@@ -24,8 +24,8 @@ use settings::{Settings, SettingsContent};
 use strum::IntoEnumIterator as _;
 use theme::ThemeSettings;
 use ui::{
-    Banner, CheckboxWithLabel, Chip, ContextMenu, PopoverMenu, ScrollableHandle, ToggleButton,
-    Tooltip, WithScrollbar, prelude::*,
+    Banner, CheckboxWithLabel, Chip, ContextMenu, PopoverMenu, ScrollableHandle, Switch,
+    ToggleButton, Tooltip, WithScrollbar, prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
@@ -1344,22 +1344,62 @@ impl ExtensionsPage {
         &self,
         label: SharedString,
         docs_url: SharedString,
+        vim: bool,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        Banner::new()
-            .child(Label::new(label))
-            .action_slot(
-                Button::new("open_docs", "View Documentation")
-                    .icon(IconName::ArrowUpRight)
-                    .icon_size(IconSize::Small)
-                    .icon_position(IconPosition::End)
-                    .on_click({
-                        move |_event, _window, cx| {
-                            telemetry::event!(
-                                "Documentation Viewed",
-                                source = "Feature Upsell",
-                                url = docs_url,
-                            );
-                            cx.open_url(&docs_url)
+        let docs_url_button = Button::new("open_docs", "View Documentation")
+            .icon(IconName::ArrowUpRight)
+            .icon_size(IconSize::Small)
+            .icon_position(IconPosition::End)
+            .on_click({
+                let docs_url = docs_url.clone();
+                move |_event, _window, cx| {
+                    telemetry::event!(
+                        "Documentation Viewed",
+                        source = "Feature Upsell",
+                        url = docs_url,
+                    );
+                    cx.open_url(&docs_url)
+                }
+            });
+
+        div()
+            .pt_4()
+            .px_4()
+            .child(
+                Banner::new()
+                    .severity(Severity::Success)
+                    .child(Label::new(label).mt_0p5())
+                    .map(|this| {
+                        if vim {
+                            this.action_slot(
+                                h_flex()
+                                    .child(
+                                        Switch::new(
+                                            "enable-vim",
+                                            if VimModeSetting::get_global(cx).0 {
+                                                ui::ToggleState::Selected
+                                            } else {
+                                                ui::ToggleState::Unselected
+                                            },
+                                        )
+                                        .on_click(cx.listener(move |this, selection, _, cx| {
+                                            telemetry::event!(
+                                                "Vim Mode Toggled",
+                                                source = "Feature Upsell"
+                                            );
+                                            this.update_settings(
+                                                selection,
+                                                cx,
+                                                |setting, value| setting.vim_mode = Some(value),
+                                            );
+                                        }))
+                                        .label("Enable Vim mode"),
+                                    )
+                                    .child(docs_url_button),
+                            )
+                        } else {
+                            this.action_slot(docs_url_button)
                         }
                     }),
             )
@@ -1367,69 +1407,94 @@ impl ExtensionsPage {
     }
 
     fn render_feature_upsells(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let upsells_count = self.upsells.len();
+        let mut container = v_flex();
 
-        v_flex().children(self.upsells.iter().enumerate().map(|(ix, feature)| {
-            let upsell = match feature {
-                // Feature::Git => FeatureUpsell::new(
-                //     "Zed comes with basic Git support. More Git features are coming in the future.",
-                // )
-                // .docs_url("https://zed.dev/docs/git"),
-                // Feature::OpenIn => FeatureUpsell::new(
-                //     "Zed supports linking to a source line on GitHub and others.",
-                // )
-                // .docs_url("https://zed.dev/docs/git#git-integrations"),
-                // Feature::Vim => FeatureUpsell::new("Vim support is built-in to Zed!")
-                //     .docs_url("https://zed.dev/docs/vim")
-                //     .child(CheckboxWithLabel::new(
-                //         "enable-vim",
-                //         Label::new("Enable vim mode"),
-                //         if VimModeSetting::get_global(cx).0 {
-                //             ui::ToggleState::Selected
-                //         } else {
-                //             ui::ToggleState::Unselected
-                //         },
-                //         cx.listener(move |this, selection, _, cx| {
-                //             telemetry::event!("Vim Mode Toggled", source = "Feature Upsell");
-                //             this.update_settings(selection, cx, |setting, value| {
-                //                 setting.vim_mode = Some(value)
-                //             });
-                //         }),
-                //     )),
-                // Feature::LanguageBash => FeatureUpsell::new("Shell support is built-in to Zed!")
-                //     .docs_url("https://zed.dev/docs/languages/bash"),
-                // Feature::LanguageC => FeatureUpsell::new("C support is built-in to Zed!")
-                //     .docs_url("https://zed.dev/docs/languages/c"),
-                // Feature::LanguageCpp => FeatureUpsell::new("C++ support is built-in to Zed!")
-                //     .docs_url("https://zed.dev/docs/languages/cpp"),
-                // Feature::LanguageGo => FeatureUpsell::new("Go support is built-in to Zed!")
-                //     .docs_url("https://zed.dev/docs/languages/go"),
-                // Feature::LanguagePython => FeatureUpsell::new("Python support is built-in to Zed!")
-                //     .docs_url("https://zed.dev/docs/languages/python"),
-                // Feature::LanguageReact => FeatureUpsell::new("React support is built-in to Zed!")
-                //     .docs_url("https://zed.dev/docs/languages/typescript"),
-                // Feature::LanguageRust => FeatureUpsell::new("Rust support is built-in to Zed!")
-                //     .docs_url("https://zed.dev/docs/languages/rust"),
-                // Feature::ExtensionRuff => {
-                //     FeatureUpsell::new("Ruff (Python linter) support is built-in to Zed!")
-                //         .docs_url("https://zed.dev/docs/languages/python#code-formatting--linting")
-                // }
-                Feature::ExtensionTailwind => self.render_feature_upsell_banner(
-                    "Tailwind CSS support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/languages/tailwindcss".into(),
+        for feature in &self.upsells {
+            let banner = match feature {
+                Feature::ExtensionRuff => self.render_feature_upsell_banner(
+                    "Ruff (linter for Python) support is built-in to Zed!".into(),
+                    "https://zed.dev/docs/languages/python#code-formatting--linting".into(),
+                    false,
+                    cx,
                 ),
                 Feature::ExtensionTailwind => self.render_feature_upsell_banner(
                     "Tailwind CSS support is built-in to Zed!".into(),
                     "https://zed.dev/docs/languages/tailwindcss".into(),
+                    false,
+                    cx,
                 ),
-                // Feature::LanguageTypescript => {
-                //     FeatureUpsell::new("Typescript support is built-in to Zed!")
-                //         .docs_url("https://zed.dev/docs/languages/typescript")
-                // }
+                Feature::Git => self.render_feature_upsell_banner(
+                    "Zed comes with basic Git support—more features are coming in the future."
+                        .into(),
+                    "https://zed.dev/docs/git".into(),
+                    false,
+                    cx,
+                ),
+                Feature::LanguageBash => self.render_feature_upsell_banner(
+                    "Shell support is built-in to Zed!".into(),
+                    "https://zed.dev/docs/languages/bash".into(),
+                    false,
+                    cx,
+                ),
+                Feature::LanguageC => self.render_feature_upsell_banner(
+                    "C support is built-in to Zed!".into(),
+                    "https://zed.dev/docs/languages/c".into(),
+                    false,
+                    cx,
+                ),
+                Feature::LanguageCpp => self.render_feature_upsell_banner(
+                    "C++ support is built-in to Zed!".into(),
+                    "https://zed.dev/docs/languages/cpp".into(),
+                    false,
+                    cx,
+                ),
+                Feature::LanguageGo => self.render_feature_upsell_banner(
+                    "Go support is built-in to Zed!".into(),
+                    "https://zed.dev/docs/languages/go".into(),
+                    false,
+                    cx,
+                ),
+                Feature::LanguagePython => self.render_feature_upsell_banner(
+                    "Python support is built-in to Zed!".into(),
+                    "https://zed.dev/docs/languages/python".into(),
+                    false,
+                    cx,
+                ),
+                Feature::LanguageReact => self.render_feature_upsell_banner(
+                    "React support is built-in to Zed!".into(),
+                    "https://zed.dev/docs/languages/typescript".into(),
+                    false,
+                    cx,
+                ),
+                Feature::LanguageRust => self.render_feature_upsell_banner(
+                    "Rust support is built-in to Zed!".into(),
+                    "https://zed.dev/docs/languages/rust".into(),
+                    false,
+                    cx,
+                ),
+                Feature::LanguageTypescript => self.render_feature_upsell_banner(
+                    "Typescript support is built-in to Zed!".into(),
+                    "https://zed.dev/docs/languages/typescript".into(),
+                    false,
+                    cx,
+                ),
+                Feature::OpenIn => self.render_feature_upsell_banner(
+                    "Zed supports linking to a source line on GitHub and others.".into(),
+                    "https://zed.dev/docs/git#git-integrations".into(),
+                    false,
+                    cx,
+                ),
+                Feature::Vim => self.render_feature_upsell_banner(
+                    "Vim support is built-in to Zed!".into(),
+                    "https://zed.dev/docs/vim".into(),
+                    true,
+                    cx,
+                ),
             };
+            container = container.child(banner);
+        }
 
-            // upsell.when(ix < upsells_count, |upsell| upsell.border_b_1())
-        }))
+        container
     }
 }
 
