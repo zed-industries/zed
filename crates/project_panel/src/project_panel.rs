@@ -2576,15 +2576,15 @@ impl ProjectPanel {
             let project = self.project.read(cx);
             let items: Vec<ClipboardItem> = entries
                 .iter()
-                .map(|entry| {
-                    let entry_path = project.path_for_entry(entry.entry_id, cx).unwrap().path;
+                .filter_map(|entry| {
+                    let entry_path = project.path_for_entry(entry.entry_id, cx)?.path;
                     let abs_entry_path = project
-                        .worktree_for_id(entry.worktree_id, cx).unwrap()
+                        .worktree_for_id(entry.worktree_id, cx)?
                         .read(cx)
                         .absolutize(&entry_path)
                         .to_string_lossy()
                         .to_string();
-                    ClipboardItem::new_string(abs_entry_path)
+                    Some(ClipboardItem::new_string(abs_entry_path))
                 })
                 .collect();
 
