@@ -6,6 +6,7 @@
   zed-editor,
 
   rust-analyzer,
+  rustup,
   cargo-nextest,
   cargo-hakari,
   cargo-machete,
@@ -19,6 +20,7 @@
   inputsFrom = [ zed-editor ];
   packages = [
     rust-analyzer
+    rustup
     cargo-nextest
     cargo-hakari
     cargo-machete
@@ -56,7 +58,6 @@
         ];
       };
       PROTOC = "${protobuf}/bin/protoc";
-      ZED_BUILD_REMOTE_SERVER = "noinstall";
       ZED_ZSTD_MUSL_LIB = "${pkgsCross.musl64.pkgsStatic.zstd.out}/lib";
     };
 }
