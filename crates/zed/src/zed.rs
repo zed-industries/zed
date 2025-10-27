@@ -19,7 +19,7 @@ use client::zed_urls;
 use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
-use editor::{Editor, MultiBuffer, SerializationMode};
+use editor::{Editor, MultiBuffer};
 use feature_flags::{FeatureFlagAppExt, PanicFeatureFlag};
 use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
@@ -1823,7 +1823,7 @@ fn open_bundled_file(
                             let mut editor =
                                 Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
                             editor.set_read_only(true);
-                            editor.set_serialization_mode(SerializationMode::Disabled);
+                            editor.set_should_serialize(false, cx);
                             editor.set_breadcrumb_header(title.into());
                             editor
                         })),

@@ -829,26 +829,19 @@ impl MinimapVisibility {
     }
 }
 
-/// Controls whether and how an editor's state should be serialized/persisted.
-/// This provides type-safe control over editor persistence behavior.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SerializationMode {
-    /// Editor state should be serialized and persisted across sessions.
-    /// This includes dirty buffer contents, selections, folds, etc.
-    Enabled,
-    /// Editor state should not be serialized.
-    /// Used for transient editors like bundled files (keymaps, settings)
-    /// or temporary views that shouldn't be restored on restart.
-    Disabled,
+pub enum BufferSerialization {
+    All,
+    NonDirtyBuffers,
 }
 
-impl SerializationMode {
-    pub fn is_enabled(self) -> bool {
-        matches!(self, SerializationMode::Enabled)
-    }
-
-    pub fn is_disabled(self) -> bool {
-        matches!(self, SerializationMode::Disabled)
+impl BufferSerialization {
+    fn new(restore_unsaved_buffers: bool) -> Self {
+        if restore_unsaved_buffers {
+            Self::All
+        } else {
+            Self::NonDirtyBuffers
+        }
     }
 }
 
@@ -1167,7 +1160,7 @@ pub struct Editor {
     show_git_blame_inline_delay_task: Option<Task<()>>,
     git_blame_inline_enabled: bool,
     render_diff_hunk_controls: RenderDiffHunkControlsFn,
-    serialization_mode: SerializationMode,
+    buffer_serialization: Option<BufferSerialization>,
     show_selection_menu: Option<bool>,
     blame: Option<Entity<GitBlame>>,
     blame_subscription: Option<Subscription>,
@@ -2229,15 +2222,13 @@ impl Editor {
             git_blame_inline_enabled: full_mode
                 && ProjectSettings::get_global(cx).git.inline_blame.enabled,
             render_diff_hunk_controls: Arc::new(render_diff_hunk_controls),
-            serialization_mode: if !is_minimap
-                && ProjectSettings::get_global(cx)
-                    .session
-                    .restore_unsaved_buffers
-            {
-                SerializationMode::Enabled
-            } else {
-                SerializationMode::Disabled
-            },
+            buffer_serialization: is_minimap.not().then(|| {
+                BufferSerialization::new(
+                    ProjectSettings::get_global(cx)
+                        .session
+                        .restore_unsaved_buffers,
+                )
+            }),
             blame: None,
             blame_subscription: None,
             tasks: BTreeMap::default(),
@@ -2743,11 +2734,12 @@ impl Editor {
         self.workspace.as_ref()?.0.upgrade()
     }
 
-    fn workspace_id(&self, _cx: &App) -> Option<WorkspaceId> {
-        if self.serialization_mode.is_disabled() {
-            return None;
-        }
-        self.workspace.as_ref().and_then(|workspace| workspace.1)
+    /// Returns the workspace serialization ID if this editor should be serialized.
+    fn workspace_serialization_id(&self, _cx: &App) -> Option<WorkspaceId> {
+        self.workspace
+            .as_ref()
+            .filter(|_| self.should_serialize_buffer())
+            .and_then(|workspace| workspace.1)
     }
 
     pub fn title<'a>(&self, cx: &'a App) -> Cow<'a, str> {
@@ -3012,12 +3004,18 @@ impl Editor {
         self.auto_replace_emoji_shortcode = auto_replace;
     }
 
-    pub fn set_serialization_mode(&mut self, mode: SerializationMode) {
-        self.serialization_mode = mode;
+    pub fn set_should_serialize(&mut self, should_serialize: bool, cx: &App) {
+        self.buffer_serialization = should_serialize.then(|| {
+            BufferSerialization::new(
+                ProjectSettings::get_global(cx)
+                    .session
+                    .restore_unsaved_buffers,
+            )
+        })
     }
 
-    pub fn snippet_stack_depth(&self) -> usize {
-        self.snippet_stack.len()
+    fn should_serialize_buffer(&self) -> bool {
+        self.buffer_serialization.is_some()
     }
 
     pub fn toggle_edit_predictions(
@@ -3246,7 +3244,7 @@ impl Editor {
             });
 
             if WorkspaceSettings::get(None, cx).restore_on_startup != RestoreOnStartupBehavior::None
-                && let Some(workspace_id) = self.workspace_id(cx)
+                && let Some(workspace_id) = self.workspace_serialization_id(cx)
             {
                 let snapshot = self.buffer().read(cx).snapshot(cx);
                 let selections = selections.clone();
@@ -3309,7 +3307,7 @@ impl Editor {
             data.folds = inmemory_folds;
         });
 
-        let Some(workspace_id) = self.workspace_id(cx) else {
+        let Some(workspace_id) = self.workspace_serialization_id(cx) else {
             return;
         };
         let background_executor = cx.background_executor().clone();
@@ -20950,12 +20948,9 @@ impl Editor {
         }
 
         let project_settings = ProjectSettings::get_global(cx);
-        self.serialization_mode =
-            if !self.mode.is_minimap() && project_settings.session.restore_unsaved_buffers {
-                SerializationMode::Enabled
-            } else {
-                SerializationMode::Disabled
-            };
+        self.buffer_serialization = self
+            .should_serialize_buffer()
+            .then(|| BufferSerialization::new(project_settings.session.restore_unsaved_buffers));
 
         if self.mode.is_full() {
             let show_inline_diagnostics = project_settings.diagnostics.inline.enabled;
