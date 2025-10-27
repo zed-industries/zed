@@ -26,6 +26,7 @@ pub(crate) const WM_GPUI_DOCK_MENU_ACTION: u32 = WM_USER + 4;
 pub(crate) const WM_GPUI_FORCE_UPDATE_WINDOW: u32 = WM_USER + 5;
 pub(crate) const WM_GPUI_KEYBOARD_LAYOUT_CHANGED: u32 = WM_USER + 6;
 pub(crate) const WM_GPUI_GPU_DEVICE_LOST: u32 = WM_USER + 7;
+pub(crate) const WM_GPUI_KEYDOWN: u32 = WM_USER + 8;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 const AUTO_HIDE_TASKBAR_THICKNESS_PX: i32 = 1;
@@ -92,13 +93,10 @@ impl WindowsWindowInner {
             }
             WM_MOUSEWHEEL => self.handle_mouse_wheel_msg(handle, wparam, lparam),
             WM_MOUSEHWHEEL => self.handle_mouse_horizontal_wheel_msg(handle, wparam, lparam),
-            WM_SYSKEYDOWN => self.handle_syskeydown_msg(handle, wparam, lparam),
-            WM_SYSKEYUP => self.handle_syskeyup_msg(handle, wparam, lparam),
-            WM_SYSCOMMAND => self.handle_system_command(wparam),
-            WM_KEYDOWN => self.handle_keydown_msg(handle, wparam, lparam),
-            WM_KEYUP => self.handle_keyup_msg(handle, wparam, lparam),
+            WM_SYSKEYUP => self.handle_syskeyup_msg(wparam, lparam),
+            WM_KEYUP => self.handle_keyup_msg(wparam, lparam),
+            WM_GPUI_KEYDOWN => self.handle_keydown_msg(wparam, lparam),
             WM_CHAR => self.handle_char_msg(wparam),
-            WM_DEADCHAR => self.handle_dead_char_msg(wparam),
             WM_IME_STARTCOMPOSITION => self.handle_ime_position(handle),
             WM_IME_COMPOSITION => self.handle_ime_composition(handle, lparam),
             WM_SETCURSOR => self.handle_set_cursor(handle, lparam),
@@ -327,35 +325,9 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn handle_syskeydown_msg(&self, handle: HWND, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+    fn handle_syskeyup_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
-        let input = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
-            PlatformInput::KeyDown(KeyDownEvent {
-                keystroke,
-                is_held: lparam.0 & (0x1 << 30) > 0,
-            })
-        })?;
-        let mut func = lock.callbacks.input.take()?;
-        drop(lock);
-
-        let handled = !func(input).propagate;
-
-        let mut lock = self.state.borrow_mut();
-        lock.callbacks.input = Some(func);
-
-        if handled {
-            lock.system_key_handled = true;
-            Some(0)
-        } else {
-            // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
-            // shortcuts.
-            None
-        }
-    }
-
-    fn handle_syskeyup_msg(&self, handle: HWND, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
-        let mut lock = self.state.borrow_mut();
-        let input = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
+        let input = handle_key_event(wparam, lparam, &mut lock, |keystroke| {
             PlatformInput::KeyUp(KeyUpEvent { keystroke })
         })?;
         let mut func = lock.callbacks.input.take()?;
@@ -369,9 +341,9 @@ impl WindowsWindowInner {
 
     // It's a known bug that you can't trigger `ctrl-shift-0`. See:
     // https://superuser.com/questions/1455762/ctrl-shift-number-key-combination-has-stopped-working-for-a-few-numbers
-    fn handle_keydown_msg(&self, handle: HWND, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+    fn handle_keydown_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
-        let Some(input) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
+        let Some(input) = handle_key_event(wparam, lparam, &mut lock, |keystroke| {
             PlatformInput::KeyDown(KeyDownEvent {
                 keystroke,
                 is_held: lparam.0 & (0x1 << 30) > 0,
@@ -381,15 +353,6 @@ impl WindowsWindowInner {
         };
         drop(lock);
 
-        let is_composing = self
-            .with_input_handler(|input_handler| input_handler.marked_text_range())
-            .flatten()
-            .is_some();
-        if is_composing {
-            translate_message(handle, wparam, lparam);
-            return Some(0);
-        }
-
         let Some(mut func) = self.state.borrow_mut().callbacks.input.take() else {
             return Some(1);
         };
@@ -398,17 +361,12 @@ impl WindowsWindowInner {
 
         self.state.borrow_mut().callbacks.input = Some(func);
 
-        if handled {
-            Some(0)
-        } else {
-            translate_message(handle, wparam, lparam);
-            Some(1)
-        }
+        if handled { Some(0) } else { Some(1) }
     }
 
-    fn handle_keyup_msg(&self, handle: HWND, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+    fn handle_keyup_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
-        let Some(input) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
+        let Some(input) = handle_key_event(wparam, lparam, &mut lock, |keystroke| {
             PlatformInput::KeyUp(KeyUpEvent { keystroke })
         }) else {
             return Some(1);
@@ -432,14 +390,6 @@ impl WindowsWindowInner {
         });
 
         Some(0)
-    }
-
-    fn handle_dead_char_msg(&self, wparam: WPARAM) -> Option<isize> {
-        let ch = char::from_u32(wparam.0 as u32)?.to_string();
-        self.with_input_handler(|input_handler| {
-            input_handler.replace_and_mark_text_in_range(None, &ch, None);
-        });
-        None
     }
 
     fn handle_mouse_down_msg(
@@ -1127,17 +1077,6 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn handle_system_command(&self, wparam: WPARAM) -> Option<isize> {
-        if wparam.0 == SC_KEYMENU as usize {
-            let mut lock = self.state.borrow_mut();
-            if lock.system_key_handled {
-                lock.system_key_handled = false;
-                return Some(0);
-            }
-        }
-        None
-    }
-
     fn handle_system_theme_changed(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
         // lParam is a pointer to a string that indicates the area containing the system parameter
         // that was changed.
@@ -1281,23 +1220,7 @@ impl WindowsWindowInner {
     }
 }
 
-#[inline]
-fn translate_message(handle: HWND, wparam: WPARAM, lparam: LPARAM) {
-    let msg = MSG {
-        hwnd: handle,
-        message: WM_KEYDOWN,
-        wParam: wparam,
-        lParam: lparam,
-        // It seems like leaving the following two parameters empty doesn't break key events, they still work as expected.
-        // But if any bugs pop up after this PR, this is probably the place to look first.
-        time: 0,
-        pt: POINT::default(),
-    };
-    unsafe { TranslateMessage(&msg).ok().log_err() };
-}
-
 fn handle_key_event<F>(
-    handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
     state: &mut WindowsWindowState,
@@ -1323,10 +1246,7 @@ where
                 capslock: current_capslock(),
             }))
         }
-        VK_PACKET => {
-            translate_message(handle, wparam, lparam);
-            None
-        }
+        VK_PACKET => None,
         VK_CAPITAL => {
             let capslock = current_capslock();
             if state
@@ -1342,11 +1262,6 @@ where
             }))
         }
         vkey => {
-            let vkey = if vkey == VK_PROCESSKEY {
-                VIRTUAL_KEY(unsafe { ImmGetVirtualKey(handle) } as u16)
-            } else {
-                vkey
-            };
             let keystroke = parse_normal_key(vkey, lparam, modifiers)?;
             Some(f(keystroke))
         }
@@ -1460,25 +1375,11 @@ fn is_virtual_key_pressed(vkey: VIRTUAL_KEY) -> bool {
     unsafe { GetKeyState(vkey.0 as i32) < 0 }
 }
 
-fn keyboard_uses_altgr() -> bool {
-    use crate::platform::windows::keyboard::WindowsKeyboardLayout;
-    WindowsKeyboardLayout::new()
-        .map(|layout| layout.uses_altgr())
-        .unwrap_or(false)
-}
-
 #[inline]
 pub(crate) fn current_modifiers() -> Modifiers {
-    let lmenu_pressed = is_virtual_key_pressed(VK_LMENU);
-    let rmenu_pressed = is_virtual_key_pressed(VK_RMENU);
-    let lcontrol_pressed = is_virtual_key_pressed(VK_LCONTROL);
-
-    // Only treat right Alt + left Ctrl as AltGr on keyboards that actually use it
-    let altgr = keyboard_uses_altgr() && rmenu_pressed && lcontrol_pressed;
-
     Modifiers {
-        control: is_virtual_key_pressed(VK_CONTROL) && !altgr,
-        alt: (lmenu_pressed || rmenu_pressed) && !altgr,
+        control: is_virtual_key_pressed(VK_CONTROL),
+        alt: is_virtual_key_pressed(VK_MENU),
         shift: is_virtual_key_pressed(VK_SHIFT),
         platform: is_virtual_key_pressed(VK_LWIN) || is_virtual_key_pressed(VK_RWIN),
         function: false,
