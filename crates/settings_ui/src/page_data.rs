@@ -796,7 +796,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
                     title: "Font Features",
-                    description: "The Opentype features to enable for rendering in UI elements.",
+                    description: "The OpenType features to enable for rendering in UI elements.",
                     field: Box::new(
                         SettingField {
                             json_path: Some("ui_font_features"),

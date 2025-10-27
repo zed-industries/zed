@@ -32,7 +32,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicUsize},
 };
-use sysinfo::System;
+use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use worktree::Worktree;
 
@@ -747,9 +747,16 @@ impl HeadlessProject {
         _cx: AsyncApp,
     ) -> Result<proto::GetProcessesResponse> {
         let mut processes = Vec::new();
-        let system = System::new_all();
+        let refresh_kind = RefreshKind::nothing().with_processes(
+            ProcessRefreshKind::nothing()
+                .without_tasks()
+                .with_cmd(UpdateKind::Always),
+        );
 
-        for (_pid, process) in system.processes() {
+        for process in System::new_with_specifics(refresh_kind)
+            .processes()
+            .values()
+        {
             let name = process.name().to_string_lossy().into_owned();
             let command = process
                 .cmd()
@@ -774,7 +781,7 @@ impl HeadlessProject {
         envelope: TypedEnvelope<proto::GetDirectoryEnvironment>,
         mut cx: AsyncApp,
     ) -> Result<proto::DirectoryEnvironment> {
-        let shell = task::Shell::from_proto(envelope.payload.shell.context("missing shell")?)?;
+        let shell = task::shell_from_proto(envelope.payload.shell.context("missing shell")?)?;
         let directory = PathBuf::from(envelope.payload.directory);
         let environment = this
             .update(&mut cx, |this, cx| {

@@ -5750,17 +5750,6 @@ impl MultiBufferSnapshot {
             debug_ranges.insert(key, text_ranges, format!("{value:?}").into())
         });
     }
-
-    // used by line_mode selections and tries to match vim behavior
-    pub fn expand_to_line(&self, range: Range<Point>) -> Range<Point> {
-        let new_start = MultiBufferPoint::new(range.start.row, 0);
-        let new_end = if range.end.column > 0 {
-            MultiBufferPoint::new(range.end.row, self.line_len(MultiBufferRow(range.end.row)))
-        } else {
-            range.end
-        };
-        new_start..new_end
-    }
 }
 
 #[cfg(any(test, feature = "test-support"))]

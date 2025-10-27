@@ -794,28 +794,34 @@ impl RemoteServerProjects {
         let wsl_picker = picker.clone();
         let creating = cx.spawn_in(window, async move |this, cx| {
             match connection.await {
-                Some(Some(client)) => this
-                    .update_in(cx, |this, window, cx| {
-                        telemetry::event!("WSL Distro Added");
-                        this.retained_connections.push(client);
-                        this.add_wsl_distro(connection_options, cx);
-                        this.mode = Mode::default_mode(&BTreeSet::new(), cx);
-                        this.focus_handle(cx).focus(window);
-                        cx.notify()
-                    })
-                    .log_err(),
-                _ => this
-                    .update(cx, |this, cx| {
-                        this.mode = Mode::AddWslDistro(AddWslDistro {
-                            picker: wsl_picker,
-                            connection_prompt: None,
-                            _creating: None,
-                        });
-                        cx.notify()
-                    })
-                    .log_err(),
-            };
-            ()
+                Some(Some(client)) => this.update_in(cx, |this, window, cx| {
+                    telemetry::event!("WSL Distro Added");
+                    this.retained_connections.push(client);
+                    let Some(fs) = this
+                        .workspace
+                        .read_with(cx, |workspace, cx| {
+                            workspace.project().read(cx).fs().clone()
+                        })
+                        .log_err()
+                    else {
+                        return;
+                    };
+
+                    crate::add_wsl_distro(fs, &connection_options, cx);
+                    this.mode = Mode::default_mode(&BTreeSet::new(), cx);
+                    this.focus_handle(cx).focus(window);
+                    cx.notify();
+                }),
+                _ => this.update(cx, |this, cx| {
+                    this.mode = Mode::AddWslDistro(AddWslDistro {
+                        picker: wsl_picker,
+                        connection_prompt: None,
+                        _creating: None,
+                    });
+                    cx.notify();
+                }),
+            }
+            .log_err();
         });
 
         self.mode = Mode::AddWslDistro(AddWslDistro {
@@ -1411,31 +1417,6 @@ impl RemoteServerProjects {
                 .and_then(|connections| connections.get_mut(server.0))
             {
                 server.projects.remove(&project);
-            }
-        });
-    }
-
-    #[cfg(target_os = "windows")]
-    fn add_wsl_distro(
-        &mut self,
-        connection_options: remote::WslConnectionOptions,
-        cx: &mut Context<Self>,
-    ) {
-        self.update_settings_file(cx, move |setting, _| {
-            let connections = setting.wsl_connections.get_or_insert(Default::default());
-
-            let distro_name = SharedString::from(connection_options.distro_name);
-            let user = connection_options.user;
-
-            if !connections
-                .iter()
-                .any(|conn| conn.distro_name == distro_name && conn.user == user)
-            {
-                connections.push(settings::WslConnection {
-                    distro_name,
-                    user,
-                    projects: BTreeSet::new(),
-                })
             }
         });
     }

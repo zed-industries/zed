@@ -640,6 +640,11 @@ impl RenderOnce for ButtonLike {
             .filter(|_| self.selected)
             .unwrap_or(self.style);
 
+        let is_outlined = matches!(
+            self.style,
+            ButtonStyle::Outlined | ButtonStyle::OutlinedGhost
+        );
+
         self.base
             .h_flex()
             .id(self.id.clone())
@@ -654,13 +659,7 @@ impl RenderOnce for ButtonLike {
             .when_some(self.width, |this, width| {
                 this.w(width).justify_center().text_center()
             })
-            .when(
-                matches!(
-                    self.style,
-                    ButtonStyle::Outlined | ButtonStyle::OutlinedGhost
-                ),
-                |this| this.border_1(),
-            )
+            .when(is_outlined, |this| this.border_1())
             .when_some(self.rounding, |this, rounding| {
                 this.when(rounding.top_left, |this| this.rounded_tl_sm())
                     .when(rounding.top_right, |this| this.rounded_tr_sm())
@@ -688,13 +687,16 @@ impl RenderOnce for ButtonLike {
                 let hovered_style = style.hovered(self.layer, cx);
                 let focus_color =
                     |refinement: StyleRefinement| refinement.bg(hovered_style.background);
+
                 this.cursor(self.cursor_style)
                     .hover(focus_color)
                     .map(|this| {
-                        if matches!(self.style, ButtonStyle::Outlined) {
-                            this.focus(|s| s.border_color(cx.theme().colors().border_focused))
+                        if is_outlined {
+                            this.focus_visible(|s| {
+                                s.border_color(cx.theme().colors().border_focused)
+                            })
                         } else {
-                            this.focus(focus_color)
+                            this.focus_visible(focus_color)
                         }
                     })
                     .active(|active| active.bg(style.active(cx).background))

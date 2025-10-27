@@ -366,7 +366,13 @@ mod tests {
     #[track_caller]
     fn assert_migrate_settings(input: &str, output: Option<&str>) {
         let migrated = migrate_settings(input).unwrap();
-        assert_migrated_correctly(migrated, output);
+        assert_migrated_correctly(migrated.clone(), output);
+
+        // expect that rerunning the migration does not result in another migration
+        if let Some(migrated) = migrated {
+            let rerun = migrate_settings(&migrated).unwrap();
+            assert_migrated_correctly(rerun, None);
+        }
     }
 
     #[track_caller]
@@ -376,7 +382,13 @@ mod tests {
         output: Option<&str>,
     ) {
         let migrated = run_migrations(input, migrations).unwrap();
-        assert_migrated_correctly(migrated, output);
+        assert_migrated_correctly(migrated.clone(), output);
+
+        // expect that rerunning the migration does not result in another migration
+        if let Some(migrated) = migrated {
+            let rerun = run_migrations(&migrated, migrations).unwrap();
+            assert_migrated_correctly(rerun, None);
+        }
     }
 
     #[test]

@@ -2079,7 +2079,7 @@ impl Buffer {
         self.end_transaction(cx)
     }
 
-    fn has_unsaved_edits(&self) -> bool {
+    pub fn has_unsaved_edits(&self) -> bool {
         let (last_version, has_unsaved_edits) = self.has_unsaved_edits.take();
 
         if last_version == self.version {

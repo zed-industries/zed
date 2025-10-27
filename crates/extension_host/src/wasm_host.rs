@@ -30,12 +30,14 @@ use node_runtime::NodeRuntime;
 use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
 use settings::Settings;
-use std::borrow::Cow;
-use std::sync::{LazyLock, OnceLock};
-use std::time::Duration;
 use std::{
+    borrow::Cow,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc, LazyLock, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
 use task::{DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
 use util::paths::SanitizedPath;
@@ -67,6 +69,7 @@ pub struct WasmExtension {
     pub work_dir: Arc<Path>,
     #[allow(unused)]
     pub zed_api_version: SemanticVersion,
+    _task: Arc<Task<Result<(), gpui_tokio::JoinError>>>,
 }
 
 impl Drop for WasmExtension {
@@ -495,6 +498,11 @@ pub struct WasmState {
     pub(crate) capability_granter: CapabilityGranter,
 }
 
+std::thread_local! {
+    /// Used by the crash handler to ignore panics in extension-related threads.
+    pub static IS_WASM_THREAD: AtomicBool = const { AtomicBool::new(false) };
+}
+
 type MainThreadCall = Box<dyn Send + for<'a> FnOnce(&'a mut AsyncApp) -> LocalBoxFuture<'a, ()>>;
 
 type ExtensionCall = Box<
@@ -529,6 +537,7 @@ fn wasm_engine(executor: &BackgroundExecutor) -> wasmtime::Engine {
             let engine_ref = engine.weak();
             executor
                 .spawn(async move {
+                    IS_WASM_THREAD.with(|v| v.store(true, Ordering::Release));
                     // Somewhat arbitrary interval, as it isn't a guaranteed interval.
                     // But this is a rough upper bound for how long the extension execution can block on
                     // `Future::poll`.
@@ -641,21 +650,26 @@ impl WasmHost {
 
             anyhow::Ok((
                 extension_task,
-                WasmExtension {
-                    manifest: manifest.clone(),
-                    work_dir: this.work_dir.join(manifest.id.as_ref()).into(),
-                    tx,
-                    zed_api_version,
-                },
+                manifest.clone(),
+                this.work_dir.join(manifest.id.as_ref()).into(),
+                tx,
+                zed_api_version,
             ))
         };
         cx.spawn(async move |cx| {
-            let (extension_task, extension) = load_extension_task.await?;
+            let (extension_task, manifest, work_dir, tx, zed_api_version) =
+                load_extension_task.await?;
             // we need to run run the task in an extension context as wasmtime_wasi may
             // call into tokio, accessing its runtime handle
-            gpui_tokio::Tokio::spawn(cx, extension_task)?.detach();
+            let task = Arc::new(gpui_tokio::Tokio::spawn(cx, extension_task)?);
 
-            Ok(extension)
+            Ok(WasmExtension {
+                manifest,
+                work_dir,
+                tx,
+                zed_api_version,
+                _task: task,
+            })
         })
     }
 

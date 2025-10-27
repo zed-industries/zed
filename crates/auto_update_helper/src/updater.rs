@@ -197,7 +197,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>, launch: bool) 
                         break;
                     }
 
-                    log::error!("Operation failed: {}", err);
+                    log::error!("Operation failed: {} ({:?})", err, io_err.kind());
                     std::thread::sleep(Duration::from_millis(50));
                 }
             }
