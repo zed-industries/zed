@@ -16,7 +16,7 @@ use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext, px};
 use itertools::Itertools;
 use language::Point;
 pub use neovim_backed_test_context::*;
-use settings::SettingsStore;
+use settings::{ActionSequence, SettingsStore};
 use ui::Pixels;
 use util::test::marked_text_ranges;
 pub use vim_test_context::*;
@@ -24,7 +24,10 @@ pub use vim_test_context::*;
 use indoc::indoc;
 use search::BufferSearchBar;
 
-use crate::{PushSneak, PushSneakBackward, insert::NormalBefore, motion, state::Mode};
+use crate::{
+    PushDelete, PushObject, PushSneak, PushSneakBackward, SwitchToVisualMode,
+    helix::HelixGotoLastModification, insert::NormalBefore, motion, object::AnyQuotes, state::Mode,
+};
 
 use util_macros::perf;
 
@@ -2318,4 +2321,101 @@ async fn test_clipping_on_mode_change(cx: &mut gpui::TestAppContext) {
         },
         Mode::Normal,
     );
+}
+
+#[gpui::test]
+async fn test_passive_mode_typing_works(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, false).await;
+
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings(cx, |s| {
+            s.passive_modal_actions = Some(true);
+        });
+    });
+
+    // Verify typing works normally (not in modal mode)
+    cx.simulate_keystrokes("h e l l o space z e d");
+    cx.assert_editor_state("hello zedˇ");
+}
+
+#[gpui::test]
+async fn test_passive_mode_delete_inside_quotes(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, false).await;
+
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings(cx, |s| {
+            s.passive_modal_actions = Some(true);
+        });
+    });
+
+    cx.update(|_, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "ctrl-d",
+            ActionSequence(vec![
+                Box::new(PushDelete),
+                Box::new(PushObject { around: false }),
+                Box::new(AnyQuotes {}),
+            ]),
+            None,
+        )])
+    });
+
+    cx.set_state(r#"let x = "helˇlo world";"#, Mode::Normal);
+    cx.simulate_keystrokes("ctrl-d");
+    cx.assert_editor_state(r#"let x = "ˇ";"#);
+}
+
+#[gpui::test]
+async fn test_passive_mode_selection_preserving(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, false).await;
+
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings(cx, |s| {
+            s.passive_modal_actions = Some(true);
+        });
+    });
+
+    cx.update(|_, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "ctrl-'",
+            ActionSequence(vec![
+                Box::new(SwitchToVisualMode {}),
+                Box::new(PushObject { around: false }),
+                Box::new(AnyQuotes {}),
+            ]),
+            None,
+        )])
+    });
+
+    cx.simulate_keystrokes("l e t x = h e l l o w o r l d");
+    cx.set_state(r#"let x = "hello worldˇ";"#, Mode::Normal);
+    cx.simulate_keystrokes("ctrl-'");
+    cx.assert_state(r#"let x = "«hello worldˇ»";"#, Mode::Visual);
+}
+
+#[gpui::test]
+async fn test_passive_mode_goto_last_modification(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, false).await;
+
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings(cx, |s| {
+            s.passive_modal_actions = Some(true);
+        });
+    });
+
+    cx.update(|_, cx| cx.bind_keys([KeyBinding::new("ctrl-g", HelixGotoLastModification, None)]));
+
+    cx.set_state("hello ˇworld", Mode::Normal);
+
+    // Create a modification
+    cx.simulate_keystrokes("z e d space");
+    cx.assert_editor_state("hello zed ˇworld");
+
+    // Move away
+    cx.simulate_keystrokes("up");
+    cx.assert_editor_state("ˇhello zed world");
+
+    // Go to last modification
+    cx.simulate_keystrokes("ctrl-g");
+    cx.assert_editor_state("hello zed ˇworld");
 }

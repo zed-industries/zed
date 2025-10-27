@@ -47,8 +47,8 @@ use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
-use vim_mode_setting::HelixModeSetting;
 use vim_mode_setting::VimModeSetting;
+use vim_mode_setting::{HelixModeSetting, PassiveModalActionsSetting};
 use workspace::{self, Pane, Workspace};
 
 use crate::{
@@ -535,53 +535,55 @@ impl Vim {
             (initial_vim_mode, Mode::Normal)
         };
 
-        // In passive mode we only subscribe to editor events so vim can track changes (change list or last-modification mark)
-        // without intercepting keystrokes.
-        let subscriptions = if passive_mode {
-            vec![cx.subscribe_in(
-                &editor,
-                window,
-                |this: &mut Vim, _editor_entity, event, window, cx| {
-                    this.handle_editor_event(event, window, cx)
-                },
-            )]
-        } else {
-            vec![
-                cx.observe_keystrokes(Self::observe_keystrokes),
-                cx.subscribe_in(
+        cx.new(|cx| {
+            // In passive mode we only subscribe to editor events so vim can track changes (change list or last-modification mark)
+            // without intercepting keystrokes.
+            let subscriptions = if passive_mode {
+                vec![cx.subscribe_in(
                     &editor,
                     window,
-                    |this, _editor_entity, event, window, cx| {
+                    |this: &mut Vim, _editor_entity, event, window, cx| {
                         this.handle_editor_event(event, window, cx)
                     },
-                ),
-            ]
-        };
+                )]
+            } else {
+                vec![
+                    cx.observe_keystrokes(Self::observe_keystrokes),
+                    cx.subscribe_in(
+                        &editor,
+                        window,
+                        |this, _editor_entity, event, window, cx| {
+                            this.handle_editor_event(event, window, cx)
+                        },
+                    ),
+                ]
+            };
 
-        cx.new(|cx| Vim {
-            mode,
-            passive_mode,
-            last_mode,
-            temp_mode: false,
-            exit_temporary_mode: false,
-            operator_stack: Vec::new(),
-            replacements: Vec::new(),
+            Vim {
+                mode,
+                passive_mode,
+                last_mode,
+                temp_mode: false,
+                exit_temporary_mode: false,
+                operator_stack: Vec::new(),
+                replacements: Vec::new(),
 
-            stored_visual_mode: None,
-            current_tx: None,
-            undo_last_line_tx: None,
-            current_anchor: None,
-            undo_modes: HashMap::default(),
+                stored_visual_mode: None,
+                current_tx: None,
+                undo_last_line_tx: None,
+                current_anchor: None,
+                undo_modes: HashMap::default(),
 
-            status_label: None,
-            selected_register: None,
-            search: SearchState::default(),
+                status_label: None,
+                selected_register: None,
+                search: SearchState::default(),
 
-            last_command: None,
-            running_command: None,
+                last_command: None,
+                running_command: None,
 
-            editor: editor.downgrade(),
-            _subscriptions: subscriptions,
+                editor: editor.downgrade(),
+                _subscriptions: subscriptions,
+            }
         })
     }
 
