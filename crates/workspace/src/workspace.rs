@@ -7323,6 +7323,7 @@ pub struct OpenOptions {
     pub visible: Option<OpenVisible>,
     pub focus: Option<bool>,
     pub open_new_workspace: Option<bool>,
+    pub prefer_focused_window: bool,
     pub replace_window: Option<WindowHandle<Workspace>>,
     pub env: Option<HashMap<String, String>>,
 }
@@ -7379,7 +7380,7 @@ pub fn open_paths(
             })?;
 
             if open_options.open_new_workspace.is_none()
-                && existing.is_none()
+                && (existing.is_none() || open_options.prefer_focused_window)
                 && all_metadatas.iter().all(|file| !file.is_dir)
             {
                 cx.update(|cx| {

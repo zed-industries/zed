@@ -531,6 +531,7 @@ async fn open_local_workspace(
         workspace::OpenOptions {
             open_new_workspace: effective_open_new_workspace,
             replace_window,
+            prefer_focused_window: wait,
             env: env.cloned(),
             ..Default::default()
         },
