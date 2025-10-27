@@ -1,5 +1,4 @@
 use crate::commit_view::CommitView;
-use chrono;
 use editor::hover_markdown_style;
 use futures::Future;
 use git::blame::BlameEntry;
