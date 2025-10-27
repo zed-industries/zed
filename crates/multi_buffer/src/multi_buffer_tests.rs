@@ -213,7 +213,11 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
     );
 
     assert_eq!(
-        boundaries_in_range(Point::new(0, 0)..Point::new(4, 2), &snapshot),
+        boundaries_in_range(
+            MultiBufferPoint::new(MultiBufferRow(0), 0)
+                ..MultiBufferPoint::new(MultiBufferRow(4), 2),
+            &snapshot
+        ),
         &[
             (MultiBufferRow(0), "bbbb\nccccc".to_string(), true),
             (MultiBufferRow(2), "ddd\neeee".to_string(), false),
@@ -221,35 +225,67 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
         ]
     );
     assert_eq!(
-        boundaries_in_range(Point::new(0, 0)..Point::new(2, 0), &snapshot),
+        boundaries_in_range(
+            MultiBufferPoint::new(MultiBufferRow(0), 0)
+                ..MultiBufferPoint::new(MultiBufferRow(2), 0),
+            &snapshot
+        ),
         &[(MultiBufferRow(0), "bbbb\nccccc".to_string(), true)]
     );
     assert_eq!(
-        boundaries_in_range(Point::new(1, 0)..Point::new(1, 5), &snapshot),
+        boundaries_in_range(
+            MultiBufferPoint::new(MultiBufferRow(1), 0)
+                ..MultiBufferPoint::new(MultiBufferRow(1), 5),
+            &snapshot
+        ),
         &[]
     );
     assert_eq!(
-        boundaries_in_range(Point::new(1, 0)..Point::new(2, 0), &snapshot),
+        boundaries_in_range(
+            MultiBufferPoint::new(MultiBufferRow(1), 0)
+                ..MultiBufferPoint::new(MultiBufferRow(2), 0),
+            &snapshot
+        ),
         &[]
     );
     assert_eq!(
-        boundaries_in_range(Point::new(1, 0)..Point::new(4, 0), &snapshot),
+        boundaries_in_range(
+            MultiBufferPoint::new(MultiBufferRow(1), 0)
+                ..MultiBufferPoint::new(MultiBufferRow(4), 0),
+            &snapshot
+        ),
         &[(MultiBufferRow(2), "ddd\neeee".to_string(), false)]
     );
     assert_eq!(
-        boundaries_in_range(Point::new(1, 0)..Point::new(4, 0), &snapshot),
+        boundaries_in_range(
+            MultiBufferPoint::new(MultiBufferRow(1), 0)
+                ..MultiBufferPoint::new(MultiBufferRow(4), 0),
+            &snapshot
+        ),
         &[(MultiBufferRow(2), "ddd\neeee".to_string(), false)]
     );
     assert_eq!(
-        boundaries_in_range(Point::new(2, 0)..Point::new(3, 0), &snapshot),
+        boundaries_in_range(
+            MultiBufferPoint::new(MultiBufferRow(2), 0)
+                ..MultiBufferPoint::new(MultiBufferRow(3), 0),
+            &snapshot
+        ),
         &[(MultiBufferRow(2), "ddd\neeee".to_string(), false)]
     );
     assert_eq!(
-        boundaries_in_range(Point::new(4, 0)..Point::new(4, 2), &snapshot),
+        boundaries_in_range(
+            MultiBufferPoint::new(MultiBufferRow(4), 0)
+                ..MultiBufferPoint::new(MultiBufferRow(4), 2),
+            &snapshot
+        ),
         &[(MultiBufferRow(4), "jj".to_string(), true)]
     );
     assert_eq!(
-        boundaries_in_range(Point::new(4, 2)..Point::new(4, 2), &snapshot),
+        boundaries_in_range(
+            MultiBufferPoint::new(MultiBufferRow(4), 2)
+                ..MultiBufferPoint::new(MultiBufferRow(4), 2),
+            &snapshot
+        ),
         &[]
     );
 
@@ -288,24 +324,24 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
 
     let snapshot = multibuffer.read(cx).snapshot(cx);
     assert_eq!(
-        snapshot.clip_point(Point::new(0, 5), Bias::Left),
-        Point::new(0, 4)
+        snapshot.clip_point(MultiBufferPoint::new(MultiBufferRow(0), 5), Bias::Left),
+        MultiBufferPoint::new(MultiBufferRow(0), 4)
     );
     assert_eq!(
-        snapshot.clip_point(Point::new(0, 5), Bias::Right),
-        Point::new(0, 4)
+        snapshot.clip_point(MultiBufferPoint::new(MultiBufferRow(0), 5), Bias::Right),
+        MultiBufferPoint::new(MultiBufferRow(0), 4)
     );
     assert_eq!(
-        snapshot.clip_point(Point::new(5, 1), Bias::Right),
-        Point::new(5, 1)
+        snapshot.clip_point(MultiBufferPoint::new(MultiBufferRow(5), 1), Bias::Right),
+        MultiBufferPoint::new(MultiBufferRow(5), 1)
     );
     assert_eq!(
-        snapshot.clip_point(Point::new(5, 2), Bias::Right),
-        Point::new(5, 2)
+        snapshot.clip_point(MultiBufferPoint::new(MultiBufferRow(5), 2), Bias::Right),
+        MultiBufferPoint::new(MultiBufferRow(5), 2)
     );
     assert_eq!(
-        snapshot.clip_point(Point::new(5, 3), Bias::Right),
-        Point::new(5, 2)
+        snapshot.clip_point(MultiBufferPoint::new(MultiBufferRow(5), 3), Bias::Right),
+        MultiBufferPoint::new(MultiBufferRow(5), 2)
     );
 
     let snapshot = multibuffer.update(cx, |multibuffer, cx| {
@@ -327,7 +363,7 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
     );
 
     fn boundaries_in_range(
-        range: Range<Point>,
+        range: Range<MultiBufferPoint>,
         snapshot: &MultiBufferSnapshot,
     ) -> Vec<(MultiBufferRow, String, bool)> {
         snapshot
@@ -358,8 +394,12 @@ fn test_diff_boundary_anchors(cx: &mut TestAppContext) {
     multibuffer.update(cx, |multibuffer, cx| multibuffer.add_diff(diff, cx));
 
     let (before, after) = multibuffer.update(cx, |multibuffer, cx| {
-        let before = multibuffer.snapshot(cx).anchor_before(Point::new(1, 0));
-        let after = multibuffer.snapshot(cx).anchor_after(Point::new(1, 0));
+        let before = multibuffer
+            .snapshot(cx)
+            .anchor_before(MultiBufferPoint::new(MultiBufferRow(1), 0));
+        let after = multibuffer
+            .snapshot(cx)
+            .anchor_after(MultiBufferPoint::new(MultiBufferRow(1), 0));
         multibuffer.set_all_diff_hunks_expanded(cx);
         (before, after)
     });
@@ -381,11 +421,20 @@ fn test_diff_boundary_anchors(cx: &mut TestAppContext) {
 
     multibuffer.update(cx, |multibuffer, cx| {
         let snapshot = multibuffer.snapshot(cx);
-        assert_eq!(before.to_point(&snapshot), Point::new(1, 0));
-        assert_eq!(after.to_point(&snapshot), Point::new(2, 0));
         assert_eq!(
-            vec![Point::new(1, 0), Point::new(2, 0),],
-            snapshot.summaries_for_anchors::<Point, _>(&[before, after]),
+            before.to_point(&snapshot),
+            MultiBufferPoint::new(MultiBufferRow(1), 0)
+        );
+        assert_eq!(
+            after.to_point(&snapshot),
+            MultiBufferPoint::new(MultiBufferRow(2), 0)
+        );
+        assert_eq!(
+            vec![
+                MultiBufferPoint::new(MultiBufferRow(1), 0),
+                MultiBufferPoint::new(MultiBufferRow(2), 0),
+            ],
+            snapshot.summaries_for_anchors::<MultiBufferPoint, _>(&[before, after]),
         )
     })
 }
@@ -426,19 +475,22 @@ fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
 
     assert_eq!(
         snapshot
-            .diff_hunks_in_range(Point::new(1, 0)..Point::MAX)
+            .diff_hunks_in_range(MultiBufferPoint::new(MultiBufferRow(1), 0)..MultiBufferPoint::MAX)
             .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0)
             .collect::<Vec<_>>(),
         vec![1..3, 4..6, 7..8]
     );
 
-    assert_eq!(snapshot.diff_hunk_before(Point::new(1, 1)), None,);
     assert_eq!(
-        snapshot.diff_hunk_before(Point::new(7, 0)),
+        snapshot.diff_hunk_before(MultiBufferPoint::new(MultiBufferRow(1), 1)),
+        None,
+    );
+    assert_eq!(
+        snapshot.diff_hunk_before(MultiBufferPoint::new(MultiBufferRow(7), 0)),
         Some(MultiBufferRow(4))
     );
     assert_eq!(
-        snapshot.diff_hunk_before(Point::new(4, 0)),
+        snapshot.diff_hunk_before(MultiBufferPoint::new(MultiBufferRow(4), 0)),
         Some(MultiBufferRow(1))
     );
 
@@ -461,11 +513,11 @@ fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
     );
 
     assert_eq!(
-        snapshot.diff_hunk_before(Point::new(2, 0)),
+        snapshot.diff_hunk_before(MultiBufferPoint::new(MultiBufferRow(2), 0)),
         Some(MultiBufferRow(1)),
     );
     assert_eq!(
-        snapshot.diff_hunk_before(Point::new(4, 0)),
+        snapshot.diff_hunk_before(MultiBufferPoint::new(MultiBufferRow(4), 0)),
         Some(MultiBufferRow(2))
     );
 }
@@ -508,7 +560,15 @@ fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
 
     // Insert a newline within an insertion hunk
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.edit([(Point::new(2, 0)..Point::new(2, 0), "__\n__")], None, cx);
+        multibuffer.edit(
+            [(
+                MultiBufferPoint::new(MultiBufferRow(2), 0)
+                    ..MultiBufferPoint::new(MultiBufferRow(2), 0),
+                "__\n__",
+            )],
+            None,
+            cx,
+        );
     });
     assert_new_snapshot(
         &multibuffer,
@@ -531,7 +591,15 @@ fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
 
     // Delete the newline before a deleted hunk.
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.edit([(Point::new(5, 4)..Point::new(6, 0), "")], None, cx);
+        multibuffer.edit(
+            [(
+                MultiBufferPoint::new(MultiBufferRow(5), 4)
+                    ..MultiBufferPoint::new(MultiBufferRow(6), 0),
+                "",
+            )],
+            None,
+            cx,
+        );
     });
     assert_new_snapshot(
         &multibuffer,
@@ -573,7 +641,15 @@ fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
     // Cannot (yet) insert at the beginning of a deleted hunk.
     // (because it would put the newline in the wrong place)
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.edit([(Point::new(6, 0)..Point::new(6, 0), "\n")], None, cx);
+        multibuffer.edit(
+            [(
+                MultiBufferPoint::new(MultiBufferRow(6), 0)
+                    ..MultiBufferPoint::new(MultiBufferRow(6), 0),
+                "\n",
+            )],
+            None,
+            cx,
+        );
     });
     assert_new_snapshot(
         &multibuffer,
@@ -596,7 +672,15 @@ fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
 
     // Replace a range that ends in a deleted hunk.
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.edit([(Point::new(5, 2)..Point::new(6, 2), "fty-")], None, cx);
+        multibuffer.edit(
+            [(
+                MultiBufferPoint::new(MultiBufferRow(5), 2)
+                    ..MultiBufferPoint::new(MultiBufferRow(6), 2),
+                "fty-",
+            )],
+            None,
+            cx,
+        );
     });
     assert_new_snapshot(
         &multibuffer,
@@ -746,7 +830,9 @@ fn test_expand_excerpts(cx: &mut App) {
     drop(snapshot);
 
     multibuffer.update(cx, |multibuffer, cx| {
-        let line_zero = multibuffer.snapshot(cx).anchor_before(Point::new(0, 0));
+        let line_zero = multibuffer
+            .snapshot(cx)
+            .anchor_before(MultiBufferPoint::new(MultiBufferRow(0), 0));
         multibuffer.expand_excerpts(
             multibuffer.excerpt_ids(),
             1,
@@ -754,7 +840,7 @@ fn test_expand_excerpts(cx: &mut App) {
             cx,
         );
         let snapshot = multibuffer.snapshot(cx);
-        let line_two = snapshot.anchor_before(Point::new(2, 0));
+        let line_two = snapshot.anchor_before(MultiBufferPoint::new(MultiBufferRow(2), 0));
         assert_eq!(line_two.cmp(&line_zero, &snapshot), cmp::Ordering::Greater);
     });
 
@@ -816,9 +902,12 @@ async fn test_set_anchored_excerpts_for_path(cx: &mut TestAppContext) {
             .map(|range| range.to_point(&snapshot_1))
             .collect::<Vec<_>>(),
         vec![
-            Point::new(2, 2)..Point::new(3, 2),
-            Point::new(6, 1)..Point::new(6, 3),
-            Point::new(11, 0)..Point::new(11, 0),
+            MultiBufferPoint::new(MultiBufferRow(2), 2)
+                ..MultiBufferPoint::new(MultiBufferRow(3), 2),
+            MultiBufferPoint::new(MultiBufferRow(6), 1)
+                ..MultiBufferPoint::new(MultiBufferRow(6), 3),
+            MultiBufferPoint::new(MultiBufferRow(11), 0)
+                ..MultiBufferPoint::new(MultiBufferRow(11), 0),
         ]
     );
     let anchor_ranges_2 = multibuffer
@@ -839,8 +928,10 @@ async fn test_set_anchored_excerpts_for_path(cx: &mut TestAppContext) {
             .map(|range| range.to_point(&snapshot_2))
             .collect::<Vec<_>>(),
         vec![
-            Point::new(16, 1)..Point::new(17, 1),
-            Point::new(22, 0)..Point::new(22, 2)
+            MultiBufferPoint::new(MultiBufferRow(16), 1)
+                ..MultiBufferPoint::new(MultiBufferRow(17), 1),
+            MultiBufferPoint::new(MultiBufferRow(22), 0)
+                ..MultiBufferPoint::new(MultiBufferRow(22), 2)
         ]
     );
 
@@ -920,7 +1011,10 @@ fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
     assert_eq!(snapshot.text(), "a\nb\nc\n");
 
     let hunk = snapshot
-        .diff_hunks_in_range(Point::new(1, 1)..Point::new(1, 1))
+        .diff_hunks_in_range(
+            MultiBufferPoint::new(MultiBufferRow(1), 1)
+                ..MultiBufferPoint::new(MultiBufferRow(1), 1),
+        )
         .next()
         .unwrap();
 
@@ -1252,7 +1346,9 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
 
     // Expand the first diff hunk
     multibuffer.update(cx, |multibuffer, cx| {
-        let position = multibuffer.read(cx).anchor_before(Point::new(2, 2));
+        let position = multibuffer
+            .read(cx)
+            .anchor_before(MultiBufferPoint::new(MultiBufferRow(2), 2));
         multibuffer.expand_diff_hunks(vec![position..position], cx)
     });
     assert_new_snapshot(
@@ -1274,8 +1370,12 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
 
     // Expand the second diff hunk
     multibuffer.update(cx, |multibuffer, cx| {
-        let start = multibuffer.read(cx).anchor_before(Point::new(4, 0));
-        let end = multibuffer.read(cx).anchor_before(Point::new(5, 0));
+        let start = multibuffer
+            .read(cx)
+            .anchor_before(MultiBufferPoint::new(MultiBufferRow(4), 0));
+        let end = multibuffer
+            .read(cx)
+            .anchor_before(MultiBufferPoint::new(MultiBufferRow(5), 0));
         multibuffer.expand_diff_hunks(vec![start..end], cx)
     });
     assert_new_snapshot(
@@ -1438,7 +1538,8 @@ fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.expand_diff_hunks(
             vec![
-                snapshot.anchor_before(Point::new(2, 0))..snapshot.anchor_before(Point::new(2, 0)),
+                snapshot.anchor_before(MultiBufferPoint::new(MultiBufferRow(2), 0))
+                    ..snapshot.anchor_before(MultiBufferPoint::new(MultiBufferRow(2), 0)),
             ],
             cx,
         );
@@ -1489,8 +1590,10 @@ fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.expand_diff_hunks(
             vec![
-                snapshot.anchor_before(Point::new(4, 0))..snapshot.anchor_before(Point::new(4, 0)),
-                snapshot.anchor_before(Point::new(4, 2))..snapshot.anchor_before(Point::new(4, 2)),
+                snapshot.anchor_before(MultiBufferPoint::new(MultiBufferRow(4), 0))
+                    ..snapshot.anchor_before(MultiBufferPoint::new(MultiBufferRow(4), 0)),
+                snapshot.anchor_before(MultiBufferPoint::new(MultiBufferRow(4), 2))
+                    ..snapshot.anchor_before(MultiBufferPoint::new(MultiBufferRow(4), 2)),
             ],
             cx,
         );
@@ -2048,13 +2151,41 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
     );
 
     let buffer_ids_by_range = [
-        (Point::new(0, 0)..Point::new(0, 0), &[id_1] as &[_]),
-        (Point::new(0, 0)..Point::new(2, 0), &[id_1]),
-        (Point::new(2, 0)..Point::new(2, 0), &[id_1]),
-        (Point::new(3, 0)..Point::new(3, 0), &[id_1]),
-        (Point::new(8, 0)..Point::new(9, 0), &[id_1]),
-        (Point::new(8, 0)..Point::new(10, 0), &[id_1, id_2]),
-        (Point::new(9, 0)..Point::new(9, 0), &[id_2]),
+        (
+            MultiBufferPoint::new(MultiBufferRow(0), 0)
+                ..MultiBufferPoint::new(MultiBufferRow(0), 0),
+            &[id_1] as &[_],
+        ),
+        (
+            MultiBufferPoint::new(MultiBufferRow(0), 0)
+                ..MultiBufferPoint::new(MultiBufferRow(2), 0),
+            &[id_1],
+        ),
+        (
+            MultiBufferPoint::new(MultiBufferRow(2), 0)
+                ..MultiBufferPoint::new(MultiBufferRow(2), 0),
+            &[id_1],
+        ),
+        (
+            MultiBufferPoint::new(MultiBufferRow(3), 0)
+                ..MultiBufferPoint::new(MultiBufferRow(3), 0),
+            &[id_1],
+        ),
+        (
+            MultiBufferPoint::new(MultiBufferRow(8), 0)
+                ..MultiBufferPoint::new(MultiBufferRow(9), 0),
+            &[id_1],
+        ),
+        (
+            MultiBufferPoint::new(MultiBufferRow(8), 0)
+                ..MultiBufferPoint::new(MultiBufferRow(10), 0),
+            &[id_1, id_2],
+        ),
+        (
+            MultiBufferPoint::new(MultiBufferRow(9), 0)
+                ..MultiBufferPoint::new(MultiBufferRow(9), 0),
+            &[id_2],
+        ),
     ];
     for (range, buffer_ids) in buffer_ids_by_range {
         assert_eq!(
@@ -3006,16 +3137,32 @@ fn test_history(cx: &mut App) {
         let transaction_1 = multibuffer.start_transaction_at(now, cx).unwrap();
         multibuffer.edit(
             [
-                (Point::new(0, 0)..Point::new(0, 0), "A"),
-                (Point::new(1, 0)..Point::new(1, 0), "A"),
+                (
+                    MultiBufferPoint::new(MultiBufferRow(0), 0)
+                        ..MultiBufferPoint::new(MultiBufferRow(0), 0),
+                    "A",
+                ),
+                (
+                    MultiBufferPoint::new(MultiBufferRow(1), 0)
+                        ..MultiBufferPoint::new(MultiBufferRow(1), 0),
+                    "A",
+                ),
             ],
             None,
             cx,
         );
         multibuffer.edit(
             [
-                (Point::new(0, 1)..Point::new(0, 1), "B"),
-                (Point::new(1, 1)..Point::new(1, 1), "B"),
+                (
+                    MultiBufferPoint::new(MultiBufferRow(0), 1)
+                        ..MultiBufferPoint::new(MultiBufferRow(0), 1),
+                    "B",
+                ),
+                (
+                    MultiBufferPoint::new(MultiBufferRow(1), 1)
+                        ..MultiBufferPoint::new(MultiBufferRow(1), 1),
+                    "B",
+                ),
             ],
             None,
             cx,
@@ -3025,7 +3172,7 @@ fn test_history(cx: &mut App) {
 
         // Verify edited ranges for transaction 1
         assert_eq!(
-            multibuffer.edited_ranges_for_transaction(transaction_1, cx),
+            multibuffer.edited_ranges_for_transaction::<MultiBufferPoint>(transaction_1, cx),
             &[
                 Point::new(0, 0)..Point::new(0, 2),
                 Point::new(1, 0)..Point::new(1, 2)
@@ -3275,12 +3422,12 @@ fn test_summaries_for_anchors(cx: &mut TestAppContext) {
     let id_2 = buffer_2.read_with(cx, |buffer, _| buffer.remote_id());
 
     let anchor_1 = Anchor::in_buffer(ids[0], id_1, text::Anchor::MIN);
-    let point_1 = snapshot.summaries_for_anchors::<Point, _>([&anchor_1])[0];
-    assert_eq!(point_1, Point::new(0, 0));
+    let point_1 = snapshot.summaries_for_anchors::<MultiBufferPoint, _>([&anchor_1])[0];
+    assert_eq!(point_1, MultiBufferPoint::new(MultiBufferRow(0), 0));
 
     let anchor_2 = Anchor::in_buffer(ids[1], id_2, text::Anchor::MIN);
-    let point_2 = snapshot.summaries_for_anchors::<Point, _>([&anchor_2])[0];
-    assert_eq!(point_2, Point::new(3, 0));
+    let point_2 = snapshot.summaries_for_anchors::<MultiBufferPoint, _>([&anchor_2])[0];
+    assert_eq!(point_2, MultiBufferPoint::new(MultiBufferRow(3), 0));
 }
 
 #[gpui::test]
@@ -3316,19 +3463,26 @@ fn test_trailing_deletion_without_newline(cx: &mut TestAppContext) {
         ),
     );
 
-    assert_eq!(snapshot.max_point(), Point::new(2, 0));
+    assert_eq!(
+        snapshot.max_point(),
+        MultiBufferPoint::new(MultiBufferRow(2), 0)
+    );
     assert_eq!(snapshot.len(), 8);
 
     assert_eq!(
         snapshot
-            .dimensions_from_points::<Point>([Point::new(2, 0)])
+            .dimensions_from_points::<Point>([MultiBufferPoint::new(MultiBufferRow(2), 0)])
             .collect::<Vec<_>>(),
         vec![Point::new(2, 0)]
     );
 
-    let (_, translated_offset) = snapshot.point_to_buffer_offset(Point::new(2, 0)).unwrap();
+    let (_, translated_offset) = snapshot
+        .point_to_buffer_offset(MultiBufferPoint::new(MultiBufferRow(2), 0))
+        .unwrap();
     assert_eq!(translated_offset, "one\n".len());
-    let (_, translated_point, _) = snapshot.point_to_buffer_point(Point::new(2, 0)).unwrap();
+    let (_, translated_point, _) = snapshot
+        .point_to_buffer_point(MultiBufferPoint::new(MultiBufferRow(2), 0))
+        .unwrap();
     assert_eq!(translated_point, Point::new(1, 0));
 
     // The same, for an excerpt that's not at the end of the multibuffer.
@@ -3360,16 +3514,20 @@ fn test_trailing_deletion_without_newline(cx: &mut TestAppContext) {
 
     assert_eq!(
         snapshot
-            .dimensions_from_points::<Point>([Point::new(2, 0)])
+            .dimensions_from_points::<Point>([MultiBufferPoint::new(MultiBufferRow(2), 0)])
             .collect::<Vec<_>>(),
         vec![Point::new(2, 0)]
     );
 
     let buffer_1_id = buffer_1.read_with(cx, |buffer_1, _| buffer_1.remote_id());
-    let (buffer, translated_offset) = snapshot.point_to_buffer_offset(Point::new(2, 0)).unwrap();
+    let (buffer, translated_offset) = snapshot
+        .point_to_buffer_offset(MultiBufferPoint::new(MultiBufferRow(2), 0))
+        .unwrap();
     assert_eq!(buffer.remote_id(), buffer_1_id);
     assert_eq!(translated_offset, "one\n".len());
-    let (buffer, translated_point, _) = snapshot.point_to_buffer_point(Point::new(2, 0)).unwrap();
+    let (buffer, translated_point, _) = snapshot
+        .point_to_buffer_point(MultiBufferPoint::new(MultiBufferRow(2), 0))
+        .unwrap();
     assert_eq!(buffer.remote_id(), buffer_1_id);
     assert_eq!(translated_point, Point::new(1, 0));
 }
@@ -3532,12 +3690,12 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
             "clip_offset({offset:?}, Right)"
         );
         assert_eq!(
-            snapshot.offset_to_point(clipped_left),
+            snapshot.offset_to_point(clipped_left).0,
             text.offset_to_point(clipped_left),
             "offset_to_point({clipped_left})"
         );
         assert_eq!(
-            snapshot.offset_to_point(clipped_right),
+            snapshot.offset_to_point(clipped_right).0,
             text.offset_to_point(clipped_right),
             "offset_to_point({clipped_right})"
         );
@@ -3556,32 +3714,34 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
         left_anchors.push(anchor_before);
         right_anchors.push(anchor_after);
         offsets.push(clipped_left);
-        points.push(text.offset_to_point(clipped_left));
+        points.push(MultiBufferPoint::from_point(
+            text.offset_to_point(clipped_left),
+        ));
     }
 
     for row in 0..text.max_point().row {
         for column in 0..text.line_len(row) + 1 {
-            let point = Point { row, column };
+            let point = MultiBufferPoint::from_point(Point { row, column });
             let clipped_left = snapshot.clip_point(point, Bias::Left);
             let clipped_right = snapshot.clip_point(point, Bias::Right);
             assert_eq!(
-                clipped_left,
-                text.clip_point(point, Bias::Left),
+                clipped_left.0,
+                text.clip_point(point.0, Bias::Left),
                 "clip_point({point:?}, Left)"
             );
             assert_eq!(
-                clipped_right,
-                text.clip_point(point, Bias::Right),
+                clipped_right.0,
+                text.clip_point(point.0, Bias::Right),
                 "clip_point({point:?}, Right)"
             );
             assert_eq!(
                 snapshot.point_to_offset(clipped_left),
-                text.point_to_offset(clipped_left),
+                text.point_to_offset(clipped_left.0),
                 "point_to_offset({clipped_left:?})"
             );
             assert_eq!(
                 snapshot.point_to_offset(clipped_right),
-                text.point_to_offset(clipped_right),
+                text.point_to_offset(clipped_right.0),
                 "point_to_offset({clipped_right:?})"
             );
         }
@@ -3593,7 +3753,7 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
         "left_anchors <-> offsets"
     );
     assert_eq!(
-        snapshot.summaries_for_anchors::<Point, _>(&left_anchors),
+        snapshot.summaries_for_anchors::<MultiBufferPoint, _>(&left_anchors),
         points,
         "left_anchors <-> points"
     );
@@ -3603,7 +3763,7 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
         "right_anchors <-> offsets"
     );
     assert_eq!(
-        snapshot.summaries_for_anchors::<Point, _>(&right_anchors),
+        snapshot.summaries_for_anchors::<MultiBufferPoint, _>(&right_anchors),
         points,
         "right_anchors <-> points"
     );
@@ -3637,13 +3797,13 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
 }
 
 fn assert_line_indents(snapshot: &MultiBufferSnapshot) {
-    let max_row = snapshot.max_point().row;
+    let max_row = snapshot.max_point().row();
     let buffer_id = snapshot.excerpts().next().unwrap().1.remote_id();
     let text = text::Buffer::new(ReplicaId::LOCAL, buffer_id, snapshot.text());
     let mut line_indents = text
-        .line_indents_in_row_range(0..max_row + 1)
+        .line_indents_in_row_range(0..max_row.0 + 1)
         .collect::<Vec<_>>();
-    for start_row in 0..snapshot.max_point().row {
+    for start_row in 0..snapshot.max_point().row().0 {
         pretty_assertions::assert_eq!(
             snapshot
                 .line_indents(MultiBufferRow(start_row), |_| true)
@@ -3657,7 +3817,7 @@ fn assert_line_indents(snapshot: &MultiBufferSnapshot) {
     line_indents.reverse();
     pretty_assertions::assert_eq!(
         snapshot
-            .reversed_line_indents(MultiBufferRow(max_row), |_| true)
+            .reversed_line_indents(max_row, |_| true)
             .map(|(row, indent, _)| (row.0, indent))
             .collect::<Vec<_>>(),
         &line_indents[..],

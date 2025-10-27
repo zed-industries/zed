@@ -2,13 +2,13 @@ use gpui::{App, Context, Entity};
 use language::{self, Buffer, TextDimension, TransactionId};
 use std::{
     collections::HashMap,
-    ops::{Range, Sub},
+    ops::Range,
     time::{Duration, Instant},
 };
 use sum_tree::Bias;
 use text::BufferId;
 
-use crate::BufferState;
+use crate::{BufferState, LangBufferDimension, MultiBufferDimension};
 
 use super::{Event, ExcerptSummary, MultiBuffer};
 
@@ -314,13 +314,13 @@ impl MultiBuffer {
         }
     }
 
-    pub fn edited_ranges_for_transaction<D>(
+    pub fn edited_ranges_for_transaction<MBD>(
         &self,
         transaction_id: TransactionId,
         cx: &App,
-    ) -> Vec<Range<D>>
+    ) -> Vec<Range<MBD::LangBufferDimension>>
     where
-        D: TextDimension + Ord + Sub<D, Output = D>,
+        MBD: MultiBufferDimension<LangBufferDimension: LangBufferDimension>,
     {
         let Some(transaction) = self.history.transaction(transaction_id) else {
             return Vec::new();
@@ -336,24 +336,35 @@ impl MultiBuffer {
             };
 
             let buffer = buffer_state.buffer.read(cx);
-            for range in buffer.edited_ranges_for_transaction_id::<D>(*buffer_transaction) {
+            for range in buffer
+                .edited_ranges_for_transaction_id::<MBD::LangBufferDimension>(*buffer_transaction)
+            {
                 for excerpt_id in &buffer_state.excerpts {
                     cursor.seek(excerpt_id, Bias::Left);
                     if let Some(excerpt) = cursor.item()
                         && excerpt.locator == *excerpt_id
                     {
-                        let excerpt_buffer_start = excerpt.range.context.start.summary::<D>(buffer);
-                        let excerpt_buffer_end = excerpt.range.context.end.summary::<D>(buffer);
+                        let excerpt_buffer_start = excerpt
+                            .range
+                            .context
+                            .start
+                            .summary::<MBD::LangBufferDimension>(buffer);
+                        let excerpt_buffer_end = excerpt
+                            .range
+                            .context
+                            .end
+                            .summary::<MBD::LangBufferDimension>(buffer);
                         let excerpt_range = excerpt_buffer_start..excerpt_buffer_end;
                         if excerpt_range.contains(&range.start)
                             && excerpt_range.contains(&range.end)
                         {
-                            let excerpt_start = D::from_text_summary(&cursor.start().text);
+                            let excerpt_start =
+                                MBD::LangBufferDimension::from_text_summary(&cursor.start().text);
 
                             let mut start = excerpt_start;
-                            start.add_assign(&(range.start - excerpt_buffer_start));
+                            start.add_distance(range.start.distance_to(excerpt_buffer_start));
                             let mut end = excerpt_start;
-                            end.add_assign(&(range.end - excerpt_buffer_start));
+                            end.add_distance(range.end.distance_to(excerpt_buffer_start));
 
                             ranges.push(start..end);
                             break;

@@ -1,3 +1,5 @@
+use crate::MultiBufferPoint;
+
 use super::{ExcerptId, MultiBufferSnapshot, ToOffset, ToPoint};
 use language::{OffsetUtf16, Point, TextDimension};
 use std::{
@@ -12,6 +14,7 @@ pub struct Anchor {
     pub buffer_id: Option<BufferId>,
     pub excerpt_id: ExcerptId,
     pub text_anchor: text::Anchor,
+    /// Some if this anchor points to within a deleted diff hunk.
     pub diff_base_anchor: Option<text::Anchor>,
 }
 
@@ -160,13 +163,6 @@ impl Anchor {
         *self
     }
 
-    pub fn summary<D>(&self, snapshot: &MultiBufferSnapshot) -> D
-    where
-        D: TextDimension + Ord + Sub<D, Output = D>,
-    {
-        snapshot.summary_for_anchor(self)
-    }
-
     pub fn is_valid(&self, snapshot: &MultiBufferSnapshot) -> bool {
         if *self == Anchor::min() || *self == Anchor::max() {
             true
@@ -183,19 +179,19 @@ impl Anchor {
 
 impl ToOffset for Anchor {
     fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> usize {
-        self.summary(snapshot)
+        snapshot.summary_for_anchor(self)
     }
     fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> OffsetUtf16 {
-        self.summary(snapshot)
+        snapshot.summary_for_anchor(self)
     }
 }
 
 impl ToPoint for Anchor {
-    fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point {
-        self.summary(snapshot)
+    fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferPoint {
+        snapshot.summary_for_anchor(self)
     }
     fn to_point_utf16(&self, snapshot: &MultiBufferSnapshot) -> rope::PointUtf16 {
-        self.summary(snapshot)
+        snapshot.summary_for_anchor(self)
     }
 }
 
@@ -204,7 +200,7 @@ pub trait AnchorRangeExt {
     fn includes(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool;
     fn overlaps(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool;
     fn to_offset(&self, content: &MultiBufferSnapshot) -> Range<usize>;
-    fn to_point(&self, content: &MultiBufferSnapshot) -> Range<Point>;
+    fn to_point(&self, content: &MultiBufferSnapshot) -> Range<MultiBufferPoint>;
 }
 
 impl AnchorRangeExt for Range<Anchor> {
@@ -227,7 +223,7 @@ impl AnchorRangeExt for Range<Anchor> {
         self.start.to_offset(content)..self.end.to_offset(content)
     }
 
-    fn to_point(&self, content: &MultiBufferSnapshot) -> Range<Point> {
+    fn to_point(&self, content: &MultiBufferSnapshot) -> Range<MultiBufferPoint> {
         self.start.to_point(content)..self.end.to_point(content)
     }
 }
