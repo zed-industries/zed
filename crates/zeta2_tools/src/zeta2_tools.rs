@@ -281,9 +281,8 @@ impl Zeta2Inspector {
                 };
 
                 let context = match zeta_options.context {
-                    ContextMode::Llm(context_options) => ContextMode::Llm(LlmContextOptions {
+                    ContextMode::Llm(_context_options) => ContextMode::Llm(LlmContextOptions {
                         excerpt: excerpt_options,
-                        ..context_options
                     }),
                     ContextMode::Syntax(context_options) => {
                         let max_retrieved_declarations = match &this.context_mode {
@@ -830,7 +829,6 @@ impl Zeta2Inspector {
                                     matches!(self.context_mode, ContextModeState::Syntax { .. }),
                                 )
                                 .handler({
-                                    let this = this.clone();
                                     move |window, cx| {
                                         this.update(cx, |this, cx| {
                                             let current_options =

@@ -140,7 +140,7 @@ mod tests {
         ];
 
         for (input, expected_output) in table {
-            let input_without_ranges = input.replace('«', "").replace('»', "");
+            let input_without_ranges = input.replace(['«', '»'], "");
             let input_without_caret = input.replace('ˇ', "");
             let cursor_offset = input_without_ranges.find('ˇ');
             let (input, ranges) = marked_text_ranges(&input_without_caret, false);
