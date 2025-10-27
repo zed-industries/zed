@@ -1105,13 +1105,13 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Result<(), acp::Error> {
         match update {
-            acp::SessionUpdate::UserMessageChunk { content } => {
+            acp::SessionUpdate::UserMessageChunk(acp::ContentChunk { content, .. }) => {
                 self.push_user_content_block(None, content, cx);
             }
-            acp::SessionUpdate::AgentMessageChunk { content } => {
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk { content, .. }) => {
                 self.push_assistant_content_block(content, false, cx);
             }
-            acp::SessionUpdate::AgentThoughtChunk { content } => {
+            acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk { content, .. }) => {
                 self.push_assistant_content_block(content, true, cx);
             }
             acp::SessionUpdate::ToolCall(tool_call) => {
@@ -1123,12 +1123,14 @@ impl AcpThread {
             acp::SessionUpdate::Plan(plan) => {
                 self.update_plan(plan, cx);
             }
-            acp::SessionUpdate::AvailableCommandsUpdate { available_commands } => {
-                cx.emit(AcpThreadEvent::AvailableCommandsUpdated(available_commands))
-            }
-            acp::SessionUpdate::CurrentModeUpdate { current_mode_id } => {
-                cx.emit(AcpThreadEvent::ModeUpdated(current_mode_id))
-            }
+            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate {
+                available_commands,
+                ..
+            }) => cx.emit(AcpThreadEvent::AvailableCommandsUpdated(available_commands)),
+            acp::SessionUpdate::CurrentModeUpdate(acp::CurrentModeUpdate {
+                current_mode_id,
+                ..
+            }) => cx.emit(AcpThreadEvent::ModeUpdated(current_mode_id)),
         }
         Ok(())
     }
@@ -2586,17 +2588,19 @@ mod tests {
                     thread.update(&mut cx, |thread, cx| {
                         thread
                             .handle_session_update(
-                                acp::SessionUpdate::AgentThoughtChunk {
+                                acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk {
                                     content: "Thinking ".into(),
-                                },
+                                    meta: None,
+                                }),
                                 cx,
                             )
                             .unwrap();
                         thread
                             .handle_session_update(
-                                acp::SessionUpdate::AgentThoughtChunk {
+                                acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk {
                                     content: "hard!".into(),
-                                },
+                                    meta: None,
+                                }),
                                 cx,
                             )
                             .unwrap();
@@ -3095,9 +3099,10 @@ mod tests {
                     thread.update(&mut cx, |thread, cx| {
                         thread
                             .handle_session_update(
-                                acp::SessionUpdate::AgentMessageChunk {
+                                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
                                     content: content.text.to_uppercase().into(),
-                                },
+                                    meta: None,
+                                }),
                                 cx,
                             )
                             .unwrap();
@@ -3454,9 +3459,10 @@ mod tests {
                     thread.update(&mut cx, |thread, cx| {
                         thread
                             .handle_session_update(
-                                acp::SessionUpdate::AgentMessageChunk {
+                                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
                                     content: content.text.to_uppercase().into(),
-                                },
+                                    meta: None,
+                                }),
                                 cx,
                             )
                             .unwrap();
