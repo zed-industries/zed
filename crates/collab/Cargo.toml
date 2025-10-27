@@ -73,7 +73,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 agent_settings.workspace = true
-assistant_context.workspace = true
+assistant_text_thread.workspace = true
 assistant_slash_command.workspace = true
 async-trait.workspace = true
 audio.workspace = true

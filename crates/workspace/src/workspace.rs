@@ -3663,24 +3663,31 @@ impl Workspace {
         };
 
         if action.clone {
-            clone_active_item(
-                self.database_id(),
-                &self.active_pane,
-                &destination,
-                action.focus,
-                window,
-                cx,
-            )
-        } else {
-            move_active_item(
-                &self.active_pane,
-                &destination,
-                action.focus,
-                true,
-                window,
-                cx,
-            )
+            if self
+                .active_pane
+                .read(cx)
+                .active_item()
+                .is_some_and(|item| item.can_split(cx))
+            {
+                clone_active_item(
+                    self.database_id(),
+                    &self.active_pane,
+                    &destination,
+                    action.focus,
+                    window,
+                    cx,
+                );
+                return;
+            }
         }
+        move_active_item(
+            &self.active_pane,
+            &destination,
+            action.focus,
+            true,
+            window,
+            cx,
+        )
     }
 
     pub fn activate_next_pane(&mut self, window: &mut Window, cx: &mut App) {
@@ -3841,24 +3848,31 @@ impl Workspace {
         };
 
         if action.clone {
-            clone_active_item(
-                self.database_id(),
-                &self.active_pane,
-                &destination,
-                action.focus,
-                window,
-                cx,
-            )
-        } else {
-            move_active_item(
-                &self.active_pane,
-                &destination,
-                action.focus,
-                true,
-                window,
-                cx,
-            );
+            if self
+                .active_pane
+                .read(cx)
+                .active_item()
+                .is_some_and(|item| item.can_split(cx))
+            {
+                clone_active_item(
+                    self.database_id(),
+                    &self.active_pane,
+                    &destination,
+                    action.focus,
+                    window,
+                    cx,
+                );
+                return;
+            }
         }
+        move_active_item(
+            &self.active_pane,
+            &destination,
+            action.focus,
+            true,
+            window,
+            cx,
+        );
     }
 
     pub fn bounding_box_for_pane(&self, pane: &Entity<Pane>) -> Option<Bounds<Pixels>> {
@@ -4141,6 +4155,9 @@ impl Workspace {
         let Some(item) = pane.read(cx).active_item() else {
             return Task::ready(None);
         };
+        if !item.can_split(cx) {
+            return Task::ready(None);
+        }
         let task = item.clone_on_split(self.database_id(), window, cx);
         cx.spawn_in(window, async move |this, cx| {
             if let Some(clone) = task.await {
@@ -7326,6 +7343,10 @@ pub fn open_paths(
     let mut existing = None;
     let mut best_match = None;
     let mut open_visible = OpenVisible::All;
+    #[cfg(target_os = "windows")]
+    let wsl_path = abs_paths
+        .iter()
+        .find_map(|p| util::paths::WslPath::from_path(p));
 
     cx.spawn(async move |cx| {
         if open_options.open_new_workspace != Some(true) {
@@ -7389,7 +7410,7 @@ pub fn open_paths(
             }
         }
 
-        if let Some(existing) = existing {
+        let result = if let Some(existing) = existing {
             let open_task = existing
                 .update(cx, |workspace, window, cx| {
                     window.activate_window();
@@ -7426,7 +7447,37 @@ pub fn open_paths(
                 )
             })?
             .await
-        }
+        };
+
+        #[cfg(target_os = "windows")]
+        if let Some(util::paths::WslPath{distro, path}) = wsl_path
+            && let Ok((workspace, _)) = &result
+        {
+            workspace
+                .update(cx, move |workspace, _window, cx| {
+                    struct OpenInWsl;
+                    workspace.show_notification(NotificationId::unique::<OpenInWsl>(), cx, move |cx| {
+                        let display_path = util::markdown::MarkdownInlineCode(&path.to_string_lossy());
+                        let msg = format!("{display_path} is inside a WSL filesystem, some features may not work unless you open it with WSL remote");
+                        cx.new(move |cx| {
+                            MessageNotification::new(msg, cx)
+                                .primary_message("Open in WSL")
+                                .primary_icon(IconName::FolderOpen)
+                                .primary_on_click(move |window, cx| {
+                                    window.dispatch_action(Box::new(remote::OpenWslPath {
+                                            distro: remote::WslConnectionOptions {
+                                                    distro_name: distro.clone(),
+                                                user: None,
+                                            },
+                                            paths: vec![path.clone().into()],
+                                        }), cx)
+                                })
+                        })
+                    });
+                })
+                .unwrap();
+        };
+        result
     })
 }
 
@@ -8191,6 +8242,9 @@ pub fn clone_active_item(
     let Some(active_item) = source.read(cx).active_item() else {
         return;
     };
+    if !active_item.can_split(cx) {
+        return;
+    }
     let destination = destination.downgrade();
     let task = active_item.clone_on_split(workspace_id, window, cx);
     window

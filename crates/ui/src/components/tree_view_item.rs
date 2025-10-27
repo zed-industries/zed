@@ -159,7 +159,7 @@ impl RenderOnce for TreeViewItem {
                     .rounded_sm()
                     .border_1()
                     .border_color(transparent_border)
-                    .focus(|s| s.border_color(focused_border))
+                    .focus_visible(|s| s.border_color(focused_border))
                     .when(self.selected, |this| {
                         this.border_color(selected_border).bg(selected_bg)
                     })

@@ -425,13 +425,20 @@ impl GitPanel {
                     }
                     GitStoreEvent::RepositoryUpdated(
                         _,
-                        RepositoryEvent::Updated { full_scan, .. },
+                        RepositoryEvent::StatusesChanged { full_scan: true }
+                        | RepositoryEvent::BranchChanged
+                        | RepositoryEvent::MergeHeadsChanged,
                         true,
                     ) => {
-                        this.schedule_update(*full_scan, window, cx);
+                        this.schedule_update(true, window, cx);
                     }
-
-                    GitStoreEvent::RepositoryAdded(_) | GitStoreEvent::RepositoryRemoved(_) => {
+                    GitStoreEvent::RepositoryUpdated(
+                        _,
+                        RepositoryEvent::StatusesChanged { full_scan: false },
+                        true,
+                    )
+                    | GitStoreEvent::RepositoryAdded
+                    | GitStoreEvent::RepositoryRemoved(_) => {
                         this.schedule_update(false, window, cx);
                     }
                     GitStoreEvent::IndexWriteError(error) => {

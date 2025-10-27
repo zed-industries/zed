@@ -1316,9 +1316,7 @@ impl Window {
         for view_id in self
             .rendered_frame
             .dispatch_tree
-            .view_path(view_id)
-            .into_iter()
-            .rev()
+            .view_path_reversed(view_id)
         {
             if !self.dirty_views.insert(view_id) {
                 break;
@@ -3257,14 +3255,11 @@ impl Window {
     /// returns a `Size`.
     ///
     /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
-    pub fn request_measured_layout<
-        F: FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
+    pub fn request_measured_layout<F>(&mut self, style: Style, measure: F) -> LayoutId
+    where
+        F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
             + 'static,
-    >(
-        &mut self,
-        style: Style,
-        measure: F,
-    ) -> LayoutId {
+    {
         self.invalidator.debug_assert_prepaint();
 
         let rem_size = self.rem_size();
@@ -4902,7 +4897,7 @@ pub enum ElementId {
     /// A code location.
     CodeLocation(core::panic::Location<'static>),
     /// A labeled child of an element.
-    NamedChild(Box<ElementId>, SharedString),
+    NamedChild(Arc<ElementId>, SharedString),
 }
 
 impl ElementId {
@@ -5016,7 +5011,7 @@ impl From<(&'static str, u32)> for ElementId {
 
 impl<T: Into<SharedString>> From<(ElementId, T)> for ElementId {
     fn from((id, name): (ElementId, T)) -> Self {
-        ElementId::NamedChild(Box::new(id), name.into())
+        ElementId::NamedChild(Arc::new(id), name.into())
     }
 }
 

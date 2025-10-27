@@ -1,7 +1,6 @@
 use std::{
     collections::hash_map,
     ops::{ControlFlow, Range},
-    sync::Arc,
     time::Duration,
 };
 
@@ -15,7 +14,6 @@ use language::{
 };
 use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId, MultiBufferSnapshot};
-use parking_lot::Mutex;
 use project::{
     HoverBlock, HoverBlockKind, InlayHintLabel, InlayHintLabelPartTooltip, InlayHintTooltip,
     InvalidationStrategy, ResolveState,
@@ -53,6 +51,7 @@ pub struct LspInlayHintData {
     append_debounce: Option<Duration>,
     hint_refresh_tasks: HashMap<BufferId, HashMap<Vec<Range<BufferRow>>, Vec<Task<()>>>>,
     hint_chunk_fetched: HashMap<BufferId, (Global, HashSet<Range<BufferRow>>)>,
+    invalidate_hints_for_buffers: HashSet<BufferId>,
     pub added_hints: HashMap<InlayId, Option<InlayHintKind>>,
 }
 
@@ -65,6 +64,7 @@ impl LspInlayHintData {
             hint_refresh_tasks: HashMap::default(),
             added_hints: HashMap::default(),
             hint_chunk_fetched: HashMap::default(),
+            invalidate_hints_for_buffers: HashSet::default(),
             invalidate_debounce: debounce_value(settings.edit_debounce_ms),
             append_debounce: debounce_value(settings.scroll_debounce_ms),
             allowed_hint_kinds: settings.enabled_inlay_hint_kinds(),
@@ -101,6 +101,7 @@ impl LspInlayHintData {
         self.hint_refresh_tasks.clear();
         self.hint_chunk_fetched.clear();
         self.added_hints.clear();
+        self.invalidate_hints_for_buffers.clear();
     }
 
     /// Checks inlay hint settings for enabled hint kinds and general enabled state.
@@ -289,7 +290,7 @@ impl Editor {
         };
 
         let mut visible_excerpts = self.visible_excerpts(cx);
-        let mut all_affected_buffers = HashSet::default();
+        let mut invalidate_hints_for_buffers = HashSet::default();
         let ignore_previous_fetches = match reason {
             InlayHintRefreshReason::ModifiersChanged(_)
             | InlayHintRefreshReason::Toggle(_)
@@ -307,7 +308,7 @@ impl Editor {
                     return;
                 };
 
-                all_affected_buffers.extend(
+                invalidate_hints_for_buffers.extend(
                     self.buffer()
                         .read(cx)
                         .all_buffers()
@@ -322,7 +323,7 @@ impl Editor {
                         }),
                 );
 
-                semantics_provider.invalidate_inlay_hints(&all_affected_buffers, cx);
+                semantics_provider.invalidate_inlay_hints(&invalidate_hints_for_buffers, cx);
                 visible_excerpts.retain(|_, (visible_buffer, _, _)| {
                     visible_buffer.read(cx).language() == Some(&affected_language)
                 });
@@ -330,6 +331,7 @@ impl Editor {
             }
         };
 
+        let multi_buffer = self.buffer().clone();
         let Some(inlay_hints) = self.inlay_hints.as_mut() else {
             return;
         };
@@ -337,6 +339,9 @@ impl Editor {
         if invalidate_cache.should_invalidate() {
             inlay_hints.clear();
         }
+        inlay_hints
+            .invalidate_hints_for_buffers
+            .extend(invalidate_hints_for_buffers);
 
         let mut buffers_to_query = HashMap::default();
         for (excerpt_id, (buffer, buffer_version, visible_range)) in visible_excerpts {
@@ -363,8 +368,10 @@ impl Editor {
             visible_excerpts.ranges.push(buffer_anchor_range);
         }
 
-        let all_affected_buffers = Arc::new(Mutex::new(all_affected_buffers));
         for (buffer_id, visible_excerpts) in buffers_to_query {
+            let Some(buffer) = multi_buffer.read(cx).buffer(buffer_id) else {
+                continue;
+            };
             let fetched_tasks = inlay_hints.hint_chunk_fetched.entry(buffer_id).or_default();
             if visible_excerpts
                 .buffer_version
@@ -376,7 +383,7 @@ impl Editor {
             }
 
             let applicable_chunks =
-                semantics_provider.applicable_inlay_chunks(buffer_id, &visible_excerpts.ranges, cx);
+                semantics_provider.applicable_inlay_chunks(&buffer, &visible_excerpts.ranges, cx);
 
             match inlay_hints
                 .hint_refresh_tasks
@@ -392,7 +399,6 @@ impl Editor {
                             ignore_previous_fetches,
                             debounce,
                             visible_excerpts,
-                            all_affected_buffers.clone(),
                             cx,
                         ));
                     }
@@ -404,7 +410,6 @@ impl Editor {
                         ignore_previous_fetches,
                         debounce,
                         visible_excerpts,
-                        all_affected_buffers.clone(),
                         cx,
                     ));
                 }
@@ -761,7 +766,6 @@ impl Editor {
         query_version: Global,
         invalidate_cache: InvalidationStrategy,
         new_hints: Vec<(Range<BufferRow>, anyhow::Result<CacheInlayHints>)>,
-        all_affected_buffers: Arc<Mutex<HashSet<BufferId>>>,
         cx: &mut Context<Self>,
     ) {
         let visible_inlay_hint_ids = self
@@ -825,21 +829,16 @@ impl Editor {
             })
             .collect::<Vec<_>>();
 
-        // We need to invalidate excerpts all buffers with the same language, do that once only, after first new data chunk is inserted.
-        let all_other_affected_buffers = all_affected_buffers
-            .lock()
-            .drain()
-            .filter(|id| buffer_id != *id)
-            .collect::<HashSet<_>>();
-        if !all_other_affected_buffers.is_empty() {
+        let invalidate_hints_for_buffers =
+            std::mem::take(&mut inlay_hints.invalidate_hints_for_buffers);
+        if !invalidate_hints_for_buffers.is_empty() {
             hints_to_remove.extend(
                 self.visible_inlay_hints(cx)
                     .iter()
                     .filter(|inlay| {
-                        inlay
-                            .position
-                            .buffer_id
-                            .is_none_or(|buffer_id| all_other_affected_buffers.contains(&buffer_id))
+                        inlay.position.buffer_id.is_none_or(|buffer_id| {
+                            invalidate_hints_for_buffers.contains(&buffer_id)
+                        })
                     })
                     .map(|inlay| inlay.id),
             );
@@ -863,7 +862,6 @@ fn spawn_editor_hints_refresh(
     ignore_previous_fetches: bool,
     debounce: Option<Duration>,
     buffer_excerpts: VisibleExcerpts,
-    all_affected_buffers: Arc<Mutex<HashSet<BufferId>>>,
     cx: &mut Context<'_, Editor>,
 ) -> Task<()> {
     cx.spawn(async move |editor, cx| {
@@ -897,7 +895,6 @@ fn spawn_editor_hints_refresh(
                     query_version,
                     invalidate_cache,
                     new_hints,
-                    all_affected_buffers,
                     cx,
                 );
             })
@@ -3652,6 +3649,297 @@ let c = 3;"#
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_invalidation_and_addition_race(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                ..InlayHintSettingsContent::default()
+            })
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": r#"fn main() {
+                    let x = 1;
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    let x = "2";
+                }
+"#,
+                "lib.rs": r#"fn aaa() {
+                    let aa = 22;
+                }
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+
+                fn bb() {
+                    let bb = 33;
+                }
+"#
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        let language = rust_lang();
+        language_registry.add(language);
+
+        let requests_count = Arc::new(AtomicUsize::new(0));
+        let closure_requests_count = requests_count.clone();
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new(move |fake_server| {
+                    let requests_count = closure_requests_count.clone();
+                    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                        move |params, _| {
+                            let requests_count = requests_count.clone();
+                            async move {
+                                requests_count.fetch_add(1, Ordering::Release);
+                                if params.text_document.uri
+                                    == lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap()
+                                {
+                                    Ok(Some(vec![
+                                        lsp::InlayHint {
+                                            position: lsp::Position::new(1, 9),
+                                            label: lsp::InlayHintLabel::String(": i32".to_owned()),
+                                            kind: Some(lsp::InlayHintKind::TYPE),
+                                            text_edits: None,
+                                            tooltip: None,
+                                            padding_left: None,
+                                            padding_right: None,
+                                            data: None,
+                                        },
+                                        lsp::InlayHint {
+                                            position: lsp::Position::new(19, 9),
+                                            label: lsp::InlayHintLabel::String(": i33".to_owned()),
+                                            kind: Some(lsp::InlayHintKind::TYPE),
+                                            text_edits: None,
+                                            tooltip: None,
+                                            padding_left: None,
+                                            padding_right: None,
+                                            data: None,
+                                        },
+                                    ]))
+                                } else if params.text_document.uri
+                                    == lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap()
+                                {
+                                    Ok(Some(vec![
+                                        lsp::InlayHint {
+                                            position: lsp::Position::new(1, 10),
+                                            label: lsp::InlayHintLabel::String(": i34".to_owned()),
+                                            kind: Some(lsp::InlayHintKind::TYPE),
+                                            text_edits: None,
+                                            tooltip: None,
+                                            padding_left: None,
+                                            padding_right: None,
+                                            data: None,
+                                        },
+                                        lsp::InlayHint {
+                                            position: lsp::Position::new(29, 10),
+                                            label: lsp::InlayHintLabel::String(": i35".to_owned()),
+                                            kind: Some(lsp::InlayHintKind::TYPE),
+                                            text_edits: None,
+                                            tooltip: None,
+                                            padding_left: None,
+                                            padding_right: None,
+                                            data: None,
+                                        },
+                                    ]))
+                                } else {
+                                    panic!("Unexpected file path {:?}", params.text_document.uri);
+                                }
+                            }
+                        },
+                    );
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let (buffer_1, _handle_1) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/a/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let (buffer_2, _handle_2) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/a/lib.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let multi_buffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.push_excerpts(
+                buffer_2.clone(),
+                [
+                    ExcerptRange::new(Point::new(0, 0)..Point::new(10, 0)),
+                    ExcerptRange::new(Point::new(23, 0)..Point::new(34, 0)),
+                ],
+                cx,
+            );
+            multibuffer.push_excerpts(
+                buffer_1.clone(),
+                [
+                    ExcerptRange::new(Point::new(0, 0)..Point::new(10, 0)),
+                    ExcerptRange::new(Point::new(13, 0)..Point::new(23, 0)),
+                ],
+                cx,
+            );
+            multibuffer
+        });
+
+        let editor = cx.add_window(|window, cx| {
+            let mut editor =
+                Editor::for_multibuffer(multi_buffer, Some(project.clone()), window, cx);
+            editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+                s.select_ranges([Point::new(3, 3)..Point::new(3, 3)])
+            });
+            editor
+        });
+
+        let fake_server = fake_servers.next().await.unwrap();
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _window, cx| {
+                assert_eq!(
+                    vec![
+                        ": i32".to_string(),
+                        ": i33".to_string(),
+                        ": i34".to_string(),
+                        ": i35".to_string(),
+                    ],
+                    sorted_cached_hint_labels(editor, cx),
+                );
+                assert_eq!(
+                    vec![
+                        ": i34".to_string(),
+                        ": i35".to_string(),
+                        ": i32".to_string(),
+                        ": i33".to_string(),
+                    ],
+                    visible_hint_labels(editor, cx),
+                    "lib.rs is added before main.rs , so its excerpts should be visible first"
+                );
+            })
+            .unwrap();
+        assert_eq!(
+            requests_count.load(Ordering::Acquire),
+            2,
+            "Should have queried hints once per each file"
+        );
+
+        // Scroll all the way down so the 1st buffer is out of sight.
+        // The selection is on the 1st buffer still.
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.scroll_screen(&ScrollAmount::Line(88.0), window, cx);
+            })
+            .unwrap();
+        // Emulate a language server refresh request, coming in the background..
+        editor
+            .update(cx, |editor, _, cx| {
+                editor.refresh_inlay_hints(
+                    InlayHintRefreshReason::RefreshRequested(fake_server.server.server_id()),
+                    cx,
+                );
+            })
+            .unwrap();
+        // Edit the 1st buffer while scrolled down and not seeing that.
+        // The edit will auto scroll to the edit (1st buffer).
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.handle_input("a", window, cx);
+            })
+            .unwrap();
+        // Add more racy additive hint tasks.
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.scroll_screen(&ScrollAmount::Line(0.2), window, cx);
+            })
+            .unwrap();
+
+        cx.executor().advance_clock(Duration::from_millis(1000));
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _window, cx| {
+                assert_eq!(
+                    vec![
+                        ": i32".to_string(),
+                        ": i33".to_string(),
+                        ": i34".to_string(),
+                        ": i35".to_string(),
+                    ],
+                    sorted_cached_hint_labels(editor, cx),
+                    "No hint changes/duplicates should occur in the cache",
+                );
+                assert_eq!(
+                    vec![
+                        ": i34".to_string(),
+                        ": i35".to_string(),
+                        ": i32".to_string(),
+                        ": i33".to_string(),
+                    ],
+                    visible_hint_labels(editor, cx),
+                    "No hint changes/duplicates should occur in the editor excerpts",
+                );
+            })
+            .unwrap();
+        assert_eq!(
+            requests_count.load(Ordering::Acquire),
+            4,
+            "Should have queried hints once more per each file, after editing the file once"
+        );
     }
 
     pub(crate) fn init_test(cx: &mut TestAppContext, f: impl Fn(&mut AllLanguageSettingsContent)) {

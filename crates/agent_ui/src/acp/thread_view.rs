@@ -5447,9 +5447,11 @@ impl AcpThreadView {
             HistoryEntry::AcpThread(thread) => self.history_store.update(cx, |history, cx| {
                 history.delete_thread(thread.id.clone(), cx)
             }),
-            HistoryEntry::TextThread(context) => self.history_store.update(cx, |history, cx| {
-                history.delete_text_thread(context.path.clone(), cx)
-            }),
+            HistoryEntry::TextThread(text_thread) => {
+                self.history_store.update(cx, |history, cx| {
+                    history.delete_text_thread(text_thread.path.clone(), cx)
+                })
+            }
         };
         task.detach_and_log_err(cx);
     }
@@ -5768,7 +5770,7 @@ fn terminal_command_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 pub(crate) mod tests {
     use acp_thread::StubAgentConnection;
     use agent_client_protocol::SessionId;
-    use assistant_context::ContextStore;
+    use assistant_text_thread::TextThreadStore;
     use editor::EditorSettings;
     use fs::FakeFs;
     use gpui::{EventEmitter, SemanticVersion, TestAppContext, VisualTestContext};
@@ -5931,10 +5933,10 @@ pub(crate) mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let context_store =
-            cx.update(|_window, cx| cx.new(|cx| ContextStore::fake(project.clone(), cx)));
+        let text_thread_store =
+            cx.update(|_window, cx| cx.new(|cx| TextThreadStore::fake(project.clone(), cx)));
         let history_store =
-            cx.update(|_window, cx| cx.new(|cx| HistoryStore::new(context_store, cx)));
+            cx.update(|_window, cx| cx.new(|cx| HistoryStore::new(text_thread_store, cx)));
 
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -6012,9 +6014,12 @@ pub(crate) mod tests {
     impl StubAgentServer<StubAgentConnection> {
         fn default_response() -> Self {
             let conn = StubAgentConnection::new();
-            conn.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk {
-                content: "Default response".into(),
-            }]);
+            conn.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+                acp::ContentChunk {
+                    content: "Default response".into(),
+                    meta: None,
+                },
+            )]);
             Self::new(conn)
         }
     }
@@ -6203,10 +6208,10 @@ pub(crate) mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let context_store =
-            cx.update(|_window, cx| cx.new(|cx| ContextStore::fake(project.clone(), cx)));
+        let text_thread_store =
+            cx.update(|_window, cx| cx.new(|cx| TextThreadStore::fake(project.clone(), cx)));
         let history_store =
-            cx.update(|_window, cx| cx.new(|cx| HistoryStore::new(context_store, cx)));
+            cx.update(|_window, cx| cx.new(|cx| HistoryStore::new(text_thread_store, cx)));
 
         let connection = Rc::new(StubAgentConnection::new());
         let thread_view = cx.update(|window, cx| {
@@ -6365,13 +6370,16 @@ pub(crate) mod tests {
 
         let connection = StubAgentConnection::new();
 
-        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk {
-            content: acp::ContentBlock::Text(acp::TextContent {
-                text: "Response".into(),
-                annotations: None,
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk {
+                content: acp::ContentBlock::Text(acp::TextContent {
+                    text: "Response".into(),
+                    annotations: None,
+                    meta: None,
+                }),
                 meta: None,
-            }),
-        }]);
+            },
+        )]);
 
         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
         add_to_workspace(thread_view.clone(), cx);
@@ -6455,13 +6463,16 @@ pub(crate) mod tests {
 
         let connection = StubAgentConnection::new();
 
-        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk {
-            content: acp::ContentBlock::Text(acp::TextContent {
-                text: "Response".into(),
-                annotations: None,
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk {
+                content: acp::ContentBlock::Text(acp::TextContent {
+                    text: "Response".into(),
+                    annotations: None,
+                    meta: None,
+                }),
                 meta: None,
-            }),
-        }]);
+            },
+        )]);
 
         let (thread_view, cx) =
             setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
@@ -6499,13 +6510,16 @@ pub(crate) mod tests {
         });
 
         // Send
-        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk {
-            content: acp::ContentBlock::Text(acp::TextContent {
-                text: "New Response".into(),
-                annotations: None,
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk {
+                content: acp::ContentBlock::Text(acp::TextContent {
+                    text: "New Response".into(),
+                    annotations: None,
+                    meta: None,
+                }),
                 meta: None,
-            }),
-        }]);
+            },
+        )]);
 
         user_message_editor.update_in(cx, |_editor, window, cx| {
             window.dispatch_action(Box::new(Chat), cx);
@@ -6592,13 +6606,14 @@ pub(crate) mod tests {
         cx.update(|_, cx| {
             connection.send_update(
                 session_id.clone(),
-                acp::SessionUpdate::AgentMessageChunk {
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
                     content: acp::ContentBlock::Text(acp::TextContent {
                         text: "Response".into(),
                         annotations: None,
                         meta: None,
                     }),
-                },
+                    meta: None,
+                }),
                 cx,
             );
             connection.end_turn(session_id, acp::StopReason::EndTurn);
@@ -6650,9 +6665,10 @@ pub(crate) mod tests {
         cx.update(|_, cx| {
             connection.send_update(
                 session_id.clone(),
-                acp::SessionUpdate::AgentMessageChunk {
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
                     content: "Message 1 resp".into(),
-                },
+                    meta: None,
+                }),
                 cx,
             );
         });
@@ -6686,9 +6702,10 @@ pub(crate) mod tests {
             // Simulate a response sent after beginning to cancel
             connection.send_update(
                 session_id.clone(),
-                acp::SessionUpdate::AgentMessageChunk {
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
                     content: "onse".into(),
-                },
+                    meta: None,
+                }),
                 cx,
             );
         });
@@ -6719,9 +6736,10 @@ pub(crate) mod tests {
         cx.update(|_, cx| {
             connection.send_update(
                 session_id.clone(),
-                acp::SessionUpdate::AgentMessageChunk {
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
                     content: "Message 2 response".into(),
-                },
+                    meta: None,
+                }),
                 cx,
             );
             connection.end_turn(session_id.clone(), acp::StopReason::EndTurn);
@@ -6759,13 +6777,16 @@ pub(crate) mod tests {
         init_test(cx);
 
         let connection = StubAgentConnection::new();
-        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk {
-            content: acp::ContentBlock::Text(acp::TextContent {
-                text: "Response".into(),
-                annotations: None,
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk {
+                content: acp::ContentBlock::Text(acp::TextContent {
+                    text: "Response".into(),
+                    annotations: None,
+                    meta: None,
+                }),
                 meta: None,
-            }),
-        }]);
+            },
+        )]);
 
         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
         add_to_workspace(thread_view.clone(), cx);
@@ -6842,13 +6863,16 @@ pub(crate) mod tests {
         init_test(cx);
 
         let connection = StubAgentConnection::new();
-        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk {
-            content: acp::ContentBlock::Text(acp::TextContent {
-                text: "Response".into(),
-                annotations: None,
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk {
+                content: acp::ContentBlock::Text(acp::TextContent {
+                    text: "Response".into(),
+                    annotations: None,
+                    meta: None,
+                }),
                 meta: None,
-            }),
-        }]);
+            },
+        )]);
 
         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
         add_to_workspace(thread_view.clone(), cx);
