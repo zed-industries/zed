@@ -411,6 +411,9 @@ impl TransportDelegate {
             };
 
             if buffer == "\r\n" {
+                if content_length == None {
+                    continue;
+                }
                 break;
             }
 
