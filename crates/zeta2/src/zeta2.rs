@@ -9,7 +9,8 @@ use cloud_llm_client::{
 use cloud_zeta2_prompt::{DEFAULT_MAX_PROMPT_BYTES, PlannedPrompt};
 use edit_prediction_context::{
     DeclarationId, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
-    EditPredictionExcerptOptions, EditPredictionScoreOptions, SyntaxIndex, SyntaxIndexState,
+    EditPredictionExcerpt, EditPredictionExcerptOptions, EditPredictionScoreOptions, SyntaxIndex,
+    SyntaxIndexState,
 };
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use futures::AsyncReadExt as _;
@@ -39,6 +40,7 @@ mod provider;
 mod related_excerpts;
 
 use crate::prediction::EditPrediction;
+pub use crate::related_excerpts::LlmContextOptions;
 pub use provider::ZetaEditPredictionProvider;
 
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
@@ -46,18 +48,27 @@ const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 /// Maximum number of events to track.
 const MAX_EVENT_COUNT: usize = 16;
 
-pub const DEFAULT_CONTEXT_OPTIONS: EditPredictionContextOptions = EditPredictionContextOptions {
-    use_imports: true,
-    max_retrieved_declarations: 0,
-    excerpt: EditPredictionExcerptOptions {
-        max_bytes: 512,
-        min_bytes: 128,
-        target_before_cursor_over_total_bytes: 0.5,
-    },
-    score: EditPredictionScoreOptions {
-        omit_excerpt_overlaps: true,
-    },
+pub const DEFAULT_EXCERPT_OPTIONS: EditPredictionExcerptOptions = EditPredictionExcerptOptions {
+    max_bytes: 512,
+    min_bytes: 128,
+    target_before_cursor_over_total_bytes: 0.5,
 };
+
+pub const DEFAULT_CONTEXT_OPTIONS: ContextMode = ContextMode::Llm(DEFAULT_LLM_CONTEXT_OPTIONS);
+
+pub const DEFAULT_LLM_CONTEXT_OPTIONS: LlmContextOptions = LlmContextOptions {
+    excerpt: DEFAULT_EXCERPT_OPTIONS,
+};
+
+pub const DEFAULT_SYNTAX_CONTEXT_OPTIONS: EditPredictionContextOptions =
+    EditPredictionContextOptions {
+        use_imports: true,
+        max_retrieved_declarations: 0,
+        excerpt: DEFAULT_EXCERPT_OPTIONS,
+        score: EditPredictionScoreOptions {
+            omit_excerpt_overlaps: true,
+        },
+    };
 
 pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
     context: DEFAULT_CONTEXT_OPTIONS,
@@ -95,11 +106,26 @@ pub struct Zeta {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ZetaOptions {
-    pub context: EditPredictionContextOptions,
+    pub context: ContextMode,
     pub max_prompt_bytes: usize,
     pub max_diagnostic_bytes: usize,
     pub prompt_format: predict_edits_v3::PromptFormat,
     pub file_indexing_parallelism: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ContextMode {
+    Llm(LlmContextOptions),
+    Syntax(EditPredictionContextOptions),
+}
+
+impl ContextMode {
+    pub fn excerpt(&self) -> &EditPredictionExcerptOptions {
+        match self {
+            ContextMode::Llm(options) => &options.excerpt,
+            ContextMode::Syntax(options) => &options.excerpt,
+        }
+    }
 }
 
 pub struct PredictionDebugInfo {
@@ -602,18 +628,6 @@ impl Zeta {
 
                 let before_retrieval = chrono::Utc::now();
 
-                let Some(context) = EditPredictionContext::gather_context(
-                    cursor_point,
-                    &snapshot,
-                    parent_abs_path.as_deref(),
-                    &options.context,
-                    index_state.as_deref(),
-                ) else {
-                    return Ok((None, None));
-                };
-
-                let retrieval_time = chrono::Utc::now() - before_retrieval;
-
                 let (diagnostic_groups, diagnostic_groups_truncated) =
                     Self::gather_nearby_diagnostics(
                         cursor_offset,
@@ -622,20 +636,72 @@ impl Zeta {
                         options.max_diagnostic_bytes,
                     );
 
-                let request = make_cloud_request(
-                    excerpt_path,
-                    context,
-                    events,
-                    can_collect_data,
-                    diagnostic_groups,
-                    diagnostic_groups_truncated,
-                    None,
-                    debug_tx.is_some(),
-                    &worktree_snapshots,
-                    index_state.as_deref(),
-                    Some(options.max_prompt_bytes),
-                    options.prompt_format,
-                );
+                let request = match options.context {
+                    ContextMode::Llm(context_options) => {
+                        let Some(excerpt) = EditPredictionExcerpt::select_from_buffer(
+                            cursor_point,
+                            &snapshot,
+                            &context_options.excerpt,
+                            index_state.as_deref(),
+                        ) else {
+                            return Ok((None, None));
+                        };
+                        let excerpt_text = excerpt.text(&snapshot);
+
+                        let referenced_declarations = vec![];
+
+                        predict_edits_v3::PredictEditsRequest {
+                            excerpt_path,
+                            excerpt: excerpt_text.body,
+                            excerpt_line_range: excerpt.line_range,
+                            excerpt_range: excerpt.range,
+                            cursor_point: predict_edits_v3::Point {
+                                line: predict_edits_v3::Line(cursor_point.row),
+                                column: cursor_point.column,
+                            },
+                            referenced_declarations,
+                            events,
+                            can_collect_data,
+                            diagnostic_groups,
+                            diagnostic_groups_truncated,
+                            debug_info: debug_tx.is_some(),
+                            prompt_max_bytes: Some(options.max_prompt_bytes),
+                            prompt_format: options.prompt_format,
+                            // TODO [zeta2]
+                            signatures: vec![],
+                            excerpt_parent: None,
+                            git_info: None,
+                        }
+                    }
+                    ContextMode::Syntax(context_options) => {
+                        let Some(context) = EditPredictionContext::gather_context(
+                            cursor_point,
+                            &snapshot,
+                            parent_abs_path.as_deref(),
+                            &context_options,
+                            index_state.as_deref(),
+                        ) else {
+                            return Ok((None, None));
+                        };
+
+                        make_syntax_context_cloud_request(
+                            excerpt_path,
+                            context,
+                            events,
+                            can_collect_data,
+                            diagnostic_groups,
+                            diagnostic_groups_truncated,
+                            None,
+                            debug_tx.is_some(),
+                            &worktree_snapshots,
+                            index_state.as_deref(),
+                            Some(options.max_prompt_bytes),
+                            options.prompt_format,
+                        )
+                    }
+                };
+
+                let retrieval_time = chrono::Utc::now() - before_retrieval;
 
                 let debug_response_tx = if let Some(debug_tx) = &debug_tx {
                     let (response_tx, response_rx) = oneshot::channel();
@@ -932,12 +998,14 @@ impl Zeta {
                 cursor_point,
                 &snapshot,
                 parent_abs_path.as_deref(),
-                &options.context,
+                // todo!
+                // &options.context,
+                &DEFAULT_SYNTAX_CONTEXT_OPTIONS,
                 index_state.as_deref(),
             )
             .context("Failed to select excerpt")
             .map(|context| {
-                make_cloud_request(
+                make_syntax_context_cloud_request(
                     excerpt_path.into(),
                     context,
                     // TODO pass everything
@@ -977,7 +1045,7 @@ pub struct ZedUpdateRequiredError {
     minimum_version: SemanticVersion,
 }
 
-fn make_cloud_request(
+fn make_syntax_context_cloud_request(
     excerpt_path: Arc<Path>,
     context: EditPredictionContext,
     events: Vec<predict_edits_v3::Event>,

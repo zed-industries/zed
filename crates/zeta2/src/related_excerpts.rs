@@ -119,12 +119,17 @@ struct SelectLineRange {
     end_line: u32,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct LlmContextOptions {
+    pub excerpt: EditPredictionExcerptOptions,
+}
+
 pub fn find_related_excerpts<'a>(
     buffer: Entity<language::Buffer>,
     cursor_position: Anchor,
     project: &Entity<Project>,
     events: impl Iterator<Item = &'a crate::Event>,
-    excerpt_options: &EditPredictionExcerptOptions,
+    options: &LlmContextOptions,
     cx: &App,
 ) -> Task<Result<Vec<RelatedExcerpt>>> {
     let language_model_registry = LanguageModelRegistry::global(cx);
@@ -155,7 +160,7 @@ pub fn find_related_excerpts<'a>(
     let snapshot = buffer.read(cx).snapshot();
     let cursor_point = cursor_position.to_point(&snapshot);
     let Some(cursor_excerpt) =
-        EditPredictionExcerpt::select_from_buffer(cursor_point, &snapshot, excerpt_options, None)
+        EditPredictionExcerpt::select_from_buffer(cursor_point, &snapshot, &options.excerpt, None)
     else {
         return Task::ready(Ok(Vec::new()));
     };

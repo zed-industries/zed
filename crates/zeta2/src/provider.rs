@@ -13,7 +13,7 @@ use project::Project;
 use util::ResultExt as _;
 
 use crate::{
-    BufferEditPrediction, Zeta,
+    BufferEditPrediction, ContextMode, Zeta,
     related_excerpts::{RelatedExcerpt, find_related_excerpts},
 };
 
@@ -66,6 +66,13 @@ impl ZetaEditPredictionProvider {
         cursor_position: language::Anchor,
         cx: &mut Context<'_, ZetaEditPredictionProvider>,
     ) {
+        if !matches!(
+            &self.zeta.read(cx).options().context,
+            ContextMode::Llm { .. }
+        ) {
+            return;
+        }
+
         let now = Instant::now();
         let was_idle = self.refresh_context_timestamp.map_or(true, |timestamp| {
             now - timestamp > Self::CONTEXT_RETRIEVAL_IDLE_DURATION
@@ -103,12 +110,16 @@ impl ZetaEditPredictionProvider {
                 let related_excerpts = this
                     .update(cx, |this, cx| {
                         let zeta = this.zeta.read(cx);
+                        let ContextMode::Llm(options) = &zeta.options().context else {
+                            return Task::ready(anyhow::Ok(vec![]));
+                        };
+
                         find_related_excerpts(
                             buffer.clone(),
                             cursor_position,
                             &this.project,
                             zeta.history_for_project(&this.project),
-                            &zeta.options().context.excerpt,
+                            options,
                             cx,
                         )
                     })
