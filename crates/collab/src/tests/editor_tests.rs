@@ -2703,7 +2703,7 @@ async fn test_lsp_pull_diagnostics(
     let (closure_workspace_diagnostic_received_tx, workspace_diagnostic_received_rx) =
         smol::channel::bounded::<()>(1);
     let expected_workspace_diagnostic_token = lsp::ProgressToken::String(format!(
-        "workspace/diagnostic-{}-1",
+        "workspace/diagnostic/{}/1",
         fake_language_server.server.server_id()
     ));
     let closure_expected_workspace_diagnostic_token = expected_workspace_diagnostic_token.clone();
