@@ -19,7 +19,7 @@ pub fn input(name: &str, input: WorkflowCallInput) -> (String, (&str, WorkflowCa
 secret!(GITHUB_TOKEN);
 secret!(CACHIX_AUTH_TOKEN);
 secret!(ZED_CLIENT_CHECKSUM_SEED);
-secret!(ZED_MINIDUMP_ENDPOINT);
+secret!(ZED_SENTRY_MINIDUMP_ENDPOINT);
 secret!(ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON);
 secret!(MACOS_CERTIFICATE);
 secret!(MACOS_CERTIFICATE_PASSWORD);
