@@ -286,7 +286,6 @@ impl CompletionsMenu {
             .map(|(id, completion)| StringMatchCandidate::new(id, completion.label.filter_text()))
             .into_group_map_by(|candidate| completions[candidate.id].match_start)
             .into_iter()
-            .map(|(k, v)| (k, v))
             .collect();
 
         let completions_menu = Self {

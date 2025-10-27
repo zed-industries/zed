@@ -22959,72 +22959,66 @@ fn snippet_completions(
                 is_incomplete = true;
             }
 
-            completions.extend(
-                matches
-                    .iter()
-                    .filter_map(|(string_match, buffer_window_len)| {
-                        let (snippet_index, matching_prefix, _snippet_word_count) =
-                            sorted_snippet_candidates[string_match.candidate_id];
-                        let snippet = &snippets[snippet_index];
-                        let start = buffer_offset - buffer_window_len;
-                        let start = snapshot.anchor_before(start);
-                        let range = start..buffer_anchor;
-                        let lsp_start = to_lsp(&start);
-                        let lsp_range = lsp::Range {
-                            start: lsp_start,
-                            end: lsp_end,
-                        };
-                        Some(Completion {
-                            replace_range: range,
-                            new_text: snippet.body.clone(),
-                            source: CompletionSource::Lsp {
-                                insert_range: None,
-                                server_id: LanguageServerId(usize::MAX),
-                                resolved: true,
-                                lsp_completion: Box::new(lsp::CompletionItem {
-                                    label: snippet.prefix.first().unwrap().clone(),
-                                    kind: Some(CompletionItemKind::SNIPPET),
-                                    label_details: snippet.description.as_ref().map(
-                                        |description| lsp::CompletionItemLabelDetails {
-                                            detail: Some(description.clone()),
-                                            description: None,
-                                        },
-                                    ),
-                                    insert_text_format: Some(InsertTextFormat::SNIPPET),
-                                    text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
-                                        lsp::InsertReplaceEdit {
-                                            new_text: snippet.body.clone(),
-                                            insert: lsp_range,
-                                            replace: lsp_range,
-                                        },
-                                    )),
-                                    filter_text: Some(snippet.body.clone()),
-                                    sort_text: Some(char::MAX.to_string()),
-                                    ..lsp::CompletionItem::default()
-                                }),
-                                lsp_defaults: None,
-                            },
-                            label: CodeLabel {
-                                text: matching_prefix.clone(),
-                                runs: Vec::new(),
-                                filter_range: 0..matching_prefix.len(),
-                            },
-                            icon_path: None,
-                            documentation: Some(
-                                CompletionDocumentation::SingleLineAndMultiLinePlainText {
-                                    single_line: snippet.name.clone().into(),
-                                    plain_text: snippet
-                                        .description
-                                        .clone()
-                                        .map(|description| description.into()),
+            completions.extend(matches.iter().map(|(string_match, buffer_window_len)| {
+                let (snippet_index, matching_prefix, _snippet_word_count) =
+                    sorted_snippet_candidates[string_match.candidate_id];
+                let snippet = &snippets[snippet_index];
+                let start = buffer_offset - buffer_window_len;
+                let start = snapshot.anchor_before(start);
+                let range = start..buffer_anchor;
+                let lsp_start = to_lsp(&start);
+                let lsp_range = lsp::Range {
+                    start: lsp_start,
+                    end: lsp_end,
+                };
+                Completion {
+                    replace_range: range,
+                    new_text: snippet.body.clone(),
+                    source: CompletionSource::Lsp {
+                        insert_range: None,
+                        server_id: LanguageServerId(usize::MAX),
+                        resolved: true,
+                        lsp_completion: Box::new(lsp::CompletionItem {
+                            label: snippet.prefix.first().unwrap().clone(),
+                            kind: Some(CompletionItemKind::SNIPPET),
+                            label_details: snippet.description.as_ref().map(|description| {
+                                lsp::CompletionItemLabelDetails {
+                                    detail: Some(description.clone()),
+                                    description: None,
+                                }
+                            }),
+                            insert_text_format: Some(InsertTextFormat::SNIPPET),
+                            text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
+                                lsp::InsertReplaceEdit {
+                                    new_text: snippet.body.clone(),
+                                    insert: lsp_range,
+                                    replace: lsp_range,
                                 },
-                            ),
-                            insert_text_mode: None,
-                            confirm: None,
-                            match_start: Some(start),
-                        })
+                            )),
+                            filter_text: Some(snippet.body.clone()),
+                            sort_text: Some(char::MAX.to_string()),
+                            ..lsp::CompletionItem::default()
+                        }),
+                        lsp_defaults: None,
+                    },
+                    label: CodeLabel {
+                        text: matching_prefix.clone(),
+                        runs: Vec::new(),
+                        filter_range: 0..matching_prefix.len(),
+                    },
+                    icon_path: None,
+                    documentation: Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
+                        single_line: snippet.name.clone().into(),
+                        plain_text: snippet
+                            .description
+                            .clone()
+                            .map(|description| description.into()),
                     }),
-            );
+                    insert_text_mode: None,
+                    confirm: None,
+                    match_start: Some(start),
+                }
+            }));
         }
 
         Ok(CompletionResponse {
