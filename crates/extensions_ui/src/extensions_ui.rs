@@ -225,9 +225,9 @@ impl ExtensionFilter {
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 enum Feature {
+    ExtensionRuff,
+    ExtensionTailwind,
     Git,
-    OpenIn,
-    Vim,
     LanguageBash,
     LanguageC,
     LanguageCpp,
@@ -236,15 +236,28 @@ enum Feature {
     LanguageReact,
     LanguageRust,
     LanguageTypescript,
-    ExtensionTailwind,
-    ExtensionRuff,
+    OpenIn,
+    Vim,
 }
 
 fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
     static KEYWORDS_BY_FEATURE: OnceLock<BTreeMap<Feature, Vec<&'static str>>> = OnceLock::new();
     KEYWORDS_BY_FEATURE.get_or_init(|| {
         BTreeMap::from_iter([
+            (Feature::ExtensionRuff, vec!["ruff"]),
+            (Feature::ExtensionTailwind, vec!["tail", "tailwind"]),
             (Feature::Git, vec!["git"]),
+            (Feature::LanguageBash, vec!["sh", "bash"]),
+            (Feature::LanguageC, vec!["c", "clang"]),
+            (Feature::LanguageCpp, vec!["c++", "cpp", "clang"]),
+            (Feature::LanguageGo, vec!["go", "golang"]),
+            (Feature::LanguagePython, vec!["python", "py"]),
+            (Feature::LanguageReact, vec!["react"]),
+            (Feature::LanguageRust, vec!["rust", "rs"]),
+            (
+                Feature::LanguageTypescript,
+                vec!["type", "typescript", "ts"],
+            ),
             (
                 Feature::OpenIn,
                 vec![
@@ -259,19 +272,6 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
                 ],
             ),
             (Feature::Vim, vec!["vim"]),
-            (Feature::LanguageBash, vec!["sh", "bash"]),
-            (Feature::LanguageC, vec!["c", "clang"]),
-            (Feature::LanguageCpp, vec!["c++", "cpp", "clang"]),
-            (Feature::LanguageGo, vec!["go", "golang"]),
-            (Feature::LanguagePython, vec!["python", "py"]),
-            (Feature::LanguageReact, vec!["react"]),
-            (Feature::LanguageRust, vec!["rust", "rs"]),
-            (Feature::ExtensionRuff, vec!["ruff"]),
-            (Feature::ExtensionTailwind, vec!["tail", "tailwind"]),
-            (
-                Feature::LanguageTypescript,
-                vec!["type", "typescript", "ts"],
-            ),
         ])
     })
 }
