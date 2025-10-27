@@ -45,6 +45,59 @@ If you missed this, you can toggle vim mode on or off anytime by opening the com
 > }
 > ```
 
+## Always-On Modal Actions (without modal editing)
+
+If you want to use Vim's powerful text objects and operators (like "delete inside quotes" or "change around parentheses"), without entering full modal editing mode, you can enable always-on modal actions. This keeps your editor the same while allowing for all Vim actions available for custom keybindings.
+
+### Enabling always-on modal actions
+
+Add this to your settings:
+
+```json [settings]
+{
+  "passive_modal_actions": true
+}
+```
+
+### Example configuration
+
+```json [settings]
+{
+  "context": "Editor",
+  "bindings": {
+    // Delete inside quotes
+    {
+      "context": "Editor",
+      "bindings": {
+        "ctrl-shift-d'": [
+          "action::Sequence",
+          [
+            "vim::PushDelete",
+            ["vim::PushObject", { "around": false }],
+            "vim::AnyQuotes"
+          ]
+        ]
+      }
+    },
+
+    // Select inside parentheses (4-step sequence)
+    {
+      "context": "Editor",
+      "bindings": {
+        "ctrl-'": [
+          "action::Sequence",
+          [
+            "vim::SwitchToVisualMode",
+            ["vim::PushObject", { "around": false }],
+            "vim::AnyQuotes",
+          ]
+        ]
+      }
+    },
+  }
+}
+```
+
 ## Zed-specific features
 
 Zed is built on a modern foundation that (among other things) uses Tree-sitter and language servers to understand the content of the file you're editing and supports multiple cursors out of the box.
@@ -205,7 +258,6 @@ These text objects implement the behavior of the [mini.ai](https://github.com/ec
 #### Choosing Between Approaches
 
 - Use **AnyQuotes/AnyBrackets** if you:
-
   - Prefer traditional Vim behavior
   - Want consistent character-based selection prioritizing innermost delimiters
   - Need behavior that closely matches vanilla Vim's text objects

@@ -474,7 +474,8 @@ impl editor::Addon for VimAddon {
 /// The state pertaining to Vim mode.
 pub(crate) struct Vim {
     pub(crate) mode: Mode,
-    pub last_mode: Mode,
+    pub(crate) passive_mode: bool,
+    pub(crate) last_mode: Mode,
     pub temp_mode: bool,
     pub status_label: Option<SharedString>,
     pub exit_temporary_mode: bool,
@@ -517,7 +518,7 @@ impl Vim {
     /// The namespace for Vim actions.
     const NAMESPACE: &'static str = "vim";
 
-    pub fn new(window: &mut Window, cx: &mut Context<Editor>) -> Entity<Self> {
+    pub fn new(window: &mut Window, cx: &mut Context<Editor>, passive_mode: bool) -> Entity<Self> {
         let editor = cx.entity();
 
         let initial_vim_mode = VimSettings::get_global(cx).default_mode;
@@ -534,8 +535,32 @@ impl Vim {
             (initial_vim_mode, Mode::Normal)
         };
 
+        // In passive mode we only subscribe to editor events so vim can track changes (change list or last-modification mark)
+        // without intercepting keystrokes.
+        let subscriptions = if passive_mode {
+            vec![cx.subscribe_in(
+                &editor,
+                window,
+                |this: &mut Vim, _editor_entity, event, window, cx| {
+                    this.handle_editor_event(event, window, cx)
+                },
+            )]
+        } else {
+            vec![
+                cx.observe_keystrokes(Self::observe_keystrokes),
+                cx.subscribe_in(
+                    &editor,
+                    window,
+                    |this, _editor_entity, event, window, cx| {
+                        this.handle_editor_event(event, window, cx)
+                    },
+                ),
+            ]
+        };
+
         cx.new(|cx| Vim {
             mode,
+            passive_mode,
             last_mode,
             temp_mode: false,
             exit_temporary_mode: false,
@@ -556,12 +581,7 @@ impl Vim {
             running_command: None,
 
             editor: editor.downgrade(),
-            _subscriptions: vec![
-                cx.observe_keystrokes(Self::observe_keystrokes),
-                cx.subscribe_in(&editor, window, |this, _, event, window, cx| {
-                    this.handle_editor_event(event, window, cx)
-                }),
-            ],
+            _subscriptions: subscriptions,
         })
     }
 
@@ -607,9 +627,10 @@ impl Vim {
     }
 
     fn activate(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
-        let vim = Vim::new(window, cx);
+        let passive_mode = Vim::is_passive_mode(cx);
+        let vim = Vim::new(window, cx, passive_mode);
 
-        if !editor.mode().is_full() {
+        if !passive_mode && !editor.mode().is_full() {
             vim.update(cx, |vim, _| {
                 vim.mode = Mode::Insert;
             });
@@ -962,7 +983,15 @@ impl Vim {
     }
 
     pub fn enabled(cx: &mut App) -> bool {
-        VimModeSetting::get_global(cx).0 || HelixModeSetting::get_global(cx).0
+        VimModeSetting::get_global(cx).0
+            || HelixModeSetting::get_global(cx).0
+            || PassiveModalActionsSetting::get_global(cx).0
+    }
+
+    pub fn is_passive_mode(cx: &mut App) -> bool {
+        !VimModeSetting::get_global(cx).0
+            && !HelixModeSetting::get_global(cx).0
+            && PassiveModalActionsSetting::get_global(cx).0
     }
 
     /// Called whenever an keystroke is typed so vim can observe all actions
