@@ -308,6 +308,16 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the element to justify items along the container's main axis such
+    /// that there is an equal amount of space around each item, but also
+    /// accounting for the doubling of space you would normally see between
+    /// each item when using justify-around.
+    /// [Docs](https://tailwindcss.com/docs/justify-content#space-evenly)
+    fn justify_evenly(mut self) -> Self {
+        self.style().justify_content = Some(JustifyContent::SpaceEvenly);
+        self
+    }
+
     /// Sets the element to pack content items in their default position as if no align-content value was set.
     /// [Docs](https://tailwindcss.com/docs/align-content#normal)
     fn content_normal(mut self) -> Self {
