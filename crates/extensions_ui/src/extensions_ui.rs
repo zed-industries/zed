@@ -24,8 +24,8 @@ use settings::{Settings, SettingsContent};
 use strum::IntoEnumIterator as _;
 use theme::ThemeSettings;
 use ui::{
-    Banner, CheckboxWithLabel, Chip, ContextMenu, PopoverMenu, ScrollableHandle, Switch,
-    ToggleButton, Tooltip, WithScrollbar, prelude::*,
+    Banner, Chip, ContextMenu, PopoverMenu, ScrollableHandle, Switch, ToggleButton, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
@@ -34,7 +34,7 @@ use workspace::{
 };
 use zed_actions::ExtensionCategoryFilter;
 
-use crate::components::{ExtensionCard, FeatureUpsell};
+use crate::components::ExtensionCard;
 use crate::extension_version_selector::{
     ExtensionVersionSelector, ExtensionVersionSelectorDelegate,
 };
