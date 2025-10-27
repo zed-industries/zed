@@ -219,6 +219,7 @@ pub struct CompletionsMenu {
     pub completions: Rc<RefCell<Box<[Completion]>>>,
     /// String match candidate for each completion, grouped by `match_start`.
     match_candidates: Arc<[(Option<text::Anchor>, Vec<StringMatchCandidate>)]>,
+    /// Entries displayed in the menu, which is a filtered and sorted subset of `match_candidates`.
     pub entries: Rc<RefCell<Box<[StringMatch]>>>,
     pub selected_item: usize,
     filter_task: Task<()>,

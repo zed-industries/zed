@@ -25545,6 +25545,145 @@ pub fn check_displayed_completions(expected: Vec<&'static str>, cx: &mut EditorL
     });
 }
 
+#[gpui::test]
+async fn test_mixed_completions_with_multi_word_snippet(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    cx.lsp
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "unsafe".into(),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range {
+                            start: lsp::Position {
+                                line: 0,
+                                character: 9,
+                            },
+                            end: lsp::Position {
+                                line: 0,
+                                character: 11,
+                            },
+                        },
+                        new_text: "unsafe".to_string(),
+                    })),
+                    insert_text_mode: Some(lsp::InsertTextMode::AS_IS),
+                    ..Default::default()
+                },
+            ])))
+        });
+
+    cx.update_editor(|editor, _, cx| {
+        editor.project().unwrap().update(cx, |project, cx| {
+            project.snippets().update(cx, |snippets, _cx| {
+                snippets.add_snippet_for_test(
+                    None,
+                    PathBuf::from("test_snippets.json"),
+                    vec![
+                        Arc::new(project::snippet_provider::Snippet {
+                            prefix: vec![
+                                "unlimited word count".to_string(),
+                                "unlimit word count".to_string(),
+                                "unlimited unknown".to_string(),
+                            ],
+                            body: "this is many words".to_string(),
+                            description: Some("description".to_string()),
+                            name: "multi-word snippet test".to_string(),
+                        }),
+                        Arc::new(project::snippet_provider::Snippet {
+                            prefix: vec!["unsnip".to_string(), "@few".to_string()],
+                            body: "fewer words".to_string(),
+                            description: Some("alt description".to_string()),
+                            name: "other name".to_string(),
+                        }),
+                    ],
+                );
+            });
+        })
+    });
+
+    let get_completions = |cx: &mut EditorLspTestContext| {
+        cx.update_editor(|editor, _, _| match &*editor.context_menu.borrow() {
+            Some(CodeContextMenu::Completions(context_menu)) => {
+                let entries = context_menu.entries.borrow();
+                entries
+                    .iter()
+                    .map(|entry| entry.string.clone())
+                    .collect_vec()
+            }
+            _ => vec![],
+        })
+    };
+
+    let test_cases: &[(&str, &[&str])] = &[
+        (
+            "un",
+            &[
+                "unsafe",
+                "unlimit word count",
+                "unlimited unknown",
+                "unlimited word count",
+                "unsnip",
+            ],
+        ),
+        (
+            "u u",
+            &[
+                "unlimited unknown",
+                "unlimit word count",
+                "unlimited word count",
+            ],
+        ),
+        ("uw c", &["unlimit word count", "unlimited word count"]),
+        ("u w ", &["unlimit word count", "unlimited word count"]),
+        (
+            "u ",
+            &[
+                "unlimit word count",
+                "unlimited unknown",
+                "unlimited word count",
+            ],
+        ),
+        ("wor", &[]),
+        ("uf", &["unsafe"]),
+        ("af", &["unsafe"]),
+        ("afu", &[]),
+        (
+            "ue",
+            &["unsafe", "unlimited unknown", "unlimited word count"],
+        ),
+        ("@", &["@few"]),
+        ("@few", &["@few"]),
+        ("@ ", &[]),
+    ];
+
+    for &(input_to_simulate, expected_completions) in test_cases {
+        cx.set_state("fn a() { ˇ }\n");
+        for c in input_to_simulate.split("") {
+            cx.simulate_input(c);
+            cx.run_until_parked();
+        }
+        let expected_completions = expected_completions
+            .iter()
+            .map(|s| s.to_string())
+            .collect_vec();
+        assert_eq!(
+            get_completions(&mut cx),
+            expected_completions,
+            "< actual / expected >, input = {input_to_simulate:?}",
+        );
+    }
+}
+
 /// Handle completion request passing a marked string specifying where the completion
 /// should be triggered from using '|' character, what range should be replaced, and what completions
 /// should be returned using '<' and '>' to delimit the range.

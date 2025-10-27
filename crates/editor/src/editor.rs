@@ -22888,8 +22888,8 @@ fn snippet_completions(
             let mut matches: Vec<(StringMatch, usize)> = vec![];
 
             let mut snippet_list_cutoff_index = 0;
-            for (word_count, buffer_window) in (1..=buffer_windows.len()).rev().zip(buffer_windows)
-            {
+            for (buffer_index, buffer_window) in buffer_windows.iter().enumerate() {
+                let word_count = buffer_index + 1;
                 // Increase `snippet_list_cutoff_index` until we have all of the
                 // snippets with sufficiently many words.
                 while sorted_snippet_candidates
