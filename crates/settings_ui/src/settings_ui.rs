@@ -6,10 +6,10 @@ use editor::{Editor, EditorEvent};
 use feature_flags::FeatureFlag;
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, App, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle, Focusable, Global,
-    KeyContext, ListState, ReadGlobal as _, ScrollHandle, Stateful, Subscription, Task,
-    TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions,
-    actions, div, list, point, prelude::*, px, uniform_list,
+    Action, App, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle,
+    Focusable, Global, KeyContext, ListState, ReadGlobal as _, ScrollHandle, Stateful,
+    Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
+    WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px, uniform_list,
 };
 use heck::ToTitleCase as _;
 use project::{Project, WorktreeId};
@@ -2794,7 +2794,7 @@ impl SettingsWindow {
                             .child(Label::new(error).size(LabelSize::Small).color(Color::Muted)),
                     )
                     .action_slot(
-                        div().pr_1().child(
+                        div().pr_1().pb_1().child(
                             Button::new("fix-in-json", "Fix in settings.json")
                                 .tab_index(0_isize)
                                 .style(ButtonStyle::Tinted(ui::TintColor::Warning))
@@ -2804,8 +2804,10 @@ impl SettingsWindow {
                         ),
                     )
             }
+
             let parse_error = error.parse_error();
             let parse_failed = parse_error.is_some();
+
             warning_banner = v_flex()
                 .gap_2()
                 .when_some(parse_error, |this, err| {
