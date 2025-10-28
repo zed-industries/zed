@@ -614,7 +614,7 @@
       "ctrl-alt-b": "workspace::ToggleRightDock",
       "ctrl-b": "workspace::ToggleLeftDock",
       "ctrl-j": "workspace::ToggleBottomDock",
-      "ctrl-shift-y": "workspace::CloseAllDocks",
+      "ctrl-shift-y": "workspace::ToggleAllDocks",
       "alt-r": "workspace::ResetActiveDockSize",
       // For 0px parameter, uses UI font size value.
       "shift-alt--": ["workspace::DecreaseActiveDockSize", { "px": 0 }],

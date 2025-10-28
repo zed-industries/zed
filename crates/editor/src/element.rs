@@ -497,6 +497,8 @@ impl EditorElement {
         register_action(editor, window, Editor::collapse_all_diff_hunks);
         register_action(editor, window, Editor::go_to_previous_change);
         register_action(editor, window, Editor::go_to_next_change);
+        register_action(editor, window, Editor::go_to_prev_reference);
+        register_action(editor, window, Editor::go_to_next_reference);
 
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.format(action, window, cx) {
@@ -3183,7 +3185,7 @@ impl EditorElement {
             i += 1;
         }
         delta = 1;
-        i = head_idx.min(buffer_rows.len() as u32 - 1);
+        i = head_idx.min(buffer_rows.len().saturating_sub(1) as u32);
         while i > 0 && buffer_rows[i as usize].buffer_row.is_none() && !count_wrapped_lines {
             i -= 1;
         }

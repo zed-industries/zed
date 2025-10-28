@@ -344,7 +344,7 @@ impl Editor {
             .extend(invalidate_hints_for_buffers);
 
         let mut buffers_to_query = HashMap::default();
-        for (excerpt_id, (buffer, buffer_version, visible_range)) in visible_excerpts {
+        for (_, (buffer, buffer_version, visible_range)) in visible_excerpts {
             let buffer_id = buffer.read(cx).remote_id();
             if !self.registered_buffers.contains_key(&buffer_id) {
                 continue;
@@ -358,13 +358,11 @@ impl Editor {
                 buffers_to_query
                     .entry(buffer_id)
                     .or_insert_with(|| VisibleExcerpts {
-                        excerpts: Vec::new(),
                         ranges: Vec::new(),
                         buffer_version: buffer_version.clone(),
                         buffer: buffer.clone(),
                     });
             visible_excerpts.buffer_version = buffer_version;
-            visible_excerpts.excerpts.push(excerpt_id);
             visible_excerpts.ranges.push(buffer_anchor_range);
         }
 
@@ -850,7 +848,6 @@ impl Editor {
 
 #[derive(Debug)]
 struct VisibleExcerpts {
-    excerpts: Vec<ExcerptId>,
     ranges: Vec<Range<text::Anchor>>,
     buffer_version: Global,
     buffer: Entity<language::Buffer>,
@@ -2017,7 +2014,7 @@ pub mod tests {
                                     task_lsp_request_ranges.lock().push(params.range);
                                     task_lsp_request_count.fetch_add(1, Ordering::Release);
                                     Ok(Some(vec![lsp::InlayHint {
-                                        position: params.range.end,
+                                        position: params.range.start,
                                         label: lsp::InlayHintLabel::String(
                                             params.range.end.line.to_string(),
                                         ),

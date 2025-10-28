@@ -679,7 +679,7 @@
       "cmd-alt-b": "workspace::ToggleRightDock",
       "cmd-r": "workspace::ToggleRightDock",
       "cmd-j": "workspace::ToggleBottomDock",
-      "alt-cmd-y": "workspace::CloseAllDocks",
+      "alt-cmd-y": "workspace::ToggleAllDocks",
       // For 0px parameter, uses UI font size value.
       "ctrl-alt-0": "workspace::ResetActiveDockSize",
       "ctrl-alt--": ["workspace::DecreaseActiveDockSize", { "px": 0 }],

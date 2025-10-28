@@ -23,7 +23,7 @@ For more information, see the documentation for [Vim mode](./vim.md) and [Helix 
 
 ## Keymap Editor
 
-You can access the keymap editor through the {#kb zed::OpenKeymap} action or by running {#action zed::OpenKeymap} action from the command palette
+You can access the keymap editor through the {#kb zed::OpenKeymap} action or by running {#action zed::OpenKeymap} action from the command palette. You can easily add or change a keybind for an action with the `Change Keybinding` or `Add Keybinding` button on the command pallets left bottom corner.
 
 In there, you can see all of the existing actions in Zed as well as the associated keybindings set to them by default.
 

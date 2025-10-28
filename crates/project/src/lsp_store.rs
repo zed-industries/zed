@@ -2492,7 +2492,7 @@ impl LocalLspStore {
                         uri.clone(),
                         adapter.language_id(&language.name()),
                         0,
-                        initial_snapshot.text_with_original_line_endings(),
+                        initial_snapshot.text(),
                     );
 
                     vec![snapshot]
@@ -6844,7 +6844,7 @@ impl LspStore {
                                 && range.start.is_valid(&buffer_snapshot)
                                 && range.end.is_valid(&buffer_snapshot)
                                 && hint.position.cmp(&range.start, &buffer_snapshot).is_ge()
-                                && hint.position.cmp(&range.end, &buffer_snapshot).is_le()
+                                && hint.position.cmp(&range.end, &buffer_snapshot).is_lt()
                         });
                         (server_id, new_hints)
                     })
@@ -7574,7 +7574,6 @@ impl LspStore {
             let previous_snapshot = buffer_snapshots.last()?;
 
             let build_incremental_change = || {
-                let line_ending = next_snapshot.line_ending();
                 buffer
                     .edits_since::<Dimensions<PointUtf16, usize>>(
                         previous_snapshot.snapshot.version(),
@@ -7582,18 +7581,16 @@ impl LspStore {
                     .map(|edit| {
                         let edit_start = edit.new.start.0;
                         let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);
+                        let new_text = next_snapshot
+                            .text_for_range(edit.new.start.1..edit.new.end.1)
+                            .collect();
                         lsp::TextDocumentContentChangeEvent {
                             range: Some(lsp::Range::new(
                                 point_to_lsp(edit_start),
                                 point_to_lsp(edit_end),
                             )),
                             range_length: None,
-                            // Collect changed text and preserve line endings.
-                            // text_for_range returns chunks with normalized \n, so we need to
-                            // convert to the buffer's actual line ending for LSP.
-                            text: line_ending.into_string(
-                                next_snapshot.text_for_range(edit.new.start.1..edit.new.end.1),
-                            ),
+                            text: new_text,
                         }
                     })
                     .collect()
@@ -7613,7 +7610,7 @@ impl LspStore {
                     vec![lsp::TextDocumentContentChangeEvent {
                         range: None,
                         range_length: None,
-                        text: next_snapshot.text_with_original_line_endings(),
+                        text: next_snapshot.text(),
                     }]
                 }
                 Some(lsp::TextDocumentSyncKind::INCREMENTAL) => build_incremental_change(),
@@ -10843,19 +10840,16 @@ impl LspStore {
             .capabilities()
             .diagnostic_provider
             .and_then(|provider| {
-                let workspace_refresher = lsp_workspace_diagnostics_refresh(
-                    None,
-                    provider.clone(),
-                    language_server.clone(),
-                    cx,
-                )?;
                 local
                     .language_server_dynamic_registrations
                     .entry(server_id)
                     .or_default()
                     .diagnostics
                     .entry(None)
-                    .or_insert(provider);
+                    .or_insert(provider.clone());
+                let workspace_refresher =
+                    lsp_workspace_diagnostics_refresh(None, provider, language_server.clone(), cx)?;
+
                 Some((None, workspace_refresher))
             })
             .into_iter()
@@ -10998,12 +10992,13 @@ impl LspStore {
 
                     let snapshot = versions.last().unwrap();
                     let version = snapshot.version;
+                    let initial_snapshot = &snapshot.snapshot;
                     let uri = lsp::Uri::from_file_path(file.abs_path(cx)).unwrap();
                     language_server.register_buffer(
                         uri,
                         adapter.language_id(&language.name()),
                         version,
-                        buffer_handle.read(cx).text_with_original_line_endings(),
+                        initial_snapshot.text(),
                     );
                     buffer_paths_registered.push((buffer_id, file.abs_path(cx)));
                     local

@@ -6,13 +6,10 @@ mod unclipped;
 
 use arrayvec::ArrayVec;
 use rayon::iter::{IntoParallelIterator, ParallelIterator as _};
-use regex::Regex;
 use std::{
-    borrow::Cow,
     cmp, fmt, io, mem,
     ops::{self, AddAssign, Range},
     str,
-    sync::{Arc, LazyLock},
 };
 use sum_tree::{Bias, Dimension, Dimensions, SumTree};
 
@@ -23,95 +20,6 @@ pub use point_utf16::PointUtf16;
 pub use unclipped::Unclipped;
 
 use crate::chunk::Bitmap;
-
-static LINE_SEPARATORS_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\r\n|\r").expect("Failed to create LINE_SEPARATORS_REGEX"));
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum LineEnding {
-    Unix,
-    Windows,
-}
-
-impl Default for LineEnding {
-    fn default() -> Self {
-        #[cfg(unix)]
-        return Self::Unix;
-
-        #[cfg(not(unix))]
-        return Self::Windows;
-    }
-}
-
-impl LineEnding {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            LineEnding::Unix => "\n",
-            LineEnding::Windows => "\r\n",
-        }
-    }
-
-    pub fn label(&self) -> &'static str {
-        match self {
-            LineEnding::Unix => "LF",
-            LineEnding::Windows => "CRLF",
-        }
-    }
-
-    pub fn detect(text: &str) -> Self {
-        let mut max_ix = cmp::min(text.len(), 1000);
-        while !text.is_char_boundary(max_ix) {
-            max_ix -= 1;
-        }
-
-        if let Some(ix) = text[..max_ix].find(['\n']) {
-            if ix > 0 && text.as_bytes()[ix - 1] == b'\r' {
-                Self::Windows
-            } else {
-                Self::Unix
-            }
-        } else {
-            Self::default()
-        }
-    }
-
-    pub fn normalize(text: &mut String) {
-        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(text, "\n") {
-            *text = replaced;
-        }
-    }
-
-    pub fn normalize_arc(text: Arc<str>) -> Arc<str> {
-        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(&text, "\n") {
-            replaced.into()
-        } else {
-            text
-        }
-    }
-
-    pub fn normalize_cow(text: Cow<str>) -> Cow<str> {
-        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(&text, "\n") {
-            replaced.into()
-        } else {
-            text
-        }
-    }
-
-    /// Converts text chunks into a [`String`] using the current line ending.
-    pub fn into_string(&self, chunks: Chunks<'_>) -> String {
-        match self {
-            LineEnding::Unix => chunks.collect(),
-            LineEnding::Windows => {
-                let line_ending = self.as_str();
-                let mut result = String::new();
-                for chunk in chunks {
-                    result.push_str(&chunk.replace('\n', line_ending));
-                }
-                result
-            }
-        }
-    }
-}
 
 #[derive(Clone, Default)]
 pub struct Rope {
@@ -283,9 +191,9 @@ impl Rope {
             (),
         );
 
-        #[cfg(not(test))]
+        #[cfg(all(test, not(rust_analyzer)))]
         const NUM_CHUNKS: usize = 16;
-        #[cfg(test)]
+        #[cfg(not(all(test, not(rust_analyzer))))]
         const NUM_CHUNKS: usize = 4;
 
         // We accommodate for NUM_CHUNKS chunks of size MAX_BASE
@@ -340,9 +248,9 @@ impl Rope {
             text = remainder;
         }
 
-        #[cfg(test)]
+        #[cfg(all(test, not(rust_analyzer)))]
         const PARALLEL_THRESHOLD: usize = 4;
-        #[cfg(not(test))]
+        #[cfg(not(all(test, not(rust_analyzer))))]
         const PARALLEL_THRESHOLD: usize = 4 * (2 * sum_tree::TREE_BASE);
 
         if new_chunks.len() >= PARALLEL_THRESHOLD {
@@ -458,16 +366,6 @@ impl Rope {
 
     pub fn reversed_chunks_in_range(&self, range: Range<usize>) -> Chunks<'_> {
         Chunks::new(self, range, true)
-    }
-
-    /// Formats the rope's text with the specified line ending string.
-    /// This replaces all `\n` characters with the provided line ending.
-    ///
-    /// The rope internally stores all line breaks as `\n` (see `Display` impl).
-    /// Use this method to convert to different line endings for file operations,
-    /// LSP communication, or other scenarios requiring specific line ending formats.
-    pub fn to_string_with_line_ending(&self, line_ending: LineEnding) -> String {
-        line_ending.into_string(self.chunks())
     }
 
     pub fn offset_to_offset_utf16(&self, offset: usize) -> OffsetUtf16 {
@@ -711,16 +609,10 @@ impl From<&String> for Rope {
     }
 }
 
-/// Display implementation for Rope.
-///
-/// Note: This always uses `\n` as the line separator, regardless of the original
-/// file's line endings. The rope internally normalizes all line breaks to `\n`.
-/// If you need to preserve original line endings (e.g., for LSP communication),
-/// use `to_string_with_line_ending` instead.
 impl fmt::Display for Rope {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for chunk in self.chunks() {
-            write!(f, "{chunk}")?;
+            write!(f, "{}", chunk)?;
         }
         Ok(())
     }
@@ -2368,53 +2260,6 @@ mod tests {
         for b in 0..=fixture.len() {
             assert_eq!(rope.ceil_char_boundary(b), ceil_char_boundary(&fixture, b));
         }
-    }
-
-    #[test]
-    fn test_to_string_with_line_ending() {
-        // Test Unix line endings (no conversion)
-        let rope = Rope::from("line1\nline2\nline3");
-        assert_eq!(
-            rope.to_string_with_line_ending(LineEnding::Unix),
-            "line1\nline2\nline3"
-        );
-
-        // Test Windows line endings
-        assert_eq!(
-            rope.to_string_with_line_ending(LineEnding::Windows),
-            "line1\r\nline2\r\nline3"
-        );
-
-        // Test empty rope
-        let empty_rope = Rope::from("");
-        assert_eq!(
-            empty_rope.to_string_with_line_ending(LineEnding::Windows),
-            ""
-        );
-
-        // Test single line (no newlines)
-        let single_line = Rope::from("single line");
-        assert_eq!(
-            single_line.to_string_with_line_ending(LineEnding::Windows),
-            "single line"
-        );
-
-        // Test rope ending with newline
-        let ending_newline = Rope::from("line1\nline2\n");
-        assert_eq!(
-            ending_newline.to_string_with_line_ending(LineEnding::Windows),
-            "line1\r\nline2\r\n"
-        );
-
-        // Test large rope with multiple chunks
-        let mut large_rope = Rope::new();
-        for i in 0..100 {
-            large_rope.push(&format!("line{}\n", i));
-        }
-        let result = large_rope.to_string_with_line_ending(LineEnding::Windows);
-        assert!(result.contains("\r\n"));
-        assert!(!result.contains("\n\n"));
-        assert_eq!(result.matches("\r\n").count(), 100);
     }
 
     fn clip_offset(text: &str, mut offset: usize, bias: Bias) -> usize {
