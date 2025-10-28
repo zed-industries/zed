@@ -1637,47 +1637,63 @@ impl OutlinePanel {
         };
 
         let mut buffers_to_unfold = HashSet::default();
-        let entries_to_remove: HashSet<_> = self
-            .cached_entries
-            .iter()
-            .filter_map(|cached_entry| match &cached_entry.entry {
-                PanelEntry::Fs(FsEntry::Directory(FsEntryDirectory {
-                    worktree_id, entry, ..
-                })) => Some(CollapsedEntry::Dir(*worktree_id, entry.id)),
-                PanelEntry::Fs(FsEntry::File(FsEntryFile {
-                    worktree_id,
-                    buffer_id,
-                    ..
-                })) => {
-                    buffers_to_unfold.insert(*buffer_id);
-                    Some(CollapsedEntry::File(*worktree_id, *buffer_id))
+        self.collapsed_entries.retain(|collapsed_entry| {
+            let matched = self.cached_entries.iter().any(|cached_entry| {
+                match (&cached_entry.entry, collapsed_entry) {
+                    (
+                        PanelEntry::Fs(FsEntry::Directory(FsEntryDirectory { worktree_id, entry: fs_entry, .. })),
+                        CollapsedEntry::Dir(wid, id),
+                    ) => wid == worktree_id && id == &fs_entry.id,
+
+                    (
+                        PanelEntry::Fs(FsEntry::File(FsEntryFile { worktree_id, buffer_id, .. })),
+                        CollapsedEntry::File(wid, bid),
+                    ) => {
+                        if wid == worktree_id && bid == buffer_id {
+                            buffers_to_unfold.insert(*buffer_id);
+                            true
+                        } else {
+                            false
+                        }
+                    }
+
+                    (
+                        PanelEntry::Fs(FsEntry::ExternalFile(external)),
+                        CollapsedEntry::ExternalFile(bid),
+                    ) => {
+                        if bid == &external.buffer_id {
+                            buffers_to_unfold.insert(external.buffer_id);
+                            true
+                        } else {
+                            false
+                        }
+                    }
+
+                    (
+                        PanelEntry::FoldedDirs(FoldedDirsEntry { worktree_id, entries, .. }),
+                        CollapsedEntry::Dir(wid, id),
+                    ) => entries
+                        .last()
+                        .map(|last| wid == worktree_id && id == &last.id)
+                        .unwrap_or(false),
+
+                    (
+                        PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)),
+                        CollapsedEntry::Excerpt(bid, id),
+                    ) => bid == &excerpt.buffer_id && id == &excerpt.id,
+
+                    (
+                        PanelEntry::Outline(OutlineEntry::Outline(outline)),
+                        CollapsedEntry::Outline(bid, ex_id, range),
+                    ) => bid == &outline.buffer_id
+                        && ex_id == &outline.excerpt_id
+                        && range == &outline.outline.range,
+
+                    _ => false,
                 }
-                PanelEntry::Fs(FsEntry::ExternalFile(external_file)) => {
-                    buffers_to_unfold.insert(external_file.buffer_id);
-                    Some(CollapsedEntry::ExternalFile(external_file.buffer_id))
-                }
-                PanelEntry::FoldedDirs(FoldedDirsEntry {
-                    worktree_id,
-                    entries,
-                    ..
-                }) => entries
-                    .last()
-                    .map(|last| CollapsedEntry::Dir(*worktree_id, last.id)),
-                PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => {
-                    Some(CollapsedEntry::Excerpt(excerpt.buffer_id, excerpt.id))
-                }
-                PanelEntry::Outline(OutlineEntry::Outline(outline)) => {
-                    Some(CollapsedEntry::Outline(
-                        outline.buffer_id,
-                        outline.excerpt_id,
-                        outline.outline.range.clone(),
-                    ))
-                }
-                PanelEntry::Search(_) => None,
-            })
-            .collect();
-        self.collapsed_entries
-            .retain(|e| !entries_to_remove.contains(e));
+            });
+            !matched
+        });
 
         active_editor.update(cx, |editor, cx| {
             buffers_to_unfold.retain(|buffer_id| editor.is_buffer_folded(*buffer_id, cx));
