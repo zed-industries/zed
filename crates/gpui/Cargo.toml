@@ -52,8 +52,8 @@ wayland = [
     "wayland-client",
     "wayland-cursor",
     "wayland-protocols",
-    "wayland-protocols-wlr",
     "wayland-protocols-plasma",
+    "wayland-protocols-wlr",
     "filedescriptor",
     "xkbcommon",
     "open",
@@ -86,9 +86,17 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+async-task = "4.7"
+backtrace = { workspace = true, optional = true }
+bitflags = { workspace = true, optional = true }
+blade-graphics = { workspace = true, optional = true }
+blade-macros = { workspace = true, optional = true }
+blade-util = { workspace = true, optional = true }
+bytemuck = { version = "1", optional = true }
 collections.workspace = true
 ctor.workspace = true
 derive_more.workspace = true
+etagere = "0.2"
 futures.workspace = true
 gpui_macros.workspace = true
 http_client.workspace = true
@@ -96,12 +104,23 @@ image.workspace = true
 inventory.workspace = true
 itertools.workspace = true
 log.workspace = true
+num_cpus = "1.13"
+parking = "2.0.0"
 parking_lot.workspace = true
 postage.workspace = true
 profiling.workspace = true
+rand = { optional = true, workspace = true }
+raw-window-handle = "0.6"
 refineable.workspace = true
+resvg = { version = "0.45.0", default-features = false, features = [
+    "text",
+    "system-fonts",
+    "memmap-fonts",
+] }
+usvg = { version = "0.45.0", default-features = false }
 util_macros.workspace = true
 schemars.workspace = true
+seahash = "4.1"
 semantic_version.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -111,33 +130,14 @@ smol.workspace = true
 stacksafe.workspace = true
 strum.workspace = true
 sum_tree.workspace = true
+taffy = "=0.9.0"
 thiserror.workspace = true
 util.workspace = true
 uuid.workspace = true
-libc.workspace = true
-async-task = "4.7"
-backtrace = { workspace = true, optional = true }
-etagere = "0.2"
-num_cpus = "1.13"
-parking = "2.0.0"
-rand = { optional = true, workspace = true }
-raw-window-handle = "0.6"
-resvg = { version = "0.45.0", default-features = false, features = [
-    "text",
-    "system-fonts",
-    "memmap-fonts",
-] }
-usvg = { version = "0.45.0", default-features = false }
-seahash = "4.1"
-taffy = "=0.9.0"
 waker-fn = "1.2.0"
 lyon = "1.0"
+libc.workspace = true
 pin-project = "1.1.10"
-blade-graphics = { workspace = true, optional = true }
-blade-macros = { workspace = true, optional = true }
-blade-util = { workspace = true, optional = true }
-bytemuck = { version = "1", optional = true }
-bitflags = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"
@@ -205,9 +205,9 @@ wayland-protocols = { version = "0.31.2", features = [
 wayland-protocols-plasma = { version = "0.2.0", features = [
     "client",
 ], optional = true }
-wayland-protocols-wlr = { version = "0.3.8", features = [
-    "client"
-], optional = true}
+wayland-protocols-wlr = { version = "0.3.9", features = [
+    "client",
+], optional = true }
 
 # X11
 as-raw-xcb-connection = { version = "1", optional = true }

@@ -309,9 +309,9 @@ impl WaylandWindowState {
             BladeRenderer::new(gpu_context, &raw_window, config)?
         };
 
-        if let Some(titlebar) = options.titlebar {
-            if let Some(title) = titlebar.title {
-                toplevel.set_title(title.to_string());
+        if let WaylandSurfaceState::Xdg(ref xdg_state) = surface_state {
+            if let Some(title) = options.titlebar.and_then(|titlebar| titlebar.title) {
+                xdg_state.toplevel.set_title(title.to_string());
             }
         }
 
