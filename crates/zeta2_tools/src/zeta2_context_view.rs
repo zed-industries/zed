@@ -251,6 +251,7 @@ impl Zeta2ContextView {
     }
 
     fn render_informational_footer(&self, cx: &mut Context<'_, Zeta2ContextView>) -> ui::Div {
+        let is_latest = self.runs.len() == self.current_ix + 1;
         let run = &self.runs[self.current_ix];
 
         h_flex()
@@ -336,7 +337,11 @@ impl Zeta2ContextView {
                         div = div.child(format!("Ran search: {:>5} ms", (t2 - t1).as_millis()));
 
                         let Some(t3) = run.finished_at else {
-                            return div.child("Filtering results...");
+                            if is_latest {
+                                return div.child("Filtering results...");
+                            } else {
+                                return div.child("Canceled");
+                            }
                         };
                         div.child(format!("Filtered results: {:>5} ms", (t3 - t2).as_millis()))
                     }),
