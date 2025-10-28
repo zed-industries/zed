@@ -563,8 +563,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create macOS app bundle
-        run: script/bundle-mac
+      - name: Create macOS app bundle (aarch64)
+        run: script/bundle-mac aarch64-apple-darwin
+
+      - name: Create macOS app bundle (x64)
+        run: script/bundle-mac x86_64-apple-darwin
 
       - name: Rename binaries
         run: |

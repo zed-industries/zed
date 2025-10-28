@@ -14,20 +14,31 @@ is_allowed_target() {
     return 1
 }
 
-if [[ -n "${1:-}" ]]; then
-    if is_allowed_target "$1"; then
-        target="$1"
-    else
-        echo "Error: Target '$1' is not allowed"
-        echo "Usage: $0 [${allowed_targets[*]}]"
-        exit 1
-    fi
+allowed_arch=("x86_64" "aarch64")
+is_allowed_arch() {
+    for val in "${allowed_arch[@]}"; do
+        if [[ "$1" == "$val" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+if is_allowed_target "$1"; then
+    target="$1"
 else
-echo "Error: Target is not specified"
-echo "Usage: $0 [${allowed_targets[*]}]"
-exit 1
+    echo "Error: Target '$1' is not allowed"
+    echo "Usage: $0 [${allowed_targets[*]}] {arch}"
+    exit 1
 fi
-echo "Uploading nightly for target: $target"
+if is_allowed_arch "$2"; then
+    arch="$2"
+else
+    echo "Error: Arch '$2' is not allowed"
+    echo "Usage: $0 $1 [${allowed_arch[*]}]"
+    exit 1
+fi
+echo "Uploading nightly for target: $target $arch"
 
 bucket_name="zed-nightly-host"
 
@@ -41,10 +52,9 @@ done
 
 case "$target" in
     macos)
-        upload_to_blob_store $bucket_name "target/aarch64-apple-darwin/release/Zed.dmg" "nightly/Zed-aarch64.dmg"
-        upload_to_blob_store $bucket_name "target/x86_64-apple-darwin/release/Zed.dmg" "nightly/Zed-x86_64.dmg"
+        upload_to_blob_store $bucket_name "target/$arch-apple-darwin/release/Zed.dmg" "nightly/Zed-$arch.dmg"
         upload_to_blob_store $bucket_name "target/latest-sha" "nightly/latest-sha"
-        rm -f "target/aarch64-apple-darwin/release/Zed.dmg" "target/x86_64-apple-darwin/release/Zed.dmg" "target/release/Zed.dmg"
+        rm -f "target/$arch-apple-darwin/release/Zed.dmg" "target/release/Zed.dmg"
         rm -f "target/latest-sha"
         ;;
     linux-targz)

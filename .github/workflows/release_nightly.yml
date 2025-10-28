@@ -96,7 +96,7 @@ jobs:
         Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
       shell: pwsh
     timeout-minutes: 60
-  bundle_mac_nightly:
+  bundle_mac_nightly_x86_64:
     needs:
     - check_style
     - run_tests_mac
@@ -131,11 +131,53 @@ jobs:
         echo "Publishing version: ${version} on release channel nightly"
         echo "nightly" > crates/zed/RELEASE_CHANNEL
       shell: bash -euxo pipefail {0}
-    - name: ./script/bundle-mac
-      run: ./script/bundle-mac
+    - name: run_bundling::bundle_mac
+      run: ./script/bundle-mac x86_64-apple-darwin
       shell: bash -euxo pipefail {0}
     - name: release_nightly::upload_zed_nightly
-      run: script/upload-nightly macos
+      run: script/upload-nightly macos x86_64
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 60
+  bundle_mac_nightly_aarch64:
+    needs:
+    - check_style
+    - run_tests_mac
+    if: github.repository_owner == 'zed-industries'
+    runs-on: self-mini-macos
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
+      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '20'
+    - name: steps::setup_sentry
+      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
+      with:
+        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than 300
+      shell: bash -euxo pipefail {0}
+    - name: release_nightly::set_release_channel_to_nightly
+      run: |
+        set -eu
+        version=$(git rev-parse --short HEAD)
+        echo "Publishing version: ${version} on release channel nightly"
+        echo "nightly" > crates/zed/RELEASE_CHANNEL
+      shell: bash -euxo pipefail {0}
+    - name: run_bundling::bundle_mac
+      run: ./script/bundle-mac aarch64-apple-darwin
+      shell: bash -euxo pipefail {0}
+    - name: release_nightly::upload_zed_nightly
+      run: script/upload-nightly macos aarch64
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   bundle_linux_nightly_x86_64:
@@ -176,7 +218,7 @@ jobs:
       run: ./script/bundle-linux
       shell: bash -euxo pipefail {0}
     - name: release_nightly::upload_zed_nightly
-      run: script/upload-nightly linux-targz
+      run: script/upload-nightly linux-targz x86_64
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   bundle_linux_nightly_aarch64:
@@ -214,7 +256,7 @@ jobs:
       run: ./script/bundle-linux
       shell: bash -euxo pipefail {0}
     - name: release_nightly::upload_zed_nightly
-      run: script/upload-nightly linux-targz
+      run: script/upload-nightly linux-targz aarch64
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   bundle_windows_nightly_x86_64:
@@ -372,7 +414,8 @@ jobs:
     continue-on-error: true
   update_nightly_tag:
     needs:
-    - bundle_mac_nightly
+    - bundle_mac_nightly_x86_64
+    - bundle_mac_nightly_aarch64
     - bundle_linux_nightly_x86_64
     - bundle_linux_nightly_aarch64
     - bundle_windows_nightly_x86_64
