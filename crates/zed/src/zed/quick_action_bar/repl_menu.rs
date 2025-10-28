@@ -388,8 +388,8 @@ fn session_state(session: Entity<Session>, cx: &mut App) -> ReplMenuState {
         }
     };
 
-    let transitional = |tooltip: SharedString, animating: bool, popover_disabled: bool| {
-        ReplMenuState {
+    let transitional =
+        |tooltip: SharedString, animating: bool, popover_disabled: bool| ReplMenuState {
             tooltip,
             icon_is_animating: animating,
             popover_disabled,
@@ -397,8 +397,7 @@ fn session_state(session: Entity<Session>, cx: &mut App) -> ReplMenuState {
             indicator: Some(Indicator::dot().color(Color::Muted)),
             status: session.kernel.status(),
             ..fill_fields()
-        }
-    };
+        };
 
     let starting = || transitional(format!("{} is starting", kernel_name).into(), true, true);
     let restarting = || transitional(format!("Restarting {}", kernel_name).into(), true, true);
