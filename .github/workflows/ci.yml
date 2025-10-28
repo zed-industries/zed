@@ -850,3 +850,9 @@ jobs:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
         with:
           environment: production
+
+  test_run_tests:
+    name: Test Generated Tests
+    uses: ./.github/workflows/run_tests.yml
+    secrets: inherit
+    if: github.repository_owner == 'zed-industries'
