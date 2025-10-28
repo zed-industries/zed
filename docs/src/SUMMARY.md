@@ -43,6 +43,11 @@
 - [Environment Variables](./environment.md)
 - [REPL](./repl.md)
 
+# Platform Support
+
+- [Windows](./windows.md)
+- [Linux](./linux.md)
+
 # AI
 
 - [Overview](./ai/overview.md)
