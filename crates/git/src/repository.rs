@@ -1593,8 +1593,13 @@ impl GitRepository for RealGitRepository {
             command
                 .envs(env.iter())
                 .current_dir(&working_directory?)
-                .args(["pull"])
-                .arg(if rebase { "--rebase" } else { "--no-rebase" })
+                .arg("pull");
+
+            if rebase {
+                command.arg("--rebase");
+            }
+
+            command
                 .arg(remote_name)
                 .arg(branch_name)
                 .stdout(smol::process::Stdio::piped())
