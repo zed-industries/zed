@@ -327,7 +327,7 @@ impl DirectXRenderer {
         // Clear the render target before resizing
         unsafe { self.devices.device_context.OMSetRenderTargets(None, None) };
         unsafe { ManuallyDrop::drop(&mut self.resources.render_target) };
-        drop(self.resources.render_target_view[0].take().unwrap());
+        drop(self.resources.render_target_view[0].take());
 
         // Resizing the swap chain requires a call to the underlying DXGI adapter, which can return the device removed error.
         // The app might have moved to a monitor that's attached to a different graphics device.
