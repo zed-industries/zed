@@ -1,0 +1,178 @@
+# Generated from xtask::workflows::run_tests
+# Rebuild with `cargo xtask workflows`.
+name: run_tests
+jobs:
+  style:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: namespace-profile-4x8-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: 'false'
+    - name: steps::setup_pnpm
+      uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
+      with:
+        version: '9'
+    - name: run_tests::style::prettier_check_docs
+      run: |
+        pnpm dlx "prettier@${PRETTIER_VERSION}" . --check || {
+          echo "To fix, run from the root of the Zed repo:"
+          echo "  cd docs && pnpm dlx prettier@${PRETTIER_VERSION} . --write && cd .."
+          false
+        }
+      shell: bash -euxo pipefail {0}
+      env:
+        PRETTIER_VERSION: 3.5.0
+      working-directory: ./docs
+    - name: run_tests::style::prettier_check_default_json
+      run: |
+        pnpm dlx "prettier@${PRETTIER_VERSION}" assets/settings/default.json --check || {
+          echo "To fix, run from the root of the Zed repo:"
+          echo "  pnpm dlx prettier@${PRETTIER_VERSION} assets/settings/default.json --write"
+          false
+        }
+      shell: bash -euxo pipefail {0}
+      env:
+        PRETTIER_VERSION: 3.5.0
+    - name: ./script/check-todos
+      run: ./script/check-todos
+      shell: bash -euxo pipefail {0}
+    - name: ./script/check-keymaps
+      run: ./script/check-keymaps
+      shell: bash -euxo pipefail {0}
+    - name: steps::cargo_fmt
+      run: cargo fmt --all -- --check
+      shell: bash -euxo pipefail {0}
+    - name: ./script/clippy
+      run: ./script/clippy
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 60
+  run_tests_windows:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: self-32vcpu-windows-2022
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: 'false'
+    - name: steps::setup_cargo_config
+      run: |
+        New-Item -ItemType Directory -Path "./../.cargo" -Force
+        Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
+      shell: pwsh
+    - name: steps::setup_node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '20'
+    - name: steps::cargo_install_nextest
+      run: cargo install cargo-nextest --locked
+      shell: pwsh
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than.ps1 250
+      shell: pwsh
+    - name: steps::cargo_nextest
+      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      shell: pwsh
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
+      shell: pwsh
+    timeout-minutes: 60
+  run_tests_linux:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: 'false'
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      shell: bash -euxo pipefail {0}
+    - name: steps::setup_node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '20'
+    - name: steps::cargo_install_nextest
+      run: cargo install cargo-nextest --locked
+      shell: bash -euxo pipefail {0}
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than 100
+      shell: bash -euxo pipefail {0}
+    - name: steps::cargo_nextest
+      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      shell: bash -euxo pipefail {0}
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        rm -f ./../.cargo
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 60
+  run_tests_mac:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: self-mini-macos
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: 'false'
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      shell: bash -euxo pipefail {0}
+    - name: steps::setup_node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '20'
+    - name: steps::cargo_install_nextest
+      run: cargo install cargo-nextest --locked
+      shell: bash -euxo pipefail {0}
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than 300
+      shell: bash -euxo pipefail {0}
+    - name: steps::cargo_nextest
+      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      shell: bash -euxo pipefail {0}
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        rm -f ./../.cargo
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 60
+  check_postgres_and_protobuf_migrations:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: self-mini-macos
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        fetch-depth: '0'
+    - name: run_tests::check_postgres_and_protobuf_migrations::remove_untracked_files
+      run: git clean -df
+      shell: bash -euxo pipefail {0}
+    - name: run_tests::check_postgres_and_protobuf_migrations::ensure_fresh_merge
+      run: |
+        if [ -z "$GITHUB_BASE_REF" ];
+        then
+          echo "BUF_BASE_BRANCH=$(git merge-base origin/main HEAD)" >> "$GITHUB_ENV"
+        else
+          git checkout -B temp
+          git merge -q "origin/$GITHUB_BASE_REF" -m "merge main into temp"
+          echo "BUF_BASE_BRANCH=$GITHUB_BASE_REF" >> "$GITHUB_ENV"
+        fi
+      shell: bash -euxo pipefail {0}
+    - name: run_tests::check_postgres_and_protobuf_migrations::bufbuild_setup_action
+      uses: bufbuild/buf-setup-action@v1
+      with:
+        version: v1.29.0
+    - name: run_tests::check_postgres_and_protobuf_migrations::bufbuild_breaking_action
+      uses: bufbuild/buf-breaking-action@v1
+      with:
+        input: crates/proto/proto/
+        against: https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/
+    timeout-minutes: 60
