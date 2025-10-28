@@ -381,6 +381,7 @@ impl VsCodeSettings {
 
     fn project_settings_content(&self) -> ProjectSettingsContent {
         ProjectSettingsContent {
+            prevent_sharing_in_public_channels: false,
             all_languages: AllLanguageSettingsContent {
                 features: None,
                 edit_predictions: self.edit_predictions_settings_content(),

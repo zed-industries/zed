@@ -35,6 +35,9 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct ProjectSettings {
+    /// Whether to prevent this project from being shared in public channels.
+    pub prevent_sharing_in_public_channels: bool,
+
     /// Configuration for language servers.
     ///
     /// The following settings can be overridden for specific language servers:
@@ -473,6 +476,7 @@ impl Settings for ProjectSettings {
             hunk_style: git.hunk_style.unwrap(),
         };
         Self {
+            prevent_sharing_in_public_channels: project.prevent_sharing_in_public_channels,
             context_servers: project
                 .context_servers
                 .clone()
