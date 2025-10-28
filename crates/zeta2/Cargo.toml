@@ -18,6 +18,7 @@ chrono.workspace = true
 client.workspace = true
 cloud_llm_client.workspace = true
 cloud_zeta2_prompt.workspace = true
+collections.workspace = true
 edit_prediction.workspace = true
 edit_prediction_context.workspace = true
 feature_flags.workspace = true
@@ -29,6 +30,7 @@ language_model.workspace = true
 log.workspace = true
 project.workspace = true
 release_channel.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -43,6 +45,7 @@ cloud_llm_client = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 lsp.workspace = true
 indoc.workspace = true
+language = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }

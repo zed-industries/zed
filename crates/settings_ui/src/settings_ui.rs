@@ -2775,8 +2775,11 @@ impl SettingsWindow {
                         this.list_state.scroll_to_reveal_item(next_logical_index);
                         // We need to render the next item to ensure it's focus handle is in the element tree
                         cx.on_next_frame(window, |_, window, cx| {
-                            window.focus_next();
                             cx.notify();
+                            cx.on_next_frame(window, |_, window, cx| {
+                                window.focus_next();
+                                cx.notify();
+                            });
                         });
                         cx.notify();
                         return;
@@ -2804,8 +2807,11 @@ impl SettingsWindow {
                         this.list_state.scroll_to_reveal_item(next_logical_index);
                         // We need to render the next item to ensure it's focus handle is in the element tree
                         cx.on_next_frame(window, |_, window, cx| {
-                            window.focus_prev();
                             cx.notify();
+                            cx.on_next_frame(window, |_, window, cx| {
+                                window.focus_prev();
+                                cx.notify();
+                            });
                         });
                         cx.notify();
                         return;
