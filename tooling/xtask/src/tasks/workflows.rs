@@ -9,6 +9,7 @@ mod release_nightly;
 mod run_action_checks;
 mod run_bundling;
 mod run_docs_checks;
+mod run_license_checks;
 mod run_style_checks;
 
 mod run_tests;
@@ -34,7 +35,10 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
             "run_action_checks.yml",
             run_action_checks::run_action_checks(),
         ),
-        // ("release.yml", release::release()),
+        (
+            "run_license_checks.yml",
+            run_license_checks::run_license_checks(),
+        ), // ("release.yml", release::release()),
     ];
     fs::create_dir_all(dir)
         .with_context(|| format!("Failed to create directory: {}", dir.display()))?;
