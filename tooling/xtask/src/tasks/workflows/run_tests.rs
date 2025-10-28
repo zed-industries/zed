@@ -209,7 +209,6 @@ fn actionlint() -> NamedJob {
         named::bash(indoc::indoc! {r#"
             ${{ steps.get_actionlint.outputs.executable }} -color
         "#})
-        .id(ACTION_LINT_STEP_ID)
     }
 
     named::job(
