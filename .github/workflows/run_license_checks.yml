@@ -29,12 +29,20 @@ jobs:
   check_licenses:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
     - name: ./script/check-licenses
       run: ./script/check-licenses
       shell: bash -euxo pipefail {0}
   build_licenses:
     runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
     - name: ./script/generate-licenses
       run: ./script/generate-licenses
       shell: bash -euxo pipefail {0}

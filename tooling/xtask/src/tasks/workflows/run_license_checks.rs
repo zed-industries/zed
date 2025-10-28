@@ -32,6 +32,7 @@ fn check_licenses() -> NamedJob {
     named::job(
         Job::default()
             .runs_on(runners::LINUX_SMALL)
+            .add_step(steps::checkout_repo())
             .add_step(steps::script("./script/check-licenses")),
     )
 }
@@ -40,6 +41,7 @@ fn build_licenses() -> NamedJob {
     named::job(
         Job::default()
             .runs_on(LINUX_MEDIUM)
+            .add_step(steps::checkout_repo())
             .add_step(steps::script("./script/generate-licenses")),
     )
 }

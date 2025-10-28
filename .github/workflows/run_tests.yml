@@ -198,6 +198,10 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
     - name: run_tests::check_dependencies::install_cargo_machete
       uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386
       with:
@@ -220,6 +224,10 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
     - name: cargo build -p collab
       run: cargo build -p collab
       shell: bash -euxo pipefail {0}

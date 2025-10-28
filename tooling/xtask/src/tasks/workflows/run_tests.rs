@@ -111,6 +111,7 @@ fn check_dependencies() -> NamedJob {
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_SMALL)
+            .add_step(steps::checkout_repo())
             .add_step(install_cargo_machete())
             .add_step(run_cargo_machete())
             .add_step(check_cargo_lock())
@@ -122,6 +123,7 @@ fn check_workspace_binaries() -> NamedJob {
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
+            .add_step(steps::checkout_repo())
             .add_step(steps::script("cargo build -p collab"))
             .add_step(steps::script("cargo build --workspace --bins --examples")),
     )
