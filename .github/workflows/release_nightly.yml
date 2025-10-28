@@ -23,8 +23,8 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        clean: 'false'
-        fetch-depth: '0'
+        clean: false
+        fetch-depth: 0
     - name: steps::cargo_fmt
       run: cargo fmt --all -- --check
       shell: bash -euxo pipefail {0}
@@ -39,7 +39,7 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        clean: 'false'
+        clean: false
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
@@ -71,7 +71,7 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        clean: 'false'
+        clean: false
     - name: steps::setup_cargo_config
       run: |
         New-Item -ItemType Directory -Path "./../.cargo" -Force
@@ -112,7 +112,7 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        clean: 'false'
+        clean: false
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -148,7 +148,7 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        clean: 'false'
+        clean: false
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -189,7 +189,7 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        clean: 'false'
+        clean: false
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -237,7 +237,7 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        clean: 'false'
+        clean: false
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -279,7 +279,7 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        clean: 'false'
+        clean: false
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -313,7 +313,7 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        clean: 'false'
+        clean: false
     - name: nix_build::install_nix
       uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
       with:
@@ -341,7 +341,7 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        clean: 'false'
+        clean: false
     - name: nix_build::set_path
       run: |
         echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
@@ -377,8 +377,8 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        clean: 'false'
-        fetch-depth: '0'
+        clean: false
+        fetch-depth: 0
     - name: release_nightly::update_nightly_tag
       run: |
         if [ "$(git rev-parse nightly)" = "$(git rev-parse HEAD)" ]; then

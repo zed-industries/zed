@@ -22,7 +22,7 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        clean: 'false'
+        clean: false
     - name: nix_build::install_nix
       uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
       with:
@@ -51,7 +51,7 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        clean: 'false'
+        clean: false
     - name: nix_build::set_path
       run: |
         echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
