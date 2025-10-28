@@ -1012,6 +1012,14 @@ impl PlatformInputHandler {
             .ok()
             .flatten()
     }
+
+    #[allow(dead_code)]
+    pub fn accepts_text_input(&mut self) -> bool {
+        self.cx
+            .update(|window, cx| self.handler.accepts_text_input(window, cx))
+            .ok()
+            .unwrap_or(true)
+    }
 }
 
 /// A struct representing a selection in a text buffer, in UTF16 characters.
@@ -1118,6 +1126,11 @@ pub trait InputHandler: 'static {
     /// (which is how iTerm does it) but it doesn't seem to work for me.
     #[allow(dead_code)]
     fn apple_press_and_hold_enabled(&mut self) -> bool {
+        true
+    }
+
+    /// Returns whether this handler is accepting text input to be inserted.
+    fn accepts_text_input(&mut self, _window: &mut Window, _cx: &mut App) -> bool {
         true
     }
 }

@@ -328,7 +328,7 @@ fn translate_accelerator(msg: &MSG) -> Option<()> {
     state_no_modifiers[VK_RWIN.0 as usize] = 0;
 
     let mut buffer_c_no_modifiers = [0u16; 8];
-    let result_c_no_modifers = unsafe {
+    let result_c_no_modifiers = unsafe {
         ToUnicode(
             vkey.0 as u32,
             scan_code,
@@ -338,15 +338,18 @@ fn translate_accelerator(msg: &MSG) -> Option<()> {
         )
     };
 
-    if result_c_no_modifers <= 0 {
+    if result_c_no_modifiers <= 0 {
         return dispatch_accelerator(msg);
     }
 
     let c_no_modifiers =
-        String::from_utf16_lossy(&buffer_c_no_modifiers[..result_c_no_modifers as usize]);
+        String::from_utf16_lossy(&buffer_c_no_modifiers[..result_c_no_modifiers as usize]);
 
     if c != c_no_modifiers {
-        return None;
+        let accepts_text_input = unsafe { SendMessageW(msg.hwnd, WM_GPUI_ACCEPTS_TEXT_INPUT, None, None) };
+        if accepts_text_input.0 != 0 {
+            return None;
+        }
     }
 
     dispatch_accelerator(msg)
@@ -361,7 +364,7 @@ fn dispatch_accelerator(msg: &MSG) -> Option<()> {
             Some(msg.lParam),
         )
     };
-    (result == LRESULT(0)).then_some(())
+    (result.0 == 0).then_some(())
 }
 
 impl Platform for WindowsPlatform {
