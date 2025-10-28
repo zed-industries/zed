@@ -628,7 +628,7 @@ Here's an example of these settings changed:
   // Allow the cursor to reach the edges of the screen
   "vertical_scroll_margin": 0,
   "gutter": {
-    // Disable line numbers completely:
+    // Disable line numbers completely
     "line_numbers": false
   },
   "command_aliases": {
