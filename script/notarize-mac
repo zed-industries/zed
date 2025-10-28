@@ -248,8 +248,17 @@ function sign_binary() {
 }
 
 sign_app_binaries  "$app_path" "$app_target"
-sign_binary "target/x86_64-apple-darwin/release/remote_server"
+sign_binary "$remote_server_path"
 
 if [ "$local_arch" = false ]; then
-    gzip -f --stdout --best target/x86_64-apple-darwin/release/remote_server > target/zed-remote-server-macos-x86_64.gz
+    remote_server_name=""
+    if [ "$app_target" = "aarch64-apple-darwin" ]; then
+        remote_server_name="zed-remote-server-macos-aarch64.gz"
+    elif [ "$app_target" = "x86_64-apple-darwin" ]; then
+        remote_server_name="zed-remote-server-macos-x86_64.gz"
+    else
+        echo "Unknown remote server binary target '$app_target'"
+        exit 1
+    fi
+    gzip -f --stdout --best $remote_server_path > "$remote_server_name"
 fi
