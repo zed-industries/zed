@@ -6,8 +6,6 @@ mod unclipped;
 
 use arrayvec::ArrayVec;
 use rayon::iter::{IntoParallelIterator, ParallelIterator as _};
-use regex::Regex;
-use smallvec::SmallVec;
 use std::{
     cmp, fmt, io, mem,
     ops::{self, AddAssign, Range},
