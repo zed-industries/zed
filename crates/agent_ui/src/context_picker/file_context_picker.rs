@@ -201,14 +201,13 @@ pub(crate) fn search_files(
             .recent_navigation_history(Some(10), cx)
             .into_iter()
             .filter_map(|(project_path, _)| {
-                let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
                 Some(FileMatch {
                     mat: PathMatch {
                         score: 0.,
                         positions: Vec::new(),
                         worktree_id: project_path.worktree_id.to_usize(),
                         path: project_path.path,
-                        path_prefix: worktree.read(cx).root_name().into(),
+                        path_prefix: RelPath::empty().into(),
                         distance_to_relative_ancestor: 0,
                         is_dir: false,
                     },
@@ -224,7 +223,7 @@ pub(crate) fn search_files(
                     positions: Vec::new(),
                     worktree_id: worktree.id().to_usize(),
                     path: entry.path.clone(),
-                    path_prefix: worktree.root_name().into(),
+                    path_prefix: RelPath::empty().into(),
                     distance_to_relative_ancestor: 0,
                     is_dir: entry.is_dir(),
                 },
@@ -276,9 +275,14 @@ pub fn extract_file_name_and_directory(
     path_prefix: &RelPath,
     path_style: PathStyle,
 ) -> (SharedString, Option<SharedString>) {
-    let full_path = path_prefix.join(path);
-    let file_name = full_path.file_name().unwrap_or_default();
-    let display_path = full_path.display(path_style);
+    // If path is empty, this means we're matching with the root directory itself
+    // so we use the path_prefix as the name
+    if path.is_empty() && !path_prefix.is_empty() {
+        return (path_prefix.display(path_style).to_string().into(), None);
+    }
+
+    let file_name = path.file_name().unwrap_or_default();
+    let display_path = path.display(path_style);
     let (directory, file_name) = display_path.split_at(display_path.len() - file_name.len());
     (
         file_name.to_string().into(),

@@ -655,13 +655,12 @@ impl ContextPickerCompletionProvider {
         let SymbolLocation::InProject(symbol_path) = &symbol.path else {
             return None;
         };
-        let path_prefix = workspace
+        let _path_prefix = workspace
             .read(cx)
             .project()
             .read(cx)
-            .worktree_for_id(symbol_path.worktree_id, cx)?
-            .read(cx)
-            .root_name();
+            .worktree_for_id(symbol_path.worktree_id, cx)?;
+        let path_prefix = RelPath::empty();
 
         let (file_name, directory) = super::file_context_picker::extract_file_name_and_directory(
             &symbol_path.path,
@@ -818,9 +817,21 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 return None;
                             }
 
+                            // If path is empty, this means we're matching with the root directory itself
+                            // so we use the path_prefix as the name
+                            let path_prefix = if mat.path.is_empty() {
+                                project
+                                    .read(cx)
+                                    .worktree_for_id(project_path.worktree_id, cx)
+                                    .map(|wt| wt.read(cx).root_name().into())
+                                    .unwrap_or_else(|| mat.path_prefix.clone())
+                            } else {
+                                mat.path_prefix.clone()
+                            };
+
                             Some(Self::completion_for_path(
                                 project_path,
-                                &mat.path_prefix,
+                                &path_prefix,
                                 is_recent,
                                 mat.is_dir,
                                 excerpt_id,

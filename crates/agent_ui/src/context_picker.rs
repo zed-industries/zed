@@ -675,9 +675,9 @@ pub(crate) fn recent_context_picker_entries(
             .filter_map(|(project_path, _)| {
                 project
                     .worktree_for_id(project_path.worktree_id, cx)
-                    .map(|worktree| RecentEntry::File {
+                    .map(|_worktree| RecentEntry::File {
                         project_path,
-                        path_prefix: worktree.read(cx).root_name().into(),
+                        path_prefix: RelPath::empty().into(),
                     })
             }),
     );

@@ -595,8 +595,8 @@ impl ContextPickerCompletionProvider {
                 .filter_map(|(project_path, _)| {
                     project
                         .worktree_for_id(project_path.worktree_id, cx)
-                        .map(|worktree| {
-                            let path_prefix = worktree.read(cx).root_name().into();
+                        .map(|_worktree| {
+                            let path_prefix = RelPath::empty().into();
                             Match::File(FileMatch {
                                 mat: fuzzy::PathMatch {
                                     score: 1.,
@@ -812,9 +812,21 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                         path: mat.path.clone(),
                                     };
 
+                                    // If path is empty, this means we're matching with the root directory itself
+                                    // so we use the path_prefix as the name
+                                    let path_prefix = if mat.path.is_empty() {
+                                        project
+                                            .read(cx)
+                                            .worktree_for_id(project_path.worktree_id, cx)
+                                            .map(|wt| wt.read(cx).root_name().into())
+                                            .unwrap_or_else(|| mat.path_prefix.clone())
+                                    } else {
+                                        mat.path_prefix.clone()
+                                    };
+
                                     Self::completion_for_path(
                                         project_path,
-                                        &mat.path_prefix,
+                                        &path_prefix,
                                         is_recent,
                                         mat.is_dir,
                                         source_range.clone(),
