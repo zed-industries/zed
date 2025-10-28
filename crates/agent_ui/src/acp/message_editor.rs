@@ -2516,7 +2516,7 @@ mod tests {
                 format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) @file x.png", symbol.to_uri())
             );
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), &[format!("x.png ")]);
+            assert_eq!(current_completion_labels(editor), &["x.png "]);
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -2558,7 +2558,7 @@ mod tests {
                         format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) @file x.png", symbol.to_uri())
                     );
                     assert!(editor.has_visible_completions_menu());
-                    assert_eq!(current_completion_labels(editor), &[format!("x.png ")]);
+                    assert_eq!(current_completion_labels(editor), &["x.png "]);
                 });
 
         editor.update_in(&mut cx, |editor, window, cx| {
