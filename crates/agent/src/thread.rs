@@ -50,7 +50,7 @@ use std::{
     time::{Duration, Instant},
 };
 use std::{fmt::Write, path::PathBuf};
-use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock};
+use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock, paths::PathStyle};
 use uuid::Uuid;
 
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
@@ -2509,8 +2509,8 @@ impl From<&str> for UserMessageContent {
     }
 }
 
-impl From<acp::ContentBlock> for UserMessageContent {
-    fn from(value: acp::ContentBlock) -> Self {
+impl UserMessageContent {
+    pub fn from_content_block(value: acp::ContentBlock, path_style: PathStyle) -> Self {
         match value {
             acp::ContentBlock::Text(text_content) => Self::Text(text_content.text),
             acp::ContentBlock::Image(image_content) => Self::Image(convert_image(image_content)),
@@ -2519,7 +2519,7 @@ impl From<acp::ContentBlock> for UserMessageContent {
                 Self::Text("[audio]".to_string())
             }
             acp::ContentBlock::ResourceLink(resource_link) => {
-                match MentionUri::parse(&resource_link.uri) {
+                match MentionUri::parse(&resource_link.uri, path_style) {
                     Ok(uri) => Self::Mention {
                         uri,
                         content: String::new(),
@@ -2532,7 +2532,7 @@ impl From<acp::ContentBlock> for UserMessageContent {
             }
             acp::ContentBlock::Resource(resource) => match resource.resource {
                 acp::EmbeddedResourceResource::TextResourceContents(resource) => {
-                    match MentionUri::parse(&resource.uri) {
+                    match MentionUri::parse(&resource.uri, path_style) {
                         Ok(uri) => Self::Mention {
                             uri,
                             content: resource.text,

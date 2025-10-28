@@ -1061,6 +1061,7 @@ impl MessageEditor {
     ) {
         self.clear(window, cx);
 
+        let path_style = self.project.read(cx).path_style(cx);
         let mut text = String::new();
         let mut mentions = Vec::new();
 
@@ -1073,7 +1074,8 @@ impl MessageEditor {
                     resource: acp::EmbeddedResourceResource::TextResourceContents(resource),
                     ..
                 }) => {
-                    let Some(mention_uri) = MentionUri::parse(&resource.uri).log_err() else {
+                    let Some(mention_uri) = MentionUri::parse(&resource.uri, path_style).log_err()
+                    else {
                         continue;
                     };
                     let start = text.len();
@@ -1089,7 +1091,9 @@ impl MessageEditor {
                     ));
                 }
                 acp::ContentBlock::ResourceLink(resource) => {
-                    if let Some(mention_uri) = MentionUri::parse(&resource.uri).log_err() {
+                    if let Some(mention_uri) =
+                        MentionUri::parse(&resource.uri, path_style).log_err()
+                    {
                         let start = text.len();
                         write!(&mut text, "{}", mention_uri.as_link()).ok();
                         let end = text.len();
@@ -1104,7 +1108,7 @@ impl MessageEditor {
                     meta: _,
                 }) => {
                     let mention_uri = if let Some(uri) = uri {
-                        MentionUri::parse(&uri)
+                        MentionUri::parse(&uri, path_style)
                     } else {
                         Ok(MentionUri::PastedImage)
                     };
@@ -2292,7 +2296,10 @@ mod tests {
                 panic!("Unexpected mentions");
             };
             pretty_assertions::assert_eq!(content, "1");
-            pretty_assertions::assert_eq!(uri, &url_one.parse::<MentionUri>().unwrap());
+            pretty_assertions::assert_eq!(
+                uri,
+                &MentionUri::parse(&url_one, PathStyle::local()).unwrap()
+            );
         }
 
         let contents = message_editor
@@ -2313,7 +2320,10 @@ mod tests {
             let [(uri, Mention::UriOnly)] = contents.as_slice() else {
                 panic!("Unexpected mentions");
             };
-            pretty_assertions::assert_eq!(uri, &url_one.parse::<MentionUri>().unwrap());
+            pretty_assertions::assert_eq!(
+                uri,
+                &MentionUri::parse(&url_one, PathStyle::local()).unwrap()
+            );
         }
 
         cx.simulate_input(" ");
@@ -2374,7 +2384,10 @@ mod tests {
                 panic!("Unexpected mentions");
             };
             pretty_assertions::assert_eq!(content, "8");
-            pretty_assertions::assert_eq!(uri, &url_eight.parse::<MentionUri>().unwrap());
+            pretty_assertions::assert_eq!(
+                uri,
+                &MentionUri::parse(&url_eight, PathStyle::local()).unwrap()
+            );
         }
 
         editor.update(&mut cx, |editor, cx| {
