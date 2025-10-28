@@ -1,20 +1,26 @@
 use gh_workflow::*;
 
 use crate::tasks::workflows::{
-    run_tests::tests_workflow,
+    run_tests::run_tests_in,
     runners,
-    steps::{self, NamedJob, named, release_job},
+    steps::{self, FluentBuilder, NamedJob, named, release_job},
 };
 
 pub(crate) fn run_action_checks() -> Workflow {
     let action_checks = actionlint();
 
-    tests_workflow(&[
-        ".github/workflows/**",
-        ".github/actions/**",
-        ".github/actionlint.yml",
-    ])
-    .add_job(action_checks.name, action_checks.job)
+    named::workflow()
+        .map(|workflow| {
+            run_tests_in(
+                &[
+                    ".github/workflows/**",
+                    ".github/actions/**",
+                    ".github/actionlint.yml",
+                ],
+                workflow,
+            )
+        })
+        .add_job(action_checks.name, action_checks.job)
 }
 const ACTION_LINT_STEP_ID: &'static str = "get_actionlint";
 

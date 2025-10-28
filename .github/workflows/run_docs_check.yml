@@ -1,6 +1,6 @@
-# Generated from xtask::workflows::run_tests
+# Generated from xtask::workflows::run_docs_checks
 # Rebuild with `cargo xtask workflows`.
-name: run_tests
+name: run_docs_checks
 on:
   pull_request:
     branches:
@@ -13,8 +13,6 @@ on:
     - v[0-9]+.[0-9]+.x
     paths:
     - docs/**
-    tags:
-    - v*
 jobs:
   check_docs:
     if: github.repository_owner == 'zed-industries'

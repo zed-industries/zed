@@ -1,6 +1,6 @@
-# Generated from xtask::workflows::run_tests
+# Generated from xtask::workflows::run_action_checks
 # Rebuild with `cargo xtask workflows`.
-name: run_tests
+name: run_action_checks
 on:
   pull_request:
     branches:
@@ -17,8 +17,6 @@ on:
     - .github/workflows/**
     - .github/actions/**
     - .github/actionlint.yml
-    tags:
-    - v*
 jobs:
   actionlint:
     if: github.repository_owner == 'zed-industries'

@@ -1,5 +1,5 @@
 use crate::tasks::workflows::{
-    run_tests::tests_workflow,
+    run_tests::run_tests_in,
     runners::{self, Platform},
     steps::{self, FluentBuilder, NamedJob, named, release_job},
 };
@@ -7,7 +7,9 @@ use gh_workflow::*;
 
 pub(crate) fn run_docs_checks() -> Workflow {
     let docs = check_docs();
-    tests_workflow(&["docs/**"]).add_job(docs.name, docs.job)
+    named::workflow()
+        .map(|workflow| run_tests_in(&["docs/**"], workflow))
+        .add_job(docs.name, docs.job)
 }
 
 fn check_docs() -> NamedJob {

@@ -153,6 +153,7 @@ pub(crate) fn release_job(deps: &[&NamedJob]) -> Job {
 }
 
 impl FluentBuilder for Job {}
+impl FluentBuilder for Workflow {}
 
 /// A helper trait for building complex objects with imperative conditionals in a fluent style.
 /// Copied from GPUI to avoid adding GPUI as dependency

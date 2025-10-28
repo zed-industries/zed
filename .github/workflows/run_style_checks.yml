@@ -1,6 +1,6 @@
-# Generated from xtask::workflows::run_tests
+# Generated from xtask::workflows::run_style_checks
 # Rebuild with `cargo xtask workflows`.
-name: run_tests
+name: run_style_checks
 on:
   pull_request:
     branches:
@@ -9,8 +9,6 @@ on:
     branches:
     - main
     - v[0-9]+.[0-9]+.x
-    tags:
-    - v*
 jobs:
   check_style:
     if: github.repository_owner == 'zed-industries'
@@ -24,27 +22,9 @@ jobs:
       uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
       with:
         version: '9'
-    - name: run_style_checks::prettier_check_docs
-      run: |
-        pnpm dlx "prettier@${PRETTIER_VERSION}" . --check || {
-          echo "To fix, run from the root of the Zed repo:"
-          echo "  cd docs && pnpm dlx prettier@${PRETTIER_VERSION} . --write && cd .."
-          false
-        }
+    - name: ./script/prettier
+      run: ./script/prettier
       shell: bash -euxo pipefail {0}
-      env:
-        PRETTIER_VERSION: 3.5.0
-      working-directory: ./docs
-    - name: run_style_checks::prettier_check_default_json
-      run: |
-        pnpm dlx "prettier@${PRETTIER_VERSION}" assets/settings/default.json --check || {
-          echo "To fix, run from the root of the Zed repo:"
-          echo "  pnpm dlx prettier@${PRETTIER_VERSION} assets/settings/default.json --write"
-          false
-        }
-      shell: bash -euxo pipefail {0}
-      env:
-        PRETTIER_VERSION: 3.5.0
     - name: ./script/check-todos
       run: ./script/check-todos
       shell: bash -euxo pipefail {0}

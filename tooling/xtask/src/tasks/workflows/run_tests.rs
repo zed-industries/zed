@@ -14,9 +14,9 @@ fn str_vec(values: &'static [&'static str]) -> Vec<String> {
 }
 
 // todo! make this take vec<&str> instead
-pub(crate) fn tests_workflow(paths: &'static [&'static str]) -> Workflow {
+pub(crate) fn run_tests_in(paths: &'static [&'static str], workflow: Workflow) -> Workflow {
     let paths = str_vec(paths);
-    named::workflow()
+    workflow
         // todo! inputs?
         .on(Event::default()
             .push(
@@ -25,12 +25,6 @@ pub(crate) fn tests_workflow(paths: &'static [&'static str]) -> Workflow {
                         [
                             "main",
                             "v[0-9]+.[0-9]+.x", // any release branch
-                        ]
-                        .map(String::from),
-                    )
-                    .tags(
-                        [
-                            "v*", // any release tag
                         ]
                         .map(String::from),
                     )
@@ -60,18 +54,24 @@ pub(crate) fn run_tests() -> Workflow {
     let migrations = check_postgres_and_protobuf_migrations();
     let doctests = doctests();
 
-    tests_workflow(&[
-        "!docs/**",
-        "!script/update_top_ranking_issues/**",
-        "!.github/ISSUE_TEMPLATE/**",
-        "!.github/workflows/**",
-        ".github/workflows/run_tests.yml", // re-include this workflow so it re-runs when changed
-    ])
-    .add_job(windows_tests.name, windows_tests.job)
-    .add_job(linux_tests.name, linux_tests.job)
-    .add_job(mac_tests.name, mac_tests.job)
-    .add_job(migrations.name, migrations.job)
-    .add_job(doctests.name, doctests.job)
+    named::workflow()
+        .map(|workflow| {
+            run_tests_in(
+                &[
+                    "!docs/**",
+                    "!script/update_top_ranking_issues/**",
+                    "!.github/ISSUE_TEMPLATE/**",
+                    "!.github/workflows/**",
+                    ".github/workflows/run_tests.yml", // re-include this workflow so it re-runs when changed
+                ],
+                workflow,
+            )
+        })
+        .add_job(windows_tests.name, windows_tests.job)
+        .add_job(linux_tests.name, linux_tests.job)
+        .add_job(mac_tests.name, mac_tests.job)
+        .add_job(migrations.name, migrations.job)
+        .add_job(doctests.name, doctests.job)
 }
 
 pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {

@@ -21,8 +21,6 @@ on:
     - '!.github/ISSUE_TEMPLATE/**'
     - '!.github/workflows/**'
     - .github/workflows/run_tests.yml
-    tags:
-    - v*
 jobs:
   run_tests_windows:
     if: github.repository_owner == 'zed-industries'

@@ -27,63 +27,63 @@ env:
   ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
 
 jobs:
-  # job_spec:
-  #   name: Decide which jobs to run
-  #   if: github.repository_owner == 'zed-industries'
-  #   outputs:
-  #     run_tests: ${{ steps.filter.outputs.run_tests }}
-  #     run_license: ${{ steps.filter.outputs.run_license }}
-  #     run_docs: ${{ steps.filter.outputs.run_docs }}
-  #     run_nix: ${{ steps.filter.outputs.run_nix }}
-  #     run_actionlint: ${{ steps.filter.outputs.run_actionlint }}
-  #   runs-on:
-  #     - namespace-profile-2x4-ubuntu-2404
-  #   steps:
-  #     - name: Checkout repo
-  #       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-  #       with:
-  #         # 350 is arbitrary; ~10days of history on main (5secs); full history is ~25secs
-  #         fetch-depth: ${{ github.ref == 'refs/heads/main' && 2 || 350 }}
-  #     - name: Fetch git history and generate output filters
-  #       id: filter
-  #       run: |
-  #         if [ -z "$GITHUB_BASE_REF" ]; then
-  #           echo "Not in a PR context (i.e., push to main/stable/preview)"
-  #           COMPARE_REV="$(git rev-parse HEAD~1)"
-  #         else
-  #           echo "In a PR context comparing to pull_request.base.ref"
-  #           git fetch origin "$GITHUB_BASE_REF" --depth=350
-  #           COMPARE_REV="$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)"
-  #         fi
-  #         CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" ${{ github.sha }})"
+  job_spec:
+    name: Decide which jobs to run
+    if: github.repository_owner == 'zed-industries'
+    outputs:
+      run_tests: ${{ steps.filter.outputs.run_tests }}
+      run_license: ${{ steps.filter.outputs.run_license }}
+      run_docs: ${{ steps.filter.outputs.run_docs }}
+      run_nix: ${{ steps.filter.outputs.run_nix }}
+      run_actionlint: ${{ steps.filter.outputs.run_actionlint }}
+    runs-on:
+      - namespace-profile-2x4-ubuntu-2404
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          # 350 is arbitrary; ~10days of history on main (5secs); full history is ~25secs
+          fetch-depth: ${{ github.ref == 'refs/heads/main' && 2 || 350 }}
+      - name: Fetch git history and generate output filters
+        id: filter
+        run: |
+          if [ -z "$GITHUB_BASE_REF" ]; then
+            echo "Not in a PR context (i.e., push to main/stable/preview)"
+            COMPARE_REV="$(git rev-parse HEAD~1)"
+          else
+            echo "In a PR context comparing to pull_request.base.ref"
+            git fetch origin "$GITHUB_BASE_REF" --depth=350
+            COMPARE_REV="$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)"
+          fi
+          CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" ${{ github.sha }})"
 
-  #         # Specify anything which should potentially skip full test suite in this regex:
-  #         # - docs/
-  #         # - script/update_top_ranking_issues/
-  #         # - .github/ISSUE_TEMPLATE/
-  #         # - .github/workflows/  (except .github/workflows/ci.yml)
-  #         SKIP_REGEX='^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!ci)))'
+          # Specify anything which should potentially skip full test suite in this regex:
+          # - docs/
+          # - script/update_top_ranking_issues/
+          # - .github/ISSUE_TEMPLATE/
+          # - .github/workflows/  (except .github/workflows/ci.yml)
+          SKIP_REGEX='^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!ci)))'
 
-  #         echo "$CHANGED_FILES" | grep -qvP "$SKIP_REGEX" && \
-  #           echo "run_tests=true" >> "$GITHUB_OUTPUT" || \
-  #           echo "run_tests=false" >> "$GITHUB_OUTPUT"
+          echo "$CHANGED_FILES" | grep -qvP "$SKIP_REGEX" && \
+            echo "run_tests=true" >> "$GITHUB_OUTPUT" || \
+            echo "run_tests=false" >> "$GITHUB_OUTPUT"
 
-  #         echo "$CHANGED_FILES" | grep -qP '^docs/' && \
-  #           echo "run_docs=true" >> "$GITHUB_OUTPUT" || \
-  #           echo "run_docs=false" >> "$GITHUB_OUTPUT"
+          echo "$CHANGED_FILES" | grep -qP '^docs/' && \
+            echo "run_docs=true" >> "$GITHUB_OUTPUT" || \
+            echo "run_docs=false" >> "$GITHUB_OUTPUT"
 
-  #         echo "$CHANGED_FILES" | grep -qP '^\.github/(workflows/|actions/|actionlint.yml)' && \
-  #           echo "run_actionlint=true" >> "$GITHUB_OUTPUT" || \
-  #           echo "run_actionlint=false" >> "$GITHUB_OUTPUT"
+          echo "$CHANGED_FILES" | grep -qP '^\.github/(workflows/|actions/|actionlint.yml)' && \
+            echo "run_actionlint=true" >> "$GITHUB_OUTPUT" || \
+            echo "run_actionlint=false" >> "$GITHUB_OUTPUT"
 
-  #         echo "$CHANGED_FILES" | grep -qP '^(Cargo.lock|script/.*licenses)' && \
-  #           echo "run_license=true" >> "$GITHUB_OUTPUT" || \
-  #           echo "run_license=false" >> "$GITHUB_OUTPUT"
+          echo "$CHANGED_FILES" | grep -qP '^(Cargo.lock|script/.*licenses)' && \
+            echo "run_license=true" >> "$GITHUB_OUTPUT" || \
+            echo "run_license=false" >> "$GITHUB_OUTPUT"
 
-  #         echo "$CHANGED_FILES" | grep -qP '^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)' && \
-  #           echo "$GITHUB_REF_NAME" | grep -qvP '^v[0-9]+\.[0-9]+\.[0-9x](-pre)?$' && \
-  #           echo "run_nix=true" >> "$GITHUB_OUTPUT" || \
-  #           echo "run_nix=false" >> "$GITHUB_OUTPUT"
+          echo "$CHANGED_FILES" | grep -qP '^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)' && \
+            echo "$GITHUB_REF_NAME" | grep -qvP '^v[0-9]+\.[0-9]+\.[0-9x](-pre)?$' && \
+            echo "run_nix=true" >> "$GITHUB_OUTPUT" || \
+            echo "run_nix=false" >> "$GITHUB_OUTPUT"
 
   migration_checks:
     name: Check Postgres and Protobuf migrations, mergability
