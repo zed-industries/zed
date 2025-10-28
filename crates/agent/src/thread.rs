@@ -1816,15 +1816,15 @@ impl Thread {
         log::debug!("Completion intent: {:?}", completion_intent);
         log::debug!("Completion mode: {:?}", self.completion_mode);
 
-        let available_tools = self
+        let available_tools: Vec<_> = self
             .running_turn
             .as_ref()
             .map(|turn| turn.tools.keys().cloned().collect())
             .unwrap_or_default();
 
+        log::debug!("Request includes {} tools", available_tools.len());
         let messages = self.build_request_messages(available_tools, cx);
         log::debug!("Request will include {} messages", messages.len());
-        log::debug!("Request includes {} tools", tools.len());
 
         let request = LanguageModelRequest {
             thread_id: Some(self.id.to_string()),

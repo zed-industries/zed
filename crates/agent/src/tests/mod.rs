@@ -2293,7 +2293,7 @@ async fn test_send_max_retries_exceeded(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_system_prompt_only_includes_enabled_tools(cx: &mut TestAppContext) {
+async fn test_request_only_includes_enabled_tools(cx: &mut TestAppContext) {
     let ThreadTest {
         model, thread, fs, ..
     } = setup(cx, TestModel::Fake).await;
@@ -2312,8 +2312,8 @@ async fn test_system_prompt_only_includes_enabled_tools(cx: &mut TestAppContext)
         json!({
             "agent": {
                 "profiles": {
-                    "test-selective": {
-                        "name": "Test Selective Profile",
+                    "test": {
+                        "name": "Test Profile",
                         "tools": {
                             EchoTool::name(): true,
                             DelayTool::name(): false,
@@ -2332,7 +2332,7 @@ async fn test_system_prompt_only_includes_enabled_tools(cx: &mut TestAppContext)
     cx.run_until_parked();
 
     thread.update(cx, |thread, _| {
-        thread.set_profile(AgentProfileId("test-selective".into()))
+        thread.set_profile(AgentProfileId("test".into()))
     });
 
     thread
