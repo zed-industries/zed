@@ -105,6 +105,13 @@ pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
     }
 }
 
+pub(crate) fn clippy(platform: Platform) -> Step<Run> {
+    match platform {
+        Platform::Windows => named::pwsh("./script/clippy.ps1"),
+        _ => named::bash("./script/clippy"),
+    }
+}
+
 pub(crate) fn cache_rust_dependencies() -> Step<Use> {
     named::uses(
         "swatinem",
