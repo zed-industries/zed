@@ -58,6 +58,12 @@ pub struct TaskTemplate {
     /// * `on_success` — hide the terminal tab on task success only, otherwise behaves similar to `always`.
     #[serde(default)]
     pub hide: HideStrategy,
+    /// Languages that this task template is associated with
+    /// When this list is empty, the task will be visible in all langauges.
+    /// Otherwise, the task will be visible only in the specified languages.
+    #[serde(default, deserialize_with = "non_empty_string_vec")]
+    #[schemars(length(min = 1))]
+    pub languages: Vec<String>,
     /// Represents the tags which this template attaches to.
     /// Adding this removes this task from other UI and gives you ability to run it by tag.
     #[serde(default, deserialize_with = "non_empty_string_vec")]

@@ -200,9 +200,30 @@ impl TasksModal {
             }
         }));
         self.picker.update(cx, |picker, cx| {
+            let language = task_contexts
+                .location()
+                .and_then(|location| location.buffer.read(cx).language())
+                .map(|lang| lang.config().name.clone());
+
             picker.delegate.task_contexts = task_contexts;
+
             picker.delegate.last_used_candidate_index = last_used_candidate_index;
-            picker.delegate.candidates = Some(new_candidates);
+            picker.delegate.candidates = Some(
+                new_candidates
+                    .into_iter()
+                    .filter(|candidate| {
+                        let task_languages = &candidate.1.original_task().languages;
+
+                        task_languages.is_empty()
+                            || language.as_ref().is_none_or(|lang| {
+                                task_languages.iter().any(|task_lang| {
+                                    task_lang.to_ascii_lowercase().as_str()
+                                        == lang.0.to_ascii_lowercase().as_str()
+                                })
+                            })
+                    })
+                    .collect(),
+            );
             picker.refresh(window, cx);
             cx.notify();
         })
