@@ -566,6 +566,7 @@ impl StackFrameList {
                 this.activate_selected_entry(window, cx);
             }))
             .hover(|style| style.bg(cx.theme().colors().element_hover).cursor_pointer())
+            .overflow_x_scroll()
             .child(
                 v_flex()
                     .gap_0p5()
