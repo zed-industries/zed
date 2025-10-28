@@ -772,7 +772,7 @@ jobs:
 
   nix-build:
     name: Build with Nix
-    uses: ./.github/workflows/nix.yml
+    uses: ./.github/workflows/nix_build.yml
     needs: [job_spec]
     if: github.repository_owner == 'zed-industries' &&
       (contains(github.event.pull_request.labels.*.name, 'run-nix') ||
