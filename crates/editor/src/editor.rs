@@ -16771,8 +16771,6 @@ impl Editor {
                         })
                         .collect::<Vec<_>>();
 
-                    dbg!(&locations);
-
                     // There is an O(n) implementation, but given this list will be
                     // small (usually <100 items), the extra O(log(n)) factor isn't
                     // worth the (surprisingly large amount of) extra complexity.
