@@ -1479,6 +1479,189 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_context_completion_provider_multiple_worktrees(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let app_state = cx.update(AppState::test);
+
+        cx.update(|cx| {
+            language::init(cx);
+            editor::init(cx);
+            workspace::init(app_state.clone(), cx);
+            Project::init_settings(cx);
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/project1"),
+                json!({
+                    "a": {
+                        "one.txt": "",
+                        "two.txt": "",
+                    }
+                }),
+            )
+            .await;
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/project2"),
+                json!({
+                    "b": {
+                        "three.txt": "",
+                        "four.txt": "",
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(
+            app_state.fs.clone(),
+            [path!("/project1").as_ref(), path!("/project2").as_ref()],
+            cx,
+        )
+        .await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+
+        let worktrees = project.update(cx, |project, cx| {
+            let worktrees = project.worktrees(cx).collect::<Vec<_>>();
+            assert_eq!(worktrees.len(), 2);
+            worktrees
+        });
+
+        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
+        let slash = PathStyle::local().separator();
+
+        for (worktree_idx, paths) in [
+            vec![rel_path("a/one.txt"), rel_path("a/two.txt")],
+            vec![rel_path("b/three.txt"), rel_path("b/four.txt")],
+        ]
+        .iter()
+        .enumerate()
+        {
+            let worktree_id = worktrees[worktree_idx].read_with(&cx, |wt, _| wt.id());
+            for path in paths {
+                workspace
+                    .update_in(&mut cx, |workspace, window, cx| {
+                        workspace.open_path(
+                            ProjectPath {
+                                worktree_id,
+                                path: (*path).into(),
+                            },
+                            None,
+                            false,
+                            window,
+                            cx,
+                        )
+                    })
+                    .await
+                    .unwrap();
+            }
+        }
+
+        let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let editor = cx.new(|cx| {
+                Editor::new(
+                    editor::EditorMode::full(),
+                    multi_buffer::MultiBuffer::build_simple("", cx),
+                    None,
+                    window,
+                    cx,
+                )
+            });
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| AtMentionEditor(editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            editor
+        });
+
+        let context_store = cx.new(|_| ContextStore::new(project.downgrade()));
+
+        let editor_entity = editor.downgrade();
+        editor.update_in(&mut cx, |editor, window, cx| {
+            window.focus(&editor.focus_handle(cx));
+            editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
+                workspace.downgrade(),
+                context_store.downgrade(),
+                None,
+                None,
+                editor_entity,
+                None,
+            ))));
+        });
+
+        cx.simulate_input("@");
+
+        // With multiple worktrees, we should see the project name as prefix
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "@");
+            assert!(editor.has_visible_completions_menu());
+            let labels = current_completion_labels(editor);
+
+            assert!(
+                labels.contains(&format!("four.txt project2{slash}b{slash}")),
+                "Expected 'four.txt project2{slash}b{slash}' in labels: {:?}",
+                labels
+            );
+            assert!(
+                labels.contains(&format!("three.txt project2{slash}b{slash}")),
+                "Expected 'three.txt project2{slash}b{slash}' in labels: {:?}",
+                labels
+            );
+        });
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
+            editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
+            editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
+            editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "@file ");
+            assert!(editor.has_visible_completions_menu());
+        });
+
+        cx.simulate_input("one");
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "@file one");
+            assert!(editor.has_visible_completions_menu());
+            assert_eq!(
+                current_completion_labels(editor),
+                vec![format!("one.txt project1{slash}a{slash}")]
+            );
+        });
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                format!("[@one.txt](@file:project1{slash}a{slash}one.txt) ")
+            );
+            assert!(!editor.has_visible_completions_menu());
+        });
+    }
+
     fn fold_ranges(editor: &Editor, cx: &mut App) -> Vec<Range<Point>> {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         editor.display_map.update(cx, |display_map, cx| {
