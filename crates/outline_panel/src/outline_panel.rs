@@ -1701,10 +1701,8 @@ impl OutlinePanel {
             return;
         };
         let mut buffers_to_fold = HashSet::default();
-        let new_entries = self
-            .cached_entries
-            .iter()
-            .flat_map(|cached_entry| match &cached_entry.entry {
+        self.collapsed_entries.extend(
+                self.cached_entries.iter().filter_map(|cached_entry| match &cached_entry.entry {
                 PanelEntry::Fs(FsEntry::Directory(FsEntryDirectory {
                     worktree_id, entry, ..
                 })) => Some(CollapsedEntry::Dir(*worktree_id, entry.id)),
@@ -1736,9 +1734,8 @@ impl OutlinePanel {
                     ))
                 }
                 PanelEntry::Search(_) => None,
-            })
-            .collect::<Vec<_>>();
-        self.collapsed_entries.extend(new_entries);
+            }),
+        );
 
         active_editor.update(cx, |editor, cx| {
             buffers_to_fold.retain(|buffer_id| !editor.is_buffer_folded(*buffer_id, cx));
