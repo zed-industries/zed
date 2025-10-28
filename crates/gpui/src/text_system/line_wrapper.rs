@@ -1,6 +1,6 @@
 use crate::{FontId, FontRun, Pixels, PlatformTextSystem, SharedString, TextRun, px};
 use collections::HashMap;
-use std::{iter, sync::Arc};
+use std::{borrow::Cow, iter, sync::Arc};
 
 /// The GPUI line wrapper, used to wrap lines of text to a given width.
 pub struct LineWrapper {
@@ -129,13 +129,13 @@ impl LineWrapper {
     }
 
     /// Truncate a line of text to the given width with this wrapper's font and font size.
-    pub fn truncate_line(
+    pub fn truncate_line<'a>(
         &mut self,
         line: SharedString,
         truncate_width: Pixels,
         truncation_suffix: &str,
-        runs: &mut Vec<TextRun>,
-    ) -> SharedString {
+        runs: &'a [TextRun],
+    ) -> (SharedString, Cow<'a, [TextRun]>) {
         let mut width = px(0.);
         let mut suffix_width = truncation_suffix
             .chars()
@@ -154,13 +154,14 @@ impl LineWrapper {
             if width.floor() > truncate_width {
                 let result =
                     SharedString::from(format!("{}{}", &line[..truncate_ix], truncation_suffix));
-                update_runs_after_truncation(&result, truncation_suffix, runs);
+                let mut runs = runs.to_vec();
+                update_runs_after_truncation(&result, truncation_suffix, &mut runs);
 
-                return result;
+                return (result, Cow::Owned(runs));
             }
         }
 
-        line
+        (line, Cow::Borrowed(runs))
     }
 
     /// Any character in this list should be treated as a word character,
@@ -493,15 +494,14 @@ mod tests {
         fn perform_test(
             wrapper: &mut LineWrapper,
             text: &'static str,
-            result: &'static str,
+            expected: &'static str,
             ellipsis: &str,
         ) {
             let dummy_run_lens = vec![text.len()];
-            let mut dummy_runs = generate_test_runs(&dummy_run_lens);
-            assert_eq!(
-                wrapper.truncate_line(text.into(), px(220.), ellipsis, &mut dummy_runs),
-                result
-            );
+            let dummy_runs = generate_test_runs(&dummy_run_lens);
+            let (result, dummy_runs) =
+                wrapper.truncate_line(text.into(), px(220.), ellipsis, &dummy_runs);
+            assert_eq!(result, expected);
             assert_eq!(dummy_runs.first().unwrap().len, result.len());
         }
 
@@ -532,16 +532,15 @@ mod tests {
         fn perform_test(
             wrapper: &mut LineWrapper,
             text: &'static str,
-            result: &str,
+            expected: &str,
             run_lens: &[usize],
             result_run_len: &[usize],
             line_width: Pixels,
         ) {
-            let mut dummy_runs = generate_test_runs(run_lens);
-            assert_eq!(
-                wrapper.truncate_line(text.into(), line_width, "…", &mut dummy_runs),
-                result
-            );
+            let dummy_runs = generate_test_runs(run_lens);
+            let (result, dummy_runs) =
+                wrapper.truncate_line(text.into(), line_width, "…", &dummy_runs);
+            assert_eq!(result, expected);
             for (run, result_len) in dummy_runs.iter().zip(result_run_len) {
                 assert_eq!(run.len, *result_len);
             }

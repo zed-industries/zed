@@ -26,8 +26,8 @@ use sum_tree::{Bias, ContextLessSummary, Dimensions, SumTree, TreeMap};
 use text::{BufferId, Edit};
 use ui::ElementId;
 
-const NEWLINES: &[u8; u128::BITS as usize] = &[b'\n'; _];
-const BULLETS: &[u8; u128::BITS as usize] = &[b'*'; _];
+const NEWLINES: &[u8; rope::Chunk::MASK_BITS] = &[b'\n'; _];
+const BULLETS: &[u8; rope::Chunk::MASK_BITS] = &[b'*'; _];
 
 /// Tracks custom blocks such as diagnostics that should be displayed within buffer.
 ///
@@ -69,6 +69,8 @@ impl From<CustomBlockId> for ElementId {
     }
 }
 
+/// A zero-indexed point in a text buffer consisting of a row and column
+/// adjusted for inserted blocks, wrapped rows, tabs, folds and inlays.
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct BlockPoint(pub Point);
 
@@ -80,11 +82,16 @@ struct WrapRow(u32);
 
 pub type RenderBlock = Arc<dyn Send + Sync + Fn(&mut BlockContext) -> AnyElement>;
 
+/// Where to place a block.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BlockPlacement<T> {
+    /// Place the block above the given position.
     Above(T),
+    /// Place the block below the given position.
     Below(T),
+    /// Place the block next the given position.
     Near(T),
+    /// Replace the given range of positions with the block.
     Replace(RangeInclusive<T>),
 }
 
@@ -1186,18 +1193,14 @@ impl BlockMapWriter<'_> {
         self.0.sync(wrap_snapshot, edits);
     }
 
-    pub fn remove_intersecting_replace_blocks<T>(
+    pub fn remove_intersecting_replace_blocks(
         &mut self,
-        ranges: impl IntoIterator<Item = Range<T>>,
+        ranges: impl IntoIterator<Item = Range<usize>>,
         inclusive: bool,
-    ) where
-        T: ToOffset,
-    {
+    ) {
         let wrap_snapshot = self.0.wrap_snapshot.borrow();
         let mut blocks_to_remove = HashSet::default();
         for range in ranges {
-            let range = range.start.to_offset(wrap_snapshot.buffer_snapshot())
-                ..range.end.to_offset(wrap_snapshot.buffer_snapshot());
             for block in self.blocks_intersecting_buffer_range(range, inclusive) {
                 if matches!(block.placement, BlockPlacement::Replace(_)) {
                     blocks_to_remove.insert(block.id);
@@ -1783,11 +1786,11 @@ impl<'a> Iterator for BlockChunks<'a> {
 
         if self.masked {
             // Not great for multibyte text because to keep cursor math correct we
-            // need to have the same number of bytes in the input as output.
+            // need to have the same number of chars in the input as output.
             let chars_count = prefix.chars().count();
             let bullet_len = chars_count;
             prefix = unsafe { std::str::from_utf8_unchecked(&BULLETS[..bullet_len]) };
-            chars = 1u128.unbounded_shl(bullet_len as u32) - 1;
+            chars = 1u128.unbounded_shl(bullet_len as u32).wrapping_sub(1);
             tabs = 0;
         }
 
@@ -3570,8 +3573,12 @@ mod tests {
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
         writer.remove_intersecting_replace_blocks(
-            [buffer_snapshot.anchor_after(Point::new(1, 0))
-                ..buffer_snapshot.anchor_after(Point::new(1, 0))],
+            [buffer_snapshot
+                .anchor_after(Point::new(1, 0))
+                .to_offset(&buffer_snapshot)
+                ..buffer_snapshot
+                    .anchor_after(Point::new(1, 0))
+                    .to_offset(&buffer_snapshot)],
             false,
         );
         let blocks_snapshot = block_map.read(wraps_snapshot, Default::default());

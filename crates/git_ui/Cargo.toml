@@ -44,7 +44,6 @@ multi_buffer.workspace = true
 notifications.workspace = true
 panel.workspace = true
 picker.workspace = true
-postage.workspace = true
 project.workspace = true
 schemars.workspace = true
 serde.workspace = true

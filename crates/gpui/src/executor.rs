@@ -2,21 +2,20 @@ use crate::{App, PlatformDispatcher};
 use async_task::Runnable;
 use futures::channel::mpsc;
 use smol::prelude::*;
-use std::mem::ManuallyDrop;
-use std::panic::Location;
-use std::thread::{self, ThreadId};
 use std::{
     fmt::Debug,
     marker::PhantomData,
-    mem,
+    mem::{self, ManuallyDrop},
     num::NonZeroUsize,
+    panic::Location,
     pin::Pin,
     rc::Rc,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicUsize, Ordering},
     },
     task::{Context, Poll},
+    thread::{self, ThreadId},
     time::{Duration, Instant},
 };
 use util::TryFutureExt;
@@ -123,7 +122,12 @@ impl TaskLabel {
     /// Construct a new task label.
     pub fn new() -> Self {
         static NEXT_TASK_LABEL: AtomicUsize = AtomicUsize::new(1);
-        Self(NEXT_TASK_LABEL.fetch_add(1, SeqCst).try_into().unwrap())
+        Self(
+            NEXT_TASK_LABEL
+                .fetch_add(1, Ordering::SeqCst)
+                .try_into()
+                .unwrap(),
+        )
     }
 }
 
@@ -271,11 +275,13 @@ impl BackgroundExecutor {
             let awoken = awoken.clone();
             let unparker = unparker.clone();
             move || {
-                awoken.store(true, SeqCst);
+                awoken.store(true, Ordering::SeqCst);
                 unparker.unpark();
             }
         });
         let mut cx = std::task::Context::from_waker(&waker);
+
+        let mut test_should_end_by = Instant::now() + Duration::from_secs(500);
 
         loop {
             match future.as_mut().poll(&mut cx) {
@@ -287,7 +293,7 @@ impl BackgroundExecutor {
                     max_ticks -= 1;
 
                     if !dispatcher.tick(background_only) {
-                        if awoken.swap(false, SeqCst) {
+                        if awoken.swap(false, Ordering::SeqCst) {
                             continue;
                         }
 
@@ -309,7 +315,12 @@ impl BackgroundExecutor {
                             )
                         }
                         dispatcher.set_unparker(unparker.clone());
-                        parker.park();
+                        parker.park_timeout(
+                            test_should_end_by.saturating_duration_since(Instant::now()),
+                        );
+                        if Instant::now() > test_should_end_by {
+                            panic!("test timed out with allow_parking")
+                        }
                     }
                 }
             }

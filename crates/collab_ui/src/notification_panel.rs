@@ -738,19 +738,17 @@ impl Render for NotificationToast {
             .on_modifiers_changed(cx.listener(|_, _, _, cx| cx.notify()))
             .child(
                 IconButton::new(close_id, close_icon)
-                    .tooltip(move |window, cx| {
+                    .tooltip(move |_window, cx| {
                         if suppress {
                             Tooltip::for_action(
                                 "Suppress.\nClose with click.",
                                 &workspace::SuppressNotification,
-                                window,
                                 cx,
                             )
                         } else {
                             Tooltip::for_action(
                                 "Close.\nSuppress with shift-click",
                                 &menu::Cancel,
-                                window,
                                 cx,
                             )
                         }

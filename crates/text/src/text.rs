@@ -2051,6 +2051,14 @@ impl BufferSnapshot {
         self.visible_text.point_to_offset(point)
     }
 
+    pub fn point_to_offset_utf16(&self, point: Point) -> OffsetUtf16 {
+        self.visible_text.point_to_offset_utf16(point)
+    }
+
+    pub fn point_utf16_to_offset_utf16(&self, point: PointUtf16) -> OffsetUtf16 {
+        self.visible_text.point_utf16_to_offset_utf16(point)
+    }
+
     pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
         self.visible_text.point_utf16_to_offset(point)
     }
@@ -2081,6 +2089,10 @@ impl BufferSnapshot {
 
     pub fn point_to_point_utf16(&self, point: Point) -> PointUtf16 {
         self.visible_text.point_to_point_utf16(point)
+    }
+
+    pub fn point_utf16_to_point(&self, point: PointUtf16) -> Point {
+        self.visible_text.point_utf16_to_point(point)
     }
 
     pub fn version(&self) -> &clock::Global {
@@ -2266,7 +2278,13 @@ impl BufferSnapshot {
                 insertion_cursor.prev();
             }
             let insertion = insertion_cursor.item().expect("invalid insertion");
-            assert_eq!(insertion.timestamp, anchor.timestamp, "invalid insertion");
+            assert_eq!(
+                insertion.timestamp,
+                anchor.timestamp,
+                "invalid insertion for buffer {} with anchor {:?}",
+                self.remote_id(),
+                anchor
+            );
 
             fragment_cursor.seek_forward(&Some(&insertion.fragment_id), Bias::Left);
             let fragment = fragment_cursor.item().unwrap();
@@ -2402,17 +2420,8 @@ impl BufferSnapshot {
         } else {
             if offset > self.visible_text.len() {
                 panic!("offset {} is out of bounds", offset)
-            } else if !self.visible_text.is_char_boundary(offset) {
-                // find the character
-                let char_start = self.visible_text.floor_char_boundary(offset);
-                // `char_start` must be less than len and a char boundary
-                let ch = self.visible_text.chars_at(char_start).next().unwrap();
-                let char_range = char_start..char_start + ch.len_utf8();
-                panic!(
-                    "byte index {} is not a char boundary; it is inside {:?} (bytes {:?})",
-                    offset, ch, char_range,
-                );
             }
+            self.visible_text.assert_char_boundary(offset);
             let (start, _, item) = self.fragments.find::<usize, _>(&None, &offset, bias);
             let fragment = item.unwrap();
             let overshoot = offset - start;
@@ -3264,6 +3273,13 @@ impl LineEnding {
         match self {
             LineEnding::Unix => "\n",
             LineEnding::Windows => "\r\n",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            LineEnding::Unix => "LF",
+            LineEnding::Windows => "CRLF",
         }
     }
 
