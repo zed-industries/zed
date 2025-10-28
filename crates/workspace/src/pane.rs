@@ -3702,6 +3702,10 @@ impl Render for Pane {
             key_context.add("EmptyPane");
         }
 
+        self.toolbar
+            .read(cx)
+            .contribute_context(&mut key_context, cx);
+
         let should_display_tab_bar = self.should_display_tab_bar.clone();
         let display_tab_bar = should_display_tab_bar(window, cx);
         let Some(project) = self.project.upgrade() else {
