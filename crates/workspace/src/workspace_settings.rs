@@ -126,6 +126,7 @@ pub struct ClockSettings {
     pub show: bool,
     pub position: ClockLocation,
     pub use_12_hour_clock: bool,
+    pub offset: String,
 }
 
 impl Settings for ClockSettings {
@@ -135,6 +136,7 @@ impl Settings for ClockSettings {
             show: clock.show.unwrap(),
             position: clock.position.unwrap(),
             use_12_hour_clock: clock.use_12_hour_clock.unwrap(),
+            offset: clock.offset.unwrap(),
         }
     }
 }

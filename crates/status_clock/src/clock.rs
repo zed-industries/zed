@@ -1,39 +1,27 @@
 use core::time::Duration;
 
-use gpui::{App, AppContext, Entity, Styled, Subscription, Task, WeakEntity};
+use gpui::{Styled, Task, WeakEntity};
 use settings::Settings;
-use time::{
-    OffsetDateTime,
-    format_description::{
-        BorrowedFormatItem, Component,
-        modifier::{Hour, Minute, Padding, Period, Second},
-    },
-};
-use ui::{
-    BorrowAppContext, Button, ButtonCommon, Clickable, Context, FluentBuilder, IntoElement,
-    LabelSize, ParentElement, Render, Tooltip, Window, div,
-};
+use time::{OffsetDateTime, UtcOffset};
+use ui::{Context, IntoElement, ParentElement, Render, Window, div};
 use util::ResultExt;
 use workspace::{ClockSettings, StatusItemView, Workspace, item::ItemHandle};
 
+// TODO: show in TitleBar
 pub struct Clock {
     update_time: Task<()>,
-    _observe_active_editor: Option<Subscription>,
+    workspace: WeakEntity<Workspace>,
 }
 
 impl Clock {
-    pub fn new() -> Self {
+    pub fn new(workspace: &Workspace) -> Self {
         Self {
             update_time: Task::ready(()),
-            _observe_active_editor: None,
+            workspace: workspace.weak_handle(),
         }
     }
 
     fn update_time(&mut self, cx: &mut Context<Self>) {
-        // cx.background_spawn(async {
-
-        // });
-
         self.update_time = cx.spawn(async move |clock, cx| {
             let now = time::OffsetDateTime::now_utc();
 
@@ -66,58 +54,51 @@ impl Render for Clock {
             return div().hidden();
         }
 
-        let time = OffsetDateTime::now_local()
-            .log_err()
-            .unwrap_or_else(|| OffsetDateTime::now_utc());
-
-        let mut hour = Hour::default();
-        hour.is_12_hour_clock = clock.use_12_hour_clock;
-        let mut period = Period::default();
-        period.is_uppercase = true;
-
-        let end = if clock.use_12_hour_clock {
-            BorrowedFormatItem::Compound(&[
-                BorrowedFormatItem::Literal(b" "),
-                BorrowedFormatItem::Component(Component::Period(period)),
-            ])
+        let format = if clock.use_12_hour_clock {
+            time::macros::format_description!("[hour repr:12]:[minute] [period case:upper]")
         } else {
-            BorrowedFormatItem::Literal(&[])
+            time::macros::format_description!("[hour repr:24]:[minute]")
         };
-        let format = [
-            BorrowedFormatItem::Component(Component::Hour(hour)),
-            BorrowedFormatItem::Literal(b":"),
-            BorrowedFormatItem::Component(Component::Minute(Minute::default())),
-            end,
-        ];
-        let text = time
-            .format(&format[..])
+
+        let offset = clock.offset.trim();
+        let offset = if offset.is_empty() {
+            None
+        } else {
+            let description =
+                time::macros::format_description!("[offset_hour padding:none]:[offset_minute]");
+            UtcOffset::parse(&offset, description)
+                .inspect_err(|error| {
+                    // TODO: allow ignoring notification, maybe use global or state to not show again
+                    if let Some(workspace) = self.workspace.upgrade() {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.show_error(
+                                &format!("Wrong UTC offset format. Example: +0:00 {error}"),
+                                cx,
+                            );
+                        })
+                    }
+                })
+                .ok()
+        };
+        let offset = offset.unwrap_or_else(|| {
+            UtcOffset::current_local_offset()
+                .log_err()
+                .unwrap_or(UtcOffset::UTC)
+        });
+
+        let now = OffsetDateTime::now_utc().to_offset(offset);
+        let text = now
+            .format(format)
             .log_err()
             .unwrap_or_else(|| "00:00".to_owned());
 
-        // struct CurrentTime(time::OffsetDateTime);
         // cx.observe_window_activation(window, |clock, window, cx| {
 
-        // });
-        // cx.observe_global::<CurrentTime>(|clock, cx| {
-        //     let time: CurrentTime = cx.global();
         // });
 
         self.update_time(cx);
 
-        div().child(
-            Button::new("clock", text)
-                .label_size(LabelSize::Small)
-                .on_click(|_event, window, cx| {
-                    window.dispatch_action(Box::new(zed_actions::OpenSettings), cx)
-                })
-                .tooltip(move |_window, cx| {
-                    Tooltip::for_action(
-                        "Open Settings and search for clock",
-                        &zed_actions::OpenSettings,
-                        cx,
-                    )
-                }),
-        )
+        div().child(text).text_sm()
     }
 }
 

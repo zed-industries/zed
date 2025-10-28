@@ -1361,7 +1361,9 @@
     // Where to display the clock.
     "position": "status_bar",
     // Whether to display hours using a 12 or 24-hour clock.
-    "use_12_hour_clock": false
+    "use_12_hour_clock": false,
+    // Offset of the clock from Utc.
+    "offset": ""
   },
   // Settings specific to the terminal
   "terminal": {
