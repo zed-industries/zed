@@ -56,7 +56,7 @@ jobs:
         name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
         path: target/x86_64-apple-darwin/release/Zed.dmg
     timeout-minutes: 60
-  bundle_linux(x86_64):
+  bundle_linux_x86_64:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
                        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
@@ -90,7 +90,7 @@ jobs:
         name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
         path: target/release/zed-remote-server-*.tar.gz
     timeout-minutes: 60
-  bundle_linux(arm64):
+  bundle_linux_arm64:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
                        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))

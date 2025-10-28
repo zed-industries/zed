@@ -20,8 +20,8 @@ pub fn run_bundling() -> Workflow {
         .add_env(("ZED_CLIENT_CHECKSUM_SEED", vars::ZED_CLIENT_CHECKSUM_SEED))
         .add_env(("ZED_MINIDUMP_ENDPOINT", vars::ZED_SENTRY_MINIDUMP_ENDPOINT))
         .add_job("bundle_mac", bundle_mac())
-        .add_job("bundle_linux(x86_64)", bundle_linux(runners::Arch::X86_64))
-        .add_job("bundle_linux(arm64)", bundle_linux(runners::Arch::AARCH64))
+        .add_job("bundle_linux_x86_64", bundle_linux(runners::Arch::X86_64))
+        .add_job("bundle_linux_arm64", bundle_linux(runners::Arch::AARCH64))
         .add_job("bundle_windows", bundle_windows())
 }
 
