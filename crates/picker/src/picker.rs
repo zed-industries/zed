@@ -361,6 +361,10 @@ impl<D: PickerDelegate> Picker<D> {
         self
     }
 
+    pub fn set_max_height(&mut self, max_height: Option<gpui::Length>) {
+        self.max_height = max_height;
+    }
+
     pub fn list_measure_all(mut self) -> Self {
         match self.element_container {
             ElementContainer::List(state) => {

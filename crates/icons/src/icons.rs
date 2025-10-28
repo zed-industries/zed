@@ -186,6 +186,7 @@ pub enum IconName {
     ReplaceNext,
     ReplyArrowRight,
     Rerun,
+    Resize,
     Return,
     RotateCcw,
     RotateCw,
