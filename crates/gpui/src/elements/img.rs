@@ -159,16 +159,15 @@ pub trait StyledImage: Sized {
         self
     }
 
-    /// Set the object fit for the image.
-    fn with_fallback<T>(mut self, fallback: impl Fn() -> T + 'static) -> Self
-    where
-        T: IntoElement,
-    {
-        self.image_style().fallback = Some(Box::new(move || fallback().into_any_element()));
+    /// Set a fallback function that will be invoked to render an error view should
+    /// the image fail to load.
+    fn with_fallback(mut self, fallback: impl Fn() -> AnyElement + 'static) -> Self {
+        self.image_style().fallback = Some(Box::new(fallback));
         self
     }
 
-    /// Set the object fit for the image.
+    /// Set a fallback function that will be invoked to render a view while the image
+    /// is still being loaded.
     fn with_loading(mut self, loading: impl Fn() -> AnyElement + 'static) -> Self {
         self.image_style().loading = Some(Box::new(loading));
         self
