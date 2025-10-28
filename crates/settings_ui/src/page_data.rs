@@ -2093,6 +2093,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Enabled",
                         description: "Enable smart tab feature to skip out of syntax nodes using the Tab key",
                         field: Box::new(SettingField {
+                            json_path: Some("smart_tab.enabled"),
                             pick: |settings_content| {
                                 settings_content
                                     .editor
@@ -2116,6 +2117,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Supersede Completions",
                         description: "Whether smart tab should take precedence over accepting completions",
                         field: Box::new(SettingField {
+                            json_path: Some("smart_tab.supersede_completions"),
                             pick: |settings_content| {
                                 settings_content
                                     .editor
@@ -2139,6 +2141,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Supersede Edit Predictions",
                         description: "Whether smart tab should take precedence over accepting edit predictions",
                         field: Box::new(SettingField {
+                            json_path: Some("smart_tab.supersede_edit_predictions"),
                             pick: |settings_content| {
                                 settings_content
                                     .editor

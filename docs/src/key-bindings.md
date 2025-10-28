@@ -204,7 +204,9 @@ We do not yet move shortcuts around to ensure that all the built-in shortcuts ca
 
 Smart Tab provides context-aware navigation of your code
 using the `tab` and `shift-tab` keys by taking advantage of syntax information using Tree-sitter. Smart Tab modifies the behavior of `tab` and `shift-tab` in the following ways:
+
 - `tab`:
+
   - If only whitespace is to the left of the cursor, inserts a tab as usual
   - Otherwise, moves the cursor to the end of the parent Tree-sitter syntax node
 
@@ -213,7 +215,6 @@ using the `tab` and `shift-tab` keys by taking advantage of syntax information u
   - If no suitable node is found, performs a normal outdent
 
 When the cursor has an active selection, `tab` and `shift-tab` behave as normal indent and outdent operations. Smart Tab also respects snippet tabstops, autocomplete suggestions, and edit predictions by default.
-
 
 ### Enabling Smart Tab
 
@@ -235,8 +236,8 @@ You can configure Smart Tab to supersede autocomplete and edit predictions:
 {
   "smart_tab": {
     "enabled": true,
-    "supersede_completions": true,      // Tab navigates instead of accepting completions
-    "supersede_edit_predictions": true  // Tab navigates instead of accepting edit predictions
+    "supersede_completions": true, // Tab navigates instead of accepting completions
+    "supersede_edit_predictions": true // Tab navigates instead of accepting edit predictions
   }
 }
 ```
