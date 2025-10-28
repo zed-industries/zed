@@ -662,6 +662,7 @@ pub(crate) fn recent_context_picker_entries(
     let mut recent = Vec::with_capacity(6);
     let workspace = workspace.read(cx);
     let project = workspace.project().read(cx);
+    let include_root_name = project.worktrees(cx).count() > 1;
 
     recent.extend(
         workspace
@@ -675,9 +676,16 @@ pub(crate) fn recent_context_picker_entries(
             .filter_map(|(project_path, _)| {
                 project
                     .worktree_for_id(project_path.worktree_id, cx)
-                    .map(|_worktree| RecentEntry::File {
-                        project_path,
-                        path_prefix: RelPath::empty().into(),
+                    .map(|worktree| {
+                        let path_prefix = if include_root_name {
+                            worktree.read(cx).root_name().into()
+                        } else {
+                            RelPath::empty().into()
+                        };
+                        RecentEntry::File {
+                            project_path,
+                            path_prefix,
+                        }
                     })
             }),
     );

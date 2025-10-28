@@ -570,6 +570,7 @@ impl ContextPickerCompletionProvider {
             .unwrap_or_default();
         let workspace = workspace.read(cx);
         let project = workspace.project().read(cx);
+        let include_root_name = project.worktrees(cx).count() > 1;
 
         if let Some(agent_panel) = workspace.panel::<AgentPanel>(cx)
             && let Some(thread) = agent_panel.read(cx).active_agent_thread(cx)
@@ -595,8 +596,12 @@ impl ContextPickerCompletionProvider {
                 .filter_map(|(project_path, _)| {
                     project
                         .worktree_for_id(project_path.worktree_id, cx)
-                        .map(|_worktree| {
-                            let path_prefix = RelPath::empty().into();
+                        .map(|worktree| {
+                            let path_prefix = if include_root_name {
+                                worktree.read(cx).root_name().into()
+                            } else {
+                                RelPath::empty().into()
+                            };
                             Match::File(FileMatch {
                                 mat: fuzzy::PathMatch {
                                     score: 1.,
