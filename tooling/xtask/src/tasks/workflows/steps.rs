@@ -157,6 +157,7 @@ impl FluentBuilder for Job {}
 /// A helper trait for building complex objects with imperative conditionals in a fluent style.
 /// Copied from GPUI to avoid adding GPUI as dependency
 /// todo(ci) just put this in gh-workflow
+#[allow(unused)]
 pub(crate) trait FluentBuilder {
     /// Imperatively modify self with the given closure.
     fn map<U>(self, f: impl FnOnce(Self) -> U) -> U
