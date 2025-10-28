@@ -157,16 +157,6 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
     }
 }
 
-pub(crate) fn check_style() -> NamedJob {
-    named::job(
-        release_job(&[])
-            .runs_on(runners::MAC_DEFAULT)
-            .add_step(steps::checkout_repo())
-            .add_step(steps::cargo_fmt())
-            .add_step(steps::script("./script/clippy")),
-    )
-}
-
 pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
     fn remove_untracked_files() -> Step<Run> {
         named::bash("git clean -df")
