@@ -44,7 +44,6 @@ If this script is insufficient for your use case, you run into problems running 
 
 ## System Requirements
 
-
 ### macOS
 
 Zed supports the follow macOS releases:
