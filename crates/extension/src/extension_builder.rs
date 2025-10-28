@@ -411,6 +411,8 @@ impl ExtensionBuilder {
         let mut clang_path = wasi_sdk_dir.clone();
         clang_path.extend(["bin", &format!("clang{}", env::consts::EXE_SUFFIX)]);
 
+        log::info!("downloading wasi-sdk to {}", wasi_sdk_dir.display());
+
         if fs::metadata(&clang_path).is_ok_and(|metadata| metadata.is_file()) {
             return Ok(clang_path);
         }
@@ -431,9 +433,11 @@ impl ExtensionBuilder {
         });
         let tar = Archive::new(body);
 
+        log::info!("un-tarring wasi-sdk to {}", wasi_sdk_dir.display());
         tar.unpack(&tar_out_dir)
             .await
             .context("failed to unpack wasi-sdk archive")?;
+        log::info!("finished downloading wasi-sdk");
 
         let inner_dir = fs::read_dir(&tar_out_dir)?
             .next()

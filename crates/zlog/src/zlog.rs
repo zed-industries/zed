@@ -10,22 +10,28 @@ pub use sink::{flush, init_output_file, init_output_stderr, init_output_stdout};
 pub const SCOPE_DEPTH_MAX: usize = 4;
 
 pub fn init() {
-    if let Err(err) = try_init() {
+    if let Err(err) = try_init(None) {
         log::error!("{err}");
         eprintln!("{err}");
     }
 }
 
-pub fn try_init() -> anyhow::Result<()> {
+pub fn try_init(filter: Option<String>) -> anyhow::Result<()> {
     log::set_logger(&ZLOG)?;
     log::set_max_level(log::LevelFilter::max());
-    process_env();
+    process_env(filter);
     filter::refresh_from_settings(&std::collections::HashMap::default());
     Ok(())
 }
 
 pub fn init_test() {
-    if get_env_config().is_some() && try_init().is_ok() {
+    if get_env_config().is_some() && try_init(None).is_ok() {
+        init_output_stdout();
+    }
+}
+
+pub fn init_test_with(filter: &str) {
+    if try_init(Some(filter.to_owned())).is_ok() {
         init_output_stdout();
     }
 }
@@ -36,8 +42,8 @@ fn get_env_config() -> Option<String> {
         .ok()
 }
 
-pub fn process_env() {
-    let Some(env_config) = get_env_config() else {
+pub fn process_env(filter: Option<String>) {
+    let Some(env_config) = get_env_config().or(filter) else {
         return;
     };
     match env_config::parse(&env_config) {

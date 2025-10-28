@@ -31,7 +31,8 @@ use util::test::TempTree;
 #[cfg(test)]
 #[ctor::ctor]
 fn init_logger() {
-    zlog::init_test();
+    // show info logs while we debug the extension_store tests hanging.
+    zlog::init_test_with("info");
 }
 
 #[gpui::test]
