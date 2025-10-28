@@ -372,6 +372,7 @@ pub fn execute_run(
 
     rayon::ThreadPoolBuilder::new()
         .num_threads(4)
+        .stack_size(10 * 1024 * 1024)
         .thread_name(|ix| format!("RayonWorker{}", ix))
         .build_global()
         .unwrap();

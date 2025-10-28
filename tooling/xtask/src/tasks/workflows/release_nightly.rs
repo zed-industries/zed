@@ -1,6 +1,7 @@
 use crate::tasks::workflows::{
     nix_build::build_nix,
-    run_tests,
+    run_bundling::bundle_mac,
+    run_tests::run_platform_tests,
     runners::{Arch, Platform},
     steps::NamedJob,
     vars::{mac_bundle_envs, windows_bundle_envs},
@@ -31,10 +32,11 @@ pub fn release_nightly() -> Workflow {
     .map(|(key, value)| (key.into(), value.into()))
     .collect();
 
-    let style = run_tests::check_style();
-    let tests = run_tests::run_platform_tests(Platform::Mac);
-    let windows_tests = run_tests::run_platform_tests(Platform::Windows);
-    let bundle_mac = bundle_mac_nightly(&[&style, &tests]);
+    let style = check_style();
+    let tests = run_platform_tests(Platform::Mac);
+    let windows_tests = run_platform_tests(Platform::Windows);
+    let bundle_mac_x86 = bundle_mac_nightly(Arch::X86_64, &[&style, &tests]);
+    let bundle_mac_arm = bundle_mac_nightly(Arch::ARM64, &[&style, &tests]);
     let linux_x86 = bundle_linux_nightly(Arch::X86_64, &[&style, &tests]);
     let linux_arm = bundle_linux_nightly(Arch::ARM64, &[&style, &tests]);
     let windows_x86 = bundle_windows_nightly(Arch::X86_64, &[&style, &windows_tests]);
@@ -55,7 +57,8 @@ pub fn release_nightly() -> Workflow {
         &[&style, &tests],
     );
     let update_nightly_tag = update_nightly_tag_job(&[
-        &bundle_mac,
+        &bundle_mac_x86,
+        &bundle_mac_arm,
         &linux_x86,
         &linux_arm,
         &windows_x86,
@@ -71,7 +74,8 @@ pub fn release_nightly() -> Workflow {
         .add_job(style.name, style.job)
         .add_job(tests.name, tests.job)
         .add_job(windows_tests.name, windows_tests.job)
-        .add_job(bundle_mac.name, bundle_mac.job)
+        .add_job(bundle_mac_x86.name, bundle_mac_x86.job)
+        .add_job(bundle_mac_arm.name, bundle_mac_arm.job)
         .add_job(linux_x86.name, linux_x86.job)
         .add_job(linux_arm.name, linux_arm.job)
         .add_job(windows_x86.name, windows_x86.job)
@@ -81,19 +85,48 @@ pub fn release_nightly() -> Workflow {
         .add_job(update_nightly_tag.name, update_nightly_tag.job)
 }
 
-fn bundle_mac_nightly(deps: &[&NamedJob]) -> NamedJob {
-    let platform = Platform::Mac;
-    let job = steps::release_job(deps)
+fn check_style() -> NamedJob {
+    let job = release_job(&[])
         .runs_on(runners::MAC_DEFAULT)
-        .envs(mac_bundle_envs())
-        .add_step(steps::checkout_repo())
-        .add_step(steps::setup_node())
-        .add_step(steps::setup_sentry())
-        .add_step(steps::clear_target_dir_if_large(platform))
-        .add_step(set_release_channel_to_nightly(platform))
-        .add_step(steps::script("./script/bundle-mac"))
-        .add_step(upload_zed_nightly(platform, Arch::ARM64));
+        .add_step(
+            steps::checkout_repo()
+                .add_with(("clean", false))
+                .add_with(("fetch-depth", 0)),
+        )
+        .add_step(steps::cargo_fmt())
+        .add_step(steps::script("./script/clippy"));
+
     named::job(job)
+}
+
+fn release_job(deps: &[&NamedJob]) -> Job {
+    let job = Job::default()
+        .cond(Expression::new(
+            "github.repository_owner == 'zed-industries'",
+        ))
+        .timeout_minutes(60u32);
+    if deps.len() > 0 {
+        job.needs(deps.iter().map(|j| j.name.clone()).collect::<Vec<_>>())
+    } else {
+        job
+    }
+}
+
+fn bundle_mac_nightly(arch: Arch, deps: &[&NamedJob]) -> NamedJob {
+    let platform = Platform::Mac;
+    NamedJob {
+        name: format!("bundle_mac_nightly_{arch}"),
+        job: release_job(deps)
+            .runs_on(runners::MAC_DEFAULT)
+            .envs(mac_bundle_envs())
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_node())
+            .add_step(steps::setup_sentry())
+            .add_step(steps::clear_target_dir_if_large(platform))
+            .add_step(set_release_channel_to_nightly(platform))
+            .add_step(bundle_mac(arch))
+            .add_step(upload_zed_nightly(platform, arch)),
+    }
 }
 
 fn bundle_linux_nightly(arch: Arch, deps: &[&NamedJob]) -> NamedJob {
@@ -170,8 +203,8 @@ fn add_rust_to_path() -> Step<Run> {
 
 fn upload_zed_nightly(platform: Platform, arch: Arch) -> Step<Run> {
     match platform {
-        Platform::Linux => named::bash("script/upload-nightly linux-targz"),
-        Platform::Mac => named::bash("script/upload-nightly macos"),
+        Platform::Linux => named::bash(&format!("script/upload-nightly linux-targz {arch}")),
+        Platform::Mac => named::bash(&format!("script/upload-nightly macos {arch}")),
         Platform::Windows => {
             let cmd = match arch {
                 Arch::X86_64 => "script/upload-nightly.ps1 -Architecture x86_64",
