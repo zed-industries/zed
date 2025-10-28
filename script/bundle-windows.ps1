@@ -204,7 +204,7 @@ function CollectFiles {
     if($Architecture -eq "aarch64") {
         New-Item -Type Directory -Path "$innoDir\arm64" -Force
         Move-Item -Path ".\conpty\build\native\runtimes\arm64\OpenConsole.exe" -Destination "$innoDir\arm64\OpenConsole.exe" -Force
-        Move-Item -Path ".\conpty\runtimes\win10-arm64\native\conpty.dll" -Destination "$innoDir\arm64\conpty.dll" -Force
+        Move-Item -Path ".\conpty\runtimes\win10-arm64\native\conpty.dll" -Destination "$innoDir\conpty.dll" -Force
     }
     else {
         New-Item -Type Directory -Path "$innoDir\x64" -Force
