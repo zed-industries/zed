@@ -3,7 +3,7 @@ use futures::{
     AsyncBufReadExt as _, SinkExt as _,
     channel::mpsc::{self},
     io::BufReader,
-    stream::{SelectAll, StreamExt, FuturesUnordered},
+    stream::{FuturesUnordered, SelectAll, StreamExt},
 };
 use gpui::{App, AppContext as _, Entity, EntityId, Task, Window};
 use jupyter_protocol::{
