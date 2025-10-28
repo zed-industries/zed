@@ -21,7 +21,7 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
 
     let workflows = vec![
         ("danger.yml", danger::danger()),
-        ("build_nix.yml", nix_build::nix_build()),
+        ("nix_build.yml", nix_build::nix_build()),
         ("run_bundling.yml", run_bundling::run_bundling()),
         // ("run_tests.yml", run_tests::run_tests()),
         // ("release.yml", release::release()),
