@@ -79,7 +79,7 @@ pub fn cleanup_cargo_config(platform: Platform) -> Step<Run> {
             Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
         "#}),
         Platform::Linux | Platform::Mac => named::bash(indoc::indoc! {r#"
-            rm -f ./../.cargo
+            rm -rf ./../.cargo
         "#}),
     };
 

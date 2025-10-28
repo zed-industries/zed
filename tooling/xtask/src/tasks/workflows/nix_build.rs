@@ -59,7 +59,7 @@ pub(crate) fn build_nix(
 ) -> NamedJob {
     let runner = match platform {
         Platform::Windows => unimplemented!(),
-        Platform::Linux => runners::LINUX_DEFAULT,
+        Platform::Linux => runners::LINUX_X86_BUNDLER,
         Platform::Mac => runners::MAC_DEFAULT,
     };
     let mut job = Job::default()
