@@ -2359,8 +2359,8 @@ async fn test_wrap_selections_in_tag_line_mode(cx: &mut gpui::TestAppContext) {
         indoc! {
             "
             <ˇ>aaaaa
-            bbbbb
-            </ˇ>"
+            bbbbb</ˇ>
+            "
         },
         Mode::VisualLine,
     );
