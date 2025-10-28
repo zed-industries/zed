@@ -1,6 +1,8 @@
 # Generated from xtask::workflows::run_tests
 # Rebuild with `cargo xtask workflows`.
 name: run_tests
+on:
+  workflow_call: {}
 jobs:
   style:
     if: github.repository_owner == 'zed-industries'

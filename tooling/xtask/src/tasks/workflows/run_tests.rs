@@ -1,4 +1,4 @@
-use gh_workflow::{Run, Step, Use, Workflow};
+use gh_workflow::{Event, Run, Step, Use, Workflow, WorkflowCall};
 
 use super::{
     runners::{self, Platform},
@@ -13,6 +13,8 @@ pub(crate) fn run_tests() -> Workflow {
     let style = style();
 
     named::workflow()
+        // todo! inputs?
+        .on(Event::default().workflow_call(WorkflowCall::default()))
         .add_job(style.name, style.job)
         .add_job(windows_tests.name, windows_tests.job)
         .add_job(linux_tests.name, linux_tests.job)
@@ -64,6 +66,15 @@ pub(crate) fn style() -> NamedJob {
         .add_env(("PRETTIER_VERSION", "3.5.0"))
     }
 
+    fn check_for_typos() -> Step<Use> {
+        named::uses(
+            "crate-ci",
+            "typos",
+            "80c8a4945eec0f6d464eaf9e65ed98ef085283d1",
+        ) // v1.38.1
+        .with(("config", "./typos.toml"))
+    }
+
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_MEDIUM)
@@ -73,6 +84,7 @@ pub(crate) fn style() -> NamedJob {
             .add_step(prettier_check_default_json())
             .add_step(steps::script("./script/check-todos"))
             .add_step(steps::script("./script/check-keymaps"))
+            .add_step(check_for_typos())
             // check style steps inlined
             .add_step(steps::cargo_fmt())
             .add_step(steps::script("./script/clippy")),
