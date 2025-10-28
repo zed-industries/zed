@@ -4,6 +4,7 @@ use ui::{Label, h_flex, prelude::*, v_flex};
 use crate::outputs::plain::TerminalOutput;
 
 /// Userspace error from the kernel
+#[derive(Clone)]
 pub struct ErrorView {
     pub ename: String,
     pub evalue: String,
@@ -24,15 +25,10 @@ impl ErrorView {
                         .font_buffer(cx)
                         .child(
                             Label::new(format!("{}: ", self.ename.clone()))
-                                // .size(LabelSize::Large)
                                 .color(Color::Error)
                                 .weight(FontWeight::BOLD),
                         )
-                        .child(
-                            Label::new(self.evalue.clone())
-                                // .size(LabelSize::Large)
-                                .weight(FontWeight::BOLD),
-                        ),
+                        .child(Label::new(self.evalue.clone()).weight(FontWeight::BOLD)),
                 )
                 .child(
                     div()
