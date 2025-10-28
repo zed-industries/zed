@@ -1,9 +1,13 @@
-use gh_workflow::{Event, Run, Step, Use, Workflow, WorkflowCall};
+use gh_workflow::{Concurrency, Event, PullRequest, Push, Run, Step, Use, Workflow};
 
 use super::{
     runners::{self, Platform},
     steps::{self, FluentBuilder, NamedJob, named, release_job},
 };
+
+// a: have tests be in separate workflow, take inputs based on existing logic, and return outputs
+// b: have separate workflows for each test kind with path filters, have them all be required
+// c: break tests into separate workflows, have each of them individually check whether to run
 
 pub(crate) fn run_tests() -> Workflow {
     let windows_tests = run_platform_tests(Platform::Windows);
@@ -17,7 +21,35 @@ pub(crate) fn run_tests() -> Workflow {
 
     named::workflow()
         // todo! inputs?
-        .on(Event::default().workflow_call(WorkflowCall::default()))
+        .on(Event::default()
+            .push(
+                Push::default()
+                    .branches(
+                        [
+                            "main",
+                            "v[0-9]+.[0-9]+.x", // any release branch
+                        ]
+                        .map(String::from),
+                    )
+                    .tags(
+                        [
+                            "v*", // any release tag
+                        ]
+                        .map(String::from),
+                    ),
+            )
+            .pull_request(
+                PullRequest::default().branches(
+                    [
+                        "**", // all branches
+                    ]
+                    .map(String::from),
+                ),
+            ))
+        .concurrency(Concurrency::default()
+            .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}")
+            .cancel_in_progress(true)
+        )
         .add_job(style.name, style.job)
         .add_job(windows_tests.name, windows_tests.job)
         .add_job(linux_tests.name, linux_tests.job)

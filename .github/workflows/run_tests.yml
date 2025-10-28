@@ -2,7 +2,15 @@
 # Rebuild with `cargo xtask workflows`.
 name: run_tests
 on:
-  workflow_call: {}
+  pull_request:
+    branches:
+    - '**'
+  push:
+    branches:
+    - main
+    - v[0-9]+.[0-9]+.x
+    tags:
+    - v*
 jobs:
   style:
     if: github.repository_owner == 'zed-industries'
@@ -11,7 +19,7 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        clean: 'false'
+        clean: false
     - name: steps::setup_pnpm
       uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
       with:
@@ -61,7 +69,7 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        clean: 'false'
+        clean: false
     - name: steps::setup_cargo_config
       run: |
         New-Item -ItemType Directory -Path "./../.cargo" -Force
@@ -93,11 +101,17 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        clean: 'false'
+        clean: false
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      shell: bash -euxo pipefail {0}
+    - name: steps::setup_linux
+      run: ./script/linux
+      shell: bash -euxo pipefail {0}
+    - name: steps::install_mold
+      run: ./script/install-mold
       shell: bash -euxo pipefail {0}
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -125,7 +139,7 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        clean: 'false'
+        clean: false
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
@@ -157,7 +171,7 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        fetch-depth: '0'
+        fetch-depth: 0
     - name: run_tests::check_postgres_and_protobuf_migrations::remove_untracked_files
       run: git clean -df
       shell: bash -euxo pipefail {0}
@@ -189,7 +203,7 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        clean: 'false'
+        clean: false
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
@@ -203,7 +217,7 @@ jobs:
       uses: lycheeverse/lychee-action@82202e5e9c2f4ef1a55a3d02563e1cb6041e5332
       with:
         args: --no-progress --exclude '^http' './docs/src/**/*'
-        fail: 'true'
+        fail: true
     - name: steps::setup_linux
       run: ./script/linux
       shell: bash -euxo pipefail {0}
@@ -223,7 +237,7 @@ jobs:
       uses: lycheeverse/lychee-action@82202e5e9c2f4ef1a55a3d02563e1cb6041e5332
       with:
         args: --no-progress --exclude '^http' 'target/deploy/docs'
-        fail: 'true'
+        fail: true
     timeout-minutes: 60
   actionlint:
     if: github.repository_owner == 'zed-industries'
@@ -232,7 +246,7 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        clean: 'false'
+        clean: false
     - id: get_actionlint
       name: run_tests::actionlint::download_actionlint
       run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
@@ -249,7 +263,7 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        clean: 'false'
+        clean: false
     - name: steps::cache_rust_dependencies
       uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
       with:
