@@ -1,0 +1,48 @@
+# Generated from xtask::workflows::run_style_checks
+# Rebuild with `cargo xtask workflows`.
+name: run_style_checks
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+  CARGO_INCREMENTAL: '0'
+on:
+  pull_request:
+    branches:
+    - '**'
+  push:
+    branches:
+    - main
+    - v[0-9]+.[0-9]+.x
+jobs:
+  check_style:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: namespace-profile-4x8-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_pnpm
+      uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
+      with:
+        version: '9'
+    - name: ./script/prettier
+      run: ./script/prettier
+      shell: bash -euxo pipefail {0}
+    - name: ./script/check-todos
+      run: ./script/check-todos
+      shell: bash -euxo pipefail {0}
+    - name: ./script/check-keymaps
+      run: ./script/check-keymaps
+      shell: bash -euxo pipefail {0}
+    - name: run_style_checks::check_for_typos
+      uses: crate-ci/typos@80c8a4945eec0f6d464eaf9e65ed98ef085283d1
+      with:
+        config: ./typos.toml
+    - name: steps::cargo_fmt
+      run: cargo fmt --all -- --check
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 60
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
+  cancel-in-progress: true

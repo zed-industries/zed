@@ -1,5 +1,5 @@
 use crate::tasks::workflows::{
-    steps::named,
+    steps::{FluentBuilder, named},
     vars::{mac_bundle_envs, windows_bundle_envs},
 };
 
@@ -76,16 +76,12 @@ fn bundle_linux(arch: runners::Arch) -> Job {
         vars::GITHUB_SHA,
         arch.triple()
     );
-    let mut job = bundle_job()
+    bundle_job()
         .runs_on(arch.linux_bundler())
         .add_step(steps::checkout_repo())
         .add_step(steps::setup_sentry())
-        .add_step(steps::script("./script/linux"));
-    // todo(ci) can we do this on arm too?
-    if arch == runners::Arch::X86_64 {
-        job = job.add_step(steps::script("./script/install-mold"));
-    }
-    job.add_step(steps::script("./script/bundle-linux"))
+        .map(steps::install_linux_dependencies)
+        .add_step(steps::script("./script/bundle-linux"))
         .add_step(steps::upload_artifact(
             &artifact_name,
             "target/release/zed-*.tar.gz",
