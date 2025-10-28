@@ -18,7 +18,7 @@ impl Vim {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     let Some(range) = object
-                        .helix_range(map, selection.clone(), scope.around())
+                        .helix_range(map, selection.clone(), &scope)
                         .unwrap_or({
                             let vim_range = object.range(map, selection.clone(), &scope, None);
                             vim_range.filter(|r| r.start <= cursor_range(selection, map).start)

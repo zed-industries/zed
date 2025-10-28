@@ -204,9 +204,10 @@ impl DelimiterRange {
 fn find_mini_delimiters(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
-    around: bool,
+    scope: &ObjectScope,
     is_valid_delimiter: &DelimiterPredicate,
 ) -> Option<Range<DisplayPoint>> {
+    let around = matches!(scope, ObjectScope::Around | ObjectScope::AroundTrimmed);
     let point = map.clip_at_line_end(display_point).to_point(map);
     let offset = point.to_offset(&map.buffer_snapshot());
 
@@ -278,17 +279,17 @@ fn is_bracket_delimiter(buffer: &BufferSnapshot, start: usize, _end: usize) -> b
 fn find_mini_quotes(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
-    around: bool,
+    scope: &ObjectScope,
 ) -> Option<Range<DisplayPoint>> {
-    find_mini_delimiters(map, display_point, around, &is_quote_delimiter)
+    find_mini_delimiters(map, display_point, scope, &is_quote_delimiter)
 }
 
 fn find_mini_brackets(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
-    around: bool,
+    scope: &ObjectScope,
 ) -> Option<Range<DisplayPoint>> {
-    find_mini_delimiters(map, display_point, around, &is_bracket_delimiter)
+    find_mini_delimiters(map, display_point, scope, &is_bracket_delimiter)
 }
 
 actions!(
@@ -554,41 +555,27 @@ impl Object {
     ) -> Option<Range<DisplayPoint>> {
         let relative_to = selection.head();
         match self {
-            Object::Word { ignore_punctuation } => {
-                if scope.around() {
+            Object::Word { ignore_punctuation } => match scope {
+                ObjectScope::Around | ObjectScope::AroundTrimmed => {
                     around_word(map, relative_to, ignore_punctuation)
-                } else {
-                    in_word(map, relative_to, ignore_punctuation)
                 }
-            }
-            Object::Subword { ignore_punctuation } => {
-                if scope.around() {
+                ObjectScope::Inside => in_word(map, relative_to, ignore_punctuation),
+            },
+            Object::Subword { ignore_punctuation } => match scope {
+                ObjectScope::Around | ObjectScope::AroundTrimmed => {
                     around_subword(map, relative_to, ignore_punctuation)
-                } else {
-                    in_subword(map, relative_to, ignore_punctuation)
                 }
-            }
-            Object::Sentence => sentence(map, relative_to, scope.around()),
+                ObjectScope::Inside => in_subword(map, relative_to, ignore_punctuation),
+            },
+            Object::Sentence => sentence(map, relative_to, scope),
             //change others later
-            Object::Paragraph => paragraph(map, relative_to, scope.around(), times.unwrap_or(1)),
-            Object::Quotes => surrounding_markers(
-                map,
-                relative_to,
-                scope.around(),
-                scope.whitespace(),
-                self.is_multiline(),
-                '\'',
-                '\'',
-            ),
-            Object::BackQuotes => surrounding_markers(
-                map,
-                relative_to,
-                scope.around(),
-                scope.whitespace(),
-                self.is_multiline(),
-                '`',
-                '`',
-            ),
+            Object::Paragraph => paragraph(map, relative_to, scope, times.unwrap_or(1)),
+            Object::Quotes => {
+                surrounding_markers(map, relative_to, scope, self.is_multiline(), '\'', '\'')
+            }
+            Object::BackQuotes => {
+                surrounding_markers(map, relative_to, scope, self.is_multiline(), '`', '`')
+            }
             Object::AnyQuotes => {
                 let quote_types = ['\'', '"', '`'];
                 let cursor_offset = relative_to.to_offset(map, Bias::Left);
@@ -602,8 +589,7 @@ impl Object {
                     if let Some(range) = surrounding_markers(
                         map,
                         relative_to,
-                        scope.around(),
-                        scope.whitespace(),
+                        scope,
                         self.is_multiline(),
                         quote,
                         quote,
@@ -632,8 +618,7 @@ impl Object {
                         surrounding_markers(
                             map,
                             relative_to,
-                            scope.around(),
-                            scope.whitespace(),
+                            scope,
                             self.is_multiline(),
                             quote,
                             quote,
@@ -651,38 +636,20 @@ impl Object {
                         }
                     })
             }
-            Object::MiniQuotes => find_mini_quotes(map, relative_to, scope.around()),
-            Object::DoubleQuotes => surrounding_markers(
-                map,
-                relative_to,
-                scope.around(),
-                scope.whitespace(),
-                self.is_multiline(),
-                '"',
-                '"',
-            ),
-            Object::VerticalBars => surrounding_markers(
-                map,
-                relative_to,
-                scope.around(),
-                scope.whitespace(),
-                self.is_multiline(),
-                '|',
-                '|',
-            ),
-            Object::Parentheses => surrounding_markers(
-                map,
-                relative_to,
-                scope.around(),
-                scope.whitespace(),
-                self.is_multiline(),
-                '(',
-                ')',
-            ),
+            Object::MiniQuotes => find_mini_quotes(map, relative_to, scope),
+            Object::DoubleQuotes => {
+                surrounding_markers(map, relative_to, scope, self.is_multiline(), '"', '"')
+            }
+            Object::VerticalBars => {
+                surrounding_markers(map, relative_to, scope, self.is_multiline(), '|', '|')
+            }
+            Object::Parentheses => {
+                surrounding_markers(map, relative_to, scope, self.is_multiline(), '(', ')')
+            }
             Object::Tag => {
                 let head = selection.head();
                 let range = selection.range();
-                surrounding_html_tag(map, head, range, scope.around())
+                surrounding_html_tag(map, head, range, scope)
             }
             Object::AnyBrackets => {
                 let bracket_pairs = [('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
@@ -696,8 +663,7 @@ impl Object {
                     if let Some(range) = surrounding_markers(
                         map,
                         relative_to,
-                        scope.around(),
-                        scope.whitespace(),
+                        scope,
                         self.is_multiline(),
                         open,
                         close,
@@ -726,8 +692,7 @@ impl Object {
                         surrounding_markers(
                             map,
                             relative_to,
-                            scope.around(),
-                            scope.whitespace(),
+                            scope,
                             self.is_multiline(),
                             open,
                             close,
@@ -745,65 +710,42 @@ impl Object {
                         }
                     })
             }
-            Object::MiniBrackets => find_mini_brackets(map, relative_to, scope.around()),
-            Object::SquareBrackets => surrounding_markers(
-                map,
-                relative_to,
-                scope.around(),
-                scope.whitespace(),
-                self.is_multiline(),
-                '[',
-                ']',
-            ),
-            Object::CurlyBrackets => surrounding_markers(
-                map,
-                relative_to,
-                scope.around(),
-                scope.whitespace(),
-                self.is_multiline(),
-                '{',
-                '}',
-            ),
-            Object::AngleBrackets => surrounding_markers(
-                map,
-                relative_to,
-                scope.around(),
-                scope.whitespace(),
-                self.is_multiline(),
-                '<',
-                '>',
-            ),
+            Object::MiniBrackets => find_mini_brackets(map, relative_to, scope),
+            Object::SquareBrackets => {
+                surrounding_markers(map, relative_to, scope, self.is_multiline(), '[', ']')
+            }
+            Object::CurlyBrackets => {
+                surrounding_markers(map, relative_to, scope, self.is_multiline(), '{', '}')
+            }
+            Object::AngleBrackets => {
+                surrounding_markers(map, relative_to, scope, self.is_multiline(), '<', '>')
+            }
             Object::Method => text_object(
                 map,
                 relative_to,
-                if scope.around() {
-                    TextObject::AroundFunction
-                } else {
-                    TextObject::InsideFunction
+                match scope {
+                    ObjectScope::Around | ObjectScope::AroundTrimmed => TextObject::AroundFunction,
+                    ObjectScope::Inside => TextObject::InsideFunction,
                 },
             ),
             Object::Comment => text_object(
                 map,
                 relative_to,
-                if scope.around() {
-                    TextObject::AroundComment
-                } else {
-                    TextObject::InsideComment
+                match scope {
+                    ObjectScope::Around | ObjectScope::AroundTrimmed => TextObject::AroundComment,
+                    ObjectScope::Inside => TextObject::InsideComment,
                 },
             ),
             Object::Class => text_object(
                 map,
                 relative_to,
-                if scope.around() {
-                    TextObject::AroundClass
-                } else {
-                    TextObject::InsideClass
+                match scope {
+                    ObjectScope::Around | ObjectScope::AroundTrimmed => TextObject::AroundClass,
+                    ObjectScope::Inside => TextObject::InsideClass,
                 },
             ),
-            Object::Argument => argument(map, relative_to, scope.around()),
-            Object::IndentObj { include_below } => {
-                indent(map, relative_to, scope.around(), include_below)
-            }
+            Object::Argument => argument(map, relative_to, scope),
+            Object::IndentObj { include_below } => indent(map, relative_to, scope, include_below),
             Object::EntireFile => entire_file(map),
         }
     }
@@ -914,7 +856,7 @@ pub fn surrounding_html_tag(
     map: &DisplaySnapshot,
     head: DisplayPoint,
     range: Range<DisplayPoint>,
-    around: bool,
+    scope: &ObjectScope,
 ) -> Option<Range<DisplayPoint>> {
     fn read_tag(chars: impl Iterator<Item = char>) -> String {
         chars
@@ -966,7 +908,8 @@ pub fn surrounding_html_tag(
                         && range.end.to_offset(map, Bias::Left) <= last_child.start_byte() + 1
                 };
                 if open_tag.is_some() && open_tag == close_tag && is_valid {
-                    let range = if around {
+                    let range = if matches!(scope, ObjectScope::Around | ObjectScope::AroundTrimmed)
+                    {
                         first_child.byte_range().start..last_child.byte_range().end
                     } else {
                         first_child.byte_range().end..last_child.byte_range().start
@@ -1167,7 +1110,7 @@ fn text_object(
 fn argument(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
-    around: bool,
+    scope: &ObjectScope,
 ) -> Option<Range<DisplayPoint>> {
     let snapshot = &map.buffer_snapshot();
     let offset = relative_to.to_offset(map, Bias::Left);
@@ -1303,7 +1246,9 @@ fn argument(
         Some(start..end)
     }
 
-    let result = comma_delimited_range_at(buffer, excerpt.map_offset_to_buffer(offset), around)?;
+    let include_comma = matches!(scope, ObjectScope::Around | ObjectScope::AroundTrimmed);
+    let result =
+        comma_delimited_range_at(buffer, excerpt.map_offset_to_buffer(offset), include_comma)?;
 
     if excerpt.contains_buffer_range(result.clone()) {
         let result = excerpt.map_range_from_buffer(result);
@@ -1316,9 +1261,10 @@ fn argument(
 fn indent(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
-    around: bool,
+    scope: &ObjectScope,
     include_below: bool,
 ) -> Option<Range<DisplayPoint>> {
+    let around = matches!(scope, ObjectScope::Around | ObjectScope::AroundTrimmed);
     let point = relative_to.to_point(map);
     let row = point.row;
 
@@ -1368,13 +1314,13 @@ fn indent(
 fn sentence(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
-    around: bool,
+    scope: &ObjectScope,
 ) -> Option<Range<DisplayPoint>> {
     let mut start = None;
     let relative_offset = relative_to.to_offset(map, Bias::Left);
     let mut previous_end = relative_offset;
-
     let mut chars = map.buffer_chars_at(previous_end).peekable();
+    let around = matches!(scope, ObjectScope::Around | ObjectScope::AroundTrimmed);
 
     // Search backwards for the previous sentence end or current sentence start. Include the character under relative_to
     for (char, offset) in chars
@@ -1520,7 +1466,7 @@ pub fn expand_to_include_whitespace(
 fn paragraph(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
-    around: bool,
+    scope: &ObjectScope,
     times: usize,
 ) -> Option<Range<DisplayPoint>> {
     let mut paragraph_start = start_of_paragraph(map, relative_to);
@@ -1534,7 +1480,7 @@ fn paragraph(
             .buffer_snapshot()
             .is_line_blank(MultiBufferRow(point.row));
 
-        if around {
+        if matches!(scope, ObjectScope::Around | ObjectScope::AroundTrimmed) {
             if paragraph_ends_with_eof {
                 if current_line_is_empty {
                     return None;
@@ -1615,13 +1561,13 @@ pub fn end_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) -> D
 pub fn surrounding_markers(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
-    around: bool,
-    whitespace: bool,
+    scope: &ObjectScope,
     search_across_lines: bool,
     open_marker: char,
     close_marker: char,
 ) -> Option<Range<DisplayPoint>> {
     let point = relative_to.to_offset(map, Bias::Left);
+    let around = matches!(scope, ObjectScope::Around | ObjectScope::AroundTrimmed);
 
     let mut matched_closes = 0;
     let mut opening = None;
@@ -1730,7 +1676,7 @@ pub fn surrounding_markers(
 
                 // Only update closing range's `end` value if whitespace is
                 // meant to be included.
-                if whitespace {
+                if *scope == ObjectScope::Around {
                     closing.end = range.end;
                 }
             } else {
@@ -1743,7 +1689,7 @@ pub fn surrounding_markers(
                 if ch.is_whitespace() && ch != '\n' {
                     // Only update closing range's `start` value if whitespace
                     // is meant to be included.
-                    if whitespace {
+                    if *scope == ObjectScope::Around {
                         opening.start = range.start
                     }
                 } else {

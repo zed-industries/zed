@@ -10,6 +10,7 @@ use text::Selection;
 use crate::{
     helix::boundary::{FuzzyBoundary, ImmediateBoundary},
     object::Object as VimObject,
+    state::ObjectScope,
 };
 
 /// A text object from helix or an extra one
@@ -43,11 +44,17 @@ impl VimObject {
         self,
         map: &DisplaySnapshot,
         selection: Selection<DisplayPoint>,
-        around: bool,
+        scope: &ObjectScope,
     ) -> Result<Option<Range<DisplayPoint>>, VimToHelixError> {
         let cursor = cursor_range(&selection, map);
         if let Some(helix_object) = self.to_helix_object() {
-            Ok(helix_object.range(map, cursor, around))
+            // TODO!: Does it make sense to update the trait so as to work on
+            // `ObjectScope` instead of the `around` bool?
+            Ok(helix_object.range(
+                map,
+                cursor,
+                matches!(scope, ObjectScope::Around | ObjectScope::AroundTrimmed),
+            ))
         } else {
             Err(VimToHelixError)
         }

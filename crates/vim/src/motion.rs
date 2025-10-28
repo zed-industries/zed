@@ -16,7 +16,7 @@ use workspace::searchable::Direction;
 use crate::{
     Vim,
     normal::mark,
-    state::{Mode, Operator},
+    state::{Mode, ObjectScope, Operator},
     surrounds::SurroundsType,
 };
 
@@ -2336,8 +2336,8 @@ fn end_of_document(
 }
 
 fn matching_tag(map: &DisplaySnapshot, head: DisplayPoint) -> Option<DisplayPoint> {
-    let inner = crate::object::surrounding_html_tag(map, head, head..head, false)?;
-    let outer = crate::object::surrounding_html_tag(map, head, head..head, true)?;
+    let inner = crate::object::surrounding_html_tag(map, head, head..head, &ObjectScope::Inside)?;
+    let outer = crate::object::surrounding_html_tag(map, head, head..head, &ObjectScope::Around)?;
 
     if head > outer.start && head < inner.start {
         let mut offset = inner.end.to_offset(map, Bias::Left);

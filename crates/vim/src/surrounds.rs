@@ -542,8 +542,7 @@ impl Vim {
                             if let Some(range) = surrounding_markers(
                                 &display_map,
                                 relative_to,
-                                true,
-                                true,
+                                &ObjectScope::Around,
                                 false,
                                 open,
                                 close,

@@ -175,25 +175,6 @@ pub(crate) enum ObjectScope {
 }
 
 impl ObjectScope {
-    // TODO!: This is meant to be removed after everything has been migrated to
-    // work with `ObjectScope` directly.
-    pub(crate) fn around(&self) -> bool {
-        match self {
-            ObjectScope::Inside => false,
-            ObjectScope::Around => true,
-            ObjectScope::AroundTrimmed => true,
-        }
-    }
-
-    // TODO!: This is meant to be removed after everything has been migrated to
-    // work with `ObjectScope` directly.
-    pub(crate) fn whitespace(&self) -> bool {
-        match self {
-            ObjectScope::Inside | ObjectScope::AroundTrimmed => false,
-            ObjectScope::Around => true,
-        }
-    }
-
     /// Create the `ObjectScope` from a `PushObject` action, taking into account
     /// its `around` and `whitespace` values.
     pub(crate) fn from_action(action: &PushObject) -> Self {
