@@ -7718,7 +7718,8 @@ outline: fn main()"
         outline_panel.update_in(cx, |panel, window, cx| {
             panel.collapse_all_entries(&CollapseAllEntries, window, cx);
         });
-        cx.executor().advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
 
         let expected_collapsed_output = indoc!(
@@ -7728,7 +7729,7 @@ outline: fn main()"
         );
 
         outline_panel.update(cx, |panel, cx| {
-            assert_eq!{
+            assert_eq! {
                 display_entries(
                     &project,
                     &snapshot(panel, cx),
@@ -7744,7 +7745,8 @@ outline: fn main()"
         outline_panel.update_in(cx, |panel, window, cx| {
             panel.expand_all_entries(&ExpandAllEntries, window, cx);
         });
-        cx.executor().advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
 
         let expected_expanded_output = indoc!(
