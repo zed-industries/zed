@@ -104,7 +104,7 @@ impl Workspace {
                     .read(cx)
                     .request
                     .as_ref()
-                    .map_or(false, |r| r.actions.is_empty())
+                    .is_some_and(|request| request.actions.is_empty())
                 {
                     let task = cx.spawn({
                         let id = id.clone();
