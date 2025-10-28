@@ -6844,7 +6844,7 @@ impl LspStore {
                                 && range.start.is_valid(&buffer_snapshot)
                                 && range.end.is_valid(&buffer_snapshot)
                                 && hint.position.cmp(&range.start, &buffer_snapshot).is_ge()
-                                && hint.position.cmp(&range.end, &buffer_snapshot).is_le()
+                                && hint.position.cmp(&range.end, &buffer_snapshot).is_lt()
                         });
                         (server_id, new_hints)
                     })
