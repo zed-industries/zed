@@ -1660,15 +1660,19 @@ impl OutlinePanel {
                     worktree_id,
                     entries,
                     ..
-                }) => entries.last().map(|last| CollapsedEntry::Dir(*worktree_id, last.id)),
+                }) => entries
+                    .last()
+                    .map(|last| CollapsedEntry::Dir(*worktree_id, last.id)),
                 PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => {
                     Some(CollapsedEntry::Excerpt(excerpt.buffer_id, excerpt.id))
                 }
-                PanelEntry::Outline(OutlineEntry::Outline(outline)) => Some(CollapsedEntry::Outline(
-                    outline.buffer_id,
-                    outline.excerpt_id,
-                    outline.outline.range.clone(),
-                )),
+                PanelEntry::Outline(OutlineEntry::Outline(outline)) => {
+                    Some(CollapsedEntry::Outline(
+                        outline.buffer_id,
+                        outline.excerpt_id,
+                        outline.outline.range.clone(),
+                    ))
+                }
                 PanelEntry::Search(_) => None,
             })
             .collect::<Vec<_>>();
@@ -1727,11 +1731,13 @@ impl OutlinePanel {
                 PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => {
                     Some(CollapsedEntry::Excerpt(excerpt.buffer_id, excerpt.id))
                 }
-                PanelEntry::Outline(OutlineEntry::Outline(outline)) => Some(CollapsedEntry::Outline(
-                    outline.buffer_id,
-                    outline.excerpt_id,
-                    outline.outline.range.clone(),
-                )),
+                PanelEntry::Outline(OutlineEntry::Outline(outline)) => {
+                    Some(CollapsedEntry::Outline(
+                        outline.buffer_id,
+                        outline.excerpt_id,
+                        outline.outline.range.clone(),
+                    ))
+            }
                 PanelEntry::Search(_) => None,
             })
             .collect::<Vec<_>>();
