@@ -59,7 +59,7 @@ Zed supports the follow macOS releases:
 
 The macOS releases labelled "Partially Supported" (Big Sur and Catalina) do not support screen sharing via Zed Collaboration. These features use the [LiveKit SDK](https://livekit.io) which relies upon [ScreenCaptureKit.framework](https://developer.apple.com/documentation/screencapturekit/) only available on macOS 12 (Monterey) and newer.
 
-**Mac Hardware**
+#### Mac Hardware
 
 Zed supports machines with Intel (x86_64) or Apple (aarch64) processors that meet the above macOS requirements:
 
@@ -90,7 +90,7 @@ Zed supports the follow Windows releases:
 | Windows 11 (all releases) | Supported | Supported |
 | Windows 10 (64-bit) | Supported | Supported |
 
-**Windows Hardware**
+#### Windows Hardware
 
 Zed supports machines with Intel or AMD 64-bit (x86_64) processors that meet the above Windows requirements:
 
