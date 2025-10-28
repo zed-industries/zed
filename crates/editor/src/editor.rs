@@ -16725,18 +16725,18 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
-        let selection = self.selections.newest::<usize>(&self.display_snapshot(cx));
+        let selection = self.selections.newest_anchor();
         let head = selection.head();
 
         let multi_buffer = self.buffer.read(cx);
-        multi_buffer.snapshot(cx).as_singleton()?;
 
-        let (buffer, head) = multi_buffer.text_anchor_for_position(head, cx)?;
+        let (buffer, text_head) = multi_buffer.text_anchor_for_position(head, cx)?;
         let workspace = self.workspace()?;
         let project = workspace.read(cx).project().clone();
-        let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
+        let references =
+            project.update(cx, |project, cx| project.references(&buffer, text_head, cx));
         Some(cx.spawn_in(window, async move |editor, cx| -> Result<()> {
-            let Some(mut locations) = references.await? else {
+            let Some(locations) = references.await? else {
                 return Ok(());
             };
 
@@ -16747,23 +16747,47 @@ impl Editor {
                 return Ok(());
             }
 
+            let multi_buffer = editor.read_with(cx, |editor, _| editor.buffer().clone())?;
+
             let multi_buffer_snapshot =
-                editor.read_with(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))?;
-            let Some((excerpt_id, _, buffer_snapshot)) = multi_buffer_snapshot.as_singleton()
-            else {
-                return Ok(());
-            };
+                multi_buffer.read_with(cx, |multi_buffer, cx| multi_buffer.snapshot(cx))?;
 
-            // There is an O(n) implementation, but given this list will be
-            // small (usually <100 items), the extra O(log(n)) factor isn't
-            // worth the (surprisingly large amount of) extra complexity.
-            locations.retain(|loc| loc.buffer == buffer);
-            locations.sort_unstable_by(|l, r| l.range.start.cmp(&r.range.start, &buffer_snapshot));
+            let (locations, current_location_index) =
+                multi_buffer.update(cx, |multi_buffer, cx| {
+                    let mut locations = locations
+                        .into_iter()
+                        .filter_map(|loc| {
+                            let start = multi_buffer.buffer_anchor_to_anchor(
+                                &loc.buffer,
+                                loc.range.start,
+                                cx,
+                            )?;
+                            let end = multi_buffer.buffer_anchor_to_anchor(
+                                &loc.buffer,
+                                loc.range.end,
+                                cx,
+                            )?;
+                            Some(start..end)
+                        })
+                        .collect::<Vec<_>>();
 
-            let current_location_index = locations.iter().position(|loc| {
-                loc.range.start.to_offset(&buffer_snapshot) <= head.to_offset(&buffer_snapshot) &&
-                    loc.range.end.to_offset(&buffer_snapshot) >= head.to_offset(&buffer_snapshot)
-            });
+                    dbg!(&locations);
+
+                    // There is an O(n) implementation, but given this list will be
+                    // small (usually <100 items), the extra O(log(n)) factor isn't
+                    // worth the (surprisingly large amount of) extra complexity.
+                    locations
+                        .sort_unstable_by(|l, r| l.start.cmp(&r.start, &multi_buffer_snapshot));
+
+                    let head_offset = head.to_offset(&multi_buffer_snapshot);
+
+                    let current_location_index = locations.iter().position(|loc| {
+                        loc.start.to_offset(&multi_buffer_snapshot) <= head_offset
+                            && loc.end.to_offset(&multi_buffer_snapshot) >= head_offset
+                    });
+
+                    (locations, current_location_index)
+                })?;
 
             let Some(current_location_index) = current_location_index else {
                 // This indicates something has gone wrong, because we already
@@ -16778,7 +16802,8 @@ impl Editor {
             let destination_location_index = match direction {
                 Direction::Next => (current_location_index + count) % locations.len(),
                 Direction::Prev => {
-                    (current_location_index + locations.len() - count % locations.len()) % locations.len()
+                    (current_location_index + locations.len() - count % locations.len())
+                        % locations.len()
                 }
             };
 
@@ -16789,14 +16814,7 @@ impl Editor {
                 return Ok(());
             }
 
-            let Range { start, end } = locations[destination_location_index].range;
-
-            let start = multi_buffer_snapshot.anchor_in_excerpt(*excerpt_id, start);
-            let end = multi_buffer_snapshot.anchor_in_excerpt(*excerpt_id, end);
-
-            let (Some(start), Some(end)) = (start, end) else {
-                return Ok(());
-            };
+            let Range { start, end } = locations[destination_location_index];
 
             editor.update_in(cx, |editor, window, cx| {
                 let effects = SelectionEffects::default();

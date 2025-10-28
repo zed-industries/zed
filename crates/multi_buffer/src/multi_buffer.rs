@@ -1540,6 +1540,22 @@ impl MultiBuffer {
         })
     }
 
+    pub fn buffer_anchor_to_anchor(
+        &self,
+        buffer: &Entity<Buffer>,
+        anchor: text::Anchor,
+        cx: &App,
+    ) -> Option<Anchor> {
+        let snapshot = buffer.read(cx).snapshot();
+        for (excerpt_id, range) in self.excerpts_for_buffer(snapshot.remote_id(), cx) {
+            if range.context.start.cmp(&anchor, &snapshot).is_le() && range.context.end.cmp(&anchor, &snapshot).is_ge() {
+                return Some(Anchor::in_buffer(excerpt_id, snapshot.remote_id(), anchor));
+            }
+        }
+
+        None
+    }
+
     pub fn remove_excerpts(
         &mut self,
         excerpt_ids: impl IntoIterator<Item = ExcerptId>,
