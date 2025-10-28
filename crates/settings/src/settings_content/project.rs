@@ -15,12 +15,6 @@ use crate::{
 #[skip_serializing_none]
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ProjectSettingsContent {
-    /// Whether to prevent this project from being shared in public channels.
-    ///
-    /// Default: false
-    #[serde(default)]
-    pub prevent_sharing_in_public_channels: bool,
-
     #[serde(flatten)]
     pub all_languages: AllLanguageSettingsContent,
 
@@ -69,6 +63,12 @@ pub struct WorktreeSettingsContent {
     #[serde(default)]
     #[serde(skip_serializing_if = "Maybe::is_unset")]
     pub project_name: Maybe<String>,
+
+    /// Whether to prevent this project from being shared in public channels.
+    ///
+    /// Default: false
+    #[serde(default)]
+    pub prevent_sharing_in_public_channels: bool,
 
     /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
     /// `file_scan_inclusions`.

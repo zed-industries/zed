@@ -9,7 +9,7 @@ use gpui::{
     canvas, point,
 };
 use gpui::{App, Task, Window, actions};
-use project::project_settings::ProjectSettings;
+use project::WorktreeSettings;
 use rpc::proto::{self};
 use settings::{Settings as _, SettingsLocation};
 use theme::ActiveTheme;
@@ -386,7 +386,7 @@ impl TitleBar {
                         path: RelPath::empty(),
                     });
 
-                    ProjectSettings::get(settings_location, cx).prevent_sharing_in_public_channels
+                    WorktreeSettings::get(settings_location, cx).prevent_sharing_in_public_channels
                 }),
                 proto::ChannelVisibility::Members => false,
             });

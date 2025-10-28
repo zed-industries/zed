@@ -381,7 +381,6 @@ impl VsCodeSettings {
 
     fn project_settings_content(&self) -> ProjectSettingsContent {
         ProjectSettingsContent {
-            prevent_sharing_in_public_channels: false,
             all_languages: AllLanguageSettingsContent {
                 features: None,
                 edit_predictions: self.edit_predictions_settings_content(),
@@ -856,6 +855,7 @@ impl VsCodeSettings {
     fn worktree_settings_content(&self) -> WorktreeSettingsContent {
         WorktreeSettingsContent {
             project_name: crate::Maybe::Unset,
+            prevent_sharing_in_public_channels: false,
             file_scan_exclusions: self
                 .read_value("files.watcherExclude")
                 .and_then(|v| v.as_array())
