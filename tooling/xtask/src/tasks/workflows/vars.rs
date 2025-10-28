@@ -35,3 +35,5 @@ secret!(AZURE_SIGNING_CLIENT_SECRET);
 var!(AZURE_SIGNING_ACCOUNT_NAME);
 var!(AZURE_SIGNING_CERT_PROFILE_NAME);
 var!(AZURE_SIGNING_ENDPOINT);
+
+pub const GITHUB_SHA: &str = "${{ github.event.pull_request.head.sha || github.sha }}";

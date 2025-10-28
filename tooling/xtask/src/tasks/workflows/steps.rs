@@ -4,7 +4,7 @@ use crate::tasks::workflows::vars;
 
 const BASH_SHELL: &str = "bash -euxo pipefail {0}";
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
-const POWERSHELL_SHELL: &str = "pwsh";
+const PWSH_SHELL: &str = "pwsh";
 
 pub fn checkout_repo() -> Step<Use> {
     named::uses(
@@ -62,7 +62,7 @@ pub fn clear_target_dir_if_large() -> Step<Run> {
 
 pub fn script(name: &str) -> Step<Run> {
     if name.ends_with(".ps1") {
-        Step::new(name).run(name).shell(POWERSHELL_SHELL)
+        Step::new(name).run(name).shell(PWSH_SHELL)
     } else {
         Step::new(name).run(name).shell(BASH_SHELL)
     }
@@ -85,6 +85,13 @@ pub(crate) mod named {
     /// wrap it in a new function.)
     pub(crate) fn bash(script: &str) -> Step<Run> {
         Step::new(function_name(1)).run(script).shell(BASH_SHELL)
+    }
+
+    /// Returns a pwsh-script step with the same name as the enclosing function.
+    /// (You shouldn't inline this function into the workflow definition, you must
+    /// wrap it in a new function.)
+    pub(crate) fn pwsh(script: &str) -> Step<Run> {
+        Step::new(function_name(1)).run(script).shell(PWSH_SHELL)
     }
 
     /// Returns a Workflow with the same name as the enclosing module.

@@ -22,6 +22,15 @@ pub enum Arch {
     AARCH64,
 }
 
+impl std::fmt::Display for Arch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Arch::X86_64 => write!(f, "x86_64"),
+            Arch::AARCH64 => write!(f, "aarch64"),
+        }
+    }
+}
+
 impl Arch {
     pub fn triple(&self) -> &'static str {
         match self {

@@ -22,7 +22,14 @@ pub fn run_bundling() -> Workflow {
         .add_job("bundle_mac", bundle_mac())
         .add_job("bundle_linux_x86_64", bundle_linux(runners::Arch::X86_64))
         .add_job("bundle_linux_arm64", bundle_linux(runners::Arch::AARCH64))
-        .add_job("bundle_windows", bundle_windows())
+        .add_job(
+            "bundle_windows_x86_64",
+            bundle_windows_job(runners::Arch::X86_64),
+        )
+        .add_job(
+            "bundle_windows_arm64",
+            bundle_windows_job(runners::Arch::AARCH64),
+        )
 }
 
 fn bundle_job() -> Job {
@@ -64,9 +71,12 @@ fn bundle_mac() -> Job {
 }
 
 fn bundle_linux(arch: runners::Arch) -> Job {
-    let sha = "${{ github.event.pull_request.head.sha || github.sha }}";
-    let artifact_name = format!("zed-{}-{}.tar.gz", sha, arch.triple());
-    let remote_server_artifact_name = format!("zed-remote-server-{}-{}.tar.gz", sha, arch.triple());
+    let artifact_name = format!("zed-{}-{}.tar.gz", vars::GITHUB_SHA, arch.triple());
+    let remote_server_artifact_name = format!(
+        "zed-remote-server-{}-{}.tar.gz",
+        vars::GITHUB_SHA,
+        arch.triple()
+    );
     let mut job = bundle_job()
         .runs_on(arch.linux_bundler())
         .add_step(steps::checkout_repo())
@@ -87,7 +97,8 @@ fn bundle_linux(arch: runners::Arch) -> Job {
         ))
 }
 
-fn bundle_windows() -> Job {
+fn bundle_windows_job(arch: runners::Arch) -> Job {
+    use vars::GITHUB_SHA;
     bundle_job()
         .runs_on(runners::WINDOWS_DEFAULT)
         .add_env(("AZURE_TENANT_ID", vars::AZURE_SIGNING_TENANT_ID))
@@ -101,12 +112,17 @@ fn bundle_windows() -> Job {
         .add_env(("TIMESTAMP_SERVER", "http://timestamp.acs.microsoft.com"))
         .add_step(steps::checkout_repo())
         .add_step(steps::setup_sentry())
-        .add_step(
-            steps::script("script/bundle-windows.ps1")
-                .working_directory("${{ env.ZED_WORKSPACE }}"),
-        )
+        .add_step(bundle_windows(arch))
         .add_step(steps::upload_artifact(
-            "Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.exe",
+            &format!("Zed_{GITHUB_SHA}-{arch}.exe"),
             "${{ env.SETUP_PATH }}",
         ))
+}
+
+fn bundle_windows(arch: runners::Arch) -> Step<Run> {
+    let step = match arch {
+        runners::Arch::X86_64 => named::pwsh("script/bundle-windows.ps1 -Architecture x86_64"),
+        runners::Arch::AARCH64 => named::pwsh("script/bundle-windows.ps1 -Architecture aarch64"),
+    };
+    step.working_directory("${{ env.ZED_WORKSPACE }}")
 }

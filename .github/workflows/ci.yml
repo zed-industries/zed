@@ -844,8 +844,7 @@ jobs:
     name: Create a Windows installer for aarch64
     runs-on: [self-32vcpu-windows-2022]
     if: |
-      ( startsWith(github.ref, 'refs/tags/v')
-      || contains(github.event.pull_request.labels.*.name, 'run-bundling') )
+      ( startsWith(github.ref, 'refs/tags/v') )
     needs: [windows_tests]
     env:
       AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
