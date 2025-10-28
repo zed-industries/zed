@@ -158,18 +158,13 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
 }
 
 pub(crate) fn check_style() -> NamedJob {
-    let job = release_job(&[])
-        .runs_on(runners::MAC_DEFAULT)
-        .add_step(
-            steps::checkout_repo()
-                .add_with(("clean", false))
-                // todo! why is this fetching full history?
-                .add_with(("fetch-depth", 0)),
-        )
-        .add_step(steps::cargo_fmt())
-        .add_step(steps::script("./script/clippy"));
-
-    named::job(job)
+    named::job(
+        release_job(&[])
+            .runs_on(runners::MAC_DEFAULT)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::cargo_fmt())
+            .add_step(steps::script("./script/clippy")),
+    )
 }
 
 pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {

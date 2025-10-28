@@ -14,7 +14,9 @@ pub fn run_license_checks() -> Workflow {
         .map(|workflow| {
             run_tests_in(
                 &[
-                    // todo! cargo.toml as well?
+                    // no Cargo.toml - the case where Cargo.lock isn't updated
+                    // is checked by the `check_dependencies` job as part of the
+                    // `run_tests` workflow
                     "Cargo.lock",
                     "**/Cargo.lock",
                     "script/*licenses",
