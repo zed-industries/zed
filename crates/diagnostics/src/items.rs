@@ -30,7 +30,7 @@ impl Render for DiagnosticIndicator {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let indicator = h_flex().gap_2();
         if !ProjectSettings::get_global(cx).diagnostics.button {
-            return indicator;
+            return indicator.hidden();
         }
 
         let diagnostic_indicator = match (self.summary.error_count, self.summary.warning_count) {
@@ -67,11 +67,10 @@ impl Render for DiagnosticIndicator {
             Some(
                 Button::new("diagnostic_message", SharedString::new(message))
                     .label_size(LabelSize::Small)
-                    .tooltip(|window, cx| {
+                    .tooltip(|_window, cx| {
                         Tooltip::for_action(
                             "Next Diagnostic",
                             &editor::actions::GoToDiagnostic::default(),
-                            window,
                             cx,
                         )
                     })
@@ -87,8 +86,8 @@ impl Render for DiagnosticIndicator {
             .child(
                 ButtonLike::new("diagnostic-indicator")
                     .child(diagnostic_indicator)
-                    .tooltip(|window, cx| {
-                        Tooltip::for_action("Project Diagnostics", &Deploy, window, cx)
+                    .tooltip(move |_window, cx| {
+                        Tooltip::for_action("Project Diagnostics", &Deploy, cx)
                     })
                     .on_click(cx.listener(|this, _, window, cx| {
                         if let Some(workspace) = this.workspace.upgrade() {
@@ -170,7 +169,10 @@ impl DiagnosticIndicator {
     fn update(&mut self, editor: Entity<Editor>, window: &mut Window, cx: &mut Context<Self>) {
         let (buffer, cursor_position) = editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().read(cx).snapshot(cx);
-            let cursor_position = editor.selections.newest::<usize>(cx).head();
+            let cursor_position = editor
+                .selections
+                .newest::<usize>(&editor.display_snapshot(cx))
+                .head();
             (buffer, cursor_position)
         });
         let new_diagnostic = buffer

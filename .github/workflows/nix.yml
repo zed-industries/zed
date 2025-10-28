@@ -1,69 +1,76 @@
-name: "Nix build"
-
+# generated `cargo xtask workflows`. Do not edit.
+name: Nix build
 on:
   workflow_call:
     inputs:
       flake-output:
         type: string
-        default: "default"
+        default: default
       cachix-filter:
         type: string
-        default: ""
-
 jobs:
-  nix-build:
-    timeout-minutes: 60
-    name: (${{ matrix.system.os }}) Nix Build
-    continue-on-error: true # TODO: remove when we want this to start blocking CI
-    strategy:
-      fail-fast: false
-      matrix:
-        system:
-          - os: x86 Linux
-            runner: namespace-profile-16x32-ubuntu-2204
-            install_nix: true
-          - os: arm Mac
-            runner: [macOS, ARM64, test]
-            install_nix: false
+  nix-build-linux-x86:
     if: github.repository_owner == 'zed-industries'
-    runs-on: ${{ matrix.system.runner }}
+    runs-on: namespace-profile-16x32-ubuntu-2204
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_MINIDUMP_ENDPOINT }}
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
-      GIT_LFS_SKIP_SMUDGE: 1 # breaks the livekit rust sdk examples which we don't actually depend on
+      GIT_LFS_SKIP_SMUDGE: '1'
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          clean: false
-
-      # on our macs we manually install nix. for some reason the cachix action is running
-      # under a non-login /bin/bash shell which doesn't source the proper script to add the
-      # nix profile to PATH, so we manually add them here
-      - name: Set path
-        if: ${{ ! matrix.system.install_nix }}
-        run: |
-          echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
-          echo "/Users/administrator/.nix-profile/bin" >> "$GITHUB_PATH"
-
-      - uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f # v31
-        if: ${{ matrix.system.install_nix }}
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad # v16
-        with:
-          name: zed
-          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-          pushFilter: "${{ inputs.cachix-filter }}"
-          cachixArgs: "-v"
-
-      - run: nix build .#${{ inputs.flake-output }} -L --accept-flake-config
-
-      - name: Limit /nix/store to 50GB on macs
-        if: ${{ ! matrix.system.install_nix }}
-        run: |
-          if [ "$(du -sm /nix/store | cut -f1)" -gt 50000 ]; then
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: 'false'
+    - name: steps::nix::install_nix
+      uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
+      with:
+        github_access_token: ${{ secrets.GITHUB_TOKEN }}
+    - name: steps::nix::cachix_action
+      uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
+      with:
+        name: zed
+        authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        pushFilter: ${{ inputs.cachix-filter }}
+        cachixArgs: -v
+    - name: steps::nix::build
+      run: nix build .#${{ inputs.flake-output }} -L --accept-flake-config
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 60
+    continue-on-error: true
+  nix-build-mac-arm:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: self-mini-macos
+    env:
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_MINIDUMP_ENDPOINT }}
+      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
+      GIT_LFS_SKIP_SMUDGE: '1'
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: 'false'
+    - name: steps::nix::set_path
+      run: |
+        echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
+        echo "/Users/administrator/.nix-profile/bin" >> "$GITHUB_PATH"
+      shell: bash -euxo pipefail {0}
+    - name: steps::nix::cachix_action
+      uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
+      with:
+        name: zed
+        authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        pushFilter: ${{ inputs.cachix-filter }}
+        cachixArgs: -v
+    - name: steps::nix::build
+      run: nix build .#${{ inputs.flake-output }} -L --accept-flake-config
+      shell: bash -euxo pipefail {0}
+    - name: steps::nix::limit_store
+      run: |-
+        if [ "$(du -sm /nix/store | cut -f1)" -gt 50000 ]; then
             nix-collect-garbage -d || true
-          fi
+        fi
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 60
+    continue-on-error: true

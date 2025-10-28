@@ -9,6 +9,7 @@ license = "GPL-3.0-or-later"
 bincode.workspace = true
 cfg-if.workspace = true
 crash-handler.workspace = true
+extension_host.workspace = true
 log.workspace = true
 minidumper.workspace = true
 paths.workspace = true
@@ -17,7 +18,6 @@ smol.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 system_specs.workspace = true
-workspace-hack.workspace = true
 zstd.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

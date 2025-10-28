@@ -35,7 +35,7 @@ The remote machine must be able to run Zed's server. The following platforms sho
 
 The list of remote servers is stored in your settings file {#kb zed::OpenSettings}. You can edit this list using the Remote Projects dialog {#kb projects::OpenRemote}, which provides some robustness - for example it checks that the connection can be established before writing it to the settings file.
 
-```json
+```json [settings]
 {
   "ssh_connections": [
     {
@@ -48,7 +48,7 @@ The list of remote servers is stored in your settings file {#kb zed::OpenSetting
 
 Zed shells out to the `ssh` on your path, and so it will inherit any configuration you have in `~/.ssh/config` for the given host. That said, if you need to override anything you can configure the following additional options on each connection:
 
-```json
+```json [settings]
 {
   "ssh_connections": [
     {
@@ -66,7 +66,7 @@ Zed shells out to the `ssh` on your path, and so it will inherit any configurati
 
 There are two additional Zed-specific options per connection, `upload_binary_over_ssh` and `nickname`:
 
-```json
+```json [settings]
 {
   "ssh_connections": [
     {
@@ -91,7 +91,7 @@ Additionally it's worth noting that while you can pass a password on the command
 
 If you'd like to be able to connect to ports on your remote server from your local machine, you can configure port forwarding in your settings file. This is particularly useful for developing websites so you can load the site in your browser while working.
 
-```json
+```json [settings]
 {
   "ssh_connections": [
     {
@@ -106,7 +106,7 @@ This will cause requests from your local machine to `localhost:8080` to be forwa
 
 By default these ports are bound to localhost, so other computers in the same network as your development machine cannot access them. You can set the local_host to bind to a different interface, for example, 0.0.0.0 will bind to all local interfaces.
 
-```json
+```json [settings]
 {
   "ssh_connections": [
     {
@@ -125,7 +125,7 @@ By default these ports are bound to localhost, so other computers in the same ne
 
 These ports also default to the `localhost` interface on the remote host. If you need to change this, you can also set the remote host:
 
-```json
+```json [settings]
 {
   "ssh_connections": [
     {

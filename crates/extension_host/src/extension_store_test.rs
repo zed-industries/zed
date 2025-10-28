@@ -31,7 +31,8 @@ use util::test::TempTree;
 #[cfg(test)]
 #[ctor::ctor]
 fn init_logger() {
-    zlog::init_test();
+    // show info logs while we debug the extension_store tests hanging.
+    zlog::init_test_with("info");
 }
 
 #[gpui::test]
@@ -159,6 +160,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         .collect(),
                         language_servers: BTreeMap::default(),
                         context_servers: BTreeMap::default(),
+                        agent_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
                         snippets: None,
                         capabilities: Vec::new(),
@@ -189,6 +191,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         grammars: BTreeMap::default(),
                         language_servers: BTreeMap::default(),
                         context_servers: BTreeMap::default(),
+                        agent_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
                         snippets: None,
                         capabilities: Vec::new(),
@@ -368,6 +371,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 grammars: BTreeMap::default(),
                 language_servers: BTreeMap::default(),
                 context_servers: BTreeMap::default(),
+                agent_servers: BTreeMap::default(),
                 slash_commands: BTreeMap::default(),
                 snippets: None,
                 capabilities: Vec::new(),
@@ -526,10 +530,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     });
 }
 
-// todo(windows)
-// Disable this test on Windows for now. Because this test hangs at
-// `let fake_server = fake_servers.next().await.unwrap();`.
-// Reenable this test when we figure out why.
 #[gpui::test]
 async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     init_test(cx);
@@ -868,5 +868,6 @@ fn init_test(cx: &mut TestAppContext) {
         Project::init_settings(cx);
         ExtensionSettings::register(cx);
         language::init(cx);
+        gpui_tokio::init(cx);
     });
 }

@@ -193,31 +193,6 @@ function prepare_binaries() {
     local architecture=$1
     local app_path=$2
 
-    echo "Unpacking dSYMs for $architecture"
-    exe_path="target/${architecture}/${target_dir}/Zed"
-    if ! dsymutil --flat "${exe_path}" 2> target/dsymutil.log; then
-        echo "dsymutil failed"
-        cat target/dsymutil.log
-        exit 1
-    fi
-    uuid=$(dwarfdump --uuid "${exe_path}" | cut -d ' ' -f 2 | tr 'A-F' 'a-f')
-    version="$(cargo metadata --no-deps --manifest-path crates/zed/Cargo.toml --offline --format-version=1 | jq -r '.packages | map(select(.name == "zed"))[0].version')"
-    if [ "$channel" == "nightly" ]; then
-        version="$version-$(git rev-parse --short HEAD)"
-    fi
-
-    echo "Removing existing gzipped dSYMs for $architecture"
-    rm -f target/${architecture}/${target_dir}/Zed.dwarf.gz
-
-    echo "Gzipping dSYMs for $architecture"
-    gzip -kf target/${architecture}/${target_dir}/Zed.dwarf
-
-    echo "Uploading dSYMs${architecture} for $architecture to by-uuid/${uuid}.dwarf.gz"
-    upload_to_blob_store_public \
-        "zed-debug-symbols" \
-        target/${architecture}/${target_dir}/Zed.dwarf.gz \
-        "by-uuid/${uuid}.dwarf.gz"
-
     cp target/${architecture}/${target_dir}/zed "${app_path}/Contents/MacOS/zed"
     cp target/${architecture}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
 }
@@ -375,7 +350,7 @@ function upload_debug_info() {
     if [[ -n "${SENTRY_AUTH_TOKEN:-}" ]]; then
         echo "Uploading zed debug symbols to sentry..."
         # note: this uploads the unstripped binary which is needed because it contains
-        # .eh_frame data for stack unwinindg. see https://github.com/getsentry/symbolic/issues/783
+        # .eh_frame data for stack unwinding. see https://github.com/getsentry/symbolic/issues/783
         sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
             "target/${architecture}/${target_dir}/zed" \
             "target/${architecture}/${target_dir}/remote_server" \

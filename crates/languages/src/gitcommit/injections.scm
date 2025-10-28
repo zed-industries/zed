@@ -1,3 +1,7 @@
+((comment) @content
+ (#set! injection.language "comment")
+)
+
 ((scissors) @content
  (#set! "language" "diff"))
 

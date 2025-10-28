@@ -33,10 +33,9 @@ async fn capture_unix(
     directory: &Path,
 ) -> Result<collections::HashMap<String, String>> {
     use std::os::unix::process::CommandExt;
-    use std::process::Stdio;
 
-    let zed_path = super::get_shell_safe_zed_path()?;
-    let shell_kind = ShellKind::new(shell_path);
+    let shell_kind = ShellKind::new(shell_path, false);
+    let zed_path = super::get_shell_safe_zed_path(shell_kind)?;
 
     let mut command_string = String::new();
     let mut command = std::process::Command::new(shell_path);
@@ -46,15 +45,16 @@ async fn capture_unix(
     // See: https://github.com/zed-industries/zed/pull/32136#issuecomment-2999645482
     const FD_STDIN: std::os::fd::RawFd = 0;
     const FD_STDOUT: std::os::fd::RawFd = 1;
+    const FD_STDERR: std::os::fd::RawFd = 2;
 
     let (fd_num, redir) = match shell_kind {
         ShellKind::Rc => (FD_STDIN, format!(">[1={}]", FD_STDIN)), // `[1=0]`
         ShellKind::Nushell | ShellKind::Tcsh => (FD_STDOUT, "".to_string()),
+        // xonsh doesn't support redirecting to stdin, and control sequences are printed to
+        // stdout on startup
+        ShellKind::Xonsh => (FD_STDERR, "o>e".to_string()),
         _ => (FD_STDIN, format!(">&{}", FD_STDIN)), // `>&0`
     };
-    command.stdin(Stdio::null());
-    command.stdout(Stdio::piped());
-    command.stderr(Stdio::piped());
 
     match shell_kind {
         ShellKind::Csh | ShellKind::Tcsh => {
@@ -103,7 +103,7 @@ async fn spawn_and_read_fd(
     child_fd: std::os::fd::RawFd,
 ) -> anyhow::Result<(Vec<u8>, std::process::Output)> {
     use command_fds::{CommandFdExt, FdMapping};
-    use std::io::Read;
+    use std::{io::Read, process::Stdio};
 
     let (mut reader, writer) = std::io::pipe()?;
 
@@ -112,7 +112,11 @@ async fn spawn_and_read_fd(
         child_fd,
     }])?;
 
-    let process = smol::process::Command::from(command).spawn()?;
+    let process = smol::process::Command::from(command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
 
     let mut buffer = Vec::new();
     reader.read_to_end(&mut buffer)?;
@@ -131,9 +135,14 @@ async fn capture_windows(
     let zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
-    let shell_kind = ShellKind::new(shell_path);
+    let shell_kind = ShellKind::new(shell_path, true);
     let env_output = match shell_kind {
-        ShellKind::Posix | ShellKind::Csh | ShellKind::Tcsh | ShellKind::Rc | ShellKind::Fish => {
+        ShellKind::Posix
+        | ShellKind::Csh
+        | ShellKind::Tcsh
+        | ShellKind::Rc
+        | ShellKind::Fish
+        | ShellKind::Xonsh => {
             return Err(anyhow::anyhow!("unsupported shell kind"));
         }
         ShellKind::PowerShell => {
@@ -168,8 +177,12 @@ async fn capture_windows(
                 .args([
                     "-c",
                     &format!(
-                        "cd '{}'; {} --printenv",
+                        "cd '{}'; {}{} --printenv",
                         directory.display(),
+                        shell_kind
+                            .command_prefix()
+                            .map(|prefix| prefix.to_string())
+                            .unwrap_or_default(),
                         zed_path.display()
                     ),
                 ])

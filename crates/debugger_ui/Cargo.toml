@@ -60,7 +60,6 @@ serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 settings.workspace = true
-shlex.workspace = true
 sysinfo.workspace = true
 task.workspace = true
 tasks_ui.workspace = true
@@ -73,7 +72,6 @@ tree-sitter.workspace = true
 ui.workspace = true
 unindent = { workspace = true, optional = true }
 util.workspace = true
-workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 

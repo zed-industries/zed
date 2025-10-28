@@ -172,6 +172,7 @@ impl TestServer {
             }
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
+            theme::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(SemanticVersion::default(), cx);
             client::init_settings(cx);
         });
@@ -357,7 +358,7 @@ impl TestServer {
                 settings::KeymapFile::load_asset_allow_partial_failure(os_keymap, cx).unwrap(),
             );
             language_model::LanguageModelRegistry::test(cx);
-            assistant_context::init(client.clone(), cx);
+            assistant_text_thread::init(client.clone(), cx);
             agent_settings::init(cx);
         });
 

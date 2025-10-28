@@ -316,9 +316,15 @@ messages!(
     (PullWorkspaceDiagnostics, Background),
     (GetDefaultBranch, Background),
     (GetDefaultBranchResponse, Background),
+    (GetTreeDiff, Background),
+    (GetTreeDiffResponse, Background),
+    (GetBlobContent, Background),
+    (GetBlobContentResponse, Background),
     (GitClone, Background),
     (GitCloneResponse, Background),
     (ToggleLspLogs, Background),
+    (GetDirectoryEnvironment, Background),
+    (DirectoryEnvironment, Background),
     (GetAgentServerCommand, Background),
     (AgentServerCommand, Background),
     (ExternalAgentsUpdated, Background),
@@ -495,8 +501,11 @@ request_messages!(
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
     (PullWorkspaceDiagnostics, Ack),
     (GetDefaultBranch, GetDefaultBranchResponse),
+    (GetBlobContent, GetBlobContentResponse),
+    (GetTreeDiff, GetTreeDiffResponse),
     (GitClone, GitCloneResponse),
     (ToggleLspLogs, Ack),
+    (GetDirectoryEnvironment, DirectoryEnvironment),
     (GetProcesses, GetProcessesResponse),
     (GetAgentServerCommand, AgentServerCommand),
     (RemoteStarted, Ack),
@@ -514,6 +523,7 @@ lsp_messages!(
     (GetDeclaration, GetDeclarationResponse, true),
     (GetTypeDefinition, GetTypeDefinitionResponse, true),
     (GetImplementation, GetImplementationResponse, true),
+    (InlayHints, InlayHintsResponse, false),
 );
 
 entity_messages!(
@@ -634,6 +644,7 @@ entity_messages!(
     GitCheckoutFiles,
     SetIndexText,
     ToggleLspLogs,
+    GetDirectoryEnvironment,
 
     Push,
     Fetch,
@@ -654,6 +665,8 @@ entity_messages!(
     GetDocumentDiagnostics,
     PullWorkspaceDiagnostics,
     GetDefaultBranch,
+    GetTreeDiff,
+    GetBlobContent,
     GitClone,
     GetAgentServerCommand,
     ExternalAgentsUpdated,
@@ -843,6 +856,7 @@ impl LspQuery {
             Some(lsp_query::Request::GetImplementation(_)) => ("GetImplementation", false),
             Some(lsp_query::Request::GetReferences(_)) => ("GetReferences", false),
             Some(lsp_query::Request::GetDocumentColor(_)) => ("GetDocumentColor", false),
+            Some(lsp_query::Request::InlayHints(_)) => ("InlayHints", false),
             None => ("<unknown>", true),
         }
     }

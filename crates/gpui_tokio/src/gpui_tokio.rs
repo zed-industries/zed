@@ -1,8 +1,9 @@
 use std::future::Future;
 
 use gpui::{App, AppContext, Global, ReadGlobal, Task};
-use tokio::task::JoinError;
 use util::defer;
+
+pub use tokio::task::JoinError;
 
 pub fn init(cx: &mut App) {
     cx.set_global(GlobalTokio::new());

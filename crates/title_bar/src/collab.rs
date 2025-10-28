@@ -403,14 +403,13 @@ impl TitleBar {
                         IconName::Mic
                     },
                 )
-                .tooltip(move |window, cx| {
+                .tooltip(move |_window, cx| {
                     if is_muted {
                         if is_deafened {
                             Tooltip::with_meta(
                                 "Unmute Microphone",
                                 None,
                                 "Audio will be unmuted",
-                                window,
                                 cx,
                             )
                         } else {
@@ -444,12 +443,12 @@ impl TitleBar {
             .selected_style(ButtonStyle::Tinted(TintColor::Error))
             .icon_size(IconSize::Small)
             .toggle_state(is_deafened)
-            .tooltip(move |window, cx| {
+            .tooltip(move |_window, cx| {
                 if is_deafened {
                     let label = "Unmute Audio";
 
                     if !muted_by_user {
-                        Tooltip::with_meta(label, None, "Microphone will be unmuted", window, cx)
+                        Tooltip::with_meta(label, None, "Microphone will be unmuted", cx)
                     } else {
                         Tooltip::simple(label, cx)
                     }
@@ -457,7 +456,7 @@ impl TitleBar {
                     let label = "Mute Audio";
 
                     if !muted_by_user {
-                        Tooltip::with_meta(label, None, "Microphone will be muted", window, cx)
+                        Tooltip::with_meta(label, None, "Microphone will be muted", cx)
                     } else {
                         Tooltip::simple(label, cx)
                     }
