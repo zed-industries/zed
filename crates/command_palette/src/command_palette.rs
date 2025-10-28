@@ -427,7 +427,6 @@ impl PickerDelegate for CommandPaletteDelegate {
             let open_keymap = Box::new(zed_actions::ChangeKeybinding {
                 action: action_name.to_string(),
             });
-            // window.focus(&self.previous_focus_handle);
             window.dispatch_action(open_keymap, cx);
             self.dismissed(window, cx);
             return;
