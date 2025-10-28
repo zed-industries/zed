@@ -71,7 +71,7 @@ pub struct SearchToolInput {
     pub queries: Box<[SearchToolQuery]>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct SearchToolQuery {
     /// A glob pattern to match file paths in the codebase
     pub glob: String,

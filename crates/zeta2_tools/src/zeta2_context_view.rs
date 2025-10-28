@@ -1,18 +1,26 @@
-use std::{any::TypeId, sync::Arc, time::Instant};
+use std::{
+    any::TypeId,
+    collections::VecDeque,
+    ops::Add,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::Result;
 use client::{Client, UserStore};
 use editor::{Editor, PathKey};
 use futures::StreamExt as _;
 use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    ParentElement as _, SharedString, Styled as _, Task, TextAlign, Window,
+    Animation, AnimationExt, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle,
+    Focusable, ParentElement as _, SharedString, Styled as _, Task, TextAlign, Window, actions,
+    pulsating_between,
 };
 use multi_buffer::MultiBuffer;
 use project::Project;
 use text::OffsetRangeExt;
 use ui::{
-    Color, FluentBuilder as _, Icon, IconName, IconSize, ListItem, StyledTypography, h_flex, v_flex,
+    ButtonCommon, Clickable, Color, Disableable, FluentBuilder as _, Icon, IconButton, IconName,
+    IconSize, InteractiveElement, IntoElement, ListItem, StyledTypography, div, h_flex, v_flex,
 };
 use workspace::{Item, ItemHandle as _};
 use zeta2::{
@@ -20,16 +28,33 @@ use zeta2::{
 };
 
 pub struct Zeta2ContextView {
+    empty_focus_handle: FocusHandle,
     project: Entity<Project>,
-    editor: Entity<Editor>,
-    search_queries: Vec<SearchToolQuery>,
     zeta: Entity<Zeta>,
-    context_retrieval_started_at: Instant,
-    search_results_generated_at: Option<Instant>,
-    search_results_executed_at: Option<Instant>,
-    context_retrieval_finished_at: Option<Instant>,
+    runs: VecDeque<RetrievalRun>,
+    current_ix: usize,
     _update_task: Task<Result<()>>,
 }
+
+#[derive(Debug)]
+pub struct RetrievalRun {
+    editor: Entity<Editor>,
+    search_queries: Vec<SearchToolQuery>,
+    started_at: Instant,
+    search_results_generated_at: Option<Instant>,
+    search_results_executed_at: Option<Instant>,
+    finished_at: Option<Instant>,
+}
+
+actions!(
+    dev,
+    [
+        /// Go to the previous context retrieval run
+        Zeta2ContextGoBack,
+        /// Go to the next context retrieval run
+        Zeta2ContextGoForward
+    ]
+);
 
 impl Zeta2ContextView {
     pub fn new(
@@ -39,9 +64,6 @@ impl Zeta2ContextView {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let multibuffer = cx.new(|_| MultiBuffer::new(language::Capability::ReadOnly));
-        let editor =
-            cx.new(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx));
         let zeta = Zeta::global(client, user_store, cx);
 
         let mut debug_rx = zeta.update(cx, |zeta, _| zeta.debug_info());
@@ -55,13 +77,10 @@ impl Zeta2ContextView {
         });
 
         Self {
+            empty_focus_handle: cx.focus_handle(),
             project,
-            editor,
-            search_queries: Vec::new(),
-            context_retrieval_started_at: Instant::now(),
-            search_results_generated_at: None,
-            search_results_executed_at: None,
-            context_retrieval_finished_at: None,
+            runs: VecDeque::new(),
+            current_ix: 0,
             zeta,
             _update_task,
         }
@@ -101,14 +120,34 @@ impl Zeta2ContextView {
     fn handle_context_retrieval_started(
         &mut self,
         info: ZetaContextRetrievalDebugInfo,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.context_retrieval_started_at = info.timestamp;
-        self.search_results_generated_at.take();
-        self.search_results_executed_at.take();
-        self.context_retrieval_finished_at.take();
-        self.search_queries.clear();
+        if self
+            .runs
+            .back()
+            .is_some_and(|run| run.search_results_executed_at.is_none())
+        {
+            self.runs.pop_back();
+        }
+
+        let multibuffer = cx.new(|_| MultiBuffer::new(language::Capability::ReadOnly));
+        let editor = cx
+            .new(|cx| Editor::for_multibuffer(multibuffer, Some(self.project.clone()), window, cx));
+
+        if self.runs.len() == 32 {
+            self.runs.pop_front();
+        }
+
+        self.runs.push_back(RetrievalRun {
+            editor,
+            search_queries: Vec::new(),
+            started_at: info.timestamp,
+            search_results_generated_at: None,
+            search_results_executed_at: None,
+            finished_at: None,
+        });
+
         cx.notify();
     }
 
@@ -118,9 +157,13 @@ impl Zeta2ContextView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.context_retrieval_finished_at = Some(info.timestamp);
+        let Some(run) = self.runs.back_mut() else {
+            return;
+        };
 
-        let multibuffer = self.editor.read(cx).buffer().clone();
+        run.finished_at = Some(info.timestamp);
+
+        let multibuffer = run.editor.read(cx).buffer().clone();
         multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.clear(cx);
 
@@ -141,7 +184,7 @@ impl Zeta2ContextView {
             }
         });
 
-        self.editor.update(cx, |editor, cx| {
+        run.editor.update(cx, |editor, cx| {
             editor.move_to_beginning(&Default::default(), window, cx);
         });
 
@@ -154,8 +197,12 @@ impl Zeta2ContextView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.search_results_generated_at = Some(info.timestamp);
-        self.search_queries = info.queries;
+        let Some(run) = self.runs.back_mut() else {
+            return;
+        };
+
+        run.search_results_generated_at = Some(info.timestamp);
+        run.search_queries = info.queries;
         cx.notify();
     }
 
@@ -165,11 +212,47 @@ impl Zeta2ContextView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.search_results_executed_at = Some(info.timestamp);
+        if self.current_ix + 2 == self.runs.len() {
+            // Switch to latest when the queries are executed
+            self.current_ix += 1;
+        }
+
+        let Some(run) = self.runs.back_mut() else {
+            return;
+        };
+
+        run.search_results_executed_at = Some(info.timestamp);
         cx.notify();
     }
 
-    fn render_informational_footer(&mut self, cx: &mut Context<'_, Zeta2ContextView>) -> ui::Div {
+    fn handle_go_back(
+        &mut self,
+        _: &Zeta2ContextGoBack,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.current_ix = self.current_ix.saturating_sub(1);
+        cx.focus_self(window);
+        cx.notify();
+    }
+
+    fn handle_go_forward(
+        &mut self,
+        _: &Zeta2ContextGoForward,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.current_ix = self
+            .current_ix
+            .add(1)
+            .min(self.runs.len().saturating_sub(1));
+        cx.focus_self(window);
+        cx.notify();
+    }
+
+    fn render_informational_footer(&self, cx: &mut Context<'_, Zeta2ContextView>) -> ui::Div {
+        let run = &self.runs[self.current_ix];
+
         h_flex()
             .w_full()
             .font_buffer(cx)
@@ -179,7 +262,7 @@ impl Zeta2ContextView {
                 v_flex()
                     .h_full()
                     .flex_1()
-                    .children(self.search_queries.iter().enumerate().map(|(ix, query)| {
+                    .children(run.search_queries.iter().enumerate().map(|(ix, query)| {
                         ListItem::new(ix)
                             .start_slot(
                                 Icon::new(IconName::MagnifyingGlass)
@@ -194,19 +277,65 @@ impl Zeta2ContextView {
                     .h_full()
                     .pr_2()
                     .text_align(TextAlign::Right)
+                    .child(
+                        h_flex()
+                            .justify_end()
+                            .child(
+                                IconButton::new("go-back", IconName::ChevronLeft)
+                                    .disabled(self.current_ix == 0 || self.runs.len() < 2)
+                                    .tooltip(ui::Tooltip::for_action_title(
+                                        "Go to previous run",
+                                        &Zeta2ContextGoBack,
+                                    ))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.handle_go_back(&Zeta2ContextGoBack, window, cx);
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .child(format!("{}/{}", self.current_ix + 1, self.runs.len()))
+                                    .map(|this| {
+                                        if self.runs.back().is_some_and(|back| {
+                                            back.search_results_executed_at.is_none()
+                                        }) {
+                                            this.with_animation(
+                                                "pulsating-count",
+                                                Animation::new(Duration::from_secs(2))
+                                                    .repeat()
+                                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                                |label, delta| label.opacity(delta),
+                                            )
+                                            .into_any_element()
+                                        } else {
+                                            this.into_any_element()
+                                        }
+                                    }),
+                            )
+                            .child(
+                                IconButton::new("go-forward", IconName::ChevronRight)
+                                    .disabled(self.current_ix + 1 == self.runs.len())
+                                    .tooltip(ui::Tooltip::for_action_title(
+                                        "Go to next run",
+                                        &Zeta2ContextGoBack,
+                                    ))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.handle_go_forward(&Zeta2ContextGoForward, window, cx);
+                                    })),
+                            ),
+                    )
                     .map(|mut div| {
-                        let t0 = self.context_retrieval_started_at;
-                        let Some(t1) = self.search_results_generated_at else {
+                        let t0 = run.started_at;
+                        let Some(t1) = run.search_results_generated_at else {
                             return div.child("Planning search...");
                         };
                         div = div.child(format!("Planned search: {:>5} ms", (t1 - t0).as_millis()));
 
-                        let Some(t2) = self.search_results_executed_at else {
+                        let Some(t2) = run.search_results_executed_at else {
                             return div.child("Running search...");
                         };
                         div = div.child(format!("Ran search: {:>5} ms", (t2 - t1).as_millis()));
 
-                        let Some(t3) = self.context_retrieval_finished_at else {
+                        let Some(t3) = run.finished_at else {
                             return div.child("Filtering results...");
                         };
                         div.child(format!("Filtered results: {:>5} ms", (t3 - t2).as_millis()))
@@ -217,7 +346,10 @@ impl Zeta2ContextView {
 
 impl Focusable for Zeta2ContextView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.editor.read(cx).focus_handle(cx)
+        self.runs
+            .get(self.current_ix)
+            .map(|run| run.editor.read(cx).focus_handle(cx))
+            .unwrap_or_else(|| self.empty_focus_handle.clone())
     }
 }
 
@@ -243,7 +375,7 @@ impl Item for Zeta2ContextView {
         if type_id == TypeId::of::<Self>() {
             Some(self_handle.to_any())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.to_any())
+            Some(self.runs.get(self.current_ix)?.editor.to_any())
         } else {
             None
         }
@@ -253,8 +385,23 @@ impl Item for Zeta2ContextView {
 impl gpui::Render for Zeta2ContextView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         v_flex()
+            .key_context("Zeta2Context")
+            .on_action(cx.listener(Self::handle_go_back))
+            .on_action(cx.listener(Self::handle_go_forward))
             .size_full()
-            .child(self.editor.clone())
-            .child(self.render_informational_footer(cx))
+            .map(|this| {
+                if self.runs.is_empty() {
+                    this.child(
+                        v_flex()
+                            .size_full()
+                            .justify_center()
+                            .items_center()
+                            .child("No retrieval runs yet"),
+                    )
+                } else {
+                    this.child(self.runs[self.current_ix].editor.clone())
+                        .child(self.render_informational_footer(cx))
+                }
+            })
     }
 }
