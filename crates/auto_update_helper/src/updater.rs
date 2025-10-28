@@ -128,6 +128,12 @@ pub(crate) const JOBS: &[Job] = &[
                     open_console_source.display(),
                     open_console_dest.display()
                 );
+                let parent = open_console_dest.parent().context(format!(
+                    "Failed to get parent directory of {}",
+                    open_console_dest.display()
+                ))?;
+                std::fs::create_dir_all(parent)
+                    .context(format!("Failed to create directory {}", parent.display()))?;
                 std::fs::copy(&open_console_source, &open_console_dest)
                     .map(|_| ())
                     .context(format!(
