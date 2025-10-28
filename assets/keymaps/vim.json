@@ -220,8 +220,8 @@
       "[ {": ["vim::UnmatchedBackward", { "char": "{" }],
       "] )": ["vim::UnmatchedForward", { "char": ")" }],
       "[ (": ["vim::UnmatchedBackward", { "char": "(" }],
-      "[ r": "editor::GoToPreviousReference",
-      "] r": "editor::GoToNextReference",
+      "[ r": "vim::GoToPreviousReference",
+      "] r": "vim::GoToNextReference",
       // tree-sitter related commands
       "[ x": "vim::SelectLargerSyntaxNode",
       "] x": "vim::SelectSmallerSyntaxNode"
@@ -434,7 +434,7 @@
       "shift-t": ["vim::PushFindBackward", { "after": true, "multiline": true }],
       "shift-f": ["vim::PushFindBackward", { "after": false, "multiline": true }],
       "alt-.": "vim::RepeatFind",
-      
+
       // Changes
       "shift-r": "editor::Paste",
       "`": "vim::ConvertToLowerCase",
@@ -444,14 +444,14 @@
       "ctrl-r": "vim::Redo",
       "y": "vim::HelixYank",
       "p": "vim::HelixPaste",
-      "shift-p": ["vim::HelixPaste", { "before": true }],            
+      "shift-p": ["vim::HelixPaste", { "before": true }],
       ">": "vim::Indent",
       "<": "vim::Outdent",
       "=": "vim::AutoIndent",
       "d": "vim::HelixDelete",
       "c": "vim::HelixSubstitute",
       "alt-c": "vim::HelixSubstituteNoYank",
-      
+
       // Selection manipulation
       "s": "vim::HelixSelectRegex",
       "alt-s": ["editor::SplitSelectionIntoLines", { "keep_selections": true }],
@@ -468,7 +468,7 @@
       "alt-i": "editor::SelectSmallerSyntaxNode",
       "alt-p": "editor::SelectPreviousSyntaxNode",
       "alt-n": "editor::SelectNextSyntaxNode",
-      
+
       // Goto mode
       "g e": "vim::EndOfDocument",
       "g h": "vim::StartOfLine",
@@ -479,11 +479,11 @@
       "g b": "vim::WindowBottom",
       "g r": "editor::FindAllReferences", // zed specific
       "g n": "pane::ActivateNextItem",
-      "shift-l": "pane::ActivateNextItem",      
+      "shift-l": "pane::ActivateNextItem",
       "g p": "pane::ActivatePreviousItem",
       "shift-h": "pane::ActivatePreviousItem",
       "g .": "vim::HelixGotoLastModification", // go to last modification
-      
+
       // Window mode
       "space w h": "workspace::ActivatePaneLeft",
       "space w l": "workspace::ActivatePaneRight",

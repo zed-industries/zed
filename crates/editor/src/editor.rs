@@ -16700,7 +16700,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let task = self.go_to_reference_before_or_after_position(Direction::Next, window, cx);
+        let task = self.go_to_reference_before_or_after_position(Direction::Next, 1, window, cx);
         if let Some(task) = task {
             task.detach();
         };
@@ -16712,7 +16712,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let task = self.go_to_reference_before_or_after_position(Direction::Prev, window, cx);
+        let task = self.go_to_reference_before_or_after_position(Direction::Prev, 1, window, cx);
         if let Some(task) = task {
             task.detach();
         };
@@ -16721,6 +16721,7 @@ impl Editor {
     pub fn go_to_reference_before_or_after_position(
         &mut self,
         direction: Direction,
+        count: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
@@ -16760,7 +16761,8 @@ impl Editor {
             locations.sort_unstable_by(|l, r| l.range.start.cmp(&r.range.start, &buffer_snapshot));
 
             let current_location_index = locations.iter().position(|loc| {
-                loc.range.start.offset <= head.offset && loc.range.end.offset >= head.offset
+                loc.range.start.to_offset(&buffer_snapshot) <= head.to_offset(&buffer_snapshot) &&
+                    loc.range.end.to_offset(&buffer_snapshot) >= head.to_offset(&buffer_snapshot)
             });
 
             let Some(current_location_index) = current_location_index else {
@@ -16774,13 +16776,9 @@ impl Editor {
             };
 
             let destination_location_index = match direction {
-                Direction::Next => (current_location_index + 1) % locations.len(),
+                Direction::Next => (current_location_index + count) % locations.len(),
                 Direction::Prev => {
-                    if current_location_index == 0 {
-                        locations.len() - 1
-                    } else {
-                        current_location_index - 1
-                    }
+                    (current_location_index + locations.len() - count % locations.len()) % locations.len()
                 }
             };
 
