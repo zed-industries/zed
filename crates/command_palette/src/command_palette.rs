@@ -132,25 +132,6 @@ impl CommandPalette {
         self.picker
             .update(cx, |picker, cx| picker.set_query(query, window, cx))
     }
-
-    fn handle_open_keymap(
-        &mut self,
-        _: &ChangeKeybinding,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let picker = &self.picker.read(cx).delegate;
-        let selected_command = picker.selected_command();
-
-        let action_name = selected_command.action.name();
-        let open_keymap_action = move || {
-            Box::new(zed_actions::ChangeKeybinding {
-                action: action_name.to_string(),
-            })
-        };
-
-        window.dispatch_action(open_keymap_action(), cx);
-    }
 }
 
 impl EventEmitter<DismissEvent> for CommandPalette {}
@@ -162,12 +143,9 @@ impl Focusable for CommandPalette {
 }
 
 impl Render for CommandPalette {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("CommandPalette")
-            .on_action(
-                cx.listener(|this, action, window, cx| this.handle_open_keymap(action, window, cx)),
-            )
             .w(rems(34.))
             .child(self.picker.clone())
     }
@@ -541,10 +519,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                         .map(|kb| kb.size(rems_from_px(12.))),
                 )
                 .on_click(move |_, window, cx| {
-                    let open_keymap = Box::new(zed_actions::ChangeKeybinding { action: "".to_string() });
-                    // window.focus(&self.previous_focus_handle);
-                    window.dispatch_action(open_keymap, cx);
-                    // window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
+                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
                 })
         };
 
