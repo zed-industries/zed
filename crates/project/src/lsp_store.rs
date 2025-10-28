@@ -10467,19 +10467,16 @@ impl LspStore {
             .capabilities()
             .diagnostic_provider
             .and_then(|provider| {
-                let workspace_refresher = lsp_workspace_diagnostics_refresh(
-                    None,
-                    provider.clone(),
-                    language_server.clone(),
-                    cx,
-                )?;
                 local
                     .language_server_dynamic_registrations
                     .entry(server_id)
                     .or_default()
                     .diagnostics
                     .entry(None)
-                    .or_insert(provider);
+                    .or_insert(provider.clone());
+                let workspace_refresher =
+                    lsp_workspace_diagnostics_refresh(None, provider, language_server.clone(), cx)?;
+
                 Some((None, workspace_refresher))
             })
             .into_iter()
