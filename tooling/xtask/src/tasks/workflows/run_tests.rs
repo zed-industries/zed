@@ -5,19 +5,13 @@ use super::{
     steps::{self, FluentBuilder, NamedJob, named, release_job},
 };
 
-// a: have tests be in separate workflow, take inputs based on existing logic, and return outputs
-// b: have separate workflows for each test kind with path filters, have them all be required
-// c: break tests into separate workflows, have each of them individually check whether to run
-
 fn str_vec(values: &'static [&'static str]) -> Vec<String> {
     values.into_iter().map(ToString::to_string).collect()
 }
 
-// todo! make this take vec<&str> instead
 pub(crate) fn run_tests_in(paths: &'static [&'static str], workflow: Workflow) -> Workflow {
     let paths = str_vec(paths);
     workflow
-        // todo! inputs?
         .on(Event::default()
             .push(
                 Push::default()
@@ -44,6 +38,9 @@ pub(crate) fn run_tests_in(paths: &'static [&'static str], workflow: Workflow) -
             .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}")
             .cancel_in_progress(true)
         )
+        .add_env(( "CARGO_TERM_COLOR", "always" ))
+        .add_env(( "RUST_BACKTRACE", 1 ))
+        .add_env(( "CARGO_INCREMENTAL", 0 ))
 }
 
 // todo! missing the random tests that are in macos_tests for some reason

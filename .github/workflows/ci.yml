@@ -2,15 +2,8 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
-      - "v[0-9]+.[0-9]+.x"
     tags:
       - "v*"
-
-  pull_request:
-    branches:
-      - "**"
 
 concurrency:
   # Allow only one workflow per any non-`main` branch.
