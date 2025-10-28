@@ -8,6 +8,7 @@ use crate::tasks::workflows::{
 
 pub(crate) fn run_action_checks() -> Workflow {
     let action_checks = actionlint();
+    let shell_checks = shellcheck();
 
     named::workflow()
         .map(|workflow| {
@@ -16,11 +17,13 @@ pub(crate) fn run_action_checks() -> Workflow {
                     ".github/workflows/**",
                     ".github/actions/**",
                     ".github/actionlint.yml",
+                    "script/**",
                 ],
                 workflow,
             )
         })
         .add_job(action_checks.name, action_checks.job)
+        .add_job(shell_checks.name, shell_checks.job)
 }
 const ACTION_LINT_STEP_ID: &'static str = "get_actionlint";
 
@@ -34,6 +37,15 @@ fn actionlint() -> NamedJob {
     )
 }
 
+fn shellcheck() -> NamedJob {
+    named::job(
+        release_job(&[])
+            .runs_on(runners::LINUX_SMALL)
+            .add_step(steps::checkout_repo())
+            .add_step(run_shellcheck()),
+    )
+}
+
 fn download_actionlint() -> Step<Run> {
     named::bash("bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)").id(ACTION_LINT_STEP_ID)
 }
@@ -42,4 +54,8 @@ fn run_actionlint() -> Step<Run> {
     named::bash(indoc::indoc! {r#"
             ${{ steps.get_actionlint.outputs.executable }} -color
         "#})
+}
+
+fn run_shellcheck() -> Step<Run> {
+    named::bash("./script/shellcheck-scripts error")
 }
