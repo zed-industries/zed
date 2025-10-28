@@ -1676,8 +1676,8 @@ impl OutlinePanel {
                 PanelEntry::Search(_) => None,
             })
             .collect();
-
-        self.collapsed_entries.retain(|e| !entries_to_remove.contains(e));
+        self.collapsed_entries
+            .retain(|e| !entries_to_remove.contains(e));
 
         active_editor.update(cx, |editor, cx| {
             buffers_to_unfold.retain(|buffer_id| editor.is_buffer_folded(*buffer_id, cx));
