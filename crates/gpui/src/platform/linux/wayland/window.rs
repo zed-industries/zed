@@ -29,7 +29,8 @@ use crate::{
     AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
     PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, Size, Tiling, WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams, px, size,
+    WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams,
+    layer_shell::LayerShellNotSupportedError, px, size,
 };
 use crate::{
     Capslock,
@@ -130,7 +131,7 @@ impl WaylandSurfaceState {
         // For layer_shell windows, create a layer surface instead of an xdg surface
         if let WindowKind::LayerShell(options) = &params.kind {
             let Some(layer_shell) = globals.layer_shell.as_ref() else {
-                anyhow::bail!("Compositor doesn't support zwlr_layer_shell_v1");
+                return Err(LayerShellNotSupportedError.into());
             };
 
             let layer_surface = layer_shell.get_layer_surface(

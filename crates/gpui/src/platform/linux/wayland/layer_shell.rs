@@ -1,4 +1,5 @@
 use bitflags::bitflags;
+use thiserror::Error;
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
 use crate::Pixels;
@@ -102,3 +103,9 @@ pub struct LayerShellOptions {
     /// How keyboard events should be delivered to the surface.
     pub keyboard_interactivity: KeyboardInteractivity,
 }
+
+/// An error indicating that an action failed because the compositor doesn't support the required
+/// layer_shell protocol.
+#[derive(Debug, Error)]
+#[error("Compositor doesn't support zwlr_layer_shell_v1")]
+pub struct LayerShellNotSupportedError;
