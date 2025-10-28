@@ -1548,7 +1548,9 @@ impl MultiBuffer {
     ) -> Option<Anchor> {
         let snapshot = buffer.read(cx).snapshot();
         for (excerpt_id, range) in self.excerpts_for_buffer(snapshot.remote_id(), cx) {
-            if range.context.start.cmp(&anchor, &snapshot).is_le() && range.context.end.cmp(&anchor, &snapshot).is_ge() {
+            if range.context.start.cmp(&anchor, &snapshot).is_le()
+                && range.context.end.cmp(&anchor, &snapshot).is_ge()
+            {
                 return Some(Anchor::in_buffer(excerpt_id, snapshot.remote_id(), anchor));
             }
         }

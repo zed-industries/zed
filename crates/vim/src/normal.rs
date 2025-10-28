@@ -209,7 +209,12 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &GoToPreviousReference, window, cx| {
         let count = Vim::take_count(cx);
         vim.update_editor(cx, |_, editor, cx| {
-         let task =   editor.go_to_reference_before_or_after_position(editor::Direction::Prev, count.unwrap_or(1), window, cx);
+            let task = editor.go_to_reference_before_or_after_position(
+                editor::Direction::Prev,
+                count.unwrap_or(1),
+                window,
+                cx,
+            );
             if let Some(task) = task {
                 task.detach_and_log_err(cx);
             };
@@ -219,7 +224,12 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &GoToNextReference, window, cx| {
         let count = Vim::take_count(cx);
         vim.update_editor(cx, |_, editor, cx| {
-         let task =   editor.go_to_reference_before_or_after_position(editor::Direction::Next, count.unwrap_or(1), window, cx);
+            let task = editor.go_to_reference_before_or_after_position(
+                editor::Direction::Next,
+                count.unwrap_or(1),
+                window,
+                cx,
+            );
             if let Some(task) = task {
                 task.detach_and_log_err(cx);
             };

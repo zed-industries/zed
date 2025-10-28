@@ -27058,7 +27058,7 @@ async fn test_next_prev_reference(cx: &mut TestAppContext) {
 
     _move(Direction::Next, 3, &mut cx).await;
     cx.assert_editor_state(CYCLE_POSITIONS[3]);
-    
+
     _move(Direction::Prev, 2, &mut cx).await;
     cx.assert_editor_state(CYCLE_POSITIONS[1]);
 }
