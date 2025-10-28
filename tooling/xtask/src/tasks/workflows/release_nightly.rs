@@ -39,8 +39,20 @@ pub fn release_nightly() -> Workflow {
     let windows_x86 = bundle_windows_nightly(Arch::X86_64, &[&style, &windows_tests]);
     let windows_arm = bundle_windows_nightly(Arch::ARM64, &[&style, &windows_tests]);
 
-    let nix_linux_x86 = build_nix(Platform::Linux, Arch::X86_64, "default", None);
-    let nix_mac_arm = build_nix(Platform::Mac, Arch::ARM64, "default", None);
+    let nix_linux_x86 = build_nix(
+        Platform::Linux,
+        Arch::X86_64,
+        "default",
+        None,
+        &[&style, &tests],
+    );
+    let nix_mac_arm = build_nix(
+        Platform::Mac,
+        Arch::ARM64,
+        "default",
+        None,
+        &[&style, &tests],
+    );
     let update_nightly_tag = update_nightly_tag_job(&[
         &bundle_mac,
         &linux_x86,
