@@ -1737,7 +1737,7 @@ impl OutlinePanel {
                         outline.excerpt_id,
                         outline.outline.range.clone(),
                     ))
-            }
+                }
                 PanelEntry::Search(_) => None,
             })
             .collect::<Vec<_>>();
