@@ -34,13 +34,16 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
         Platform::Linux => runners::LINUX_DEFAULT,
         Platform::Mac => runners::MAC_DEFAULT,
     };
-    // todo! missing script/linux step
     NamedJob {
         name: format!("run_tests_{platform}"),
         job: release_job(&[])
             .runs_on(runner)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
+            .when(
+                platform == Platform::Linux,
+                steps::install_linux_dependencies,
+            )
             .add_step(steps::setup_node())
             .add_step(steps::cargo_install_nextest(platform))
             .add_step(steps::clear_target_dir_if_large(platform))
