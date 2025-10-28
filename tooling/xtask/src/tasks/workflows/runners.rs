@@ -19,14 +19,14 @@ impl Into<gh_workflow::RunsOn> for Runner {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Arch {
     X86_64,
-    AARCH64,
+    ARM64,
 }
 
 impl std::fmt::Display for Arch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Arch::X86_64 => write!(f, "x86_64"),
-            Arch::AARCH64 => write!(f, "aarch64"),
+            Arch::ARM64 => write!(f, "aarch64"),
         }
     }
 }
@@ -35,14 +35,31 @@ impl Arch {
     pub fn triple(&self) -> &'static str {
         match self {
             Arch::X86_64 => "x86_64-unknown-linux-gnu",
-            Arch::AARCH64 => "aarch64-unknown-linux-gnu",
+            Arch::ARM64 => "aarch64-unknown-linux-gnu",
         }
     }
 
     pub fn linux_bundler(&self) -> Runner {
         match self {
             Arch::X86_64 => LINUX_X86_BUNDLER,
-            Arch::AARCH64 => LINUX_ARM_BUNDLER,
+            Arch::ARM64 => LINUX_ARM_BUNDLER,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Platform {
+    Windows,
+    Linux,
+    Mac,
+}
+
+impl std::fmt::Display for Platform {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Platform::Windows => write!(f, "windows"),
+            Platform::Linux => write!(f, "linux"),
+            Platform::Mac => write!(f, "mac"),
         }
     }
 }
