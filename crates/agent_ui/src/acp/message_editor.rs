@@ -702,7 +702,7 @@ impl MessageEditor {
             let mut all_tracked_buffers = Vec::new();
 
             let result = editor.update(cx, |editor, cx| {
-                let mut ix = 0;
+                let mut ix = text.chars().position(|c| !c.is_whitespace()).unwrap_or(0);
                 let mut chunks: Vec<acp::ContentBlock> = Vec::new();
                 let text = editor.text(cx);
                 editor.display_map.update(cx, |map, cx| {
@@ -714,15 +714,6 @@ impl MessageEditor {
 
                         let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot());
                         if crease_range.start > ix {
-                            //todo(): Custom slash command ContentBlock?
-                            // let chunk = if prevent_slash_commands
-                            //     && ix == 0
-                            //     && parse_slash_command(&text[ix..]).is_some()
-                            // {
-                            //     format!(" {}", &text[ix..crease_range.start]).into()
-                            // } else {
-                            //     text[ix..crease_range.start].into()
-                            // };
                             let chunk = text[ix..crease_range.start].into();
                             chunks.push(chunk);
                         }
@@ -783,15 +774,6 @@ impl MessageEditor {
                     }
 
                     if ix < text.len() {
-                        //todo(): Custom slash command ContentBlock?
-                        // let last_chunk = if prevent_slash_commands
-                        //     && ix == 0
-                        //     && parse_slash_command(&text[ix..]).is_some()
-                        // {
-                        //     format!(" {}", text[ix..].trim_end())
-                        // } else {
-                        //     text[ix..].trim_end().to_owned()
-                        // };
                         let last_chunk = text[ix..].trim_end().to_owned();
                         if !last_chunk.is_empty() {
                             chunks.push(last_chunk.into());
@@ -2746,5 +2728,63 @@ mod tests {
             }
             _ => panic!("Expected Text mention for small file"),
         }
+    }
+
+    #[gpui::test]
+    async fn test_whitespace_trimming(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({"file.rs": "fn main() {}"}))
+            .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+
+        let message_editor = cx.update(|window, cx| {
+            cx.new(|cx| {
+                MessageEditor::new(
+                    workspace.downgrade(),
+                    project.clone(),
+                    history_store.clone(),
+                    None,
+                    Default::default(),
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        min_lines: 1,
+                        max_lines: None,
+                    },
+                    window,
+                    cx,
+                )
+            })
+        });
+        let editor = message_editor.update(cx, |message_editor, _| message_editor.editor.clone());
+
+        cx.run_until_parked();
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("  hello world  ", window, cx);
+        });
+
+        let (content, _) = message_editor
+            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            content,
+            vec![acp::ContentBlock::Text(acp::TextContent {
+                text: "hello world".into(),
+                annotations: None,
+                meta: None
+            })]
+        );
     }
 }
