@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+source script/lib/blob-store.sh
+
+build_flag="--release"
+target_dir="release"
+local_arch=false
+local_only=false
+local_install=false
+bundle_name=""
+
+# This must match the team in the provisioning profile.
+IDENTITY="Zed Industries, Inc."
+APPLE_NOTARIZATION_TEAM="MQ55VZLNZQ"
+
+# Function for displaying help info
+help_info() {
+  echo "
+Usage: ${0##*/} [options] [bundle_name]
+Build the application bundle for macOS.
+
+Options:
+  -d    Compile in debug mode
+  -l    Compile for local architecture only.
+  -i    Install the resulting DMG into /Applications in local mode. Noop without -l.
+  -h    Display this help and exit.
+  "
+}
+
+function prepare_binaries() {
+    local architecture=$1
+    local app_path=$2
+
+    cp target/${architecture}/${target_dir}/zed "${app_path}/Contents/MacOS/zed"
+    cp target/${architecture}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
+}
+
+while getopts 'dlih' flag
+do
+    case "${flag}" in
+        d)
+            export CARGO_INCREMENTAL=true
+            export CARGO_BUNDLE_SKIP_BUILD=true
+            build_flag="";
+            target_dir="debug"
+            ;;
+        l)
+            export CARGO_INCREMENTAL=true
+            export CARGO_BUNDLE_SKIP_BUILD=true
+            local_arch=true
+            local_only=true
+            ;;
+        i) local_install=true;;
+        h)
+           help_info
+           exit 0
+           ;;
+    esac
+done
+
+shift $((OPTIND-1))
+
+if [[ $# -gt 0 ]]; then
+    if [ "$1" ]; then
+        bundle_name=$1
+    fi
+fi
+
+# Get release channel
+pushd crates/zed
+channel=$(<RELEASE_CHANNEL)
+export ZED_RELEASE_CHANNEL="${channel}"
+popd
+
+export ZED_BUNDLE=true
+
+cargo_bundle_version=$(cargo -q bundle --help 2>&1 | head -n 1 || echo "")
+if [ "$cargo_bundle_version" != "cargo-bundle v0.6.1-zed" ]; then
+    cargo install cargo-bundle --git https://github.com/zed-industries/cargo-bundle.git --branch zed-deploy
+fi
+
+# Deal with versions of macOS that don't include libstdc++ headers
+export CXXFLAGS="-stdlib=libc++"
+
+version_info=$(rustc --version --verbose)
+host_line=$(echo "$version_info" | grep host)
+local_target_triple=${host_line#*: }
+
+# Generate the licenses first, so they can be baked into the binaries
+script/generate-licenses
+
+if [ "$local_arch" = true ]; then
+    echo "Building for local target only."
+    cargo build ${build_flag} --package zed --package cli --package remote_server
+else
+    rustup target add aarch64-apple-darwin
+    rustup target add x86_64-apple-darwin
+
+    echo "Compiling zed binaries"
+    cargo build ${build_flag} --package zed --package cli --target aarch64-apple-darwin --target x86_64-apple-darwin
+    # Build remote_server in separate invocation to prevent feature unification from other crates
+    # from influencing dynamic libraries required by it.
+    cargo build ${build_flag} --package remote_server     --target aarch64-apple-darwin --target x86_64-apple-darwin
+fi
+
+echo "Creating application bundle"
+pushd crates/zed
+cp Cargo.toml Cargo.toml.backup
+sed \
+    -i.backup \
+    "s/package.metadata.bundle-${channel}/package.metadata.bundle/" \
+    Cargo.toml
+
+if [ "$local_arch" = true ]; then
+    app_path=$(cargo bundle ${build_flag} --select-workspace-root | xargs)
+else
+    app_path_x64=$(cargo bundle ${build_flag} --target x86_64-apple-darwin --select-workspace-root | xargs)
+    app_path_aarch64=$(cargo bundle ${build_flag} --target aarch64-apple-darwin --select-workspace-root | xargs)
+    app_path=$app_path_x64
+fi
+
+if [ "$local_arch" = true ]; then
+    cp -R target/${target_dir}/cli "${app_path}/Contents/MacOS/"
+else
+    prepare_binaries "aarch64-apple-darwin" "$app_path_aarch64"
+    prepare_binaries "x86_64-apple-darwin" "$app_path_x64"
+fi
+
+mv Cargo.toml.backup Cargo.toml
+popd
+echo "Built ${app_path}"
+
+function upload_debug_info() {
+    architecture=$1
+    if [[ -n "${SENTRY_AUTH_TOKEN:-}" ]]; then
+        echo "Uploading zed debug symbols to sentry..."
+        # note: this uploads the unstripped binary which is needed because it contains
+        # .eh_frame data for stack unwinding. see https://github.com/getsentry/symbolic/issues/783
+        sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
+            "target/${architecture}/${target_dir}/zed" \
+            "target/${architecture}/${target_dir}/remote_server" \
+            "target/${architecture}/${target_dir}/zed.dwarf"
+    else
+        echo "missing SENTRY_AUTH_TOKEN. skipping sentry upload."
+    fi
+}
+
+if command -v sentry-cli >/dev/null 2>&1; then
+    upload_debug_info "aarch64-apple-darwin"
+    upload_debug_info "x86_64-apple-darwin"
+else
+    echo "sentry-cli not found. skipping sentry upload."
+    echo "install with: 'curl -sL https://sentry.io/get-cli | bash'"
+fi
