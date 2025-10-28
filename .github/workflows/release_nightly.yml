@@ -242,7 +242,7 @@ jobs:
     name: Build and cache Nix package
     needs: tests
     secrets: inherit
-    uses: ./.github/workflows/nix.yml
+    uses: ./.github/workflows/nix_build.yml
 
   bundle-windows-x64:
     timeout-minutes: 60

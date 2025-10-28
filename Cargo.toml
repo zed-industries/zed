@@ -508,7 +508,7 @@ fork = "0.2.0"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"
-gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "a0b197dd77c0ed2390c150e601f9d4f9a0ca7105" }
+gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "fe5fd50664bfe164277cab5c86537a2361eddbbd" }
 git2 = { version = "0.20.1", default-features = false }
 globset = "0.4"
 handlebars = "4.3"

@@ -1,40 +1,13 @@
+use super::{runners, steps, steps::named, vars};
 use gh_workflow::*;
 use indexmap::IndexMap;
-
-use super::{runners, steps, vars};
-
-/// Generates the danger.yml workflow
-pub fn danger() -> Workflow {
-    Workflow::default()
-        .name("Danger")
-        .on(
-            Event::default().pull_request(PullRequest::default().add_branch("main").types([
-                PullRequestType::Opened,
-                PullRequestType::Synchronize,
-                PullRequestType::Reopened,
-                PullRequestType::Edited,
-            ])),
-        )
-        .add_job(
-            "danger",
-            Job::default()
-                .cond(Expression::new(
-                    "github.repository_owner == 'zed-industries'",
-                ))
-                .runs_on(runners::LINUX_CHEAP)
-                .add_step(steps::checkout_repo())
-                .add_step(steps::setup_pnpm())
-                .add_step(steps::danger::setup_node())
-                .add_step(steps::danger::install_deps())
-                .add_step(steps::danger::run()),
-        )
-}
+use indoc::indoc;
 
 /// Generates the nix.yml workflow
-pub fn nix() -> Workflow {
+pub fn nix_build() -> Workflow {
     let env: IndexMap<_, _> = [
         ("ZED_CLIENT_CHECKSUM_SEED", vars::ZED_CLIENT_CHECKSUM_SEED),
-        ("ZED_MINIDUMP_ENDPOINT", vars::ZED_MINIDUMP_ENDPOINT),
+        ("ZED_MINIDUMP_ENDPOINT", vars::ZED_SENTRY_MINIDUMP_ENDPOINT),
         (
             "ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON",
             vars::ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON,
@@ -64,8 +37,7 @@ pub fn nix() -> Workflow {
         },
     );
 
-    Workflow::default()
-        .name("Nix build")
+    named::workflow()
         .on(Event::default().workflow_call(
             WorkflowCall::default()
                 .add_input(flake_output.0, flake_output.1)
@@ -80,11 +52,11 @@ pub fn nix() -> Workflow {
                     "github.repository_owner == 'zed-industries'",
                 ))
                 .runs_on(runners::LINUX_DEFAULT)
-                .env(env.clone())
+                .envs(env.clone())
                 .add_step(steps::checkout_repo().add_with(("clean", "false")))
-                .add_step(steps::nix::install_nix())
-                .add_step(steps::nix::cachix_action(&input_cachix_filter))
-                .add_step(steps::nix::build(&input_flake_output)),
+                .add_step(install_nix())
+                .add_step(cachix_action(&input_cachix_filter))
+                .add_step(build(&input_flake_output)),
         )
         .add_job(
             "nix-build-mac-arm",
@@ -95,11 +67,56 @@ pub fn nix() -> Workflow {
                     "github.repository_owner == 'zed-industries'",
                 ))
                 .runs_on(runners::MAC_DEFAULT)
-                .env(env)
+                .envs(env)
                 .add_step(steps::checkout_repo().add_with(("clean", "false")))
-                .add_step(steps::nix::set_path())
-                .add_step(steps::nix::cachix_action(&input_cachix_filter))
-                .add_step(steps::nix::build(&input_flake_output))
-                .add_step(steps::nix::limit_store()),
+                .add_step(set_path())
+                .add_step(cachix_action(&input_cachix_filter))
+                .add_step(build(&input_flake_output))
+                .add_step(limit_store()),
         )
+}
+// on our macs we manually install nix. for some reason the cachix action is running
+// under a non-login /bin/bash shell which doesn't source the proper script to add the
+// nix profile to PATH, so we manually add them here
+pub fn set_path() -> Step<Run> {
+    named::bash(indoc! {r#"
+            echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
+            echo "/Users/administrator/.nix-profile/bin" >> "$GITHUB_PATH"
+        "#})
+}
+
+pub fn install_nix() -> Step<Use> {
+    named::uses(
+        "cachix",
+        "install-nix-action",
+        "02a151ada4993995686f9ed4f1be7cfbb229e56f", // v31
+    )
+    .add_with(("github_access_token", vars::GITHUB_TOKEN))
+}
+
+pub fn cachix_action(cachix_filter: &str) -> Step<Use> {
+    named::uses(
+        "cachix",
+        "cachix-action",
+        "0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad", // v16
+    )
+    .add_with(("name", "zed"))
+    .add_with(("authToken", vars::CACHIX_AUTH_TOKEN))
+    .add_with(("pushFilter", cachix_filter))
+    .add_with(("cachixArgs", "-v"))
+}
+
+pub fn build(flake_output: &str) -> Step<Run> {
+    named::bash(&format!(
+        "nix build .#{} -L --accept-flake-config",
+        flake_output
+    ))
+}
+
+pub fn limit_store() -> Step<Run> {
+    named::bash(indoc! {r#"
+            if [ "$(du -sm /nix/store | cut -f1)" -gt 50000 ]; then
+                nix-collect-garbage -d || true
+            fi"#
+    })
 }
