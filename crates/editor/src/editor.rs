@@ -35,7 +35,6 @@ mod persistence;
 mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
-pub mod send_to_console;
 pub mod tasks;
 
 #[cfg(test)]
