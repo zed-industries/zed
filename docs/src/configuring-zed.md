@@ -9,7 +9,7 @@ In addition to the settings described here, you may also want to change your [th
 You can browse through many of the supported settings via the Settings Editor, which can be opened with the {#kb zed::OpenSettings} keybinding, or through the `zed: open settings` action in the command palette. Through it, you can customize your local, user settings as well as project settings.
 
 > Note that not all settings that Zed supports are available through the Settings Editor yet.
-> Some more intricate ones, such as language formatters, can only be changed through the JSON settings file {#kb: zed::OpenSettingsFile}.
+> Some more intricate ones, such as language formatters, can only be changed through the JSON settings file {#kb zed::OpenSettingsFile}.
 
 ## User Settings File
 

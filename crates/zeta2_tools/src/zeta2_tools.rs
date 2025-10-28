@@ -1,3 +1,5 @@
+mod zeta2_context_view;
+
 use std::{cmp::Reverse, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 
 use chrono::TimeDelta;
@@ -21,16 +23,19 @@ use ui_input::InputField;
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use workspace::{Item, SplitDirection, Workspace};
 use zeta2::{
-    ContextMode, DEFAULT_SYNTAX_CONTEXT_OPTIONS, LlmContextOptions, PredictionDebugInfo, Zeta,
-    Zeta2FeatureFlag, ZetaOptions,
+    ContextMode, DEFAULT_SYNTAX_CONTEXT_OPTIONS, LlmContextOptions, Zeta, Zeta2FeatureFlag,
+    ZetaDebugInfo, ZetaEditPredictionDebugInfo, ZetaOptions,
 };
 
 use edit_prediction_context::{EditPredictionContextOptions, EditPredictionExcerptOptions};
+use zeta2_context_view::Zeta2ContextView;
 
 actions!(
     dev,
     [
-        /// Opens the language server protocol logs viewer.
+        /// Opens the edit prediction context view.
+        OpenZeta2ContextView,
+        /// Opens the edit prediction inspector.
         OpenZeta2Inspector,
         /// Rate prediction as positive.
         Zeta2RatePredictionPositive,
@@ -48,6 +53,27 @@ pub fn init(cx: &mut App) {
                 Box::new(cx.new(|cx| {
                     Zeta2Inspector::new(
                         &project,
+                        workspace.client(),
+                        workspace.user_store(),
+                        window,
+                        cx,
+                    )
+                })),
+                window,
+                cx,
+            );
+        });
+    })
+    .detach();
+
+    cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
+        workspace.register_action(move |workspace, _: &OpenZeta2ContextView, window, cx| {
+            let project = workspace.project();
+            workspace.split_item(
+                SplitDirection::Right,
+                Box::new(cx.new(|cx| {
+                    Zeta2ContextView::new(
+                        project.clone(),
                         workspace.client(),
                         workspace.user_store(),
                         window,
@@ -320,7 +346,7 @@ impl Zeta2Inspector {
 
     fn update_last_prediction(
         &mut self,
-        prediction: zeta2::PredictionDebugInfo,
+        prediction: zeta2::ZetaDebugInfo,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -340,6 +366,9 @@ impl Zeta2Inspector {
             let language_registry = self.project.read(cx).languages().clone();
             async move |this, cx| {
                 let mut languages = HashMap::default();
+                let ZetaDebugInfo::EditPredicted(prediction) = prediction else {
+                    return;
+                };
                 for ext in prediction
                     .request
                     .referenced_declarations
@@ -450,7 +479,7 @@ impl Zeta2Inspector {
                         editor
                     });
 
-                    let PredictionDebugInfo {
+                    let ZetaEditPredictionDebugInfo {
                         response_rx,
                         position,
                         buffer,

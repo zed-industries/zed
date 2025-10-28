@@ -45,8 +45,8 @@ mod related_excerpts;
 
 use crate::merge_excerpts::merge_excerpts;
 use crate::prediction::EditPrediction;
-pub use crate::related_excerpts::LlmContextOptions;
 use crate::related_excerpts::find_related_excerpts;
+pub use crate::related_excerpts::{LlmContextOptions, SearchToolQuery};
 pub use provider::ZetaEditPredictionProvider;
 
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
@@ -107,7 +107,7 @@ pub struct Zeta {
     projects: HashMap<EntityId, ZetaProject>,
     options: ZetaOptions,
     update_required: bool,
-    debug_tx: Option<mpsc::UnboundedSender<PredictionDebugInfo>>,
+    debug_tx: Option<mpsc::UnboundedSender<ZetaDebugInfo>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -134,13 +134,32 @@ impl ContextMode {
     }
 }
 
-pub struct PredictionDebugInfo {
+pub enum ZetaDebugInfo {
+    ContextRetrievalStarted(ZetaContextRetrievalDebugInfo),
+    SearchQueriesGenerated(ZetaSearchQueryDebugInfo),
+    SearchQueriesExecuted(ZetaContextRetrievalDebugInfo),
+    ContextRetrievalFinished(ZetaContextRetrievalDebugInfo),
+    EditPredicted(ZetaEditPredictionDebugInfo),
+}
+
+pub struct ZetaContextRetrievalDebugInfo {
+    pub project: Entity<Project>,
+    pub timestamp: Instant,
+}
+
+pub struct ZetaEditPredictionDebugInfo {
     pub request: predict_edits_v3::PredictEditsRequest,
     pub retrieval_time: TimeDelta,
     pub buffer: WeakEntity<Buffer>,
     pub position: language::Anchor,
     pub local_prompt: Result<String, String>,
     pub response_rx: oneshot::Receiver<Result<predict_edits_v3::PredictEditsResponse, String>>,
+}
+
+pub struct ZetaSearchQueryDebugInfo {
+    pub project: Entity<Project>,
+    pub timestamp: Instant,
+    pub queries: Vec<SearchToolQuery>,
 }
 
 pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
@@ -303,7 +322,7 @@ impl Zeta {
         }
     }
 
-    pub fn debug_info(&mut self) -> mpsc::UnboundedReceiver<PredictionDebugInfo> {
+    pub fn debug_info(&mut self) -> mpsc::UnboundedReceiver<ZetaDebugInfo> {
         let (debug_watch_tx, debug_watch_rx) = mpsc::unbounded();
         self.debug_tx = Some(debug_watch_tx);
         debug_watch_rx
@@ -324,11 +343,30 @@ impl Zeta {
     }
 
     pub fn history_for_project(&self, project: &Entity<Project>) -> impl Iterator<Item = &Event> {
-        static EMPTY_EVENTS: VecDeque<Event> = VecDeque::new();
         self.projects
             .get(&project.entity_id())
-            .map_or(&EMPTY_EVENTS, |project| &project.events)
-            .iter()
+            .map(|project| project.events.iter())
+            .into_iter()
+            .flatten()
+    }
+
+    pub fn context_for_project(
+        &self,
+        project: &Entity<Project>,
+    ) -> impl Iterator<Item = (Entity<Buffer>, &[Range<Anchor>])> {
+        self.projects
+            .get(&project.entity_id())
+            .and_then(|project| {
+                Some(
+                    project
+                        .context
+                        .as_ref()?
+                        .iter()
+                        .map(|(buffer, ranges)| (buffer.clone(), ranges.as_slice())),
+                )
+            })
+            .into_iter()
+            .flatten()
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
@@ -781,24 +819,19 @@ impl Zeta {
                 let debug_response_tx = if let Some(debug_tx) = &debug_tx {
                     let (response_tx, response_rx) = oneshot::channel();
 
-                    if !request.referenced_declarations.is_empty() || !request.signatures.is_empty()
-                    {
-                    } else {
-                    };
-
                     let local_prompt = build_prompt(&request)
                         .map(|(prompt, _)| prompt)
                         .map_err(|err| err.to_string());
 
                     debug_tx
-                        .unbounded_send(PredictionDebugInfo {
+                        .unbounded_send(ZetaDebugInfo::EditPredicted(ZetaEditPredictionDebugInfo {
                             request: request.clone(),
                             retrieval_time,
                             buffer: buffer.downgrade(),
                             local_prompt,
                             position,
                             response_rx,
-                        })
+                        }))
                         .ok();
                     Some(response_tx)
                 } else {
@@ -1047,7 +1080,20 @@ impl Zeta {
             return;
         };
 
+        let debug_tx = self.debug_tx.clone();
+
         zeta_project.refresh_context_task = Some(cx.spawn(async move |this, cx| {
+            if let Some(debug_tx) = &debug_tx {
+                debug_tx
+                    .unbounded_send(ZetaDebugInfo::ContextRetrievalStarted(
+                        ZetaContextRetrievalDebugInfo {
+                            project: project.clone(),
+                            timestamp: Instant::now(),
+                        },
+                    ))
+                    .ok();
+            }
+
             let related_excerpts = this
                 .update(cx, |this, cx| {
                     let Some(zeta_project) = this.projects.get(&project.entity_id()) else {
@@ -1064,6 +1110,7 @@ impl Zeta {
                         &project,
                         zeta_project.events.iter(),
                         options,
+                        debug_tx,
                         cx,
                     )
                 })
@@ -1077,6 +1124,16 @@ impl Zeta {
                 };
                 zeta_project.context = Some(related_excerpts);
                 zeta_project.refresh_context_task.take();
+                if let Some(debug_tx) = &this.debug_tx {
+                    debug_tx
+                        .unbounded_send(ZetaDebugInfo::ContextRetrievalFinished(
+                            ZetaContextRetrievalDebugInfo {
+                                project,
+                                timestamp: Instant::now(),
+                            },
+                        ))
+                        .ok();
+                }
             })
             .ok()
         }));
