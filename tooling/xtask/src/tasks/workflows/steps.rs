@@ -1,6 +1,6 @@
 use gh_workflow::*;
 
-use crate::tasks::workflows::vars;
+use crate::tasks::workflows::{runners::Platform, vars};
 
 const BASH_SHELL: &str = "bash -euxo pipefail {0}";
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
@@ -44,6 +44,48 @@ pub fn setup_sentry() -> Step<Use> {
     .add_with(("token", vars::SENTRY_AUTH_TOKEN))
 }
 
+pub fn cargo_fmt() -> Step<Run> {
+    named::bash("cargo fmt --all -- --check")
+}
+
+pub fn cargo_install_nextest(platform: Platform) -> Step<Run> {
+    named::run(platform, "cargo install cargo-nextest --locked")
+}
+
+pub fn cargo_nextest(platform: Platform) -> Step<Run> {
+    named::run(
+        platform,
+        "cargo nextest run --workspace --no-fail-fast --failure-output immediate-final",
+    )
+}
+
+pub fn setup_cargo_config(platform: Platform) -> Step<Run> {
+    match platform {
+        Platform::Windows => named::pwsh(indoc::indoc! {r#"
+            New-Item -ItemType Directory -Path "./../.cargo" -Force
+            Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
+        "#}),
+
+        Platform::Linux | Platform::Mac => named::bash(indoc::indoc! {r#"
+            mkdir -p ./../.cargo
+            cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+        "#}),
+    }
+}
+
+pub fn cleanup_cargo_config(platform: Platform) -> Step<Run> {
+    let step = match platform {
+        Platform::Windows => named::pwsh(indoc::indoc! {r#"
+            Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
+        "#}),
+        Platform::Linux | Platform::Mac => named::bash(indoc::indoc! {r#"
+            rm -f ./../.cargo
+        "#}),
+    };
+
+    step.if_condition(Expression::new("always()"))
+}
+
 pub fn upload_artifact(name: &str, path: &str) -> Step<Use> {
     Step::new(format!("@actions/upload-artifact {}", name))
         .uses(
@@ -55,9 +97,12 @@ pub fn upload_artifact(name: &str, path: &str) -> Step<Use> {
         .add_with(("path", path))
 }
 
-pub fn clear_target_dir_if_large() -> Step<Run> {
-    named::bash("script/clear-target-dir-if-larger-than ${{ env.MAX_SIZE }}")
-        .add_env(("MAX_SIZE", "${{ runner.os == 'macOS' && 300 || 100 }}"))
+pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
+    match platform {
+        Platform::Windows => named::pwsh("./script/clear-target-dir-if-larger-than.ps1 250"),
+        Platform::Linux => named::bash("./script/clear-target-dir-if-larger-than 100"),
+        Platform::Mac => named::bash("./script/clear-target-dir-if-larger-than 300"),
+    }
 }
 
 pub fn script(name: &str) -> Step<Run> {
@@ -66,6 +111,11 @@ pub fn script(name: &str) -> Step<Run> {
     } else {
         Step::new(name).run(name).shell(BASH_SHELL)
     }
+}
+
+pub(crate) struct NamedJob {
+    pub name: String,
+    pub job: Job,
 }
 
 // (janky) helper to generate steps with a name that corresponds
@@ -94,6 +144,18 @@ pub(crate) mod named {
         Step::new(function_name(1)).run(script).shell(PWSH_SHELL)
     }
 
+    /// Runs the command in either powershell or bash, depending on platform.
+    /// (You shouldn't inline this function into the workflow definition, you must
+    /// wrap it in a new function.)
+    pub(crate) fn run(platform: Platform, script: &str) -> Step<Run> {
+        match platform {
+            Platform::Windows => Step::new(function_name(1)).run(script).shell(PWSH_SHELL),
+            Platform::Linux | Platform::Mac => {
+                Step::new(function_name(1)).run(script).shell(BASH_SHELL)
+            }
+        }
+    }
+
     /// Returns a Workflow with the same name as the enclosing module.
     pub(crate) fn workflow() -> Workflow {
         Workflow::default().name(
@@ -103,6 +165,15 @@ pub(crate) mod named {
                 .unwrap()
                 .to_owned(),
         )
+    }
+
+    /// Returns a Job with the same name as the enclosing function.
+    /// (note job names may not contain `::`)
+    pub(crate) fn job(job: Job) -> NamedJob {
+        NamedJob {
+            name: function_name(1).split("::").last().unwrap().to_owned(),
+            job,
+        }
     }
 
     /// Returns the function name N callers above in the stack

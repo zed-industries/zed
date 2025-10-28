@@ -5,9 +5,8 @@ use std::path::Path;
 
 mod danger;
 mod nix_build;
-// mod release;
+mod release_nightly;
 mod run_bundling;
-// mod run_tests;
 
 mod runners;
 mod steps;
@@ -23,6 +22,7 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         ("danger.yml", danger::danger()),
         ("nix_build.yml", nix_build::nix_build()),
         ("run_bundling.yml", run_bundling::run_bundling()),
+        ("release_nightly.yml", release_nightly::release_nightly()),
         // ("run_tests.yml", run_tests::run_tests()),
         // ("release.yml", release::release()),
     ];

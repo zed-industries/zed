@@ -1,4 +1,7 @@
-use crate::tasks::workflows::steps::named;
+use crate::tasks::workflows::{
+    steps::named,
+    vars::{mac_bundle_envs, windows_bundle_envs},
+};
 
 use super::{runners, steps, vars};
 use gh_workflow::*;
@@ -21,14 +24,14 @@ pub fn run_bundling() -> Workflow {
         .add_env(("ZED_MINIDUMP_ENDPOINT", vars::ZED_SENTRY_MINIDUMP_ENDPOINT))
         .add_job("bundle_mac", bundle_mac())
         .add_job("bundle_linux_x86_64", bundle_linux(runners::Arch::X86_64))
-        .add_job("bundle_linux_arm64", bundle_linux(runners::Arch::AARCH64))
+        .add_job("bundle_linux_arm64", bundle_linux(runners::Arch::ARM64))
         .add_job(
             "bundle_windows_x86_64",
             bundle_windows_job(runners::Arch::X86_64),
         )
         .add_job(
             "bundle_windows_arm64",
-            bundle_windows_job(runners::Arch::AARCH64),
+            bundle_windows_job(runners::Arch::ARM64),
         )
 }
 
@@ -44,21 +47,11 @@ fn bundle_job() -> Job {
 fn bundle_mac() -> Job {
     bundle_job()
         .runs_on(runners::MAC_DEFAULT)
-        .add_env(("MACOS_CERTIFICATE", vars::MACOS_CERTIFICATE))
-        .add_env((
-            "MACOS_CERTIFICATE_PASSWORD",
-            vars::MACOS_CERTIFICATE_PASSWORD,
-        ))
-        .add_env(("APPLE_NOTARIZATION_KEY", vars::APPLE_NOTARIZATION_KEY))
-        .add_env(("APPLE_NOTARIZATION_KEY_ID", vars::APPLE_NOTARIZATION_KEY_ID))
-        .add_env((
-            "APPLE_NOTARIZATION_ISSUER_ID",
-            vars::APPLE_NOTARIZATION_ISSUER_ID,
-        ))
+        .envs(mac_bundle_envs())
         .add_step(steps::checkout_repo())
         .add_step(steps::setup_node())
         .add_step(steps::setup_sentry())
-        .add_step(steps::clear_target_dir_if_large())
+        .add_step(steps::clear_target_dir_if_large(runners::Platform::Mac))
         .add_step(steps::script("./script/bundle-mac"))
         .add_step(steps::upload_artifact(
             "Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg",
@@ -101,15 +94,7 @@ fn bundle_windows_job(arch: runners::Arch) -> Job {
     use vars::GITHUB_SHA;
     bundle_job()
         .runs_on(runners::WINDOWS_DEFAULT)
-        .add_env(("AZURE_TENANT_ID", vars::AZURE_SIGNING_TENANT_ID))
-        .add_env(("AZURE_CLIENT_ID", vars::AZURE_SIGNING_CLIENT_ID))
-        .add_env(("AZURE_CLIENT_SECRET", vars::AZURE_SIGNING_CLIENT_SECRET))
-        .add_env(("ACCOUNT_NAME", vars::AZURE_SIGNING_ACCOUNT_NAME))
-        .add_env(("CERT_PROFILE_NAME", vars::AZURE_SIGNING_CERT_PROFILE_NAME))
-        .add_env(("ENDPOINT", vars::AZURE_SIGNING_ENDPOINT))
-        .add_env(("FILE_DIGEST", "SHA256"))
-        .add_env(("TIMESTAMP_DIGEST", "SHA256"))
-        .add_env(("TIMESTAMP_SERVER", "http://timestamp.acs.microsoft.com"))
+        .envs(windows_bundle_envs())
         .add_step(steps::checkout_repo())
         .add_step(steps::setup_sentry())
         .add_step(bundle_windows(arch))
@@ -122,7 +107,7 @@ fn bundle_windows_job(arch: runners::Arch) -> Job {
 fn bundle_windows(arch: runners::Arch) -> Step<Run> {
     let step = match arch {
         runners::Arch::X86_64 => named::pwsh("script/bundle-windows.ps1 -Architecture x86_64"),
-        runners::Arch::AARCH64 => named::pwsh("script/bundle-windows.ps1 -Architecture aarch64"),
+        runners::Arch::ARM64 => named::pwsh("script/bundle-windows.ps1 -Architecture aarch64"),
     };
     step.working_directory("${{ env.ZED_WORKSPACE }}")
 }
