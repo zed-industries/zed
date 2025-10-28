@@ -13,7 +13,7 @@ on:
     - labeled
     - synchronize
 jobs:
-  bundle_mac:
+  bundle_mac_x86_64:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
                        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
@@ -40,19 +40,60 @@ jobs:
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
       shell: bash -euxo pipefail {0}
-    - name: ./script/bundle-mac
-      run: ./script/bundle-mac
+    - name: run_bundling::bundle_mac
+      run: ./script/bundle-mac x86_64-apple-darwin
+      shell: bash -euxo pipefail {0}
+    - name: '@actions/upload-artifact Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
+        path: target/x86_64-apple-darwin/release/Zed.dmg
+    - name: '@actions/upload-artifact zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-macos-x86_64.gz'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-macos-x86_64.gz
+        path: target/zed-remote-server-macos-x86_64.gz
+    timeout-minutes: 60
+  bundle_mac_arm64:
+    if: |-
+      (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
+                       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
+    runs-on: self-mini-macos
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
+      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '20'
+    - name: steps::setup_sentry
+      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
+      with:
+        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than 300
+      shell: bash -euxo pipefail {0}
+    - name: run_bundling::bundle_mac
+      run: ./script/bundle-mac aarch64-apple-darwin
       shell: bash -euxo pipefail {0}
     - name: '@actions/upload-artifact Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
         name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg
         path: target/aarch64-apple-darwin/release/Zed.dmg
-    - name: '@actions/upload-artifact Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg'
+    - name: '@actions/upload-artifact zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-macos-aarch64.gz'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
-        name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
-        path: target/x86_64-apple-darwin/release/Zed.dmg
+        name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-macos-aarch64.gz
+        path: target/zed-remote-server-macos-aarch64.gz
     timeout-minutes: 60
   bundle_linux_x86_64:
     if: |-
