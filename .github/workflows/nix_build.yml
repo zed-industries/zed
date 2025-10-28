@@ -39,7 +39,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
     continue-on-error: true
-  build_nix_mac_arm64:
+  build_nix_mac_aarch64:
     if: github.repository_owner == 'zed-industries'
     runs-on: self-mini-macos
     env:

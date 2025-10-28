@@ -26,7 +26,7 @@ impl std::fmt::Display for Arch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Arch::X86_64 => write!(f, "x86_64"),
-            Arch::ARM64 => write!(f, "arm64"),
+            Arch::ARM64 => write!(f, "aarch64"),
         }
     }
 }

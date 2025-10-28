@@ -179,7 +179,7 @@ jobs:
       run: script/upload-nightly linux-targz
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
-  bundle_linux_nightly_arm64:
+  bundle_linux_nightly_aarch64:
     needs:
     - check_style
     - run_tests_mac
@@ -259,7 +259,7 @@ jobs:
       shell: pwsh
       working-directory: ${{ env.ZED_WORKSPACE }}
     timeout-minutes: 60
-  bundle_windows_nightly_arm64:
+  bundle_windows_nightly_aarch64:
     needs:
     - check_style
     - run_tests_windows
@@ -329,7 +329,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
     continue-on-error: true
-  build_nix_mac_arm64:
+  build_nix_mac_aarch64:
     if: github.repository_owner == 'zed-industries'
     runs-on: self-mini-macos
     env:
@@ -368,9 +368,9 @@ jobs:
     needs:
     - bundle_mac_nightly
     - bundle_linux_nightly_x86_64
-    - bundle_linux_nightly_arm64
+    - bundle_linux_nightly_aarch64
     - bundle_windows_nightly_x86_64
-    - bundle_windows_nightly_arm64
+    - bundle_windows_nightly_aarch64
     if: github.repository_owner == 'zed-industries'
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:

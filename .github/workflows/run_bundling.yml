@@ -181,10 +181,10 @@ jobs:
       run: script/bundle-windows.ps1 -Architecture aarch64
       shell: pwsh
       working-directory: ${{ env.ZED_WORKSPACE }}
-    - name: '@actions/upload-artifact Zed_${{ github.event.pull_request.head.sha || github.sha }}-arm64.exe'
+    - name: '@actions/upload-artifact Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.exe'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
-        name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-arm64.exe
+        name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.exe
         path: ${{ env.SETUP_PATH }}
     timeout-minutes: 60
 concurrency:
