@@ -7751,14 +7751,8 @@ outline: fn main()"
             "
         outline: mod outer  <==== selected
           outline: pub struct OuterStruct
-            outline: field: String
           outline: impl OuterStruct
-            outline: pub fn new()
-            outline: pub fn method(&self)
           outline: mod inner
-            outline: pub fn inner_function()
-            outline: pub struct InnerStruct
-              outline: value: i32
         outline: fn main()"
         );
 
