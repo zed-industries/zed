@@ -79,7 +79,7 @@ if [[ "$target_triple" = "x86_64-apple-darwin" ]]; then
 elif [[ "$target_triple" = "aarch64-apple-darwin" ]]; then
     remote_server_arch="aarch64"
 else
-    echo "Unsuppported architecture $target_triple"
+    echo "Unsupported architecture $target_triple"
     exit 1
 fi
 
