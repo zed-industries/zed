@@ -2836,7 +2836,6 @@ Configuration object for defining settings profiles. Example:
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
-
   - Double-clicking on the file
   - Double-clicking on the tab header
   - Using the {#action project_panel::OpenPermanent} action
@@ -2996,11 +2995,33 @@ List of `string` glob patterns
 
 - Description: Whether to show relative line numbers in the gutter
 - Setting: `relative_line_numbers`
-- Default: `false`
+- Default: `"disabled"`
 
 **Options**
 
-`boolean` values
+1. Show relative line numbers in the gutter whilst counting wrapped lines as one line:
+
+```json [settings]
+{
+  "relative_line_numbers": "enabled"
+}
+```
+
+2. Show relative line numbers in the gutter, including wrapped lines in the counting:
+
+```json [settings]
+{
+  "relative_line_numbers": "wrapped"
+}
+```
+
+2. Do not use relative line numbers:
+
+```json [settings]
+{
+  "relative_line_numbers": "disabled"
+}
+```
 
 ## Remove Trailing Whitespace On Save
 
