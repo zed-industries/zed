@@ -570,7 +570,7 @@ impl ContextPickerCompletionProvider {
             .unwrap_or_default();
         let workspace = workspace.read(cx);
         let project = workspace.project().read(cx);
-        let include_root_name = project.worktrees(cx).count() > 1;
+        let include_root_name = workspace.visible_worktrees(cx).count() > 1;
 
         if let Some(agent_panel) = workspace.panel::<AgentPanel>(cx)
             && let Some(thread) = agent_panel.read(cx).active_agent_thread(cx)

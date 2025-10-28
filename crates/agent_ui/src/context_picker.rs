@@ -662,7 +662,7 @@ pub(crate) fn recent_context_picker_entries(
     let mut recent = Vec::with_capacity(6);
     let workspace = workspace.read(cx);
     let project = workspace.project().read(cx);
-    let include_root_name = project.worktrees(cx).count() > 1;
+    let include_root_name = workspace.visible_worktrees(cx).count() > 1;
 
     recent.extend(
         workspace

@@ -197,8 +197,8 @@ pub(crate) fn search_files(
     if query.is_empty() {
         let workspace = workspace.read(cx);
         let project = workspace.project().read(cx);
-        let worktree_count = project.worktrees(cx).count();
-        let include_root_name = worktree_count > 1;
+        let visible_worktrees = workspace.visible_worktrees(cx).collect::<Vec<_>>();
+        let include_root_name = visible_worktrees.len() > 1;
 
         let recent_matches = workspace
             .recent_navigation_history(Some(10), cx)
@@ -227,7 +227,7 @@ pub(crate) fn search_files(
                 }
             });
 
-        let file_matches = project.worktrees(cx).flat_map(|worktree| {
+        let file_matches = visible_worktrees.into_iter().flat_map(|worktree| {
             let worktree = worktree.read(cx);
             let path_prefix: Arc<RelPath> = if include_root_name {
                 worktree.root_name().into()
@@ -299,8 +299,9 @@ pub fn extract_file_name_and_directory(
         return (path_prefix.display(path_style).to_string().into(), None);
     }
 
-    let file_name = path.file_name().unwrap_or_default();
-    let display_path = path.display(path_style);
+    let full_path = path_prefix.join(path);
+    let file_name = full_path.file_name().unwrap_or_default();
+    let display_path = full_path.display(path_style);
     let (directory, file_name) = display_path.split_at(display_path.len() - file_name.len());
     (
         file_name.to_string().into(),
