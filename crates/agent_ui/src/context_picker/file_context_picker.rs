@@ -197,34 +197,50 @@ pub(crate) fn search_files(
     if query.is_empty() {
         let workspace = workspace.read(cx);
         let project = workspace.project().read(cx);
+        let visible_worktrees = workspace.visible_worktrees(cx).collect::<Vec<_>>();
+        let include_root_name = visible_worktrees.len() > 1;
+
         let recent_matches = workspace
             .recent_navigation_history(Some(10), cx)
             .into_iter()
-            .filter_map(|(project_path, _)| {
-                let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
-                Some(FileMatch {
+            .map(|(project_path, _)| {
+                let path_prefix = if include_root_name {
+                    project
+                        .worktree_for_id(project_path.worktree_id, cx)
+                        .map(|wt| wt.read(cx).root_name().into())
+                        .unwrap_or_else(|| RelPath::empty().into())
+                } else {
+                    RelPath::empty().into()
+                };
+
+                FileMatch {
                     mat: PathMatch {
                         score: 0.,
                         positions: Vec::new(),
                         worktree_id: project_path.worktree_id.to_usize(),
                         path: project_path.path,
-                        path_prefix: worktree.read(cx).root_name().into(),
+                        path_prefix,
                         distance_to_relative_ancestor: 0,
                         is_dir: false,
                     },
                     is_recent: true,
-                })
+                }
             });
 
-        let file_matches = project.worktrees(cx).flat_map(|worktree| {
+        let file_matches = visible_worktrees.into_iter().flat_map(|worktree| {
             let worktree = worktree.read(cx);
+            let path_prefix: Arc<RelPath> = if include_root_name {
+                worktree.root_name().into()
+            } else {
+                RelPath::empty().into()
+            };
             worktree.entries(false, 0).map(move |entry| FileMatch {
                 mat: PathMatch {
                     score: 0.,
                     positions: Vec::new(),
                     worktree_id: worktree.id().to_usize(),
                     path: entry.path.clone(),
-                    path_prefix: worktree.root_name().into(),
+                    path_prefix: path_prefix.clone(),
                     distance_to_relative_ancestor: 0,
                     is_dir: entry.is_dir(),
                 },
@@ -235,6 +251,7 @@ pub(crate) fn search_files(
         Task::ready(recent_matches.chain(file_matches).collect())
     } else {
         let worktrees = workspace.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
+        let include_root_name = worktrees.len() > 1;
         let candidate_sets = worktrees
             .into_iter()
             .map(|worktree| {
@@ -243,7 +260,7 @@ pub(crate) fn search_files(
                 PathMatchCandidateSet {
                     snapshot: worktree.snapshot(),
                     include_ignored: worktree.root_entry().is_some_and(|entry| entry.is_ignored),
-                    include_root_name: true,
+                    include_root_name,
                     candidates: project::Candidates::Entries,
                 }
             })
@@ -276,6 +293,12 @@ pub fn extract_file_name_and_directory(
     path_prefix: &RelPath,
     path_style: PathStyle,
 ) -> (SharedString, Option<SharedString>) {
+    // If path is empty, this means we're matching with the root directory itself
+    // so we use the path_prefix as the name
+    if path.is_empty() && !path_prefix.is_empty() {
+        return (path_prefix.display(path_style).to_string().into(), None);
+    }
+
     let full_path = path_prefix.join(path);
     let file_name = full_path.file_name().unwrap_or_default();
     let display_path = full_path.display(path_style);

@@ -1816,9 +1816,15 @@ impl Thread {
         log::debug!("Completion intent: {:?}", completion_intent);
         log::debug!("Completion mode: {:?}", self.completion_mode);
 
-        let messages = self.build_request_messages(cx);
+        let available_tools: Vec<_> = self
+            .running_turn
+            .as_ref()
+            .map(|turn| turn.tools.keys().cloned().collect())
+            .unwrap_or_default();
+
+        log::debug!("Request includes {} tools", available_tools.len());
+        let messages = self.build_request_messages(available_tools, cx);
         log::debug!("Request will include {} messages", messages.len());
-        log::debug!("Request includes {} tools", tools.len());
 
         let request = LanguageModelRequest {
             thread_id: Some(self.id.to_string()),
@@ -1909,7 +1915,11 @@ impl Thread {
         self.running_turn.as_ref()?.tools.get(name).cloned()
     }
 
-    fn build_request_messages(&self, cx: &App) -> Vec<LanguageModelRequestMessage> {
+    fn build_request_messages(
+        &self,
+        available_tools: Vec<SharedString>,
+        cx: &App,
+    ) -> Vec<LanguageModelRequestMessage> {
         log::trace!(
             "Building request messages from {} thread messages",
             self.messages.len()
@@ -1917,7 +1927,7 @@ impl Thread {
 
         let system_prompt = SystemPromptTemplate {
             project: self.project_context.read(cx),
-            available_tools: self.tools.keys().cloned().collect(),
+            available_tools,
         }
         .render(&self.templates)
         .context("failed to build system prompt")

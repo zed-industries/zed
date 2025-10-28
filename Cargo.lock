@@ -17439,6 +17439,7 @@ dependencies = [
  "anyhow",
  "auto_update",
  "call",
+ "channel",
  "chrono",
  "client",
  "cloud_llm_client",

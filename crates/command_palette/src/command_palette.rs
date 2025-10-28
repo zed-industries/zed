@@ -531,7 +531,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                 .w_full()
                 .p_1p5()
                 .gap_1()
-                .justify_between()
+                .justify_end()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(keybinding_buttons)
