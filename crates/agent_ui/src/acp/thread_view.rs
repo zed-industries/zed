@@ -4305,7 +4305,8 @@ impl AcpThreadView {
             return;
         };
 
-        if let Some(mention) = MentionUri::parse(&url).log_err() {
+        if let Some(mention) = MentionUri::parse(&url, workspace.read(cx).path_style(cx)).log_err()
+        {
             workspace.update(cx, |workspace, cx| match mention {
                 MentionUri::File { abs_path } => {
                     let project = workspace.project();
