@@ -7,7 +7,7 @@
   - [Update](./update.md)
   - [Uninstall](./uninstall.md)
 - [Authenticate](./authentication.md)
-  - [Telemetry](./telemetry.md)
+- [Telemetry](./telemetry.md)
 
 # Configuration
 
