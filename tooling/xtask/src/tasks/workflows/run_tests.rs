@@ -9,13 +9,13 @@ use super::{
 // b: have separate workflows for each test kind with path filters, have them all be required
 // c: break tests into separate workflows, have each of them individually check whether to run
 
+// todo! missing the random tests that are in macos_tests for some reason
 pub(crate) fn run_tests() -> Workflow {
     let windows_tests = run_platform_tests(Platform::Windows);
     let linux_tests = run_platform_tests(Platform::Linux);
     let mac_tests = run_platform_tests(Platform::Mac);
     let migrations = check_postgres_and_protobuf_migrations();
     let style = style();
-    let docs = check_docs();
     let action_lint = actionlint();
     let doctests = doctests();
 
@@ -55,9 +55,99 @@ pub(crate) fn run_tests() -> Workflow {
         .add_job(linux_tests.name, linux_tests.job)
         .add_job(mac_tests.name, mac_tests.job)
         .add_job(migrations.name, migrations.job)
-        .add_job(docs.name, docs.job)
         .add_job(action_lint.name, action_lint.job)
         .add_job(doctests.name, doctests.job)
+}
+
+fn tests_workflow(paths: impl Into<Vec<String>>) -> Workflow {
+    let paths = paths.into();
+    named::workflow()
+        // todo! inputs?
+        .on(Event::default()
+            .push(
+                Push::default()
+                    .branches(
+                        [
+                            "main",
+                            "v[0-9]+.[0-9]+.x", // any release branch
+                        ]
+                        .map(String::from),
+                    )
+                    .tags(
+                        [
+                            "v*", // any release tag
+                        ]
+                        .map(String::from),
+                    )
+                    .paths(paths.clone())
+                ,
+            )
+            .pull_request(
+                PullRequest::default().branches(
+                    [
+                        "**", // all branches
+                    ]
+                    .map(String::from),
+                )
+                .paths(paths),
+            ))
+        .concurrency(Concurrency::default()
+            .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}")
+            .cancel_in_progress(true)
+        )
+}
+
+pub(crate) mod check_docs {
+    use super::*;
+
+    pub(crate) fn check_docs() -> Workflow {
+        let docs = docs();
+        tests_workflow(["docs/**"].map(String::from)).add_job(docs.name, docs.job)
+    }
+
+    fn docs() -> NamedJob {
+        // todo! would have preferred to just reference the action here while building, but the gh-workflow crate
+        // only supports using repo actions (owner, name, version), not local actions (path)
+        fn lychee_link_check(dir: &str) -> Step<Use> {
+            named::uses(
+                "lycheeverse",
+                "lychee-action",
+                "82202e5e9c2f4ef1a55a3d02563e1cb6041e5332",
+            ) // v2.4.1
+            .add_with(("args", format!("--no-progress --exclude '^http' '{dir}'")))
+            .add_with(("fail", true))
+        }
+
+        fn install_mdbook() -> Step<Use> {
+            named::uses(
+                "peaceiris",
+                "actions-mdbook",
+                "ee69d230fe19748b7abf22df32acaa93833fad08", // v2
+            )
+            .with(("mdbook-version", "0.4.37"))
+        }
+
+        fn build_docs() -> Step<Run> {
+            named::bash(indoc::indoc! {r#"
+                mkdir -p target/deploy
+                mdbook build ./docs --dest-dir=../target/deploy/docs/
+            "#})
+        }
+
+        named::job(
+            release_job(&[])
+                .runs_on(runners::LINUX_LARGE)
+                .add_step(steps::checkout_repo())
+                .add_step(steps::setup_cargo_config(Platform::Linux))
+                // todo(ci): un-inline build_docs/action.yml here
+                .add_step(steps::cache_rust_dependencies())
+                .add_step(lychee_link_check("./docs/src/**/*")) // check markdown links
+                .map(steps::install_linux_dependencies)
+                .add_step(install_mdbook())
+                .add_step(build_docs())
+                .add_step(lychee_link_check("target/deploy/docs")), // check links in generated html
+        )
+    }
 }
 
 pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
@@ -183,50 +273,6 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .add_step(ensure_fresh_merge())
             .add_step(bufbuild_setup_action())
             .add_step(bufbuild_breaking_action()),
-    )
-}
-
-fn check_docs() -> NamedJob {
-    // todo! would have preferred to just reference the action here while building, but the gh-workflow crate
-    // only supports using repo actions (owner, name, version), not local actions (path)
-    fn lychee_link_check(dir: &str) -> Step<Use> {
-        named::uses(
-            "lycheeverse",
-            "lychee-action",
-            "82202e5e9c2f4ef1a55a3d02563e1cb6041e5332",
-        ) // v2.4.1
-        .add_with(("args", format!("--no-progress --exclude '^http' '{dir}'")))
-        .add_with(("fail", true))
-    }
-
-    fn install_mdbook() -> Step<Use> {
-        named::uses(
-            "peaceiris",
-            "actions-mdbook",
-            "ee69d230fe19748b7abf22df32acaa93833fad08", // v2
-        )
-        .with(("mdbook-version", "0.4.37"))
-    }
-
-    fn build_docs() -> Step<Run> {
-        named::bash(indoc::indoc! {r#"
-            mkdir -p target/deploy
-            mdbook build ./docs --dest-dir=../target/deploy/docs/
-        "#})
-    }
-
-    named::job(
-        release_job(&[])
-            .runs_on(runners::LINUX_LARGE)
-            .add_step(steps::checkout_repo())
-            .add_step(steps::setup_cargo_config(Platform::Linux))
-            // todo(ci): un-inline build_docs/action.yml here
-            .add_step(steps::cache_rust_dependencies())
-            .add_step(lychee_link_check("./docs/src/**/*")) // check markdown links
-            .map(steps::install_linux_dependencies)
-            .add_step(install_mdbook())
-            .add_step(build_docs())
-            .add_step(lychee_link_check("target/deploy/docs")), // check links in generated html
     )
 }
 
