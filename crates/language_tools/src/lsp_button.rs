@@ -1011,7 +1011,7 @@ impl StatusItemView for LspButton {
 impl Render for LspButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         if self.server_state.read(cx).language_servers.is_empty() || self.lsp_menu.is_none() {
-            return div();
+            return div().hidden();
         }
 
         let mut has_errors = false;
@@ -1065,14 +1065,8 @@ impl Render for LspButton {
                         .when_some(indicator, IconButton::indicator)
                         .icon_size(IconSize::Small)
                         .indicator_border_color(Some(cx.theme().colors().status_bar_background)),
-                    move |window, cx| {
-                        Tooltip::with_meta(
-                            "Language Servers",
-                            Some(&ToggleMenu),
-                            description,
-                            window,
-                            cx,
-                        )
+                    move |_window, cx| {
+                        Tooltip::with_meta("Language Servers", Some(&ToggleMenu), description, cx)
                     },
                 ),
         )

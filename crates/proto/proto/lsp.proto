@@ -465,6 +465,7 @@ message ResolveInlayHintResponse {
 
 message RefreshInlayHints {
     uint64 project_id = 1;
+    uint64 server_id = 2;
 }
 
 message CodeLens {
@@ -781,6 +782,7 @@ message TextEdit {
 message LspQuery {
     uint64 project_id = 1;
     uint64 lsp_request_id = 2;
+    optional uint64 server_id = 15;
     oneof request {
         GetReferences get_references = 3;
         GetDocumentColor get_document_color = 4;
@@ -793,6 +795,7 @@ message LspQuery {
         GetDeclaration get_declaration = 11;
         GetTypeDefinition get_type_definition = 12;
         GetImplementation get_implementation = 13;
+        InlayHints inlay_hints = 14;
     }
 }
 
@@ -815,6 +818,7 @@ message LspResponse {
         GetTypeDefinitionResponse get_type_definition_response = 10;
         GetImplementationResponse get_implementation_response = 11;
         GetReferencesResponse get_references_response = 12;
+        InlayHintsResponse inlay_hints_response = 13;
     }
     uint64 server_id = 7;
 }

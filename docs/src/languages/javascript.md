@@ -34,7 +34,7 @@ For example, if you have Prettier installed and on your `PATH`, you can use it t
 
 Zed supports JSX syntax highlighting out of the box.
 
-In JSX strings, the [`tailwindcss-language-server`](./tailwindcss.md) is used provide autocompletion for Tailwind CSS classes.
+In JSX strings, the [`tailwindcss-language-server`](./tailwindcss.md) is used to provide autocompletion for Tailwind CSS classes.
 
 ## JSDoc
 
@@ -49,8 +49,8 @@ You can configure Zed to format code using `eslint --fix` by running the ESLint 
 {
   "languages": {
     "JavaScript": {
-      "formatter": {
-        "code_action": "source.fixAll.eslint"
+      "code_actions_on_format": {
+        "source.fixAll.eslint": true
       }
     }
   }
@@ -63,8 +63,8 @@ You can also only execute a single ESLint rule when using `fixAll`:
 {
   "languages": {
     "JavaScript": {
-      "formatter": {
-        "code_action": "source.fixAll.eslint"
+      "code_actions_on_format": {
+        "source.fixAll.eslint": true
       }
     }
   },
@@ -92,8 +92,8 @@ the formatter:
 {
   "languages": {
     "JavaScript": {
-      "formatter": {
-        "code_action": "source.fixAll.eslint"
+      "code_actions_on_format": {
+        "source.fixAll.eslint": true
       }
     }
   }
@@ -175,7 +175,7 @@ You can configure ESLint's `workingDirectory` setting:
 
 ## Debugging
 
-Zed supports debugging JavaScript code out of the box.
+Zed supports debugging JavaScript code out of the box with `vscode-js-debug`.
 The following can be debugged without writing additional configuration:
 
 - Tasks from `package.json`
@@ -191,7 +191,13 @@ As for all languages, configurations from `.vscode/launch.json` are also availab
 
 If your use-case isn't covered by any of these, you can take full control by adding debug configurations to `.zed/debug.json`. See below for example configurations.
 
-### Debug the current file
+### Configuring JavaScript debug tasks
+
+JavaScript debugging is more complicated than other languages because there are two different environments: Node.js and the browser. `vscode-js-debug` exposes a `type` field, that you can use to specify the environment, either `node` or `chrome`.
+
+- [vscode-js-debug configuration documentation](https://github.com/microsoft/vscode-js-debug/blob/main/OPTIONS.md)
+
+### Debug the current file with Node
 
 ```json [debug]
 [
@@ -205,8 +211,6 @@ If your use-case isn't covered by any of these, you can take full control by add
   }
 ]
 ```
-
-This implicitly runs the current file using `node`.
 
 ### Launch a web app in Chrome
 

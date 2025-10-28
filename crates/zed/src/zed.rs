@@ -18,13 +18,13 @@ use breadcrumbs::Breadcrumbs;
 use client::zed_urls;
 use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
-use editor::ProposedChangesEditorToolbar;
 use editor::{Editor, MultiBuffer};
 use extension_host::ExtensionStore;
 use feature_flags::{FeatureFlagAppExt, PanicFeatureFlag};
 use fs::Fs;
 use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
+use git_ui::commit_view::CommitViewToolbar;
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
@@ -39,7 +39,7 @@ use language_onboarding::BasedPyrightBanner;
 use language_tools::lsp_button::{self, LspButton};
 use language_tools::lsp_log_view::LspLogToolbarItemView;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
-use migrator::{migrate_keymap, migrate_settings};
+use migrator::migrate_keymap;
 use onboarding::DOCS_URL;
 use onboarding::multibuffer_hint::MultibufferHint;
 pub use open_listener::*;
@@ -177,6 +177,9 @@ pub fn init(cx: &mut App) {
             open_log_file(workspace, window, cx);
         });
     });
+    cx.on_action(|_: &workspace::RevealLogInFileManager, cx| {
+        cx.reveal_path(paths::log_file().as_path());
+    });
     cx.on_action(|_: &zed_actions::OpenLicenses, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_bundled_file(
@@ -261,6 +264,11 @@ pub fn init(cx: &mut App) {
                 window,
                 cx,
             );
+        });
+    });
+    cx.on_action(|_: &zed_actions::About, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            about(workspace, window, cx);
         });
     });
 }
@@ -416,6 +424,8 @@ pub fn initialize_workspace(
 
         let cursor_position =
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
+        let line_ending_indicator =
+            cx.new(|_| line_ending_selector::LineEndingIndicator::default());
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(search_button, window, cx);
             status_bar.add_left_item(lsp_button, window, cx);
@@ -424,6 +434,7 @@ pub fn initialize_workspace(
             status_bar.add_right_item(edit_prediction_button, window, cx);
             status_bar.add_right_item(active_buffer_language, window, cx);
             status_bar.add_right_item(active_toolchain_language, window, cx);
+            status_bar.add_right_item(line_ending_indicator, window, cx);
             status_bar.add_right_item(vim_mode_indicator, window, cx);
             status_bar.add_right_item(cursor_position, window, cx);
             status_bar.add_right_item(image_info, window, cx);
@@ -687,7 +698,6 @@ fn register_actions(
     cx: &mut Context<Workspace>,
 ) {
     workspace
-        .register_action(about)
         .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
         .register_action(|_, _: &Minimize, window, _| {
             window.minimize_window();
@@ -864,6 +874,24 @@ fn register_actions(
                 }
             }
         })
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, action: &zed_actions::ResetAllZoom, _window, cx| {
+                if action.persist {
+                    update_settings_file(fs.clone(), cx, move |settings, _| {
+                        settings.theme.ui_font_size = None;
+                        settings.theme.buffer_font_size = None;
+                        settings.theme.agent_ui_font_size = None;
+                        settings.theme.agent_buffer_font_size = None;
+                    });
+                } else {
+                    theme::reset_ui_font_size(cx);
+                    theme::reset_buffer_font_size(cx);
+                    theme::reset_agent_ui_font_size(cx);
+                    theme::reset_agent_buffer_font_size(cx);
+                }
+            }
+        })
         .register_action(|_, _: &install_cli::RegisterZedScheme, window, cx| {
             cx.spawn_in(window, async move |workspace, cx| {
                 install_cli::register_zed_scheme(cx).await?;
@@ -1028,8 +1056,6 @@ fn initialize_pane(
                 )
             });
             toolbar.add_item(buffer_search_bar.clone(), window, cx);
-            let proposed_change_bar = cx.new(|_| ProposedChangesEditorToolbar::new());
-            toolbar.add_item(proposed_change_bar, window, cx);
             let quick_action_bar =
                 cx.new(|cx| QuickActionBar::new(buffer_search_bar, workspace, cx));
             toolbar.add_item(quick_action_bar, window, cx);
@@ -1049,6 +1075,8 @@ fn initialize_pane(
             toolbar.add_item(migration_banner, window, cx);
             let project_diff_toolbar = cx.new(|cx| ProjectDiffToolbar::new(workspace, cx));
             toolbar.add_item(project_diff_toolbar, window, cx);
+            let commit_view_toolbar = cx.new(|cx| CommitViewToolbar::new(workspace, cx));
+            toolbar.add_item(commit_view_toolbar, window, cx);
             let agent_diff_toolbar = cx.new(AgentDiffToolbar::new);
             toolbar.add_item(agent_diff_toolbar, window, cx);
             let basedpyright_banner = cx.new(|cx| BasedPyrightBanner::new(workspace, cx));
@@ -1057,12 +1085,7 @@ fn initialize_pane(
     });
 }
 
-fn about(
-    _: &mut Workspace,
-    _: &zed_actions::About,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
+fn about(_: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
     let release_channel = ReleaseChannel::global(cx).display_name();
     let version = env!("CARGO_PKG_VERSION");
     let debug = if cfg!(debug_assertions) {
@@ -1275,18 +1298,24 @@ pub fn handle_settings_file_changes(
                                  store: &mut SettingsStore,
                                  cx: &mut App|
           -> bool {
+        let result = if is_user {
+            store.set_user_settings(&content, cx)
+        } else {
+            store.set_global_settings(&content, cx)
+        };
+
         let id = NotificationId::Named("failed-to-migrate-settings".into());
         // Apply migrations to both user and global settings
-        let (processed_content, content_migrated) = match migrate_settings(&content) {
-            Ok(result) => {
+        let content_migrated = match result.migration_status {
+            settings::MigrationStatus::Succeeded => {
                 dismiss_app_notification(&id, cx);
-                if let Some(migrated_content) = result {
-                    (migrated_content, true)
-                } else {
-                    (content, false)
-                }
+                true
             }
-            Err(err) => {
+            settings::MigrationStatus::NotNeeded => {
+                dismiss_app_notification(&id, cx);
+                false
+            }
+            settings::MigrationStatus::Failed { error: err } => {
                 show_app_notification(id, cx, move |cx| {
                     cx.new(|cx| {
                         MessageNotification::new(
@@ -1305,22 +1334,22 @@ pub fn handle_settings_file_changes(
                     })
                 });
                 // notify user here
-                (content, false)
+                false
             }
         };
 
-        let result = if is_user {
-            store.set_user_settings(&processed_content, cx)
-        } else {
-            store.set_global_settings(&processed_content, cx)
-        };
-
-        if let Err(err) = &result {
+        if let settings::ParseStatus::Failed { error: err } = &result.parse_status {
             let settings_type = if is_user { "user" } else { "global" };
             log::error!("Failed to load {} settings: {err}", settings_type);
         }
 
-        settings_changed(result.err(), cx);
+        settings_changed(
+            match result.parse_status {
+                settings::ParseStatus::Failed { error } => Some(anyhow::format_err!(error)),
+                settings::ParseStatus::Success => None,
+            },
+            cx,
+        );
 
         content_migrated
     };
@@ -2830,14 +2859,16 @@ mod tests {
         });
 
         // Split the pane with the first entry, then open the second entry again.
-        window
+        let (task1, task2) = window
             .update(cx, |w, window, cx| {
-                w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, window, cx);
-                w.open_path(file2.clone(), None, true, window, cx)
+                (
+                    w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, window, cx),
+                    w.open_path(file2.clone(), None, true, window, cx),
+                )
             })
-            .unwrap()
-            .await
             .unwrap();
+        task1.await.unwrap();
+        task2.await.unwrap();
 
         window
             .read_with(cx, |w, cx| {
@@ -3460,7 +3491,13 @@ mod tests {
                     SplitDirection::Right,
                     window,
                     cx,
-                );
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        window
+            .update(cx, |workspace, window, cx| {
                 workspace.open_path(
                     (worktree.read(cx).id(), rel_path("the-new-name.rs")),
                     None,
@@ -4563,6 +4600,7 @@ mod tests {
                     | "workspace::ActivatePane"
                     | "workspace::MoveItemToPane"
                     | "workspace::MoveItemToPaneInDirection"
+                    | "workspace::NewFileSplit"
                     | "workspace::OpenTerminal"
                     | "workspace::SendKeystrokes"
                     | "agent::NewNativeAgentThreadFromSummary"
@@ -4665,7 +4703,7 @@ mod tests {
                 "keymap_editor",
                 "keystroke_input",
                 "language_selector",
-                "line_ending",
+                "line_ending_selector",
                 "lsp_tool",
                 "markdown",
                 "menu",
@@ -5047,5 +5085,64 @@ mod tests {
             new_content_str.contains("UNIQUEVALUE"),
             "BUG FOUND: Project settings were overwritten when opening via command - original custom content was lost"
         );
+    }
+
+    #[gpui::test]
+    async fn test_prefer_focused_window(cx: &mut gpui::TestAppContext) {
+        let app_state = init_test(cx);
+        let paths = [PathBuf::from(path!("/dir/document.txt"))];
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/dir"),
+                json!({
+                    "document.txt": "Some of the documentation's content."
+                }),
+            )
+            .await;
+
+        let project_a = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window_a =
+            cx.add_window(|window, cx| Workspace::test_new(project_a.clone(), window, cx));
+
+        let project_b = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window_b =
+            cx.add_window(|window, cx| Workspace::test_new(project_b.clone(), window, cx));
+
+        let project_c = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window_c =
+            cx.add_window(|window, cx| Workspace::test_new(project_c.clone(), window, cx));
+
+        for window in [window_a, window_b, window_c] {
+            let _ = cx.update_window(*window, |_, window, _| {
+                window.activate_window();
+            });
+
+            cx.update(|cx| {
+                let open_options = OpenOptions {
+                    prefer_focused_window: true,
+                    ..Default::default()
+                };
+
+                workspace::open_paths(&paths, app_state.clone(), open_options, cx)
+            })
+            .await
+            .unwrap();
+
+            cx.update_window(*window, |_, window, _| assert!(window.is_window_active()))
+                .unwrap();
+
+            let _ = window.read_with(cx, |workspace, cx| {
+                let pane = workspace.active_pane().read(cx);
+                let project_path = pane.active_item().unwrap().project_path(cx).unwrap();
+
+                assert_eq!(
+                    project_path.path.as_ref().as_std_path().to_str().unwrap(),
+                    path!("document.txt")
+                )
+            });
+        }
     }
 }

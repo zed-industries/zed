@@ -20,6 +20,10 @@ As well as Zed preview:
 brew install --cask zed@preview
 ```
 
+### Windows
+
+Get the latest stable builds via [the download page](https://zed.dev/download). If you want to download our preview build, you can find it on its [releases page](https://zed.dev/releases/preview). After the first manual installation, Zed will periodically check for install updates.
+
 ### Linux
 
 For most Linux users, the easiest way to install Zed is through our installation script:
@@ -71,10 +75,12 @@ General highlights:
 
 ## Configure Zed
 
-To open your custom settings to set things like fonts, formatting settings, per-language settings, and more, use the {#kb zed::OpenSettings} keybinding.
+To make Zed feel more like home, you can use the {#kb zed::OpenSettings} keybinding to open the settings window.
+In there, you can browse through many of the customization points, including common ones like formatting settings, fonts, per-language settings, and many more.
 
-To see all available settings, open the Command Palette with {#kb command_palette::Toggle} and search for `zed: open default settings`.
-You can also check them all out in the [Configuring Zed](./configuring-zed.md) documentation.
+Note that, however, some settings can't yet be changed through the settings window and can only be set through the JSON file, which you can access through the {#kb zed::OpenSettingsFile} keybinding.
+
+You can also check all supported settings in the [Configuring Zed](./configuring-zed.md) documentation.
 
 ## Configure AI in Zed
 

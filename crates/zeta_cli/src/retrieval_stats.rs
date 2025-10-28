@@ -3,8 +3,8 @@ use ::util::{RangeExt, ResultExt as _};
 use anyhow::{Context as _, Result};
 use cloud_llm_client::predict_edits_v3::DeclarationScoreComponents;
 use edit_prediction_context::{
-    Declaration, DeclarationStyle, EditPredictionContext, Identifier, Imports, Reference,
-    ReferenceRegion, SyntaxIndex, SyntaxIndexState, references_in_range,
+    Declaration, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions, Identifier,
+    Imports, Reference, ReferenceRegion, SyntaxIndex, SyntaxIndexState, references_in_range,
 };
 use futures::StreamExt as _;
 use futures::channel::mpsc;
@@ -32,6 +32,7 @@ use std::{
     time::Duration,
 };
 use util::paths::PathStyle;
+use zeta2::ContextMode;
 
 use crate::headless::ZetaCliAppState;
 use crate::source_location::SourceLocation;
@@ -46,6 +47,10 @@ pub async fn retrieval_stats(
     options: zeta2::ZetaOptions,
     cx: &mut AsyncApp,
 ) -> Result<String> {
+    let ContextMode::Syntax(context_options) = options.context.clone() else {
+        anyhow::bail!("retrieval stats only works in ContextMode::Syntax");
+    };
+
     let options = Arc::new(options);
     let worktree_path = worktree.canonicalize()?;
 
@@ -264,10 +269,10 @@ pub async fn retrieval_stats(
         .map(|project_file| {
             let index_state = index_state.clone();
             let lsp_definitions = lsp_definitions.clone();
-            let options = options.clone();
             let output_tx = output_tx.clone();
             let done_count = done_count.clone();
             let file_snapshots = file_snapshots.clone();
+            let context_options = context_options.clone();
             cx.background_spawn(async move {
                 let snapshot = project_file.snapshot;
 
@@ -279,7 +284,7 @@ pub async fn retrieval_stats(
                     &snapshot,
                 );
 
-                let imports = if options.context.use_imports {
+                let imports = if context_options.use_imports {
                     Imports::gather(&snapshot, Some(&project_file.parent_abs_path))
                 } else {
                     Imports::default()
@@ -311,7 +316,7 @@ pub async fn retrieval_stats(
                         &snapshot,
                         &index_state,
                         &file_snapshots,
-                        &options,
+                        &context_options,
                     )
                     .await?;
 
@@ -958,7 +963,7 @@ async fn retrieve_definitions(
     snapshot: &BufferSnapshot,
     index: &Arc<SyntaxIndexState>,
     file_snapshots: &Arc<HashMap<ProjectEntryId, BufferSnapshot>>,
-    options: &Arc<zeta2::ZetaOptions>,
+    context_options: &EditPredictionContextOptions,
 ) -> Result<RetrieveResult> {
     let mut single_reference_map = HashMap::default();
     single_reference_map.insert(reference.identifier.clone(), vec![reference.clone()]);
@@ -966,7 +971,7 @@ async fn retrieve_definitions(
         query_point,
         snapshot,
         imports,
-        &options.context,
+        &context_options,
         Some(&index),
         |_, _, _| single_reference_map,
     );

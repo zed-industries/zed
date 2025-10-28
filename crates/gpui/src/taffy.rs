@@ -3,7 +3,6 @@ use crate::{
     point, size,
 };
 use collections::{FxHashMap, FxHashSet};
-use smallvec::SmallVec;
 use stacksafe::{StackSafe, stacksafe};
 use std::{fmt::Debug, ops::Range};
 use taffy::{
@@ -31,6 +30,7 @@ pub struct TaffyLayoutEngine {
     taffy: TaffyTree<NodeContext>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
     computed_layouts: FxHashSet<LayoutId>,
+    layout_bounds_scratch_space: Vec<LayoutId>,
 }
 
 const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
@@ -43,6 +43,7 @@ impl TaffyLayoutEngine {
             taffy,
             absolute_layout_bounds: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
+            layout_bounds_scratch_space: Vec::new(),
         }
     }
 
@@ -69,9 +70,7 @@ impl TaffyLayoutEngine {
         } else {
             self.taffy
                 // This is safe because LayoutId is repr(transparent) to taffy::tree::NodeId.
-                .new_with_children(taffy_style, unsafe {
-                    std::mem::transmute::<&[LayoutId], &[taffy::NodeId]>(children)
-                })
+                .new_with_children(taffy_style, LayoutId::to_taffy_slice(children))
                 .expect(EXPECT_MESSAGE)
                 .into()
         }
@@ -170,7 +169,7 @@ impl TaffyLayoutEngine {
         //
 
         if !self.computed_layouts.insert(id) {
-            let mut stack = SmallVec::<[LayoutId; 64]>::new();
+            let mut stack = &mut self.layout_bounds_scratch_space;
             stack.push(id);
             while let Some(id) = stack.pop() {
                 self.absolute_layout_bounds.remove(&id);
@@ -179,7 +178,7 @@ impl TaffyLayoutEngine {
                         .children(id.into())
                         .expect(EXPECT_MESSAGE)
                         .into_iter()
-                        .map(Into::into),
+                        .map(LayoutId::from),
                 );
             }
         }
@@ -264,6 +263,13 @@ impl TaffyLayoutEngine {
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 #[repr(transparent)]
 pub struct LayoutId(NodeId);
+
+impl LayoutId {
+    fn to_taffy_slice(node_ids: &[Self]) -> &[taffy::NodeId] {
+        // SAFETY: LayoutId is repr(transparent) to taffy::tree::NodeId.
+        unsafe { std::mem::transmute::<&[LayoutId], &[taffy::NodeId]>(node_ids) }
+    }
+}
 
 impl std::hash::Hash for LayoutId {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {

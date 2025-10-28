@@ -203,6 +203,10 @@ fn template_big_table_of_actions(book: &mut Book) {
     });
 }
 
+fn format_binding(binding: String) -> String {
+    binding.replace("\\", "\\\\")
+}
+
 fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<PreprocessorError>) {
     let regex = Regex::new(r"\{#kb (.*?)\}").unwrap();
 
@@ -223,7 +227,10 @@ fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<Prepr
                     return "<div>No default binding</div>".to_string();
                 }
 
-                format!("<kbd class=\"keybinding\">{macos_binding}|{linux_binding}</kbd>")
+                let formatted_macos_binding = format_binding(macos_binding);
+                let formatted_linux_binding = format_binding(linux_binding);
+
+                format!("<kbd class=\"keybinding\">{formatted_macos_binding}|{formatted_linux_binding}</kbd>")
             })
             .into_owned()
     });
@@ -529,6 +536,7 @@ fn handle_postprocessing() -> Result<()> {
         .as_str()
         .expect("Default title not a string")
         .to_string();
+    let amplitude_key = std::env::var("DOCS_AMPLITUDE_API_KEY").unwrap_or_default();
 
     output.insert("html".to_string(), zed_html);
     mdbook::Renderer::render(&mdbook::renderer::HtmlHandlebars::new(), &ctx)?;
@@ -597,6 +605,7 @@ fn handle_postprocessing() -> Result<()> {
         let meta_title = format!("{} | {}", page_title, meta_title);
         zlog::trace!(logger => "Updating {:?}", pretty_path(&file, &root_dir));
         let contents = contents.replace("#description#", meta_description);
+        let contents = contents.replace("#amplitude_key#", &amplitude_key);
         let contents = title_regex()
             .replace(&contents, |_: &regex::Captures| {
                 format!("<title>{}</title>", meta_title)

@@ -9,6 +9,7 @@ pub mod rel_path;
 pub mod schemars;
 pub mod serde;
 pub mod shell;
+pub mod shell_builder;
 pub mod shell_env;
 pub mod size;
 #[cfg(any(test, feature = "test-support"))]
@@ -295,12 +296,12 @@ fn load_shell_from_passwd() -> Result<()> {
 }
 
 /// Returns a shell escaped path for the current zed executable
-pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
+pub fn get_shell_safe_zed_path(shell_kind: shell::ShellKind) -> anyhow::Result<String> {
     let zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
     zed_path
-        .try_shell_safe()
+        .try_shell_safe(shell_kind)
         .context("Failed to shell-escape Zed executable path.")
 }
 
@@ -353,7 +354,10 @@ pub async fn load_login_shell_environment() -> Result<()> {
     // into shell's `cd` command (and hooks) to manipulate env.
     // We do this so that we get the env a user would have when spawning a shell
     // in home directory.
-    for (name, value) in shell_env::capture(get_system_shell(), &[], paths::home_dir()).await? {
+    for (name, value) in shell_env::capture(get_system_shell(), &[], paths::home_dir())
+        .await
+        .with_context(|| format!("capturing environment with {:?}", get_system_shell()))?
+    {
         unsafe { env::set_var(&name, &value) };
     }
 
@@ -627,7 +631,7 @@ where
 }
 
 pub fn log_err<E: std::fmt::Debug>(error: &E) {
-    log_error_with_caller(*Location::caller(), error, log::Level::Warn);
+    log_error_with_caller(*Location::caller(), error, log::Level::Error);
 }
 
 pub trait TryFutureExt {

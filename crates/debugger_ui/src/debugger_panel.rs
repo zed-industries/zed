@@ -43,6 +43,8 @@ use workspace::{
 };
 use zed_actions::ToggleFocus;
 
+const DEBUG_PANEL_KEY: &str = "DebugPanel";
+
 pub struct DebugPanel {
     size: Pixels,
     active_session: Option<Entity<DebugSession>>,
@@ -614,12 +616,11 @@ impl DebugPanel {
                 })
                 .tooltip({
                     let focus_handle = focus_handle.clone();
-                    move |window, cx| {
+                    move |_window, cx| {
                         Tooltip::for_action_in(
                             "Start Debug Session",
                             &crate::Start,
                             &focus_handle,
-                            window,
                             cx,
                         )
                     }
@@ -692,12 +693,11 @@ impl DebugPanel {
                                                 ))
                                                 .tooltip({
                                                     let focus_handle = focus_handle.clone();
-                                                    move |window, cx| {
+                                                    move |_window, cx| {
                                                         Tooltip::for_action_in(
                                                             "Pause Program",
                                                             &Pause,
                                                             &focus_handle,
-                                                            window,
                                                             cx,
                                                         )
                                                     }
@@ -717,12 +717,11 @@ impl DebugPanel {
                                                 .disabled(thread_status != ThreadStatus::Stopped)
                                                 .tooltip({
                                                     let focus_handle = focus_handle.clone();
-                                                    move |window, cx| {
+                                                    move |_window, cx| {
                                                         Tooltip::for_action_in(
                                                             "Continue Program",
                                                             &Continue,
                                                             &focus_handle,
-                                                            window,
                                                             cx,
                                                         )
                                                     }
@@ -742,12 +741,11 @@ impl DebugPanel {
                                             .disabled(thread_status != ThreadStatus::Stopped)
                                             .tooltip({
                                                 let focus_handle = focus_handle.clone();
-                                                move |window, cx| {
+                                                move |_window, cx| {
                                                     Tooltip::for_action_in(
                                                         "Step Over",
                                                         &StepOver,
                                                         &focus_handle,
-                                                        window,
                                                         cx,
                                                     )
                                                 }
@@ -768,12 +766,11 @@ impl DebugPanel {
                                         .disabled(thread_status != ThreadStatus::Stopped)
                                         .tooltip({
                                             let focus_handle = focus_handle.clone();
-                                            move |window, cx| {
+                                            move |_window, cx| {
                                                 Tooltip::for_action_in(
                                                     "Step In",
                                                     &StepInto,
                                                     &focus_handle,
-                                                    window,
                                                     cx,
                                                 )
                                             }
@@ -791,12 +788,11 @@ impl DebugPanel {
                                             .disabled(thread_status != ThreadStatus::Stopped)
                                             .tooltip({
                                                 let focus_handle = focus_handle.clone();
-                                                move |window, cx| {
+                                                move |_window, cx| {
                                                     Tooltip::for_action_in(
                                                         "Step Out",
                                                         &StepOut,
                                                         &focus_handle,
-                                                        window,
                                                         cx,
                                                     )
                                                 }
@@ -814,12 +810,11 @@ impl DebugPanel {
                                             ))
                                             .tooltip({
                                                 let focus_handle = focus_handle.clone();
-                                                move |window, cx| {
+                                                move |_window, cx| {
                                                     Tooltip::for_action_in(
                                                         "Rerun Session",
                                                         &RerunSession,
                                                         &focus_handle,
-                                                        window,
                                                         cx,
                                                     )
                                                 }
@@ -859,12 +854,11 @@ impl DebugPanel {
                                                 } else {
                                                     "Terminate All Threads"
                                                 };
-                                                move |window, cx| {
+                                                move |_window, cx| {
                                                     Tooltip::for_action_in(
                                                         label,
                                                         &Stop,
                                                         &focus_handle,
-                                                        window,
                                                         cx,
                                                     )
                                                 }
@@ -891,12 +885,11 @@ impl DebugPanel {
                                                 ))
                                                 .tooltip({
                                                     let focus_handle = focus_handle.clone();
-                                                    move |window, cx| {
+                                                    move |_window, cx| {
                                                         Tooltip::for_action_in(
                                                             "Detach",
                                                             &Detach,
                                                             &focus_handle,
-                                                            window,
                                                             cx,
                                                         )
                                                     }
@@ -1414,6 +1407,10 @@ impl Panel for DebugPanel {
         "DebugPanel"
     }
 
+    fn panel_key() -> &'static str {
+        DEBUG_PANEL_KEY
+    }
+
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {
         DebuggerSettings::get_global(cx).dock.into()
     }
@@ -1777,6 +1774,7 @@ impl Render for DebugPanel {
                     this.child(
                         v_flex()
                             .size_full()
+                            .overflow_hidden()
                             .gap_1()
                             .items_center()
                             .justify_center()

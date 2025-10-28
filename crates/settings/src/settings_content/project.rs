@@ -8,7 +8,8 @@ use settings_macros::MergeFrom;
 use util::serde::default_true;
 
 use crate::{
-    AllLanguageSettingsContent, ExtendingVec, ProjectTerminalSettingsContent, SlashCommandSettings,
+    AllLanguageSettingsContent, DelayMs, ExtendingVec, Maybe, ProjectTerminalSettingsContent,
+    SlashCommandSettings,
 };
 
 #[skip_serializing_none]
@@ -55,11 +56,13 @@ pub struct ProjectSettingsContent {
 #[skip_serializing_none]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorktreeSettingsContent {
-    /// The displayed name of this project. If not set or empty, the root directory name
+    /// The displayed name of this project. If not set or null, the root directory name
     /// will be displayed.
     ///
-    /// Default: ""
-    pub project_name: Option<String>,
+    /// Default: null
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Maybe::is_unset")]
+    pub project_name: Maybe<String>,
 
     /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
     /// `file_scan_inclusions`.
@@ -154,6 +157,8 @@ pub struct DapSettingsContent {
     pub binary: Option<String>,
     #[serde(default)]
     pub args: Option<Vec<String>>,
+    #[serde(default)]
+    pub env: Option<HashMap<String, String>>,
 }
 
 #[skip_serializing_none]
@@ -308,7 +313,7 @@ pub struct InlineBlameSettings {
     /// after a delay once the cursor stops moving.
     ///
     /// Default: 0
-    pub delay_ms: Option<u64>,
+    pub delay_ms: Option<DelayMs>,
     /// The amount of padding between the end of the source line and the start
     /// of the inline blame in units of columns.
     ///
@@ -395,7 +400,7 @@ pub struct LspPullDiagnosticsSettingsContent {
     /// 0 turns the debounce off.
     ///
     /// Default: 50
-    pub debounce_ms: Option<u64>,
+    pub debounce_ms: Option<DelayMs>,
 }
 
 #[skip_serializing_none]
@@ -411,7 +416,7 @@ pub struct InlineDiagnosticsSettingsContent {
     /// last editor event.
     ///
     /// Default: 150
-    pub update_debounce_ms: Option<u64>,
+    pub update_debounce_ms: Option<DelayMs>,
     /// The amount of padding between the end of the source line and the start
     /// of the inline diagnostic in units of columns.
     ///

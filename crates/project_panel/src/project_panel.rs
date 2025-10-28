@@ -64,7 +64,7 @@ use workspace::{
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
     SplitDirection, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::{DetachAndPromptErr, NotifyTaskExt},
+    notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
 use zed_actions::workspace::OpenWithSystem;
@@ -491,17 +491,17 @@ impl ProjectPanel {
         let project_panel = cx.new(|cx| {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
-            cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
-                this.focus_out(window, cx);
-            })
-            .detach();
 
             cx.subscribe_in(
                 &git_store,
                 window,
                 |this, _, event, window, cx| match event {
-                    GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, _)
-                    | GitStoreEvent::RepositoryAdded(_)
+                    GitStoreEvent::RepositoryUpdated(
+                        _,
+                        RepositoryEvent::StatusesChanged { full_scan: _ },
+                        _,
+                    )
+                    | GitStoreEvent::RepositoryAdded
                     | GitStoreEvent::RepositoryRemoved(_) => {
                         this.update_visible_entries(None, false, false, window, cx);
                         cx.notify();
@@ -615,8 +615,11 @@ impl ProjectPanel {
             .detach();
 
             let trash_action = [TypeId::of::<Trash>()];
-            let is_remote = project.read(cx).is_via_collab();
+            let is_remote = project.read(cx).is_remote();
 
+            // Make sure the trash option is never displayed anywhere on remote
+            // hosts since they may not support trashing. May want to dynamically
+            // detect this in the future.
             if is_remote {
                 CommandPaletteFilter::update_global(cx, |filter, _cx| {
                     filter.hide_action_types(&trash_action);
@@ -643,7 +646,7 @@ impl ProjectPanel {
                             .as_ref()
                             .is_some_and(|state| state.processing_filename.is_none())
                         {
-                            match project_panel.confirm_edit(window, cx) {
+                            match project_panel.confirm_edit(false, window, cx) {
                                 Some(task) => {
                                     task.detach_and_notify_err(window, cx);
                                 }
@@ -947,12 +950,6 @@ impl ProjectPanel {
         }
     }
 
-    fn focus_out(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.focus_handle.is_focused(window) {
-            self.confirm(&Confirm, window, cx);
-        }
-    }
-
     fn deploy_context_menu(
         &mut self,
         position: Point<Pixels>,
@@ -981,7 +978,7 @@ impl ProjectPanel {
             let is_foldable = auto_fold_dirs && self.is_foldable(entry, worktree);
             let is_unfoldable = auto_fold_dirs && self.is_unfoldable(entry, worktree);
             let is_read_only = project.is_read_only(cx);
-            let is_remote = project.is_via_collab();
+            let is_remote = project.is_remote();
             let is_local = project.is_local();
 
             let settings = ProjectPanelSettings::get_global(cx);
@@ -1045,13 +1042,13 @@ impl ProjectPanel {
                             .when(!should_hide_rename, |menu| {
                                 menu.action("Rename", Box::new(Rename))
                             })
-                            .when(!is_root & !is_remote, |menu| {
+                            .when(!is_root && !is_remote, |menu| {
                                 menu.action("Trash", Box::new(Trash { skip_prompt: false }))
                             })
                             .when(!is_root, |menu| {
                                 menu.action("Delete", Box::new(Delete { skip_prompt: false }))
                             })
-                            .when(!is_remote & is_root, |menu| {
+                            .when(!is_remote && is_root, |menu| {
                                 menu.separator()
                                     .action(
                                         "Add Folder to Project…",
@@ -1421,7 +1418,7 @@ impl ProjectPanel {
     }
 
     fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(task) = self.confirm_edit(window, cx) {
+        if let Some(task) = self.confirm_edit(true, window, cx) {
             task.detach_and_notify_err(window, cx);
         }
     }
@@ -1553,6 +1550,7 @@ impl ProjectPanel {
 
     fn confirm_edit(
         &mut self,
+        refocus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
@@ -1606,7 +1604,7 @@ impl ProjectPanel {
                 filename.clone()
             };
             if let Some(existing) = worktree.read(cx).entry_for_path(&new_path) {
-                if existing.id == entry.id {
+                if existing.id == entry.id && refocus {
                     window.focus(&self.focus_handle);
                 }
                 return None;
@@ -1617,7 +1615,9 @@ impl ProjectPanel {
             });
         };
 
-        window.focus(&self.focus_handle);
+        if refocus {
+            window.focus(&self.focus_handle);
+        }
         edit_state.processing_filename = Some(filename);
         cx.notify();
 
@@ -2677,12 +2677,14 @@ impl ProjectPanel {
                 for task in paste_tasks {
                     match task {
                         PasteTask::Rename(task) => {
-                            if let Some(CreatedEntry::Included(entry)) = task.await.log_err() {
+                            if let Some(CreatedEntry::Included(entry)) =
+                                task.await.notify_async_err(cx)
+                            {
                                 last_succeed = Some(entry);
                             }
                         }
                         PasteTask::Copy(task) => {
-                            if let Some(Some(entry)) = task.await.log_err() {
+                            if let Some(Some(entry)) = task.await.notify_async_err(cx) {
                                 last_succeed = Some(entry);
                             }
                         }
@@ -2698,8 +2700,10 @@ impl ProjectPanel {
                             });
 
                             if item_count == 1 {
-                                // open entry if not dir, and only focus if rename is not pending
-                                if !entry.is_dir() {
+                                // open entry if not dir, setting is enabled, and only focus if rename is not pending
+                                if !entry.is_dir()
+                                    && ProjectPanelSettings::get_global(cx).open_file_on_paste
+                                {
                                     project_panel.open_entry(
                                         entry.id,
                                         disambiguation_range.is_none(),
@@ -4678,12 +4682,11 @@ impl ProjectPanel {
                             div()
                                 .id("symlink_icon")
                                 .pr_3()
-                                .tooltip(move |window, cx| {
+                                .tooltip(move |_window, cx| {
                                     Tooltip::with_meta(
                                         path.to_string(),
                                         None,
                                         "Symbolic Link",
-                                        window,
                                         cx,
                                     )
                                 })
@@ -5454,33 +5457,13 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::new_directory))
                         .on_action(cx.listener(Self::rename))
                         .on_action(cx.listener(Self::delete))
-                        .on_action(cx.listener(Self::trash))
                         .on_action(cx.listener(Self::cut))
                         .on_action(cx.listener(Self::copy))
                         .on_action(cx.listener(Self::paste))
                         .on_action(cx.listener(Self::duplicate))
-                        .on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
-                            if event.click_count() > 1
-                                && let Some(entry_id) = this.state.last_worktree_root_id
-                            {
-                                let project = this.project.read(cx);
-
-                                let worktree_id = if let Some(worktree) =
-                                    project.worktree_for_entry(entry_id, cx)
-                                {
-                                    worktree.read(cx).id()
-                                } else {
-                                    return;
-                                };
-
-                                this.state.selection = Some(SelectedEntry {
-                                    worktree_id,
-                                    entry_id,
-                                });
-
-                                this.new_file(&NewFile, window, cx);
-                            }
-                        }))
+                        .when(!project.is_remote(), |el| {
+                            el.on_action(cx.listener(Self::trash))
+                        })
                 })
                 .when(project.is_local(), |el| {
                     el.on_action(cx.listener(Self::reveal_in_finder))
@@ -5815,7 +5798,34 @@ impl Render for ProjectPanel {
                                             );
                                         }
                                     }),
-                                ),
+                                )
+                                .when(!project.is_read_only(cx), |el| {
+                                    el.on_click(cx.listener(
+                                        |this, event: &gpui::ClickEvent, window, cx| {
+                                            if event.click_count() > 1
+                                                && let Some(entry_id) =
+                                                    this.state.last_worktree_root_id
+                                            {
+                                                let project = this.project.read(cx);
+
+                                                let worktree_id = if let Some(worktree) =
+                                                    project.worktree_for_entry(entry_id, cx)
+                                                {
+                                                    worktree.read(cx).id()
+                                                } else {
+                                                    return;
+                                                };
+
+                                                this.state.selection = Some(SelectedEntry {
+                                                    worktree_id,
+                                                    entry_id,
+                                                });
+
+                                                this.new_file(&NewFile, window, cx);
+                                            }
+                                        },
+                                    ))
+                                }),
                         )
                         .size_full(),
                 )
@@ -5856,7 +5866,6 @@ impl Render for ProjectPanel {
                         .key_binding(KeyBinding::for_action_in(
                             &workspace::Open,
                             &focus_handle,
-                            window,
                             cx,
                         ))
                         .on_click(cx.listener(|this, _, window, cx| {
@@ -6005,6 +6014,10 @@ impl Panel for ProjectPanel {
 
     fn persistent_name() -> &'static str {
         "Project Panel"
+    }
+
+    fn panel_key() -> &'static str {
+        PROJECT_PANEL_KEY
     }
 
     fn starts_open(&self, _: &Window, cx: &App) -> bool {

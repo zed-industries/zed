@@ -50,17 +50,23 @@ impl Vim {
         if count <= 1 || Vim::globals(cx).dot_replaying {
             self.create_mark("^".into(), window, cx);
 
+            if HelixModeSetting::get_global(cx).0 {
+                self.update_editor(cx, |_, editor, cx| {
+                    editor.dismiss_menus_and_popups(false, window, cx);
+                });
+                self.switch_mode(Mode::HelixNormal, false, window, cx);
+                return;
+            }
+
             self.update_editor(cx, |_, editor, cx| {
                 editor.dismiss_menus_and_popups(false, window, cx);
 
-                if !HelixModeSetting::get_global(cx).0 {
-                    editor.change_selections(Default::default(), window, cx, |s| {
-                        s.move_cursors_with(|map, mut cursor, _| {
-                            *cursor.column_mut() = cursor.column().saturating_sub(1);
-                            (map.clip_point(cursor, Bias::Left), SelectionGoal::None)
-                        });
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.move_cursors_with(|map, mut cursor, _| {
+                        *cursor.column_mut() = cursor.column().saturating_sub(1);
+                        (map.clip_point(cursor, Bias::Left), SelectionGoal::None)
                     });
-                }
+                });
             });
 
             self.switch_mode(Mode::Normal, false, window, cx);
@@ -84,7 +90,7 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             let mut edits = Vec::new();
-            for selection in editor.selections.all::<Point>(cx) {
+            for selection in editor.selections.all::<Point>(&editor.display_snapshot(cx)) {
                 let point = selection.head();
                 let new_row = match direction {
                     Direction::Next => point.row + 1,

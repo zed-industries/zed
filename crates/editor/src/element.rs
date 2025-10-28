@@ -458,7 +458,6 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_code_actions);
         register_action(editor, window, Editor::open_excerpts);
         register_action(editor, window, Editor::open_excerpts_in_split);
-        register_action(editor, window, Editor::open_proposed_changes_editor);
         register_action(editor, window, Editor::toggle_soft_wrap);
         register_action(editor, window, Editor::toggle_tab_bar);
         register_action(editor, window, Editor::toggle_line_numbers);
@@ -493,6 +492,7 @@ impl EditorElement {
         register_action(editor, window, Editor::stage_and_next);
         register_action(editor, window, Editor::unstage_and_next);
         register_action(editor, window, Editor::expand_all_diff_hunks);
+        register_action(editor, window, Editor::collapse_all_diff_hunks);
         register_action(editor, window, Editor::go_to_previous_change);
         register_action(editor, window, Editor::go_to_next_change);
 
@@ -651,7 +651,6 @@ impl EditorElement {
     fn mouse_left_down(
         editor: &mut Editor,
         event: &MouseDownEvent,
-        hovered_hunk: Option<Range<Anchor>>,
         position_map: &PositionMap,
         line_numbers: &HashMap<MultiBufferRow, LineNumberLayout>,
         window: &mut Window,
@@ -667,7 +666,20 @@ impl EditorElement {
         let mut click_count = event.click_count;
         let mut modifiers = event.modifiers;
 
-        if let Some(hovered_hunk) = hovered_hunk {
+        if let Some(hovered_hunk) =
+            position_map
+                .display_hunks
+                .iter()
+                .find_map(|(hunk, hunk_hitbox)| match hunk {
+                    DisplayDiffHunk::Folded { .. } => None,
+                    DisplayDiffHunk::Unfolded {
+                        multi_buffer_range, ..
+                    } => hunk_hitbox
+                        .as_ref()
+                        .is_some_and(|hitbox| hitbox.is_hovered(window))
+                        .then(|| multi_buffer_range.clone()),
+                })
+        {
             editor.toggle_single_diff_hunk(hovered_hunk, cx);
             cx.notify();
             return;
@@ -750,8 +762,14 @@ impl EditorElement {
                 .row;
             if line_numbers
                 .get(&MultiBufferRow(multi_buffer_row))
-                .and_then(|line_number| line_number.hitbox.as_ref())
-                .is_some_and(|hitbox| hitbox.contains(&event.position))
+                .is_some_and(|line_layout| {
+                    line_layout.segments.iter().any(|segment| {
+                        segment
+                            .hitbox
+                            .as_ref()
+                            .is_some_and(|hitbox| hitbox.contains(&event.position))
+                    })
+                })
             {
                 let line_offset_from_top = display_row - position_map.scroll_position.y as u32;
 
@@ -1070,7 +1088,10 @@ impl EditorElement {
                     ref mouse_down_time,
                 } => {
                     let drag_and_drop_delay = Duration::from_millis(
-                        EditorSettings::get_global(cx).drag_and_drop_selection.delay,
+                        EditorSettings::get_global(cx)
+                            .drag_and_drop_selection
+                            .delay
+                            .0,
                     );
                     if mouse_down_time.elapsed() >= drag_and_drop_delay {
                         let drop_cursor = Selection {
@@ -1191,10 +1212,10 @@ impl EditorElement {
             if mouse_over_inline_blame || mouse_over_popover {
                 editor.show_blame_popover(*buffer_id, blame_entry, event.position, false, cx);
             } else if !keyboard_grace {
-                editor.hide_blame_popover(cx);
+                editor.hide_blame_popover(false, cx);
             }
         } else {
-            editor.hide_blame_popover(cx);
+            editor.hide_blame_popover(false, cx);
         }
 
         let breakpoint_indicator = if gutter_hovered {
@@ -1377,7 +1398,7 @@ impl EditorElement {
         editor_with_selections.update(cx, |editor, cx| {
             if editor.show_local_selections {
                 let mut layouts = Vec::new();
-                let newest = editor.selections.newest(cx);
+                let newest = editor.selections.newest(&editor.display_snapshot(cx));
                 for selection in local_selections.iter().cloned() {
                     let is_empty = selection.start == selection.end;
                     let is_newest = selection == newest;
@@ -1406,7 +1427,11 @@ impl EditorElement {
                     layouts.push(layout);
                 }
 
-                let player = editor.current_user_player_color(cx);
+                let mut player = editor.current_user_player_color(cx);
+                if !editor.is_focused(window) {
+                    const UNFOCUS_EDITOR_SELECTION_OPACITY: f32 = 0.5;
+                    player.selection = player.selection.opacity(UNFOCUS_EDITOR_SELECTION_OPACITY);
+                }
                 selections.push((player, layouts));
 
                 if let SelectionDragState::Dragging {
@@ -3124,9 +3149,10 @@ impl EditorElement {
 
     fn calculate_relative_line_numbers(
         &self,
-        snapshot: &EditorSnapshot,
+        buffer_rows: &[RowInfo],
         rows: &Range<DisplayRow>,
         relative_to: Option<DisplayRow>,
+        count_wrapped_lines: bool,
     ) -> HashMap<DisplayRow, DisplayRowDelta> {
         let mut relative_rows: HashMap<DisplayRow, DisplayRowDelta> = Default::default();
         let Some(relative_to) = relative_to else {
@@ -3134,18 +3160,19 @@ impl EditorElement {
         };
 
         let start = rows.start.min(relative_to);
-        let end = rows.end.max(relative_to);
-
-        let buffer_rows = snapshot
-            .row_infos(start)
-            .take(1 + end.minus(start) as usize)
-            .collect::<Vec<_>>();
 
         let head_idx = relative_to.minus(start);
         let mut delta = 1;
         let mut i = head_idx + 1;
+        let should_count_line = |row_info: &RowInfo| {
+            if count_wrapped_lines {
+                row_info.buffer_row.is_some() || row_info.wrapped_buffer_row.is_some()
+            } else {
+                row_info.buffer_row.is_some()
+            }
+        };
         while i < buffer_rows.len() as u32 {
-            if buffer_rows[i as usize].buffer_row.is_some() {
+            if should_count_line(&buffer_rows[i as usize]) {
                 if rows.contains(&DisplayRow(i + start.0)) {
                     relative_rows.insert(DisplayRow(i + start.0), delta);
                 }
@@ -3154,14 +3181,14 @@ impl EditorElement {
             i += 1;
         }
         delta = 1;
-        i = head_idx.min(buffer_rows.len() as u32 - 1);
-        while i > 0 && buffer_rows[i as usize].buffer_row.is_none() {
+        i = head_idx.min(buffer_rows.len().saturating_sub(1) as u32);
+        while i > 0 && buffer_rows[i as usize].buffer_row.is_none() && !count_wrapped_lines {
             i -= 1;
         }
 
         while i > 0 {
             i -= 1;
-            if buffer_rows[i as usize].buffer_row.is_some() {
+            if should_count_line(&buffer_rows[i as usize]) {
                 if rows.contains(&DisplayRow(i + start.0)) {
                     relative_rows.insert(DisplayRow(i + start.0), delta);
                 }
@@ -3193,9 +3220,11 @@ impl EditorElement {
             return Arc::default();
         }
 
-        let (newest_selection_head, is_relative) = self.editor.update(cx, |editor, cx| {
+        let (newest_selection_head, relative) = self.editor.update(cx, |editor, cx| {
             let newest_selection_head = newest_selection_head.unwrap_or_else(|| {
-                let newest = editor.selections.newest::<Point>(cx);
+                let newest = editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx));
                 SelectionLayout::new(
                     newest,
                     editor.selections.line_mode(),
@@ -3207,79 +3236,97 @@ impl EditorElement {
                 )
                 .head
             });
-            let is_relative = editor.should_use_relative_line_numbers(cx);
-            (newest_selection_head, is_relative)
+            let relative = editor.relative_line_numbers(cx);
+            (newest_selection_head, relative)
         });
 
-        let relative_to = if is_relative {
+        let relative_to = if relative.enabled() {
             Some(newest_selection_head.row())
         } else {
             None
         };
-        let relative_rows = self.calculate_relative_line_numbers(snapshot, &rows, relative_to);
+        let relative_rows = self.calculate_relative_line_numbers(
+            &buffer_rows,
+            &rows,
+            relative_to,
+            relative.wrapped(),
+        );
         let mut line_number = String::new();
-        let line_numbers = buffer_rows
-            .iter()
-            .enumerate()
-            .flat_map(|(ix, row_info)| {
-                let display_row = DisplayRow(rows.start.0 + ix as u32);
-                line_number.clear();
-                let non_relative_number = row_info.buffer_row? + 1;
-                let number = relative_rows
-                    .get(&display_row)
-                    .unwrap_or(&non_relative_number);
-                write!(&mut line_number, "{number}").unwrap();
-                if row_info
-                    .diff_status
-                    .is_some_and(|status| status.is_deleted())
-                {
-                    return None;
-                }
+        let segments = buffer_rows.iter().enumerate().flat_map(|(ix, row_info)| {
+            let display_row = DisplayRow(rows.start.0 + ix as u32);
+            line_number.clear();
+            let non_relative_number = if relative.wrapped() {
+                row_info.buffer_row.or(row_info.wrapped_buffer_row)? + 1
+            } else {
+                row_info.buffer_row? + 1
+            };
+            let number = relative_rows
+                .get(&display_row)
+                .unwrap_or(&non_relative_number);
+            write!(&mut line_number, "{number}").unwrap();
+            if row_info
+                .diff_status
+                .is_some_and(|status| status.is_deleted())
+            {
+                return None;
+            }
 
-                let color = active_rows
-                    .get(&display_row)
-                    .map(|spec| {
-                        if spec.breakpoint {
-                            cx.theme().colors().debugger_accent
-                        } else {
-                            cx.theme().colors().editor_active_line_number
-                        }
-                    })
-                    .unwrap_or_else(|| cx.theme().colors().editor_line_number);
-                let shaped_line =
-                    self.shape_line_number(SharedString::from(&line_number), color, window);
-                let scroll_top = scroll_position.y * ScrollPixelOffset::from(line_height);
-                let line_origin = gutter_hitbox.map(|hitbox| {
-                    hitbox.origin
-                        + point(
-                            hitbox.size.width - shaped_line.width - gutter_dimensions.right_padding,
-                            ix as f32 * line_height
-                                - Pixels::from(scroll_top % ScrollPixelOffset::from(line_height)),
-                        )
-                });
-
-                #[cfg(not(test))]
-                let hitbox = line_origin.map(|line_origin| {
-                    window.insert_hitbox(
-                        Bounds::new(line_origin, size(shaped_line.width, line_height)),
-                        HitboxBehavior::Normal,
+            let color = active_rows
+                .get(&display_row)
+                .map(|spec| {
+                    if spec.breakpoint {
+                        cx.theme().colors().debugger_accent
+                    } else {
+                        cx.theme().colors().editor_active_line_number
+                    }
+                })
+                .unwrap_or_else(|| cx.theme().colors().editor_line_number);
+            let shaped_line =
+                self.shape_line_number(SharedString::from(&line_number), color, window);
+            let scroll_top = scroll_position.y * ScrollPixelOffset::from(line_height);
+            let line_origin = gutter_hitbox.map(|hitbox| {
+                hitbox.origin
+                    + point(
+                        hitbox.size.width - shaped_line.width - gutter_dimensions.right_padding,
+                        ix as f32 * line_height
+                            - Pixels::from(scroll_top % ScrollPixelOffset::from(line_height)),
                     )
-                });
-                #[cfg(test)]
-                let hitbox = {
-                    let _ = line_origin;
-                    None
-                };
+            });
 
-                let multi_buffer_row = DisplayPoint::new(display_row, 0).to_point(snapshot).row;
-                let multi_buffer_row = MultiBufferRow(multi_buffer_row);
-                let line_number = LineNumberLayout {
-                    shaped_line,
-                    hitbox,
-                };
-                Some((multi_buffer_row, line_number))
-            })
-            .collect();
+            #[cfg(not(test))]
+            let hitbox = line_origin.map(|line_origin| {
+                window.insert_hitbox(
+                    Bounds::new(line_origin, size(shaped_line.width, line_height)),
+                    HitboxBehavior::Normal,
+                )
+            });
+            #[cfg(test)]
+            let hitbox = {
+                let _ = line_origin;
+                None
+            };
+
+            let segment = LineNumberSegment {
+                shaped_line,
+                hitbox,
+            };
+
+            let buffer_row = DisplayPoint::new(display_row, 0).to_point(snapshot).row;
+            let multi_buffer_row = MultiBufferRow(buffer_row);
+
+            Some((multi_buffer_row, segment))
+        });
+
+        let mut line_numbers: HashMap<MultiBufferRow, LineNumberLayout> = HashMap::default();
+        for (buffer_row, segment) in segments {
+            line_numbers
+                .entry(buffer_row)
+                .or_insert_with(|| LineNumberLayout {
+                    segments: Default::default(),
+                })
+                .segments
+                .push(segment);
+        }
         Arc::new(line_numbers)
     }
 
@@ -3806,13 +3853,7 @@ impl EditorElement {
         let multi_buffer = editor.buffer.read(cx);
         let file_status = multi_buffer
             .all_diff_hunks_expanded()
-            .then(|| {
-                editor
-                    .project
-                    .as_ref()?
-                    .read(cx)
-                    .status_for_buffer_id(for_excerpt.buffer_id, cx)
-            })
+            .then(|| editor.status_for_buffer_id(for_excerpt.buffer_id, cx))
             .flatten();
         let indicator = multi_buffer
             .buffer(for_excerpt.buffer_id)
@@ -3892,7 +3933,7 @@ impl EditorElement {
                                         .children(toggle_chevron_icon)
                                         .tooltip({
                                             let focus_handle = focus_handle.clone();
-                                            move |window, cx| {
+                                            move |_window, cx| {
                                                 Tooltip::with_meta_in(
                                                     "Toggle Excerpt Fold",
                                                     Some(&ToggleFold),
@@ -3905,7 +3946,6 @@ impl EditorElement {
                                                         )
                                                     ),
                                                     &focus_handle,
-                                                    window,
                                                     cx,
                                                 )
                                             }
@@ -4006,15 +4046,11 @@ impl EditorElement {
                                             .id("jump-to-file-button")
                                             .gap_2p5()
                                             .child(Label::new("Jump To File"))
-                                            .children(
-                                                KeyBinding::for_action_in(
-                                                    &OpenExcerpts,
-                                                    &focus_handle,
-                                                    window,
-                                                    cx,
-                                                )
-                                                .map(|binding| binding.into_any_element()),
-                                            ),
+                                            .child(KeyBinding::for_action_in(
+                                                &OpenExcerpts,
+                                                &focus_handle,
+                                                cx,
+                                            )),
                                     )
                                 },
                             )
@@ -5828,34 +5864,36 @@ impl EditorElement {
         let line_height = layout.position_map.line_height;
         window.set_cursor_style(CursorStyle::Arrow, &layout.gutter_hitbox);
 
-        for LineNumberLayout {
-            shaped_line,
-            hitbox,
-        } in layout.line_numbers.values()
-        {
-            let Some(hitbox) = hitbox else {
-                continue;
-            };
+        for line_layout in layout.line_numbers.values() {
+            for LineNumberSegment {
+                shaped_line,
+                hitbox,
+            } in &line_layout.segments
+            {
+                let Some(hitbox) = hitbox else {
+                    continue;
+                };
 
-            let Some(()) = (if !is_singleton && hitbox.is_hovered(window) {
-                let color = cx.theme().colors().editor_hover_line_number;
+                let Some(()) = (if !is_singleton && hitbox.is_hovered(window) {
+                    let color = cx.theme().colors().editor_hover_line_number;
 
-                let line = self.shape_line_number(shaped_line.text.clone(), color, window);
-                line.paint(hitbox.origin, line_height, window, cx).log_err()
-            } else {
-                shaped_line
-                    .paint(hitbox.origin, line_height, window, cx)
-                    .log_err()
-            }) else {
-                continue;
-            };
+                    let line = self.shape_line_number(shaped_line.text.clone(), color, window);
+                    line.paint(hitbox.origin, line_height, window, cx).log_err()
+                } else {
+                    shaped_line
+                        .paint(hitbox.origin, line_height, window, cx)
+                        .log_err()
+                }) else {
+                    continue;
+                };
 
-            // In singleton buffers, we select corresponding lines on the line number click, so use | -like cursor.
-            // In multi buffers, we open file at the line number clicked, so use a pointing hand cursor.
-            if is_singleton {
-                window.set_cursor_style(CursorStyle::IBeam, hitbox);
-            } else {
-                window.set_cursor_style(CursorStyle::PointingHand, hitbox);
+                // In singleton buffers, we select corresponding lines on the line number click, so use | -like cursor.
+                // In multi buffers, we open file at the line number clicked, so use a pointing hand cursor.
+                if is_singleton {
+                    window.set_cursor_style(CursorStyle::IBeam, hitbox);
+                } else {
+                    window.set_cursor_style(CursorStyle::PointingHand, hitbox);
+                }
             }
         }
     }
@@ -6170,7 +6208,10 @@ impl EditorElement {
                 } = &editor.selection_drag_state
                 {
                     let drag_and_drop_delay = Duration::from_millis(
-                        EditorSettings::get_global(cx).drag_and_drop_selection.delay,
+                        EditorSettings::get_global(cx)
+                            .drag_and_drop_selection
+                            .delay
+                            .0,
                     );
                     if mouse_down_time.elapsed() >= drag_and_drop_delay {
                         window.set_cursor_style(
@@ -7247,26 +7288,6 @@ impl EditorElement {
         window.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
-            let diff_hunk_range =
-                layout
-                    .display_hunks
-                    .iter()
-                    .find_map(|(hunk, hunk_hitbox)| match hunk {
-                        DisplayDiffHunk::Folded { .. } => None,
-                        DisplayDiffHunk::Unfolded {
-                            multi_buffer_range, ..
-                        } => {
-                            if hunk_hitbox
-                                .as_ref()
-                                .map(|hitbox| hitbox.is_hovered(window))
-                                .unwrap_or(false)
-                            {
-                                Some(multi_buffer_range.clone())
-                            } else {
-                                None
-                            }
-                        }
-                    });
             let line_numbers = layout.line_numbers.clone();
 
             move |event: &MouseDownEvent, phase, window, cx| {
@@ -7283,7 +7304,6 @@ impl EditorElement {
                             Self::mouse_left_down(
                                 editor,
                                 event,
-                                diff_hunk_range.clone(),
                                 &position_map,
                                 line_numbers.as_ref(),
                                 window,
@@ -7457,8 +7477,8 @@ impl EditorElement {
                         }
                         let clipped_start = range.start.max(&buffer_range.start, buffer);
                         let clipped_end = range.end.min(&buffer_range.end, buffer);
-                        let range = buffer_snapshot.anchor_in_excerpt(excerpt_id, clipped_start)?
-                            ..buffer_snapshot.anchor_in_excerpt(excerpt_id, clipped_end)?;
+                        let range = buffer_snapshot
+                            .anchor_range_in_excerpt(excerpt_id, *clipped_start..*clipped_end)?;
                         let start = range.start.to_display_point(display_snapshot);
                         let end = range.end.to_display_point(display_snapshot);
                         let selection_layout = SelectionLayout {
@@ -8786,7 +8806,8 @@ impl Element for EditorElement {
                         .editor_with_selections(cx)
                         .map(|editor| {
                             editor.update(cx, |editor, cx| {
-                                let all_selections = editor.selections.all::<Point>(cx);
+                                let all_selections =
+                                    editor.selections.all::<Point>(&snapshot.display_snapshot);
                                 let selected_buffer_ids =
                                     if editor.buffer_kind(cx) == ItemBufferKind::Singleton {
                                         Vec::new()
@@ -8808,10 +8829,12 @@ impl Element for EditorElement {
                                         selected_buffer_ids
                                     };
 
-                                let mut selections = editor
-                                    .selections
-                                    .disjoint_in_range(start_anchor..end_anchor, cx);
-                                selections.extend(editor.selections.pending(cx));
+                                let mut selections = editor.selections.disjoint_in_range(
+                                    start_anchor..end_anchor,
+                                    &snapshot.display_snapshot,
+                                );
+                                selections
+                                    .extend(editor.selections.pending(&snapshot.display_snapshot));
 
                                 (selections, selected_buffer_ids)
                             })
@@ -8921,10 +8944,20 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let merged_highlighted_ranges =
+                        if let Some((_, colors)) = document_colors.as_ref() {
+                            &highlighted_ranges
+                                .clone()
+                                .into_iter()
+                                .chain(colors.clone())
+                                .collect()
+                        } else {
+                            &highlighted_ranges
+                        };
                     let bg_segments_per_row = Self::bg_segments_per_row(
                         start_row..end_row,
                         &selections,
-                        &highlighted_ranges,
+                        &merged_highlighted_ranges,
                         self.style.background,
                     );
 
@@ -9773,9 +9806,15 @@ impl EditorLayout {
     }
 }
 
-struct LineNumberLayout {
+#[derive(Debug)]
+struct LineNumberSegment {
     shaped_line: ShapedLine,
     hitbox: Option<Hitbox>,
+}
+
+#[derive(Debug)]
+struct LineNumberLayout {
+    segments: SmallVec<[LineNumberSegment; 1]>,
 }
 
 struct ColoredRange<T> {
@@ -10834,13 +10873,21 @@ mod tests {
             .unwrap();
         assert_eq!(layouts.len(), 6);
 
+        let get_row_infos = |snapshot: &EditorSnapshot| {
+            snapshot
+                .row_infos(DisplayRow(0))
+                .take(6)
+                .collect::<Vec<RowInfo>>()
+        };
+
         let relative_rows = window
             .update(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
                 element.calculate_relative_line_numbers(
-                    &snapshot,
+                    &get_row_infos(&snapshot),
                     &(DisplayRow(0)..DisplayRow(6)),
                     Some(DisplayRow(3)),
+                    false,
                 )
             })
             .unwrap();
@@ -10856,9 +10903,10 @@ mod tests {
             .update(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
                 element.calculate_relative_line_numbers(
-                    &snapshot,
+                    &get_row_infos(&snapshot),
                     &(DisplayRow(3)..DisplayRow(6)),
                     Some(DisplayRow(1)),
+                    false,
                 )
             })
             .unwrap();
@@ -10872,9 +10920,10 @@ mod tests {
             .update(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
                 element.calculate_relative_line_numbers(
-                    &snapshot,
+                    &get_row_infos(&snapshot),
                     &(DisplayRow(0)..DisplayRow(3)),
                     Some(DisplayRow(6)),
+                    false,
                 )
             })
             .unwrap();
@@ -10882,6 +10931,88 @@ mod tests {
         assert_eq!(relative_rows[&DisplayRow(0)], 5);
         assert_eq!(relative_rows[&DisplayRow(1)], 4);
         assert_eq!(relative_rows[&DisplayRow(2)], 3);
+    }
+
+    #[gpui::test]
+    fn test_shape_line_numbers_wrapping(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+
+        update_test_language_settings(cx, |s| {
+            s.defaults.preferred_line_length = Some(5_u32);
+            s.defaults.soft_wrap = Some(language_settings::SoftWrap::PreferredLineLength);
+        });
+
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        let line_height = window
+            .update(cx, |_, window, _| {
+                style.text.line_height_in_pixels(window.rem_size())
+            })
+            .unwrap();
+        let element = EditorElement::new(&editor, style);
+        let snapshot = window
+            .update(cx, |editor, window, cx| editor.snapshot(window, cx))
+            .unwrap();
+
+        let layouts = cx
+            .update_window(*window, |_, window, cx| {
+                element.layout_line_numbers(
+                    None,
+                    GutterDimensions {
+                        left_padding: Pixels::ZERO,
+                        right_padding: Pixels::ZERO,
+                        width: px(30.0),
+                        margin: Pixels::ZERO,
+                        git_blame_entries_width: None,
+                    },
+                    line_height,
+                    gpui::Point::default(),
+                    DisplayRow(0)..DisplayRow(6),
+                    &(0..6)
+                        .map(|row| RowInfo {
+                            buffer_row: Some(row),
+                            ..Default::default()
+                        })
+                        .collect::<Vec<_>>(),
+                    &BTreeMap::default(),
+                    Some(DisplayPoint::new(DisplayRow(0), 0)),
+                    &snapshot,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap();
+        assert_eq!(layouts.len(), 3);
+
+        let relative_rows = window
+            .update(cx, |editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                let start_row = DisplayRow(0);
+                let end_row = DisplayRow(6);
+                let row_infos = snapshot
+                    .row_infos(start_row)
+                    .take((start_row..end_row).len())
+                    .collect::<Vec<RowInfo>>();
+
+                element.calculate_relative_line_numbers(
+                    &row_infos,
+                    &(DisplayRow(0)..DisplayRow(6)),
+                    Some(DisplayRow(3)),
+                    true,
+                )
+            })
+            .unwrap();
+
+        assert_eq!(relative_rows[&DisplayRow(0)], 3);
+        assert_eq!(relative_rows[&DisplayRow(1)], 2);
+        assert_eq!(relative_rows[&DisplayRow(2)], 1);
+        // current line has no relative number
+        assert_eq!(relative_rows[&DisplayRow(4)], 1);
+        assert_eq!(relative_rows[&DisplayRow(5)], 2);
     }
 
     #[gpui::test]
@@ -10997,7 +11128,13 @@ mod tests {
             state
                 .line_numbers
                 .get(&MultiBufferRow(0))
-                .map(|line_number| line_number.shaped_line.text.as_ref()),
+                .map(|line_number| line_number
+                    .segments
+                    .first()
+                    .unwrap()
+                    .shaped_line
+                    .text
+                    .as_ref()),
             Some("1")
         );
     }

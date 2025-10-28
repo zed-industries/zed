@@ -1265,6 +1265,13 @@ impl CollabPanel {
                     window.handler_for(&this, move |this, _, cx| {
                         this.copy_channel_link(channel_id, cx)
                     }),
+                )
+                .entry(
+                    "Copy Channel Notes Link",
+                    None,
+                    window.handler_for(&this, move |this, _, cx| {
+                        this.copy_channel_notes_link(channel_id, cx)
+                    }),
                 );
 
             let mut has_destructive_actions = false;
@@ -2220,6 +2227,15 @@ impl CollabPanel {
         cx.write_to_clipboard(item)
     }
 
+    fn copy_channel_notes_link(&mut self, channel_id: ChannelId, cx: &mut Context<Self>) {
+        let channel_store = self.channel_store.read(cx);
+        let Some(channel) = channel_store.channel_for_id(channel_id) else {
+            return;
+        };
+        let item = ClipboardItem::new_string(channel.notes_link(None, cx));
+        cx.write_to_clipboard(item)
+    }
+
     fn render_signed_out(&mut self, cx: &mut Context<Self>) -> Div {
         let collab_blurb = "Work with your team in realtime with collaborative editing, voice, shared notes and more.";
 
@@ -3035,6 +3051,10 @@ impl Panel for CollabPanel {
 
     fn persistent_name() -> &'static str {
         "CollabPanel"
+    }
+
+    fn panel_key() -> &'static str {
+        COLLABORATION_PANEL_KEY
     }
 
     fn activation_priority(&self) -> u32 {

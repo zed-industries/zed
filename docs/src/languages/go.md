@@ -75,9 +75,11 @@ See [gopls inlayHints documentation](https://github.com/golang/tools/blob/master
 
 ## Debugging
 
-Zed supports zero-configuration debugging of Go tests and entry points (`func main`). Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list of these preconfigured debug tasks.
+Zed supports zero-configuration debugging of Go tests and entry points (`func main`) using Delve. Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list of these preconfigured debug tasks.
 
 For more control, you can add debug configurations to `.zed/debug.json`. See below for examples.
+
+- [Delve configuration documentation](https://github.com/go-delve/delve/blob/master/Documentation/api/dap/README.md#launch-and-attach-configurations)
 
 ### Debug Go Packages
 
