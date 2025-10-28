@@ -15389,7 +15389,7 @@ impl Editor {
                         || display_map.intersects_fold(range.end)
                         // If cursor is already at the end of the syntax node, continue searching (when direction = next)
                         || (direction == Direction::Next && range.end == selection_pos)
-                        // If cursror is already at the start of the syntax node, continue searching (when direction = prev)
+                        // If cursor is already at the start of the syntax node, continue searching (when direction = prev)
                         || (direction == Direction::Prev && range.start == selection_pos)
                     {
                         continue;

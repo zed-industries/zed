@@ -752,12 +752,12 @@ pub struct SmartTabSettingsContent {
     /// Default: false
     pub enabled: Option<bool>,
 
-    /// Whether to smart tab should supersede the completion menu.
+    /// Whether smart tab should supersede the completion menu.
     ///
     /// Default: false
     pub supersede_completions: Option<bool>,
 
-    /// Whether to smart tab should supersede accepting edit predictions.
+    /// Whether smart tab should supersede accepting edit predictions.
     ///
     /// Default: false
     pub supersede_edit_predictions: Option<bool>,
