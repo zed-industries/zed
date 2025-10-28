@@ -262,13 +262,15 @@ impl CommandPaletteDelegate {
         }
     }
 
-    fn selected_command(&self) -> &Command {
+    fn selected_command(&self) -> Option<&Command> {
         let action_ix = self
             .matches
             .get(self.selected_ix)
             .map(|m| m.candidate_id)
             .unwrap_or(self.selected_ix);
-        &self.commands[action_ix]
+        // this gets called in headless tests where there are no commands loaded
+        // so we need to return an Option here
+        self.commands.get(action_ix)
     }
 }
 
@@ -422,7 +424,9 @@ impl PickerDelegate for CommandPaletteDelegate {
 
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if secondary {
-            let selected_command = self.selected_command();
+            let Some(selected_command) = self.selected_command() else {
+                return;
+            };
             let action_name = selected_command.action.name();
             let open_keymap = Box::new(zed_actions::ChangeKeybinding {
                 action: action_name.to_string(),
@@ -497,7 +501,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
-        let selected_command = self.selected_command();
+        let selected_command = self.selected_command()?;
         let keybind =
             KeyBinding::for_action_in(&*selected_command.action, &self.previous_focus_handle, cx);
 
