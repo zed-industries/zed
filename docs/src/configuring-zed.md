@@ -12,6 +12,7 @@ You can browse through many of the supported settings via the Settings Editor, w
 > Some more intricate ones, such as language formatters, can only be changed through the JSON settings file {#kb: zed::OpenSettingsFile}.
 
 ## User Settings File
+
 <!--
 TBD: Settings files. Rewrite with "remote settings" in mind (e.g. `local settings` on the remote host).
 Consider renaming `zed: Open Local Settings` to `zed: Open Project Settings`.
@@ -43,10 +44,10 @@ For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode`
 The syntax for configuration files is a super-set of JSON that allows `//` comments.
 
 ## Per-release Channel Overrides
+
 Zed reads the same `settings.json` across all release channels (Stable, Preview or Nightly).
 However, you can scope overrides to a specific channel by adding top-level `stable`, `preview`, `nightly` or `dev` objects.
 They are merged into the base configuration with settings from these keys taking precedence upon launching the specified build. For example:
-
 
 ```json [settings]
 {
@@ -61,11 +62,13 @@ They are merged into the base configuration with settings from these keys taking
   }
 }
 ```
+
 With this configuration, Stable keeps all base preferences, Preview switches to `zed-dark`, and Nightly enables Vim mode with a different theme.
 
 Changing settings in the Settings Editorwill always apply the change across all channels.
 
 # Settings
+
 Find below an extensive run-through of many supported settings by Zed.
 
 ## Active Pane Modifiers
