@@ -424,7 +424,7 @@ pub fn initialize_workspace(
 
         let cursor_position =
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
-        let clock = cx.new(|_| status_clock::Clock::new(workspace));
+        let clock = cx.new(|_| status_clock::Clock::status_bar(workspace));
         let line_ending_indicator =
             cx.new(|_| line_ending_selector::LineEndingIndicator::default());
         workspace.status_bar().update(cx, |status_bar, cx| {

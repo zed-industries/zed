@@ -182,6 +182,16 @@ impl Render for TitleBar {
             children.push(self.banner.clone().into_any_element())
         }
 
+        if matches!(
+            workspace::ClockSettings::get_global(cx).position,
+            settings::ClockLocation::TitleBar
+        ) {
+            children.push(
+                cx.new(|_| status_clock::Clock::title_bar(self.workspace.clone()))
+                    .into_any_element(),
+            );
+        }
+
         let status = self.client.status();
         let status = &*status.borrow();
         let user = self.user_store.read(cx).current_user();

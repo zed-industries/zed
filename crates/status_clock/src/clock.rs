@@ -1,7 +1,7 @@
 use core::time::Duration;
 
 use gpui::{Styled, Task, WeakEntity};
-use settings::Settings;
+use settings::{ClockLocation, Settings};
 use time::{OffsetDateTime, UtcOffset};
 use ui::{Context, IntoElement, ParentElement, Render, Window, div};
 use util::ResultExt;
@@ -11,17 +11,27 @@ use workspace::{ClockSettings, StatusItemView, Workspace, item::ItemHandle};
 pub struct Clock {
     update_time: Task<()>,
     workspace: WeakEntity<Workspace>,
+    position: ClockLocation,
 }
 
 impl Clock {
-    pub fn new(workspace: &Workspace) -> Self {
+    pub fn new(workspace: WeakEntity<Workspace>, position: ClockLocation) -> Self {
         Self {
             update_time: Task::ready(()),
-            workspace: workspace.weak_handle(),
+            workspace,
+            position,
         }
     }
 
-    fn update_time(&mut self, cx: &mut Context<Self>) {
+    pub fn title_bar(workspace: WeakEntity<Workspace>) -> Self {
+        Self::new(workspace, ClockLocation::TitleBar)
+    }
+
+    pub fn status_bar(workspace: &Workspace) -> Self {
+        Self::new(workspace.weak_handle(), ClockLocation::StatusBar)
+    }
+
+    fn update_time(&mut self, cx: &Context<Self>) {
         self.update_time = cx.spawn(async move |clock, cx| {
             let now = time::OffsetDateTime::now_utc();
 
@@ -50,9 +60,9 @@ impl Clock {
 impl Render for Clock {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let clock = ClockSettings::get_global(cx);
-        if !clock.show {
+        if !clock.show || self.position != clock.position {
             return div().hidden();
-        }
+        };
 
         let format = if clock.use_12_hour_clock {
             time::macros::format_description!("[hour repr:12]:[minute] [period case:upper]")
@@ -66,8 +76,9 @@ impl Render for Clock {
         } else {
             let description =
                 time::macros::format_description!("[offset_hour padding:none]:[offset_minute]");
-            UtcOffset::parse(&offset, description)
-                .inspect_err(|error| {
+            match UtcOffset::parse(&offset, description) {
+                Ok(offset) => Some(offset),
+                Err(error) => {
                     // TODO: allow ignoring notification, maybe use global or state to not show again
                     if let Some(workspace) = self.workspace.upgrade() {
                         workspace.update(cx, |workspace, cx| {
@@ -77,8 +88,9 @@ impl Render for Clock {
                             );
                         })
                     }
-                })
-                .ok()
+                    None
+                }
+            }
         };
         let offset = offset.unwrap_or_else(|| {
             UtcOffset::current_local_offset()
@@ -92,13 +104,14 @@ impl Render for Clock {
             .log_err()
             .unwrap_or_else(|| "00:00".to_owned());
 
-        // cx.observe_window_activation(window, |clock, window, cx| {
-
-        // });
+        // cx.observe_window_activation(window, |clock, window, cx| {});
 
         self.update_time(cx);
 
-        div().child(text).text_sm()
+        match self.position {
+            ClockLocation::TitleBar => div().px_1().child(text).text_sm(),
+            ClockLocation::StatusBar => div().child(text).text_sm(),
+        }
     }
 }
 

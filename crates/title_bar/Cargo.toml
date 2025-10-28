@@ -43,6 +43,7 @@ schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true
+status_clock.workspace = true
 story = { workspace = true, optional = true }
 telemetry.workspace = true
 theme.workspace = true
