@@ -73,14 +73,34 @@ pub fn script(name: &str) -> Step<Run> {
 pub(crate) mod named {
     use super::*;
 
+    /// Returns a uses step with the same name as the enclosing function.
+    /// (You shouldn't inline this function into the workflow definition, you must
+    /// wrap it in a new function.)
     pub(crate) fn uses(owner: &str, repo: &str, ref_: &str) -> Step<Use> {
         Step::new(function_name(1)).uses(owner, repo, ref_)
     }
 
+    /// Returns a bash-script step with the same name as the enclosing function.
+    /// (You shouldn't inline this function into the workflow definition, you must
+    /// wrap it in a new function.)
     pub(crate) fn bash(script: &str) -> Step<Run> {
         Step::new(function_name(1)).run(script).shell(BASH_SHELL)
     }
 
+    /// Returns a Workflow with the same name as the enclosing module.
+    pub(crate) fn workflow() -> Workflow {
+        Workflow::default().name(
+            named::function_name(1)
+                .split("::")
+                .next()
+                .unwrap()
+                .to_owned(),
+        )
+    }
+
+    /// Returns the function name N callers above in the stack
+    /// (typically 1).
+    /// This only works because xtask always runs debug builds.
     pub(crate) fn function_name(i: usize) -> String {
         let mut name = "<unknown>".to_string();
         let mut count = 0;

@@ -1,5 +1,6 @@
-# generated `cargo xtask workflows`. Do not edit.
-name: Danger
+# Generated from xtask::workflows::danger
+# Rebuild with `cargo xtask workflows`.
+name: danger
 on:
   pull_request:
     types:

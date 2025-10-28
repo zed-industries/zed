@@ -4,7 +4,7 @@ use indexmap::IndexMap;
 use indoc::indoc;
 
 /// Generates the nix.yml workflow
-pub fn nix() -> Workflow {
+pub fn nix_build() -> Workflow {
     let env: IndexMap<_, _> = [
         ("ZED_CLIENT_CHECKSUM_SEED", vars::ZED_CLIENT_CHECKSUM_SEED),
         ("ZED_MINIDUMP_ENDPOINT", vars::ZED_SENTRY_MINIDUMP_ENDPOINT),
@@ -37,8 +37,7 @@ pub fn nix() -> Workflow {
         },
     );
 
-    Workflow::default()
-        .name("Nix build")
+    named::workflow()
         .on(Event::default().workflow_call(
             WorkflowCall::default()
                 .add_input(flake_output.0, flake_output.1)

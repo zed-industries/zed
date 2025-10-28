@@ -1,9 +1,10 @@
+use crate::tasks::workflows::steps::named;
+
 use super::{runners, steps, vars};
 use gh_workflow::*;
 
 pub fn run_bundling() -> Workflow {
-    Workflow::default()
-        .name("Run Bundling")
+    named::workflow()
         .on(Event::default().pull_request(
             PullRequest::default().types([PullRequestType::Labeled, PullRequestType::Synchronize]),
         ))
@@ -18,10 +19,10 @@ pub fn run_bundling() -> Workflow {
         .add_env(("RUST_BACKTRACE", "1"))
         .add_env(("ZED_CLIENT_CHECKSUM_SEED", vars::ZED_CLIENT_CHECKSUM_SEED))
         .add_env(("ZED_MINIDUMP_ENDPOINT", vars::ZED_SENTRY_MINIDUMP_ENDPOINT))
-        .add_job("bundle-mac", bundle_mac())
-        .add_job("bundle-linux-x86_64", bundle_linux(runners::Arch::X86_64))
-        .add_job("bundle-linux-aarch64", bundle_linux(runners::Arch::AARCH64))
-        .add_job("bundle-windows", bundle_windows())
+        .add_job("bundle_mac", bundle_mac())
+        .add_job("bundle_linux(x86_64)", bundle_linux(runners::Arch::X86_64))
+        .add_job("bundle_linux(arm64)", bundle_linux(runners::Arch::AARCH64))
+        .add_job("bundle_windows", bundle_windows())
 }
 
 fn bundle_job() -> Job {

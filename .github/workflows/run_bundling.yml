@@ -1,5 +1,6 @@
-# generated `cargo xtask workflows`. Do not edit.
-name: Run Bundling
+# Generated from xtask::workflows::run_bundling
+# Rebuild with `cargo xtask workflows`.
+name: run_bundling
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: '0'
@@ -12,7 +13,7 @@ on:
     - labeled
     - synchronize
 jobs:
-  bundle-mac:
+  bundle_mac:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
                        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
@@ -55,7 +56,7 @@ jobs:
         name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
         path: target/x86_64-apple-darwin/release/Zed.dmg
     timeout-minutes: 60
-  bundle-linux-x86_64:
+  bundle_linux(x86_64):
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
                        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
@@ -89,7 +90,7 @@ jobs:
         name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
         path: target/release/zed-remote-server-*.tar.gz
     timeout-minutes: 60
-  bundle-linux-aarch64:
+  bundle_linux(arm64):
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
                        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
@@ -120,7 +121,7 @@ jobs:
         name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
         path: target/release/zed-remote-server-*.tar.gz
     timeout-minutes: 60
-  bundle-windows:
+  bundle_windows:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
                        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))

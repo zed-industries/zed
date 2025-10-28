@@ -6,8 +6,7 @@ use super::{runners, steps};
 
 /// Generates the danger.yml workflow
 pub fn danger() -> Workflow {
-    Workflow::default()
-        .name("Danger")
+    named::workflow()
         .on(
             Event::default().pull_request(PullRequest::default().add_branch("main").types([
                 PullRequestType::Opened,
