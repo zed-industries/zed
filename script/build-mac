@@ -114,15 +114,11 @@ sed \
 
 if [ "$local_arch" = true ]; then
     app_path=$(cargo bundle ${build_flag} --select-workspace-root | xargs)
+    cp -R target/${target_dir}/cli "${app_path}/Contents/MacOS/"
 else
     app_path_x64=$(cargo bundle ${build_flag} --target x86_64-apple-darwin --select-workspace-root | xargs)
     app_path_aarch64=$(cargo bundle ${build_flag} --target aarch64-apple-darwin --select-workspace-root | xargs)
     app_path=$app_path_x64
-fi
-
-if [ "$local_arch" = true ]; then
-    cp -R target/${target_dir}/cli "${app_path}/Contents/MacOS/"
-else
     prepare_binaries "aarch64-apple-darwin" "$app_path_aarch64"
     prepare_binaries "x86_64-apple-darwin" "$app_path_x64"
 fi
