@@ -16,11 +16,9 @@ use std::{
 };
 
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
-const WORD_REGEX: &str = "[^ \t]+";
 
 pub(super) struct RegexSearches {
     url_regex: RegexSearch,
-    word_regex: RegexSearch,
     path_hyperlink_regexes: Vec<(RegexSearch, Regex)>,
     path_hyperlink_timeout: Duration,
 }
@@ -29,7 +27,6 @@ impl Default for RegexSearches {
     fn default() -> Self {
         Self {
             url_regex: RegexSearch::new(URL_REGEX).unwrap(),
-            word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
             path_hyperlink_regexes: Vec::default(),
             path_hyperlink_timeout: Duration::default(),
         }
@@ -59,7 +56,6 @@ impl RegexSearches {
 
         Self {
             url_regex: RegexSearch::new(URL_REGEX).unwrap(),
-            word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
             path_hyperlink_regexes: path_hyperlink_regexes
                 .into_iter()
                 .filter_map(|regex| {
