@@ -42,7 +42,7 @@ use serde::Deserialize;
 pub use settings::{
     ModeContent, Settings, SettingsStore, UseSystemClipboard, update_settings_file,
 };
-use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
+use state::{Mode, ObjectScope, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
@@ -662,14 +662,13 @@ impl Vim {
                 Vim::globals(cx).forced_motion = true;
             });
             Vim::action(editor, cx, |vim, action: &PushObject, window, cx| {
-                vim.push_operator(
-                    Operator::Object {
-                        around: action.around,
-                        whitespace: action.whitespace,
-                    },
-                    window,
-                    cx,
-                )
+                let scope = match (action.around, action.whitespace) {
+                    (false, _) => ObjectScope::Inside,
+                    (true, true) => ObjectScope::Around,
+                    (true, false) => ObjectScope::AroundTrimmed,
+                };
+
+                vim.push_operator(Operator::Object { scope }, window, cx)
             });
 
             Vim::action(editor, cx, |vim, action: &PushFindForward, window, cx| {

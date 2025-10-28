@@ -19,7 +19,7 @@ use crate::{
     indent::IndentDirection,
     motion::{self, Motion, first_non_whitespace, next_line_end, right},
     object::Object,
-    state::{Mark, Mode, Operator},
+    state::{Mark, Mode, ObjectScope, Operator},
     surrounds::SurroundsType,
 };
 use collections::BTreeSet;
@@ -454,64 +454,82 @@ impl Vim {
     ) {
         let mut waiting_operator: Option<Operator> = None;
         match self.maybe_pop_operator() {
-            Some(Operator::Object { around, whitespace }) => match self.maybe_pop_operator() {
-                Some(Operator::Change) => self.change_object(object, around, times, window, cx),
-                Some(Operator::Delete) => {
-                    self.delete_object(object, around, whitespace, times, window, cx)
+            Some(Operator::Object { scope }) => {
+                let (around, whitespace) = match scope {
+                    ObjectScope::Inside => (false, false),
+                    ObjectScope::Around => (true, true),
+                    ObjectScope::AroundTrimmed => (true, false),
+                };
+
+                match self.maybe_pop_operator() {
+                    Some(Operator::Change) => self.change_object(object, around, times, window, cx),
+                    Some(Operator::Delete) => {
+                        self.delete_object(object, around, whitespace, times, window, cx)
+                    }
+                    Some(Operator::Yank) => self.yank_object(object, around, times, window, cx),
+                    Some(Operator::Indent) => {
+                        self.indent_object(object, around, IndentDirection::In, times, window, cx)
+                    }
+                    Some(Operator::Outdent) => {
+                        self.indent_object(object, around, IndentDirection::Out, times, window, cx)
+                    }
+                    Some(Operator::AutoIndent) => {
+                        self.indent_object(object, around, IndentDirection::Auto, times, window, cx)
+                    }
+                    Some(Operator::ShellCommand) => {
+                        self.shell_command_object(object, around, window, cx);
+                    }
+                    Some(Operator::Rewrap) => self.rewrap_object(object, around, times, window, cx),
+                    Some(Operator::Lowercase) => self.convert_object(
+                        object,
+                        around,
+                        ConvertTarget::LowerCase,
+                        times,
+                        window,
+                        cx,
+                    ),
+                    Some(Operator::Uppercase) => self.convert_object(
+                        object,
+                        around,
+                        ConvertTarget::UpperCase,
+                        times,
+                        window,
+                        cx,
+                    ),
+                    Some(Operator::OppositeCase) => self.convert_object(
+                        object,
+                        around,
+                        ConvertTarget::OppositeCase,
+                        times,
+                        window,
+                        cx,
+                    ),
+                    Some(Operator::Rot13) => {
+                        self.convert_object(object, around, ConvertTarget::Rot13, times, window, cx)
+                    }
+                    Some(Operator::Rot47) => {
+                        self.convert_object(object, around, ConvertTarget::Rot47, times, window, cx)
+                    }
+                    Some(Operator::AddSurrounds { target: None }) => {
+                        waiting_operator = Some(Operator::AddSurrounds {
+                            target: Some(SurroundsType::Object(object, around)),
+                        });
+                    }
+                    Some(Operator::ToggleComments) => {
+                        self.toggle_comments_object(object, around, times, window, cx)
+                    }
+                    Some(Operator::ReplaceWithRegister) => {
+                        self.replace_with_register_object(object, around, window, cx)
+                    }
+                    Some(Operator::Exchange) => self.exchange_object(object, around, window, cx),
+                    Some(Operator::HelixMatch) => {
+                        self.select_current_object(object, around, window, cx)
+                    }
+                    _ => {
+                        // Can't do anything for namespace operators. Ignoring
+                    }
                 }
-                Some(Operator::Yank) => self.yank_object(object, around, times, window, cx),
-                Some(Operator::Indent) => {
-                    self.indent_object(object, around, IndentDirection::In, times, window, cx)
-                }
-                Some(Operator::Outdent) => {
-                    self.indent_object(object, around, IndentDirection::Out, times, window, cx)
-                }
-                Some(Operator::AutoIndent) => {
-                    self.indent_object(object, around, IndentDirection::Auto, times, window, cx)
-                }
-                Some(Operator::ShellCommand) => {
-                    self.shell_command_object(object, around, window, cx);
-                }
-                Some(Operator::Rewrap) => self.rewrap_object(object, around, times, window, cx),
-                Some(Operator::Lowercase) => {
-                    self.convert_object(object, around, ConvertTarget::LowerCase, times, window, cx)
-                }
-                Some(Operator::Uppercase) => {
-                    self.convert_object(object, around, ConvertTarget::UpperCase, times, window, cx)
-                }
-                Some(Operator::OppositeCase) => self.convert_object(
-                    object,
-                    around,
-                    ConvertTarget::OppositeCase,
-                    times,
-                    window,
-                    cx,
-                ),
-                Some(Operator::Rot13) => {
-                    self.convert_object(object, around, ConvertTarget::Rot13, times, window, cx)
-                }
-                Some(Operator::Rot47) => {
-                    self.convert_object(object, around, ConvertTarget::Rot47, times, window, cx)
-                }
-                Some(Operator::AddSurrounds { target: None }) => {
-                    waiting_operator = Some(Operator::AddSurrounds {
-                        target: Some(SurroundsType::Object(object, around)),
-                    });
-                }
-                Some(Operator::ToggleComments) => {
-                    self.toggle_comments_object(object, around, times, window, cx)
-                }
-                Some(Operator::ReplaceWithRegister) => {
-                    self.replace_with_register_object(object, around, window, cx)
-                }
-                Some(Operator::Exchange) => self.exchange_object(object, around, window, cx),
-                Some(Operator::HelixMatch) => {
-                    self.select_current_object(object, around, window, cx)
-                }
-                _ => {
-                    // Can't do anything for namespace operators. Ignoring
-                }
-            },
+            }
             Some(Operator::HelixNext { around }) => {
                 self.select_next_object(object, around, window, cx);
             }

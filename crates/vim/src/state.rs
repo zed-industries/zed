@@ -87,8 +87,7 @@ pub enum Operator {
     Yank,
     Replace,
     Object {
-        around: bool,
-        whitespace: bool,
+        scope: ObjectScope,
     },
     FindForward {
         before: bool,
@@ -148,6 +147,28 @@ pub enum Operator {
     HelixPrevious {
         around: bool,
     },
+}
+
+/// Controls how the object interacts with its delimiters and the surrounding
+/// whitespace.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum ObjectScope {
+    /// Inside the delimiters, excluding whitespace.
+    ///
+    /// Used by the `i` operator (e.g., `diw` for "delete inner word").
+    /// Selects only the content between delimiters without including
+    /// the delimiters themselves or surrounding whitespace.
+    Inside,
+    /// Around the delimiters, including surrounding whitespace.
+    ///
+    /// Used by the `a` operator (e.g., `daw` for "delete a word").
+    /// Selects the content, the delimiters, and any surrounding whitespace.
+    Around,
+    /// Around the delimiters, excluding surrounding whitespace.
+    ///
+    /// Similar to `Around`, but does not include whitespace adjacent to
+    /// the delimiters.
+    AroundTrimmed,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -997,8 +1018,12 @@ pub struct SearchState {
 impl Operator {
     pub fn id(&self) -> &'static str {
         match self {
-            Operator::Object { around: false, .. } => "i",
-            Operator::Object { around: true, .. } => "a",
+            Operator::Object {
+                scope: ObjectScope::Inside,
+            } => "i",
+            Operator::Object {
+                scope: ObjectScope::Around | ObjectScope::AroundTrimmed,
+            } => "a",
             Operator::Change => "c",
             Operator::Delete => "d",
             Operator::Yank => "y",

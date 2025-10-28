@@ -17,7 +17,7 @@ use crate::{
     Vim,
     motion::{Motion, MotionKind, first_non_whitespace, next_line_end, start_of_line},
     object::Object,
-    state::{Mark, Mode, Operator},
+    state::{Mark, Mode, ObjectScope, Operator},
 };
 
 actions!(
@@ -426,7 +426,12 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Vim>,
     ) {
-        if let Some(Operator::Object { around, .. }) = self.active_operator() {
+        if let Some(Operator::Object { scope }) = self.active_operator() {
+            let around = match scope {
+                ObjectScope::Around | ObjectScope::AroundTrimmed => true,
+                ObjectScope::Inside => false,
+            };
+
             self.pop_operator(window, cx);
             let current_mode = self.mode;
             let target_mode = object.target_visual_mode(current_mode, around);

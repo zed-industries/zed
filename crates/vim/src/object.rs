@@ -3,7 +3,7 @@ use std::ops::Range;
 use crate::{
     Vim,
     motion::right,
-    state::{Mode, Operator},
+    state::{Mode, ObjectScope, Operator},
 };
 use editor::{
     Bias, DisplayPoint, Editor, ToOffset,
@@ -408,8 +408,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         if !matches!(vim.active_operator(), Some(Operator::Object { .. })) {
             vim.push_operator(
                 Operator::Object {
-                    around: true,
-                    whitespace: true,
+                    scope: ObjectScope::Around,
                 },
                 window,
                 cx,
