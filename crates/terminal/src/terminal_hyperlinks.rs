@@ -7,8 +7,8 @@ use alacritty_terminal::{
         search::{Match, RegexIter, RegexSearch},
     },
 };
+use fancy_regex::{Captures, Regex};
 use log::{info, warn};
-use regex::{Captures, Regex};
 use std::{
     error::Error,
     ops::{Index, Range},
@@ -16,9 +16,11 @@ use std::{
 };
 
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
+const WORD_REGEX: &str = "[^ \t]+";
 
 pub(super) struct RegexSearches {
     url_regex: RegexSearch,
+    word_regex: RegexSearch,
     path_hyperlink_regexes: Vec<(RegexSearch, Regex)>,
     path_hyperlink_timeout: Duration,
 }
@@ -27,6 +29,7 @@ impl Default for RegexSearches {
     fn default() -> Self {
         Self {
             url_regex: RegexSearch::new(URL_REGEX).unwrap(),
+            word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
             path_hyperlink_regexes: Vec::default(),
             path_hyperlink_timeout: Duration::default(),
         }
@@ -56,6 +59,7 @@ impl RegexSearches {
 
         Self {
             url_regex: RegexSearch::new(URL_REGEX).unwrap(),
+            word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
             path_hyperlink_regexes: path_hyperlink_regexes
                 .into_iter()
                 .filter_map(|regex| {
@@ -109,66 +113,74 @@ impl RegexSearches {
             ))
         };
 
-        let start = term.line_search_left(hovered);
-        let end = term.line_search_right(hovered);
+        let found_from_captures = |start: AlacPoint,
+                                   input: &str,
+                                   captures: Captures|
+         -> Option<(String, Match)> {
+            let found_from_range = |path: Range<usize>,
+                                    line: Option<u32>,
+                                    column: Option<u32>|
+             -> Option<(String, Match)> {
+                let path_start = advance_point_by_str(start, &input[..path.start]);
+                let path_end = advance_point_by_str(path_start, &input[path.clone()]);
+                let path_match = path_start
+                    ..=term
+                        .expand_wide(path_end, AlacDirection::Left)
+                        .sub(term, Boundary::Grid, 1);
+
+                Some((
+                    {
+                        let mut path = input[path].to_string();
+                        line.inspect(|line| path += &format!(":{line}"));
+                        column.inspect(|column| path += &format!(":{column}"));
+                        path
+                    },
+                    path_match,
+                ))
+            };
+
+            let Some(path_capture) = captures.name("path") else {
+                return found_from_range(captures.get(0).unwrap().range(), None, None);
+            };
+
+            let Some(line) = captures
+                .name("line")
+                .and_then(|line_capture| line_capture.as_str().parse().ok())
+            else {
+                return found_from_range(path_capture.range(), None, None);
+            };
+
+            let Some(column) = captures
+                .name("column")
+                .and_then(|column_capture| column_capture.as_str().parse().ok())
+            else {
+                return found_from_range(path_capture.range(), Some(line), None);
+            };
+
+            return found_from_range(path_capture.range(), Some(line), Some(column));
+        };
+
+        let line_start = term.line_search_left(hovered);
+        let line_end = term.line_search_right(hovered);
 
         for (regex_search, regex) in &mut self.path_hyperlink_regexes {
-            let mut match_found = false;
-            for search_match in
-                RegexIter::new(start, end, AlacDirection::Right, &term, regex_search)
-            {
-                let (match_start, match_end) = (*search_match.start(), *search_match.end());
-                let input = term.bounds_to_string(match_start, match_end);
+            let mut path_found = false;
 
-                let found_from_captures = |captures: Captures| -> Option<(String, Match)> {
-                    let found_from_range = |path: Range<usize>,
-                                            line: Option<u32>,
-                                            column: Option<u32>|
-                     -> Option<(String, Match)> {
-                        let path_start = advance_point_by_str(match_start, &input[..path.start]);
-                        let path_end = advance_point_by_str(path_start, &input[path.clone()]);
-                        let path_match = path_start
-                            ..=term.expand_wide(path_end, AlacDirection::Left).sub(
-                                term,
-                                Boundary::Grid,
-                                1,
-                            );
-
-                        Some((
-                            {
-                                let mut path = input[path].to_string();
-                                line.inspect(|line| path += &format!(":{line}"));
-                                column.inspect(|column| path += &format!(":{column}"));
-                                path
-                            },
-                            path_match,
-                        ))
-                    };
-
-                    let Some(path_capture) = captures.name("path") else {
-                        return found_from_range(captures.get(0).unwrap().range(), None, None);
-                    };
-
-                    let Some(line) = captures
-                        .name("line")
-                        .and_then(|line_capture| line_capture.as_str().parse().ok())
-                    else {
-                        return found_from_range(path_capture.range(), None, None);
-                    };
-
-                    let Some(column) = captures
-                        .name("column")
-                        .and_then(|column_capture| column_capture.as_str().parse().ok())
-                    else {
-                        return found_from_range(path_capture.range(), Some(line), None);
-                    };
-
-                    return found_from_range(path_capture.range(), Some(line), Some(column));
-                };
-
-                for captures in regex.captures_iter(&input) {
-                    if let Some(found) = found_from_captures(captures) {
-                        match_found = true;
+            for regex_search_match in RegexIter::new(
+                line_start,
+                line_end,
+                AlacDirection::Right,
+                &term,
+                regex_search,
+            ) {
+                let (match_start, match_end) =
+                    (*regex_search_match.start(), *regex_search_match.end());
+                let match_text = term.bounds_to_string(match_start, match_end);
+                if let Ok(Some(line_captures)) = regex.captures(&match_text) {
+                    if let Some(found) =
+                        found_from_captures(match_start, &match_text, line_captures)
+                    {
+                        path_found = true;
                         if found.1.contains(&hovered) {
                             return Some(found);
                         }
@@ -176,7 +188,7 @@ impl RegexSearches {
                 }
             }
 
-            if match_found {
+            if path_found {
                 return None;
             }
 
@@ -320,15 +332,16 @@ mod tests {
         term::{Config, cell::Flags, test::TermSize},
         vte::ansi::Handler,
     };
+    use fancy_regex::Regex;
     use std::{cell::RefCell, ops::RangeInclusive, path::PathBuf};
     use url::Url;
     use util::paths::PathWithPosition;
 
     fn re_test(re: &str, hay: &str, expected: Vec<&str>) {
-        let results: Vec<_> = regex::Regex::new(re)
+        let results: Vec<_> = Regex::new(re)
             .unwrap()
             .find_iter(hay)
-            .map(|m| m.as_str())
+            .map(|m| m.unwrap().as_str())
             .collect();
         assert_eq!(results, expected);
     }
