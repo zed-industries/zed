@@ -1641,12 +1641,20 @@ impl OutlinePanel {
             let matched = self.cached_entries.iter().any(|cached_entry| {
                 match (&cached_entry.entry, collapsed_entry) {
                     (
-                        PanelEntry::Fs(FsEntry::Directory(FsEntryDirectory { worktree_id, entry: fs_entry, .. })),
+                        PanelEntry::Fs(FsEntry::Directory(FsEntryDirectory {
+                            worktree_id,
+                            entry: fs_entry,
+                            ..
+                        })),
                         CollapsedEntry::Dir(wid, id),
                     ) => wid == worktree_id && id == &fs_entry.id,
 
                     (
-                        PanelEntry::Fs(FsEntry::File(FsEntryFile { worktree_id, buffer_id, .. })),
+                        PanelEntry::Fs(FsEntry::File(FsEntryFile {
+                            worktree_id,
+                            buffer_id,
+                            ..
+                        })),
                         CollapsedEntry::File(wid, bid),
                     ) => {
                         if wid == worktree_id && bid == buffer_id {
@@ -1670,7 +1678,11 @@ impl OutlinePanel {
                     }
 
                     (
-                        PanelEntry::FoldedDirs(FoldedDirsEntry { worktree_id, entries, .. }),
+                        PanelEntry::FoldedDirs(FoldedDirsEntry {
+                            worktree_id,
+                            entries,
+                            ..
+                        }),
                         CollapsedEntry::Dir(wid, id),
                     ) => entries
                         .last()
@@ -1685,10 +1697,11 @@ impl OutlinePanel {
                     (
                         PanelEntry::Outline(OutlineEntry::Outline(outline)),
                         CollapsedEntry::Outline(bid, ex_id, range),
-                    ) => bid == &outline.buffer_id
-                        && ex_id == &outline.excerpt_id
-                        && range == &outline.outline.range,
-
+                    ) => {
+                        bid == &outline.buffer_id
+                            && ex_id == &outline.excerpt_id
+                            && range == &outline.outline.range
+                    }
                     _ => false,
                 }
             });
@@ -1717,41 +1730,44 @@ impl OutlinePanel {
             return;
         };
         let mut buffers_to_fold = HashSet::default();
-        self.collapsed_entries.extend(
-                self.cached_entries.iter().filter_map(|cached_entry| match &cached_entry.entry {
-                PanelEntry::Fs(FsEntry::Directory(FsEntryDirectory {
-                    worktree_id, entry, ..
-                })) => Some(CollapsedEntry::Dir(*worktree_id, entry.id)),
-                PanelEntry::Fs(FsEntry::File(FsEntryFile {
-                    worktree_id,
-                    buffer_id,
-                    ..
-                })) => {
-                    buffers_to_fold.insert(*buffer_id);
-                    Some(CollapsedEntry::File(*worktree_id, *buffer_id))
-                }
-                PanelEntry::Fs(FsEntry::ExternalFile(external_file)) => {
-                    buffers_to_fold.insert(external_file.buffer_id);
-                    Some(CollapsedEntry::ExternalFile(external_file.buffer_id))
-                }
-                PanelEntry::FoldedDirs(FoldedDirsEntry {
-                    worktree_id,
-                    entries,
-                    ..
-                }) => Some(CollapsedEntry::Dir(*worktree_id, entries.last()?.id)),
-                PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => {
-                    Some(CollapsedEntry::Excerpt(excerpt.buffer_id, excerpt.id))
-                }
-                PanelEntry::Outline(OutlineEntry::Outline(outline)) => {
-                    Some(CollapsedEntry::Outline(
-                        outline.buffer_id,
-                        outline.excerpt_id,
-                        outline.outline.range.clone(),
-                    ))
-                }
-                PanelEntry::Search(_) => None,
-            }),
-        );
+        self.collapsed_entries
+            .extend(self.cached_entries.iter().filter_map(
+                |cached_entry| match &cached_entry.entry {
+                    PanelEntry::Fs(FsEntry::Directory(FsEntryDirectory {
+                        worktree_id,
+                        entry,
+                        ..
+                    })) => Some(CollapsedEntry::Dir(*worktree_id, entry.id)),
+                    PanelEntry::Fs(FsEntry::File(FsEntryFile {
+                        worktree_id,
+                        buffer_id,
+                        ..
+                    })) => {
+                        buffers_to_fold.insert(*buffer_id);
+                        Some(CollapsedEntry::File(*worktree_id, *buffer_id))
+                    }
+                    PanelEntry::Fs(FsEntry::ExternalFile(external_file)) => {
+                        buffers_to_fold.insert(external_file.buffer_id);
+                        Some(CollapsedEntry::ExternalFile(external_file.buffer_id))
+                    }
+                    PanelEntry::FoldedDirs(FoldedDirsEntry {
+                        worktree_id,
+                        entries,
+                        ..
+                    }) => Some(CollapsedEntry::Dir(*worktree_id, entries.last()?.id)),
+                    PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => {
+                        Some(CollapsedEntry::Excerpt(excerpt.buffer_id, excerpt.id))
+                    }
+                    PanelEntry::Outline(OutlineEntry::Outline(outline)) => {
+                        Some(CollapsedEntry::Outline(
+                            outline.buffer_id,
+                            outline.excerpt_id,
+                            outline.outline.range.clone(),
+                        ))
+                    }
+                    PanelEntry::Search(_) => None,
+                },
+            ));
 
         active_editor.update(cx, |editor, cx| {
             buffers_to_fold.retain(|buffer_id| !editor.is_buffer_folded(*buffer_id, cx));
