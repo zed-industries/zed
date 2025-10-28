@@ -1540,7 +1540,8 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 ```json [settings]
 "status_bar": {
   "active_language_button": true,
-  "cursor_position_button": true
+  "cursor_position_button": true,
+  "line_endings_button": false
 },
 ```
 
@@ -2993,11 +2994,33 @@ List of `string` glob patterns
 
 - Description: Whether to show relative line numbers in the gutter
 - Setting: `relative_line_numbers`
-- Default: `false`
+- Default: `"disabled"`
 
 **Options**
 
-`boolean` values
+1. Show relative line numbers in the gutter whilst counting wrapped lines as one line:
+
+```json [settings]
+{
+  "relative_line_numbers": "enabled"
+}
+```
+
+2. Show relative line numbers in the gutter, including wrapped lines in the counting:
+
+```json [settings]
+{
+  "relative_line_numbers": "wrapped"
+}
+```
+
+2. Do not use relative line numbers:
+
+```json [settings]
+{
+  "relative_line_numbers": "disabled"
+}
+```
 
 ## Remove Trailing Whitespace On Save
 

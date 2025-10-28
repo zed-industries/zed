@@ -7,6 +7,7 @@ use parking_lot::RwLock;
 use rand::prelude::*;
 use settings::SettingsStore;
 use std::env;
+use std::time::{Duration, Instant};
 use util::RandomCharIter;
 use util::rel_path::rel_path;
 use util::test::sample_text;
@@ -31,6 +32,7 @@ fn test_empty_singleton(cx: &mut App) {
             multibuffer_row: Some(MultiBufferRow(0)),
             diff_status: None,
             expand_info: None,
+            wrapped_buffer_row: None,
         }]
     );
 }
@@ -2431,6 +2433,8 @@ impl ReferenceMultibuffer {
                             buffer_id: region.buffer_id,
                             diff_status: region.status,
                             buffer_row,
+                            wrapped_buffer_row: None,
+
                             multibuffer_row: Some(MultiBufferRow(
                                 text[..ix].matches('\n').count() as u32
                             )),
@@ -2984,7 +2988,7 @@ fn test_history(cx: &mut App) {
     });
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |this, _| {
-        this.history.group_interval = group_interval;
+        this.set_group_interval(group_interval);
     });
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.push_excerpts(

@@ -72,7 +72,7 @@ impl StashList {
         if let Some(repo) = repository.clone() {
             _subscriptions.push(
                 cx.subscribe_in(&repo, window, |this, _, event, window, cx| {
-                    if matches!(event, RepositoryEvent::Updated { .. }) {
+                    if matches!(event, RepositoryEvent::StashEntriesChanged) {
                         let stash_entries = this.picker.read_with(cx, |picker, cx| {
                             picker
                                 .delegate
@@ -523,11 +523,7 @@ impl PickerDelegate for StashListDelegate {
         Some("No stashes found".into())
     }
 
-    fn render_footer(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Option<AnyElement> {
+    fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         let focus_handle = self.focus_handle.clone();
 
         Some(
@@ -541,7 +537,7 @@ impl PickerDelegate for StashListDelegate {
                 .child(
                     Button::new("apply-stash", "Apply")
                         .key_binding(
-                            KeyBinding::for_action_in(&menu::Confirm, &focus_handle, window, cx)
+                            KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(|_, window, cx| {
@@ -551,13 +547,8 @@ impl PickerDelegate for StashListDelegate {
                 .child(
                     Button::new("pop-stash", "Pop")
                         .key_binding(
-                            KeyBinding::for_action_in(
-                                &menu::SecondaryConfirm,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                            .map(|kb| kb.size(rems_from_px(12.))),
+                            KeyBinding::for_action_in(&menu::SecondaryConfirm, &focus_handle, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(|_, window, cx| {
                             window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
@@ -569,7 +560,6 @@ impl PickerDelegate for StashListDelegate {
                             KeyBinding::for_action_in(
                                 &stash_picker::DropStashItem,
                                 &focus_handle,
-                                window,
                                 cx,
                             )
                             .map(|kb| kb.size(rems_from_px(12.))),

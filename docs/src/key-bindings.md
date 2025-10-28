@@ -5,7 +5,6 @@ Zed has a very customizable key binding system—you can tweak everything to wor
 ## Predefined Keymaps
 
 If you're used to a specific editor's defaults, you can change your `base_keymap` through the settings window ({#kb zed::OpenSettings}) or directly through your `settings.json` file ({#kb zed::OpenSettingsFile}).
-
 We currently support:
 
 - VS Code (default)
@@ -24,13 +23,13 @@ For more information, see the documentation for [Vim mode](./vim.md) and [Helix 
 
 ## Keymap Editor
 
-You can access the Keymap Editor through the {#kb zed::OpenKeymap} action or by running {#action zed::OpenKeymap} action from the command palette
+You can access the keymap editor through the {#kb zed::OpenKeymap} action or by running {#action zed::OpenKeymap} action from the command palette. You can easily add or change a keybind for an action with the `Change Keybinding` or `Add Keybinding` button on the command pallets left bottom corner.
 
 In there, you can see all of the existing actions in Zed as well as the associated keybindings set to them by default.
 
-You can also customize them directly by clicking on the pencil icon that appears when you hover over a particular action, by double-clicking on the action row, or by pressing the `enter` key.
+You can also customize them right from there, either by clicking on the pencil icon that appears when you hover over a particular action, by double-clicking on the action row, or by pressing the `enter` key.
 
-All edits in the Keymap Editor are reflected on the `keymap.json` file.
+Anything that you end up doing on the keymap editor also gets reflected on the `keymap.json` file.
 
 ## User Keymaps
 

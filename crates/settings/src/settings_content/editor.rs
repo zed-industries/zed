@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 
-use crate::{DelayMs, DiagnosticSeverityContent, ShowScrollbar};
+use crate::{
+    DelayMs, DiagnosticSeverityContent, ShowScrollbar, serialize_f32_with_two_decimal_places,
+};
 
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -70,6 +72,7 @@ pub struct EditorSettingsContent {
     /// The number of lines to keep above/below the cursor when auto-scrolling.
     ///
     /// Default: 3.
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub vertical_scroll_margin: Option<f32>,
     /// Whether to scroll when clicking near the edge of the visible text area.
     ///
@@ -78,22 +81,27 @@ pub struct EditorSettingsContent {
     /// The number of characters to keep on either side when scrolling with the mouse.
     ///
     /// Default: 5.
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub horizontal_scroll_margin: Option<f32>,
     /// Scroll sensitivity multiplier. This multiplier is applied
     /// to both the horizontal and vertical delta values while scrolling.
     ///
     /// Default: 1.0
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub scroll_sensitivity: Option<f32>,
     /// Scroll sensitivity multiplier for fast scrolling. This multiplier is applied
     /// to both the horizontal and vertical delta values while scrolling. Fast scrolling
     /// happens when a user holds the alt or option key while scrolling.
     ///
     /// Default: 4.0
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub fast_scroll_sensitivity: Option<f32>,
     /// Whether the line numbers on editors gutter are relative or not.
+    /// When "enabled" shows relative number of buffer lines, when "wrapped" shows
+    /// relative number of display lines.
     ///
-    /// Default: false
-    pub relative_line_numbers: Option<bool>,
+    /// Default: "disabled"
+    pub relative_line_numbers: Option<RelativeLineNumbers>,
     /// When to populate a new search's query based on the text under the cursor.
     ///
     /// Default: always
@@ -191,6 +199,41 @@ pub struct EditorSettingsContent {
     ///
     /// Default: [`DocumentColorsRenderMode::Inlay`]
     pub lsp_document_colors: Option<DocumentColorsRenderMode>,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum RelativeLineNumbers {
+    Disabled,
+    Enabled,
+    Wrapped,
+}
+
+impl RelativeLineNumbers {
+    pub fn enabled(&self) -> bool {
+        match self {
+            RelativeLineNumbers::Enabled | RelativeLineNumbers::Wrapped => true,
+            RelativeLineNumbers::Disabled => false,
+        }
+    }
+    pub fn wrapped(&self) -> bool {
+        match self {
+            RelativeLineNumbers::Enabled | RelativeLineNumbers::Disabled => false,
+            RelativeLineNumbers::Wrapped => true,
+        }
+    }
 }
 
 // Toolbar related settings
@@ -796,7 +839,9 @@ pub enum DisplayIn {
     derive_more::FromStr,
 )]
 #[serde(transparent)]
-pub struct MinimumContrast(pub f32);
+pub struct MinimumContrast(
+    #[serde(serialize_with = "crate::serialize_f32_with_two_decimal_places")] pub f32,
+);
 
 impl Display for MinimumContrast {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -827,7 +872,9 @@ impl From<f32> for MinimumContrast {
     derive_more::FromStr,
 )]
 #[serde(transparent)]
-pub struct InactiveOpacity(pub f32);
+pub struct InactiveOpacity(
+    #[serde(serialize_with = "serialize_f32_with_two_decimal_places")] pub f32,
+);
 
 impl Display for InactiveOpacity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -838,5 +885,67 @@ impl Display for InactiveOpacity {
 impl From<f32> for InactiveOpacity {
     fn from(x: f32) -> Self {
         Self(x)
+    }
+}
+
+/// Centered layout related setting (left/right).
+///
+/// Valid range: 0.0 to 0.4
+/// Default: 2.0
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    MergeFrom,
+    PartialEq,
+    PartialOrd,
+    derive_more::FromStr,
+)]
+#[serde(transparent)]
+pub struct CenteredPaddingSettings(
+    #[serde(serialize_with = "serialize_f32_with_two_decimal_places")] pub f32,
+);
+
+impl CenteredPaddingSettings {
+    pub const MIN_PADDING: f32 = 0.0;
+    // This is an f64 so serde_json can give a type hint without random numbers in the back
+    pub const DEFAULT_PADDING: f64 = 0.2;
+    pub const MAX_PADDING: f32 = 0.4;
+}
+
+impl Display for CenteredPaddingSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:.2}", self.0)
+    }
+}
+
+impl From<f32> for CenteredPaddingSettings {
+    fn from(x: f32) -> Self {
+        Self(x)
+    }
+}
+
+impl Default for CenteredPaddingSettings {
+    fn default() -> Self {
+        Self(Self::DEFAULT_PADDING as f32)
+    }
+}
+
+impl schemars::JsonSchema for CenteredPaddingSettings {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "CenteredPaddingSettings".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        use schemars::json_schema;
+        json_schema!({
+            "type": "number",
+            "minimum": Self::MIN_PADDING,
+            "maximum": Self::MAX_PADDING,
+            "default": Self::DEFAULT_PADDING,
+            "description": "Centered layout related setting (left/right)."
+        })
     }
 }

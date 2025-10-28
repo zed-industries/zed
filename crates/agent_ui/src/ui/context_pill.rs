@@ -244,8 +244,8 @@ impl RenderOnce for ContextPill {
                             .truncate(),
                     ),
                 )
-                .tooltip(|window, cx| {
-                    Tooltip::with_meta("Suggested Context", None, "Click to add it", window, cx)
+                .tooltip(|_window, cx| {
+                    Tooltip::with_meta("Suggested Context", None, "Click to add it", cx)
                 })
                 .when_some(on_click.as_ref(), |element, on_click| {
                     let on_click = on_click.clone();
@@ -497,9 +497,9 @@ impl AddedContext {
             icon_path: None,
             status: ContextStatus::Ready,
             render_hover: {
-                let context = handle.context.clone();
+                let text_thread = handle.text_thread.clone();
                 Some(Rc::new(move |_, cx| {
-                    let text = context.read(cx).to_xml(cx);
+                    let text = text_thread.read(cx).to_xml(cx);
                     ContextPillHover::new_text(text.into(), cx).into()
                 }))
             },

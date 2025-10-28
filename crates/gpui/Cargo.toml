@@ -1,6 +1,6 @@
 [package]
 name = "gpui"
-version = "0.2.1"
+version = "0.2.2"
 edition.workspace = true
 authors = ["Nathan Sobo <nathan@zed.dev>"]
 description = "Zed's GPU-accelerated UI framework"
@@ -85,7 +85,7 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 async-task = "4.7"
-backtrace = { version = "0.3", optional = true }
+backtrace = { workspace = true, optional = true }
 blade-graphics = { workspace = true, optional = true }
 blade-macros = { workspace = true, optional = true }
 blade-util = { workspace = true, optional = true }
@@ -234,7 +234,7 @@ windows-numerics = "0.2"
 windows-registry = "0.5"
 
 [dev-dependencies]
-backtrace = "0.3"
+backtrace.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 http_client = { workspace = true, features = ["test-support"] }

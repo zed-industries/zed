@@ -30,6 +30,7 @@ impl VimTestContext {
             editor::init_settings(cx);
             project::Project::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
+            settings_ui::init(cx);
         });
     }
 

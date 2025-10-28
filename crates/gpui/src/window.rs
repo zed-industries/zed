@@ -60,6 +60,13 @@ pub use prompts::*;
 
 pub(crate) const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1536.), px(864.));
 
+/// A 6:5 aspect ratio minimum window size to be used for functional,
+/// additional-to-main-Zed windows, like the settings and rules library windows.
+pub const DEFAULT_ADDITIONAL_WINDOW_SIZE: Size<Pixels> = Size {
+    width: Pixels(900.),
+    height: Pixels(750.),
+};
+
 /// Represents the two different phases when dispatching events.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
 pub enum DispatchPhase {
@@ -815,6 +822,12 @@ impl Frame {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+enum InputModality {
+    Mouse,
+    Keyboard,
+}
+
 /// Holds the state for a specific window.
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
@@ -863,6 +876,7 @@ pub struct Window {
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
+    last_input_modality: InputModality,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
@@ -1246,6 +1260,7 @@ impl Window {
             hovered,
             needs_present,
             last_input_timestamp,
+            last_input_modality: InputModality::Mouse,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
@@ -1307,9 +1322,7 @@ impl Window {
         for view_id in self
             .rendered_frame
             .dispatch_tree
-            .view_path(view_id)
-            .into_iter()
-            .rev()
+            .view_path_reversed(view_id)
         {
             if !self.dirty_views.insert(view_id) {
                 break;
@@ -1839,7 +1852,8 @@ impl Window {
         f: impl FnOnce(&GlobalElementId, &mut Self) -> R,
     ) -> R {
         self.element_id_stack.push(element_id);
-        let global_id = GlobalElementId(self.element_id_stack.clone());
+        let global_id = GlobalElementId(Arc::from(&*self.element_id_stack));
+
         let result = f(&global_id, self);
         self.element_id_stack.pop();
         result
@@ -1897,6 +1911,12 @@ impl Window {
     /// The current state of the keyboard's modifiers
     pub fn modifiers(&self) -> Modifiers {
         self.modifiers
+    }
+
+    /// Returns true if the last input event was keyboard-based (key press, tab navigation, etc.)
+    /// This is used for focus-visible styling to show focus indicators only for keyboard navigation.
+    pub fn last_input_was_keyboard(&self) -> bool {
+        self.last_input_modality == InputModality::Keyboard
     }
 
     /// The current state of the keyboard's capslock
@@ -2245,7 +2265,7 @@ impl Window {
             self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
                 ..range.end.accessed_element_states_index]
                 .iter()
-                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+                .map(|(id, type_id)| (id.clone(), *type_id)),
         );
         self.text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
@@ -2313,7 +2333,7 @@ impl Window {
             self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
                 ..range.end.accessed_element_states_index]
                 .iter()
-                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+                .map(|(id, type_id)| (id.clone(), *type_id)),
         );
         self.next_frame.tab_stops.replay(
             &self.rendered_frame.tab_stops.insertion_history
@@ -2635,10 +2655,8 @@ impl Window {
     {
         self.invalidator.debug_assert_paint_or_prepaint();
 
-        let key = (GlobalElementId(global_id.0.clone()), TypeId::of::<S>());
-        self.next_frame
-            .accessed_element_states
-            .push((GlobalElementId(key.0.clone()), TypeId::of::<S>()));
+        let key = (global_id.clone(), TypeId::of::<S>());
+        self.next_frame.accessed_element_states.push(key.clone());
 
         if let Some(any) = self
             .next_frame
@@ -3243,14 +3261,11 @@ impl Window {
     /// returns a `Size`.
     ///
     /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
-    pub fn request_measured_layout<
-        F: FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
+    pub fn request_measured_layout<F>(&mut self, style: Style, measure: F) -> LayoutId
+    where
+        F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
             + 'static,
-    >(
-        &mut self,
-        style: Style,
-        measure: F,
-    ) -> LayoutId {
+    {
         self.invalidator.debug_assert_prepaint();
 
         let rem_size = self.rem_size();
@@ -3580,6 +3595,16 @@ impl Window {
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
         self.last_input_timestamp.set(Instant::now());
+
+        // Track whether this input was keyboard-based for focus-visible styling
+        self.last_input_modality = match &event {
+            PlatformInput::KeyDown(_) | PlatformInput::ModifiersChanged(_) => {
+                InputModality::Keyboard
+            }
+            PlatformInput::MouseDown(e) if e.is_focusing() => InputModality::Mouse,
+            _ => self.last_input_modality,
+        };
+
         // Handlers may set this to false by calling `stop_propagation`.
         cx.propagate_event = true;
         // Handlers may set this to true by calling `prevent_default`.
@@ -4313,14 +4338,14 @@ impl Window {
     }
 
     /// Returns a generic handler that invokes the given handler with the view and context associated with the given view handle.
-    pub fn handler_for<V: Render, Callback: Fn(&mut V, &mut Window, &mut Context<V>) + 'static>(
+    pub fn handler_for<E: 'static, Callback: Fn(&mut E, &mut Window, &mut Context<E>) + 'static>(
         &self,
-        view: &Entity<V>,
+        entity: &Entity<E>,
         f: Callback,
-    ) -> impl Fn(&mut Window, &mut App) + use<V, Callback> {
-        let view = view.downgrade();
+    ) -> impl Fn(&mut Window, &mut App) + 'static {
+        let entity = entity.downgrade();
         move |window: &mut Window, cx: &mut App| {
-            view.update(cx, |view, cx| f(view, window, cx)).ok();
+            entity.update(cx, |entity, cx| f(entity, window, cx)).ok();
         }
     }
 
@@ -4718,7 +4743,7 @@ impl<V: 'static + Render> WindowHandle<V> {
             .get(self.id)
             .and_then(|window| {
                 window
-                    .as_ref()
+                    .as_deref()
                     .and_then(|window| window.root.clone())
                     .map(|root_view| root_view.downcast::<V>())
             })
@@ -4879,7 +4904,7 @@ pub enum ElementId {
     /// A code location.
     CodeLocation(core::panic::Location<'static>),
     /// A labeled child of an element.
-    NamedChild(Box<ElementId>, SharedString),
+    NamedChild(Arc<ElementId>, SharedString),
 }
 
 impl ElementId {
@@ -4993,7 +5018,7 @@ impl From<(&'static str, u32)> for ElementId {
 
 impl<T: Into<SharedString>> From<(ElementId, T)> for ElementId {
     fn from((id, name): (ElementId, T)) -> Self {
-        ElementId::NamedChild(Box::new(id), name.into())
+        ElementId::NamedChild(Arc::new(id), name.into())
     }
 }
 

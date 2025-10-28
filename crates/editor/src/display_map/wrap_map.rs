@@ -972,18 +972,11 @@ impl<'a> Iterator for WrapChunks<'a> {
 
         let (prefix, suffix) = self.input_chunk.text.split_at(input_len);
 
-        let (chars, tabs) = if input_len == 128 {
-            let output = (self.input_chunk.chars, self.input_chunk.tabs);
-            self.input_chunk.chars = 0;
-            self.input_chunk.tabs = 0;
-            output
-        } else {
-            let mask = (1 << input_len) - 1;
-            let output = (self.input_chunk.chars & mask, self.input_chunk.tabs & mask);
-            self.input_chunk.chars = self.input_chunk.chars >> input_len;
-            self.input_chunk.tabs = self.input_chunk.tabs >> input_len;
-            output
-        };
+        let mask = 1u128.unbounded_shl(input_len as u32).wrapping_sub(1);
+        let chars = self.input_chunk.chars & mask;
+        let tabs = self.input_chunk.tabs & mask;
+        self.input_chunk.tabs = self.input_chunk.tabs.unbounded_shr(input_len as u32);
+        self.input_chunk.chars = self.input_chunk.chars.unbounded_shr(input_len as u32);
 
         self.input_chunk.text = suffix;
         Some(Chunk {
@@ -1024,6 +1017,7 @@ impl Iterator for WrapRows<'_> {
                 multibuffer_row: None,
                 diff_status,
                 expand_info: None,
+                wrapped_buffer_row: buffer_row.buffer_row,
             }
         } else {
             buffer_row

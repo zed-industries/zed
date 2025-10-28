@@ -5,7 +5,7 @@ use crate::{
 use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use futures::io::BufReader;
+use futures::{AsyncReadExt, io::Cursor};
 use heck::ToSnakeCase;
 use http_client::{self, AsyncBody, HttpClient};
 use serde::Deserialize;
@@ -411,6 +411,8 @@ impl ExtensionBuilder {
         let mut clang_path = wasi_sdk_dir.clone();
         clang_path.extend(["bin", &format!("clang{}", env::consts::EXE_SUFFIX)]);
 
+        log::info!("downloading wasi-sdk to {}", wasi_sdk_dir.display());
+
         if fs::metadata(&clang_path).is_ok_and(|metadata| metadata.is_file()) {
             return Ok(clang_path);
         }
@@ -423,13 +425,19 @@ impl ExtensionBuilder {
 
         log::info!("downloading wasi-sdk to {}", wasi_sdk_dir.display());
         let mut response = self.http.get(&url, AsyncBody::default(), true).await?;
-        let body = BufReader::new(response.body_mut());
-        let body = GzipDecoder::new(body);
+        let body = GzipDecoder::new({
+            // stream the entire request into memory at once as the artifact is quite big (100MB+)
+            let mut b = vec![];
+            response.body_mut().read_to_end(&mut b).await?;
+            Cursor::new(b)
+        });
         let tar = Archive::new(body);
 
+        log::info!("un-tarring wasi-sdk to {}", wasi_sdk_dir.display());
         tar.unpack(&tar_out_dir)
             .await
             .context("failed to unpack wasi-sdk archive")?;
+        log::info!("finished downloading wasi-sdk");
 
         let inner_dir = fs::read_dir(&tar_out_dir)?
             .next()

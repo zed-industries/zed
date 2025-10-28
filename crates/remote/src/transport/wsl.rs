@@ -2,7 +2,7 @@ use crate::{
     RemoteClientDelegate, RemotePlatform,
     remote_client::{CommandTemplate, RemoteConnection, RemoteConnectionOptions},
 };
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender};
@@ -24,7 +24,7 @@ use util::{
     shell::ShellKind,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Deserialize, schemars::JsonSchema)]
 pub struct WslConnectionOptions {
     pub distro_name: String,
     pub user: Option<String>,
@@ -441,6 +441,7 @@ impl RemoteConnection for WslRemoteConnection {
             bail!("WSL shares the network interface with the host system");
         }
 
+        let shell_kind = ShellKind::new(&self.shell, false);
         let working_dir = working_dir
             .map(|working_dir| RemotePathBuf::new(working_dir, PathStyle::Posix).to_string())
             .unwrap_or("~".to_string());
@@ -448,19 +449,26 @@ impl RemoteConnection for WslRemoteConnection {
         let mut exec = String::from("exec env ");
 
         for (k, v) in env.iter() {
-            if let Some((k, v)) = shlex::try_quote(k).ok().zip(shlex::try_quote(v).ok()) {
-                write!(exec, "{}={} ", k, v).unwrap();
-            }
+            write!(
+                exec,
+                "{}={} ",
+                k,
+                shell_kind.try_quote(v).context("shell quoting")?
+            )?;
         }
 
         if let Some(program) = program {
-            write!(exec, "{}", shlex::try_quote(&program)?).unwrap();
+            write!(
+                exec,
+                "{}",
+                shell_kind.try_quote(&program).context("shell quoting")?
+            )?;
             for arg in args {
-                let arg = shlex::try_quote(&arg)?;
-                write!(exec, " {}", &arg).unwrap();
+                let arg = shell_kind.try_quote(&arg).context("shell quoting")?;
+                write!(exec, " {}", &arg)?;
             }
         } else {
-            write!(&mut exec, "{} -l", self.shell).unwrap();
+            write!(&mut exec, "{} -l", self.shell)?;
         }
 
         let wsl_args = if let Some(user) = &self.connection_options.user {

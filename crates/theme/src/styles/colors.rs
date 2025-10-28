@@ -162,6 +162,25 @@ pub struct ThemeColors {
     /// The border color of the minimap thumb.
     pub minimap_thumb_border: Hsla,
 
+    /// Background color for Vim Normal mode indicator.
+    pub vim_normal_background: Hsla,
+    /// Background color for Vim Insert mode indicator.
+    pub vim_insert_background: Hsla,
+    /// Background color for Vim Replace mode indicator.
+    pub vim_replace_background: Hsla,
+    /// Background color for Vim Visual mode indicator.
+    pub vim_visual_background: Hsla,
+    /// Background color for Vim Visual Line mode indicator.
+    pub vim_visual_line_background: Hsla,
+    /// Background color for Vim Visual Block mode indicator.
+    pub vim_visual_block_background: Hsla,
+    /// Background color for Vim Helix Normal mode indicator.
+    pub vim_helix_normal_background: Hsla,
+    /// Background color for Vim Helix Select mode indicator.
+    pub vim_helix_select_background: Hsla,
+    /// Text color for Vim mode indicator label.
+    pub vim_mode_text: Hsla,
+
     // ===
     // Editor
     // ===

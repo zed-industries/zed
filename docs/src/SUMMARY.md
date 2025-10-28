@@ -8,6 +8,8 @@
   - [Uninstall](./uninstall.md)
 - [Authenticate](./authentication.md)
 - [Telemetry](./telemetry.md)
+- [Troubleshooting](./troubleshooting.md)
+- [Additional Learning Materials](./additional-learning-materials.md)
 
 # Configuration
 

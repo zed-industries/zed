@@ -8,7 +8,7 @@ use std::{
 use editor::{Editor, EditorStyle};
 use gpui::{ClickEvent, Entity, FocusHandle, Focusable, FontWeight, Modifiers};
 
-use settings::{CodeFade, DelayMs, InactiveOpacity, MinimumContrast};
+use settings::{CenteredPaddingSettings, CodeFade, DelayMs, InactiveOpacity, MinimumContrast};
 use ui::prelude::*;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -71,6 +71,14 @@ impl_newtype_numeric_stepper!(CodeFade, 0.1, 0.2, 0.05, 0.0, 0.9);
 impl_newtype_numeric_stepper!(InactiveOpacity, 0.1, 0.2, 0.05, 0.0, 1.0);
 impl_newtype_numeric_stepper!(MinimumContrast, 1., 10., 0.5, 0.0, 106.0);
 impl_newtype_numeric_stepper!(DelayMs, 100, 500, 10, 0, 2000);
+impl_newtype_numeric_stepper!(
+    CenteredPaddingSettings,
+    0.05,
+    0.2,
+    0.1,
+    CenteredPaddingSettings::MIN_PADDING,
+    CenteredPaddingSettings::MAX_PADDING
+);
 
 macro_rules! impl_numeric_stepper_int {
     ($type:ident) => {
@@ -330,7 +338,7 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                 .border_color(border_color)
                 .bg(bg_color)
                 .hover(|s| s.bg(hover_bg_color))
-                .focus(|s| s.border_color(focus_border_color).bg(hover_bg_color))
+                .focus_visible(|s| s.border_color(focus_border_color).bg(hover_bg_color))
                 .child(Icon::new(icon).size(IconSize::Small))
         };
 
@@ -361,7 +369,6 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                 let new_value = value.saturating_sub(step);
                                 let new_value = if new_value < min { min } else { new_value };
                                 on_change(&new_value, window, cx);
-                                window.focus_prev();
                             }
                         };
 

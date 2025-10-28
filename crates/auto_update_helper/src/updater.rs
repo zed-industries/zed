@@ -36,13 +36,31 @@ pub(crate) const JOBS: &[Job] = &[
         std::fs::remove_file(&zed_wsl)
             .context(format!("Failed to remove old file {}", zed_wsl.display()))
     },
+    // TODO: remove after a few weeks once everyone is on the new version and this file never exists
     |app_dir| {
         let open_console = app_dir.join("OpenConsole.exe");
-        log::info!("Removing old file: {}", open_console.display());
-        std::fs::remove_file(&open_console).context(format!(
-            "Failed to remove old file {}",
-            open_console.display()
-        ))
+        if open_console.exists() {
+            log::info!("Removing old file: {}", open_console.display());
+            std::fs::remove_file(&open_console).context(format!(
+                "Failed to remove old file {}",
+                open_console.display()
+            ))?
+        }
+        Ok(())
+    },
+    |app_dir| {
+        let archs = ["x64", "arm64"];
+        for arch in archs {
+            let open_console = app_dir.join(format!("{arch}\\OpenConsole.exe"));
+            if open_console.exists() {
+                log::info!("Removing old file: {}", open_console.display());
+                std::fs::remove_file(&open_console).context(format!(
+                    "Failed to remove old file {}",
+                    open_console.display()
+                ))?
+            }
+        }
+        Ok(())
     },
     |app_dir| {
         let conpty = app_dir.join("conpty.dll");
@@ -100,20 +118,32 @@ pub(crate) const JOBS: &[Job] = &[
             ))
     },
     |app_dir| {
-        let open_console_source = app_dir.join("install\\OpenConsole.exe");
-        let open_console_dest = app_dir.join("OpenConsole.exe");
-        log::info!(
-            "Copying new file {} to {}",
-            open_console_source.display(),
-            open_console_dest.display()
-        );
-        std::fs::copy(&open_console_source, &open_console_dest)
-            .map(|_| ())
-            .context(format!(
-                "Failed to copy new file {} to {}",
-                open_console_source.display(),
-                open_console_dest.display()
-            ))
+        let archs = ["x64", "arm64"];
+        for arch in archs {
+            let open_console_source = app_dir.join(format!("install\\{arch}\\OpenConsole.exe"));
+            let open_console_dest = app_dir.join(format!("{arch}\\OpenConsole.exe"));
+            if open_console_source.exists() {
+                log::info!(
+                    "Copying new file {} to {}",
+                    open_console_source.display(),
+                    open_console_dest.display()
+                );
+                let parent = open_console_dest.parent().context(format!(
+                    "Failed to get parent directory of {}",
+                    open_console_dest.display()
+                ))?;
+                std::fs::create_dir_all(parent)
+                    .context(format!("Failed to create directory {}", parent.display()))?;
+                std::fs::copy(&open_console_source, &open_console_dest)
+                    .map(|_| ())
+                    .context(format!(
+                        "Failed to copy new file {} to {}",
+                        open_console_source.display(),
+                        open_console_dest.display()
+                    ))?
+            }
+        }
+        Ok(())
     },
     |app_dir| {
         let conpty_source = app_dir.join("install\\conpty.dll");
@@ -197,7 +227,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>, launch: bool) 
                         break;
                     }
 
-                    log::error!("Operation failed: {}", err);
+                    log::error!("Operation failed: {} ({:?})", err, io_err.kind());
                     std::thread::sleep(Duration::from_millis(50));
                 }
             }

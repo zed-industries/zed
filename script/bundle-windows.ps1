@@ -2,10 +2,10 @@
 Param(
     [Parameter()][Alias('i')][switch]$Install,
     [Parameter()][Alias('h')][switch]$Help,
+    [Parameter()][Alias('a')][string]$Architecture,
     [Parameter()][string]$Name
 )
 
-. "$PSScriptRoot/lib/blob-store.ps1"
 . "$PSScriptRoot/lib/workspace.ps1"
 
 # https://stackoverflow.com/questions/57949031/powershell-script-stops-if-program-fails-like-bash-set-o-errexit
@@ -14,12 +14,44 @@ $PSNativeCommandUseErrorActionPreference = $true
 
 $buildSuccess = $false
 
+$OSArchitecture = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
+    "X64" { "x86_64" }
+    "Arm64" { "aarch64" }
+    default { throw "Unsupported architecture" }
+}
+
+$Architecture = if ($Architecture) {
+    $Architecture
+} else {
+    $OSArchitecture
+}
+
+$CargoOutDir = "./target/$Architecture-pc-windows-msvc/release"
+
+function Get-VSArch {
+    param(
+        [string]$Arch
+    )
+
+    switch ($Arch) {
+        "x86_64" { "amd64" }
+        "aarch64" { "arm64" }
+    }
+}
+
+Push-Location
+& "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1" -Arch (Get-VSArch -Arch $Architecture) -HostArch (Get-VSArch -Arch $OSArchitecture)
+Pop-Location
+
+$target = "$Architecture-pc-windows-msvc"
+
 if ($Help) {
     Write-Output "Usage: test.ps1 [-Install] [-Help]"
     Write-Output "Build the installer for Windows.\n"
     Write-Output "Options:"
-    Write-Output "  -Install, -i  Run the installer after building."
-    Write-Output "  -Help, -h     Show this help message."
+    Write-Output "  -Architecture, -a Which architecture to build (x86_64 or aarch64)"
+    Write-Output "  -Install, -i      Run the installer after building."
+    Write-Output "  -Help, -h         Show this help message."
     exit 0
 }
 
@@ -30,6 +62,10 @@ $env:RELEASE_CHANNEL = $channel
 Pop-Location
 
 function CheckEnvironmentVariables {
+    if(-not $env:CI) {
+        return
+    }
+
     $requiredVars = @(
         'ZED_WORKSPACE', 'RELEASE_VERSION', 'ZED_RELEASE_CHANNEL',
         'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET',
@@ -55,6 +91,8 @@ function PrepareForBundle {
     New-Item -Path "$innoDir\appx" -ItemType Directory -Force
     New-Item -Path "$innoDir\bin" -ItemType Directory -Force
     New-Item -Path "$innoDir\tools" -ItemType Directory -Force
+
+    rustup target add $target
 }
 
 function GenerateLicenses {
@@ -67,34 +105,34 @@ function GenerateLicenses {
 function BuildZedAndItsFriends {
     Write-Output "Building Zed and its friends, for channel: $channel"
     # Build zed.exe, cli.exe and auto_update_helper.exe
-    cargo build --release --package zed --package cli --package auto_update_helper
-    Copy-Item -Path ".\target\release\zed.exe" -Destination "$innoDir\Zed.exe" -Force
-    Copy-Item -Path ".\target\release\cli.exe" -Destination "$innoDir\cli.exe" -Force
-    Copy-Item -Path ".\target\release\auto_update_helper.exe" -Destination "$innoDir\auto_update_helper.exe" -Force
+    cargo build --release --package zed --package cli --package auto_update_helper --target $target
+    Copy-Item -Path ".\$CargoOutDir\zed.exe" -Destination "$innoDir\Zed.exe" -Force
+    Copy-Item -Path ".\$CargoOutDir\cli.exe" -Destination "$innoDir\cli.exe" -Force
+    Copy-Item -Path ".\$CargoOutDir\auto_update_helper.exe" -Destination "$innoDir\auto_update_helper.exe" -Force
     # Build explorer_command_injector.dll
     switch ($channel) {
         "stable" {
-            cargo build --release --features stable --no-default-features --package explorer_command_injector
+            cargo build --release --features stable --no-default-features --package explorer_command_injector --target $target
         }
         "preview" {
-            cargo build --release --features preview --no-default-features --package explorer_command_injector
+            cargo build --release --features preview --no-default-features --package explorer_command_injector --target $target
         }
         default {
-            cargo build --release --package explorer_command_injector
+            cargo build --release --package explorer_command_injector --target $target
         }
     }
-    Copy-Item -Path ".\target\release\explorer_command_injector.dll" -Destination "$innoDir\zed_explorer_command_injector.dll" -Force
+    Copy-Item -Path ".\$CargoOutDir\explorer_command_injector.dll" -Destination "$innoDir\zed_explorer_command_injector.dll" -Force
 }
 
 function ZipZedAndItsFriendsDebug {
     $items = @(
-        ".\target\release\zed.pdb",
-        ".\target\release\cli.pdb",
-        ".\target\release\auto_update_helper.pdb",
-        ".\target\release\explorer_command_injector.pdb"
+        ".\$CargoOutDir\zed.pdb",
+        ".\$CargoOutDir\cli.pdb",
+        ".\$CargoOutDir\auto_update_helper.pdb",
+        ".\$CargoOutDir\explorer_command_injector.pdb"
     )
 
-    Compress-Archive -Path $items -DestinationPath ".\target\release\zed-$env:RELEASE_VERSION-$env:ZED_RELEASE_CHANNEL.dbg.zip" -Force
+    Compress-Archive -Path $items -DestinationPath ".\$CargoOutDir\zed-$env:RELEASE_VERSION-$env:ZED_RELEASE_CHANNEL.dbg.zip" -Force
 }
 
 
@@ -109,7 +147,7 @@ function UploadToSentry {
         return
     }
     Write-Output "Uploading zed debug symbols to sentry..."
-    sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev .\target\release\
+    sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev $CargoOutDir
 }
 
 function MakeAppx {
@@ -132,6 +170,10 @@ function MakeAppx {
 }
 
 function SignZedAndItsFriends {
+    if (-not $env:CI) {
+        return
+    }
+
     $files = "$innoDir\Zed.exe,$innoDir\cli.exe,$innoDir\auto_update_helper.exe,$innoDir\zed_explorer_command_injector.dll,$innoDir\zed_explorer_command_injector.appx"
     & "$innoDir\sign.ps1" $files
 }
@@ -159,9 +201,19 @@ function CollectFiles {
     Move-Item -Path "$innoDir\cli.exe" -Destination "$innoDir\bin\zed.exe" -Force
     Move-Item -Path "$innoDir\zed.sh" -Destination "$innoDir\bin\zed" -Force
     Move-Item -Path "$innoDir\auto_update_helper.exe" -Destination "$innoDir\tools\auto_update_helper.exe" -Force
-    Move-Item -Path ".\AGS_SDK-6.3.0\ags_lib\lib\amd_ags_x64.dll" -Destination "$innoDir\amd_ags_x64.dll" -Force
-    Move-Item -Path ".\conpty\build\native\runtimes\x64\OpenConsole.exe" -Destination "$innoDir\OpenConsole.exe" -Force
-    Move-Item -Path ".\conpty\runtimes\win10-x64\native\conpty.dll" -Destination "$innoDir\conpty.dll" -Force
+    if($Architecture -eq "aarch64") {
+        New-Item -Type Directory -Path "$innoDir\arm64" -Force
+        Move-Item -Path ".\conpty\build\native\runtimes\arm64\OpenConsole.exe" -Destination "$innoDir\arm64\OpenConsole.exe" -Force
+        Move-Item -Path ".\conpty\runtimes\win10-arm64\native\conpty.dll" -Destination "$innoDir\conpty.dll" -Force
+    }
+    else {
+        New-Item -Type Directory -Path "$innoDir\x64" -Force
+        New-Item -Type Directory -Path "$innoDir\arm64" -Force
+        Move-Item -Path ".\AGS_SDK-6.3.0\ags_lib\lib\amd_ags_x64.dll" -Destination "$innoDir\amd_ags_x64.dll" -Force
+        Move-Item -Path ".\conpty\build\native\runtimes\x64\OpenConsole.exe" -Destination "$innoDir\x64\OpenConsole.exe" -Force
+        Move-Item -Path ".\conpty\build\native\runtimes\arm64\OpenConsole.exe" -Destination "$innoDir\arm64\OpenConsole.exe" -Force
+        Move-Item -Path ".\conpty\runtimes\win10-x64\native\conpty.dll" -Destination "$innoDir\conpty.dll" -Force
+    }
 }
 
 function BuildInstaller {
@@ -172,7 +224,7 @@ function BuildInstaller {
             $appIconName = "app-icon"
             $appName = "Zed"
             $appDisplayName = "Zed"
-            $appSetupName = "Zed-x86_64"
+            $appSetupName = "Zed-$Architecture"
             # The mutex name here should match the mutex name in crates\zed\src\zed\windows_only_instance.rs
             $appMutex = "Zed-Stable-Instance-Mutex"
             $appExeName = "Zed"
@@ -186,7 +238,7 @@ function BuildInstaller {
             $appIconName = "app-icon-preview"
             $appName = "Zed Preview"
             $appDisplayName = "Zed Preview"
-            $appSetupName = "Zed-x86_64"
+            $appSetupName = "Zed-$Architecture"
             # The mutex name here should match the mutex name in crates\zed\src\zed\windows_only_instance.rs
             $appMutex = "Zed-Preview-Instance-Mutex"
             $appExeName = "Zed"
@@ -200,7 +252,7 @@ function BuildInstaller {
             $appIconName = "app-icon-nightly"
             $appName = "Zed Nightly"
             $appDisplayName = "Zed Nightly"
-            $appSetupName = "Zed-x86_64"
+            $appSetupName = "Zed-$Architecture"
             # The mutex name here should match the mutex name in crates\zed\src\zed\windows_only_instance.rs
             $appMutex = "Zed-Nightly-Instance-Mutex"
             $appExeName = "Zed"
@@ -214,7 +266,7 @@ function BuildInstaller {
             $appIconName = "app-icon-dev"
             $appName = "Zed Dev"
             $appDisplayName = "Zed Dev"
-            $appSetupName = "Zed-x86_64"
+            $appSetupName = "Zed-$Architecture"
             # The mutex name here should match the mutex name in crates\zed\src\zed\windows_only_instance.rs
             $appMutex = "Zed-Dev-Instance-Mutex"
             $appExeName = "Zed"
@@ -252,14 +304,16 @@ function BuildInstaller {
         "AppxFullName"   = $appAppxFullName
     }
 
-    $signTool = "powershell.exe -ExecutionPolicy Bypass -File $innoDir\sign.ps1 `$f"
-
     $defs = @()
     foreach ($key in $definitions.Keys) {
         $defs += "/d$key=`"$($definitions[$key])`""
     }
 
-    $innoArgs = @($issFilePath) + $defs + "/sDefaultsign=`"$signTool`""
+    $innoArgs = @($issFilePath) + $defs
+    if($env:CI) {
+        $signTool = "powershell.exe -ExecutionPolicy Bypass -File $innoDir\sign.ps1 `$f"
+        $innoArgs += "/sDefaultsign=`"$signTool`""
+    }
 
     # Execute Inno Setup
     Write-Host "🚀 Running Inno Setup: $innoSetupPath $innoArgs"
@@ -277,8 +331,8 @@ function BuildInstaller {
 }
 
 ParseZedWorkspace
-$innoDir = "$env:ZED_WORKSPACE\inno"
-$debugArchive = ".\target\release\zed-$env:RELEASE_VERSION-$env:ZED_RELEASE_CHANNEL.dbg.zip"
+$innoDir = "$env:ZED_WORKSPACE\inno\$Architecture"
+$debugArchive = "$CargoOutDir\zed-$env:RELEASE_VERSION-$env:ZED_RELEASE_CHANNEL.dbg.zip"
 $debugStoreKey = "$env:ZED_RELEASE_CHANNEL/zed-$env:RELEASE_VERSION-$env:ZED_RELEASE_CHANNEL.dbg.zip"
 
 CheckEnvironmentVariables
@@ -293,8 +347,9 @@ DownloadConpty
 CollectFiles
 BuildInstaller
 
-UploadToBlobStorePublic -BucketName "zed-debug-symbols" -FileToUpload $debugArchive -BlobStoreKey $debugStoreKey
-UploadToSentry
+if($env:CI) {
+    UploadToSentry
+}
 
 if ($buildSuccess) {
     Write-Output "Build successful"

@@ -34,7 +34,7 @@ For example, if you have Prettier installed and on your `PATH`, you can use it t
 
 Zed supports JSX syntax highlighting out of the box.
 
-In JSX strings, the [`tailwindcss-language-server`](./tailwindcss.md) is used provide autocompletion for Tailwind CSS classes.
+In JSX strings, the [`tailwindcss-language-server`](./tailwindcss.md) is used to provide autocompletion for Tailwind CSS classes.
 
 ## JSDoc
 
