@@ -346,7 +346,8 @@ fn translate_accelerator(msg: &MSG) -> Option<()> {
         String::from_utf16_lossy(&buffer_c_no_modifiers[..result_c_no_modifiers as usize]);
 
     if c != c_no_modifiers {
-        let accepts_text_input = unsafe { SendMessageW(msg.hwnd, WM_GPUI_ACCEPTS_TEXT_INPUT, None, None) };
+        let accepts_text_input =
+            unsafe { SendMessageW(msg.hwnd, WM_GPUI_ACCEPTS_TEXT_INPUT, None, None) };
         if accepts_text_input.0 != 0 {
             return None;
         }
