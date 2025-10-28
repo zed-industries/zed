@@ -122,9 +122,6 @@
   // Whether to enable helix mode and key bindings.
   // Enabling this mode will automatically enable vim mode.
   "helix_mode": false,
-  // Whether to enable modal actions for key bindings.
-  // Enables the use of modal actions in keybinds even when vim mode or helix mode are disabled.
-  "passive_modal_actions": false,
   // Whether to show the informational hover box when moving the mouse
   // over symbols in the editor.
   "hover_popover_enabled": true,

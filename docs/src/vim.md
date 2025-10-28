@@ -45,57 +45,28 @@ If you missed this, you can toggle vim mode on or off anytime by opening the com
 > }
 > ```
 
-## Always-On Modal Actions (without modal editing)
+## Using Vim Actions without Modal Editing
 
-If you want to use Vim's powerful text objects and operators (like "delete inside quotes" or "change around parentheses"), without entering full modal editing mode, you can enable always-on modal actions. This keeps your editor the same while allowing for all Vim actions available for custom keybindings.
+Even when vim mode is **disabled**, all Vim actions (operators, text objects, and motions) are available for custom keybindings. This allows you to use Vim's powerful editing commands without entering modal editing mode.
 
-### Enabling always-on modal actions
+### Example: Binding Vim actions to custom keys
 
-Add this to your settings:
-
-```json [settings]
-{
-  "passive_modal_actions": true
-}
-```
-
-### Example configuration
-
-```json [settings]
-{
-  "context": "Editor",
-  "bindings": {
-    // Delete inside quotes
-    {
-      "context": "Editor",
-      "bindings": {
-        "ctrl-shift-d'": [
-          "action::Sequence",
-          [
-            "vim::PushDelete",
-            ["vim::PushObject", { "around": false }],
-            "vim::AnyQuotes"
-          ]
-        ]
-      }
-    },
-
-    // Select inside parentheses (4-step sequence)
-    {
-      "context": "Editor",
-      "bindings": {
-        "ctrl-'": [
-          "action::Sequence",
-          [
-            "vim::SwitchToVisualMode",
-            ["vim::PushObject", { "around": false }],
-            "vim::AnyQuotes",
-          ]
-        ]
-      }
-    },
+```json [keymap.json]
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      // Delete inside quotes with Cmd+'
+      "cmd-'": [
+        "vim::PushDelete",
+        ["vim::PushObject", { "around": false }],
+        "vim::AnyQuotes"
+      ],
+      // Go to last modification with Cmd+.
+      "cmd-.": "vim::HelixGotoLastModification"
+    }
   }
-}
+]
 ```
 
 ## Zed-specific features

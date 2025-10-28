@@ -92,16 +92,19 @@ impl Render for ModeIndicator {
             return div().hidden().into_any_element();
         };
 
-        let vim_readable = vim.read(cx);
+        let (status_label, temp_mode, mode) = {
+            let vim_readable = vim.read(cx);
+            (
+                vim_readable.status_label.clone(),
+                vim_readable.temp_mode,
+                vim_readable.mode,
+            )
+        };
 
-        // Hide mode indicator in passive mode
-        if vim_readable.passive_mode {
+        let vim_enabled = Vim::enabled(cx);
+        if !vim_enabled {
             return div().hidden().into_any_element();
         }
-
-        let status_label = vim_readable.status_label.clone();
-        let temp_mode = vim_readable.temp_mode;
-        let mode = vim_readable.mode;
 
         let theme = cx.theme();
         let colors = theme.colors();
@@ -128,7 +131,7 @@ impl Render for ModeIndicator {
                 mode.to_string()
             };
 
-            let current_operators_description = self.current_operators_description(vim.clone(), cx);
+            let current_operators_description = self.current_operators_description(vim, cx);
             let pending = self
                 .pending_keys
                 .as_ref()

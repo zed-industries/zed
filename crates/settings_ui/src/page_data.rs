@@ -1099,19 +1099,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Always-On Modal Actions",
-                    description: "Always keep modal editing actions (Vim/Helix operators and text objects) available for keybindings without being in modal editing mode. Requires manual keybinding configuration in your keymap.",
-                    field: Box::new(SettingField {
-                        json_path: Some("passive_modal_actions"),
-                        pick: |settings_content| settings_content.passive_modal_actions.as_ref(),
-                        write: |settings_content, value| {
-                            settings_content.passive_modal_actions = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
             ],
         },
         SettingsPage {

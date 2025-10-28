@@ -25,7 +25,7 @@ use indoc::indoc;
 use search::BufferSearchBar;
 
 use crate::{
-    PushDelete, PushObject, PushSneak, PushSneakBackward, SwitchToVisualMode,
+    PushDelete, PushFindForward, PushObject, PushSneak, PushSneakBackward, SwitchToVisualMode,
     helix::HelixGotoLastModification, insert::NormalBefore, motion, object::AnyQuotes, state::Mode,
 };
 
@@ -2324,56 +2324,8 @@ async fn test_clipping_on_mode_change(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_passive_mode_typing_works(cx: &mut gpui::TestAppContext) {
+async fn test_vim_disabled_actions_work_with_manual_binding(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, false).await;
-
-    cx.update_global(|store: &mut SettingsStore, cx| {
-        store.update_user_settings(cx, |s| {
-            s.passive_modal_actions = Some(true);
-        });
-    });
-
-    // Verify typing works normally (not in modal mode)
-    cx.simulate_keystrokes("h e l l o space z e d");
-    cx.assert_editor_state("hello zedˇ");
-}
-
-#[gpui::test]
-async fn test_passive_mode_delete_inside_quotes(cx: &mut gpui::TestAppContext) {
-    let mut cx = VimTestContext::new(cx, false).await;
-
-    cx.update_global(|store: &mut SettingsStore, cx| {
-        store.update_user_settings(cx, |s| {
-            s.passive_modal_actions = Some(true);
-        });
-    });
-
-    cx.update(|_, cx| {
-        cx.bind_keys([KeyBinding::new(
-            "ctrl-d",
-            ActionSequence(vec![
-                Box::new(PushDelete),
-                Box::new(PushObject { around: false }),
-                Box::new(AnyQuotes {}),
-            ]),
-            None,
-        )])
-    });
-
-    cx.set_state(r#"let x = "helˇlo world";"#, Mode::Normal);
-    cx.simulate_keystrokes("ctrl-d");
-    cx.assert_editor_state(r#"let x = "ˇ";"#);
-}
-
-#[gpui::test]
-async fn test_passive_mode_selection_preserving(cx: &mut gpui::TestAppContext) {
-    let mut cx = VimTestContext::new(cx, false).await;
-
-    cx.update_global(|store: &mut SettingsStore, cx| {
-        store.update_user_settings(cx, |s| {
-            s.passive_modal_actions = Some(true);
-        });
-    });
 
     cx.update(|_, cx| {
         cx.bind_keys([KeyBinding::new(
@@ -2394,14 +2346,33 @@ async fn test_passive_mode_selection_preserving(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_passive_mode_goto_last_modification(cx: &mut gpui::TestAppContext) {
+async fn test_vim_disabled_multi_keystroke_sequence_works(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, false).await;
 
-    cx.update_global(|store: &mut SettingsStore, cx| {
-        store.update_user_settings(cx, |s| {
-            s.passive_modal_actions = Some(true);
-        });
+    cx.update(|_, cx| {
+        cx.bind_keys([
+            KeyBinding::new("ctrl-d", PushDelete, None),
+            KeyBinding::new(
+                "ctrl-alt-t",
+                PushFindForward {
+                    before: true,
+                    multiline: true,
+                },
+                None,
+            ),
+        ])
     });
+
+    cx.set_state("helloˇ world test", Mode::Normal);
+
+    // This should delete until the next space
+    cx.simulate_keystrokes("ctrl-d ctrl-alt-t space");
+    cx.assert_editor_state("helloˇ test");
+}
+
+#[gpui::test]
+async fn test_vim_disabled_goto_last_modification(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, false).await;
 
     cx.update(|_, cx| cx.bind_keys([KeyBinding::new("ctrl-g", HelixGotoLastModification, None)]));
 

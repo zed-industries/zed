@@ -47,8 +47,8 @@ use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
+use vim_mode_setting::HelixModeSetting;
 use vim_mode_setting::VimModeSetting;
-use vim_mode_setting::{HelixModeSetting, PassiveModalActionsSetting};
 use workspace::{self, Pane, Workspace};
 
 use crate::{
@@ -282,6 +282,10 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|_, _: &MenuSelectNext, window, cx| {
+            if !Vim::enabled(cx) {
+                window.dispatch_action(menu::SelectNext.boxed_clone(), cx);
+                return;
+            }
             let count = Vim::take_count(cx).unwrap_or(1);
 
             for _ in 0..count {
@@ -290,6 +294,10 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|_, _: &MenuSelectPrevious, window, cx| {
+            if !Vim::enabled(cx) {
+                window.dispatch_action(menu::SelectPrevious.boxed_clone(), cx);
+                return;
+            }
             let count = Vim::take_count(cx).unwrap_or(1);
 
             for _ in 0..count {
@@ -298,12 +306,19 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|_, _: &ToggleProjectPanelFocus, window, cx| {
+            if !Vim::enabled(cx) {
+                window.dispatch_action(project_panel::ToggleFocus.boxed_clone(), cx);
+                return;
+            }
             if Vim::take_count(cx).is_none() {
                 window.dispatch_action(project_panel::ToggleFocus.boxed_clone(), cx);
             }
         });
 
         workspace.register_action(|workspace, n: &Number, window, cx| {
+            if !Vim::enabled(cx) {
+                return;
+            }
             let vim = workspace
                 .focused_pane(window, cx)
                 .read(cx)
@@ -341,6 +356,9 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|workspace, _: &MaximizePane, window, cx| {
+            if !Vim::enabled(cx) {
+                return;
+            }
             let pane = workspace.active_pane();
             let Some(size) = workspace.bounding_box_for_pane(pane) else {
                 return;
@@ -358,6 +376,9 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|workspace, _: &ResizePaneRight, window, cx| {
+            if !Vim::enabled(cx) {
+                return;
+            }
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             Vim::take_forced_motion(cx);
             let theme = ThemeSettings::get_global(cx);
@@ -372,6 +393,9 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|workspace, _: &ResizePaneLeft, window, cx| {
+            if !Vim::enabled(cx) {
+                return;
+            }
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             Vim::take_forced_motion(cx);
             let theme = ThemeSettings::get_global(cx);
@@ -386,6 +410,9 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|workspace, _: &ResizePaneUp, window, cx| {
+            if !Vim::enabled(cx) {
+                return;
+            }
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             Vim::take_forced_motion(cx);
             let theme = ThemeSettings::get_global(cx);
@@ -394,6 +421,9 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|workspace, _: &ResizePaneDown, window, cx| {
+            if !Vim::enabled(cx) {
+                return;
+            }
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             Vim::take_forced_motion(cx);
             let theme = ThemeSettings::get_global(cx);
@@ -402,6 +432,9 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|workspace, _: &SearchSubmit, window, cx| {
+            if !Vim::enabled(cx) {
+                return;
+            }
             let vim = workspace
                 .focused_pane(window, cx)
                 .read(cx)
@@ -414,6 +447,9 @@ pub fn init(cx: &mut App) {
             })
         });
         workspace.register_action(|_, _: &GoToTab, window, cx| {
+            if !Vim::enabled(cx) {
+                return;
+            }
             let count = Vim::take_count(cx);
             Vim::take_forced_motion(cx);
 
@@ -431,6 +467,9 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|workspace, _: &GoToPreviousTab, window, cx| {
+            if !Vim::enabled(cx) {
+                return;
+            }
             let count = Vim::take_count(cx);
             Vim::take_forced_motion(cx);
 
@@ -475,7 +514,6 @@ impl editor::Addon for VimAddon {
 /// The state pertaining to Vim mode.
 pub(crate) struct Vim {
     pub(crate) mode: Mode,
-    pub(crate) passive_mode: bool,
     pub(crate) last_mode: Mode,
     pub temp_mode: bool,
     pub status_label: Option<SharedString>,
@@ -519,7 +557,7 @@ impl Vim {
     /// The namespace for Vim actions.
     const NAMESPACE: &'static str = "vim";
 
-    pub fn new(window: &mut Window, cx: &mut Context<Editor>, passive_mode: bool) -> Entity<Self> {
+    pub fn new(window: &mut Window, cx: &mut Context<Editor>) -> Entity<Self> {
         let editor = cx.entity();
 
         let initial_vim_mode = VimSettings::get_global(cx).default_mode;
@@ -537,32 +575,19 @@ impl Vim {
         };
 
         cx.new(|cx| {
-            // In passive mode we only subscribe to editor events so vim can track changes (change list or last-modification mark)
-            // without intercepting keystrokes.
-            let subscriptions = if passive_mode {
-                vec![cx.subscribe_in(
+            let subscriptions = vec![
+                cx.observe_keystrokes(Self::observe_keystrokes),
+                cx.subscribe_in(
                     &editor,
                     window,
-                    |this: &mut Vim, _editor_entity, event, window, cx| {
+                    |this, _editor_entity, event, window, cx| {
                         this.handle_editor_event(event, window, cx)
                     },
-                )]
-            } else {
-                vec![
-                    cx.observe_keystrokes(Self::observe_keystrokes),
-                    cx.subscribe_in(
-                        &editor,
-                        window,
-                        |this, _editor_entity, event, window, cx| {
-                            this.handle_editor_event(event, window, cx)
-                        },
-                    ),
-                ]
-            };
+                ),
+            ];
 
             Vim {
                 mode,
-                passive_mode,
                 last_mode,
                 temp_mode: false,
                 exit_temporary_mode: false,
@@ -597,12 +622,10 @@ impl Vim {
             return;
         }
 
-        let mut was_enabled = Vim::enabled(cx);
         let mut was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
-        cx.observe_global_in::<SettingsStore>(window, move |editor, window, cx| {
-            let enabled = Vim::enabled(cx);
+        cx.observe_global_in::<SettingsStore>(window, move |editor, _, cx| {
             let toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
-            if enabled && was_enabled && (toggle != was_toggle) {
+            if toggle != was_toggle {
                 if toggle {
                     let is_relative = editor
                         .addon::<VimAddon>()
@@ -613,27 +636,17 @@ impl Vim {
                 }
             }
             was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
-            if was_enabled == enabled {
-                return;
-            }
-            was_enabled = enabled;
-            if enabled {
-                Self::activate(editor, window, cx)
-            } else {
-                Self::deactivate(editor, cx)
-            }
         })
         .detach();
-        if was_enabled {
-            Self::activate(editor, window, cx)
-        }
+
+        // Keep always active for keybindings. Vim keymap loading is controlled separately
+        Self::activate(editor, window, cx)
     }
 
     fn activate(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
-        let passive_mode = Vim::is_passive_mode(cx);
-        let vim = Vim::new(window, cx, passive_mode);
+        let vim = Vim::new(window, cx);
 
-        if !passive_mode && !editor.mode().is_full() {
+        if !editor.mode().is_full() {
             vim.update(cx, |vim, _| {
                 vim.mode = Mode::Insert;
             });
@@ -946,22 +959,6 @@ impl Vim {
         })
     }
 
-    fn deactivate(editor: &mut Editor, cx: &mut Context<Editor>) {
-        editor.set_cursor_shape(CursorShape::Bar, cx);
-        editor.set_clip_at_line_ends(false, cx);
-        editor.set_collapse_matches(false);
-        editor.set_input_enabled(true);
-        editor.set_autoindent(true);
-        editor.selections.set_line_mode(false);
-        editor.unregister_addon::<VimAddon>();
-        editor.set_relative_line_number(None, cx);
-        if let Some(vim) = Vim::globals(cx).focused_vim()
-            && vim.entity_id() == cx.entity().entity_id()
-        {
-            Vim::globals(cx).focused_vim = None;
-        }
-    }
-
     /// Register an action on the editor.
     pub fn action<A: Action>(
         editor: &mut Editor,
@@ -985,16 +982,8 @@ impl Vim {
             .map(|workspace| workspace.read(cx).focused_pane(window, cx))
     }
 
-    pub fn enabled(cx: &mut App) -> bool {
-        VimModeSetting::get_global(cx).0
-            || HelixModeSetting::get_global(cx).0
-            || PassiveModalActionsSetting::get_global(cx).0
-    }
-
-    pub fn is_passive_mode(cx: &mut App) -> bool {
-        !VimModeSetting::get_global(cx).0
-            && !HelixModeSetting::get_global(cx).0
-            && PassiveModalActionsSetting::get_global(cx).0
+    pub fn enabled(cx: &App) -> bool {
+        VimModeSetting::get_global(cx).0 || HelixModeSetting::get_global(cx).0
     }
 
     /// Called whenever an keystroke is typed so vim can observe all actions
@@ -1077,7 +1066,7 @@ impl Vim {
             EditorEvent::Edited { .. } => self.push_to_change_list(window, cx),
             EditorEvent::FocusedIn => self.sync_vim_settings(window, cx),
             EditorEvent::CursorShapeChanged => {
-                if !self.passive_mode {
+                if Vim::enabled(cx) {
                     self.cursor_shape_changed(window, cx);
                 }
             }
@@ -1276,7 +1265,7 @@ impl Vim {
     }
 
     pub fn cursor_shape(&self, cx: &mut App) -> CursorShape {
-        if self.passive_mode {
+        if !Vim::enabled(cx) {
             return EditorSettings::get_global(cx)
                 .cursor_shape
                 .unwrap_or_default();
@@ -1315,9 +1304,17 @@ impl Vim {
         }
     }
 
-    pub fn editor_input_enabled(&self) -> bool {
-        // In passive mode, we do not want Vim to disable the editor's input.
-        if self.passive_mode {
+    pub fn editor_input_enabled(&self, cx: &mut App) -> bool {
+        // Ensure there are no operators waiting for character input
+        if let Some(operator) = self.operator_stack.last() {
+            if operator.is_waiting(self.mode) {
+                // Disable the input so that characters are captured via InputIgnored event
+                return false;
+            }
+        }
+
+        // When vim mode is disabled and no operator is waiting we then enable input
+        if !Vim::enabled(cx) {
             return true;
         }
 
@@ -1343,9 +1340,9 @@ impl Vim {
         !(self.mode == Mode::Insert && self.last_mode == Mode::VisualBlock)
     }
 
-    pub fn clip_at_line_ends(&self) -> bool {
-        // In passive mode, we only want to clip during operations
-        if self.passive_mode {
+    pub fn clip_at_line_ends(&self, cx: &mut App) -> bool {
+        // When vim mode is disabled, we only want to clip during operations
+        if !Vim::enabled(cx) {
             return (self.mode.is_visual() || self.active_operator().is_some())
                 && matches!(self.mode, Mode::Normal);
         }
@@ -1417,15 +1414,18 @@ impl Vim {
                 .newest::<usize>(&editor.display_snapshot(cx))
                 .is_empty()
         });
-        let editor = editor.read(cx);
-        let editor_mode = editor.mode();
+        let (editor_mode, leader_id, vim_enabled) = {
+            let editor = editor.read(cx);
+            let vim_enabled = Vim::enabled(cx);
+            (editor.mode(), editor.leader_id(), vim_enabled)
+        };
 
-        if !self.passive_mode
+        if vim_enabled
             && editor_mode.is_full()
             && !newest_selection_empty
             && self.mode == Mode::Normal
             // When following someone, don't switch vim mode.
-            && editor.leader_id().is_none()
+            && leader_id.is_none()
         {
             if preserve_selection {
                 self.switch_mode(Mode::Visual, true, window, cx);
@@ -1954,16 +1954,16 @@ impl Vim {
     fn sync_vim_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.update_editor(cx, |vim, editor, cx| {
             editor.set_cursor_shape(vim.cursor_shape(cx), cx);
-            editor.set_clip_at_line_ends(vim.clip_at_line_ends(), cx);
+            editor.set_clip_at_line_ends(vim.clip_at_line_ends(cx), cx);
             editor.set_collapse_matches(true);
-            editor.set_input_enabled(vim.editor_input_enabled());
+            editor.set_input_enabled(vim.editor_input_enabled(cx));
             editor.set_autoindent(vim.should_autoindent());
             editor
                 .selections
                 .set_line_mode(matches!(vim.mode, Mode::VisualLine));
 
             let hide_edit_predictions =
-                !(vim.passive_mode || matches!(vim.mode, Mode::Insert | Mode::Replace));
+                !(!Vim::enabled(cx) || matches!(vim.mode, Mode::Insert | Mode::Replace));
             editor.set_edit_predictions_hidden_for_vim_mode(hide_edit_predictions, window, cx);
         });
         cx.notify()

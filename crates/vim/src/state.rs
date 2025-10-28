@@ -709,9 +709,8 @@ impl VimGlobals {
 
         cx.observe_global::<SettingsStore>(move |cx| {
             let is_enabled = Vim::enabled(cx);
-            let is_passive = Vim::is_passive_mode(cx);
 
-            KeyBinding::set_vim_mode(cx, !is_passive && is_enabled);
+            KeyBinding::set_vim_mode(cx, is_enabled);
 
             if was_enabled == Some(is_enabled) {
                 return;
