@@ -66,10 +66,6 @@ pub struct AgentSettingsContent {
     ///
     /// Default: "primary_screen"
     pub notify_when_agent_waiting: Option<NotifyWhenAgentWaiting>,
-    /// Whether to show a popup notification when the agent is done and the agent panel is hidden.
-    ///
-    /// Default: false
-    pub notify_when_agent_is_hidden: Option<bool>,
     /// Whether to play a sound when the agent has either completed its response, or needs user input.
     ///
     /// Default: false
