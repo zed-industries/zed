@@ -29,7 +29,9 @@
 
 # Using Zed
 
-- [Multibuffers](./multibuffers.md) -[Command Palette](./command-palette.md) -[Command-line Interface](./command-line-interface.md)
+- [Multibuffers](./multibuffers.md)
+-[Command Palette](./command-palette.md)
+-[Command-line Interface](./command-line-interface.md)
 - [Outline Panel](./outline-panel.md)
 - [Code Completions](./completions.md)
 - [Channels](./channels.md)
