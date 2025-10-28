@@ -114,8 +114,16 @@ pub(crate) fn cache_rust_dependencies() -> Step<Use> {
     .with(("save-if", "${{ github.ref == 'refs/heads/main' }}"))
 }
 
-pub(crate) fn setup_linux() -> Step<Run> {
+fn setup_linux() -> Step<Run> {
     named::bash("./script/linux")
+}
+
+fn install_mold() -> Step<Run> {
+    named::bash("./script/install-mold")
+}
+
+pub(crate) fn install_linux_dependencies(job: Job) -> Job {
+    job.add_step(setup_linux()).add_step(install_mold())
 }
 
 pub fn script(name: &str) -> Step<Run> {
@@ -141,6 +149,63 @@ pub(crate) fn release_job(deps: &[&NamedJob]) -> Job {
         job.needs(deps.iter().map(|j| j.name.clone()).collect::<Vec<_>>())
     } else {
         job
+    }
+}
+
+impl FluentBuilder for Job {}
+
+/// A helper trait for building complex objects with imperative conditionals in a fluent style.
+/// Copied from GPUI to avoid adding GPUI as dependency
+/// todo(ci) just put this in gh-workflow
+pub(crate) trait FluentBuilder {
+    /// Imperatively modify self with the given closure.
+    fn map<U>(self, f: impl FnOnce(Self) -> U) -> U
+    where
+        Self: Sized,
+    {
+        f(self)
+    }
+
+    /// Conditionally modify self with the given closure.
+    fn when(self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| if condition { then(this) } else { this })
+    }
+
+    /// Conditionally modify self with the given closure.
+    fn when_else(
+        self,
+        condition: bool,
+        then: impl FnOnce(Self) -> Self,
+        else_fn: impl FnOnce(Self) -> Self,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| if condition { then(this) } else { else_fn(this) })
+    }
+
+    /// Conditionally unwrap and modify self with the given closure, if the given option is Some.
+    fn when_some<T>(self, option: Option<T>, then: impl FnOnce(Self, T) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| {
+            if let Some(value) = option {
+                then(this, value)
+            } else {
+                this
+            }
+        })
+    }
+    /// Conditionally unwrap and modify self with the given closure, if the given option is None.
+    fn when_none<T>(self, option: &Option<T>, then: impl FnOnce(Self) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| if option.is_some() { this } else { then(this) })
     }
 }
 

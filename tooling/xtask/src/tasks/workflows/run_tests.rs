@@ -2,7 +2,7 @@ use gh_workflow::{Event, Run, Step, Use, Workflow, WorkflowCall};
 
 use super::{
     runners::{self, Platform},
-    steps::{self, NamedJob, named, release_job},
+    steps::{self, FluentBuilder, NamedJob, named, release_job},
 };
 
 pub(crate) fn run_tests() -> Workflow {
@@ -188,7 +188,7 @@ fn check_docs() -> NamedJob {
             // todo(ci): un-inline build_docs/action.yml here
             .add_step(steps::cache_rust_dependencies())
             .add_step(lychee_link_check("./docs/src/**/*")) // check markdown links
-            .add_step(steps::setup_linux())
+            .map(steps::install_linux_dependencies)
             .add_step(install_mdbook())
             .add_step(build_docs())
             .add_step(lychee_link_check("target/deploy/docs")), // check links in generated html
@@ -233,7 +233,7 @@ fn doctests() -> NamedJob {
             .runs_on(runners::LINUX_DEFAULT)
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies())
-            .add_step(steps::setup_linux())
+            .map(steps::install_linux_dependencies)
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .add_step(run_doctests())
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
