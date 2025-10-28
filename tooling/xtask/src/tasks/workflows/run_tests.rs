@@ -11,6 +11,7 @@ pub(crate) fn run_tests() -> Workflow {
     let mac_tests = run_platform_tests(Platform::Mac);
     let migrations = check_postgres_and_protobuf_migrations();
     let style = style();
+    let docs = check_docs();
 
     named::workflow()
         // todo! inputs?
@@ -20,6 +21,7 @@ pub(crate) fn run_tests() -> Workflow {
         .add_job(linux_tests.name, linux_tests.job)
         .add_job(mac_tests.name, mac_tests.job)
         .add_job(migrations.name, migrations.job)
+        .add_job(docs.name, docs.job)
 }
 
 pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
@@ -28,6 +30,7 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
         Platform::Linux => runners::LINUX_DEFAULT,
         Platform::Mac => runners::MAC_DEFAULT,
     };
+    // todo! missing script/linux step
     NamedJob {
         name: format!("run_tests_{platform}"),
         job: release_job(&[])
@@ -141,5 +144,58 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .add_step(ensure_fresh_merge())
             .add_step(bufbuild_setup_action())
             .add_step(bufbuild_breaking_action()),
+    )
+}
+
+fn check_docs() -> NamedJob {
+    // todo! would have preferred to just reference the action here while building, but the gh-workflow crate
+    // only supports using repo actions (owner, name, version), not local actions (path)
+    fn lychee_link_check(dir: &str) -> Step<Use> {
+        named::uses(
+            "lycheeverse",
+            "lychee-action",
+            "82202e5e9c2f4ef1a55a3d02563e1cb6041e5332",
+        ) // v2.4.1
+        .add_with(("args", format!("--no-progress --exclude '^http' '{dir}'")))
+        .add_with(("fail", true))
+    }
+
+    fn install_mdbook() -> Step<Use> {
+        named::uses(
+            "peaceiris",
+            "actions-mdbook",
+            "ee69d230fe19748b7abf22df32acaa93833fad08", // v2
+        )
+        .with(("mdbook-version", "0.4.37"))
+    }
+
+    fn cache_dependencies() -> Step<Use> {
+        named::uses(
+            "swatinem",
+            "rust-cache",
+            "9d47c6ad4b02e050fd481d890b2ea34778fd09d6", // v2
+        )
+        .with(("save-if", "${{ github.ref == 'refs/heads/main' }}"))
+    }
+
+    fn build_docs() -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            mkdir -p target/deploy
+            mdbook build ./docs --dest-dir=../target/deploy/docs/
+        "#})
+    }
+
+    named::job(
+        release_job(&[])
+            .runs_on(runners::LINUX_LARGE)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_cargo_config(Platform::Linux))
+            // todo(ci): un-inline build_docs/action.yml here
+            .add_step(cache_dependencies())
+            .add_step(lychee_link_check("./docs/src/**/*")) // check markdown links
+            .add_step(steps::script("./script/linux"))
+            .add_step(install_mdbook())
+            .add_step(build_docs())
+            .add_step(lychee_link_check("target/deploy/docs")), // check links in generated html
     )
 }
