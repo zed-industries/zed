@@ -1,4 +1,4 @@
-use gh_workflow::{Concurrency, Event, PullRequest, Push, Run, Step, Use, Workflow};
+use gh_workflow::{Concurrency, Event, Expression, PullRequest, Push, Run, Step, Use, Workflow};
 
 use super::{
     runners::{self, Platform},
@@ -43,13 +43,14 @@ pub(crate) fn run_tests_in(paths: &'static [&'static str], workflow: Workflow) -
         .add_env(( "CARGO_INCREMENTAL", 0 ))
 }
 
-// todo! missing the random tests that are in macos_tests for some reason
 pub(crate) fn run_tests() -> Workflow {
     let windows_tests = run_platform_tests(Platform::Windows);
     let linux_tests = run_platform_tests(Platform::Linux);
     let mac_tests = run_platform_tests(Platform::Mac);
     let migrations = check_postgres_and_protobuf_migrations();
     let doctests = doctests();
+    let check_dependencies = check_dependencies();
+    let check_other_binaries = check_workspace_binaries();
 
     named::workflow()
         .map(|workflow| {
@@ -69,6 +70,61 @@ pub(crate) fn run_tests() -> Workflow {
         .add_job(mac_tests.name, mac_tests.job)
         .add_job(migrations.name, migrations.job)
         .add_job(doctests.name, doctests.job)
+        .add_job(check_dependencies.name, check_dependencies.job)
+        .add_job(check_other_binaries.name, check_other_binaries.job)
+}
+
+fn check_dependencies() -> NamedJob {
+    fn install_cargo_machete() -> Step<Use> {
+        named::uses(
+            "clechasseur",
+            "rs-cargo",
+            "8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386", // v2
+        )
+        .add_with(("command", "install"))
+        .add_with(("args", "cargo-machete@0.7.0"))
+    }
+
+    fn run_cargo_machete() -> Step<Use> {
+        named::uses(
+            "clechasseur",
+            "rs-cargo",
+            "8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386", // v2
+        )
+        .add_with(("command", "machete"))
+    }
+
+    fn check_cargo_lock() -> Step<Run> {
+        named::bash("cargo update --locked --workspace")
+    }
+
+    fn check_vulnerable_dependencies() -> Step<Use> {
+        named::uses(
+            "actions",
+            "dependency-review-action",
+            "67d4f4bd7a9b17a0db54d2a7519187c65e339de8", // v4
+        )
+        .if_condition(Expression::new("github.event_name == 'pull_request'"))
+        .with(("license-check", false))
+    }
+
+    named::job(
+        release_job(&[])
+            .runs_on(runners::LINUX_SMALL)
+            .add_step(install_cargo_machete())
+            .add_step(run_cargo_machete())
+            .add_step(check_cargo_lock())
+            .add_step(check_vulnerable_dependencies()),
+    )
+}
+
+fn check_workspace_binaries() -> NamedJob {
+    named::job(
+        release_job(&[])
+            .runs_on(runners::LINUX_LARGE)
+            .add_step(steps::script("cargo build -p collab"))
+            .add_step(steps::script("cargo build --workspace --bins --examples")),
+    )
 }
 
 pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {

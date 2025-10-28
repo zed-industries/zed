@@ -14,6 +14,7 @@ on:
     - '**/Cargo.lock'
     - script/*licenses
     - '**/LICENSE*'
+    - .github/workflows/run_license_checks.yml
   push:
     branches:
     - main
@@ -23,6 +24,7 @@ on:
     - '**/Cargo.lock'
     - script/*licenses
     - '**/LICENSE*'
+    - .github/workflows/run_license_checks.yml
 jobs:
   check_licenses:
     runs-on: namespace-profile-2x4-ubuntu-2404

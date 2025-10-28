@@ -194,6 +194,39 @@ jobs:
         rm -rf ./../.cargo
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
+  check_dependencies:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: run_tests::check_dependencies::install_cargo_machete
+      uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386
+      with:
+        command: install
+        args: cargo-machete@0.7.0
+    - name: run_tests::check_dependencies::run_cargo_machete
+      uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386
+      with:
+        command: machete
+    - name: run_tests::check_dependencies::check_cargo_lock
+      run: cargo update --locked --workspace
+      shell: bash -euxo pipefail {0}
+    - name: run_tests::check_dependencies::check_vulnerable_dependencies
+      if: github.event_name == 'pull_request'
+      uses: actions/dependency-review-action@67d4f4bd7a9b17a0db54d2a7519187c65e339de8
+      with:
+        license-check: false
+    timeout-minutes: 60
+  check_workspace_binaries:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: namespace-profile-8x16-ubuntu-2204
+    steps:
+    - name: cargo build -p collab
+      run: cargo build -p collab
+      shell: bash -euxo pipefail {0}
+    - name: cargo build --workspace --bins --examples
+      run: cargo build --workspace --bins --examples
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 60
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
   cancel-in-progress: true

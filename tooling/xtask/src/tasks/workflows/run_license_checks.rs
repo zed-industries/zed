@@ -19,6 +19,7 @@ pub fn run_license_checks() -> Workflow {
                     "**/Cargo.lock",
                     "script/*licenses",
                     "**/LICENSE*",
+                    ".github/workflows/run_license_checks.yml",
                 ],
                 workflow,
             )
