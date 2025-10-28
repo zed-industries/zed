@@ -2473,7 +2473,7 @@ mod tests {
                 format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) @symbol ")
             );
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), &["MySymbol"]);
+            assert_eq!(current_completion_labels(editor), &["MySymbol one.txt L1"]);
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
