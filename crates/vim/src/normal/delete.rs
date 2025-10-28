@@ -214,9 +214,11 @@ fn ends_at_eof(map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>) -
 
 #[cfg(test)]
 mod test {
+    use gpui::KeyBinding;
     use indoc::indoc;
 
     use crate::{
+        PushObject,
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
@@ -764,5 +766,25 @@ mod test {
         )
         .await
         .assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_delete_object_scope(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "a",
+                PushObject {
+                    around: true,
+                    whitespace: false,
+                },
+                Some("VimControl && !menu"),
+            )]);
+        });
+
+        cx.set_state("some 'ˇquotes' here", Mode::Normal);
+        cx.simulate_keystrokes("d a '");
+        cx.assert_editor_state("some ˇ here");
     }
 }
