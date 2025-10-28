@@ -14,6 +14,7 @@ pub fn run_license_checks() -> Workflow {
         .map(|workflow| {
             run_tests_in(
                 &[
+                    // todo! cargo.toml as well?
                     "Cargo.lock",
                     "**/Cargo.lock",
                     "script/*licenses",

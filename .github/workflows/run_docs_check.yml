@@ -1,6 +1,10 @@
 # Generated from xtask::workflows::run_docs_checks
 # Rebuild with `cargo xtask workflows`.
 name: run_docs_checks
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+  CARGO_INCREMENTAL: '0'
 on:
   pull_request:
     branches:
