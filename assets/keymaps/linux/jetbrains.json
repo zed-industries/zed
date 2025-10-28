@@ -91,7 +91,7 @@
   {
     "context": "Workspace",
     "bindings": {
-      "ctrl-shift-f12": "workspace::CloseAllDocks",
+      "ctrl-shift-f12": "workspace::ToggleAllDocks",
       "ctrl-shift-r": ["pane::DeploySearch", { "replace_enabled": true }],
       "alt-shift-f10": "task::Spawn",
       "ctrl-e": "file_finder::Toggle",

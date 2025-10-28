@@ -176,6 +176,10 @@ async fn build_remote_server_from_source(
     };
     if platform.os == "linux" && use_musl {
         rust_flags.push_str(" -C target-feature=+crt-static");
+
+        if let Ok(path) = std::env::var("ZED_ZSTD_MUSL_LIB") {
+            rust_flags.push_str(&format!(" -C link-arg=-L{path}"));
+        }
     }
     if build_remote_server.contains("mold") {
         rust_flags.push_str(" -C link-arg=-fuse-ld=mold");
@@ -202,32 +206,26 @@ async fn build_remote_server_from_source(
         )
         .await?;
     } else {
-        let which = cx
-            .background_spawn(async move { which::which("zig") })
-            .await;
-
-        if which.is_err() {
-            #[cfg(not(target_os = "windows"))]
-            {
-                anyhow::bail!(
-                    "zig not found on $PATH, install zig (see https://ziglang.org/learn/getting-started or use zigup)"
-                )
-            }
-            #[cfg(target_os = "windows")]
-            {
-                anyhow::bail!(
-                    "zig not found on $PATH, install zig (use `winget install -e --id zig.zig` or see https://ziglang.org/learn/getting-started or use zigup)"
-                )
-            }
+        if which("zig", cx).await?.is_none() {
+            anyhow::bail!(if cfg!(not(windows)) {
+                "zig not found on $PATH, install zig (see https://ziglang.org/learn/getting-started or use zigup)"
+            } else {
+                "zig not found on $PATH, install zig (use `winget install -e --id zig.zig` or see https://ziglang.org/learn/getting-started or use zigup)"
+            });
         }
 
+        let rustup = which("rustup", cx)
+            .await?
+            .context("rustup not found on $PATH, install rustup (see https://rustup.rs/)")?;
         delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
         log::info!("adding rustup target");
-        run_cmd(Command::new("rustup").args(["target", "add"]).arg(&triple)).await?;
+        run_cmd(Command::new(rustup).args(["target", "add"]).arg(&triple)).await?;
 
-        delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
-        log::info!("installing cargo-zigbuild");
-        run_cmd(Command::new("cargo").args(["install", "--locked", "cargo-zigbuild"])).await?;
+        if which("cargo-zigbuild", cx).await?.is_none() {
+            delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
+            log::info!("installing cargo-zigbuild");
+            run_cmd(Command::new("cargo").args(["install", "--locked", "cargo-zigbuild"])).await?;
+        }
 
         delegate.set_status(
             Some(&format!(
@@ -270,7 +268,9 @@ async fn build_remote_server_from_source(
         #[cfg(target_os = "windows")]
         {
             // On Windows, we use 7z to compress the binary
-            let seven_zip = which::which("7z.exe").context("7z.exe not found on $PATH, install it (e.g. with `winget install -e --id 7zip.7zip`) or, if you don't want this behaviour, set $env:ZED_BUILD_REMOTE_SERVER=\"nocompress\"")?;
+            let seven_zip = which("7z.exe",cx)
+                .await?
+                .context("7z.exe not found on $PATH, install it (e.g. with `winget install -e --id 7zip.7zip`) or, if you don't want this behaviour, set $env:ZED_BUILD_REMOTE_SERVER=\"nocompress\"")?;
             let gz_path = format!("target/remote_server/{}/debug/remote_server.gz", triple);
             if smol::fs::metadata(&gz_path).await.is_ok() {
                 smol::fs::remove_file(&gz_path).await?;
@@ -292,4 +292,23 @@ async fn build_remote_server_from_source(
     };
 
     Ok(Some(path))
+}
+
+#[cfg(debug_assertions)]
+async fn which(
+    binary_name: impl AsRef<str>,
+    cx: &mut AsyncApp,
+) -> Result<Option<std::path::PathBuf>> {
+    let binary_name = binary_name.as_ref().to_string();
+    let binary_name_cloned = binary_name.clone();
+    let res = cx
+        .background_spawn(async move { which::which(binary_name_cloned) })
+        .await;
+    match res {
+        Ok(path) => Ok(Some(path)),
+        Err(which::Error::CannotFindBinaryPath) => Ok(None),
+        Err(err) => Err(anyhow::anyhow!(
+            "Failed to run 'which' to find the binary '{binary_name}': {err}"
+        )),
+    }
 }

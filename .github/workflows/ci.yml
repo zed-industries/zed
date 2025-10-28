@@ -547,7 +547,7 @@ jobs:
           ref: ${{ github.ref }}
 
       - name: Limit target directory size
-        run: script/clear-target-dir-if-larger-than 100
+        run: script/clear-target-dir-if-larger-than 300
 
       - name: Determine version and release channel
         run: |
