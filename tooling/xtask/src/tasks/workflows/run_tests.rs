@@ -124,8 +124,11 @@ fn check_workspace_binaries() -> NamedJob {
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
+            .add_step(steps::setup_cargo_config(Platform::Linux))
+            .map(steps::install_linux_dependencies)
             .add_step(steps::script("cargo build -p collab"))
-            .add_step(steps::script("cargo build --workspace --bins --examples")),
+            .add_step(steps::script("cargo build --workspace --bins --examples"))
+            .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )
 }
 
