@@ -12,6 +12,8 @@ pub(crate) fn run_tests() -> Workflow {
     let migrations = check_postgres_and_protobuf_migrations();
     let style = style();
     let docs = check_docs();
+    let action_lint = actionlint();
+    let doctests = doctests();
 
     named::workflow()
         // todo! inputs?
@@ -22,6 +24,8 @@ pub(crate) fn run_tests() -> Workflow {
         .add_job(mac_tests.name, mac_tests.job)
         .add_job(migrations.name, migrations.job)
         .add_job(docs.name, docs.job)
+        .add_job(action_lint.name, action_lint.job)
+        .add_job(doctests.name, doctests.job)
 }
 
 pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
@@ -169,15 +173,6 @@ fn check_docs() -> NamedJob {
         .with(("mdbook-version", "0.4.37"))
     }
 
-    fn cache_dependencies() -> Step<Use> {
-        named::uses(
-            "swatinem",
-            "rust-cache",
-            "9d47c6ad4b02e050fd481d890b2ea34778fd09d6", // v2
-        )
-        .with(("save-if", "${{ github.ref == 'refs/heads/main' }}"))
-    }
-
     fn build_docs() -> Step<Run> {
         named::bash(indoc::indoc! {r#"
             mkdir -p target/deploy
@@ -187,15 +182,61 @@ fn check_docs() -> NamedJob {
 
     named::job(
         release_job(&[])
-            .runs_on(runners::LINUX_LARGE)
+            .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(Platform::Linux))
             // todo(ci): un-inline build_docs/action.yml here
-            .add_step(cache_dependencies())
+            .add_step(steps::cache_rust_dependencies())
             .add_step(lychee_link_check("./docs/src/**/*")) // check markdown links
-            .add_step(steps::script("./script/linux"))
+            .add_step(steps::setup_linux())
             .add_step(install_mdbook())
             .add_step(build_docs())
             .add_step(lychee_link_check("target/deploy/docs")), // check links in generated html
+    )
+}
+
+fn actionlint() -> NamedJob {
+    const ACTION_LINT_STEP_ID: &'static str = "get_actionlint";
+
+    fn download_actionlint() -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            curl -sSL https://github.com/rhysd/actionlint/releases/download/v1.6.1/actionlint_linux_amd64.tar.gz | tar xz
+            mv actionlint_linux_amd64/actionlint /usr/local/bin/
+        "#}).id(ACTION_LINT_STEP_ID)
+    }
+
+    fn run_actionlint() -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            ${{ steps.get_actionlint.outputs.executable }} -color
+        "#})
+        .id(ACTION_LINT_STEP_ID)
+    }
+
+    named::job(
+        release_job(&[])
+            .runs_on(runners::LINUX_SMALL)
+            .add_step(steps::checkout_repo())
+            .add_step(download_actionlint())
+            .add_step(run_actionlint()),
+    )
+}
+
+fn doctests() -> NamedJob {
+    fn run_doctests() -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            cargo test --workspace --doc --no-fail-fast
+        "#})
+        .id("run_doctests")
+    }
+
+    named::job(
+        release_job(&[])
+            .runs_on(runners::LINUX_DEFAULT)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::cache_rust_dependencies())
+            .add_step(steps::setup_linux())
+            .add_step(steps::setup_cargo_config(Platform::Linux))
+            .add_step(run_doctests())
+            .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )
 }

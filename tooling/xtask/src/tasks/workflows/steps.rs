@@ -105,6 +105,19 @@ pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
     }
 }
 
+pub(crate) fn cache_rust_dependencies() -> Step<Use> {
+    named::uses(
+        "swatinem",
+        "rust-cache",
+        "9d47c6ad4b02e050fd481d890b2ea34778fd09d6", // v2
+    )
+    .with(("save-if", "${{ github.ref == 'refs/heads/main' }}"))
+}
+
+pub(crate) fn setup_linux() -> Step<Run> {
+    named::bash("./script/linux")
+}
+
 pub fn script(name: &str) -> Step<Run> {
     if name.ends_with(".ps1") {
         Step::new(name).run(name).shell(PWSH_SHELL)

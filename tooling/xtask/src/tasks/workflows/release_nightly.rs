@@ -139,7 +139,7 @@ fn update_nightly_tag_job(deps: &[&NamedJob]) -> NamedJob {
     NamedJob {
         name: "update_nightly_tag".to_owned(),
         job: steps::release_job(deps)
-            .runs_on(runners::LINUX_CHEAP)
+            .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo().add_with(("fetch-depth", 0)))
             .add_step(update_nightly_tag())
             .add_step(create_sentry_release()),
