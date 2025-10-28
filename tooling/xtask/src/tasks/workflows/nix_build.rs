@@ -33,12 +33,14 @@ pub fn nix_build() -> Workflow {
         Arch::X86_64,
         &input_flake_output,
         Some(&input_cachix_filter),
+        &[],
     );
     let mac_arm = build_nix(
         Platform::Mac,
         Arch::ARM64,
         &input_flake_output,
         Some(&input_cachix_filter),
+        &[],
     );
 
     named::workflow()
@@ -56,6 +58,7 @@ pub(crate) fn build_nix(
     arch: Arch,
     flake_output: &str,
     cachix_filter: Option<&str>,
+    deps: &[&NamedJob],
 ) -> NamedJob {
     let runner = match platform {
         Platform::Windows => unimplemented!(),
@@ -77,6 +80,10 @@ pub(crate) fn build_nix(
         ))
         .add_env(("GIT_LFS_SKIP_SMUDGE", "1")) // breaks the livekit rust sdk examples which we don't actually depend on
         .add_step(steps::checkout_repo());
+
+    if deps.len() > 0 {
+        job = job.needs(deps.iter().map(|d| d.name.clone()).collect::<Vec<String>>());
+    }
 
     job = if platform == Platform::Linux {
         job.add_step(install_nix())
