@@ -17,7 +17,7 @@ use crate::{
     Vim,
     motion::{Motion, MotionKind, first_non_whitespace, next_line_end, start_of_line},
     object::Object,
-    state::{Mark, Mode, ObjectScope, Operator},
+    state::{Mark, Mode, Operator},
 };
 
 actions!(
@@ -427,14 +427,9 @@ impl Vim {
         cx: &mut Context<Vim>,
     ) {
         if let Some(Operator::Object { scope }) = self.active_operator() {
-            let around = match scope {
-                ObjectScope::Around | ObjectScope::AroundTrimmed => true,
-                ObjectScope::Inside => false,
-            };
-
             self.pop_operator(window, cx);
             let current_mode = self.mode;
-            let target_mode = object.target_visual_mode(current_mode, around);
+            let target_mode = object.target_visual_mode(current_mode, &scope);
             if target_mode != current_mode {
                 self.switch_mode(target_mode, true, window, cx);
             }
@@ -458,7 +453,7 @@ impl Vim {
 
                         let original_point = selection.tail().to_point(map);
 
-                        if let Some(range) = object.range(map, mut_selection, around, true, count) {
+                        if let Some(range) = object.range(map, mut_selection, &scope, count) {
                             if !range.is_empty() {
                                 let expand_both_ways = object.always_expands_both_ways()
                                     || selection.is_empty()
@@ -469,13 +464,9 @@ impl Vim {
                                         && selection.end == range.end
                                         && object.always_expands_both_ways()
                                     {
-                                        if let Some(range) = object.range(
-                                            map,
-                                            selection.clone(),
-                                            around,
-                                            true,
-                                            count,
-                                        ) {
+                                        if let Some(range) =
+                                            object.range(map, selection.clone(), &scope, count)
+                                        {
                                             selection.start = range.start;
                                             selection.end = range.end;
                                         }

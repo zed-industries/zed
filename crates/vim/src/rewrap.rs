@@ -1,4 +1,9 @@
-use crate::{Vim, motion::Motion, object::Object, state::Mode};
+use crate::{
+    Vim,
+    motion::Motion,
+    object::Object,
+    state::{Mode, ObjectScope},
+};
 use collections::HashMap;
 use editor::{Bias, Editor, RewrapOptions, SelectionEffects, display_map::ToDisplayPoint};
 use gpui::{Context, Window, actions};
@@ -94,7 +99,7 @@ impl Vim {
     pub(crate) fn rewrap_object(
         &mut self,
         object: Object,
-        around: bool,
+        scope: ObjectScope,
         times: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -107,7 +112,7 @@ impl Vim {
                     s.move_with(|map, selection| {
                         let anchor = map.display_point_to_anchor(selection.head(), Bias::Right);
                         original_positions.insert(selection.id, anchor);
-                        object.expand_selection(map, selection, around, true, times);
+                        object.expand_selection(map, selection, &scope, times);
                     });
                 });
                 editor.rewrap_impl(

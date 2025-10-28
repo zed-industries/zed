@@ -2,7 +2,7 @@ use crate::{
     Vim,
     motion::{self, Motion, MotionKind},
     object::Object,
-    state::Mode,
+    state::{Mode, ObjectScope},
 };
 use editor::{
     Bias, DisplayPoint,
@@ -105,7 +105,7 @@ impl Vim {
     pub fn change_object(
         &mut self,
         object: Object,
-        around: bool,
+        scope: ObjectScope,
         times: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -117,8 +117,7 @@ impl Vim {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(|map, selection| {
-                        objects_found |=
-                            object.expand_selection(map, selection, around, true, times);
+                        objects_found |= object.expand_selection(map, selection, &scope, times);
                     });
                 });
                 if objects_found {

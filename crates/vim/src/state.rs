@@ -2,7 +2,10 @@ use crate::command::command_interceptor;
 use crate::motion::MotionKind;
 use crate::normal::repeat::Replayer;
 use crate::surrounds::SurroundsType;
-use crate::{ToggleMarksView, ToggleRegistersView, UseSystemClipboard, Vim, VimAddon, VimSettings};
+use crate::{
+    PushObject, ToggleMarksView, ToggleRegistersView, UseSystemClipboard, Vim, VimAddon,
+    VimSettings,
+};
 use crate::{motion::Motion, object::Object};
 use anyhow::Result;
 use collections::HashMap;
@@ -169,6 +172,37 @@ pub(crate) enum ObjectScope {
     /// Similar to `Around`, but does not include whitespace adjacent to
     /// the delimiters.
     AroundTrimmed,
+}
+
+impl ObjectScope {
+    // TODO!: This is meant to be removed after everything has been migrated to
+    // work with `ObjectScope` directly.
+    pub(crate) fn around(&self) -> bool {
+        match self {
+            ObjectScope::Inside => false,
+            ObjectScope::Around => true,
+            ObjectScope::AroundTrimmed => true,
+        }
+    }
+
+    // TODO!: This is meant to be removed after everything has been migrated to
+    // work with `ObjectScope` directly.
+    pub(crate) fn whitespace(&self) -> bool {
+        match self {
+            ObjectScope::Inside | ObjectScope::AroundTrimmed => false,
+            ObjectScope::Around => true,
+        }
+    }
+
+    /// Create the `ObjectScope` from a `PushObject` action, taking into account
+    /// its `around` and `whitespace` values.
+    pub(crate) fn from_action(action: &PushObject) -> Self {
+        match (action.around, action.whitespace) {
+            (false, _) => ObjectScope::Inside,
+            (true, true) => ObjectScope::Around,
+            (true, false) => ObjectScope::AroundTrimmed,
+        }
+    }
 }
 
 #[derive(Default, Clone, Debug)]

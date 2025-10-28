@@ -1,4 +1,4 @@
-use crate::{Vim, motion::Motion, object::Object};
+use crate::{ObjectScope, Vim, motion::Motion, object::Object};
 use collections::HashMap;
 use editor::{Bias, SelectionEffects, display_map::ToDisplayPoint};
 use gpui::{Context, Window};
@@ -45,7 +45,7 @@ impl Vim {
     pub fn toggle_comments_object(
         &mut self,
         object: Object,
-        around: bool,
+        scope: ObjectScope,
         times: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -58,7 +58,7 @@ impl Vim {
                     s.move_with(|map, selection| {
                         let anchor = map.display_point_to_anchor(selection.head(), Bias::Right);
                         original_positions.insert(selection.id, anchor);
-                        object.expand_selection(map, selection, around, true, times);
+                        object.expand_selection(map, selection, &scope, times);
                     });
                 });
                 editor.toggle_comments(&Default::default(), window, cx);

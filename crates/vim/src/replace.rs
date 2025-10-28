@@ -2,7 +2,7 @@ use crate::{
     Vim,
     motion::{self, Motion},
     object::Object,
-    state::Mode,
+    state::{Mode, ObjectScope},
 };
 use editor::{
     Anchor, Bias, Editor, EditorSnapshot, SelectionEffects, ToOffset, ToPoint,
@@ -143,7 +143,7 @@ impl Vim {
     pub fn exchange_object(
         &mut self,
         object: Object,
-        around: bool,
+        scope: ObjectScope,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -154,7 +154,7 @@ impl Vim {
                 .selections
                 .newest_display(&editor.display_snapshot(cx));
             let snapshot = editor.snapshot(window, cx);
-            object.expand_selection(&snapshot, &mut selection, around, true, None);
+            object.expand_selection(&snapshot, &mut selection, &scope, None);
             let start = snapshot
                 .buffer_snapshot()
                 .anchor_before(selection.start.to_point(&snapshot));

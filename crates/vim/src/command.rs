@@ -47,7 +47,7 @@ use crate::{
         search::{FindCommand, ReplaceCommand, Replacement},
     },
     object::Object,
-    state::{Mark, Mode},
+    state::{Mark, Mode, ObjectScope},
     visual::VisualDeleteLine,
 };
 
@@ -2043,7 +2043,7 @@ impl Vim {
     pub fn shell_command_object(
         &mut self,
         object: Object,
-        around: bool,
+        scope: ObjectScope,
         window: &mut Window,
         cx: &mut Context<Vim>,
     ) {
@@ -2057,7 +2057,7 @@ impl Vim {
                 .selections
                 .newest_display(&editor.display_snapshot(cx));
             let range = object
-                .range(&snapshot, start.clone(), around, true, None)
+                .range(&snapshot, start.clone(), &scope, None)
                 .unwrap_or(start.range());
             if range.start != start.start {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {

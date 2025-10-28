@@ -11,7 +11,7 @@ use crate::{
     Vim,
     motion::{Motion, MotionKind},
     object::Object,
-    state::{Mode, Register},
+    state::{Mode, ObjectScope, Register},
 };
 
 /// Pastes text from the specified register at the cursor position.
@@ -233,7 +233,7 @@ impl Vim {
     pub fn replace_with_register_object(
         &mut self,
         object: Object,
-        around: bool,
+        scope: ObjectScope,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -244,7 +244,7 @@ impl Vim {
                 editor.set_clip_at_line_ends(false, cx);
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|map, selection| {
-                        object.expand_selection(map, selection, around, true, None);
+                        object.expand_selection(map, selection, &scope, None);
                     });
                 });
 

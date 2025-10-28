@@ -4,7 +4,7 @@ use crate::{
     Vim, VimSettings,
     motion::{Motion, MotionKind},
     object::Object,
-    state::{Mode, Register},
+    state::{Mode, ObjectScope, Register},
 };
 use collections::HashMap;
 use editor::{ClipboardSelection, Editor, SelectionEffects};
@@ -65,7 +65,7 @@ impl Vim {
     pub fn yank_object(
         &mut self,
         object: Object,
-        around: bool,
+        scope: ObjectScope,
         times: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -76,7 +76,7 @@ impl Vim {
                 let mut start_positions: HashMap<_, _> = Default::default();
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|map, selection| {
-                        object.expand_selection(map, selection, around, true, times);
+                        object.expand_selection(map, selection, &scope, times);
                         let start_position = (selection.start, selection.goal);
                         start_positions.insert(selection.id, start_position);
                     });

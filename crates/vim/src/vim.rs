@@ -662,12 +662,7 @@ impl Vim {
                 Vim::globals(cx).forced_motion = true;
             });
             Vim::action(editor, cx, |vim, action: &PushObject, window, cx| {
-                let scope = match (action.around, action.whitespace) {
-                    (false, _) => ObjectScope::Inside,
-                    (true, true) => ObjectScope::Around,
-                    (true, false) => ObjectScope::AroundTrimmed,
-                };
-
+                let scope = ObjectScope::from_action(action);
                 vim.push_operator(Operator::Object { scope }, window, cx)
             });
 

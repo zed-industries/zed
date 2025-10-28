@@ -1,5 +1,5 @@
 use crate::{
-    Vim,
+    ObjectScope, Vim,
     motion::{Motion, MotionKind},
     object::Object,
     state::Mode,
@@ -92,8 +92,7 @@ impl Vim {
     pub fn delete_object(
         &mut self,
         object: Object,
-        around: bool,
-        whitespace: bool,
+        scope: ObjectScope,
         times: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -110,7 +109,7 @@ impl Vim {
                 // to the same column it was before deletion if the line is not empty or only
                 // contains whitespace
                 let mut column_before_move: HashMap<_, _> = Default::default();
-                let target_mode = object.target_visual_mode(vim.mode, around);
+                let target_mode = object.target_visual_mode(vim.mode, &scope);
 
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(|map, selection| {
@@ -119,7 +118,7 @@ impl Vim {
                             column_before_move.insert(selection.id, cursor_point.column);
                         }
 
-                        object.expand_selection(map, selection, around, whitespace, times);
+                        object.expand_selection(map, selection, &scope, times);
                         let offset_range = selection.map(|p| p.to_offset(map, Bias::Left)).range();
                         let mut move_selection_start_to_previous_line =
                             |map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>| {
@@ -146,7 +145,10 @@ impl Vim {
                         // If expanded range contains only newlines and
                         // the object is around or sentence, expand to include a newline
                         // at the end or start
-                        if (around || object == Object::Sentence) && contains_only_newlines {
+                        if (matches!(scope, ObjectScope::AroundTrimmed | ObjectScope::Around)
+                            || object == Object::Sentence)
+                            && contains_only_newlines
+                        {
                             if end_at_newline {
                                 move_selection_end_to_next_line(map, selection);
                             } else {
@@ -156,7 +158,9 @@ impl Vim {
 
                         // Does post-processing for the trailing newline and EOF
                         // when not cancelled.
-                        let cancelled = around && selection.start == selection.end;
+                        let cancelled =
+                            matches!(scope, ObjectScope::AroundTrimmed | ObjectScope::Around)
+                                && selection.start == selection.end;
                         if object == Object::Paragraph && !cancelled {
                             // EOF check should be done before including a trailing newline.
                             if ends_at_eof(map, selection) {

@@ -1,7 +1,7 @@
 use text::SelectionGoal;
 use ui::{Context, Window};
 
-use crate::{Vim, helix::object::cursor_range, object::Object};
+use crate::{Vim, helix::object::cursor_range, object::Object, state::ObjectScope};
 
 impl Vim {
     /// Selects the object each cursor is over.
@@ -9,7 +9,7 @@ impl Vim {
     pub fn select_current_object(
         &mut self,
         object: Object,
-        around: bool,
+        scope: ObjectScope,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -18,10 +18,9 @@ impl Vim {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     let Some(range) = object
-                        .helix_range(map, selection.clone(), around)
+                        .helix_range(map, selection.clone(), scope.around())
                         .unwrap_or({
-                            let vim_range =
-                                object.range(map, selection.clone(), around, true, None);
+                            let vim_range = object.range(map, selection.clone(), &scope, None);
                             vim_range.filter(|r| r.start <= cursor_range(selection, map).start)
                         })
                     else {

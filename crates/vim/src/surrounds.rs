@@ -2,7 +2,7 @@ use crate::{
     Vim,
     motion::{self, Motion},
     object::{Object, surrounding_markers},
-    state::Mode,
+    state::{Mode, ObjectScope},
 };
 use editor::{Bias, movement};
 use gpui::{Context, Window};
@@ -53,7 +53,13 @@ impl Vim {
                 for selection in &display_selections {
                     let range = match &target {
                         SurroundsType::Object(object, around) => {
-                            object.range(&display_map, selection.clone(), *around, true, None)
+                            // TODO!: Should `SurroundsType::Object` be updated to also leverage `ObjectScope`?
+                            let scope = match around {
+                                true => ObjectScope::Around,
+                                false => ObjectScope::Inside,
+                            };
+
+                            object.range(&display_map, selection.clone(), &scope, None)
                         }
                         SurroundsType::Motion(motion) => {
                             motion
@@ -152,8 +158,9 @@ impl Vim {
 
                 for selection in &display_selections {
                     let start = selection.start.to_offset(&display_map, Bias::Left);
+                    let scope = ObjectScope::Around;
                     if let Some(range) =
-                        pair_object.range(&display_map, selection.clone(), true, true, None)
+                        pair_object.range(&display_map, selection.clone(), &scope, None)
                     {
                         // If the current parenthesis object is single-line,
                         // then we need to filter whether it is the current line or not
@@ -265,8 +272,9 @@ impl Vim {
 
                     for selection in &selections {
                         let start = selection.start.to_offset(&display_map, Bias::Left);
+                        let scope = ObjectScope::Around;
                         if let Some(range) =
-                            target.range(&display_map, selection.clone(), true, true, None)
+                            target.range(&display_map, selection.clone(), &scope, None)
                         {
                             if !target.is_multiline() {
                                 let is_same_row = selection.start.row() == range.start.row()
@@ -391,8 +399,9 @@ impl Vim {
 
                     for selection in &selections {
                         let start = selection.start.to_offset(&display_map, Bias::Left);
+                        let scope = ObjectScope::Around;
                         if let Some(range) =
-                            object.range(&display_map, selection.clone(), true, true, None)
+                            object.range(&display_map, selection.clone(), &scope, None)
                         {
                             // If the current parenthesis object is single-line,
                             // then we need to filter whether it is the current line or not

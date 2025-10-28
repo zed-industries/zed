@@ -9,7 +9,7 @@ use crate::{
     motion::Motion,
     normal::{ChangeCase, ConvertToLowerCase, ConvertToRot13, ConvertToRot47, ConvertToUpperCase},
     object::Object,
-    state::Mode,
+    state::{Mode, ObjectScope},
 };
 
 pub enum ConvertTarget {
@@ -80,7 +80,7 @@ impl Vim {
     pub fn convert_object(
         &mut self,
         object: Object,
-        around: bool,
+        scope: ObjectScope,
         mode: ConvertTarget,
         times: Option<usize>,
         window: &mut Window,
@@ -93,7 +93,7 @@ impl Vim {
                 let mut original_positions: HashMap<_, _> = Default::default();
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|map, selection| {
-                        object.expand_selection(map, selection, around, true, times);
+                        object.expand_selection(map, selection, &scope, times);
                         original_positions.insert(
                             selection.id,
                             map.display_point_to_anchor(selection.start, Bias::Left),
