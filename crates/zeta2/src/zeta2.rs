@@ -1047,41 +1047,39 @@ impl Zeta {
             return;
         };
 
-        zeta_project
-            .refresh_context_task
-            .get_or_insert(cx.spawn(async move |this, cx| {
-                let related_excerpts = this
-                    .update(cx, |this, cx| {
-                        let Some(zeta_project) = this.projects.get(&project.entity_id()) else {
-                            return Task::ready(anyhow::Ok(HashMap::default()));
-                        };
-
-                        let ContextMode::Llm(options) = &this.options().context else {
-                            return Task::ready(anyhow::Ok(HashMap::default()));
-                        };
-
-                        find_related_excerpts(
-                            buffer.clone(),
-                            cursor_position,
-                            &project,
-                            zeta_project.events.iter(),
-                            options,
-                            cx,
-                        )
-                    })
-                    .ok()?
-                    .await
-                    .log_err()
-                    .unwrap_or_default();
-                this.update(cx, |this, _cx| {
-                    let Some(zeta_project) = this.projects.get_mut(&project.entity_id()) else {
-                        return;
+        zeta_project.refresh_context_task = Some(cx.spawn(async move |this, cx| {
+            let related_excerpts = this
+                .update(cx, |this, cx| {
+                    let Some(zeta_project) = this.projects.get(&project.entity_id()) else {
+                        return Task::ready(anyhow::Ok(HashMap::default()));
                     };
-                    zeta_project.context = Some(related_excerpts);
-                    zeta_project.refresh_context_task.take();
+
+                    let ContextMode::Llm(options) = &this.options().context else {
+                        return Task::ready(anyhow::Ok(HashMap::default()));
+                    };
+
+                    find_related_excerpts(
+                        buffer.clone(),
+                        cursor_position,
+                        &project,
+                        zeta_project.events.iter(),
+                        options,
+                        cx,
+                    )
                 })
-                .ok()
-            }));
+                .ok()?
+                .await
+                .log_err()
+                .unwrap_or_default();
+            this.update(cx, |this, _cx| {
+                let Some(zeta_project) = this.projects.get_mut(&project.entity_id()) else {
+                    return;
+                };
+                zeta_project.context = Some(related_excerpts);
+                zeta_project.refresh_context_task.take();
+            })
+            .ok()
+        }));
     }
 
     fn gather_nearby_diagnostics(
