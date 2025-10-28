@@ -1637,7 +1637,7 @@ impl OutlinePanel {
         };
 
         let mut buffers_to_unfold = HashSet::default();
-        let entries_to_remove = self
+        let entries_to_remove: HashSet<_> = self
             .cached_entries
             .iter()
             .filter_map(|cached_entry| match &cached_entry.entry {
@@ -1675,12 +1675,9 @@ impl OutlinePanel {
                 }
                 PanelEntry::Search(_) => None,
             })
-            .collect::<Vec<_>>();
+            .collect();
 
-        if !entries_to_remove.is_empty() {
-            let to_remove: HashSet<_> = entries_to_remove.into_iter().collect();
-            self.collapsed_entries.retain(|e| !to_remove.contains(e));
-        }
+        self.collapsed_entries.retain(|e| !entries_to_remove.contains(e));
 
         active_editor.update(cx, |editor, cx| {
             buffers_to_unfold.retain(|buffer_id| editor.is_buffer_folded(*buffer_id, cx));
