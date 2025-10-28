@@ -29,10 +29,10 @@ jobs:
       with:
         clean: false
     - id: get_actionlint
-      name: run_tests::run_action_checks::actionlint::download_actionlint
+      name: run_action_checks::download_actionlint
       run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
       shell: bash -euxo pipefail {0}
-    - name: run_tests::run_action_checks::actionlint::run_actionlint
+    - name: run_action_checks::run_actionlint
       run: |
         ${{ steps.get_actionlint.outputs.executable }} -color
       shell: bash -euxo pipefail {0}
