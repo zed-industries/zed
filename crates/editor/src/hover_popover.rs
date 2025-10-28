@@ -27,7 +27,6 @@ use ui::{Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
 use url::Url;
 use util::TryFutureExt;
 use workspace::{OpenOptions, OpenVisible, Workspace};
-pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
 pub const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
@@ -290,15 +289,18 @@ fn show_hover(
             let delay = if ignore_timeout {
                 None
             } else {
+                let lsp_request_early = hover_popover_delay / 2;
+                cx.background_executor()
+                    .timer(Duration::from_millis(
+                        hover_popover_delay - lsp_request_early,
+                    ))
+                    .await;
+
                 // Construct delay task to wait for later
                 let total_delay = Some(
                     cx.background_executor()
-                        .timer(Duration::from_millis(hover_popover_delay)),
+                        .timer(Duration::from_millis(lsp_request_early)),
                 );
-
-                cx.background_executor()
-                    .timer(Duration::from_millis(HOVER_REQUEST_DELAY_MILLIS))
-                    .await;
                 total_delay
             };
 
@@ -307,7 +309,6 @@ fn show_hover(
             if let Some(delay) = delay {
                 delay.await;
             }
-
             let offset = anchor.to_offset(&snapshot.buffer_snapshot());
             let local_diagnostic = if all_diagnostics_active {
                 None

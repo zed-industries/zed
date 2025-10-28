@@ -274,9 +274,10 @@ impl BranchDiff {
                     .as_ref()
                     .and_then(|t| t.entries.get(&item.repo_path))
                     .cloned();
-                let status = self
-                    .merge_statuses(Some(item.status), branch_diff.as_ref())
-                    .unwrap();
+                let Some(status) = self.merge_statuses(Some(item.status), branch_diff.as_ref())
+                else {
+                    continue;
+                };
                 if !status.has_changes() {
                     continue;
                 }

@@ -275,7 +275,7 @@ impl VsCodeSettings {
             }),
             redact_private_values: None,
             relative_line_numbers: self.read_enum("editor.lineNumbers", |s| match s {
-                "relative" => Some(true),
+                "relative" => Some(RelativeLineNumbers::Enabled),
                 _ => None,
             }),
             rounded_selection: self.read_bool("editor.roundedSelection"),

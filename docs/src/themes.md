@@ -10,13 +10,13 @@ Navigating through the theme list by moving up and down will change the theme in
 
 ## Installing more Themes
 
-More themes are available from the Extensions page, which you can access via the command palette with "zed: Extensions" or the [Zed website](https://zed.dev/extensions).
+More themes are available from the Extensions page, which you can access via the command palette with `zed: extensions` or the [Zed website](https://zed.dev/extensions).
 
 Many popular themes have been ported to Zed, and if you're struggling to choose one, visit [zed-themes.com](https://zed-themes.com), a third-party gallery with visible previews for many of them.
 
 ## Configuring a Theme
 
-Your selected theme is stored in your settings file. You can open your settings file from the command palette with "zed: Open Settings" (bound to `cmd-,` on macOS and `ctrl-,` on Linux).
+Your selected theme is stored in your settings file. You can open your settings file from the command palette with `zed: open settings file` (bound to `cmd-alt-,` on macOS and `ctrl-alt-,` on Linux).
 
 By default, Zed maintains two themes: one for light mode and one for dark mode. You can set the mode to `"dark"` or `"light"` to ignore the current system mode.
 

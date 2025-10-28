@@ -108,7 +108,6 @@ use gpui::{
     UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
     div, point, prelude::*, pulsating_between, px, relative, size,
 };
-use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{HoverLink, HoveredLinkState, find_file};
 use hover_popover::{HoverState, hide_hover};
 use indent_guides::ActiveIndentGuidesState;
@@ -162,11 +161,12 @@ use project::{
 use rand::seq::SliceRandom;
 use rpc::{ErrorCode, ErrorExt, proto::PeerId};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager};
-use selections_collection::{
-    MutableSelectionsCollection, SelectionsCollection, resolve_selections,
-};
+use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
-use settings::{GitGutterSetting, Settings, SettingsLocation, SettingsStore, update_settings_file};
+use settings::{
+    GitGutterSetting, RelativeLineNumbers, Settings, SettingsLocation, SettingsStore,
+    update_settings_file,
+};
 use smallvec::{SmallVec, smallvec};
 use snippet::Snippet;
 use std::{
@@ -212,6 +212,7 @@ use crate::{
         inlay_hints::{LspInlayHintData, inlay_hint_settings},
     },
     scroll::{ScrollOffset, ScrollPixelOffset},
+    selections_collection::resolve_selections_wrapping_blocks,
     signature_help::{SignatureHelpHiddenBy, SignatureHelpState},
 };
 
@@ -3136,7 +3137,7 @@ impl Editor {
             refresh_linked_ranges(self, window, cx);
 
             self.refresh_selected_text_highlights(false, window, cx);
-            refresh_matching_bracket_highlights(self, cx);
+            self.refresh_matching_bracket_highlights(window, cx);
             self.update_visible_edit_prediction(window, cx);
             self.edit_prediction_requires_modifier_in_indent_conflict = true;
             self.inline_blame_popover.take();
@@ -4320,16 +4321,17 @@ impl Editor {
             let new_anchor_selections = new_selections.iter().map(|e| &e.0);
             let new_selection_deltas = new_selections.iter().map(|e| e.1);
             let map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
-            let new_selections = resolve_selections::<usize, _>(new_anchor_selections, &map)
-                .zip(new_selection_deltas)
-                .map(|(selection, delta)| Selection {
-                    id: selection.id,
-                    start: selection.start + delta,
-                    end: selection.end + delta,
-                    reversed: selection.reversed,
-                    goal: SelectionGoal::None,
-                })
-                .collect::<Vec<_>>();
+            let new_selections =
+                resolve_selections_wrapping_blocks::<usize, _>(new_anchor_selections, &map)
+                    .zip(new_selection_deltas)
+                    .map(|(selection, delta)| Selection {
+                        id: selection.id,
+                        start: selection.start + delta,
+                        end: selection.end + delta,
+                        reversed: selection.reversed,
+                        goal: SelectionGoal::None,
+                    })
+                    .collect::<Vec<_>>();
 
             let mut i = 0;
             for (position, delta, selection_id, pair) in new_autoclose_regions {
@@ -6730,6 +6732,7 @@ impl Editor {
 
     fn prepare_highlight_query_from_selection(
         &mut self,
+        window: &Window,
         cx: &mut Context<Editor>,
     ) -> Option<(String, Range<Anchor>)> {
         if matches!(self.mode, EditorMode::SingleLine) {
@@ -6741,24 +6744,23 @@ impl Editor {
         if self.selections.count() != 1 || self.selections.line_mode() {
             return None;
         }
-        let selection = self.selections.newest_anchor();
-        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        let selection_point_range = selection.start.to_point(&multi_buffer_snapshot)
-            ..selection.end.to_point(&multi_buffer_snapshot);
+        let snapshot = self.snapshot(window, cx);
+        let selection = self.selections.newest::<Point>(&snapshot);
         // If the selection spans multiple rows OR it is empty
-        if selection_point_range.start.row != selection_point_range.end.row
-            || selection_point_range.start.column == selection_point_range.end.column
+        if selection.start.row != selection.end.row
+            || selection.start.column == selection.end.column
         {
             return None;
         }
-
-        let query = multi_buffer_snapshot
-            .text_for_range(selection.range())
+        let selection_anchor_range = selection.range().to_anchors(snapshot.buffer_snapshot());
+        let query = snapshot
+            .buffer_snapshot()
+            .text_for_range(selection_anchor_range.clone())
             .collect::<String>();
         if query.trim().is_empty() {
             return None;
         }
-        Some((query, selection.range()))
+        Some((query, selection_anchor_range))
     }
 
     fn update_selection_occurrence_highlights(
@@ -6911,7 +6913,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let Some((query_text, query_range)) = self.prepare_highlight_query_from_selection(cx)
+        let Some((query_text, query_range)) =
+            self.prepare_highlight_query_from_selection(window, cx)
         else {
             self.clear_background_highlights::<SelectedTextHighlight>(cx);
             self.quick_selection_highlight_task.take();
@@ -10519,7 +10522,7 @@ impl Editor {
 
         for selection in self
             .selections
-            .all::<Point>(&self.display_snapshot(cx))
+            .all_adjusted(&self.display_snapshot(cx))
             .iter()
         {
             let Some(wrap_config) = snapshot
@@ -14332,10 +14335,6 @@ impl Editor {
                 let last_selection = selections.iter().max_by_key(|s| s.id).unwrap();
                 let mut next_selected_range = None;
 
-                // Collect and sort selection ranges for efficient overlap checking
-                let mut selection_ranges: Vec<_> = selections.iter().map(|s| s.range()).collect();
-                selection_ranges.sort_by_key(|r| r.start);
-
                 let bytes_after_last_selection =
                     buffer.bytes_in_range(last_selection.end..buffer.len());
                 let bytes_before_first_selection = buffer.bytes_in_range(0..first_selection.start);
@@ -14357,18 +14356,11 @@ impl Editor {
                         || (!buffer.is_inside_word(offset_range.start, None)
                             && !buffer.is_inside_word(offset_range.end, None))
                     {
-                        // Use binary search to check for overlap (O(log n))
-                        let overlaps = selection_ranges
-                            .binary_search_by(|range| {
-                                if range.end <= offset_range.start {
-                                    std::cmp::Ordering::Less
-                                } else if range.start >= offset_range.end {
-                                    std::cmp::Ordering::Greater
-                                } else {
-                                    std::cmp::Ordering::Equal
-                                }
-                            })
-                            .is_ok();
+                        let idx = selections
+                            .partition_point(|selection| selection.end <= offset_range.start);
+                        let overlaps = selections
+                            .get(idx)
+                            .map_or(false, |selection| selection.start < offset_range.end);
 
                         if !overlaps {
                             next_selected_range = Some(offset_range);
@@ -19351,9 +19343,16 @@ impl Editor {
         EditorSettings::get_global(cx).gutter.line_numbers
     }
 
-    pub fn should_use_relative_line_numbers(&self, cx: &mut App) -> bool {
-        self.use_relative_line_numbers
-            .unwrap_or(EditorSettings::get_global(cx).relative_line_numbers)
+    pub fn relative_line_numbers(&self, cx: &mut App) -> RelativeLineNumbers {
+        match (
+            self.use_relative_line_numbers,
+            EditorSettings::get_global(cx).relative_line_numbers,
+        ) {
+            (None, setting) => setting,
+            (Some(false), _) => RelativeLineNumbers::Disabled,
+            (Some(true), RelativeLineNumbers::Wrapped) => RelativeLineNumbers::Wrapped,
+            (Some(true), _) => RelativeLineNumbers::Enabled,
+        }
     }
 
     pub fn toggle_relative_line_numbers(
@@ -19362,8 +19361,8 @@ impl Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let is_relative = self.should_use_relative_line_numbers(cx);
-        self.set_relative_line_number(Some(!is_relative), cx)
+        let is_relative = self.relative_line_numbers(cx);
+        self.set_relative_line_number(Some(!is_relative.enabled()), cx)
     }
 
     pub fn set_relative_line_number(&mut self, is_relative: Option<bool>, cx: &mut Context<Self>) {
@@ -20768,7 +20767,7 @@ impl Editor {
                 self.refresh_code_actions(window, cx);
                 self.refresh_selected_text_highlights(true, window, cx);
                 self.refresh_single_line_folds(window, cx);
-                refresh_matching_bracket_highlights(self, cx);
+                self.refresh_matching_bracket_highlights(window, cx);
                 if self.has_active_edit_prediction() {
                     self.update_visible_edit_prediction(window, cx);
                 }

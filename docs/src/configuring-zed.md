@@ -4,7 +4,16 @@ Zed is designed to be configured: we want to fit your workflow and preferences e
 
 In addition to the settings described here, you may also want to change your [theme](./themes.md), configure your [key bindings](./key-bindings.md), set up [tasks](./tasks.md) or install [extensions](https://github.com/zed-industries/extensions).
 
-## Settings files
+## Settings Window
+
+You can browse through many of the supported settings by using the settings window, which can be opened with the {#kb zed::OpenSettings} keybinding, or through the `zed: open settings` action in the command palette.
+
+Through it, you can customize your local, user settings as well as project settings.
+
+> Note that not all settings that Zed supports are available through the UI yet.
+> Some more intricate ones—for example, language formatters—can only be changed through the JSON settings file.
+
+## User Settings File
 
 <!--
 TBD: Settings files. Rewrite with "remote settings" in mind (e.g. `local settings` on the remote host).
@@ -13,21 +22,56 @@ Consider renaming `zed: Open Local Settings` to `zed: Open Project Settings`.
 TBD: Add settings documentation about how settings are merged as overlays. E.g. project>local>default. Note how settings that are maps are merged, but settings that are arrays are replaced and must include the defaults.
 -->
 
-Your settings file can be opened with {#kb zed::OpenSettings}. By default it is located at `~/.config/zed/settings.json`, though if you have XDG_CONFIG_HOME in your environment on Linux it will be at `$XDG_CONFIG_HOME/zed/settings.json` instead.
+Your settings JSON file can be opened with {#kb zed::OpenSettingsFile}.
+By default it is located at `~/.config/zed/settings.json`, though if you have `XDG_CONFIG_HOME` in your environment on Linux it will be at `$XDG_CONFIG_HOME/zed/settings.json` instead.
 
-This configuration is merged with any local configuration inside your projects. You can open the project settings by running {#action zed::OpenProjectSettings} from the command palette. This will create a `.zed` directory containing`.zed/settings.json`.
+Whatever you have added to your user settings file gets merged with any local configuration inside your projects.
 
-Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed. Not all settings can be set in local files, just those that impact the behavior of the editor and language tooling. For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
+### Default Settings
 
-The syntax for configuration files is a super-set of JSON that allows `//` comments.
-
-## Default settings
-
-You can find the default settings for your current Zed by running {#action zed::OpenDefaultSettings} from the command palette.
+When visiting the settings UI, the values you see set are the default ones.
+You can also verify all of them in JSON form by running {#action zed::OpenDefaultSettings} from the command palette.
 
 Extensions that provide language servers may also provide default settings for those language servers.
 
-# Settings
+## Project Settings File
+
+Similarly to user files, you can open your project settings file by running {#action zed::OpenProjectSettings} from the command palette.
+This will create a `.zed` directory containing`.zed/settings.json`.
+
+Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed.
+Not all settings can be set in local files, just those that impact the behavior of the editor and language tooling.
+For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
+
+The syntax for configuration files is a super-set of JSON that allows `//` comments.
+
+## Per-release Channel Overrides
+
+Zed reads the same `settings.json` across all release channels (Stable, Preview or Nightly).
+However, you can scope overrides to a specific channel by adding top-level `stable`, `preview`, `nightly` or `dev` objects.
+They are merged into the base configuration with settings from these keys taking precedence upon launching the specified build. For example:
+
+```json [settings]
+{
+  "theme": "sunset",
+  "vim_mode": false,
+  "nightly": {
+    "theme": "cave-light",
+    "vim_mode": true
+  },
+  "preview": {
+    "theme": "zed-dark"
+  }
+}
+```
+
+With this configuration, Stable keeps all base preferences, Preview switches to `zed-dark`, and Nightly enables Vim mode with a different theme.
+
+Changing settings via the UI will always apply the change across all channels.
+
+---
+
+Find below an extensive run-through of many supported settings by Zed.
 
 ## Active Pane Modifiers
 
@@ -2952,11 +2996,33 @@ List of `string` glob patterns
 
 - Description: Whether to show relative line numbers in the gutter
 - Setting: `relative_line_numbers`
-- Default: `false`
+- Default: `"disabled"`
 
 **Options**
 
-`boolean` values
+1. Show relative line numbers in the gutter whilst counting wrapped lines as one line:
+
+```json [settings]
+{
+  "relative_line_numbers": "enabled"
+}
+```
+
+2. Show relative line numbers in the gutter, including wrapped lines in the counting:
+
+```json [settings]
+{
+  "relative_line_numbers": "wrapped"
+}
+```
+
+2. Do not use relative line numbers:
+
+```json [settings]
+{
+  "relative_line_numbers": "disabled"
+}
+```
 
 ## Remove Trailing Whitespace On Save
 

@@ -27,6 +27,13 @@ pub struct OpenZedUrl {
     pub url: String,
 }
 
+/// Opens the keymap to either add a keybinding or change an existing one
+#[derive(PartialEq, Clone, Default, Action, JsonSchema, Serialize, Deserialize)]
+#[action(namespace = zed, no_json, no_register)]
+pub struct ChangeKeybinding {
+    pub action: String,
+}
+
 actions!(
     zed,
     [
@@ -232,7 +239,7 @@ pub mod command_palette {
         command_palette,
         [
             /// Toggles the command palette.
-            Toggle
+            Toggle,
         ]
     );
 }

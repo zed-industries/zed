@@ -35,7 +35,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
 use ui::App;
-use util::{ResultExt, get_default_system_shell_preferring_bash};
+use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -95,9 +95,14 @@ pub enum AssistantMessageChunk {
 }
 
 impl AssistantMessageChunk {
-    pub fn from_str(chunk: &str, language_registry: &Arc<LanguageRegistry>, cx: &mut App) -> Self {
+    pub fn from_str(
+        chunk: &str,
+        language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
+        cx: &mut App,
+    ) -> Self {
         Self::Message {
-            block: ContentBlock::new(chunk.into(), language_registry, cx),
+            block: ContentBlock::new(chunk.into(), language_registry, path_style, cx),
         }
     }
 
@@ -186,6 +191,7 @@ impl ToolCall {
         tool_call: acp::ToolCall,
         status: ToolCallStatus,
         language_registry: Arc<LanguageRegistry>,
+        path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<Self> {
@@ -199,6 +205,7 @@ impl ToolCall {
             content.push(ToolCallContent::from_acp(
                 item,
                 language_registry.clone(),
+                path_style,
                 terminals,
                 cx,
             )?);
@@ -223,6 +230,7 @@ impl ToolCall {
         &mut self,
         fields: acp::ToolCallUpdateFields,
         language_registry: Arc<LanguageRegistry>,
+        path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<()> {
@@ -260,12 +268,13 @@ impl ToolCall {
 
             // Reuse existing content if we can
             for (old, new) in self.content.iter_mut().zip(content.by_ref()) {
-                old.update_from_acp(new, language_registry.clone(), terminals, cx)?;
+                old.update_from_acp(new, language_registry.clone(), path_style, terminals, cx)?;
             }
             for new in content {
                 self.content.push(ToolCallContent::from_acp(
                     new,
                     language_registry.clone(),
+                    path_style,
                     terminals,
                     cx,
                 )?)
@@ -450,21 +459,23 @@ impl ContentBlock {
     pub fn new(
         block: acp::ContentBlock,
         language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
         cx: &mut App,
     ) -> Self {
         let mut this = Self::Empty;
-        this.append(block, language_registry, cx);
+        this.append(block, language_registry, path_style, cx);
         this
     }
 
     pub fn new_combined(
         blocks: impl IntoIterator<Item = acp::ContentBlock>,
         language_registry: Arc<LanguageRegistry>,
+        path_style: PathStyle,
         cx: &mut App,
     ) -> Self {
         let mut this = Self::Empty;
         for block in blocks {
-            this.append(block, &language_registry, cx);
+            this.append(block, &language_registry, path_style, cx);
         }
         this
     }
@@ -473,6 +484,7 @@ impl ContentBlock {
         &mut self,
         block: acp::ContentBlock,
         language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
         cx: &mut App,
     ) {
         if matches!(self, ContentBlock::Empty)
@@ -482,7 +494,7 @@ impl ContentBlock {
             return;
         }
 
-        let new_content = self.block_string_contents(block);
+        let new_content = self.block_string_contents(block, path_style);
 
         match self {
             ContentBlock::Empty => {
@@ -492,7 +504,7 @@ impl ContentBlock {
                 markdown.update(cx, |markdown, cx| markdown.append(&new_content, cx));
             }
             ContentBlock::ResourceLink { resource_link } => {
-                let existing_content = Self::resource_link_md(&resource_link.uri);
+                let existing_content = Self::resource_link_md(&resource_link.uri, path_style);
                 let combined = format!("{}\n{}", existing_content, new_content);
 
                 *self = Self::create_markdown_block(combined, language_registry, cx);
@@ -511,11 +523,11 @@ impl ContentBlock {
         }
     }
 
-    fn block_string_contents(&self, block: acp::ContentBlock) -> String {
+    fn block_string_contents(&self, block: acp::ContentBlock, path_style: PathStyle) -> String {
         match block {
             acp::ContentBlock::Text(text_content) => text_content.text,
             acp::ContentBlock::ResourceLink(resource_link) => {
-                Self::resource_link_md(&resource_link.uri)
+                Self::resource_link_md(&resource_link.uri, path_style)
             }
             acp::ContentBlock::Resource(acp::EmbeddedResource {
                 resource:
@@ -524,14 +536,14 @@ impl ContentBlock {
                         ..
                     }),
                 ..
-            }) => Self::resource_link_md(&uri),
+            }) => Self::resource_link_md(&uri, path_style),
             acp::ContentBlock::Image(image) => Self::image_md(&image),
             acp::ContentBlock::Audio(_) | acp::ContentBlock::Resource(_) => String::new(),
         }
     }
 
-    fn resource_link_md(uri: &str) -> String {
-        if let Some(uri) = MentionUri::parse(uri).log_err() {
+    fn resource_link_md(uri: &str, path_style: PathStyle) -> String {
+        if let Some(uri) = MentionUri::parse(uri, path_style).log_err() {
             uri.as_link().to_string()
         } else {
             uri.to_string()
@@ -577,6 +589,7 @@ impl ToolCallContent {
     pub fn from_acp(
         content: acp::ToolCallContent,
         language_registry: Arc<LanguageRegistry>,
+        path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<Self> {
@@ -584,6 +597,7 @@ impl ToolCallContent {
             acp::ToolCallContent::Content { content } => Ok(Self::ContentBlock(ContentBlock::new(
                 content,
                 &language_registry,
+                path_style,
                 cx,
             ))),
             acp::ToolCallContent::Diff { diff } => Ok(Self::Diff(cx.new(|cx| {
@@ -607,6 +621,7 @@ impl ToolCallContent {
         &mut self,
         new: acp::ToolCallContent,
         language_registry: Arc<LanguageRegistry>,
+        path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<()> {
@@ -622,7 +637,7 @@ impl ToolCallContent {
         };
 
         if needs_update {
-            *self = Self::from_acp(new, language_registry, terminals, cx)?;
+            *self = Self::from_acp(new, language_registry, path_style, terminals, cx)?;
         }
         Ok(())
     }
@@ -1105,13 +1120,13 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Result<(), acp::Error> {
         match update {
-            acp::SessionUpdate::UserMessageChunk { content } => {
+            acp::SessionUpdate::UserMessageChunk(acp::ContentChunk { content, .. }) => {
                 self.push_user_content_block(None, content, cx);
             }
-            acp::SessionUpdate::AgentMessageChunk { content } => {
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk { content, .. }) => {
                 self.push_assistant_content_block(content, false, cx);
             }
-            acp::SessionUpdate::AgentThoughtChunk { content } => {
+            acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk { content, .. }) => {
                 self.push_assistant_content_block(content, true, cx);
             }
             acp::SessionUpdate::ToolCall(tool_call) => {
@@ -1123,12 +1138,14 @@ impl AcpThread {
             acp::SessionUpdate::Plan(plan) => {
                 self.update_plan(plan, cx);
             }
-            acp::SessionUpdate::AvailableCommandsUpdate { available_commands } => {
-                cx.emit(AcpThreadEvent::AvailableCommandsUpdated(available_commands))
-            }
-            acp::SessionUpdate::CurrentModeUpdate { current_mode_id } => {
-                cx.emit(AcpThreadEvent::ModeUpdated(current_mode_id))
-            }
+            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate {
+                available_commands,
+                ..
+            }) => cx.emit(AcpThreadEvent::AvailableCommandsUpdated(available_commands)),
+            acp::SessionUpdate::CurrentModeUpdate(acp::CurrentModeUpdate {
+                current_mode_id,
+                ..
+            }) => cx.emit(AcpThreadEvent::ModeUpdated(current_mode_id)),
         }
         Ok(())
     }
@@ -1140,6 +1157,7 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) {
         let language_registry = self.project.read(cx).languages().clone();
+        let path_style = self.project.read(cx).path_style(cx);
         let entries_len = self.entries.len();
 
         if let Some(last_entry) = self.entries.last_mut()
@@ -1151,12 +1169,12 @@ impl AcpThread {
             }) = last_entry
         {
             *id = message_id.or(id.take());
-            content.append(chunk.clone(), &language_registry, cx);
+            content.append(chunk.clone(), &language_registry, path_style, cx);
             chunks.push(chunk);
             let idx = entries_len - 1;
             cx.emit(AcpThreadEvent::EntryUpdated(idx));
         } else {
-            let content = ContentBlock::new(chunk.clone(), &language_registry, cx);
+            let content = ContentBlock::new(chunk.clone(), &language_registry, path_style, cx);
             self.push_entry(
                 AgentThreadEntry::UserMessage(UserMessage {
                     id: message_id,
@@ -1176,6 +1194,7 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) {
         let language_registry = self.project.read(cx).languages().clone();
+        let path_style = self.project.read(cx).path_style(cx);
         let entries_len = self.entries.len();
         if let Some(last_entry) = self.entries.last_mut()
             && let AgentThreadEntry::AssistantMessage(AssistantMessage { chunks }) = last_entry
@@ -1185,10 +1204,10 @@ impl AcpThread {
             match (chunks.last_mut(), is_thought) {
                 (Some(AssistantMessageChunk::Message { block }), false)
                 | (Some(AssistantMessageChunk::Thought { block }), true) => {
-                    block.append(chunk, &language_registry, cx)
+                    block.append(chunk, &language_registry, path_style, cx)
                 }
                 _ => {
-                    let block = ContentBlock::new(chunk, &language_registry, cx);
+                    let block = ContentBlock::new(chunk, &language_registry, path_style, cx);
                     if is_thought {
                         chunks.push(AssistantMessageChunk::Thought { block })
                     } else {
@@ -1197,7 +1216,7 @@ impl AcpThread {
                 }
             }
         } else {
-            let block = ContentBlock::new(chunk, &language_registry, cx);
+            let block = ContentBlock::new(chunk, &language_registry, path_style, cx);
             let chunk = if is_thought {
                 AssistantMessageChunk::Thought { block }
             } else {
@@ -1249,6 +1268,7 @@ impl AcpThread {
     ) -> Result<()> {
         let update = update.into();
         let languages = self.project.read(cx).languages().clone();
+        let path_style = self.project.read(cx).path_style(cx);
 
         let ix = match self.index_for_tool_call(update.id()) {
             Some(ix) => ix,
@@ -1265,6 +1285,7 @@ impl AcpThread {
                             meta: None,
                         }),
                         &languages,
+                        path_style,
                         cx,
                     ))],
                     status: ToolCallStatus::Failed,
@@ -1284,7 +1305,7 @@ impl AcpThread {
         match update {
             ToolCallUpdate::UpdateFields(update) => {
                 let location_updated = update.fields.locations.is_some();
-                call.update_fields(update.fields, languages, &self.terminals, cx)?;
+                call.update_fields(update.fields, languages, path_style, &self.terminals, cx)?;
                 if location_updated {
                     self.resolve_locations(update.id, cx);
                 }
@@ -1323,6 +1344,7 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Result<(), acp::Error> {
         let language_registry = self.project.read(cx).languages().clone();
+        let path_style = self.project.read(cx).path_style(cx);
         let id = update.id.clone();
 
         if let Some(ix) = self.index_for_tool_call(&id) {
@@ -1330,7 +1352,13 @@ impl AcpThread {
                 unreachable!()
             };
 
-            call.update_fields(update.fields, language_registry, &self.terminals, cx)?;
+            call.update_fields(
+                update.fields,
+                language_registry,
+                path_style,
+                &self.terminals,
+                cx,
+            )?;
             call.status = status;
 
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
@@ -1339,6 +1367,7 @@ impl AcpThread {
                 update.try_into()?,
                 status,
                 language_registry,
+                self.project.read(cx).path_style(cx),
                 &self.terminals,
                 cx,
             )?;
@@ -1618,6 +1647,7 @@ impl AcpThread {
         let block = ContentBlock::new_combined(
             message.clone(),
             self.project.read(cx).languages().clone(),
+            self.project.read(cx).path_style(cx),
             cx,
         );
         let request = acp::PromptRequest {
@@ -2586,17 +2616,19 @@ mod tests {
                     thread.update(&mut cx, |thread, cx| {
                         thread
                             .handle_session_update(
-                                acp::SessionUpdate::AgentThoughtChunk {
+                                acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk {
                                     content: "Thinking ".into(),
-                                },
+                                    meta: None,
+                                }),
                                 cx,
                             )
                             .unwrap();
                         thread
                             .handle_session_update(
-                                acp::SessionUpdate::AgentThoughtChunk {
+                                acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk {
                                     content: "hard!".into(),
-                                },
+                                    meta: None,
+                                }),
                                 cx,
                             )
                             .unwrap();
@@ -3095,9 +3127,10 @@ mod tests {
                     thread.update(&mut cx, |thread, cx| {
                         thread
                             .handle_session_update(
-                                acp::SessionUpdate::AgentMessageChunk {
+                                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
                                     content: content.text.to_uppercase().into(),
-                                },
+                                    meta: None,
+                                }),
                                 cx,
                             )
                             .unwrap();
@@ -3454,9 +3487,10 @@ mod tests {
                     thread.update(&mut cx, |thread, cx| {
                         thread
                             .handle_session_update(
-                                acp::SessionUpdate::AgentMessageChunk {
+                                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
                                     content: content.text.to_uppercase().into(),
-                                },
+                                    meta: None,
+                                }),
                                 cx,
                             )
                             .unwrap();

@@ -116,6 +116,10 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
             return;
         }
 
+        self.zeta.update(cx, |zeta, cx| {
+            zeta.refresh_context_if_needed(&self.project, &buffer, cursor_position, cx);
+        });
+
         let pending_prediction_id = self.next_pending_prediction_id;
         self.next_pending_prediction_id += 1;
         let last_request_timestamp = self.last_request_timestamp;

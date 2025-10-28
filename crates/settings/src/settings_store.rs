@@ -7,7 +7,7 @@ use futures::{
     channel::{mpsc, oneshot},
     future::LocalBoxFuture,
 };
-use gpui::{App, AsyncApp, BorrowAppContext, Global, Task, UpdateGlobal};
+use gpui::{App, AsyncApp, BorrowAppContext, Global, SharedString, Task, UpdateGlobal};
 
 use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
 use schemars::{JsonSchema, json_schema};
@@ -32,15 +32,14 @@ pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
     ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
-    LanguageToSettingsMap, SettingsJsonSchemaParams, ThemeName, VsCodeSettings, WorktreeId,
-    infer_json_indent_size,
+    LanguageToSettingsMap, ThemeName, VsCodeSettings, WorktreeId,
     merge_from::MergeFrom,
-    parse_json_with_comments,
     settings_content::{
         ExtensionsSettingsContent, ProjectSettingsContent, SettingsContent, UserSettingsContent,
     },
-    update_value_in_json_text,
 };
+
+use settings_json::{infer_json_indent_size, parse_json_with_comments, update_value_in_json_text};
 
 pub trait SettingsKey: 'static + Send + Sync {
     /// The name of a key within the JSON file from which this setting should
@@ -148,14 +147,15 @@ pub struct SettingsStore {
     _setting_file_updates: Task<()>,
     setting_file_updates_tx:
         mpsc::UnboundedSender<Box<dyn FnOnce(AsyncApp) -> LocalBoxFuture<'static, Result<()>>>>,
-    file_errors: BTreeMap<SettingsFile, String>,
+    file_errors: BTreeMap<SettingsFile, SettingsParseResult>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum SettingsFile {
+    Default,
+    Global,
     User,
     Server,
-    Default,
     /// Represents project settings in ssh projects as well as local projects
     Project((WorktreeId, Arc<RelPath>)),
 }
@@ -184,6 +184,8 @@ impl Ord for SettingsFile {
             (_, Server) => Ordering::Greater,
             (User, _) => Ordering::Less,
             (_, User) => Ordering::Greater,
+            (Global, _) => Ordering::Less,
+            (_, Global) => Ordering::Greater,
         }
     }
 }
@@ -235,6 +237,14 @@ trait AnySettingValue: 'static + Send + Sync {
     fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<RelPath>, value: Box<dyn Any>);
 }
 
+/// Parameters that are used when generating some JSON schemas at runtime.
+pub struct SettingsJsonSchemaParams<'a> {
+    pub language_names: &'a [String],
+    pub font_names: &'a [String],
+    pub theme_names: &'a [SharedString],
+    pub icon_theme_names: &'a [SharedString],
+}
+
 impl SettingsStore {
     pub fn new(cx: &App, default_settings: &str) -> Self {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
@@ -264,7 +274,7 @@ impl SettingsStore {
     pub fn observe_active_settings_profile_name(cx: &mut App) -> gpui::Subscription {
         cx.observe_global::<ActiveSettingsProfileName>(|cx| {
             Self::update_global(cx, |store, cx| {
-                store.recompute_values(None, cx).log_err();
+                store.recompute_values(None, cx);
             });
         })
     }
@@ -386,7 +396,7 @@ impl SettingsStore {
             ..Default::default()
         })
         .unwrap();
-        self.set_user_settings(&new_text, cx).unwrap();
+        _ = self.set_user_settings(&new_text, cx);
     }
 
     pub async fn load_settings(fs: &Arc<dyn Fs>) -> Result<String> {
@@ -515,6 +525,7 @@ impl SettingsStore {
             SettingsFile::Default => Some(self.default_settings.as_ref()),
             SettingsFile::Server => self.server_settings.as_deref(),
             SettingsFile::Project(ref key) => self.local_settings.get(key),
+            SettingsFile::Global => self.global_settings.as_deref(),
         }
     }
 
@@ -617,22 +628,58 @@ impl SettingsStore {
         (SettingsFile::Default, None)
     }
 
-    fn handle_potential_file_error<R>(
+    #[inline(always)]
+    fn parse_and_migrate_zed_settings<SettingsContentType: serde::de::DeserializeOwned>(
         &mut self,
+        user_settings_content: &str,
         file: SettingsFile,
-        result: Result<R>,
-    ) -> Result<R> {
-        if let Err(err) = result.as_ref() {
-            let message = err.to_string();
-            self.file_errors.insert(file, message);
+    ) -> (Option<SettingsContentType>, SettingsParseResult) {
+        let mut migration_status = MigrationStatus::NotNeeded;
+        let settings: SettingsContentType = if user_settings_content.is_empty() {
+            parse_json_with_comments("{}").expect("Empty settings should always be valid")
         } else {
-            self.file_errors.remove(&file);
-        }
-        return result;
+            let migration_res = migrator::migrate_settings(user_settings_content);
+            let content = match &migration_res {
+                Ok(Some(content)) => content,
+                Ok(None) => user_settings_content,
+                Err(_) => user_settings_content,
+            };
+            let parse_result = parse_json_with_comments(content);
+            migration_status = match migration_res {
+                Ok(Some(_)) => MigrationStatus::Succeeded,
+                Ok(None) => MigrationStatus::NotNeeded,
+                Err(err) => MigrationStatus::Failed {
+                    error: err.to_string(),
+                },
+            };
+            match parse_result {
+                Ok(settings) => settings,
+                Err(err) => {
+                    let result = SettingsParseResult {
+                        parse_status: ParseStatus::Failed {
+                            error: err.to_string(),
+                        },
+                        migration_status,
+                    };
+                    self.file_errors.insert(file, result.clone());
+                    return (None, result);
+                }
+            }
+        };
+
+        let result = SettingsParseResult {
+            parse_status: ParseStatus::Success,
+            migration_status,
+        };
+        self.file_errors.insert(file, result.clone());
+        return (Some(settings), result);
     }
 
-    pub fn error_for_file(&self, file: SettingsFile) -> Option<String> {
-        self.file_errors.get(&file).cloned()
+    pub fn error_for_file(&self, file: SettingsFile) -> Option<SettingsParseResult> {
+        self.file_errors
+            .get(&file)
+            .filter(|parse_result| parse_result.requires_user_action())
+            .cloned()
     }
 }
 
@@ -697,41 +744,46 @@ impl SettingsStore {
         cx: &mut App,
     ) -> Result<()> {
         self.default_settings = parse_json_with_comments(default_settings_content)?;
-        self.recompute_values(None, cx)?;
+        self.recompute_values(None, cx);
         Ok(())
     }
 
     /// Sets the user settings via a JSON string.
-    pub fn set_user_settings(&mut self, user_settings_content: &str, cx: &mut App) -> Result<()> {
-        let settings: UserSettingsContent = if user_settings_content.is_empty() {
-            parse_json_with_comments("{}")?
-        } else {
-            self.handle_potential_file_error(
-                SettingsFile::User,
-                parse_json_with_comments(user_settings_content),
-            )?
-        };
+    #[must_use]
+    pub fn set_user_settings(
+        &mut self,
+        user_settings_content: &str,
+        cx: &mut App,
+    ) -> SettingsParseResult {
+        let (settings, parse_result) = self.parse_and_migrate_zed_settings::<UserSettingsContent>(
+            user_settings_content,
+            SettingsFile::User,
+        );
 
-        self.user_settings = Some(settings);
-        self.recompute_values(None, cx)?;
-        Ok(())
+        if let Some(settings) = settings {
+            self.user_settings = Some(settings);
+            self.recompute_values(None, cx);
+        }
+        return parse_result;
     }
 
     /// Sets the global settings via a JSON string.
+    #[must_use]
     pub fn set_global_settings(
         &mut self,
         global_settings_content: &str,
         cx: &mut App,
-    ) -> Result<()> {
-        let settings: SettingsContent = if global_settings_content.is_empty() {
-            parse_json_with_comments("{}")?
-        } else {
-            parse_json_with_comments(global_settings_content)?
-        };
+    ) -> SettingsParseResult {
+        let (settings, parse_result) = self.parse_and_migrate_zed_settings::<SettingsContent>(
+            global_settings_content,
+            SettingsFile::Global,
+        );
 
-        self.global_settings = Some(Box::new(settings));
-        self.recompute_values(None, cx)?;
-        Ok(())
+        if let Some(settings) = settings {
+            self.global_settings = Some(Box::new(settings));
+            self.recompute_values(None, cx);
+        }
+        return parse_result;
     }
 
     pub fn set_server_settings(
@@ -742,16 +794,13 @@ impl SettingsStore {
         let settings: Option<SettingsContent> = if server_settings_content.is_empty() {
             None
         } else {
-            self.handle_potential_file_error(
-                SettingsFile::Server,
-                parse_json_with_comments(server_settings_content),
-            )?
+            parse_json_with_comments(server_settings_content)?
         };
 
         // Rewrite the server settings into a content type
         self.server_settings = settings.map(|settings| Box::new(settings));
 
-        self.recompute_values(None, cx)?;
+        self.recompute_values(None, cx);
         Ok(())
     }
 
@@ -803,30 +852,35 @@ impl SettingsStore {
                     .remove(&(root_id, directory_path.clone()));
             }
             (LocalSettingsKind::Settings, Some(settings_contents)) => {
-                let new_settings = self
-                    .handle_potential_file_error(
+                let (new_settings, parse_result) = self
+                    .parse_and_migrate_zed_settings::<ProjectSettingsContent>(
+                        settings_contents,
                         SettingsFile::Project((root_id, directory_path.clone())),
-                        parse_json_with_comments::<ProjectSettingsContent>(settings_contents),
-                    )
-                    .map_err(|e| InvalidSettingsError::LocalSettings {
+                    );
+                match parse_result.parse_status {
+                    ParseStatus::Success => Ok(()),
+                    ParseStatus::Failed { error } => Err(InvalidSettingsError::LocalSettings {
                         path: directory_path.join(local_settings_file_relative_path()),
-                        message: e.to_string(),
-                    })?;
-                match self.local_settings.entry((root_id, directory_path.clone())) {
-                    btree_map::Entry::Vacant(v) => {
-                        v.insert(SettingsContent {
-                            project: new_settings,
-                            ..Default::default()
-                        });
-                        zed_settings_changed = true;
-                    }
-                    btree_map::Entry::Occupied(mut o) => {
-                        if &o.get().project != &new_settings {
-                            o.insert(SettingsContent {
+                        message: error,
+                    }),
+                }?;
+                if let Some(new_settings) = new_settings {
+                    match self.local_settings.entry((root_id, directory_path.clone())) {
+                        btree_map::Entry::Vacant(v) => {
+                            v.insert(SettingsContent {
                                 project: new_settings,
                                 ..Default::default()
                             });
                             zed_settings_changed = true;
+                        }
+                        btree_map::Entry::Occupied(mut o) => {
+                            if &o.get().project != &new_settings {
+                                o.insert(SettingsContent {
+                                    project: new_settings,
+                                    ..Default::default()
+                                });
+                                zed_settings_changed = true;
+                            }
                         }
                     }
                 }
@@ -874,7 +928,7 @@ impl SettingsStore {
         };
 
         if zed_settings_changed {
-            self.recompute_values(Some((root_id, &directory_path)), cx)?;
+            self.recompute_values(Some((root_id, &directory_path)), cx);
         }
         Ok(())
     }
@@ -891,7 +945,7 @@ impl SettingsStore {
             },
             ..Default::default()
         }));
-        self.recompute_values(None, cx)?;
+        self.recompute_values(None, cx);
         Ok(())
     }
 
@@ -899,7 +953,7 @@ impl SettingsStore {
     pub fn clear_local_settings(&mut self, root_id: WorktreeId, cx: &mut App) -> Result<()> {
         self.local_settings
             .retain(|(worktree_id, _), _| worktree_id != &root_id);
-        self.recompute_values(Some((root_id, RelPath::empty())), cx)?;
+        self.recompute_values(Some((root_id, RelPath::empty())), cx);
         Ok(())
     }
 
@@ -989,12 +1043,11 @@ impl SettingsStore {
             .to_value()
     }
 
-    // todo -> this function never fails, and should not return a result
     fn recompute_values(
         &mut self,
         changed_local_path: Option<(WorktreeId, &RelPath)>,
         cx: &mut App,
-    ) -> std::result::Result<(), InvalidSettingsError> {
+    ) {
         // Reload the global and local values for every setting.
         let mut project_settings_stack = Vec::<SettingsContent>::new();
         let mut paths_stack = Vec::<Option<(WorktreeId, &RelPath)>>::new();
@@ -1054,7 +1107,6 @@ impl SettingsStore {
                 setting_value.set_local_value(*root_id, directory_path.clone(), value);
             }
         }
-        Ok(())
     }
 
     pub fn editorconfig_properties(
@@ -1084,6 +1136,96 @@ impl SettingsStore {
 
         properties.use_fallbacks();
         Some(properties)
+    }
+}
+
+/// The result of parsing settings, including any migration attempts
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsParseResult {
+    /// The result of parsing the settings file (possibly after migration)
+    pub parse_status: ParseStatus,
+    /// The result of attempting to migrate the settings file
+    pub migration_status: MigrationStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParseStatus {
+    /// Settings were parsed successfully
+    Success,
+    /// Settings failed to parse
+    Failed { error: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MigrationStatus {
+    /// No migration was needed - settings are up to date
+    NotNeeded,
+    /// Settings were automatically migrated in memory, but the file needs to be updated
+    Succeeded,
+    /// Migration was attempted but failed. Original settings were parsed instead.
+    Failed { error: String },
+}
+
+impl Default for SettingsParseResult {
+    fn default() -> Self {
+        Self {
+            parse_status: ParseStatus::Success,
+            migration_status: MigrationStatus::NotNeeded,
+        }
+    }
+}
+
+impl SettingsParseResult {
+    pub fn unwrap(self) -> bool {
+        self.result().unwrap()
+    }
+
+    pub fn expect(self, message: &str) -> bool {
+        self.result().expect(message)
+    }
+
+    /// Formats the ParseResult as a Result type. This is a lossy conversion
+    pub fn result(self) -> Result<bool> {
+        let migration_result = match self.migration_status {
+            MigrationStatus::NotNeeded => Ok(false),
+            MigrationStatus::Succeeded => Ok(true),
+            MigrationStatus::Failed { error } => {
+                Err(anyhow::format_err!(error)).context("Failed to migrate settings")
+            }
+        };
+
+        let parse_result = match self.parse_status {
+            ParseStatus::Success => Ok(()),
+            ParseStatus::Failed { error } => {
+                Err(anyhow::format_err!(error)).context("Failed to parse settings")
+            }
+        };
+
+        match (migration_result, parse_result) {
+            (migration_result @ Ok(_), Ok(())) => migration_result,
+            (Err(migration_err), Ok(())) => Err(migration_err),
+            (_, Err(parse_err)) => Err(parse_err),
+        }
+    }
+
+    /// Returns true if there were any errors migrating and parsing the settings content or if migration was required but there were no errors
+    pub fn requires_user_action(&self) -> bool {
+        matches!(self.parse_status, ParseStatus::Failed { .. })
+            || matches!(
+                self.migration_status,
+                MigrationStatus::Succeeded | MigrationStatus::Failed { .. }
+            )
+    }
+
+    pub fn ok(self) -> Option<bool> {
+        self.result().ok()
+    }
+
+    pub fn parse_error(&self) -> Option<String> {
+        match &self.parse_status {
+            ParseStatus::Failed { error } => Some(error.clone()),
+            ParseStatus::Success => None,
+        }
     }
 }
 

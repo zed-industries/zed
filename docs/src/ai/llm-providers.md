@@ -64,7 +64,7 @@ With that done, choose one of the two authentication methods:
 #### Authentication via Named Profile (Recommended)
 
 1. Ensure you have the AWS CLI installed and configured with a named profile
-2. Open your `settings.json` (`zed: open settings`) and include the `bedrock` key under `language_models` with the following settings:
+2. Open your `settings.json` (`zed: open settings file`) and include the `bedrock` key under `language_models` with the following settings:
    ```json [settings]
    {
      "language_models": {
