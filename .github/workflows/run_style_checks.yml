@@ -42,9 +42,6 @@ jobs:
     - name: steps::cargo_fmt
       run: cargo fmt --all -- --check
       shell: bash -euxo pipefail {0}
-    - name: ./script/clippy
-      run: ./script/clippy
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}

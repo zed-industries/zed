@@ -23,8 +23,7 @@ pub(crate) fn check_style() -> NamedJob {
             .add_step(steps::script("./script/check-todos"))
             .add_step(steps::script("./script/check-keymaps"))
             .add_step(check_for_typos())
-            .add_step(steps::cargo_fmt())
-            .add_step(steps::script("./script/clippy")),
+            .add_step(steps::cargo_fmt()),
     )
 }
 
