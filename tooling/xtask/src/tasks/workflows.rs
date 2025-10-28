@@ -29,7 +29,7 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         ("run_bundling.yml", run_bundling::run_bundling()),
         ("release_nightly.yml", release_nightly::release_nightly()),
         ("run_tests.yml", run_tests::run_tests()),
-        ("run_docs_check.yml", run_docs_checks::run_docs_checks()),
+        ("run_docs_checks.yml", run_docs_checks::run_docs_checks()),
         ("run_style_checks.yml", run_style_checks::run_style_checks()),
         (
             "run_action_checks.yml",
