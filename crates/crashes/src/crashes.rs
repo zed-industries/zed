@@ -33,17 +33,31 @@ const CRASH_HANDLER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 static PANIC_THREAD_ID: AtomicU32 = AtomicU32::new(0);
 
 pub async fn init(crash_init: InitCrashHandler) {
-    if *RELEASE_CHANNEL == ReleaseChannel::Dev && env::var("ZED_GENERATE_MINIDUMPS").is_err() {
-        let old_hook = panic::take_hook();
-        panic::set_hook(Box::new(move |info| {
-            unsafe { env::set_var("RUST_BACKTRACE", "1") };
-            old_hook(info);
-            // prevent the macOS crash dialog from popping up
-            std::process::exit(1);
-        }));
-        return;
-    } else {
-        panic::set_hook(Box::new(panic_hook));
+    let gen_var = match env::var("ZED_GENERATE_MINIDUMPS") {
+        Ok(v) => {
+            if v == "false" || v == "0" {
+                Some(false)
+            } else {
+                Some(true)
+            }
+        }
+        Err(_) => None,
+    };
+
+    match (gen_var, *RELEASE_CHANNEL) {
+        (Some(false), _) | (None, ReleaseChannel::Dev) => {
+            let old_hook = panic::take_hook();
+            panic::set_hook(Box::new(move |info| {
+                unsafe { env::set_var("RUST_BACKTRACE", "1") };
+                old_hook(info);
+                // prevent the macOS crash dialog from popping up
+                std::process::exit(1);
+            }));
+            return;
+        }
+        (Some(true), _) | (None, _) => {
+            panic::set_hook(Box::new(panic_hook));
+        }
     }
 
     let exe = env::current_exe().expect("unable to find ourselves");
@@ -272,6 +286,11 @@ impl minidumper::ServerHandler for CrashServer {
 }
 
 pub fn panic_hook(info: &PanicHookInfo) {
+    // Don't handle a panic on threads that are not relevant to the main execution.
+    if extension_host::wasm_host::IS_WASM_THREAD.with(|v| v.load(Ordering::Acquire)) {
+        return;
+    }
+
     let message = info
         .payload()
         .downcast_ref::<&str>()

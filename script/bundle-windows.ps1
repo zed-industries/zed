@@ -5,7 +5,6 @@ Param(
     [Parameter()][string]$Name
 )
 
-. "$PSScriptRoot/lib/blob-store.ps1"
 . "$PSScriptRoot/lib/workspace.ps1"
 
 # https://stackoverflow.com/questions/57949031/powershell-script-stops-if-program-fails-like-bash-set-o-errexit
@@ -293,7 +292,6 @@ DownloadConpty
 CollectFiles
 BuildInstaller
 
-UploadToBlobStorePublic -BucketName "zed-debug-symbols" -FileToUpload $debugArchive -BlobStoreKey $debugStoreKey
 UploadToSentry
 
 if ($buildSuccess) {

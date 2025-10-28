@@ -214,6 +214,14 @@ async fn deserialize_pane_group(
         }
         SerializedPaneGroup::Pane(serialized_pane) => {
             let active = serialized_pane.active;
+            let new_items = deserialize_terminal_views(
+                workspace_id,
+                project.clone(),
+                workspace.clone(),
+                serialized_pane.children.as_slice(),
+                cx,
+            )
+            .await;
 
             let pane = panel
                 .update_in(cx, |terminal_panel, window, cx| {
@@ -228,71 +236,56 @@ async fn deserialize_pane_group(
                 .log_err()?;
             let active_item = serialized_pane.active_item;
             let pinned_count = serialized_pane.pinned_count;
-            let new_items = deserialize_terminal_views(
-                workspace_id,
-                project.clone(),
-                workspace.clone(),
-                serialized_pane.children.as_slice(),
-                cx,
-            );
-            cx.spawn({
-                let pane = pane.downgrade();
-                async move |cx| {
-                    let new_items = new_items.await;
-
-                    let items = pane.update_in(cx, |pane, window, cx| {
-                        populate_pane_items(pane, new_items, active_item, window, cx);
-                        pane.set_pinned_count(pinned_count);
-                        pane.items_len()
-                    });
+            let terminal = pane
+                .update_in(cx, |pane, window, cx| {
+                    populate_pane_items(pane, new_items, active_item, window, cx);
+                    pane.set_pinned_count(pinned_count);
                     // Avoid blank panes in splits
-                    if items.is_ok_and(|items| items == 0) {
+                    if pane.items_len() == 0 {
                         let working_directory = workspace
                             .update(cx, |workspace, cx| default_working_directory(workspace, cx))
                             .ok()
                             .flatten();
-                        let Some(terminal) = project
-                            .update(cx, |project, cx| {
-                                project.create_terminal_shell(working_directory, cx)
-                            })
-                            .log_err()
-                        else {
-                            return;
-                        };
-
-                        let terminal = terminal.await.log_err();
-                        pane.update_in(cx, |pane, window, cx| {
-                            if let Some(terminal) = terminal {
-                                let terminal_view = Box::new(cx.new(|cx| {
-                                    TerminalView::new(
-                                        terminal,
-                                        workspace.clone(),
-                                        Some(workspace_id),
-                                        project.downgrade(),
-                                        window,
-                                        cx,
-                                    )
-                                }));
-                                pane.add_item(terminal_view, true, false, None, window, cx);
-                            }
-                        })
-                        .ok();
+                        let terminal = project.update(cx, |project, cx| {
+                            project.create_terminal_shell(working_directory, cx)
+                        });
+                        Some(Some(terminal))
+                    } else {
+                        Some(None)
                     }
-                }
-            })
-            .detach();
+                })
+                .ok()
+                .flatten()?;
+            if let Some(terminal) = terminal {
+                let terminal = terminal.await.ok()?;
+                pane.update_in(cx, |pane, window, cx| {
+                    let terminal_view = Box::new(cx.new(|cx| {
+                        TerminalView::new(
+                            terminal,
+                            workspace.clone(),
+                            Some(workspace_id),
+                            project.downgrade(),
+                            window,
+                            cx,
+                        )
+                    }));
+                    pane.add_item(terminal_view, true, false, None, window, cx);
+                })
+                .ok()?;
+            }
             Some((Member::Pane(pane.clone()), active.then_some(pane)))
         }
     }
 }
 
-fn deserialize_terminal_views(
+async fn deserialize_terminal_views(
     workspace_id: WorkspaceId,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     item_ids: &[u64],
     cx: &mut AsyncWindowContext,
-) -> impl Future<Output = Vec<Entity<TerminalView>>> + use<> {
+) -> Vec<Entity<TerminalView>> {
+    let mut items = Vec::with_capacity(item_ids.len());
     let mut deserialized_items = item_ids
         .iter()
         .map(|item_id| {
@@ -309,15 +302,12 @@ fn deserialize_terminal_views(
             .unwrap_or_else(|e| Task::ready(Err(e.context("no window present"))))
         })
         .collect::<FuturesUnordered<_>>();
-    async move {
-        let mut items = Vec::with_capacity(deserialized_items.len());
-        while let Some(item) = deserialized_items.next().await {
-            if let Some(item) = item.log_err() {
-                items.push(item);
-            }
+    while let Some(item) = deserialized_items.next().await {
+        if let Some(item) = item.log_err() {
+            items.push(item);
         }
-        items
     }
+    items
 }
 
 #[derive(Debug, Serialize, Deserialize)]

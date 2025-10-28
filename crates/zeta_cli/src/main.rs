@@ -20,6 +20,7 @@ use reqwest_client::ReqwestClient;
 use serde_json::json;
 use std::{collections::HashSet, path::PathBuf, process::exit, str::FromStr, sync::Arc};
 use zeta::{PerformPredictEditsParams, Zeta};
+use zeta2::ContextMode;
 
 use crate::headless::ZetaCliAppState;
 use crate::source_location::SourceLocation;
@@ -263,8 +264,8 @@ async fn get_context(
                         })?
                         .await?;
 
-                    let planned_prompt = cloud_zeta2_prompt::PlannedPrompt::populate(&request)?;
-                    let (prompt_string, section_labels) = planned_prompt.to_prompt_string()?;
+                    let (prompt_string, section_labels) =
+                        cloud_zeta2_prompt::build_prompt(&request)?;
 
                     match zeta2_args.output_format {
                         OutputFormat::Prompt => anyhow::Ok(prompt_string),
@@ -301,7 +302,7 @@ async fn get_context(
 impl Zeta2Args {
     fn to_options(&self, omit_excerpt_overlaps: bool) -> zeta2::ZetaOptions {
         zeta2::ZetaOptions {
-            context: EditPredictionContextOptions {
+            context: ContextMode::Syntax(EditPredictionContextOptions {
                 max_retrieved_declarations: self.max_retrieved_definitions,
                 use_imports: !self.disable_imports_gathering,
                 excerpt: EditPredictionExcerptOptions {
@@ -313,7 +314,7 @@ impl Zeta2Args {
                 score: EditPredictionScoreOptions {
                     omit_excerpt_overlaps,
                 },
-            },
+            }),
             max_diagnostic_bytes: self.max_diagnostic_bytes,
             max_prompt_bytes: self.max_prompt_bytes,
             prompt_format: self.prompt_format.clone().into(),

@@ -47,6 +47,7 @@ pub enum OpenRequestKind {
     AgentPanel,
     DockMenuAction { index: usize },
     BuiltinJsonSchema { schema_path: String },
+    Setting { setting_path: String },
 }
 
 impl OpenRequest {
@@ -92,6 +93,10 @@ impl OpenRequest {
             } else if let Some(schema_path) = url.strip_prefix("zed://schemas/") {
                 this.kind = Some(OpenRequestKind::BuiltinJsonSchema {
                     schema_path: schema_path.to_string(),
+                });
+            } else if let Some(setting_path) = url.strip_prefix("zed://settings/") {
+                this.kind = Some(OpenRequestKind::Setting {
+                    setting_path: setting_path.to_string(),
                 });
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
@@ -526,6 +531,7 @@ async fn open_local_workspace(
         workspace::OpenOptions {
             open_new_workspace: effective_open_new_workspace,
             replace_window,
+            prefer_focused_window: wait,
             env: env.cloned(),
             ..Default::default()
         },

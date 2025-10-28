@@ -182,7 +182,7 @@ TBD: Centered layout related settings
   "show_whitespaces": "selection",
   "whitespace_map": { // Which characters to show when `show_whitespaces` enabled
     "space": "•",
-    "tab": "→"
+    "tab": "⟶"       // use "→", for a shorter arrow
   },
 
   "unnecessary_code_fade": 0.3, // How much to fade out unused code.
@@ -204,7 +204,7 @@ TBD: Centered layout related settings
     "folds": true,                // Show/hide show fold buttons in the gutter.
     "min_line_number_digits": 4   // Reserve space for N digit line numbers
   },
-  "relative_line_numbers": false, // Show relative line numbers in gutter
+  "relative_line_numbers": "enabled", // Show relative line numbers in gutter
 
   // Indent guides
   "indent_guides": {

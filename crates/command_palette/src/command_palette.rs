@@ -443,7 +443,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let matching_command = self.matches.get(ix)?;
@@ -462,10 +462,9 @@ impl PickerDelegate for CommandPaletteDelegate {
                             command.name.clone(),
                             matching_command.positions.clone(),
                         ))
-                        .children(KeyBinding::for_action_in(
+                        .child(KeyBinding::for_action_in(
                             &*command.action,
                             &self.previous_focus_handle,
-                            window,
                             cx,
                         )),
                 ),

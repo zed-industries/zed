@@ -2,7 +2,7 @@ use collab_ui::collab_panel;
 use gpui::{App, Menu, MenuItem, OsAction};
 use release_channel::ReleaseChannel;
 use terminal_view::terminal_panel;
-use zed_actions::{ToggleFocus as ToggleDebugPanel, dev};
+use zed_actions::{ToggleFocus as ToggleDebugPanel, agent::AddSelectionToThread, dev};
 
 pub fn app_menus(cx: &mut App) -> Vec<Menu> {
     use zed_actions::Quit;
@@ -19,6 +19,10 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         MenuItem::action(
             "Reset Zoom",
             zed_actions::ResetBufferFontSize { persist: false },
+        ),
+        MenuItem::action(
+            "Reset All Zoom",
+            zed_actions::ResetAllZoom { persist: false },
         ),
         MenuItem::separator(),
         MenuItem::action("Toggle Left Dock", workspace::ToggleLeftDock),
@@ -214,6 +218,8 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::action("Move Line Up", editor::actions::MoveLineUp),
                 MenuItem::action("Move Line Down", editor::actions::MoveLineDown),
                 MenuItem::action("Duplicate Selection", editor::actions::DuplicateLineDown),
+                MenuItem::separator(),
+                MenuItem::action("Add to Agent Thread", AddSelectionToThread),
             ],
         },
         Menu {

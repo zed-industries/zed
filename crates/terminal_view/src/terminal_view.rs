@@ -840,9 +840,7 @@ impl TerminalView {
                 .size(ButtonSize::Compact)
                 .icon_color(Color::Default)
                 .shape(ui::IconButtonShape::Square)
-                .tooltip(move |window, cx| {
-                    Tooltip::for_action("Rerun task", &RerunTask, window, cx)
-                })
+                .tooltip(move |_window, cx| Tooltip::for_action("Rerun task", &RerunTask, cx))
                 .on_click(move |_, window, cx| {
                     window.dispatch_action(Box::new(terminal_rerun_override(&task_id)), cx);
                 }),
@@ -1215,32 +1213,36 @@ impl Item for TerminalView {
         workspace::item::ItemBufferKind::Singleton
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Option<Entity<Self>>> {
-        let Ok(terminal) = self.project.update(cx, |project, cx| {
-            let cwd = project
-                .active_project_directory(cx)
-                .map(|it| it.to_path_buf());
-            project.clone_terminal(self.terminal(), cx, cwd)
-        }) else {
+        let Some(terminal_task) = self
+            .project
+            .update(cx, |project, cx| {
+                let cwd = project
+                    .active_project_directory(cx)
+                    .map(|it| it.to_path_buf());
+                project.clone_terminal(self.terminal(), cx, cwd)
+            })
+            .ok()
+        else {
             return Task::ready(None);
         };
-        cx.spawn_in(window, async move |this, cx| {
-            let terminal = terminal.await.log_err()?;
-            this.update_in(cx, |this, window, cx| {
+
+        let workspace = self.workspace.clone();
+        let project = self.project.clone();
+        cx.spawn_in(window, async move |_, cx| {
+            let terminal = terminal_task.await.log_err()?;
+            cx.update(|window, cx| {
                 cx.new(|cx| {
-                    TerminalView::new(
-                        terminal,
-                        this.workspace.clone(),
-                        workspace_id,
-                        this.project.clone(),
-                        window,
-                        cx,
-                    )
+                    TerminalView::new(terminal, workspace, workspace_id, project, window, cx)
                 })
             })
             .ok()

@@ -153,6 +153,10 @@ impl Item for KeyContextView {
         None
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
@@ -167,7 +171,7 @@ impl Item for KeyContextView {
 }
 
 impl Render for KeyContextView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         use itertools::Itertools;
 
         let key_equivalents = cx.keyboard_mapper().get_key_equivalents();
@@ -212,7 +216,6 @@ impl Render for KeyContextView {
                             .style(ButtonStyle::Filled)
                             .key_binding(ui::KeyBinding::for_action(
                                 &zed_actions::OpenDefaultKeymap,
-                                window,
                                 cx
                             ))
                             .on_click(|_, window, cx| {
@@ -222,7 +225,7 @@ impl Render for KeyContextView {
                     .child(
                         Button::new("edit_your_keymap", "Edit Keymap File")
                             .style(ButtonStyle::Filled)
-                            .key_binding(ui::KeyBinding::for_action(&zed_actions::OpenKeymapFile, window, cx))
+                            .key_binding(ui::KeyBinding::for_action(&zed_actions::OpenKeymapFile, cx))
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(zed_actions::OpenKeymapFile.boxed_clone(), cx);
                             }),

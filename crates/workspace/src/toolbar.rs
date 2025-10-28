@@ -1,7 +1,7 @@
 use crate::ItemHandle;
 use gpui::{
-    AnyView, App, Context, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled,
-    Window,
+    AnyView, App, Context, Entity, EntityId, EventEmitter, KeyContext, ParentElement as _, Render,
+    Styled, Window,
 };
 use ui::prelude::*;
 use ui::{h_flex, v_flex};
@@ -25,6 +25,8 @@ pub trait ToolbarItemView: Render + EventEmitter<ToolbarItemEvent> {
         _cx: &mut Context<Self>,
     ) {
     }
+
+    fn contribute_context(&self, _context: &mut KeyContext, _cx: &App) {}
 }
 
 trait ToolbarItemViewHandle: Send {
@@ -37,6 +39,7 @@ trait ToolbarItemViewHandle: Send {
         cx: &mut App,
     ) -> ToolbarItemLocation;
     fn focus_changed(&mut self, pane_focused: bool, window: &mut Window, cx: &mut App);
+    fn contribute_context(&self, context: &mut KeyContext, cx: &App);
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -236,6 +239,14 @@ impl Toolbar {
     pub fn hidden(&self) -> bool {
         self.hidden
     }
+
+    pub fn contribute_context(&self, context: &mut KeyContext, cx: &App) {
+        for (item, location) in &self.items {
+            if *location != ToolbarItemLocation::Hidden {
+                item.contribute_context(context, cx);
+            }
+        }
+    }
 }
 
 impl<T: ToolbarItemView> ToolbarItemViewHandle for Entity<T> {
@@ -263,5 +274,9 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for Entity<T> {
             this.pane_focus_update(pane_focused, window, cx);
             cx.notify();
         });
+    }
+
+    fn contribute_context(&self, context: &mut KeyContext, cx: &App) {
+        self.read(cx).contribute_context(context, cx)
     }
 }

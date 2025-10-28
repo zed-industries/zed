@@ -65,6 +65,7 @@ util.workspace = true
 watch.workspace = true
 worktree.workspace = true
 thiserror.workspace = true
+rayon.workspace = true
 
 [target.'cfg(not(windows))'.dependencies]
 crashes.workspace = true
@@ -75,7 +76,7 @@ minidumper.workspace = true
 
 [dev-dependencies]
 action_log.workspace = true
-agent = { workspace = true, features = ["test-support"] }
+agent.workspace = true
 client = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
 collections.workspace = true

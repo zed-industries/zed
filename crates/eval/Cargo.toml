@@ -19,7 +19,7 @@ path = "src/explorer.rs"
 
 [dependencies]
 acp_thread.workspace = true
-agent.workspace = true
+agent = { workspace = true, features = ["eval"] }
 agent-client-protocol.workspace = true
 agent_settings.workspace = true
 agent_ui.workspace = true
@@ -29,7 +29,6 @@ buffer_diff.workspace = true
 chrono.workspace = true
 clap.workspace = true
 client.workspace = true
-cloud_llm_client.workspace = true
 collections.workspace = true
 debug_adapter_extension.workspace = true
 dirs.workspace = true
@@ -54,13 +53,13 @@ pretty_assertions.workspace = true
 project.workspace = true
 prompt_store.workspace = true
 regex.workspace = true
+rand.workspace = true
 release_channel.workspace = true
 reqwest_client.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 shellexpand.workspace = true
-smol.workspace = true
 telemetry.workspace = true
 terminal_view.workspace = true
 toml.workspace = true

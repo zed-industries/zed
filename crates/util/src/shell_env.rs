@@ -33,10 +33,9 @@ async fn capture_unix(
     directory: &Path,
 ) -> Result<collections::HashMap<String, String>> {
     use std::os::unix::process::CommandExt;
-    use std::process::Stdio;
 
-    let zed_path = super::get_shell_safe_zed_path()?;
     let shell_kind = ShellKind::new(shell_path, false);
+    let zed_path = super::get_shell_safe_zed_path(shell_kind)?;
 
     let mut command_string = String::new();
     let mut command = std::process::Command::new(shell_path);
@@ -56,9 +55,6 @@ async fn capture_unix(
         ShellKind::Xonsh => (FD_STDERR, "o>e".to_string()),
         _ => (FD_STDIN, format!(">&{}", FD_STDIN)), // `>&0`
     };
-    command.stdin(Stdio::null());
-    command.stdout(Stdio::piped());
-    command.stderr(Stdio::piped());
 
     match shell_kind {
         ShellKind::Csh | ShellKind::Tcsh => {
@@ -107,7 +103,7 @@ async fn spawn_and_read_fd(
     child_fd: std::os::fd::RawFd,
 ) -> anyhow::Result<(Vec<u8>, std::process::Output)> {
     use command_fds::{CommandFdExt, FdMapping};
-    use std::io::Read;
+    use std::{io::Read, process::Stdio};
 
     let (mut reader, writer) = std::io::pipe()?;
 
@@ -116,7 +112,11 @@ async fn spawn_and_read_fd(
         child_fd,
     }])?;
 
-    let process = smol::process::Command::from(command).spawn()?;
+    let process = smol::process::Command::from(command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
 
     let mut buffer = Vec::new();
     reader.read_to_end(&mut buffer)?;

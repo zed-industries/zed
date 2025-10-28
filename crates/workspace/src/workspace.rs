@@ -1,6 +1,6 @@
 pub mod dock;
 pub mod history_manager;
-pub mod invalid_buffer_view;
+pub mod invalid_item_view;
 pub mod item;
 mod modal_layer;
 pub mod notifications;
@@ -83,7 +83,7 @@ use remote::{
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
-use settings::{Settings, SettingsLocation, update_settings_file};
+use settings::{CenteredPaddingSettings, Settings, SettingsLocation, update_settings_file};
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -1199,9 +1199,6 @@ struct FollowerView {
 }
 
 impl Workspace {
-    const DEFAULT_PADDING: f32 = 0.2;
-    const MAX_PADDING: f32 = 0.4;
-
     pub fn new(
         workspace_id: Option<WorkspaceId>,
         project: Entity<Project>,
@@ -1461,7 +1458,7 @@ impl Workspace {
             }),
             cx.on_release(move |this, cx| {
                 this.app_state.workspace_store.update(cx, move |store, _| {
-                    store.workspaces.remove(&window_handle.clone());
+                    store.workspaces.remove(&window_handle);
                 })
             }),
         ];
@@ -3666,24 +3663,31 @@ impl Workspace {
         };
 
         if action.clone {
-            clone_active_item(
-                self.database_id(),
-                &self.active_pane,
-                &destination,
-                action.focus,
-                window,
-                cx,
-            )
-        } else {
-            move_active_item(
-                &self.active_pane,
-                &destination,
-                action.focus,
-                true,
-                window,
-                cx,
-            )
+            if self
+                .active_pane
+                .read(cx)
+                .active_item()
+                .is_some_and(|item| item.can_split(cx))
+            {
+                clone_active_item(
+                    self.database_id(),
+                    &self.active_pane,
+                    &destination,
+                    action.focus,
+                    window,
+                    cx,
+                );
+                return;
+            }
         }
+        move_active_item(
+            &self.active_pane,
+            &destination,
+            action.focus,
+            true,
+            window,
+            cx,
+        )
     }
 
     pub fn activate_next_pane(&mut self, window: &mut Window, cx: &mut App) {
@@ -3844,24 +3848,31 @@ impl Workspace {
         };
 
         if action.clone {
-            clone_active_item(
-                self.database_id(),
-                &self.active_pane,
-                &destination,
-                action.focus,
-                window,
-                cx,
-            )
-        } else {
-            move_active_item(
-                &self.active_pane,
-                &destination,
-                action.focus,
-                true,
-                window,
-                cx,
-            );
+            if self
+                .active_pane
+                .read(cx)
+                .active_item()
+                .is_some_and(|item| item.can_split(cx))
+            {
+                clone_active_item(
+                    self.database_id(),
+                    &self.active_pane,
+                    &destination,
+                    action.focus,
+                    window,
+                    cx,
+                );
+                return;
+            }
         }
+        move_active_item(
+            &self.active_pane,
+            &destination,
+            action.focus,
+            true,
+            window,
+            cx,
+        );
     }
 
     pub fn bounding_box_for_pane(&self, pane: &Entity<Pane>) -> Option<Bounds<Pixels>> {
@@ -4144,6 +4155,9 @@ impl Workspace {
         let Some(item) = pane.read(cx).active_item() else {
             return Task::ready(None);
         };
+        if !item.can_split(cx) {
+            return Task::ready(None);
+        }
         let task = item.clone_on_split(self.database_id(), window, cx);
         cx.spawn_in(window, async move |this, cx| {
             if let Some(clone) = task.await {
@@ -5938,8 +5952,11 @@ impl Workspace {
 
     fn adjust_padding(padding: Option<f32>) -> f32 {
         padding
-            .unwrap_or(Self::DEFAULT_PADDING)
-            .clamp(0.0, Self::MAX_PADDING)
+            .unwrap_or(CenteredPaddingSettings::default().0)
+            .clamp(
+                CenteredPaddingSettings::MIN_PADDING,
+                CenteredPaddingSettings::MAX_PADDING,
+            )
     }
 
     fn render_dock(
@@ -6423,8 +6440,12 @@ impl Render for Workspace {
         let paddings = if centered_layout {
             let settings = WorkspaceSettings::get_global(cx).centered_layout;
             (
-                render_padding(Self::adjust_padding(settings.left_padding)),
-                render_padding(Self::adjust_padding(settings.right_padding)),
+                render_padding(Self::adjust_padding(
+                    settings.left_padding.map(|padding| padding.0),
+                )),
+                render_padding(Self::adjust_padding(
+                    settings.right_padding.map(|padding| padding.0),
+                )),
             )
         } else {
             (None, None)
@@ -7015,7 +7036,9 @@ actions!(
     zed,
     [
         /// Opens the Zed log file.
-        OpenLog
+        OpenLog,
+        /// Reveals the Zed log file in the system file manager.
+        RevealLogInFileManager
     ]
 );
 
@@ -7300,6 +7323,7 @@ pub struct OpenOptions {
     pub visible: Option<OpenVisible>,
     pub focus: Option<bool>,
     pub open_new_workspace: Option<bool>,
+    pub prefer_focused_window: bool,
     pub replace_window: Option<WindowHandle<Workspace>>,
     pub env: Option<HashMap<String, String>>,
 }
@@ -7320,6 +7344,10 @@ pub fn open_paths(
     let mut existing = None;
     let mut best_match = None;
     let mut open_visible = OpenVisible::All;
+    #[cfg(target_os = "windows")]
+    let wsl_path = abs_paths
+        .iter()
+        .find_map(|p| util::paths::WslPath::from_path(p));
 
     cx.spawn(async move |cx| {
         if open_options.open_new_workspace != Some(true) {
@@ -7352,7 +7380,7 @@ pub fn open_paths(
             })?;
 
             if open_options.open_new_workspace.is_none()
-                && existing.is_none()
+                && (existing.is_none() || open_options.prefer_focused_window)
                 && all_metadatas.iter().all(|file| !file.is_dir)
             {
                 cx.update(|cx| {
@@ -7383,7 +7411,7 @@ pub fn open_paths(
             }
         }
 
-        if let Some(existing) = existing {
+        let result = if let Some(existing) = existing {
             let open_task = existing
                 .update(cx, |workspace, window, cx| {
                     window.activate_window();
@@ -7420,7 +7448,37 @@ pub fn open_paths(
                 )
             })?
             .await
-        }
+        };
+
+        #[cfg(target_os = "windows")]
+        if let Some(util::paths::WslPath{distro, path}) = wsl_path
+            && let Ok((workspace, _)) = &result
+        {
+            workspace
+                .update(cx, move |workspace, _window, cx| {
+                    struct OpenInWsl;
+                    workspace.show_notification(NotificationId::unique::<OpenInWsl>(), cx, move |cx| {
+                        let display_path = util::markdown::MarkdownInlineCode(&path.to_string_lossy());
+                        let msg = format!("{display_path} is inside a WSL filesystem, some features may not work unless you open it with WSL remote");
+                        cx.new(move |cx| {
+                            MessageNotification::new(msg, cx)
+                                .primary_message("Open in WSL")
+                                .primary_icon(IconName::FolderOpen)
+                                .primary_on_click(move |window, cx| {
+                                    window.dispatch_action(Box::new(remote::OpenWslPath {
+                                            distro: remote::WslConnectionOptions {
+                                                    distro_name: distro.clone(),
+                                                user: None,
+                                            },
+                                            paths: vec![path.clone().into()],
+                                        }), cx)
+                                })
+                        })
+                    });
+                })
+                .unwrap();
+        };
+        result
     })
 }
 
@@ -8185,6 +8243,9 @@ pub fn clone_active_item(
     let Some(active_item) = source.read(cx).active_item() else {
         return;
     };
+    if !active_item.can_split(cx) {
+        return;
+    }
     let destination = destination.downgrade();
     let task = active_item.clone_on_split(workspace_id, window, cx);
     window
