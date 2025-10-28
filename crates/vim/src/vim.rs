@@ -574,8 +574,29 @@ impl Vim {
             (initial_vim_mode, Mode::Normal)
         };
 
-        cx.new(|cx| {
-            let subscriptions = vec![
+        cx.new(|cx| Vim {
+            mode,
+            last_mode,
+            temp_mode: false,
+            exit_temporary_mode: false,
+            operator_stack: Vec::new(),
+            replacements: Vec::new(),
+
+            stored_visual_mode: None,
+            current_tx: None,
+            undo_last_line_tx: None,
+            current_anchor: None,
+            undo_modes: HashMap::default(),
+
+            status_label: None,
+            selected_register: None,
+            search: SearchState::default(),
+
+            last_command: None,
+            running_command: None,
+
+            editor: editor.downgrade(),
+            _subscriptions: vec![
                 cx.observe_keystrokes(Self::observe_keystrokes),
                 cx.subscribe_in(
                     &editor,
@@ -584,32 +605,7 @@ impl Vim {
                         this.handle_editor_event(event, window, cx)
                     },
                 ),
-            ];
-
-            Vim {
-                mode,
-                last_mode,
-                temp_mode: false,
-                exit_temporary_mode: false,
-                operator_stack: Vec::new(),
-                replacements: Vec::new(),
-
-                stored_visual_mode: None,
-                current_tx: None,
-                undo_last_line_tx: None,
-                current_anchor: None,
-                undo_modes: HashMap::default(),
-
-                status_label: None,
-                selected_register: None,
-                search: SearchState::default(),
-
-                last_command: None,
-                running_command: None,
-
-                editor: editor.downgrade(),
-                _subscriptions: subscriptions,
-            }
+            ],
         })
     }
 
