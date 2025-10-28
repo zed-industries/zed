@@ -14,18 +14,19 @@ pub struct HighlightedLabel {
 impl HighlightedLabel {
     /// Constructs a label with the given characters highlighted.
     /// Characters are identified by UTF-8 byte position.
+    /// Now,highlighting of the error location will be ignored rather than causing a crash.
     pub fn new(label: impl Into<SharedString>, highlight_indices: Vec<usize>) -> Self {
         let label = label.into();
+        let mut highlight_indices_checked = Vec::new();
         for &run in &highlight_indices {
-            assert!(
-                label.is_char_boundary(run),
-                "highlight index {run} is not a valid UTF-8 boundary"
-            );
+            if label.is_char_boundary(run) {
+                highlight_indices_checked.push(run);
+            }
         }
         Self {
             base: LabelLike::new(),
             label,
-            highlight_indices,
+            highlight_indices: highlight_indices_checked,
         }
     }
 
