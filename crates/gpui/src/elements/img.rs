@@ -632,7 +632,7 @@ impl Asset for ImageAssetLoader {
                 }
             };
 
-            let data = if let Ok(format) = image::guess_format(&bytes) {
+            if let Ok(format) = image::guess_format(&bytes) {
                 let data = match format {
                     ImageFormat::Gif => {
                         let decoder = GifDecoder::new(Cursor::new(&bytes))?;
@@ -690,12 +690,12 @@ impl Asset for ImageAssetLoader {
                     }
                 };
 
-                RenderImage::new(data)
+                Ok(Arc::new(RenderImage::new(data)))
             } else {
-                return Ok(svg_renderer.render_single_frame(&bytes, 1.0, true)?);
-            };
-
-            Ok(Arc::new(data))
+                svg_renderer
+                    .render_single_frame(&bytes, 1.0, true)
+                    .map_err(Into::into)
+            }
         }
     }
 }

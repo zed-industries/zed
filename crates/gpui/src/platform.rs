@@ -1817,7 +1817,9 @@ impl Image {
             ImageFormat::Tiff => frames_for_image(&self.bytes, image::ImageFormat::Tiff)?,
             ImageFormat::Ico => frames_for_image(&self.bytes, image::ImageFormat::Ico)?,
             ImageFormat::Svg => {
-                return Ok(svg_renderer.render_single_frame(&self.bytes, 1.0, false)?);
+                return svg_renderer
+                    .render_single_frame(&self.bytes, 1.0, false)
+                    .map_err(Into::into);
             }
         };
 
