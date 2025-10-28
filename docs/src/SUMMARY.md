@@ -4,9 +4,9 @@
 
 - [Getting Started](./getting-started.md)
 - [Installation](./installation.md)
-  - [Quick Start](./quick-start.md)<!-- doesn't exist yet -->
-  - [Authenticate](./authentication.md)
-  - [Update](./update.md)<!-- doesn't exist yet -->
+  - [Update](./update.md)
+  - [Uninstall](./uninstall.md)
+- [Authenticate](./authentication.md)
   - [Telemetry](./telemetry.md)
 
 # Configuration
