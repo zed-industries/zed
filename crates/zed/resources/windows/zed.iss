@@ -31,7 +31,10 @@ WizardStyle=modern
 
 CloseApplications=force
 
+#if GetEnv("CI") != ""
 SignTool=Defaultsign
+#endif
+
 DefaultDirName={autopf}\{#AppName}
 PrivilegesRequired=lowest
 
@@ -62,8 +65,15 @@ Source: "{#ResourcesDir}\Zed.exe"; DestDir: "{code:GetInstallDir}"; Flags: ignor
 Source: "{#ResourcesDir}\bin\*"; DestDir: "{code:GetInstallDir}\bin"; Flags: ignoreversion
 Source: "{#ResourcesDir}\tools\*"; DestDir: "{app}\tools"; Flags: ignoreversion
 Source: "{#ResourcesDir}\appx\*"; DestDir: "{app}\appx";  BeforeInstall: RemoveAppxPackage; AfterInstall: AddAppxPackage; Flags: ignoreversion; Check: IsWindows11OrLater
+#ifexist ResourcesDir + "\amd_ags_x64.dll"
 Source: "{#ResourcesDir}\amd_ags_x64.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#ResourcesDir}\OpenConsole.exe"; DestDir: "{code:GetInstallDir}"; Flags: ignoreversion
+#endif
+#ifexist ResourcesDir + "\x64\OpenConsole.exe"
+Source: "{#ResourcesDir}\x64\OpenConsole.exe"; DestDir: "{code:GetInstallDir}\x64"; Flags: ignoreversion
+#endif
+#ifexist ResourcesDir + "\arm64\OpenConsole.exe"
+Source: "{#ResourcesDir}\arm64\OpenConsole.exe"; DestDir: "{code:GetInstallDir}\arm64"; Flags: ignoreversion
+#endif
 Source: "{#ResourcesDir}\conpty.dll"; DestDir: "{code:GetInstallDir}"; Flags: ignoreversion
 
 [Icons]

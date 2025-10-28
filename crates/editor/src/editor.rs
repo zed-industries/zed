@@ -163,7 +163,10 @@ use rpc::{ErrorCode, ErrorExt, proto::PeerId};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager};
 use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
-use settings::{GitGutterSetting, Settings, SettingsLocation, SettingsStore, update_settings_file};
+use settings::{
+    GitGutterSetting, RelativeLineNumbers, Settings, SettingsLocation, SettingsStore,
+    update_settings_file,
+};
 use smallvec::{SmallVec, smallvec};
 use snippet::Snippet;
 use std::{
@@ -10519,7 +10522,7 @@ impl Editor {
 
         for selection in self
             .selections
-            .all::<Point>(&self.display_snapshot(cx))
+            .all_adjusted(&self.display_snapshot(cx))
             .iter()
         {
             let Some(wrap_config) = snapshot
@@ -19351,9 +19354,16 @@ impl Editor {
         EditorSettings::get_global(cx).gutter.line_numbers
     }
 
-    pub fn should_use_relative_line_numbers(&self, cx: &mut App) -> bool {
-        self.use_relative_line_numbers
-            .unwrap_or(EditorSettings::get_global(cx).relative_line_numbers)
+    pub fn relative_line_numbers(&self, cx: &mut App) -> RelativeLineNumbers {
+        match (
+            self.use_relative_line_numbers,
+            EditorSettings::get_global(cx).relative_line_numbers,
+        ) {
+            (None, setting) => setting,
+            (Some(false), _) => RelativeLineNumbers::Disabled,
+            (Some(true), RelativeLineNumbers::Wrapped) => RelativeLineNumbers::Wrapped,
+            (Some(true), _) => RelativeLineNumbers::Enabled,
+        }
     }
 
     pub fn toggle_relative_line_numbers(
@@ -19362,8 +19372,8 @@ impl Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let is_relative = self.should_use_relative_line_numbers(cx);
-        self.set_relative_line_number(Some(!is_relative), cx)
+        let is_relative = self.relative_line_numbers(cx);
+        self.set_relative_line_number(Some(!is_relative.enabled()), cx)
     }
 
     pub fn set_relative_line_number(&mut self, is_relative: Option<bool>, cx: &mut Context<Self>) {
