@@ -65,7 +65,7 @@ fn bundle_mac_job(arch: runners::Arch) -> Job {
         ))
 }
 
-fn bundle_mac(arch: runners::Arch) -> Step<Run> {
+pub fn bundle_mac(arch: runners::Arch) -> Step<Run> {
     named::bash(&format!("./script/bundle-mac {arch}-apple-darwin"))
 }
 
