@@ -61,7 +61,7 @@ jobs:
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
-        rm -f ./../.cargo
+        rm -rf ./../.cargo
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   run_tests_windows:
@@ -303,7 +303,7 @@ jobs:
     timeout-minutes: 60
   build_nix_linux_x86_64:
     if: github.repository_owner == 'zed-industries'
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: namespace-profile-32x64-ubuntu-2004
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
