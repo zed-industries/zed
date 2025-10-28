@@ -5,7 +5,7 @@
 - [Getting Started](./getting-started.md)
 - [Installation](./installation.md)
   - [Quick Start](./quick-start.md)<!-- doesn't exist yet -->
-  - [Authentication](./authentication.md)
+  - [Authenticate](./authentication.md)
   - [Update](./update.md)<!-- doesn't exist yet -->
   - [Telemetry](./telemetry.md)
 
