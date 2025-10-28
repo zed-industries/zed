@@ -718,10 +718,6 @@ jobs:
       (contains(github.event.pull_request.labels.*.name, 'run-nix') ||
       needs.job_spec.outputs.run_nix == 'true')
     secrets: inherit
-    with:
-      flake-output: debug
-      # excludes the final package to only cache dependencies
-      cachix-filter: "-zed-editor-[0-9.]*-nightly"
 
   bundle-windows-x64:
     timeout-minutes: 120

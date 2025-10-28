@@ -12,7 +12,7 @@ fn str_vec(values: &'static [&'static str]) -> Vec<String> {
 pub(crate) fn run_tests_in(paths: &'static [&'static str], workflow: Workflow) -> Workflow {
     let paths = str_vec(paths);
     workflow
-        .on(Event::default()
+        .add_event(Event::default()
             .push(
                 Push::default()
                     .branches(

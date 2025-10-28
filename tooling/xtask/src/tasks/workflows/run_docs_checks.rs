@@ -8,7 +8,7 @@ use gh_workflow::*;
 pub(crate) fn run_docs_checks() -> Workflow {
     let docs = check_docs();
     named::workflow()
-        .map(|workflow| run_tests_in(&["docs/**"], workflow))
+        .map(|workflow| run_tests_in(&["docs/**", "crates/docs_preprocessor/**"], workflow))
         .add_job(docs.name, docs.job)
 }
 
