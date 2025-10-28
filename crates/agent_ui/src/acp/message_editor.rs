@@ -2179,10 +2179,10 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    format!("eight.txt dir{slash}b{slash}"),
-                    format!("seven.txt dir{slash}b{slash}"),
-                    format!("six.txt dir{slash}b{slash}"),
-                    format!("five.txt dir{slash}b{slash}"),
+                    format!("eight.txt b{slash}"),
+                    format!("seven.txt b{slash}"),
+                    format!("six.txt b{slash}"),
+                    format!("five.txt b{slash}"),
                 ]
             );
             editor.set_text("", window, cx);
@@ -2210,10 +2210,10 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    format!("eight.txt dir{slash}b{slash}"),
-                    format!("seven.txt dir{slash}b{slash}"),
-                    format!("six.txt dir{slash}b{slash}"),
-                    format!("five.txt dir{slash}b{slash}"),
+                    format!("eight.txt b{slash}"),
+                    format!("seven.txt b{slash}"),
+                    format!("six.txt b{slash}"),
+                    format!("five.txt b{slash}"),
                     "Files & Directories".into(),
                     "Symbols".into(),
                     "Threads".into(),
@@ -2246,7 +2246,7 @@ mod tests {
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
                 current_completion_labels(editor),
-                vec![format!("one.txt dir{slash}a{slash}")]
+                vec![format!("one.txt a{slash}")]
             );
         });
 
@@ -2516,7 +2516,7 @@ mod tests {
                 format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) @file x.png", symbol.to_uri())
             );
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), &[format!("x.png dir{slash}")]);
+            assert_eq!(current_completion_labels(editor), &[format!("x.png ")]);
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -2558,7 +2558,7 @@ mod tests {
                         format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) @file x.png", symbol.to_uri())
                     );
                     assert!(editor.has_visible_completions_menu());
-                    assert_eq!(current_completion_labels(editor), &[format!("x.png dir{slash}")]);
+                    assert_eq!(current_completion_labels(editor), &[format!("x.png ")]);
                 });
 
         editor.update_in(&mut cx, |editor, window, cx| {

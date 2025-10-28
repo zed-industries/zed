@@ -1320,10 +1320,10 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    format!("seven.txt dir{slash}b{slash}"),
-                    format!("six.txt dir{slash}b{slash}"),
-                    format!("five.txt dir{slash}b{slash}"),
-                    format!("four.txt dir{slash}a{slash}"),
+                    format!("seven.txt b{slash}"),
+                    format!("six.txt b{slash}"),
+                    format!("five.txt b{slash}"),
+                    format!("four.txt a{slash}"),
                     "Files & Directories".into(),
                     "Symbols".into(),
                     "Fetch".into()
@@ -1355,7 +1355,7 @@ mod tests {
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
                 current_completion_labels(editor),
-                vec![format!("one.txt dir{slash}a{slash}")]
+                vec![format!("one.txt a{slash}")]
             );
         });
 
@@ -1367,12 +1367,12 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt) ")
+                format!("Lorem [@one.txt](@file:a{slash}one.txt) ")
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 37)]
+                vec![Point::new(0, 6)..Point::new(0, 33)]
             );
         });
 
@@ -1381,12 +1381,12 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  ")
+                format!("Lorem [@one.txt](@file:a{slash}one.txt)  ")
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 37)]
+                vec![Point::new(0, 6)..Point::new(0, 33)]
             );
         });
 
@@ -1395,12 +1395,12 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum "),
+                format!("Lorem [@one.txt](@file:a{slash}one.txt)  Ipsum "),
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 37)]
+                vec![Point::new(0, 6)..Point::new(0, 33)]
             );
         });
 
@@ -1409,12 +1409,12 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum @file "),
+                format!("Lorem [@one.txt](@file:a{slash}one.txt)  Ipsum @file "),
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 37)]
+                vec![Point::new(0, 6)..Point::new(0, 33)]
             );
         });
 
@@ -1427,14 +1427,14 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum [@seven.txt](@file:dir{slash}b{slash}seven.txt) ")
+                format!("Lorem [@one.txt](@file:a{slash}one.txt)  Ipsum [@seven.txt](@file:b{slash}seven.txt) ")
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
                 vec![
-                    Point::new(0, 6)..Point::new(0, 37),
-                    Point::new(0, 45)..Point::new(0, 80)
+                    Point::new(0, 6)..Point::new(0, 33),
+                    Point::new(0, 41)..Point::new(0, 72)
                 ]
             );
         });
@@ -1444,14 +1444,14 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum [@seven.txt](@file:dir{slash}b{slash}seven.txt) \n@")
+                format!("Lorem [@one.txt](@file:a{slash}one.txt)  Ipsum [@seven.txt](@file:b{slash}seven.txt) \n@")
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
                 vec![
-                    Point::new(0, 6)..Point::new(0, 37),
-                    Point::new(0, 45)..Point::new(0, 80)
+                    Point::new(0, 6)..Point::new(0, 33),
+                    Point::new(0, 41)..Point::new(0, 72)
                 ]
             );
         });
@@ -1465,15 +1465,15 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum [@seven.txt](@file:dir{slash}b{slash}seven.txt) \n[@six.txt](@file:dir{slash}b{slash}six.txt) ")
+                format!("Lorem [@one.txt](@file:a{slash}one.txt)  Ipsum [@seven.txt](@file:b{slash}seven.txt) \n[@six.txt](@file:b{slash}six.txt) ")
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
                 vec![
-                    Point::new(0, 6)..Point::new(0, 37),
-                    Point::new(0, 45)..Point::new(0, 80),
-                    Point::new(1, 0)..Point::new(1, 31)
+                    Point::new(0, 6)..Point::new(0, 33),
+                    Point::new(0, 41)..Point::new(0, 72),
+                    Point::new(1, 0)..Point::new(1, 27)
                 ]
             );
         });
