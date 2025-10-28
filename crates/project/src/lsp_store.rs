@@ -138,6 +138,7 @@ pub use worktree::{
 
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 pub const SERVER_PROGRESS_THROTTLE_TIMEOUT: Duration = Duration::from_millis(100);
+const WORKSPACE_DIAGNOSTICS_TOKEN_START: &str = "id:";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormatTrigger {
@@ -9371,7 +9372,9 @@ impl LspStore {
                 );
             }
             lsp::ProgressParamsValue::WorkspaceDiagnostic(report) => {
-                let identifier = token.split_once("id:").map(|(_, id)| id.to_owned());
+                let identifier = token
+                    .split_once(WORKSPACE_DIAGNOSTICS_TOKEN_START)
+                    .map(|(_, id)| id.to_owned());
                 if let Some(LanguageServerState::Running {
                     workspace_diagnostics_refresh_tasks,
                     ..
@@ -12504,7 +12507,7 @@ fn lsp_workspace_diagnostics_refresh(
 
                 let token = if let Some(identifier) = &registration_id {
                     format!(
-                        "workspace/diagnostic/{}/{requests}/id:{identifier}",
+                        "workspace/diagnostic/{}/{requests}/{WORKSPACE_DIAGNOSTICS_TOKEN_START}{identifier}",
                         server.server_id(),
                     )
                 } else {
