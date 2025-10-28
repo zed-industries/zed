@@ -34,6 +34,12 @@ impl Default for Encoding {
     }
 }
 
+impl From<&'static encoding_rs::Encoding> for Encoding {
+    fn from(encoding: &'static encoding_rs::Encoding) -> Self {
+        Encoding::new(encoding)
+    }
+}
+
 unsafe impl Send for Encoding {}
 unsafe impl Sync for Encoding {}
 
@@ -120,13 +126,19 @@ impl Encoding {
 /// Convert a byte vector from a specified encoding to a UTF-8 string.
 pub async fn to_utf8(
     input: Vec<u8>,
-    encoding: Encoding,
-    force: bool,
-    detect_utf16: bool,
+    options: &EncodingOptions,
     buffer_encoding: Option<Arc<Encoding>>,
 ) -> anyhow::Result<String> {
-    encoding
-        .decode(input, force, detect_utf16, buffer_encoding)
+    options
+        .encoding
+        .decode(
+            input,
+            options.force.load(std::sync::atomic::Ordering::Acquire),
+            options
+                .detect_utf16
+                .load(std::sync::atomic::Ordering::Acquire),
+            buffer_encoding,
+        )
         .await
 }
 
@@ -159,6 +171,18 @@ impl Default for EncodingOptions {
             encoding: Arc::new(Encoding::default()),
             force: AtomicBool::new(false),
             detect_utf16: AtomicBool::new(true),
+        }
+    }
+}
+
+impl Clone for EncodingOptions {
+    fn clone(&self) -> Self {
+        EncodingOptions {
+            encoding: Arc::new(self.encoding.get().into()),
+            force: AtomicBool::new(self.force.load(std::sync::atomic::Ordering::Acquire)),
+            detect_utf16: AtomicBool::new(
+                self.detect_utf16.load(std::sync::atomic::Ordering::Acquire),
+            ),
         }
     }
 }

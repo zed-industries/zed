@@ -2720,13 +2720,7 @@ impl Project {
         }
 
         self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.open_buffer(
-                path.into(),
-                Some((*self.encoding_options.encoding).clone()),
-                *self.encoding_options.force.get_mut(),
-                *self.encoding_options.detect_utf16.get_mut(),
-                cx,
-            )
+            buffer_store.open_buffer(path.into(), &self.encoding_options, cx)
         })
     }
 
@@ -5409,7 +5403,7 @@ impl Project {
         cx.spawn(async move |cx| {
             let file = worktree
                 .update(cx, |worktree, cx| {
-                    worktree.load_file(&rel_path, None, false, true, None, cx)
+                    worktree.load_file(&rel_path, &Default::default(), None, cx)
                 })?
                 .await
                 .context("Failed to load settings file")?;

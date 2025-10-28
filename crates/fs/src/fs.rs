@@ -58,11 +58,9 @@ use smol::io::AsyncReadExt;
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
 
+use encodings::{Encoding, EncodingOptions, from_utf8, to_utf8};
 #[cfg(any(test, feature = "test-support"))]
 pub use fake_git_repo::{LOAD_HEAD_TEXT_TASK, LOAD_INDEX_TEXT_TASK};
-use encodings::Encoding;
-use encodings::from_utf8;
-use encodings::to_utf8;
 
 pub trait Watcher: Send + Sync {
     fn add(&self, path: &Path) -> Result<()>;
@@ -122,19 +120,10 @@ pub trait Fs: Send + Sync {
     async fn load_with_encoding(
         &self,
         path: &Path,
-        encoding: Encoding,
-        force: bool,
-        detect_utf16: bool,
+        options: &EncodingOptions,
         buffer_encoding: Option<Arc<Encoding>>,
     ) -> Result<String> {
-        Ok(to_utf8(
-            self.load_bytes(path).await?,
-            encoding,
-            force,
-            detect_utf16,
-            buffer_encoding,
-        )
-        .await?)
+        Ok(to_utf8(self.load_bytes(path).await?, options, buffer_encoding).await?)
     }
 
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>>;

@@ -469,9 +469,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
         .update(cx, |tree, cx| {
             tree.load_file(
                 rel_path("one/node_modules/b/b1.js"),
-                None,
-                false,
-                false,
+                &Default::default(),
                 None,
                 cx,
             )
@@ -516,9 +514,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
         .update(cx, |tree, cx| {
             tree.load_file(
                 rel_path("one/node_modules/a/a2.js"),
-                None,
-                false,
-                false,
+                &Default::default(),
                 None,
                 cx,
             )

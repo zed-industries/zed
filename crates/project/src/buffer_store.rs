@@ -7,7 +7,7 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use client::Client;
 use collections::{HashMap, HashSet, hash_map};
-use encodings::Encoding;
+use encodings::EncodingOptions;
 use fs::Fs;
 use futures::StreamExt;
 use futures::{Future, FutureExt as _, channel::oneshot, future::Shared};
@@ -629,23 +629,17 @@ impl LocalBufferStore {
         &self,
         path: Arc<RelPath>,
         worktree: Entity<Worktree>,
-        encoding: Option<Encoding>,
-        force: bool,
-        detect_utf16: bool,
+        options: &EncodingOptions,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {
+        let options = options.clone();
+        let encoding = options.encoding.clone();
+
         let load_buffer = worktree.update(cx, |worktree, cx| {
             let reservation = cx.reserve_entity();
             let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
 
-            let load_file_task = worktree.load_file(
-                path.as_ref(),
-                encoding.clone(),
-                force,
-                detect_utf16,
-                None,
-                cx,
-            );
+            let load_file_task = worktree.load_file(path.as_ref(), &options, None, cx);
 
             cx.spawn(async move |_, cx| {
                 let loaded_file = load_file_task.await?;
@@ -682,11 +676,7 @@ impl LocalBufferStore {
                             entry_id: None,
                             is_local: true,
                             is_private: false,
-                            encoding: Some(Arc::new(if let Some(encoding) = &encoding {
-                                encoding.clone()
-                            } else {
-                                Encoding::default()
-                            })),
+                            encoding: Some(encoding.clone()),
                         })),
                         Capability::ReadWrite,
                     )
@@ -714,11 +704,7 @@ impl LocalBufferStore {
                 anyhow::Ok(())
             })??;
 
-            buffer.update(cx, |buffer, _| {
-                buffer
-                    .encoding
-                    .set(encoding.unwrap_or(Encoding::default()).get())
-            })?;
+            buffer.update(cx, |buffer, _| buffer.encoding.set(encoding.get()))?;
 
             Ok(buffer)
         })
@@ -850,9 +836,7 @@ impl BufferStore {
     pub fn open_buffer(
         &mut self,
         project_path: ProjectPath,
-        encoding: Option<Encoding>,
-        force: bool,
-        detect_utf16: bool,
+        options: &EncodingOptions,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
         if let Some(buffer) = self.get_by_path(&project_path) {
@@ -876,9 +860,7 @@ impl BufferStore {
                     return Task::ready(Err(anyhow!("no such worktree")));
                 };
                 let load_buffer = match &self.state {
-                    BufferStoreState::Local(this) => {
-                        this.open_buffer(path, worktree, encoding, force, detect_utf16, cx)
-                    }
+                    BufferStoreState::Local(this) => this.open_buffer(path, worktree, options, cx),
                     BufferStoreState::Remote(this) => this.open_buffer(path, worktree, cx),
                 };
 
@@ -1191,7 +1173,7 @@ impl BufferStore {
                 let buffers = this.update(cx, |this, cx| {
                     project_paths
                         .into_iter()
-                        .map(|project_path| this.open_buffer(project_path, None, false, true, cx))
+                        .map(|project_path| this.open_buffer(project_path, &Default::default(), cx))
                         .collect::<Vec<_>>()
                 })?;
                 for buffer_task in buffers {

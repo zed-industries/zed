@@ -57,7 +57,7 @@ impl ContextProvider for JsonTaskProvider {
             let contents = file
                 .worktree
                 .update(cx, |this, cx| {
-                    this.load_file(&file.path, None, false, true, None, cx)
+                    this.load_file(&file.path, &Default::default(), None, cx)
                 })
                 .ok()?
                 .await

@@ -21,7 +21,7 @@ use anyhow::{Context as _, Result};
 use clock::Lamport;
 pub use clock::ReplicaId;
 use collections::HashMap;
-use encodings::Encoding;
+use encodings::{Encoding, EncodingOptions};
 use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
@@ -422,9 +422,7 @@ pub trait LocalFile: File {
     fn load(
         &self,
         cx: &App,
-        encoding: Encoding,
-        force: bool,
-        detect_utf16: bool,
+        options: &EncodingOptions,
         buffer_encoding: Option<Arc<Encoding>>,
     ) -> Task<Result<String>>;
 
@@ -1372,6 +1370,8 @@ impl Buffer {
         let encoding = (*self.encoding).clone();
 
         let buffer_encoding = self.encoding.clone();
+        let options = EncodingOptions::default();
+        options.encoding.set(encoding.get());
 
         let prev_version = self.text.version();
         self.reload_task = Some(cx.spawn(async move |this, cx| {
@@ -1379,7 +1379,7 @@ impl Buffer {
                 let file = this.file.as_ref()?.as_local()?;
 
                 Some((file.disk_state().mtime(), {
-                    file.load(cx, encoding, false, true, Some(buffer_encoding))
+                    file.load(cx, &options, Some(buffer_encoding))
                 }))
             })?
             else {
@@ -5271,9 +5271,7 @@ impl LocalFile for TestFile {
     fn load(
         &self,
         _cx: &App,
-        _encoding: Encoding,
-        _force: bool,
-        _detect_utf16: bool,
+        _options: &EncodingOptions,
         _buffer_encoding: Option<Arc<Encoding>>,
     ) -> Task<Result<String>> {
         unimplemented!()

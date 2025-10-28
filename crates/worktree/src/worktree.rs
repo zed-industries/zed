@@ -7,7 +7,7 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{Context as _, Result, anyhow};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
-use encodings::Encoding;
+use encodings::{Encoding, EncodingOptions};
 use fs::{Fs, MTime, PathEvent, RemoveOptions, Watcher, copy_recursive, read_dir_items};
 use futures::{
     FutureExt as _, Stream, StreamExt,
@@ -707,16 +707,12 @@ impl Worktree {
     pub fn load_file(
         &self,
         path: &RelPath,
-        encoding: Option<Encoding>,
-        force: bool,
-        detect_utf16: bool,
+        options: &EncodingOptions,
         buffer_encoding: Option<Arc<Encoding>>,
         cx: &Context<Worktree>,
     ) -> Task<Result<LoadedFile>> {
         match self {
-            Worktree::Local(this) => {
-                this.load_file(path, encoding, force, detect_utf16, buffer_encoding, cx)
-            }
+            Worktree::Local(this) => this.load_file(path, options, buffer_encoding, cx),
             Worktree::Remote(_) => {
                 Task::ready(Err(anyhow!("remote worktrees can't yet load files")))
             }
@@ -1327,9 +1323,7 @@ impl LocalWorktree {
     fn load_file(
         &self,
         path: &RelPath,
-        encoding: Option<Encoding>,
-        force: bool,
-        detect_utf16: bool,
+        options: &EncodingOptions,
         buffer_encoding: Option<Arc<Encoding>>,
         cx: &Context<Worktree>,
     ) -> Task<Result<LoadedFile>> {
@@ -1338,6 +1332,8 @@ impl LocalWorktree {
         let fs = self.fs.clone();
         let entry = self.refresh_entry(path.clone(), None, cx);
         let is_private = self.is_path_private(path.as_ref());
+        let options = options.clone();
+        let encoding = options.encoding.clone();
 
         let this = cx.weak_entity();
         cx.background_spawn(async move {
@@ -1356,17 +1352,7 @@ impl LocalWorktree {
                 }
             }
             let text = fs
-                .load_with_encoding(
-                    &abs_path,
-                    if let Some(ref encoding) = encoding {
-                        Encoding::new(encoding.get())
-                    } else {
-                        Encoding::new(encodings::UTF_8)
-                    },
-                    force,
-                    detect_utf16,
-                    buffer_encoding.clone(),
-                )
+                .load_with_encoding(&abs_path, &options, buffer_encoding.clone())
                 .await?;
 
             let worktree = this.upgrade().context("worktree was dropped")?;
@@ -1391,7 +1377,7 @@ impl LocalWorktree {
                         },
                         is_local: true,
                         is_private,
-                        encoding: encoding.map(|e| Arc::new(Encoding::new(e.get()))),
+                        encoding: Some(encoding),
                     })
                 }
             };
@@ -3180,16 +3166,25 @@ impl language::LocalFile for File {
     fn load(
         &self,
         cx: &App,
-        encoding: Encoding,
-        force: bool,
-        detect_utf16: bool,
+        options: &EncodingOptions,
         buffer_encoding: Option<Arc<Encoding>>,
     ) -> Task<Result<String>> {
         let worktree = self.worktree.read(cx).as_local().unwrap();
         let abs_path = worktree.absolutize(&self.path);
         let fs = worktree.fs.clone();
+        let options = EncodingOptions {
+            encoding: options.encoding.clone(),
+            force: std::sync::atomic::AtomicBool::new(
+                options.force.load(std::sync::atomic::Ordering::Acquire),
+            ),
+            detect_utf16: std::sync::atomic::AtomicBool::new(
+                options
+                    .detect_utf16
+                    .load(std::sync::atomic::Ordering::Acquire),
+            ),
+        };
         cx.background_spawn(async move {
-            fs.load_with_encoding(&abs_path, encoding, force, detect_utf16, buffer_encoding)
+            fs.load_with_encoding(&abs_path, &options, buffer_encoding)
                 .await
         })
     }

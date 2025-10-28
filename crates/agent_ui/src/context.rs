@@ -287,7 +287,7 @@ impl DirectoryContextHandle {
             let open_task = project.update(cx, |project, cx| {
                 project.buffer_store().update(cx, |buffer_store, cx| {
                     let project_path = ProjectPath { worktree_id, path };
-                    buffer_store.open_buffer(project_path, None, false, true, cx)
+                    buffer_store.open_buffer(project_path, &Default::default(), cx)
                 })
             });
 

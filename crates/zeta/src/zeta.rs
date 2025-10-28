@@ -1986,7 +1986,7 @@ mod tests {
                     .worktree_for_root_name("closed_source_worktree", cx)
                     .unwrap();
                 worktree2.update(cx, |worktree2, cx| {
-                    worktree2.load_file(rel_path("main.rs"), None, false, true, None, cx)
+                    worktree2.load_file(rel_path("main.rs"), &Default::default(), None, cx)
                 })
             })
             .await

@@ -1248,7 +1248,7 @@ fn full_mention_for_directory(
                             worktree_id,
                             path: worktree_path,
                         };
-                        buffer_store.open_buffer(project_path, None, false, true, cx)
+                        buffer_store.open_buffer(project_path, &Default::default(), cx)
                     })
                 });
 
