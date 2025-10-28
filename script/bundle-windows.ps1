@@ -202,10 +202,13 @@ function CollectFiles {
     Move-Item -Path "$innoDir\zed.sh" -Destination "$innoDir\bin\zed" -Force
     Move-Item -Path "$innoDir\auto_update_helper.exe" -Destination "$innoDir\tools\auto_update_helper.exe" -Force
     if($Architecture -eq "aarch64") {
+        New-Item -Type Directory -Path "$innoDir\arm64" -Force
         Move-Item -Path ".\conpty\build\native\runtimes\arm64\OpenConsole.exe" -Destination "$innoDir\arm64\OpenConsole.exe" -Force
         Move-Item -Path ".\conpty\runtimes\win10-arm64\native\conpty.dll" -Destination "$innoDir\arm64\conpty.dll" -Force
     }
     else {
+        New-Item -Type Directory -Path "$innoDir\x64" -Force
+        New-Item -Type Directory -Path "$innoDir\arm64" -Force
         Move-Item -Path ".\AGS_SDK-6.3.0\ags_lib\lib\amd_ags_x64.dll" -Destination "$innoDir\amd_ags_x64.dll" -Force
         Move-Item -Path ".\conpty\build\native\runtimes\x64\OpenConsole.exe" -Destination "$innoDir\x64\OpenConsole.exe" -Force
         Move-Item -Path ".\conpty\build\native\runtimes\arm64\OpenConsole.exe" -Destination "$innoDir\arm64\OpenConsole.exe" -Force
