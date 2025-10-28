@@ -2014,7 +2014,7 @@ pub mod tests {
                                     task_lsp_request_ranges.lock().push(params.range);
                                     task_lsp_request_count.fetch_add(1, Ordering::Release);
                                     Ok(Some(vec![lsp::InlayHint {
-                                        position: params.range.end,
+                                        position: params.range.start,
                                         label: lsp::InlayHintLabel::String(
                                             params.range.end.line.to_string(),
                                         ),
