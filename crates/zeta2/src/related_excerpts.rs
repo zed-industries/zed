@@ -1,10 +1,13 @@
-use std::{cmp::Reverse, fmt::Write, ops::Range, path::PathBuf, sync::Arc};
+use std::{cmp::Reverse, fmt::Write, ops::Range, path::PathBuf, sync::Arc, time::Instant};
 
-use crate::merge_excerpts::write_merged_excerpts;
+use crate::{
+    ZetaContextRetrievalDebugInfo, ZetaDebugInfo, ZetaSearchQueryDebugInfo,
+    merge_excerpts::write_merged_excerpts,
+};
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions, Line};
-use futures::{StreamExt, stream::BoxStream};
+use futures::{StreamExt, channel::mpsc, stream::BoxStream};
 use gpui::{App, AsyncApp, Entity, Task};
 use indoc::indoc;
 use language::{Anchor, Bias, Buffer, OffsetRangeExt, Point, TextBufferSnapshot, ToPoint as _};
@@ -61,22 +64,22 @@ const SEARCH_TOOL_NAME: &str = "search";
 /// Search for relevant code
 ///
 /// For the best results, run multiple queries at once with a single invocation of this tool.
-#[derive(Deserialize, JsonSchema)]
-struct SearchToolInput {
+#[derive(Clone, Deserialize, JsonSchema)]
+pub struct SearchToolInput {
     /// An array of queries to run for gathering context relevant to the next prediction
     #[schemars(length(max = 5))]
-    queries: Box<[SearchToolQuery]>,
+    pub queries: Box<[SearchToolQuery]>,
 }
 
-#[derive(Deserialize, JsonSchema)]
-struct SearchToolQuery {
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct SearchToolQuery {
     /// A glob pattern to match file paths in the codebase
-    glob: String,
+    pub glob: String,
     /// A regular expression to match content within the files matched by the glob pattern
-    regex: String,
+    pub regex: String,
     /// Whether the regex is case-sensitive. Defaults to false (case-insensitive).
     #[serde(default)]
-    case_sensitive: bool,
+    pub case_sensitive: bool,
 }
 
 const RESULTS_MESSAGE: &str = indoc! {"
@@ -124,6 +127,7 @@ pub fn find_related_excerpts<'a>(
     project: &Entity<Project>,
     events: impl Iterator<Item = &'a crate::Event>,
     options: &LlmContextOptions,
+    debug_tx: Option<mpsc::UnboundedSender<ZetaDebugInfo>>,
     cx: &App,
 ) -> Task<Result<HashMap<Entity<Buffer>, Vec<Range<Anchor>>>>> {
     let language_model_registry = LanguageModelRegistry::global(cx);
@@ -304,11 +308,33 @@ pub fn find_related_excerpts<'a>(
             snapshot: TextBufferSnapshot,
         }
 
+        let search_queries = search_calls
+            .iter()
+            .map(|(_, tool_use)| {
+                Ok(serde_json::from_value::<SearchToolInput>(
+                    tool_use.input.clone(),
+                )?)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        if let Some(debug_tx) = &debug_tx {
+            debug_tx
+                .unbounded_send(ZetaDebugInfo::SearchQueriesGenerated(
+                    ZetaSearchQueryDebugInfo {
+                        project: project.clone(),
+                        timestamp: Instant::now(),
+                        queries: search_queries
+                            .iter()
+                            .flat_map(|call| call.queries.iter().cloned())
+                            .collect(),
+                    },
+                ))
+                .ok();
+        }
+
         let mut result_buffers_by_path = HashMap::default();
 
-        for (index, tool_use) in search_calls.into_iter().rev() {
-            let call = serde_json::from_value::<SearchToolInput>(tool_use.input.clone())?;
-
+        for ((index, tool_use), call) in search_calls.into_iter().zip(search_queries).rev() {
             let mut excerpts_by_buffer = HashMap::default();
 
             for query in call.queries {
@@ -392,6 +418,17 @@ pub fn find_related_excerpts<'a>(
                     },
                 ],
             );
+
+            if let Some(debug_tx) = &debug_tx {
+                debug_tx
+                    .unbounded_send(ZetaDebugInfo::SearchQueriesExecuted(
+                        ZetaContextRetrievalDebugInfo {
+                            project: project.clone(),
+                            timestamp: Instant::now(),
+                        },
+                    ))
+                    .ok();
+            }
         }
 
         if result_buffers_by_path.is_empty() {
