@@ -9,58 +9,13 @@ use super::{
 // b: have separate workflows for each test kind with path filters, have them all be required
 // c: break tests into separate workflows, have each of them individually check whether to run
 
-// todo! missing the random tests that are in macos_tests for some reason
-pub(crate) fn run_tests() -> Workflow {
-    let windows_tests = run_platform_tests(Platform::Windows);
-    let linux_tests = run_platform_tests(Platform::Linux);
-    let mac_tests = run_platform_tests(Platform::Mac);
-    let migrations = check_postgres_and_protobuf_migrations();
-    let style = style();
-    let action_lint = actionlint();
-    let doctests = doctests();
-
-    named::workflow()
-        // todo! inputs?
-        .on(Event::default()
-            .push(
-                Push::default()
-                    .branches(
-                        [
-                            "main",
-                            "v[0-9]+.[0-9]+.x", // any release branch
-                        ]
-                        .map(String::from),
-                    )
-                    .tags(
-                        [
-                            "v*", // any release tag
-                        ]
-                        .map(String::from),
-                    ),
-            )
-            .pull_request(
-                PullRequest::default().branches(
-                    [
-                        "**", // all branches
-                    ]
-                    .map(String::from),
-                ),
-            ))
-        .concurrency(Concurrency::default()
-            .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}")
-            .cancel_in_progress(true)
-        )
-        .add_job(style.name, style.job)
-        .add_job(windows_tests.name, windows_tests.job)
-        .add_job(linux_tests.name, linux_tests.job)
-        .add_job(mac_tests.name, mac_tests.job)
-        .add_job(migrations.name, migrations.job)
-        .add_job(action_lint.name, action_lint.job)
-        .add_job(doctests.name, doctests.job)
+fn str_vec(values: &'static [&'static str]) -> Vec<String> {
+    values.into_iter().map(ToString::to_string).collect()
 }
 
-fn tests_workflow(paths: impl Into<Vec<String>>) -> Workflow {
-    let paths = paths.into();
+// todo! make this take vec<&str> instead
+fn tests_workflow(paths: &'static [&'static str]) -> Workflow {
+    let paths = str_vec(paths);
     named::workflow()
         // todo! inputs?
         .on(Event::default()
@@ -97,15 +52,135 @@ fn tests_workflow(paths: impl Into<Vec<String>>) -> Workflow {
         )
 }
 
-pub(crate) mod check_docs {
+// todo! missing the random tests that are in macos_tests for some reason
+pub(crate) fn run_tests() -> Workflow {
+    let windows_tests = run_platform_tests(Platform::Windows);
+    let linux_tests = run_platform_tests(Platform::Linux);
+    let mac_tests = run_platform_tests(Platform::Mac);
+    let migrations = check_postgres_and_protobuf_migrations();
+    let doctests = doctests();
+
+    tests_workflow(&[
+        "!docs/**",
+        "!script/update_top_ranking_issues/**",
+        "!.github/ISSUE_TEMPLATE/**",
+        "!.github/workflows/**",
+        ".github/workflows/run_tests.yml", // re-include this workflow so it re-runs when changed
+    ])
+    .add_job(windows_tests.name, windows_tests.job)
+    .add_job(linux_tests.name, linux_tests.job)
+    .add_job(mac_tests.name, mac_tests.job)
+    .add_job(migrations.name, migrations.job)
+    .add_job(doctests.name, doctests.job)
+}
+
+pub(crate) mod run_action_checks {
     use super::*;
 
-    pub(crate) fn check_docs() -> Workflow {
-        let docs = docs();
-        tests_workflow(["docs/**"].map(String::from)).add_job(docs.name, docs.job)
+    pub(crate) fn run_action_checks() -> Workflow {
+        let action_checks = actionlint();
+
+        tests_workflow(&[
+            ".github/workflows/**",
+            ".github/actions/**",
+            ".github/actionlint.yml",
+        ])
+        .add_job(action_checks.name, action_checks.job)
     }
 
-    fn docs() -> NamedJob {
+    fn actionlint() -> NamedJob {
+        const ACTION_LINT_STEP_ID: &'static str = "get_actionlint";
+
+        fn download_actionlint() -> Step<Run> {
+            named::bash("bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)").id(ACTION_LINT_STEP_ID)
+        }
+
+        fn run_actionlint() -> Step<Run> {
+            named::bash(indoc::indoc! {r#"
+                ${{ steps.get_actionlint.outputs.executable }} -color
+            "#})
+        }
+
+        named::job(
+            release_job(&[])
+                .runs_on(runners::LINUX_SMALL)
+                .add_step(steps::checkout_repo())
+                .add_step(download_actionlint())
+                .add_step(run_actionlint()),
+        )
+    }
+}
+
+pub(crate) mod run_style_checks {
+    use super::*;
+
+    pub(crate) fn run_style_checks() -> Workflow {
+        let style = check_style();
+        tests_workflow(
+            &[], // always check style
+        )
+        .add_job(style.name, style.job)
+    }
+
+    pub(crate) fn check_style() -> NamedJob {
+        fn prettier_check_docs() -> Step<Run> {
+            named::bash(indoc::indoc! {r#"
+                pnpm dlx "prettier@${PRETTIER_VERSION}" . --check || {
+                  echo "To fix, run from the root of the Zed repo:"
+                  echo "  cd docs && pnpm dlx prettier@${PRETTIER_VERSION} . --write && cd .."
+                  false
+                }
+            "#})
+            .working_directory("./docs")
+            .add_env(("PRETTIER_VERSION", "3.5.0"))
+        }
+
+        fn prettier_check_default_json() -> Step<Run> {
+            named::bash(indoc::indoc! {r#"
+                pnpm dlx "prettier@${PRETTIER_VERSION}" assets/settings/default.json --check || {
+                  echo "To fix, run from the root of the Zed repo:"
+                  echo "  pnpm dlx prettier@${PRETTIER_VERSION} assets/settings/default.json --write"
+                  false
+                }
+            "#})
+            .add_env(("PRETTIER_VERSION", "3.5.0"))
+        }
+
+        fn check_for_typos() -> Step<Use> {
+            named::uses(
+                "crate-ci",
+                "typos",
+                "80c8a4945eec0f6d464eaf9e65ed98ef085283d1",
+            ) // v1.38.1
+            .with(("config", "./typos.toml"))
+        }
+
+        named::job(
+            release_job(&[])
+                .runs_on(runners::LINUX_MEDIUM)
+                .add_step(steps::checkout_repo())
+                .add_step(steps::setup_pnpm())
+                .add_step(prettier_check_docs())
+                .add_step(prettier_check_default_json())
+                .add_step(steps::script("./script/check-todos"))
+                .add_step(steps::script("./script/check-keymaps"))
+                .add_step(check_for_typos())
+                // check style steps inlined
+                .add_step(steps::cargo_fmt())
+                .add_step(steps::script("./script/clippy")),
+        )
+    }
+}
+
+pub(crate) mod run_docs_check {
+    use super::*;
+
+    pub(crate) fn run_docs_check() -> Workflow {
+        let docs = check_docs();
+        tests_workflow(&["docs/**"]).add_job(docs.name, docs.job)
+    }
+
+    fn check_docs() -> NamedJob {
         // todo! would have preferred to just reference the action here while building, but the gh-workflow crate
         // only supports using repo actions (owner, name, version), not local actions (path)
         fn lychee_link_check(dir: &str) -> Step<Use> {
@@ -174,55 +249,6 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
     }
 }
 
-pub(crate) fn style() -> NamedJob {
-    fn prettier_check_docs() -> Step<Run> {
-        named::bash(indoc::indoc! {r#"
-            pnpm dlx "prettier@${PRETTIER_VERSION}" . --check || {
-              echo "To fix, run from the root of the Zed repo:"
-              echo "  cd docs && pnpm dlx prettier@${PRETTIER_VERSION} . --write && cd .."
-              false
-            }
-        "#})
-        .working_directory("./docs")
-        .add_env(("PRETTIER_VERSION", "3.5.0"))
-    }
-
-    fn prettier_check_default_json() -> Step<Run> {
-        named::bash(indoc::indoc! {r#"
-            pnpm dlx "prettier@${PRETTIER_VERSION}" assets/settings/default.json --check || {
-              echo "To fix, run from the root of the Zed repo:"
-              echo "  pnpm dlx prettier@${PRETTIER_VERSION} assets/settings/default.json --write"
-              false
-            }
-        "#})
-        .add_env(("PRETTIER_VERSION", "3.5.0"))
-    }
-
-    fn check_for_typos() -> Step<Use> {
-        named::uses(
-            "crate-ci",
-            "typos",
-            "80c8a4945eec0f6d464eaf9e65ed98ef085283d1",
-        ) // v1.38.1
-        .with(("config", "./typos.toml"))
-    }
-
-    named::job(
-        release_job(&[])
-            .runs_on(runners::LINUX_MEDIUM)
-            .add_step(steps::checkout_repo())
-            .add_step(steps::setup_pnpm())
-            .add_step(prettier_check_docs())
-            .add_step(prettier_check_default_json())
-            .add_step(steps::script("./script/check-todos"))
-            .add_step(steps::script("./script/check-keymaps"))
-            .add_step(check_for_typos())
-            // check style steps inlined
-            .add_step(steps::cargo_fmt())
-            .add_step(steps::script("./script/clippy")),
-    )
-}
-
 pub(crate) fn check_style() -> NamedJob {
     let job = release_job(&[])
         .runs_on(runners::MAC_DEFAULT)
@@ -273,28 +299,6 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .add_step(ensure_fresh_merge())
             .add_step(bufbuild_setup_action())
             .add_step(bufbuild_breaking_action()),
-    )
-}
-
-fn actionlint() -> NamedJob {
-    const ACTION_LINT_STEP_ID: &'static str = "get_actionlint";
-
-    fn download_actionlint() -> Step<Run> {
-        named::bash("bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)").id(ACTION_LINT_STEP_ID)
-    }
-
-    fn run_actionlint() -> Step<Run> {
-        named::bash(indoc::indoc! {r#"
-            ${{ steps.get_actionlint.outputs.executable }} -color
-        "#})
-    }
-
-    named::job(
-        release_job(&[])
-            .runs_on(runners::LINUX_SMALL)
-            .add_step(steps::checkout_repo())
-            .add_step(download_actionlint())
-            .add_step(run_actionlint()),
     )
 }
 

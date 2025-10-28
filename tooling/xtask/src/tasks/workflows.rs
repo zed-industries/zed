@@ -25,7 +25,18 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         ("run_bundling.yml", run_bundling::run_bundling()),
         ("release_nightly.yml", release_nightly::release_nightly()),
         ("run_tests.yml", run_tests::run_tests()),
-        ("check_docs.yml", run_tests::check_docs::check_docs()),
+        (
+            "run_docs_check.yml",
+            run_tests::run_docs_check::run_docs_check(),
+        ),
+        (
+            "run_style_checks.yml",
+            run_tests::run_style_checks::run_style_checks(),
+        ),
+        (
+            "run_action_checks.yml",
+            run_tests::run_action_checks::run_action_checks(),
+        ),
         // ("release.yml", release::release()),
     ];
     fs::create_dir_all(dir)
