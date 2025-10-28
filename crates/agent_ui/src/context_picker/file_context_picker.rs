@@ -199,11 +199,11 @@ pub(crate) fn search_files(
         let project = workspace.project().read(cx);
         let worktree_count = project.worktrees(cx).count();
         let include_root_name = worktree_count > 1;
-        
+
         let recent_matches = workspace
             .recent_navigation_history(Some(10), cx)
             .into_iter()
-            .filter_map(|(project_path, _)| {
+            .map(|(project_path, _)| {
                 let path_prefix = if include_root_name {
                     project
                         .worktree_for_id(project_path.worktree_id, cx)
@@ -212,8 +212,8 @@ pub(crate) fn search_files(
                 } else {
                     RelPath::empty().into()
                 };
-                
-                Some(FileMatch {
+
+                FileMatch {
                     mat: PathMatch {
                         score: 0.,
                         positions: Vec::new(),
@@ -224,7 +224,7 @@ pub(crate) fn search_files(
                         is_dir: false,
                     },
                     is_recent: true,
-                })
+                }
             });
 
         let file_matches = project.worktrees(cx).flat_map(|worktree| {
