@@ -235,9 +235,7 @@ jobs:
         clean: 'false'
     - id: get_actionlint
       name: run_tests::actionlint::download_actionlint
-      run: |
-        curl -sSL https://github.com/rhysd/actionlint/releases/download/v1.6.1/actionlint_linux_amd64.tar.gz | tar xz
-        mv actionlint_linux_amd64/actionlint /usr/local/bin/
+      run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
       shell: bash -euxo pipefail {0}
     - name: run_tests::actionlint::run_actionlint
       run: |

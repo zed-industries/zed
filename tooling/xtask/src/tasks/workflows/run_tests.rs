@@ -199,10 +199,7 @@ fn actionlint() -> NamedJob {
     const ACTION_LINT_STEP_ID: &'static str = "get_actionlint";
 
     fn download_actionlint() -> Step<Run> {
-        named::bash(indoc::indoc! {r#"
-            curl -sSL https://github.com/rhysd/actionlint/releases/download/v1.6.1/actionlint_linux_amd64.tar.gz | tar xz
-            mv actionlint_linux_amd64/actionlint /usr/local/bin/
-        "#}).id(ACTION_LINT_STEP_ID)
+        named::bash("bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)").id(ACTION_LINT_STEP_ID)
     }
 
     fn run_actionlint() -> Step<Run> {
