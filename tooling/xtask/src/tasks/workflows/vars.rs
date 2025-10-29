@@ -91,7 +91,7 @@ impl PathCondition {
             .set_by_step
             .borrow()
             .clone()
-            .expect(&format!("condition {},is never set", self.name));
+            .unwrap_or_else(|| panic!("condition {},is never set", self.name));
         NamedJob {
             name: job.name,
             job: job
