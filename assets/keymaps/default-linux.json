@@ -731,6 +731,12 @@
       "tab": "editor::ComposeCompletion"
     }
   },
+  {
+    "context": "Editor && smart_tab_supersede_completions && showing_completions",
+    "bindings": {
+      "tab": "editor::Tab"
+    }
+  },
   // Bindings for accepting edit predictions
   //
   // alt-l is provided as an alternative to tab/alt-tab. and will be displayed in the UI. This is
@@ -750,6 +756,18 @@
       "alt-tab": "editor::AcceptEditPrediction",
       "alt-l": "editor::AcceptEditPrediction",
       "alt-right": "editor::AcceptPartialEditPrediction"
+    }
+  },
+  {
+    "context": "Editor && smart_tab_supersede_edit_predictions && edit_prediction",
+    "bindings": {
+      "tab": "editor::Tab"
+    }
+  },
+  {
+    "context": "Editor && smart_tab_supersede_edit_predictions && edit_prediction_conflict",
+    "bindings": {
+      "tab": "editor::Tab"
     }
   },
   {

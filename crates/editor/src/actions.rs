@@ -573,6 +573,10 @@ actions!(
         LineDown,
         /// Moves cursor up one line.
         LineUp,
+        /// Moves cursor to the start of the next larger syntax node.
+        MoveToStartOfLargerSyntaxNode,
+        /// Moves cursor to the end of the next larger syntax node.
+        MoveToEndOfLargerSyntaxNode,
         /// Moves cursor down.
         MoveDown,
         /// Moves cursor left.
