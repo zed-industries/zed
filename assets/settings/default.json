@@ -1329,7 +1329,7 @@
       "model": null,
       "max_tokens": null
     },
-    // Whether edit predictions are enabled when editing text threads.
+    // Whether edit predictions are enabled when editing text threads in the agent panel.
     // This setting has no effect if globally disabled.
     "enabled_in_text_threads": true
   },

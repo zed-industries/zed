@@ -5737,7 +5737,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         SettingsPageItem::SettingItem(SettingItem {
                             title: "In Text Threads",
-                            description: "Whether edit predictions are enabled when editing text threads.",
+                            description: "Whether edit predictions are enabled when editing text threads in the agent panel.",
                             field: Box::new(SettingField {
                                 json_path: Some("edit_prediction_in_text_threads"),
                                 pick: |settings_content| {
