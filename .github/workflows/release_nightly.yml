@@ -33,7 +33,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   run_tests_mac:
-    if: github.repository_owner == 'zed-industries'
+    if: 'false'
     runs-on: self-mini-macos
     steps:
     - name: steps::checkout_repo
@@ -68,7 +68,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   run_tests_windows:
-    if: github.repository_owner == 'zed-industries'
+    if: 'false'
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo

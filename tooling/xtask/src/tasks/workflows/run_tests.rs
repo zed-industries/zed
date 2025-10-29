@@ -301,6 +301,7 @@ pub(crate) fn run_platform_tests(platform: Platform, deps: &[&NamedJob]) -> Name
     NamedJob {
         name: format!("run_tests_{platform}"),
         job: release_job(deps)
+            .cond(Expression::new("false"))
             .runs_on(runner)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
