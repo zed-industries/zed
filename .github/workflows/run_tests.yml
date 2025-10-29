@@ -6,7 +6,9 @@ env:
   RUST_BACKTRACE: '1'
   CARGO_INCREMENTAL: '0'
 on:
-  pull_request: {}
+  pull_request:
+    branches:
+    - '**'
   push:
     branches:
     - main
@@ -290,21 +292,23 @@ jobs:
     steps:
     - name: run_tests::tests_pass
       run: |
+        set +x
         EXIT_CODE=0
 
         check_result() {
           echo "* $1: $2"
-          [[ "$2" != "skipped" && "$2" != "success" ]] && EXIT_CODE=1
+          if [[ "$2" != "skipped" && "$2" != "success" ]]; then EXIT_CODE=1; fi
         }
 
-        check_result run_tests_windows ${{ needs.run_tests_windows.result }}
-        check_result run_tests_linux ${{ needs.run_tests_linux.result }}
-        check_result run_tests_mac ${{ needs.run_tests_mac.result }}
-        check_result check_postgres_and_protobuf_migrations ${{ needs.check_postgres_and_protobuf_migrations.result }}
-        check_result doctests ${{ needs.doctests.result }}
-        check_result check_dependencies ${{ needs.check_dependencies.result }}
-        check_result check_workspace_binaries ${{ needs.check_workspace_binaries.result }}
-        check_result check_style ${{ needs.check_style.result }}
+        check_result "run_tests_windows" "${{ needs.run_tests_windows.result }}"
+        check_result "run_tests_linux" "${{ needs.run_tests_linux.result }}"
+        check_result "run_tests_mac" "${{ needs.run_tests_mac.result }}"
+        check_result "check_postgres_and_protobuf_migrations" "${{ needs.check_postgres_and_protobuf_migrations.result }}"
+        check_result "doctests" "${{ needs.doctests.result }}"
+        check_result "check_dependencies" "${{ needs.check_dependencies.result }}"
+        check_result "check_workspace_binaries" "${{ needs.check_workspace_binaries.result }}"
+        check_result "check_style" "${{ needs.check_style.result }}"
+
         exit $EXIT_CODE
       shell: bash -euxo pipefail {0}
 concurrency:

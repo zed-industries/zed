@@ -146,6 +146,15 @@ pub(crate) struct NamedJob {
     pub job: Job,
 }
 
+// impl NamedJob {
+//     pub fn map(self, f: impl FnOnce(Job) -> Job) -> Self {
+//         NamedJob {
+//             name: self.name,
+//             job: f(self.job),
+//         }
+//     }
+// }
+
 pub(crate) fn release_job(deps: &[&NamedJob]) -> Job {
     let job = Job::default()
         .cond(Expression::new(

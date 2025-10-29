@@ -7,6 +7,16 @@ use super::{
     steps::{self, FluentBuilder, NamedJob, named, release_job},
 };
 
+/// Represents a pattern to check for changed files and corresponding output variable
+// struct ChangeDetectionRule {
+//     /// Name of the output variable (e.g., "run_tests", "run_docs")
+//     output_name: &'static str,
+//     /// Perl-compatible regex pattern to match against changed files
+//     pattern: &'static str,
+//     /// If true, set output to "true" when pattern does NOT match (inverted logic)
+//     invert_match: bool,
+// }
+
 fn str_vec(values: &'static [&'static str]) -> Vec<String> {
     values.into_iter().map(ToString::to_string).collect()
 }
@@ -46,9 +56,11 @@ pub(crate) fn run_tests_in(paths: &'static [&'static str], workflow: Workflow) -
 }
 
 pub(crate) fn run_tests() -> Workflow {
-    let windows_tests = run_platform_tests(Platform::Windows);
-    let linux_tests = run_platform_tests(Platform::Linux);
-    let mac_tests = run_platform_tests(Platform::Mac);
+    // let choose = choose_which_jobs_to_run();
+
+    let windows_tests = run_platform_tests(Platform::Windows, &[]); //.map(|job| job.cond());
+    let linux_tests = run_platform_tests(Platform::Linux, &[]);
+    let mac_tests = run_platform_tests(Platform::Mac, &[]);
     let migrations = check_postgres_and_protobuf_migrations();
     let doctests = doctests();
     let check_dependencies = check_dependencies();
@@ -74,7 +86,7 @@ pub(crate) fn run_tests() -> Workflow {
                     .add_branch("main")
                     .add_branch("v[0-9]+.[0-9]+.x")
             )
-            .pull_request(PullRequest::default())
+            .pull_request(PullRequest::default().add_branch("**"))
         )
         .concurrency(Concurrency::default()
             .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}")
@@ -89,13 +101,83 @@ pub(crate) fn run_tests() -> Workflow {
     workflow.add_job(tests_pass.name, tests_pass.job)
 }
 
+/// Generates a bash script that checks changed files against regex patterns
+/// and sets GitHub output variables accordingly
+// fn decide_which_actions_to_run() -> String {
+//     let rules = [
+//         ChangeDetectionRule {
+//             output_name: "run_tests",
+//             pattern: r"^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!ci)))",
+//             invert_match: true,
+//         },
+//         ChangeDetectionRule {
+//             output_name: "run_docs",
+//             pattern: r"^docs/",
+//             invert_match: false,
+//         },
+//         ChangeDetectionRule {
+//             output_name: "run_actionlint",
+//             pattern: r"^\.github/(workflows/|actions/|actionlint.yml)",
+//             invert_match: false,
+//         },
+//         ChangeDetectionRule {
+//             output_name: "run_license",
+//             pattern: r"^(Cargo.lock|script/.*licenses)",
+//             invert_match: false,
+//         },
+//         ChangeDetectionRule {
+//             output_name: "run_nix",
+//             pattern: r"^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)",
+//             invert_match: false,
+//         },
+//     ];
+
+//     let mut script = String::new();
+
+//     // Add the header that determines what to compare against
+//     script.push_str(indoc::indoc! {r#"
+//         if [ -z "$GITHUB_BASE_REF" ]; then
+//           echo "Not in a PR context (i.e., push to main/stable/preview)"
+//           COMPARE_REV="$(git rev-parse HEAD~1)"
+//         else
+//           echo "In a PR context comparing to pull_request.base.ref"
+//           git fetch origin "$GITHUB_BASE_REF" --depth=350
+//           COMPARE_REV="$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)"
+//         fi
+//         CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" ${{ github.sha }})"
+
+//         check_pattern() {
+//           local output_name="$1"
+//           local pattern="$2"
+//           local grep_arg="$3"
+
+//           echo "$CHANGED_FILES" | grep "$grep_arg" "$pattern" && \
+//             echo "${output_name}=true" >> "$GITHUB_OUTPUT" || \
+//             echo "${output_name}=false" >> "$GITHUB_OUTPUT"
+//         }
+
+//     "#});
+
+//     // Generate a function call for each rule
+//     for rule in &rules {
+//         let grep_arg = if rule.invert_match { "-qvP" } else { "-qP" };
+//         script.push_str(&format!(
+//             "check_pattern \"{}\" '{}' {}\n",
+//             rule.output_name, rule.pattern, grep_arg
+//         ));
+//     }
+
+//     script
+// }
+
 pub(crate) fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
     let mut script = String::from(indoc::indoc! {r#"
+        set +x
         EXIT_CODE=0
 
         check_result() {
           echo "* $1: $2"
-          [[ "$2" != "skipped" && "$2" != "success" ]] && EXIT_CODE=1
+          if [[ "$2" != "skipped" && "$2" != "success" ]]; then EXIT_CODE=1; fi
         }
 
     "#});
@@ -210,7 +292,7 @@ fn check_workspace_binaries() -> NamedJob {
     )
 }
 
-pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
+pub(crate) fn run_platform_tests(platform: Platform, deps: &[&NamedJob]) -> NamedJob {
     let runner = match platform {
         Platform::Windows => runners::WINDOWS_DEFAULT,
         Platform::Linux => runners::LINUX_DEFAULT,
@@ -218,7 +300,7 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
     };
     NamedJob {
         name: format!("run_tests_{platform}"),
-        job: release_job(&[])
+        job: release_job(deps)
             .runs_on(runner)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
