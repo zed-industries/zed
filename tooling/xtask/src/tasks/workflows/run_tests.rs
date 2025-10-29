@@ -157,6 +157,7 @@ fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
             "github.repository_owner == 'zed-industries'",
         ))
         .outputs(outputs)
+        .add_step(steps::checkout_repo())
         .add_step(
             Step::new(step_name.clone())
                 .run(script)
