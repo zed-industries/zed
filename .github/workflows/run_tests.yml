@@ -46,7 +46,7 @@ jobs:
             echo "${output_name}=false" >> "$GITHUB_OUTPUT"
         }
 
-        check_pattern "run_action_checks" '^\.github/(workflows/|actions/|actionlint.yml)' -qP
+        check_pattern "run_action_checks" '^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask' -qP
         check_pattern "run_docs" '^docs/' -qP
         check_pattern "run_licenses" '^(Cargo.lock|script/.*licenses)' -qP
         check_pattern "run_nix" '^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)' -qP
@@ -416,6 +416,15 @@ jobs:
     - name: run_tests::check_scripts::run_actionlint
       run: |
         ${{ steps.get_actionlint.outputs.executable }} -color
+      shell: bash -euxo pipefail {0}
+    - name: run_tests::check_scripts::check_xtask_workflows
+      run: |
+        cargo run xtask workflows
+        if ! git diff --exit-code .github; then
+          echo "Error: .github directory has uncommitted changes after running 'cargo run xtask workflows'"
+          echo "Please run 'cargo run xtask workflows' locally and commit the changes"
+          exit 1
+        fi
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   build_nix_linux_x86_64:
