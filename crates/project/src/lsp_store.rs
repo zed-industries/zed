@@ -6608,9 +6608,9 @@ impl LspStore {
             return HashMap::default();
         }
 
-        let last_chunk_number = applicable_chunks.len() - 1;
+        let last_chunk_number = existing_inlay_hints.buffer_chunks_len() - 1;
 
-        for (i, row_chunk) in applicable_chunks.into_iter().enumerate() {
+        for row_chunk in applicable_chunks {
             match (
                 existing_inlay_hints
                     .cached_hints(&row_chunk)
@@ -6623,7 +6623,7 @@ impl LspStore {
                     .cloned(),
             ) {
                 (None, None) => {
-                    let end = if last_chunk_number == i {
+                    let end = if last_chunk_number == row_chunk.id {
                         Point::new(row_chunk.end, buffer_snapshot.line_len(row_chunk.end))
                     } else {
                         Point::new(row_chunk.end, 0)
