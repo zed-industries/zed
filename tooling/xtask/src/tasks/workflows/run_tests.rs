@@ -450,8 +450,8 @@ fn check_scripts() -> NamedJob {
         named::bash(indoc::indoc! {r#"
             cargo xtask workflows
             if ! git diff --exit-code .github; then
-              echo "Error: .github directory has uncommitted changes after running 'cargo run xtask workflows'"
-              echo "Please run 'cargo run xtask workflows' locally and commit the changes"
+              echo "Error: .github directory has uncommitted changes after running 'cargo xtask workflows'"
+              echo "Please run 'cargo xtask workflows' locally and commit the changes"
               exit 1
             fi
         "#})
