@@ -1,5 +1,15 @@
 name: CI
 
+# ideal release flow:
+#  phase 1:
+#   - tests on linux/windows/mac
+#   - (maybe) check fmt and spelling / licenses? [or maybe not, we already test them everywhere else...]
+#   - create draft release with the draft release notes
+#  phase 2:
+#   - build linux/windows/mac
+#  phase 3:
+#   - auto-release preview (for patch releases on the preview branch)
+
 on:
   push:
     tags:
