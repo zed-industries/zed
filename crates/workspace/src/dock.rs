@@ -637,6 +637,59 @@ impl Dock {
         self.panel_entries.len()
     }
 
+    pub fn next_enabled_panel(&self, cx: &App) -> Option<usize> {
+        let panel_count = self.panel_entries.len();
+        if panel_count == 0 {
+            return None;
+        }
+
+        let start_index = if let Some(current) = self.active_panel_index {
+            (current + 1) % panel_count
+        } else {
+            0
+        };
+
+        for i in 0..panel_count {
+            let panel_index = (start_index + i) % panel_count;
+            if self.panel_entries[panel_index].panel.enabled(cx) {
+                return Some(panel_index);
+            }
+        }
+
+        None
+    }
+
+    pub fn previous_enabled_panel(&self, cx: &App) -> Option<usize> {
+        let panel_count = self.panel_entries.len();
+        if panel_count == 0 {
+            return None;
+        }
+
+        let start_index = if let Some(current) = self.active_panel_index {
+            if current == 0 {
+                panel_count - 1
+            } else {
+                current - 1
+            }
+        } else {
+            panel_count - 1
+        };
+
+        for i in 0..panel_count {
+            let panel_index = if start_index >= i {
+                start_index - i
+            } else {
+                panel_count - (i - start_index)
+            };
+
+            if self.panel_entries[panel_index].panel.enabled(cx) {
+                return Some(panel_index);
+            }
+        }
+
+        None
+    }
+
     pub fn activate_panel(&mut self, panel_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         if Some(panel_ix) != self.active_panel_index {
             if let Some(active_panel) = self.active_panel_entry() {
