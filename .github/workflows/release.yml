@@ -160,9 +160,6 @@ jobs:
     needs:
     - run_tests_linux
     - check_scripts
-    if: |-
-      (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
-                       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     runs-on: namespace-profile-8x32-ubuntu-2004-arm-m4
     steps:
     - name: steps::checkout_repo
@@ -197,9 +194,6 @@ jobs:
     needs:
     - run_tests_linux
     - check_scripts
-    if: |-
-      (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
-                       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     runs-on: namespace-profile-32x64-ubuntu-2004
     steps:
     - name: steps::checkout_repo
@@ -234,9 +228,6 @@ jobs:
     needs:
     - run_tests_mac
     - check_scripts
-    if: |-
-      (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
-                       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     runs-on: self-mini-macos
     env:
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
@@ -278,9 +269,6 @@ jobs:
     needs:
     - run_tests_mac
     - check_scripts
-    if: |-
-      (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
-                       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     runs-on: self-mini-macos
     env:
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
@@ -322,9 +310,6 @@ jobs:
     needs:
     - run_tests_windows
     - check_scripts
-    if: |-
-      (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
-                       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     runs-on: self-32vcpu-windows-2022
     env:
       AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
@@ -359,9 +344,6 @@ jobs:
     needs:
     - run_tests_windows
     - check_scripts
-    if: |-
-      (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
-                       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     runs-on: self-32vcpu-windows-2022
     env:
       AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}

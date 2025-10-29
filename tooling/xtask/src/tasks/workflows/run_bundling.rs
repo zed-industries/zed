@@ -50,10 +50,11 @@ pub fn run_bundling() -> Workflow {
 
 fn bundle_job(deps: &[&NamedJob]) -> Job {
     dependant_job(deps)
-        .cond(Expression::new(
+        .when(deps.len() == 0, |job|
+                job.cond(Expression::new(
                 "(github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
                  (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))",
-            ))
+            )))
         .timeout_minutes(60u32)
 }
 
