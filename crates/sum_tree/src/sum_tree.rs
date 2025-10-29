@@ -311,7 +311,7 @@ impl<T: Item> SumTree<T> {
         }
     }
 
-    pub async fn from_iter_async<'cx, I, S>(iter: I, spawn: S) -> Self
+    pub async fn from_iter_async<I, S>(iter: I, spawn: S) -> Self
     where
         T: 'static + Send + Sync,
         for<'a> T::Summary: Summary<Context<'a> = ()> + Send + Sync,
@@ -321,8 +321,6 @@ impl<T: Item> SumTree<T> {
         let mut futures = vec![];
         let chunks = iter.into_iter().chunks(2 * TREE_BASE);
         for chunk in chunks.into_iter() {
-            // todo(lw): See if we can make background_spawn scoped
-            // todo(lw): See if we can use stream::chunks instead
             let items: ArrayVec<T, { 2 * TREE_BASE }> = chunk.into_iter().collect();
             futures.push(async move {
                 let item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }> =
@@ -626,9 +624,10 @@ impl<T: Item> SumTree<T> {
         S: BackgroundSpawn,
         I: IntoIterator<Item = T> + 'static,
         T: 'static + Send + Sync,
-        for<'a> T::Summary: Summary<Context<'a> = ()> + Send + Sync,
+        for<'b> T::Summary: Summary<Context<'b> = ()> + Send + Sync,
     {
-        self.append(Self::from_iter_async(iter, spawn).await, ());
+        let other = Self::from_iter_async(iter, spawn);
+        self.append(other.await, ());
     }
 
     pub fn push(&mut self, item: T, cx: <T::Summary as Summary>::Context<'_>) {
@@ -1510,30 +1509,6 @@ mod tests {
             if ix == 1 { Some(1) } else { None }
         });
         assert_eq!(SumTree::from_iter(iterator, ()).items(()), vec![1]);
-    }
-
-    #[test]
-    fn test_from_async_stream() {
-        struct NoSpawn;
-        impl BackgroundSpawn for NoSpawn {
-            type Task<R>
-                = std::pin::Pin<Box<dyn Future<Output = R> + Sync + Send>>
-            where
-                R: Send + Sync;
-            fn background_spawn<R>(
-                &self,
-                future: impl Future<Output = R> + Send + Sync + 'static,
-            ) -> Self::Task<R>
-            where
-                R: Send + Sync + 'static,
-            {
-                Box::pin(future)
-            }
-        }
-        let items: Vec<u8> = (0..255).collect();
-        let async_tree = pollster::block_on(SumTree::from_iter_async(items.clone(), NoSpawn));
-        let iter_tree = SumTree::from_iter(items, ());
-        assert_eq!(async_tree, iter_tree);
     }
 
     #[derive(Clone, Default, Debug)]

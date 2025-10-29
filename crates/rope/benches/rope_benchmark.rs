@@ -30,7 +30,7 @@ fn generate_random_text(rng: &mut StdRng, len: usize) -> String {
 fn generate_random_rope(rng: &mut StdRng, text_len: usize, cx: &AsyncApp) -> Rope {
     let text = generate_random_text(rng, text_len);
     let mut rope = Rope::new();
-    rope.push(&text, cx);
+    rope.push(&text, cx.background_executor());
     rope
 }
 
@@ -89,7 +89,7 @@ fn rope_benchmarks(c: &mut Criterion) {
             b.iter(|| {
                 let mut rope = Rope::new();
                 for _ in 0..10 {
-                    rope.push(&text, &cx);
+                    rope.push(&text, cx.background_executor());
                 }
             });
         });

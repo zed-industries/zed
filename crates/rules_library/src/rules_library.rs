@@ -554,7 +554,7 @@ impl RulesLibrary {
 
         let prompt_id = PromptId::new();
         let save = self.store.update(cx, |store, cx| {
-            store.save(prompt_id, None, false, "".into(), cx)
+            store.save(prompt_id, None, false, Default::default(), cx)
         });
         self.picker
             .update(cx, |picker, cx| picker.refresh(window, cx));
@@ -888,7 +888,13 @@ impl RulesLibrary {
             let new_id = PromptId::new();
             let body = rule.body_editor.read(cx).text(cx);
             let save = self.store.update(cx, |store, cx| {
-                store.save(new_id, Some(title.into()), false, body.into(), cx)
+                store.save(
+                    new_id,
+                    Some(title.into()),
+                    false,
+                    Rope::from_str(&body, cx.background_executor()),
+                    cx,
+                )
             });
             self.picker
                 .update(cx, |picker, cx| picker.refresh(window, cx));

@@ -14317,7 +14317,6 @@ dependencies = [
  "gpui",
  "log",
  "rand 0.9.2",
- "rayon",
  "sum_tree",
  "unicode-segmentation",
  "util",
@@ -16243,6 +16242,7 @@ checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 name = "streaming_diff"
 version = "0.1.0"
 dependencies = [
+ "gpui",
  "ordered-float 2.10.1",
  "rand 0.9.2",
  "rope",
@@ -16366,7 +16366,6 @@ dependencies = [
  "log",
  "pollster 0.4.0",
  "rand 0.9.2",
- "rayon",
  "zlog",
 ]
 
