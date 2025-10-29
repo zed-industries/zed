@@ -1,4 +1,6 @@
-use gh_workflow::{Concurrency, Event, Expression, PullRequest, Push, Run, Step, Use, Workflow};
+use gh_workflow::{
+    Concurrency, Event, Expression, Job, PullRequest, Push, Run, Step, Use, Workflow,
+};
 
 use super::{
     runners::{self, Platform},
@@ -18,7 +20,7 @@ pub(crate) fn run_tests_in(paths: &'static [&'static str], workflow: Workflow) -
                     .branches(
                         [
                             "main",
-                            "v[0-9]+.[0-9]+.x", // any release branch
+                        "v[0-9]+.[0-9]+.x", // any release branch
                         ]
                         .map(String::from),
                     )
@@ -51,27 +53,103 @@ pub(crate) fn run_tests() -> Workflow {
     let doctests = doctests();
     let check_dependencies = check_dependencies();
     let check_other_binaries = check_workspace_binaries();
+    let check_style = check_style();
 
-    named::workflow()
-        .map(|workflow| {
-            run_tests_in(
-                &[
-                    "!docs/**",
-                    "!script/update_top_ranking_issues/**",
-                    "!.github/ISSUE_TEMPLATE/**",
-                    "!.github/workflows/**",
-                    ".github/workflows/run_tests.yml", // re-include this workflow so it re-runs when changed
-                ],
-                workflow,
+    let jobs = [
+        windows_tests,
+        linux_tests,
+        mac_tests,
+        migrations,
+        doctests,
+        check_dependencies,
+        check_other_binaries,
+        check_style,
+    ];
+    let tests_pass = tests_pass(&jobs);
+
+    let mut workflow = named::workflow()
+        .add_event(Event::default()
+            .push(
+                Push::default()
+                    .add_branch("main")
+                    .add_branch("v[0-9]+.[0-9]+.x")
             )
-        })
-        .add_job(windows_tests.name, windows_tests.job)
-        .add_job(linux_tests.name, linux_tests.job)
-        .add_job(mac_tests.name, mac_tests.job)
-        .add_job(migrations.name, migrations.job)
-        .add_job(doctests.name, doctests.job)
-        .add_job(check_dependencies.name, check_dependencies.job)
-        .add_job(check_other_binaries.name, check_other_binaries.job)
+            .pull_request(PullRequest::default())
+        )
+        .concurrency(Concurrency::default()
+            .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}")
+            .cancel_in_progress(true)
+        )
+        .add_env(( "CARGO_TERM_COLOR", "always" ))
+        .add_env(( "RUST_BACKTRACE", 1 ))
+        .add_env(( "CARGO_INCREMENTAL", 0 ));
+    for job in jobs {
+        workflow = workflow.add_job(job.name, job.job)
+    }
+    workflow.add_job(tests_pass.name, tests_pass.job)
+}
+
+pub(crate) fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
+    let mut script = String::from(indoc::indoc! {r#"
+        EXIT_CODE=0
+
+        check_result() {
+          echo "* $1: $2"
+          [[ "$2" != "skipped" && "$2" != "success" ]] && EXIT_CODE=1
+        }
+
+    "#});
+
+    script.push_str(
+        &jobs
+            .iter()
+            .map(|job| {
+                format!(
+                    "check_result \"{}\" \"${{{{ needs.{}.result }}}}\"",
+                    job.name, job.name
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+
+    script.push_str("\n\nexit $EXIT_CODE\n");
+
+    let job = Job::default()
+        .runs_on(runners::LINUX_SMALL)
+        .needs(
+            jobs.iter()
+                .map(|j| j.name.to_string())
+                .collect::<Vec<String>>(),
+        )
+        .cond(Expression::new(
+            "github.repository_owner == 'zed-industries' && always()",
+        ))
+        .add_step(named::bash(&script));
+
+    named::job(job)
+}
+
+pub(crate) fn check_style() -> NamedJob {
+    fn check_for_typos() -> Step<Use> {
+        named::uses(
+            "crate-ci",
+            "typos",
+            "80c8a4945eec0f6d464eaf9e65ed98ef085283d1",
+        ) // v1.38.1
+        .with(("config", "./typos.toml"))
+    }
+    named::job(
+        release_job(&[])
+            .runs_on(runners::LINUX_MEDIUM)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_pnpm())
+            .add_step(steps::script("./script/prettier"))
+            .add_step(steps::script("./script/check-todos"))
+            .add_step(steps::script("./script/check-keymaps"))
+            .add_step(check_for_typos())
+            .add_step(steps::cargo_fmt()),
+    )
 }
 
 fn check_dependencies() -> NamedJob {

@@ -6,25 +6,11 @@ env:
   RUST_BACKTRACE: '1'
   CARGO_INCREMENTAL: '0'
 on:
-  pull_request:
-    branches:
-    - '**'
-    paths:
-    - '!docs/**'
-    - '!script/update_top_ranking_issues/**'
-    - '!.github/ISSUE_TEMPLATE/**'
-    - '!.github/workflows/**'
-    - .github/workflows/run_tests.yml
+  pull_request: {}
   push:
     branches:
     - main
     - v[0-9]+.[0-9]+.x
-    paths:
-    - '!docs/**'
-    - '!script/update_top_ranking_issues/**'
-    - '!.github/ISSUE_TEMPLATE/**'
-    - '!.github/workflows/**'
-    - .github/workflows/run_tests.yml
 jobs:
   run_tests_windows:
     if: github.repository_owner == 'zed-industries'
@@ -260,6 +246,67 @@ jobs:
         rm -rf ./../.cargo
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
+  check_style:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: namespace-profile-4x8-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_pnpm
+      uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
+      with:
+        version: '9'
+    - name: ./script/prettier
+      run: ./script/prettier
+      shell: bash -euxo pipefail {0}
+    - name: ./script/check-todos
+      run: ./script/check-todos
+      shell: bash -euxo pipefail {0}
+    - name: ./script/check-keymaps
+      run: ./script/check-keymaps
+      shell: bash -euxo pipefail {0}
+    - name: run_tests::check_style::check_for_typos
+      uses: crate-ci/typos@80c8a4945eec0f6d464eaf9e65ed98ef085283d1
+      with:
+        config: ./typos.toml
+    - name: steps::cargo_fmt
+      run: cargo fmt --all -- --check
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 60
+  tests_pass:
+    needs:
+    - run_tests_windows
+    - run_tests_linux
+    - run_tests_mac
+    - check_postgres_and_protobuf_migrations
+    - doctests
+    - check_dependencies
+    - check_workspace_binaries
+    - check_style
+    if: github.repository_owner == 'zed-industries' && always()
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: run_tests::tests_pass
+      run: |
+        EXIT_CODE=0
+
+        check_result() {
+          echo "* $1: $2"
+          [[ "$2" != "skipped" && "$2" != "success" ]] && EXIT_CODE=1
+        }
+
+        check_result run_tests_windows ${{ needs.run_tests_windows.result }}
+        check_result run_tests_linux ${{ needs.run_tests_linux.result }}
+        check_result run_tests_mac ${{ needs.run_tests_mac.result }}
+        check_result check_postgres_and_protobuf_migrations ${{ needs.check_postgres_and_protobuf_migrations.result }}
+        check_result doctests ${{ needs.doctests.result }}
+        check_result check_dependencies ${{ needs.check_dependencies.result }}
+        check_result check_workspace_binaries ${{ needs.check_workspace_binaries.result }}
+        check_result check_style ${{ needs.check_style.result }}
+        exit $EXIT_CODE
+      shell: bash -euxo pipefail {0}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
   cancel-in-progress: true
