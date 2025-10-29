@@ -552,23 +552,33 @@ message UpdateLanguageServer {
     }
 }
 
+message ProgressToken {
+    oneof value {
+        int32 number = 1;
+        string string = 2;
+    }
+}
+
 message LspWorkStart {
-    string token = 1;
+    reserved 1;
     optional string title = 4;
     optional string message = 2;
     optional uint32 percentage = 3;
     optional bool is_cancellable = 5;
+    ProgressToken token = 6;
 }
 
 message LspWorkProgress {
-    string token = 1;
+    reserved 1;
     optional string message = 2;
     optional uint32 percentage = 3;
     optional bool is_cancellable = 4;
+    ProgressToken token = 5;
 }
 
 message LspWorkEnd {
-    string token = 1;
+    reserved 1;
+    ProgressToken token = 2;
 }
 
 message LspDiskBasedDiagnosticsUpdating {}
@@ -708,7 +718,8 @@ message CancelLanguageServerWork {
 
     message LanguageServerWork {
         uint64 language_server_id = 1;
-        optional string token = 2;
+        reserved 2;
+        optional ProgressToken token = 3;
     }
 }
 
