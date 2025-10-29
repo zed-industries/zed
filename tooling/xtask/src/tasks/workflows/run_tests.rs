@@ -449,8 +449,8 @@ fn check_scripts() -> NamedJob {
         release_job(&[])
             .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
-            .add_step(download_actionlint())
             .add_step(run_shellcheck())
+            .add_step(download_actionlint().id("get_actionlint"))
             .add_step(run_actionlint()),
     )
 }

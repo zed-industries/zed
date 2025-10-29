@@ -406,11 +406,12 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: run_tests::check_scripts::download_actionlint
-      run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
-      shell: bash -euxo pipefail {0}
     - name: run_tests::check_scripts::run_shellcheck
       run: ./script/shellcheck-scripts error
+      shell: bash -euxo pipefail {0}
+    - id: get_actionlint
+      name: run_tests::check_scripts::download_actionlint
+      run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
       shell: bash -euxo pipefail {0}
     - name: run_tests::check_scripts::run_actionlint
       run: |
