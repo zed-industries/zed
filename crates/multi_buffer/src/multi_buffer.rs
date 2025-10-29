@@ -340,7 +340,6 @@ pub struct RowInfo {
     pub multibuffer_row: Option<MultiBufferRow>,
     pub diff_status: Option<buffer_diff::DiffHunkStatus>,
     pub expand_info: Option<ExpandInfo>,
-    pub wrapped_buffer_row: Option<u32>,
 }
 
 /// A slice into a [`Buffer`] that is being edited in a [`MultiBuffer`].
@@ -6633,7 +6632,6 @@ impl Iterator for MultiBufferRows<'_> {
                 multibuffer_row: Some(MultiBufferRow(0)),
                 diff_status: None,
                 expand_info: None,
-                wrapped_buffer_row: None,
             });
         }
 
@@ -6691,7 +6689,6 @@ impl Iterator for MultiBufferRows<'_> {
                     buffer_row: Some(last_row),
                     multibuffer_row: Some(multibuffer_row),
                     diff_status: None,
-                    wrapped_buffer_row: None,
                     expand_info,
                 });
             } else {
@@ -6736,7 +6733,6 @@ impl Iterator for MultiBufferRows<'_> {
                 .diff_hunk_status
                 .filter(|_| self.point < region.range.end),
             expand_info,
-            wrapped_buffer_row: None,
         });
         self.point += Point::new(1, 0);
         result
