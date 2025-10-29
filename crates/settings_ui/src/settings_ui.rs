@@ -278,7 +278,6 @@ impl SettingFieldRenderer {
                     settings_file.clone(),
                     render_control(field, settings_file, metadata, window, cx),
                     sub_field,
-                    window,
                     cx,
                 )
             },
@@ -772,7 +771,6 @@ impl SettingsPageItem {
                             .tooltip(Tooltip::text(setting_item.field.type_name()))
                             .into_any_element(),
                         sub_field,
-                        window,
                         cx,
                     ),
                 };
@@ -931,7 +929,6 @@ fn render_settings_item(
     file: SettingsUiFile,
     control: AnyElement,
     sub_field: bool,
-    _window: &mut Window,
     cx: &mut Context<'_, SettingsWindow>,
 ) -> Stateful<Div> {
     let (found_in_file, _) = setting_item.field.file_set_in(file.clone(), cx);
