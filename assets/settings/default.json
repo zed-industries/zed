@@ -1700,6 +1700,7 @@
       "preferred_line_length": 72
     },
     "Go": {
+      "hard_tabs": true,
       "code_actions_on_format": {
         "source.organizeImports": true
       },
