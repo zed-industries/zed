@@ -179,36 +179,77 @@ impl AcpThreadHistory {
         cx: &App,
     ) -> Task<Vec<ListItemType>> {
         let query = self.search_query.clone();
-        cx.background_spawn({
-            let executor = cx.background_executor().clone();
-            async move {
-                let mut candidates = Vec::with_capacity(entries.len());
+        let history_store = self.history_store.clone();
+        let executor = cx.background_executor().clone();
 
-                for (idx, entry) in entries.iter().enumerate() {
-                    candidates.push(StringMatchCandidate::new(idx, entry.title()));
+        cx.spawn(async move |cx| {
+            // Try FTS for full content search
+            let search_task_result = history_store.update(cx, |store, cx| {
+                store.search_threads(query.to_string(), cx)
+            });
+
+            match search_task_result {
+                Ok(task) => {
+                    // Task was created successfully, now await it
+                    match task.await {
+                        Ok(search_results) => {
+                            // Convert to ListItemType
+                            search_results
+                                .into_iter()
+                                .map(|entry| ListItemType::Entry {
+                                    entry,
+                                    format: EntryTimeFormat::TimeOnly,
+                                })
+                                .collect()
+                        }
+                        Err(err) => {
+                            log::error!("FTS search failed: {}, falling back to title-only fuzzy search", err);
+                            Self::fuzzy_filter_titles(entries, &query, executor).await
+                        }
+                    }
                 }
-
-                const MAX_MATCHES: usize = 100;
-
-                let matches = fuzzy::match_strings(
-                    &candidates,
-                    &query,
-                    false,
-                    true,
-                    MAX_MATCHES,
-                    &Default::default(),
-                    executor,
-                )
-                .await;
-
-                matches
-                    .into_iter()
-                    .map(|search_match| ListItemType::SearchResult {
-                        entry: entries[search_match.candidate_id].clone(),
-                        positions: search_match.positions,
-                    })
-                    .collect()
+                Err(err) => {
+                    log::error!("Failed to access history store: {}, falling back to title-only fuzzy search", err);
+                    Self::fuzzy_filter_titles(entries, &query, executor).await
+                }
             }
+        })
+    }
+
+    fn fuzzy_filter_titles(
+        entries: Vec<HistoryEntry>,
+        query: &str,
+        executor: gpui::BackgroundExecutor,
+    ) -> Task<Vec<ListItemType>> {
+        let executor_clone = executor.clone();
+        let query = query.to_string();
+        executor.spawn(async move {
+            let mut candidates = Vec::with_capacity(entries.len());
+
+            for (idx, entry) in entries.iter().enumerate() {
+                candidates.push(StringMatchCandidate::new(idx, entry.title()));
+            }
+
+            const MAX_MATCHES: usize = 100;
+
+            let matches = fuzzy::match_strings(
+                &candidates,
+                &query,
+                false,
+                true,
+                MAX_MATCHES,
+                &Default::default(),
+                executor_clone,
+            )
+            .await;
+
+            matches
+                .into_iter()
+                .map(|search_match| ListItemType::SearchResult {
+                    entry: entries[search_match.candidate_id].clone(),
+                    positions: search_match.positions,
+                })
+                .collect()
         })
     }
 

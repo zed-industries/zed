@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use acp_thread::AcpThread;
-use agent::{ContextServerRegistry, DbThreadMetadata, HistoryEntry, HistoryStore};
+use agent::{ContextServerRegistry, DbThreadMetadata, HistoryEntry, HistoryStore, ThreadsDatabase};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::{
     ExternalAgentServerName,
@@ -78,7 +78,8 @@ use zed_actions::{
     assistant::{OpenRulesLibrary, ToggleFocus},
 };
 
-const AGENT_PANEL_KEY: &str = "agent_panel";
+const AGENT_PANEL_KEY: &str = "AgentPanel";
+const FTS_MIGRATION_KEY: &str = "fts-index-migrated";
 
 #[derive(Serialize, Deserialize, Debug)]
 struct SerializedAgentPanel {
@@ -696,6 +697,46 @@ impl AgentPanel {
 
         // Initial sync of agent servers from extensions
         panel.sync_agent_servers_from_extensions(cx);
+
+        // Background task to rebuild FTS index for existing threads (one-time migration)
+        let db_task = ThreadsDatabase::connect(cx);
+        cx.spawn(async move |_this, _cx| {
+            // Check if migration already completed
+            if db::kvp::KEY_VALUE_STORE
+                .read_kvp(FTS_MIGRATION_KEY)
+                .log_err()
+                .flatten()
+                .is_some()
+            {
+                log::debug!("FTS index migration already completed, skipping");
+                return;
+            }
+
+            match db_task.await {
+                Ok(db) => match db.rebuild_search_index().await {
+                    Ok(count) => {
+                        log::info!("Initial FTS indexing: indexed {} threads", count);
+
+                        // Mark migration as completed
+                        db::kvp::KEY_VALUE_STORE
+                            .write_kvp(FTS_MIGRATION_KEY.to_string(), "true".to_string())
+                            .await
+                            .log_err();
+                    }
+                    Err(err) => {
+                        log::warn!("Failed to rebuild thread search index: {}", err);
+                    }
+                },
+                Err(err) => {
+                    log::warn!(
+                        "Failed to connect to threads database for indexing: {}",
+                        err
+                    );
+                }
+            }
+        })
+        .detach();
+
         panel
     }
 
