@@ -9,7 +9,7 @@ on:
     - v00.00.00-test
 jobs:
   run_tests_mac:
-    if: 'false'
+    if: github.repository_owner == 'zed-industries'
     runs-on: self-mini-macos
     steps:
     - name: steps::checkout_repo
@@ -44,7 +44,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   run_tests_linux:
-    if: 'false'
+    if: github.repository_owner == 'zed-industries'
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - name: steps::checkout_repo
@@ -85,7 +85,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   run_tests_windows:
-    if: 'false'
+    if: github.repository_owner == 'zed-industries'
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
