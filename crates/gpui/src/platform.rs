@@ -40,7 +40,7 @@ use crate::{
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
     Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph,
-    ShapedRun, SharedString, Size, SvgRenderer, SvgSize, SystemWindowTab, Task, TaskLabel, Window,
+    ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, TaskLabel, Window,
     WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
@@ -1817,13 +1817,9 @@ impl Image {
             ImageFormat::Tiff => frames_for_image(&self.bytes, image::ImageFormat::Tiff)?,
             ImageFormat::Ico => frames_for_image(&self.bytes, image::ImageFormat::Ico)?,
             ImageFormat::Svg => {
-                let pixmap = svg_renderer.render_pixmap(&self.bytes, SvgSize::ScaleFactor(1.0))?;
-
-                let buffer =
-                    image::ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take())
-                        .unwrap();
-
-                SmallVec::from_elem(Frame::new(buffer), 1)
+                return svg_renderer
+                    .render_single_frame(&self.bytes, 1.0, false)
+                    .map_err(Into::into);
             }
         };
 

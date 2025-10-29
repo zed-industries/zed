@@ -16492,7 +16492,7 @@ dependencies = [
  "editor",
  "file_icons",
  "gpui",
- "multi_buffer",
+ "language",
  "ui",
  "workspace",
 ]
