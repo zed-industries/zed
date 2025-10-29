@@ -79,8 +79,6 @@ const SEARCH_TOOL_NAME: &str = "search";
 #[derive(Clone, Deserialize, Serialize, JsonSchema)]
 pub struct SearchToolInput {
     /// An array of queries to run for gathering context relevant to the next prediction
-    ///
-    /// For the best performance, combine queries for the same glob into one regex pattern.
     #[schemars(length(max = 5))]
     pub queries: Box<[SearchToolQuery]>,
 }
