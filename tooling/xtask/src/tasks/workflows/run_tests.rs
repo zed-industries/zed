@@ -213,7 +213,7 @@ pub(crate) fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
     named::job(job)
 }
 
-pub(crate) fn check_style() -> NamedJob {
+fn check_style() -> NamedJob {
     fn check_for_typos() -> Step<Use> {
         named::uses(
             "crate-ci",
@@ -448,7 +448,7 @@ fn check_scripts() -> NamedJob {
 
     fn check_xtask_workflows() -> Step<Run> {
         named::bash(indoc::indoc! {r#"
-            cargo run xtask workflows
+            cargo xtask workflows
             if ! git diff --exit-code .github; then
               echo "Error: .github directory has uncommitted changes after running 'cargo run xtask workflows'"
               echo "Please run 'cargo run xtask workflows' locally and commit the changes"
