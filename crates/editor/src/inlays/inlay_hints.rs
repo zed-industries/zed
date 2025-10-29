@@ -2695,7 +2695,7 @@ let c = 3;"#
                 ),
                 (
                     "main.rs",
-                    lsp::Range::new(lsp::Position::new(50, 0), lsp::Position::new(100, 11))
+                    lsp::Range::new(lsp::Position::new(50, 0), lsp::Position::new(100, 0))
                 ),
             ],
             lsp_request_ranges
@@ -2754,7 +2754,7 @@ let c = 3;"#
                 ),
                 (
                     "main.rs",
-                    lsp::Range::new(lsp::Position::new(50, 0), lsp::Position::new(100, 11))
+                    lsp::Range::new(lsp::Position::new(50, 0), lsp::Position::new(100, 0))
                 ),
             ],
             lsp_request_ranges
