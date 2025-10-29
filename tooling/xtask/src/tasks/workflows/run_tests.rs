@@ -43,6 +43,7 @@ pub(crate) fn run_tests() -> Workflow {
     ]);
 
     let jobs = [
+        orchestrate,
         check_style(),
         should_run_tests.guard(run_platform_tests(Platform::Windows)),
         should_run_tests.guard(run_platform_tests(Platform::Linux)),
@@ -88,16 +89,15 @@ pub(crate) fn run_tests() -> Workflow {
         )
         .add_env(( "CARGO_TERM_COLOR", "always" ))
         .add_env(( "RUST_BACKTRACE", 1 ))
-        .add_env(( "CARGO_INCREMENTAL", 0 ))
-        .add_job(orchestrate.name, orchestrate.job);
+        .add_env(( "CARGO_INCREMENTAL", 0 ));
     for job in jobs {
         workflow = workflow.add_job(job.name, job.job)
     }
     workflow.add_job(tests_pass.name, tests_pass.job)
 }
 
-/// Generates a bash script that checks changed files against regex patterns
-/// and sets GitHub output variables accordingly
+// Generates a bash script that checks changed files against regex patterns
+// and sets GitHub output variables accordingly
 fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
     let name = "orchestrate".to_owned();
     let step_name = "filter".to_owned();
