@@ -22,7 +22,8 @@ pub fn run_bundling() -> Workflow {
         .add_env(("RUST_BACKTRACE", "1"))
         .add_env(("ZED_CLIENT_CHECKSUM_SEED", vars::ZED_CLIENT_CHECKSUM_SEED))
         .add_env(("ZED_MINIDUMP_ENDPOINT", vars::ZED_SENTRY_MINIDUMP_ENDPOINT))
-        .add_job("bundle_mac", bundle_mac())
+        .add_job("bundle_mac_x86_64", bundle_mac_job(runners::Arch::X86_64))
+        .add_job("bundle_mac_arm64", bundle_mac_job(runners::Arch::ARM64))
         .add_job("bundle_linux_x86_64", bundle_linux(runners::Arch::X86_64))
         .add_job("bundle_linux_arm64", bundle_linux(runners::Arch::ARM64))
         .add_job(
@@ -44,7 +45,8 @@ fn bundle_job() -> Job {
         .timeout_minutes(60u32)
 }
 
-fn bundle_mac() -> Job {
+fn bundle_mac_job(arch: runners::Arch) -> Job {
+    use vars::GITHUB_SHA;
     bundle_job()
         .runs_on(runners::MAC_DEFAULT)
         .envs(mac_bundle_envs())
@@ -52,15 +54,19 @@ fn bundle_mac() -> Job {
         .add_step(steps::setup_node())
         .add_step(steps::setup_sentry())
         .add_step(steps::clear_target_dir_if_large(runners::Platform::Mac))
-        .add_step(steps::script("./script/bundle-mac"))
+        .add_step(bundle_mac(arch))
         .add_step(steps::upload_artifact(
-            "Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg",
-            "target/aarch64-apple-darwin/release/Zed.dmg",
+            &format!("Zed_{GITHUB_SHA}-{arch}.dmg"),
+            &format!("target/{arch}-apple-darwin/release/Zed.dmg"),
         ))
         .add_step(steps::upload_artifact(
-            "Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg",
-            "target/x86_64-apple-darwin/release/Zed.dmg",
+            &format!("zed-remote-server-{GITHUB_SHA}-macos-{arch}.gz"),
+            &format!("target/zed-remote-server-macos-{arch}.gz"),
         ))
+}
+
+pub fn bundle_mac(arch: runners::Arch) -> Step<Run> {
+    named::bash(&format!("./script/bundle-mac {arch}-apple-darwin"))
 }
 
 fn bundle_linux(arch: runners::Arch) -> Job {

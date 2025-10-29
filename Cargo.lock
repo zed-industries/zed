@@ -21114,7 +21114,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.211.0"
+version = "0.212.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",
@@ -21670,6 +21670,7 @@ dependencies = [
 name = "zeta2_tools"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "clap",
  "client",

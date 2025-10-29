@@ -1348,5 +1348,12 @@
       "ctrl-enter up": "dev::Zeta2RatePredictionPositive",
       "ctrl-enter down": "dev::Zeta2RatePredictionNegative"
     }
+  },
+  {
+    "context": "Zeta2Context > Editor",
+    "bindings": {
+      "alt-left": "dev::Zeta2ContextGoBack",
+      "alt-right": "dev::Zeta2ContextGoForward"
+    }
   }
 ]
