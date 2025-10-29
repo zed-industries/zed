@@ -25,7 +25,7 @@ pub(crate) fn run_tests() -> Workflow {
     let should_check_docs = PathCondition::new("run_docs", r"^docs/");
     let should_check_scripts = PathCondition::new(
         "run_action_checks",
-        r"^\.github/(workflows/|actions/|actionlint.yml)",
+        r"^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask",
     );
     let should_check_licences =
         PathCondition::new("run_licenses", r"^(Cargo.lock|script/.*licenses)");
@@ -445,12 +445,25 @@ fn check_scripts() -> NamedJob {
     fn run_shellcheck() -> Step<Run> {
         named::bash("./script/shellcheck-scripts error")
     }
+
+    fn check_xtask_workflows() -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            cargo run xtask workflows
+            if ! git diff --exit-code .github; then
+              echo "Error: .github directory has uncommitted changes after running 'cargo run xtask workflows'"
+              echo "Please run 'cargo run xtask workflows' locally and commit the changes"
+              exit 1
+            fi
+        "#})
+    }
+
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
             .add_step(run_shellcheck())
             .add_step(download_actionlint().id("get_actionlint"))
-            .add_step(run_actionlint()),
+            .add_step(run_actionlint())
+            .add_step(check_xtask_workflows()),
     )
 }
