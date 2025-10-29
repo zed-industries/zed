@@ -1,5 +1,12 @@
 [
   {
+    "context": "Picker || menu",
+    "bindings": {
+      "ctrl-n": "menu::SelectNext",
+      "ctrl-p": "menu::SelectPrevious"
+    }
+  },
+  {
     "context": "VimControl && !menu",
     "bindings": {
       "i": ["vim::PushObject", { "around": false }],
