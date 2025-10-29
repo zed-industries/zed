@@ -383,15 +383,21 @@ impl Inventory {
         worktree: Option<WorktreeId>,
         cx: &App,
     ) -> Task<Vec<(TaskSourceKind, TaskTemplate)>> {
-        let global_tasks = self.global_templates_from_settings().collect::<Vec<_>>();
+        let language_name = language.as_ref().map(|language| language.name());
+        let global_tasks = self
+            .global_templates_from_settings(language_name.as_ref().map(|name| name.0.as_str()))
+            .collect::<Vec<_>>();
         let mut worktree_tasks = worktree
             .into_iter()
             .flat_map(|worktree| self.worktree_templates_from_settings(worktree))
             .collect::<Vec<_>>();
 
-        let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
-            name: language.name().into(),
-        });
+        let task_source_kind =
+            language_name
+                .as_ref()
+                .map(|language_name| TaskSourceKind::Language {
+                    name: language_name.0.clone(),
+                });
         let language_tasks = language
             .filter(|language| {
                 language_settings(Some(language.name()), file.as_ref(), cx)
@@ -475,7 +481,10 @@ impl Inventory {
             .collect::<Vec<_>>();
 
         let not_used_score = post_inc(&mut lru_score);
-        let global_tasks = self.global_templates_from_settings().collect::<Vec<_>>();
+        let language_name = language.map(|language| language.name().0);
+        let global_tasks = self
+            .global_templates_from_settings(language_name.as_ref().map(|name| name.as_str()))
+            .collect::<Vec<_>>();
         let associated_tasks = language
             .filter(|language| {
                 language_settings(Some(language.name()), file.as_ref(), cx)
@@ -611,8 +620,18 @@ impl Inventory {
 
     fn global_templates_from_settings(
         &self,
+        language_name: Option<&str>,
     ) -> impl '_ + Iterator<Item = (TaskSourceKind, TaskTemplate)> {
-        self.templates_from_settings.global_scenarios()
+        let expected_tag = language_name.map(|name| format!("language:{name}"));
+
+        self.templates_from_settings
+            .global_scenarios()
+            .filter(move |(_, template)| {
+                expected_tag.as_ref().is_none_or(|language| {
+                    template.tags.is_empty()
+                        || template.tags.iter().any(|tag| tag.as_str() == language)
+                })
+            })
     }
 
     fn global_debug_scenarios_from_settings(
