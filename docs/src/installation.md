@@ -89,9 +89,9 @@ Zed supports the following Windows releases:
 | Version | Zed Status |
 | ------------------------- | ------------------- |
 | Windows 11, version 22H2 and later | Supported |
-| Windows 10, version 1903 and later (64-bit) | Supported |
+| Windows 10, version 1903 and later | Supported |
 
-32-bit releases of Windows are not supported.
+A 64-bit operating system is required to run Zed.
 
 #### Windows Hardware
 
