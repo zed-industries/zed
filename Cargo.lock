@@ -13125,7 +13125,6 @@ dependencies = [
  "paths",
  "rope",
  "serde",
- "serde_json",
  "text",
  "util",
  "uuid",
