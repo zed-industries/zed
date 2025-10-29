@@ -5724,7 +5724,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             title: "Display Mode",
                             description: "When to show edit predictions previews in buffer. The eager mode displays them inline, while the subtle mode displays them only when holding a modifier key.",
                             field: Box::new(SettingField {
-                                json_path: Some("edit_prediction_mode"),
+                                json_path: Some("edit_prediction.display_mode"),
                                 pick: |settings_content| {
                                     settings_content.project.all_languages.edit_predictions.as_ref()?.mode.as_ref()
                                 },
@@ -5739,7 +5739,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             title: "In Text Threads",
                             description: "Whether edit predictions are enabled when editing text threads in the agent panel.",
                             field: Box::new(SettingField {
-                                json_path: Some("edit_prediction_in_text_threads"),
+                                json_path: Some("edit_prediction.in_text_threads"),
                                 pick: |settings_content| {
                                     settings_content.project.all_languages.edit_predictions.as_ref()?.enabled_in_text_threads.as_ref()
                                 },
@@ -5752,10 +5752,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         SettingsPageItem::SettingItem(SettingItem {
                             title: "Copilot Provider",
-                            description: "Set up GitHub Copilot as your edit prediction provider. You can toggle between it and Zed's default provider.",
+                            description: "Use GitHub Copilot as your edit prediction provider.",
                             field: Box::new(
                                 SettingField {
-                                    json_path: Some("languages.$(language).wrap_guides"),
+                                    json_path: Some("edit_prediction.copilot_provider"),
                                     pick: |settings_content| {
                                         settings_content.project.all_languages.edit_predictions.as_ref()?.copilot.as_ref()
                                     },
@@ -5770,10 +5770,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         SettingsPageItem::SettingItem(SettingItem {
                             title: "Codestral Provider",
-                            description: "Set up Mistral's Codestral as your edit prediction provider. You can toggle between it and Zed's default provider.",
+                            description: "Use Mistral's Codestral as your edit prediction provider.",
                             field: Box::new(
                                 SettingField {
-                                    json_path: Some("languages.$(language).wrap_guides"),
+                                    json_path: Some("edit_prediction.codestral_provider"),
                                     pick: |settings_content| {
                                         settings_content.project.all_languages.edit_predictions.as_ref()?.codestral.as_ref()
                                     },
