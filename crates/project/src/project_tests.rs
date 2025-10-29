@@ -9171,7 +9171,9 @@ async fn test_odd_events_for_ignored_dirs(
         repository_updates.lock().drain(..).collect::<Vec<_>>(),
         vec![
             RepositoryEvent::MergeHeadsChanged,
-            RepositoryEvent::BranchChanged
+            RepositoryEvent::BranchChanged,
+            RepositoryEvent::StatusesChanged { full_scan: false },
+            RepositoryEvent::StatusesChanged { full_scan: false },
         ],
         "Initial worktree scan should produce a repo update event"
     );

@@ -1573,6 +1573,7 @@ impl Buffer {
                 self.reparse = None;
             }
             Err(parse_task) => {
+                // todo(lw): hot foreground spawn
                 self.reparse = Some(cx.spawn(async move |this, cx| {
                     let new_syntax_map = parse_task.await;
                     this.update(cx, move |this, cx| {
