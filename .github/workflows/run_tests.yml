@@ -22,6 +22,7 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+        fetch-depth: ${{ github.ref == 'refs/heads/main' && 2 || 350 }}
     - id: filter
       name: filter
       run: |
