@@ -137,7 +137,7 @@ impl<T: 'static> SettingField<T> {
         SettingField {
             pick: |_| Some(&UnimplementedSettingField),
             write: |_, _| unreachable!(),
-            json_path: None,
+            json_path: self.json_path,
         }
     }
 }
@@ -941,7 +941,8 @@ fn render_settings_item(
         .read_from_clipboard()
         .and_then(|entry| entry.text())
         .map_or(false, |maybe_url| {
-            maybe_url.strip_prefix("zed://settings/") == setting_item.field.json_path()
+            setting_item.field.json_path().is_some()
+                && maybe_url.strip_prefix("zed://settings/") == setting_item.field.json_path()
         });
 
     let (link_icon, link_icon_color) = if clipboard_has_link {
