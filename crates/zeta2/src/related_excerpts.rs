@@ -7,8 +7,12 @@ use crate::{
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions, Line};
-use futures::{StreamExt, channel::mpsc, stream::BoxStream};
-use gpui::{App, AsyncApp, Entity, Task};
+use futures::{
+    StreamExt,
+    channel::mpsc::{self, UnboundedSender},
+    stream::BoxStream,
+};
+use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use indoc::indoc;
 use language::{Anchor, Bias, Buffer, OffsetRangeExt, Point, TextBufferSnapshot, ToPoint as _};
 use language_model::{
@@ -22,7 +26,10 @@ use project::{
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
-use util::paths::{PathMatcher, PathStyle};
+use util::{
+    ResultExt as _,
+    paths::{PathMatcher, PathStyle},
+};
 use workspace::item::Settings as _;
 
 const SEARCH_PROMPT: &str = indoc! {r#"
@@ -333,26 +340,33 @@ pub fn find_related_excerpts<'a>(
         }
 
         let mut result_buffers_by_path = HashMap::default();
-
         for ((index, tool_use), call) in search_calls.into_iter().zip(search_queries).rev() {
-            let mut excerpts_by_buffer = HashMap::default();
+            let (results_tx, mut results_rx) = mpsc::unbounded();
 
             for query in call.queries {
-                // TODO [zeta2] parallelize?
-
-                run_query(
-                    query,
-                    &mut excerpts_by_buffer,
-                    path_style,
-                    exclude_matcher.clone(),
-                    &project,
-                    cx,
-                )
-                .await?;
+                let exclude_matcher = exclude_matcher.clone();
+                let results_tx = results_tx.clone();
+                let project = project.clone();
+                cx.spawn(async move |cx| {
+                    run_query(
+                        query,
+                        results_tx.clone(),
+                        path_style,
+                        exclude_matcher,
+                        &project,
+                        cx,
+                    )
+                    .await
+                    .log_err();
+                })
+                .detach()
             }
+            drop(results_tx);
 
-            if excerpts_by_buffer.is_empty() {
-                continue;
+            let mut excerpts_by_buffer: HashMap<_, Vec<_>> = HashMap::default();
+
+            while let Some((buffer, ranges)) = results_rx.next().await {
+                excerpts_by_buffer.entry(buffer).or_default().extend(ranges);
             }
 
             let mut merged_result = RESULTS_MESSAGE.to_string();
@@ -363,23 +377,19 @@ pub fn find_related_excerpts<'a>(
                 buffer_entity
                     .clone()
                     .read_with(cx, |buffer, cx| {
-                        let Some(file) = buffer.file() else {
+                        let snapshot = buffer.snapshot();
+                        let Some(file) = snapshot.file() else {
                             return;
                         };
-
                         let path = file.full_path(cx);
 
                         writeln!(&mut merged_result, "`````filename={}", path.display()).unwrap();
-
-                        let snapshot = buffer.snapshot();
-
                         write_merged_excerpts(
                             &snapshot,
                             excerpts_for_buffer,
                             &[],
                             &mut merged_result,
                         );
-
                         merged_result.push_str("`````\n\n");
 
                         result_buffers_by_path.insert(
@@ -418,17 +428,17 @@ pub fn find_related_excerpts<'a>(
                     },
                 ],
             );
+        }
 
-            if let Some(debug_tx) = &debug_tx {
-                debug_tx
-                    .unbounded_send(ZetaDebugInfo::SearchQueriesExecuted(
-                        ZetaContextRetrievalDebugInfo {
-                            project: project.clone(),
-                            timestamp: Instant::now(),
-                        },
-                    ))
-                    .ok();
-            }
+        if let Some(debug_tx) = &debug_tx {
+            debug_tx
+                .unbounded_send(ZetaDebugInfo::SearchQueriesExecuted(
+                    ZetaContextRetrievalDebugInfo {
+                        project: project.clone(),
+                        timestamp: Instant::now(),
+                    },
+                ))
+                .ok();
         }
 
         if result_buffers_by_path.is_empty() {
@@ -551,7 +561,7 @@ const MAX_RESULT_BYTES_PER_QUERY: usize = MAX_EXCERPT_LEN * 5;
 
 async fn run_query(
     args: SearchToolQuery,
-    excerpts_by_buffer: &mut HashMap<Entity<Buffer>, Vec<Range<Line>>>,
+    results_tx: UnboundedSender<(Entity<Buffer>, Vec<Range<Line>>)>,
     path_style: PathStyle,
     exclude_matcher: PathMatcher,
     project: &Entity<Project>,
@@ -581,42 +591,42 @@ async fn run_query(
             continue;
         }
 
-        let excerpts_for_buffer = excerpts_by_buffer
-            .entry(buffer.clone())
-            .or_insert_with(|| Vec::with_capacity(ranges.len()));
-
         let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
 
-        for range in ranges {
-            let offset_range = range.to_offset(&snapshot);
-            let query_point = (offset_range.start + offset_range.len() / 2).to_point(&snapshot);
+        let results_tx = results_tx.clone();
+        cx.background_spawn(async move {
+            let mut line_ranges = Vec::with_capacity(ranges.len());
 
-            if total_bytes + MIN_EXCERPT_LEN >= MAX_RESULT_BYTES_PER_QUERY {
-                break;
-            }
+            for range in ranges {
+                let offset_range = range.to_offset(&snapshot);
+                let query_point = (offset_range.start + offset_range.len() / 2).to_point(&snapshot);
 
-            let excerpt = EditPredictionExcerpt::select_from_buffer(
-                query_point,
-                &snapshot,
-                &EditPredictionExcerptOptions {
-                    max_bytes: MAX_EXCERPT_LEN.min(MAX_RESULT_BYTES_PER_QUERY - total_bytes),
-                    min_bytes: MIN_EXCERPT_LEN,
-                    target_before_cursor_over_total_bytes: 0.5,
-                },
-                None,
-            );
+                if total_bytes + MIN_EXCERPT_LEN >= MAX_RESULT_BYTES_PER_QUERY {
+                    break;
+                }
 
-            if let Some(excerpt) = excerpt {
-                total_bytes += excerpt.range.len();
-                if !excerpt.line_range.is_empty() {
-                    excerpts_for_buffer.push(excerpt.line_range);
+                let excerpt = EditPredictionExcerpt::select_from_buffer(
+                    query_point,
+                    &snapshot,
+                    &EditPredictionExcerptOptions {
+                        max_bytes: MAX_EXCERPT_LEN.min(MAX_RESULT_BYTES_PER_QUERY - total_bytes),
+                        min_bytes: MIN_EXCERPT_LEN,
+                        target_before_cursor_over_total_bytes: 0.5,
+                    },
+                    None,
+                );
+
+                if let Some(excerpt) = excerpt {
+                    total_bytes += excerpt.range.len();
+                    if !excerpt.line_range.is_empty() {
+                        line_ranges.push(excerpt.line_range);
+                    }
                 }
             }
-        }
 
-        if excerpts_for_buffer.is_empty() {
-            excerpts_by_buffer.remove(&buffer);
-        }
+            results_tx.unbounded_send((buffer, line_ranges)).log_err();
+        })
+        .detach();
     }
 
     anyhow::Ok(())
