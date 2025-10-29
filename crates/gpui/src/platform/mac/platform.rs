@@ -253,24 +253,29 @@ impl MacPlatform {
                 menu.setTitle_(menu_title);
                 menu.setDelegate_(delegate);
 
+                // Check the first item to see if it is window menu
+                if let Some(i) = menu_config.items.first()
+                    && matches!(
+                        i,
+                        MenuItem::SystemMenu(OsMenu {
+                            menu_type: SystemMenuType::Window,
+                            ..
+                        })
+                    )
+                {
+                    let app: id = msg_send![APP_CLASS, sharedApplication];
+                    app.setWindowsMenu_(menu);
+                };
+
                 for item_config in &menu_config.items {
-                    menu.addItem_(Self::create_menu_item(
-                        item_config,
-                        delegate,
-                        actions,
-                        keymap,
-                    ));
+                    Self::create_menu_item(item_config, delegate, actions, keymap)
+                        .map(|item| menu.addItem_(item));
                 }
 
                 let menu_item = NSMenuItem::new(nil).autorelease();
                 menu_item.setTitle_(menu_title);
                 menu_item.setSubmenu_(menu);
                 application_menu.addItem_(menu_item);
-
-                if menu_config.name == "Window" {
-                    let app: id = msg_send![APP_CLASS, sharedApplication];
-                    app.setWindowsMenu_(menu);
-                }
             }
 
             application_menu
@@ -288,12 +293,8 @@ impl MacPlatform {
             let dock_menu = NSMenu::new(nil);
             dock_menu.setDelegate_(delegate);
             for item_config in menu_items {
-                dock_menu.addItem_(Self::create_menu_item(
-                    &item_config,
-                    delegate,
-                    actions,
-                    keymap,
-                ));
+                Self::create_menu_item(&item_config, delegate, actions, keymap)
+                    .map(|item| dock_menu.addItem_(item));
             }
 
             dock_menu
@@ -305,12 +306,12 @@ impl MacPlatform {
         delegate: id,
         actions: &mut Vec<Box<dyn Action>>,
         keymap: &Keymap,
-    ) -> id {
+    ) -> Option<id> {
         static DEFAULT_CONTEXT: OnceLock<Vec<KeyContext>> = OnceLock::new();
 
         unsafe {
             match item {
-                MenuItem::Separator => NSMenuItem::separatorItem(nil),
+                MenuItem::Separator => Some(NSMenuItem::separatorItem(nil)),
                 MenuItem::Action {
                     name,
                     action,
@@ -412,18 +413,19 @@ impl MacPlatform {
                     let tag = actions.len() as NSInteger;
                     let _: () = msg_send![item, setTag: tag];
                     actions.push(action.boxed_clone());
-                    item
+                    Some(item)
                 }
                 MenuItem::Submenu(Menu { name, items }) => {
                     let item = NSMenuItem::new(nil).autorelease();
                     let submenu = NSMenu::new(nil).autorelease();
                     submenu.setDelegate_(delegate);
                     for item in items {
-                        submenu.addItem_(Self::create_menu_item(item, delegate, actions, keymap));
+                        Self::create_menu_item(item, delegate, actions, keymap)
+                            .map(|item| submenu.addItem_(item));
                     }
                     item.setSubmenu_(submenu);
                     item.setTitle_(ns_string(name));
-                    item
+                    Some(item)
                 }
                 MenuItem::SystemMenu(OsMenu { name, menu_type }) => {
                     let item = NSMenuItem::new(nil).autorelease();
@@ -437,9 +439,12 @@ impl MacPlatform {
                             let app: id = msg_send![APP_CLASS, sharedApplication];
                             app.setServicesMenu_(item);
                         }
+                        SystemMenuType::Window => {
+                            return None;
+                        }
                     }
 
-                    item
+                    Some(item)
                 }
             }
         }

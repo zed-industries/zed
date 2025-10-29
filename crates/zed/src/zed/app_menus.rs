@@ -281,6 +281,9 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         Menu {
             name: "Window".into(),
             items: vec![
+                #[cfg(target_os = "macos")]
+                MenuItem::os_submenu("", gpui::SystemMenuType::Window),
+                MenuItem::separator(),
                 MenuItem::action("Minimize", super::Minimize),
                 MenuItem::action("Zoom", super::Zoom),
                 MenuItem::separator(),
