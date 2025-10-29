@@ -1,4 +1,4 @@
-use gh_workflow::{Step, Use, Workflow};
+use gh_workflow::{Event, Push, Step, Use, Workflow};
 
 use crate::tasks::workflows::{
     run_bundling, run_tests, runners,
@@ -30,7 +30,7 @@ pub(crate) fn release() -> Workflow {
     let bundle_windows_x86_64 = bundle_windows_x86_64(&[&windows_tests, &check_scripts]);
     let bundle_windows_arm64 = bundle_windows_arm64(&[&windows_tests, &check_scripts]);
 
-    let publish_release = publish_release(&[
+    let upload_release_assets = upload_release_assets(&[
         &bundle_linux_arm64,
         &bundle_linux_x86_64,
         &bundle_mac_arm64,
@@ -41,6 +41,11 @@ pub(crate) fn release() -> Workflow {
     ]);
 
     named::workflow()
+        .on(Event::default().push(
+            Push::default()
+                .add_branch("gh-workflow-release")
+                .tags(vec!["v00.00.00-test".to_string()]),
+        ))
         .add_job(macos_tests.name, macos_tests.job)
         .add_job(linux_tests.name, linux_tests.job)
         .add_job(windows_tests.name, windows_tests.job)
@@ -52,11 +57,11 @@ pub(crate) fn release() -> Workflow {
         .add_job(bundle_mac_x86_64.name, bundle_mac_x86_64.job)
         .add_job(bundle_windows_arm64.name, bundle_windows_arm64.job)
         .add_job(bundle_windows_x86_64.name, bundle_windows_x86_64.job)
-        .add_job(publish_release.name, publish_release.job)
+        .add_job(upload_release_assets.name, upload_release_assets.job)
 }
 
-fn publish_release(deps: &[&NamedJob]) -> NamedJob {
-    fn download_release_artifacts() -> Step<Use> {
+fn upload_release_assets(deps: &[&NamedJob]) -> NamedJob {
+    fn download_workflow_artifacts() -> Step<Use> {
         named::uses(
             "actions",
             "download-artifact",
@@ -74,13 +79,13 @@ fn publish_release(deps: &[&NamedJob]) -> NamedJob {
         )
         .add_with(("draft", true))
         .add_with(("prerelease", "${{ env.RELEASE_CHANNEL == 'preview' }}"))
-        .add_with(("files", "release-artifacts/*"))
+        .add_with(("files", "release-artifacts/*")) // todo! const
     }
 
     named::job(
         dependant_job(deps)
             .runs_on(runners::LINUX_MEDIUM)
-            .add_step(download_release_artifacts())
+            .add_step(download_workflow_artifacts())
             .add_step(upload_release_artifacts()),
     )
 }
