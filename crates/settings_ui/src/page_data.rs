@@ -5721,8 +5721,8 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 items.extend(
                     [
                         SettingsPageItem::SettingItem(SettingItem {
-                            title: "Edit Prediction Mode",
-                            description: "When to show edit predictions previews in buffer. The eager mode dislpays them inline, while the subtle mode displays them only when holding a modifier key.",
+                            title: "Display Mode",
+                            description: "When to show edit predictions previews in buffer. The eager mode displays them inline, while the subtle mode displays them only when holding a modifier key.",
                             field: Box::new(SettingField {
                                 json_path: Some("edit_prediction_mode"),
                                 pick: |settings_content| {
@@ -5736,7 +5736,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             files: USER,
                         }),
                         SettingsPageItem::SettingItem(SettingItem {
-                            title: "Edit Predictions in Text Threads",
+                            title: "In Text Threads",
                             description: "Whether edit predictions are enabled when editing text threads.",
                             field: Box::new(SettingField {
                                 json_path: Some("edit_prediction_in_text_threads"),
