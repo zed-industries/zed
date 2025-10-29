@@ -68,22 +68,24 @@ impl zed::Extension for HtmlExtension {
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         let server_path = if let Some(path) = worktree.which(BINARY_NAME) {
-            path
+            return Ok(zed::Command {
+                command: path,
+                args: vec!["--stdio".to_string()],
+                env: Default::default(),
+            });
         } else {
-            self.server_script_path(language_server_id)?
+            let server_path = self.server_script_path(language_server_id)?;
+            env::current_dir()
+                .unwrap()
+                .join(&server_path)
+                .to_string_lossy()
+                .to_string()
         };
         self.cached_binary_path = Some(server_path.clone());
 
         Ok(zed::Command {
             command: zed::node_binary_path()?,
-            args: vec![
-                env::current_dir()
-                    .unwrap()
-                    .join(&server_path)
-                    .to_string_lossy()
-                    .to_string(),
-                "--stdio".to_string(),
-            ],
+            args: vec![server_path, "--stdio".to_string()],
             env: Default::default(),
         })
     }

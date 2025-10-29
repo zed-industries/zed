@@ -1,4 +1,5 @@
 mod boundary;
+mod duplicate;
 mod object;
 mod paste;
 mod select;
@@ -17,7 +18,7 @@ use text::{Bias, SelectionGoal};
 use workspace::searchable;
 use workspace::searchable::FilteredSearchRange;
 
-use crate::motion;
+use crate::motion::{self, MotionKind};
 use crate::state::SearchState;
 use crate::{
     Vim,
@@ -40,6 +41,17 @@ actions!(
         HelixSelectLine,
         /// Select all matches of a given pattern within the current selection.
         HelixSelectRegex,
+        /// Removes all but the one selection that was created last.
+        /// `Newest` can eventually be `Primary`.
+        HelixKeepNewestSelection,
+        /// Copies all selections below.
+        HelixDuplicateBelow,
+        /// Copies all selections above.
+        HelixDuplicateAbove,
+        /// Delete the selection and enter edit mode.
+        HelixSubstitute,
+        /// Delete the selection and enter edit mode, without yanking the selection.
+        HelixSubstituteNoYank,
     ]
 );
 
@@ -51,6 +63,17 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_goto_last_modification);
     Vim::action(editor, cx, Vim::helix_paste);
     Vim::action(editor, cx, Vim::helix_select_regex);
+    Vim::action(editor, cx, Vim::helix_keep_newest_selection);
+    Vim::action(editor, cx, |vim, _: &HelixDuplicateBelow, window, cx| {
+        let times = Vim::take_count(cx);
+        vim.helix_duplicate_selections_below(times, window, cx);
+    });
+    Vim::action(editor, cx, |vim, _: &HelixDuplicateAbove, window, cx| {
+        let times = Vim::take_count(cx);
+        vim.helix_duplicate_selections_above(times, window, cx);
+    });
+    Vim::action(editor, cx, Vim::helix_substitute);
+    Vim::action(editor, cx, Vim::helix_substitute_no_yank);
 }
 
 impl Vim {
@@ -322,7 +345,7 @@ impl Vim {
         self.update_editor(cx, |vim, editor, cx| {
             let has_selection = editor
                 .selections
-                .all_adjusted(cx)
+                .all_adjusted(&editor.display_snapshot(cx))
                 .iter()
                 .any(|selection| !selection.is_empty());
 
@@ -455,19 +478,20 @@ impl Vim {
     pub fn helix_replace(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                let (map, selections) = editor.selections.all_display(cx);
+                let display_map = editor.display_snapshot(cx);
+                let selections = editor.selections.all_display(&display_map);
 
                 // Store selection info for positioning after edit
                 let selection_info: Vec<_> = selections
                     .iter()
                     .map(|selection| {
                         let range = selection.range();
-                        let start_offset = range.start.to_offset(&map, Bias::Left);
-                        let end_offset = range.end.to_offset(&map, Bias::Left);
+                        let start_offset = range.start.to_offset(&display_map, Bias::Left);
+                        let end_offset = range.end.to_offset(&display_map, Bias::Left);
                         let was_empty = range.is_empty();
                         let was_reversed = selection.reversed;
                         (
-                            map.buffer_snapshot().anchor_before(start_offset),
+                            display_map.buffer_snapshot().anchor_before(start_offset),
                             end_offset - start_offset,
                             was_empty,
                             was_reversed,
@@ -481,11 +505,11 @@ impl Vim {
 
                     // For empty selections, extend to replace one character
                     if range.is_empty() {
-                        range.end = movement::saturating_right(&map, range.start);
+                        range.end = movement::saturating_right(&display_map, range.start);
                     }
 
-                    let byte_range = range.start.to_offset(&map, Bias::Left)
-                        ..range.end.to_offset(&map, Bias::Left);
+                    let byte_range = range.start.to_offset(&display_map, Bias::Left)
+                        ..range.end.to_offset(&display_map, Bias::Left);
 
                     if !byte_range.is_empty() {
                         let replacement_text = text.repeat(byte_range.len());
@@ -545,7 +569,7 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             editor.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
             let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
-            let mut selections = editor.selections.all::<Point>(cx);
+            let mut selections = editor.selections.all::<Point>(&display_map);
             let max_point = display_map.buffer_snapshot().max_point();
             let buffer_snapshot = &display_map.buffer_snapshot();
 
@@ -574,6 +598,71 @@ impl Vim {
                 s.select(selections);
             });
         });
+    }
+
+    fn helix_keep_newest_selection(
+        &mut self,
+        _: &HelixKeepNewestSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_editor(cx, |_, editor, cx| {
+            let newest = editor
+                .selections
+                .newest::<usize>(&editor.display_snapshot(cx));
+            editor.change_selections(Default::default(), window, cx, |s| s.select(vec![newest]));
+        });
+    }
+
+    fn do_helix_substitute(&mut self, yank: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_editor(cx, |vim, editor, cx| {
+            editor.set_clip_at_line_ends(false, cx);
+            editor.transact(window, cx, |editor, window, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.move_with(|map, selection| {
+                        if selection.start == selection.end {
+                            selection.end = movement::right(map, selection.end);
+                        }
+
+                        // If the selection starts and ends on a newline, we exclude the last one.
+                        if !selection.is_empty()
+                            && selection.start.column() == 0
+                            && selection.end.column() == 0
+                        {
+                            selection.end = movement::left(map, selection.end);
+                        }
+                    })
+                });
+                if yank {
+                    vim.copy_selections_content(editor, MotionKind::Exclusive, window, cx);
+                }
+                let selections = editor
+                    .selections
+                    .all::<Point>(&editor.display_snapshot(cx))
+                    .into_iter();
+                let edits = selections.map(|selection| (selection.start..selection.end, ""));
+                editor.edit(edits, cx);
+            });
+        });
+        self.switch_mode(Mode::Insert, true, window, cx);
+    }
+
+    fn helix_substitute(
+        &mut self,
+        _: &HelixSubstitute,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.do_helix_substitute(true, window, cx);
+    }
+
+    fn helix_substitute_no_yank(
+        &mut self,
+        _: &HelixSubstituteNoYank,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.do_helix_substitute(false, window, cx);
     }
 }
 
@@ -1211,5 +1300,68 @@ mod test {
         cx.set_state("ˇone two one", Mode::HelixNormal);
         cx.simulate_keystrokes("s o n e enter");
         cx.assert_state("ˇone two one", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_substitute(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("ˇone two", Mode::HelixNormal);
+        cx.simulate_keystrokes("c");
+        cx.assert_state("ˇne two", Mode::Insert);
+
+        cx.set_state("«oneˇ» two", Mode::HelixNormal);
+        cx.simulate_keystrokes("c");
+        cx.assert_state("ˇ two", Mode::Insert);
+
+        cx.set_state(
+            indoc! {"
+            oneˇ two
+            three
+            "},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("x c");
+        cx.assert_state(
+            indoc! {"
+            ˇ
+            three
+            "},
+            Mode::Insert,
+        );
+
+        cx.set_state(
+            indoc! {"
+            one twoˇ
+            three
+            "},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("c");
+        cx.assert_state(
+            indoc! {"
+            one twoˇthree
+            "},
+            Mode::Insert,
+        );
+
+        // Helix doesn't set the cursor to the first non-blank one when
+        // replacing lines: it uses language-dependent indent queries instead.
+        cx.set_state(
+            indoc! {"
+            one two
+            «    indented
+            three not indentedˇ»
+            "},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("c");
+        cx.set_state(
+            indoc! {"
+            one two
+            ˇ
+            "},
+            Mode::Insert,
+        );
     }
 }

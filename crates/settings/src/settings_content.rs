@@ -485,6 +485,7 @@ pub struct GitPanelSettingsContent {
     /// Default width of the panel in pixels.
     ///
     /// Default: 360
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
     /// How entry statuses are displayed.
     ///
@@ -556,6 +557,7 @@ pub struct NotificationPanelSettingsContent {
     /// Default width of the panel in pixels.
     ///
     /// Default: 300
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
 }
 
@@ -573,6 +575,7 @@ pub struct PanelSettingsContent {
     /// Default width of the panel in pixels.
     ///
     /// Default: 240
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
 }
 
@@ -608,14 +611,33 @@ pub struct FileFinderSettingsContent {
     /// Whether to use gitignored files when searching.
     /// Only the file Zed had indexed will be used, not necessary all the gitignored files.
     ///
-    /// Can accept 3 values:
-    /// * `Some(true)`: Use all gitignored files
-    /// * `Some(false)`: Use only the files Zed had indexed
-    /// * `None`: Be smart and search for ignored when called from a gitignored worktree
-    ///
-    /// Default: None
-    /// todo() -> Change this type to an enum
-    pub include_ignored: Option<bool>,
+    /// Default: Smart
+    pub include_ignored: Option<IncludeIgnoredContent>,
+}
+
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum IncludeIgnoredContent {
+    /// Use all gitignored files
+    All,
+    /// Use only the files Zed had indexed
+    Indexed,
+    /// Be smart and search for ignored when called from a gitignored worktree
+    #[default]
+    Smart,
 }
 
 #[derive(
@@ -728,6 +750,7 @@ pub struct OutlinePanelSettingsContent {
     /// Customize default width (in pixels) taken by outline panel
     ///
     /// Default: 240
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
     /// The position of outline panel
     ///
@@ -748,6 +771,7 @@ pub struct OutlinePanelSettingsContent {
     /// Amount of indentation (in pixels) for nested items.
     ///
     /// Default: 20
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub indent_size: Option<f32>,
     /// Whether to reveal it in the outline panel automatically,
     /// when a corresponding project entry becomes active.
@@ -983,5 +1007,250 @@ impl From<SaturatingBool> for bool {
 impl merge_from::MergeFrom for SaturatingBool {
     fn merge_from(&mut self, other: &Self) {
         self.0 |= other.0
+    }
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    MergeFrom,
+    JsonSchema,
+    derive_more::FromStr,
+)]
+#[serde(transparent)]
+pub struct DelayMs(pub u64);
+
+impl From<u64> for DelayMs {
+    fn from(n: u64) -> Self {
+        Self(n)
+    }
+}
+
+impl std::fmt::Display for DelayMs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}ms", self.0)
+    }
+}
+
+/// A wrapper type that distinguishes between an explicitly set value (including null) and an unset value.
+///
+/// This is useful for configuration where you need to differentiate between:
+/// - A field that is not present in the configuration file (`Maybe::Unset`)
+/// - A field that is explicitly set to `null` (`Maybe::Set(None)`)
+/// - A field that is explicitly set to a value (`Maybe::Set(Some(value))`)
+///
+/// # Examples
+///
+/// In JSON:
+/// - `{}` (field missing) deserializes to `Maybe::Unset`
+/// - `{"field": null}` deserializes to `Maybe::Set(None)`
+/// - `{"field": "value"}` deserializes to `Maybe::Set(Some("value"))`
+///
+/// WARN: This type should not be wrapped in an option inside of settings, otherwise the default `serde_json` behavior
+/// of treating `null` and missing as the `Option::None` will be used
+#[derive(Debug, Clone, PartialEq, Eq, strum::EnumDiscriminants, Default)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
+pub enum Maybe<T> {
+    /// An explicitly set value, which may be `None` (representing JSON `null`) or `Some(value)`.
+    Set(Option<T>),
+    /// A value that was not present in the configuration.
+    #[default]
+    Unset,
+}
+
+impl<T: Clone> merge_from::MergeFrom for Maybe<T> {
+    fn merge_from(&mut self, other: &Self) {
+        if self.is_unset() {
+            *self = other.clone();
+        }
+    }
+}
+
+impl<T> From<Option<Option<T>>> for Maybe<T> {
+    fn from(value: Option<Option<T>>) -> Self {
+        match value {
+            Some(value) => Maybe::Set(value),
+            None => Maybe::Unset,
+        }
+    }
+}
+
+impl<T> Maybe<T> {
+    pub fn is_set(&self) -> bool {
+        matches!(self, Maybe::Set(_))
+    }
+
+    pub fn is_unset(&self) -> bool {
+        matches!(self, Maybe::Unset)
+    }
+
+    pub fn into_inner(self) -> Option<T> {
+        match self {
+            Maybe::Set(value) => value,
+            Maybe::Unset => None,
+        }
+    }
+
+    pub fn as_ref(&self) -> Option<&Option<T>> {
+        match self {
+            Maybe::Set(value) => Some(value),
+            Maybe::Unset => None,
+        }
+    }
+}
+
+impl<T: serde::Serialize> serde::Serialize for Maybe<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Maybe::Set(value) => value.serialize(serializer),
+            Maybe::Unset => serializer.serialize_none(),
+        }
+    }
+}
+
+impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for Maybe<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Option::<T>::deserialize(deserializer).map(Maybe::Set)
+    }
+}
+
+impl<T: JsonSchema> JsonSchema for Maybe<T> {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        format!("Nullable<{}>", T::schema_name()).into()
+    }
+
+    fn json_schema(generator: &mut schemars::generate::SchemaGenerator) -> schemars::Schema {
+        let mut schema = generator.subschema_for::<Option<T>>();
+        // Add description explaining that null is an explicit value
+        let description = if let Some(existing_desc) =
+            schema.get("description").and_then(|desc| desc.as_str())
+        {
+            format!(
+                "{}. Note: `null` is treated as an explicit value, different from omitting the field entirely.",
+                existing_desc
+            )
+        } else {
+            "This field supports explicit `null` values. Omitting the field is different from setting it to `null`.".to_string()
+        };
+
+        schema.insert("description".to_string(), description.into());
+
+        schema
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json;
+
+    #[test]
+    fn test_maybe() {
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        struct TestStruct {
+            #[serde(default)]
+            #[serde(skip_serializing_if = "Maybe::is_unset")]
+            field: Maybe<String>,
+        }
+
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        struct NumericTest {
+            #[serde(default)]
+            value: Maybe<i32>,
+        }
+
+        let json = "{}";
+        let result: TestStruct = serde_json::from_str(json).unwrap();
+        assert!(result.field.is_unset());
+        assert_eq!(result.field, Maybe::Unset);
+
+        let json = r#"{"field": null}"#;
+        let result: TestStruct = serde_json::from_str(json).unwrap();
+        assert!(result.field.is_set());
+        assert_eq!(result.field, Maybe::Set(None));
+
+        let json = r#"{"field": "hello"}"#;
+        let result: TestStruct = serde_json::from_str(json).unwrap();
+        assert!(result.field.is_set());
+        assert_eq!(result.field, Maybe::Set(Some("hello".to_string())));
+
+        let test = TestStruct {
+            field: Maybe::Unset,
+        };
+        let json = serde_json::to_string(&test).unwrap();
+        assert_eq!(json, "{}");
+
+        let test = TestStruct {
+            field: Maybe::Set(None),
+        };
+        let json = serde_json::to_string(&test).unwrap();
+        assert_eq!(json, r#"{"field":null}"#);
+
+        let test = TestStruct {
+            field: Maybe::Set(Some("world".to_string())),
+        };
+        let json = serde_json::to_string(&test).unwrap();
+        assert_eq!(json, r#"{"field":"world"}"#);
+
+        let default_maybe: Maybe<i32> = Maybe::default();
+        assert!(default_maybe.is_unset());
+
+        let unset: Maybe<String> = Maybe::Unset;
+        assert!(unset.is_unset());
+        assert!(!unset.is_set());
+
+        let set_none: Maybe<String> = Maybe::Set(None);
+        assert!(set_none.is_set());
+        assert!(!set_none.is_unset());
+
+        let set_some: Maybe<String> = Maybe::Set(Some("value".to_string()));
+        assert!(set_some.is_set());
+        assert!(!set_some.is_unset());
+
+        let original = TestStruct {
+            field: Maybe::Set(Some("test".to_string())),
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: TestStruct = serde_json::from_str(&json).unwrap();
+        assert_eq!(original, deserialized);
+
+        let json = r#"{"value": 42}"#;
+        let result: NumericTest = serde_json::from_str(json).unwrap();
+        assert_eq!(result.value, Maybe::Set(Some(42)));
+
+        let json = r#"{"value": null}"#;
+        let result: NumericTest = serde_json::from_str(json).unwrap();
+        assert_eq!(result.value, Maybe::Set(None));
+
+        let json = "{}";
+        let result: NumericTest = serde_json::from_str(json).unwrap();
+        assert_eq!(result.value, Maybe::Unset);
+
+        // Test JsonSchema implementation
+        use schemars::schema_for;
+        let schema = schema_for!(Maybe<String>);
+        let schema_json = serde_json::to_value(&schema).unwrap();
+
+        // Verify the description mentions that null is an explicit value
+        let description = schema_json["description"].as_str().unwrap();
+        assert!(
+            description.contains("null") && description.contains("explicit"),
+            "Schema description should mention that null is an explicit value. Got: {}",
+            description
+        );
     }
 }

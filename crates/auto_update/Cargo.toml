@@ -27,7 +27,6 @@ settings.workspace = true
 smol.workspace = true
 tempfile.workspace = true
 workspace.workspace = true
-workspace-hack.workspace = true
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 which.workspace = true

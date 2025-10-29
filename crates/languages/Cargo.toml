@@ -90,7 +90,6 @@ tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter-yaml = { workspace = true, optional = true }
 util.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true

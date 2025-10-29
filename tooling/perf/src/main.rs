@@ -228,8 +228,8 @@ fn compare_profiles(args: &[String]) {
                 a.strip_prefix("--save=")
                     .expect("FATAL: save param formatted incorrectly"),
             );
+            ident_idx = 1;
         }
-        ident_idx = 1;
     });
     let ident_new = args
         .get(ident_idx)

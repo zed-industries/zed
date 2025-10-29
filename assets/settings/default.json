@@ -1,8 +1,8 @@
 {
   "$schema": "zed://schemas/settings",
-  /// The displayed name of this project. If not set or empty, the root directory name
+  /// The displayed name of this project. If not set or null, the root directory name
   /// will be displayed.
-  "project_name": "",
+  "project_name": null,
   // The name of the Zed theme to use for the UI.
   //
   // `mode` is one of:
@@ -311,11 +311,11 @@
   "use_on_type_format": true,
   // Whether to automatically add matching closing characters when typing
   // opening parenthesis, bracket, brace, single or double quote characters.
-  // For example, when you type (, Zed will add a closing ) at the correct position.
+  // For example, when you type '(', Zed will add a closing ) at the correct position.
   "use_autoclose": true,
   // Whether to automatically surround selected text when typing opening parenthesis,
   // bracket, brace, single or double quote characters.
-  // For example, when you select text and type (, Zed will surround the text with ().
+  // For example, when you select text and type '(', Zed will surround the text with ().
   "use_auto_surround": true,
   // Whether indentation should be adjusted based on the context whilst typing.
   "auto_indent": true,
@@ -884,8 +884,6 @@
     // Note: This setting has no effect on external agents that support permission modes, such as Claude Code.
     //       You can set `agent_servers.claude.default_mode` to `bypassPermissions` to skip all permission requests.
     "always_allow_tool_actions": false,
-    // When enabled, the agent will stream edits.
-    "stream_edits": false,
     // When enabled, agent edits will be displayed in single-file editors for review
     "single_file_review": true,
     // When enabled, show voting thumbs for feedback on agent edits.
@@ -1093,10 +1091,10 @@
     // Only the file Zed had indexed will be used, not necessary all the gitignored files.
     //
     // Can accept 3 values:
-    //   * `true`: Use all gitignored files
-    //   * `false`: Use only the files Zed had indexed
-    //   * `null`: Be smart and search for ignored when called from a gitignored worktree
-    "include_ignored": null
+    //   * "all": Use all gitignored files
+    //   * "indexed": Use only the files Zed had indexed
+    //   * "smart": Be smart and search for ignored when called from a gitignored worktree
+    "include_ignored": "smart"
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -1352,7 +1350,9 @@
     // Whether to show the active language button in the status bar.
     "active_language_button": true,
     // Whether to show the cursor position button in the status bar.
-    "cursor_position_button": true
+    "cursor_position_button": true,
+    // Whether to show active line endings button in the status bar.
+    "line_endings_button": false
   },
   // Settings specific to the terminal
   "terminal": {
@@ -1529,6 +1529,7 @@
     // A value of 45 preserves colorful themes while ensuring legibility.
     "minimum_contrast": 45
   },
+  "code_actions_on_format": {},
   // Settings related to running tasks.
   "tasks": {
     "variables": {},
@@ -1558,6 +1559,7 @@
   //
   "file_types": {
     "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json", "tsconfig*.json"],
+    "Markdown": [".rules", ".cursorrules", ".windsurfrules", ".clinerules"],
     "Shell Script": [".env.*"]
   },
   // Settings for which version of Node.js and NPM to use when installing
@@ -1698,7 +1700,10 @@
       "preferred_line_length": 72
     },
     "Go": {
-      "formatter": [{ "code_action": "source.organizeImports" }, "language_server"],
+      "hard_tabs": true,
+      "code_actions_on_format": {
+        "source.organizeImports": true
+      },
       "debuggers": ["Delve"]
     },
     "GraphQL": {
@@ -1737,7 +1742,7 @@
       }
     },
     "Kotlin": {
-      "language_servers": ["kotlin-language-server", "!kotlin-lsp", "..."]
+      "language_servers": ["!kotlin-language-server", "kotlin-lsp", "..."]
     },
     "LaTeX": {
       "formatter": "language_server",
@@ -1765,15 +1770,20 @@
       }
     },
     "Plain Text": {
-      "allow_rewrap": "anywhere"
+      "allow_rewrap": "anywhere",
+      "soft_wrap": "editor_width"
     },
     "Python": {
+      "code_actions_on_format": {
+        "source.organizeImports.ruff": true
+      },
       "formatter": {
         "language_server": {
           "name": "ruff"
         }
       },
-      "debuggers": ["Debugpy"]
+      "debuggers": ["Debugpy"],
+      "language_servers": ["basedpyright", "ruff", "!ty", "!pyrefly", "!pyright", "!pylsp", "..."]
     },
     "Ruby": {
       "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "!sorbet", "!steep", "..."]
@@ -1815,10 +1825,11 @@
     },
     "SystemVerilog": {
       "format_on_save": "off",
+      "language_servers": ["!slang", "..."],
       "use_on_type_format": false
     },
     "Vue.js": {
-      "language_servers": ["vue-language-server", "..."],
+      "language_servers": ["vue-language-server", "vtsls", "..."],
       "prettier": {
         "allowed": true
       }
@@ -1922,6 +1933,11 @@
   // DAP Specific settings.
   "dap": {
     // Specify the DAP name as a key here.
+    "CodeLLDB": {
+      "env": {
+        "RUST_LOG": "info"
+      }
+    }
   },
   // Common language server settings.
   "global_lsp_settings": {

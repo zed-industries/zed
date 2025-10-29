@@ -2,12 +2,11 @@
 /// The tests in this file assume that server_cx is running on Windows too.
 /// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
-use assistant_tool::{Tool as _, ToolResultContent};
-use assistant_tools::{ReadFileTool, ReadFileToolInput};
+use agent::{AgentTool, ReadFileTool, ReadFileToolInput, ToolCallEventStream};
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};
-use language_model::{LanguageModelRequest, fake_provider::FakeLanguageModel};
+use language_model::LanguageModelToolResultContent;
 
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
@@ -1721,47 +1720,26 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
         .unwrap();
 
     let action_log = cx.new(|_| action_log::ActionLog::new(project.clone()));
-    let model = Arc::new(FakeLanguageModel::default());
-    let request = Arc::new(LanguageModelRequest::default());
 
     let input = ReadFileToolInput {
         path: "project/b.txt".into(),
         start_line: None,
         end_line: None,
     };
-    let exists_result = cx.update(|cx| {
-        ReadFileTool::run(
-            Arc::new(ReadFileTool),
-            serde_json::to_value(input).unwrap(),
-            request.clone(),
-            project.clone(),
-            action_log.clone(),
-            model.clone(),
-            None,
-            cx,
-        )
-    });
-    let output = exists_result.output.await.unwrap().content;
-    assert_eq!(output, ToolResultContent::Text("B".to_string()));
+    let read_tool = Arc::new(ReadFileTool::new(project, action_log));
+    let (event_stream, _) = ToolCallEventStream::test();
+
+    let exists_result = cx.update(|cx| read_tool.clone().run(input, event_stream.clone(), cx));
+    let output = exists_result.await.unwrap();
+    assert_eq!(output, LanguageModelToolResultContent::Text("B".into()));
 
     let input = ReadFileToolInput {
         path: "project/c.txt".into(),
         start_line: None,
         end_line: None,
     };
-    let does_not_exist_result = cx.update(|cx| {
-        ReadFileTool::run(
-            Arc::new(ReadFileTool),
-            serde_json::to_value(input).unwrap(),
-            request.clone(),
-            project.clone(),
-            action_log.clone(),
-            model.clone(),
-            None,
-            cx,
-        )
-    });
-    does_not_exist_result.output.await.unwrap_err();
+    let does_not_exist_result = cx.update(|cx| read_tool.run(input, event_stream, cx));
+    does_not_exist_result.await.unwrap_err();
 }
 
 #[gpui::test]

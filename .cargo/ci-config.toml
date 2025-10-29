@@ -5,11 +5,15 @@
 # Arrays are merged together though. See: https://doc.rust-lang.org/cargo/reference/config.html#hierarchical-structure
 # The intent for this file is to configure CI build process with a divergance from Zed developers experience; for example, in this config file
 # we use `-D warnings` for rustflags (which makes compilation fail in presence of warnings during build process). Placing that in developers `config.toml`
-# would be incovenient.
+# would be inconvenient.
 # The reason for not using the RUSTFLAGS environment variable is that doing so would override all the settings in the config.toml file, even if the contents of the latter are completely nonsensical. See: https://github.com/rust-lang/cargo/issues/5376
 # Here, we opted to use `[target.'cfg(all())']` instead of `[build]` because `[target.'**']` is guaranteed to be cumulative.
 [target.'cfg(all())']
 rustflags = ["-D", "warnings"]
+
+# We don't need fullest debug information for dev stuff (tests etc.) in CI.
+[profile.dev]
+debug = "limited"
 
 # Use Mold on Linux, because it's faster than GNU ld and LLD.
 #

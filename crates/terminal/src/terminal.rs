@@ -67,7 +67,7 @@ use thiserror::Error;
 use gpui::{
     App, AppContext as _, Bounds, ClipboardItem, Context, EventEmitter, Hsla, Keystroke, Modifiers,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Rgba,
-    ScrollWheelEvent, SharedString, Size, Task, TouchPhase, Window, actions, black, px,
+    ScrollWheelEvent, Size, Task, TouchPhase, Window, actions, black, px,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -277,7 +277,7 @@ pub struct TerminalError {
     pub directory: Option<PathBuf>,
     pub program: Option<String>,
     pub args: Option<Vec<String>>,
-    pub title_override: Option<SharedString>,
+    pub title_override: Option<String>,
     pub source: std::io::Error,
 }
 
@@ -446,16 +446,16 @@ impl TerminalBuilder {
         struct ShellParams {
             program: String,
             args: Option<Vec<String>>,
-            title_override: Option<SharedString>,
+            title_override: Option<String>,
         }
 
         impl ShellParams {
             fn new(
                 program: String,
                 args: Option<Vec<String>>,
-                title_override: Option<SharedString>,
+                title_override: Option<String>,
             ) -> Self {
-                log::info!("Using {program} as shell");
+                log::debug!("Using {program} as shell");
                 Self {
                     program,
                     args,
@@ -514,10 +514,8 @@ impl TerminalBuilder {
                 working_directory: working_directory.clone(),
                 drain_on_exit: true,
                 env: env.clone().into_iter().collect(),
-                // We do not want to escape arguments if we are using CMD as our shell.
-                // If we do we end up with too many quotes/escaped quotes for CMD to handle.
                 #[cfg(windows)]
-                escape_args: shell_kind != util::shell::ShellKind::Cmd,
+                escape_args: shell_kind.tty_escape_args(),
             }
         };
 
@@ -823,7 +821,7 @@ pub struct Terminal {
     pub last_content: TerminalContent,
     pub selection_head: Option<AlacPoint>,
     pub breadcrumb_text: String,
-    title_override: Option<SharedString>,
+    title_override: Option<String>,
     scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,

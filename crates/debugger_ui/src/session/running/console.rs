@@ -484,12 +484,11 @@ impl Render for Console {
                             .tooltip({
                                 let query_focus_handle = query_focus_handle.clone();
 
-                                move |window, cx| {
+                                move |_window, cx| {
                                     Tooltip::for_action_in(
                                         "Evaluate",
                                         &Confirm,
                                         &query_focus_handle,
-                                        window,
                                         cx,
                                     )
                                 }
@@ -963,8 +962,12 @@ mod tests {
     ) {
         cx.set_state(input);
 
-        let buffer_position =
-            cx.editor(|editor, _, cx| editor.selections.newest::<Point>(cx).start);
+        let buffer_position = cx.editor(|editor, _, cx| {
+            editor
+                .selections
+                .newest::<Point>(&editor.display_snapshot(cx))
+                .start
+        });
 
         let snapshot = &cx.buffer_snapshot();
 

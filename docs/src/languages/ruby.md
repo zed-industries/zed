@@ -260,10 +260,6 @@ In order to do that, you need to configure the language server so that it knows 
   "lsp": {
     "tailwindcss-language-server": {
       "settings": {
-        "includeLanguages": {
-          "html+erb": "html",
-          "ruby": "html"
-        },
         "experimental": {
           "classRegex": ["\\bclass:\\s*['\"]([^'\"]*)['\"]"]
         }

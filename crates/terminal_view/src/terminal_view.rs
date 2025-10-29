@@ -840,9 +840,7 @@ impl TerminalView {
                 .size(ButtonSize::Compact)
                 .icon_color(Color::Default)
                 .shape(ui::IconButtonShape::Square)
-                .tooltip(move |window, cx| {
-                    Tooltip::for_action("Rerun task", &RerunTask, window, cx)
-                })
+                .tooltip(move |_window, cx| Tooltip::for_action("Rerun task", &RerunTask, cx))
                 .on_click(move |_, window, cx| {
                     window.dispatch_action(Box::new(terminal_rerun_override(&task_id)), cx);
                 }),
@@ -1215,13 +1213,17 @@ impl Item for TerminalView {
         workspace::item::ItemBufferKind::Singleton
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>> {
-        let terminal = self
+    ) -> Task<Option<Entity<Self>>> {
+        let Some(terminal_task) = self
             .project
             .update(cx, |project, cx| {
                 let cwd = project
@@ -1229,19 +1231,22 @@ impl Item for TerminalView {
                     .map(|it| it.to_path_buf());
                 project.clone_terminal(self.terminal(), cx, cwd)
             })
-            .ok()?
-            .log_err()?;
+            .ok()
+        else {
+            return Task::ready(None);
+        };
 
-        Some(cx.new(|cx| {
-            TerminalView::new(
-                terminal,
-                self.workspace.clone(),
-                workspace_id,
-                self.project.clone(),
-                window,
-                cx,
-            )
-        }))
+        let workspace = self.workspace.clone();
+        let project = self.project.clone();
+        cx.spawn_in(window, async move |_, cx| {
+            let terminal = terminal_task.await.log_err()?;
+            cx.update(|window, cx| {
+                cx.new(|cx| {
+                    TerminalView::new(terminal, workspace, workspace_id, project, window, cx)
+                })
+            })
+            .ok()
+        })
     }
 
     fn is_dirty(&self, cx: &gpui::App) -> bool {

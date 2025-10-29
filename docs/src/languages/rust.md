@@ -294,9 +294,12 @@ There's a way to get custom completion items from rust-analyzer, that will trans
 
 ## Debugging
 
-Zed supports debugging Rust binaries and tests out of the box. Run {#action debugger::Start} ({#kb debugger::Start}) to launch one of these preconfigured debug tasks.
+Zed supports debugging Rust binaries and tests out of the box with `CodeLLDB` and `GDB`. Run {#action debugger::Start} ({#kb debugger::Start}) to launch one of these preconfigured debug tasks.
 
 For more control, you can add debug configurations to `.zed/debug.json`. See the examples below.
+
+- [CodeLLDB configuration documentation](https://github.com/vadimcn/codelldb/blob/master/MANUAL.md#starting-a-new-debug-session)
+- [GDB configuration documentation](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Debugger-Adapter-Protocol.html)
 
 ### Build binary then debug
 

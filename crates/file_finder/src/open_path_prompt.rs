@@ -669,7 +669,7 @@ impl PickerDelegate for OpenPathDelegate {
     ) -> Option<Self::ListItem> {
         let settings = FileFinderSettings::get_global(cx);
         let candidate = self.get_entry(ix)?;
-        let match_positions = match &self.directory_state {
+        let mut match_positions = match &self.directory_state {
             DirectoryState::List { .. } => self.string_matches.get(ix)?.positions.clone(),
             DirectoryState::Create { user_input, .. } => {
                 if let Some(user_input) = user_input {
@@ -710,29 +710,38 @@ impl PickerDelegate for OpenPathDelegate {
         });
 
         match &self.directory_state {
-            DirectoryState::List { parent_path, .. } => Some(
-                ListItem::new(ix)
-                    .spacing(ListItemSpacing::Sparse)
-                    .start_slot::<Icon>(file_icon)
-                    .inset(true)
-                    .toggle_state(selected)
-                    .child(HighlightedLabel::new(
-                        if parent_path == &self.prompt_root {
-                            format!("{}{}", self.prompt_root, candidate.path.string)
-                        } else if is_current_dir_candidate {
-                            "open this directory".to_string()
-                        } else {
-                            candidate.path.string
-                        },
+            DirectoryState::List { parent_path, .. } => {
+                let (label, indices) = if *parent_path == self.prompt_root {
+                    match_positions.iter_mut().for_each(|position| {
+                        *position += self.prompt_root.len();
+                    });
+                    (
+                        format!("{}{}", self.prompt_root, candidate.path.string),
                         match_positions,
-                    )),
-            ),
+                    )
+                } else if is_current_dir_candidate {
+                    ("open this directory".to_string(), vec![])
+                } else {
+                    (candidate.path.string, match_positions)
+                };
+                Some(
+                    ListItem::new(ix)
+                        .spacing(ListItemSpacing::Sparse)
+                        .start_slot::<Icon>(file_icon)
+                        .inset(true)
+                        .toggle_state(selected)
+                        .child(HighlightedLabel::new(label, indices)),
+                )
+            }
             DirectoryState::Create {
                 parent_path,
                 user_input,
                 ..
             } => {
-                let (label, delta) = if parent_path == &self.prompt_root {
+                let (label, delta) = if *parent_path == self.prompt_root {
+                    match_positions.iter_mut().for_each(|position| {
+                        *position += self.prompt_root.len();
+                    });
                     (
                         format!("{}{}", self.prompt_root, candidate.path.string),
                         self.prompt_root.len(),
@@ -740,10 +749,10 @@ impl PickerDelegate for OpenPathDelegate {
                 } else {
                     (candidate.path.string.clone(), 0)
                 };
-                let label_len = label.len();
 
                 let label_with_highlights = match user_input {
                     Some(user_input) => {
+                        let label_len = label.len();
                         if user_input.file.string == candidate.path.string {
                             if user_input.exists {
                                 let label = if user_input.is_dir {
@@ -772,20 +781,10 @@ impl PickerDelegate for OpenPathDelegate {
                                     .into_any_element()
                             }
                         } else {
-                            let mut highlight_positions = match_positions;
-                            highlight_positions.iter_mut().for_each(|position| {
-                                *position += delta;
-                            });
-                            HighlightedLabel::new(label, highlight_positions).into_any_element()
+                            HighlightedLabel::new(label, match_positions).into_any_element()
                         }
                     }
-                    None => {
-                        let mut highlight_positions = match_positions;
-                        highlight_positions.iter_mut().for_each(|position| {
-                            *position += delta;
-                        });
-                        HighlightedLabel::new(label, highlight_positions).into_any_element()
-                    }
+                    None => HighlightedLabel::new(label, match_positions).into_any_element(),
                 };
 
                 Some(

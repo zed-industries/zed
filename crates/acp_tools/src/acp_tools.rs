@@ -93,8 +93,8 @@ struct WatchedConnection {
     messages: Vec<WatchedConnectionMessage>,
     list_state: ListState,
     connection: Weak<acp::ClientSideConnection>,
-    incoming_request_methods: HashMap<i32, Arc<str>>,
-    outgoing_request_methods: HashMap<i32, Arc<str>>,
+    incoming_request_methods: HashMap<acp::RequestId, Arc<str>>,
+    outgoing_request_methods: HashMap<acp::RequestId, Arc<str>>,
     _task: Task<()>,
 }
 
@@ -175,7 +175,7 @@ impl AcpTools {
                     }
                 };
 
-                method_map.insert(id, method.clone());
+                method_map.insert(id.clone(), method.clone());
                 (Some(id), method.into(), MessageType::Request, Ok(params))
             }
             acp::StreamMessageContent::Response { id, result } => {
@@ -338,6 +338,7 @@ impl AcpTools {
                     .children(
                         message
                             .request_id
+                            .as_ref()
                             .map(|req_id| div().child(ui::Chip::new(req_id.to_string()))),
                     ),
             )
@@ -389,7 +390,7 @@ impl AcpTools {
 
 struct WatchedConnectionMessage {
     name: SharedString,
-    request_id: Option<i32>,
+    request_id: Option<acp::RequestId>,
     direction: acp::StreamMessageDirection,
     message_type: MessageType,
     params: Result<Option<serde_json::Value>, acp::Error>,

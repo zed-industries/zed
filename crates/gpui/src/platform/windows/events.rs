@@ -1307,10 +1307,10 @@ where
     F: FnOnce(Keystroke) -> PlatformInput,
 {
     let virtual_key = VIRTUAL_KEY(wparam.loword());
-    let mut modifiers = current_modifiers();
+    let modifiers = current_modifiers();
 
     match virtual_key {
-        VK_SHIFT | VK_CONTROL | VK_MENU | VK_LWIN | VK_RWIN => {
+        VK_SHIFT | VK_CONTROL | VK_MENU | VK_LMENU | VK_RMENU | VK_LWIN | VK_RWIN => {
             if state
                 .last_reported_modifiers
                 .is_some_and(|prev_modifiers| prev_modifiers == modifiers)
@@ -1460,13 +1460,25 @@ fn is_virtual_key_pressed(vkey: VIRTUAL_KEY) -> bool {
     unsafe { GetKeyState(vkey.0 as i32) < 0 }
 }
 
+fn keyboard_uses_altgr() -> bool {
+    use crate::platform::windows::keyboard::WindowsKeyboardLayout;
+    WindowsKeyboardLayout::new()
+        .map(|layout| layout.uses_altgr())
+        .unwrap_or(false)
+}
+
 #[inline]
 pub(crate) fn current_modifiers() -> Modifiers {
-    let altgr = is_virtual_key_pressed(VK_RMENU) && is_virtual_key_pressed(VK_LCONTROL);
+    let lmenu_pressed = is_virtual_key_pressed(VK_LMENU);
+    let rmenu_pressed = is_virtual_key_pressed(VK_RMENU);
+    let lcontrol_pressed = is_virtual_key_pressed(VK_LCONTROL);
+
+    // Only treat right Alt + left Ctrl as AltGr on keyboards that actually use it
+    let altgr = keyboard_uses_altgr() && rmenu_pressed && lcontrol_pressed;
 
     Modifiers {
         control: is_virtual_key_pressed(VK_CONTROL) && !altgr,
-        alt: is_virtual_key_pressed(VK_MENU) && !altgr,
+        alt: (lmenu_pressed || rmenu_pressed) && !altgr,
         shift: is_virtual_key_pressed(VK_SHIFT),
         platform: is_virtual_key_pressed(VK_LWIN) || is_virtual_key_pressed(VK_RWIN),
         function: false,

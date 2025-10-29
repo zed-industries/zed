@@ -1,9 +1,9 @@
 use super::*;
 use collections::{HashMap, HashSet};
 use editor::{
-    DisplayPoint, EditorSettings,
+    DisplayPoint, EditorSettings, Inlay,
     actions::{GoToDiagnostic, GoToPreviousDiagnostic, Hover, MoveToBeginning},
-    display_map::{DisplayRow, Inlay},
+    display_map::DisplayRow,
     test::{
         editor_content_with_blocks, editor_lsp_test_context::EditorLspTestContext,
         editor_test_context::EditorTestContext,
@@ -1341,7 +1341,7 @@ async fn test_hover_diagnostic_and_info_popovers(cx: &mut gpui::TestAppContext) 
             range: Some(range),
         }))
     });
-    let delay = cx.update(|_, cx| EditorSettings::get_global(cx).hover_popover_delay + 1);
+    let delay = cx.update(|_, cx| EditorSettings::get_global(cx).hover_popover_delay.0 + 1);
     cx.background_executor
         .advance_clock(Duration::from_millis(delay));
 

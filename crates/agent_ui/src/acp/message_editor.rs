@@ -3,19 +3,18 @@ use crate::{
     context_picker::{ContextPickerAction, fetch_context_picker::fetch_url_content},
 };
 use acp_thread::{MentionUri, selection_name};
+use agent::{HistoryStore, outline};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
-use agent2::HistoryStore;
 use anyhow::{Result, anyhow};
 use assistant_slash_commands::codeblock_fence_for_path;
-use assistant_tool::outline;
 use collections::{HashMap, HashSet};
 use editor::{
     Addon, Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
-    EditorEvent, EditorMode, EditorSnapshot, EditorStyle, ExcerptId, FoldPlaceholder, InlayId,
+    EditorEvent, EditorMode, EditorSnapshot, EditorStyle, ExcerptId, FoldPlaceholder, Inlay,
     MultiBuffer, ToOffset,
     actions::Paste,
-    display_map::{Crease, CreaseId, FoldId, Inlay},
+    display_map::{Crease, CreaseId, FoldId},
 };
 use futures::{
     FutureExt as _,
@@ -30,7 +29,8 @@ use language::{Buffer, Language, language_settings::InlayHintKind};
 use language_model::LanguageModelImage;
 use postage::stream::Stream as _;
 use project::{
-    CompletionIntent, InlayHint, InlayHintLabel, Project, ProjectItem, ProjectPath, Worktree,
+    CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, ProjectItem, ProjectPath,
+    Worktree,
 };
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
@@ -76,7 +76,7 @@ pub enum MessageEditorEvent {
 
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
 
-const COMMAND_HINT_INLAY_ID: u32 = 0;
+const COMMAND_HINT_INLAY_ID: InlayId = InlayId::Hint(0);
 
 impl MessageEditor {
     pub fn new(
@@ -152,7 +152,7 @@ impl MessageEditor {
                         let has_new_hint = !new_hints.is_empty();
                         editor.splice_inlays(
                             if has_hint {
-                                &[InlayId::Hint(COMMAND_HINT_INLAY_ID)]
+                                &[COMMAND_HINT_INLAY_ID]
                             } else {
                                 &[]
                             },
@@ -230,7 +230,7 @@ impl MessageEditor {
 
     pub fn insert_thread_summary(
         &mut self,
-        thread: agent2::DbThreadMetadata,
+        thread: agent::DbThreadMetadata,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -239,7 +239,6 @@ impl MessageEditor {
             name: thread.title.to_string(),
         };
         let content = format!("{}\n", uri.as_link());
-
         let content_len = content.len() - 1;
 
         let start = self.editor.update(cx, |editor, cx| {
@@ -290,15 +289,10 @@ impl MessageEditor {
         let snapshot = self
             .editor
             .update(cx, |editor, cx| editor.snapshot(window, cx));
-        let Some((excerpt_id, _, _)) = snapshot.buffer_snapshot().as_singleton() else {
+        let Some(start_anchor) = snapshot.buffer_snapshot().as_singleton_anchor(start) else {
             return Task::ready(());
         };
-        let Some(start_anchor) = snapshot
-            .buffer_snapshot()
-            .anchor_in_excerpt(*excerpt_id, start)
-        else {
-            return Task::ready(());
-        };
+        let excerpt_id = start_anchor.excerpt_id;
         let end_anchor = snapshot
             .buffer_snapshot()
             .anchor_before(start_anchor.to_offset(&snapshot.buffer_snapshot()) + content_len + 1);
@@ -330,7 +324,7 @@ impl MessageEditor {
                 })
                 .shared();
             insert_crease_for_mention(
-                *excerpt_id,
+                excerpt_id,
                 start,
                 content_len,
                 mention_uri.name().into(),
@@ -342,7 +336,7 @@ impl MessageEditor {
             )
         } else {
             insert_crease_for_mention(
-                *excerpt_id,
+                excerpt_id,
                 start,
                 content_len,
                 crease_text,
@@ -544,10 +538,7 @@ impl MessageEditor {
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
-        let Some((&excerpt_id, _, _)) = snapshot.as_singleton() else {
-            return;
-        };
-        let Some(start) = snapshot.anchor_in_excerpt(excerpt_id, source_range.start) else {
+        let Some(start) = snapshot.as_singleton_anchor(source_range.start) else {
             return;
         };
 
@@ -605,7 +596,7 @@ impl MessageEditor {
         id: acp::SessionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
-        let server = Rc::new(agent2::NativeAgentServer::new(
+        let server = Rc::new(agent::NativeAgentServer::new(
             self.project.read(cx).fs().clone(),
             self.history_store.clone(),
         ));
@@ -618,7 +609,7 @@ impl MessageEditor {
         let connection = server.connect(None, delegate, cx);
         cx.spawn(async move |_, cx| {
             let (agent, _) = connection.await?;
-            let agent = agent.downcast::<agent2::NativeAgentConnection>().unwrap();
+            let agent = agent.downcast::<agent::NativeAgentConnection>().unwrap();
             let summary = agent
                 .0
                 .update(cx, |agent, cx| agent.thread_summary(id, cx))?
@@ -635,12 +626,12 @@ impl MessageEditor {
         path: PathBuf,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
-        let context = self.history_store.update(cx, |text_thread_store, cx| {
-            text_thread_store.load_text_thread(path.as_path().into(), cx)
+        let text_thread_task = self.history_store.update(cx, |store, cx| {
+            store.load_text_thread(path.as_path().into(), cx)
         });
         cx.spawn(async move |_, cx| {
-            let context = context.await?;
-            let xml = context.update(cx, |context, cx| context.to_xml(cx))?;
+            let text_thread = text_thread_task.await?;
+            let xml = text_thread.update(cx, |text_thread, cx| text_thread.to_xml(cx))?;
             Ok(Mention::Text {
                 content: xml,
                 tracked_buffers: Vec::new(),
@@ -708,7 +699,7 @@ impl MessageEditor {
             let mut all_tracked_buffers = Vec::new();
 
             let result = editor.update(cx, |editor, cx| {
-                let mut ix = 0;
+                let mut ix = text.chars().position(|c| !c.is_whitespace()).unwrap_or(0);
                 let mut chunks: Vec<acp::ContentBlock> = Vec::new();
                 let text = editor.text(cx);
                 editor.display_map.update(cx, |map, cx| {
@@ -720,15 +711,6 @@ impl MessageEditor {
 
                         let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot());
                         if crease_range.start > ix {
-                            //todo(): Custom slash command ContentBlock?
-                            // let chunk = if prevent_slash_commands
-                            //     && ix == 0
-                            //     && parse_slash_command(&text[ix..]).is_some()
-                            // {
-                            //     format!(" {}", &text[ix..crease_range.start]).into()
-                            // } else {
-                            //     text[ix..crease_range.start].into()
-                            // };
                             let chunk = text[ix..crease_range.start].into();
                             chunks.push(chunk);
                         }
@@ -789,15 +771,6 @@ impl MessageEditor {
                     }
 
                     if ix < text.len() {
-                        //todo(): Custom slash command ContentBlock?
-                        // let last_chunk = if prevent_slash_commands
-                        //     && ix == 0
-                        //     && parse_slash_command(&text[ix..]).is_some()
-                        // {
-                        //     format!(" {}", text[ix..].trim_end())
-                        // } else {
-                        //     text[ix..].trim_end().to_owned()
-                        // };
                         let last_chunk = text[ix..].trim_end().to_owned();
                         if !last_chunk.is_empty() {
                             chunks.push(last_chunk.into());
@@ -1068,6 +1041,7 @@ impl MessageEditor {
     ) {
         self.clear(window, cx);
 
+        let path_style = self.project.read(cx).path_style(cx);
         let mut text = String::new();
         let mut mentions = Vec::new();
 
@@ -1080,7 +1054,8 @@ impl MessageEditor {
                     resource: acp::EmbeddedResourceResource::TextResourceContents(resource),
                     ..
                 }) => {
-                    let Some(mention_uri) = MentionUri::parse(&resource.uri).log_err() else {
+                    let Some(mention_uri) = MentionUri::parse(&resource.uri, path_style).log_err()
+                    else {
                         continue;
                     };
                     let start = text.len();
@@ -1096,7 +1071,9 @@ impl MessageEditor {
                     ));
                 }
                 acp::ContentBlock::ResourceLink(resource) => {
-                    if let Some(mention_uri) = MentionUri::parse(&resource.uri).log_err() {
+                    if let Some(mention_uri) =
+                        MentionUri::parse(&resource.uri, path_style).log_err()
+                    {
                         let start = text.len();
                         write!(&mut text, "{}", mention_uri.as_link()).ok();
                         let end = text.len();
@@ -1111,7 +1088,7 @@ impl MessageEditor {
                     meta: _,
                 }) => {
                     let mention_uri = if let Some(uri) = uri {
-                        MentionUri::parse(&uri)
+                        MentionUri::parse(&uri, path_style)
                     } else {
                         Ok(MentionUri::PastedImage)
                     };
@@ -1595,10 +1572,9 @@ mod tests {
     use std::{cell::RefCell, ops::Range, path::Path, rc::Rc, sync::Arc};
 
     use acp_thread::MentionUri;
+    use agent::{HistoryStore, outline};
     use agent_client_protocol as acp;
-    use agent2::HistoryStore;
-    use assistant_context::ContextStore;
-    use assistant_tool::outline;
+    use assistant_text_thread::TextThreadStore;
     use editor::{AnchorRangeExt as _, Editor, EditorMode};
     use fs::FakeFs;
     use futures::StreamExt as _;
@@ -1629,8 +1605,8 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -1692,13 +1668,10 @@ mod tests {
 
         editor.update_in(cx, |editor, window, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            let start = snapshot
-                .anchor_in_excerpt(excerpt_id, completion.replace_range.start)
+            let range = snapshot
+                .anchor_range_in_excerpt(excerpt_id, completion.replace_range)
                 .unwrap();
-            let end = snapshot
-                .anchor_in_excerpt(excerpt_id, completion.replace_range.end)
-                .unwrap();
-            editor.edit([(start..end, completion.new_text)], cx);
+            editor.edit([(range, completion.new_text)], cx);
             (completion.confirm.unwrap())(CompletionIntent::Complete, window, cx);
         });
 
@@ -1737,8 +1710,8 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         // Start with no available commands - simulating Claude which doesn't support slash commands
         let available_commands = Rc::new(RefCell::new(vec![]));
@@ -1901,8 +1874,8 @@ mod tests {
 
         let mut cx = VisualTestContext::from_window(*window, cx);
 
-        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![
             acp::AvailableCommand {
@@ -2141,8 +2114,8 @@ mod tests {
             opened_editors.push(buffer);
         }
 
-        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
 
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
@@ -2189,10 +2162,10 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    format!("eight.txt dir{slash}b{slash}"),
-                    format!("seven.txt dir{slash}b{slash}"),
-                    format!("six.txt dir{slash}b{slash}"),
-                    format!("five.txt dir{slash}b{slash}"),
+                    format!("eight.txt b{slash}"),
+                    format!("seven.txt b{slash}"),
+                    format!("six.txt b{slash}"),
+                    format!("five.txt b{slash}"),
                 ]
             );
             editor.set_text("", window, cx);
@@ -2220,10 +2193,10 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    format!("eight.txt dir{slash}b{slash}"),
-                    format!("seven.txt dir{slash}b{slash}"),
-                    format!("six.txt dir{slash}b{slash}"),
-                    format!("five.txt dir{slash}b{slash}"),
+                    format!("eight.txt b{slash}"),
+                    format!("seven.txt b{slash}"),
+                    format!("six.txt b{slash}"),
+                    format!("five.txt b{slash}"),
                     "Files & Directories".into(),
                     "Symbols".into(),
                     "Threads".into(),
@@ -2256,7 +2229,7 @@ mod tests {
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
                 current_completion_labels(editor),
-                vec![format!("one.txt dir{slash}a{slash}")]
+                vec![format!("one.txt a{slash}")]
             );
         });
 
@@ -2303,7 +2276,10 @@ mod tests {
                 panic!("Unexpected mentions");
             };
             pretty_assertions::assert_eq!(content, "1");
-            pretty_assertions::assert_eq!(uri, &url_one.parse::<MentionUri>().unwrap());
+            pretty_assertions::assert_eq!(
+                uri,
+                &MentionUri::parse(&url_one, PathStyle::local()).unwrap()
+            );
         }
 
         let contents = message_editor
@@ -2324,7 +2300,10 @@ mod tests {
             let [(uri, Mention::UriOnly)] = contents.as_slice() else {
                 panic!("Unexpected mentions");
             };
-            pretty_assertions::assert_eq!(uri, &url_one.parse::<MentionUri>().unwrap());
+            pretty_assertions::assert_eq!(
+                uri,
+                &MentionUri::parse(&url_one, PathStyle::local()).unwrap()
+            );
         }
 
         cx.simulate_input(" ");
@@ -2385,7 +2364,10 @@ mod tests {
                 panic!("Unexpected mentions");
             };
             pretty_assertions::assert_eq!(content, "8");
-            pretty_assertions::assert_eq!(uri, &url_eight.parse::<MentionUri>().unwrap());
+            pretty_assertions::assert_eq!(
+                uri,
+                &MentionUri::parse(&url_eight, PathStyle::local()).unwrap()
+            );
         }
 
         editor.update(&mut cx, |editor, cx| {
@@ -2470,7 +2452,7 @@ mod tests {
                 format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) @symbol ")
             );
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), &["MySymbol"]);
+            assert_eq!(current_completion_labels(editor), &["MySymbol one.txt L1"]);
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -2526,7 +2508,7 @@ mod tests {
                 format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) @file x.png", symbol.to_uri())
             );
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), &[format!("x.png dir{slash}")]);
+            assert_eq!(current_completion_labels(editor), &["x.png "]);
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -2568,7 +2550,7 @@ mod tests {
                         format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) @file x.png", symbol.to_uri())
                     );
                     assert!(editor.has_visible_completions_menu());
-                    assert_eq!(current_completion_labels(editor), &[format!("x.png dir{slash}")]);
+                    assert_eq!(current_completion_labels(editor), &["x.png "]);
                 });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -2668,8 +2650,8 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -2746,6 +2728,64 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_whitespace_trimming(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({"file.rs": "fn main() {}"}))
+            .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+
+        let message_editor = cx.update(|window, cx| {
+            cx.new(|cx| {
+                MessageEditor::new(
+                    workspace.downgrade(),
+                    project.clone(),
+                    history_store.clone(),
+                    None,
+                    Default::default(),
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        min_lines: 1,
+                        max_lines: None,
+                    },
+                    window,
+                    cx,
+                )
+            })
+        });
+        let editor = message_editor.update(cx, |message_editor, _| message_editor.editor.clone());
+
+        cx.run_until_parked();
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("  hello world  ", window, cx);
+        });
+
+        let (content, _) = message_editor
+            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            content,
+            vec![acp::ContentBlock::Text(acp::TextContent {
+                text: "hello world".into(),
+                annotations: None,
+                meta: None
+            })]
+        );
+    }
+
+    #[gpui::test]
     async fn test_insert_thread_summary(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -2756,11 +2796,10 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
 
-        // Create a thread metadata to insert as summary
-        let thread_metadata = agent2::DbThreadMetadata {
+        let thread_metadata = agent::DbThreadMetadata {
             id: acp::SessionId("thread-123".into()),
             title: "Previous Conversation".into(),
             updated_at: chrono::Utc::now(),
@@ -2789,7 +2828,6 @@ mod tests {
             })
         });
 
-        // Construct expected values for verification
         let expected_uri = MentionUri::Thread {
             id: thread_metadata.id.clone(),
             name: thread_metadata.title.to_string(),

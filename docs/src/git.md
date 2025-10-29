@@ -17,6 +17,7 @@ Here's an overview of all currently supported features:
 - Git status in the Project Panel
 - Branch creating and switching
 - Git blame viewing
+- Git stash pop, apply, drop and view
 
 ## Git Panel
 
@@ -73,6 +74,41 @@ Zed offers two commit textareas:
 
 As soon as you commit in Zed, in the Git Panel, you'll see a bar right under the commit textarea, which will show the recently submitted commit.
 In there, you can use the "Uncommit" button, which performs the `git reset HEADˆ--soft` command.
+
+## Stashing
+
+Git stash allows you to temporarily save your uncommitted changes and revert your working directory to a clean state. This is particularly useful when you need to quickly switch branches or pull updates without committing incomplete work.
+
+### Creating Stashes
+
+To stash all your current changes, use the {#action git::StashAll} action. This will save both staged and unstaged changes to a new stash entry and clean your working directory.
+
+### Managing Stashes
+
+Zed provides a comprehensive stash picker accessible via {#action git::ViewStash}. From the stash picker, you can:
+
+- **View stash list**: Browse all your saved stashes with their descriptions and timestamps
+- **Open diffs**: See exactly what changes are stored in each stash
+- **Apply stashes**: Apply stash changes to your working directory while keeping the stash entry
+- **Pop stashes**: Apply stash changes and remove the stash entry from the list
+- **Drop stashes**: Delete unwanted stash entries without applying them
+
+### Quick Stash Operations
+
+For faster workflows, Zed provides direct actions to work with the most recent stash:
+
+- **Apply latest stash**: Use {#action git::StashApply} to apply the most recent stash without removing it
+- **Pop latest stash**: Use {#action git::StashPop} to apply and remove the most recent stash
+
+### Stash Diff View
+
+When viewing a specific stash in the diff view, you have additional options available through the interface:
+
+- Apply the current stash to your working directory
+- Pop the current stash (apply and remove)
+- Remove the stash without applying changes
+
+To open the stash diff view, select a stash from the stash picker and use the {#action stash_picker::ShowStashItem} ({#kb stash_picker::ShowStashItem}) keybinding.
 
 ## AI Support in Git
 
@@ -151,6 +187,10 @@ When viewing files with changes, Zed displays diff hunks that can be expanded or
 | {#action git::Switch}                     | {#kb git::Switch}                     |
 | {#action git::CheckoutBranch}             | {#kb git::CheckoutBranch}             |
 | {#action git::Blame}                      | {#kb git::Blame}                      |
+| {#action git::StashAll}                   | {#kb git::StashAll}                   |
+| {#action git::StashPop}                   | {#kb git::StashPop}                   |
+| {#action git::StashApply}                 | {#kb git::StashApply}                 |
+| {#action git::ViewStash}                  | {#kb git::ViewStash}                  |
 | {#action editor::ToggleGitBlameInline}    | {#kb editor::ToggleGitBlameInline}    |
 | {#action editor::ExpandAllDiffHunks}      | {#kb editor::ExpandAllDiffHunks}      |
 | {#action editor::ToggleSelectedDiffHunks} | {#kb editor::ToggleSelectedDiffHunks} |
