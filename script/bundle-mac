@@ -6,7 +6,6 @@ source script/lib/blob-store.sh
 build_flag="--release"
 target_dir="release"
 open_result=false
-local_arch=false
 local_only=false
 local_install=false
 can_code_sign=false
@@ -38,6 +37,11 @@ do
             export CARGO_BUNDLE_SKIP_BUILD=true
             build_flag="";
             target_dir="debug"
+            ;;
+        l)
+            export CARGO_INCREMENTAL=true
+            export CARGO_BUNDLE_SKIP_BUILD=true
+            local_only=true
             ;;
         i) local_install=true;;
         h)
