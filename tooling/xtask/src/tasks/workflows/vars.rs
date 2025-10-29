@@ -1,4 +1,8 @@
-use gh_workflow::Env;
+use std::cell::RefCell;
+
+use gh_workflow::{Env, Expression};
+
+use crate::tasks::workflows::steps::NamedJob;
 
 macro_rules! secret {
     ($secret_name:ident) => {
@@ -56,4 +60,47 @@ pub fn windows_bundle_envs() -> Env {
         .add("FILE_DIGEST", "SHA256")
         .add("TIMESTAMP_DIGEST", "SHA256")
         .add("TIMESTAMP_SERVER", "http://timestamp.acs.microsoft.com")
+}
+
+// Represents a pattern to check for changed files and corresponding output variable
+pub(crate) struct PathCondition {
+    pub name: &'static str,
+    pub pattern: &'static str,
+    pub invert: bool,
+    pub set_by_step: RefCell<Option<String>>,
+}
+impl PathCondition {
+    pub fn new(name: &'static str, pattern: &'static str) -> Self {
+        Self {
+            name,
+            pattern,
+            invert: false,
+            set_by_step: Default::default(),
+        }
+    }
+    pub fn inverted(name: &'static str, pattern: &'static str) -> Self {
+        Self {
+            name,
+            pattern,
+            invert: false,
+            set_by_step: Default::default(),
+        }
+    }
+    pub fn guard(&self, job: NamedJob) -> NamedJob {
+        let set_by_step = self
+            .set_by_step
+            .borrow()
+            .clone()
+            .expect(&format!("condition {},is never set", self.name));
+        NamedJob {
+            name: job.name,
+            job: job
+                .job
+                .add_needs(set_by_step.clone())
+                .cond(Expression::new(format!(
+                    "needs.{}.outputs.{} == 'true'",
+                    &set_by_step, self.name
+                ))),
+        }
+    }
 }

@@ -33,8 +33,8 @@ pub fn release_nightly() -> Workflow {
     .collect();
 
     let style = check_style();
-    let tests = run_platform_tests(Platform::Mac, &[]);
-    let windows_tests = run_platform_tests(Platform::Windows, &[]);
+    let tests = run_platform_tests(Platform::Mac);
+    let windows_tests = run_platform_tests(Platform::Windows);
     let bundle_mac_x86 = bundle_mac_nightly(Arch::X86_64, &[&style, &tests]);
     let bundle_mac_arm = bundle_mac_nightly(Arch::ARM64, &[&style, &tests]);
     let linux_x86 = bundle_linux_nightly(Arch::X86_64, &[&style, &tests]);

@@ -1,47 +1,11 @@
 use crate::tasks::workflows::{
-    run_tests::run_tests_in,
     runners::{Arch, Platform},
-    steps::{FluentBuilder, NamedJob},
+    steps::NamedJob,
 };
 
 use super::{runners, steps, steps::named, vars};
 use gh_workflow::*;
 use indoc::indoc;
-
-/// Generates the nix.yml workflow
-pub fn nix_build() -> Workflow {
-    let linux_x86 = build_nix(
-        Platform::Linux,
-        Arch::X86_64,
-        "debug",
-        Some("-zed-editor-[0-9.]*-nightly"),
-        &[],
-    );
-    let mac_arm = build_nix(
-        Platform::Mac,
-        Arch::ARM64,
-        "debug",
-        Some("-zed-editor-[0-9.]*-nightly"),
-        &[],
-    );
-
-    named::workflow()
-        .map(|workflow| {
-            run_tests_in(
-                &[
-                    "nix/**",
-                    "flake.*",
-                    "Cargo.*",
-                    "rust-toolchain.toml",
-                    ".cargo/config.toml",
-                ],
-                workflow,
-            )
-        })
-        .add_event(Event::default().workflow_call(WorkflowCall::default()))
-        .add_job(linux_x86.name, linux_x86.job)
-        .add_job(mac_arm.name, mac_arm.job)
-}
 
 pub(crate) fn build_nix(
     platform: Platform,

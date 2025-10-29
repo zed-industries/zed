@@ -1,81 +1,75 @@
 use gh_workflow::{
     Concurrency, Event, Expression, Job, PullRequest, Push, Run, Step, Use, Workflow,
 };
+use indexmap::IndexMap;
+
+use crate::tasks::workflows::{
+    nix_build::build_nix, runners::Arch, steps::BASH_SHELL, vars::PathCondition,
+};
 
 use super::{
     runners::{self, Platform},
     steps::{self, FluentBuilder, NamedJob, named, release_job},
 };
 
-/// Represents a pattern to check for changed files and corresponding output variable
-// struct ChangeDetectionRule {
-//     /// Name of the output variable (e.g., "run_tests", "run_docs")
-//     output_name: &'static str,
-//     /// Perl-compatible regex pattern to match against changed files
-//     pattern: &'static str,
-//     /// If true, set output to "true" when pattern does NOT match (inverted logic)
-//     invert_match: bool,
-// }
-
-fn str_vec(values: &'static [&'static str]) -> Vec<String> {
-    values.into_iter().map(ToString::to_string).collect()
-}
-
-pub(crate) fn run_tests_in(paths: &'static [&'static str], workflow: Workflow) -> Workflow {
-    let paths = str_vec(paths);
-    workflow
-        .add_event(Event::default()
-            .push(
-                Push::default()
-                    .branches(
-                        [
-                            "main",
-                        "v[0-9]+.[0-9]+.x", // any release branch
-                        ]
-                        .map(String::from),
-                    )
-                    .paths(paths.clone())
-                ,
-            )
-            .pull_request(
-                PullRequest::default().branches(
-                    [
-                        "**", // all branches
-                    ]
-                    .map(String::from),
-                )
-                .paths(paths),
-            ))
-        .concurrency(Concurrency::default()
-            .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}")
-            .cancel_in_progress(true)
-        )
-        .add_env(( "CARGO_TERM_COLOR", "always" ))
-        .add_env(( "RUST_BACKTRACE", 1 ))
-        .add_env(( "CARGO_INCREMENTAL", 0 ))
-}
-
 pub(crate) fn run_tests() -> Workflow {
-    // let choose = choose_which_jobs_to_run();
+    // Specify anything which should potentially skip full test suite in this regex:
+    // - docs/
+    // - script/update_top_ranking_issues/
+    // - .github/ISSUE_TEMPLATE/
+    // - .github/workflows/  (except .github/workflows/ci.yml)
+    let should_run_tests = PathCondition::inverted(
+        "run_tests",
+        r"^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests)))",
+    );
+    let should_check_docs = PathCondition::new("run_docs", r"^docs/");
+    let should_check_scripts = PathCondition::new(
+        "run_action_checks",
+        r"^\.github/(workflows/|actions/|actionlint.yml)",
+    );
+    let should_check_licences =
+        PathCondition::new("run_licenses", r"^(Cargo.lock|script/.*licenses)");
+    let should_build_nix = PathCondition::new(
+        "run_nix",
+        r"^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)",
+    );
 
-    let windows_tests = run_platform_tests(Platform::Windows, &[]); //.map(|job| job.cond());
-    let linux_tests = run_platform_tests(Platform::Linux, &[]);
-    let mac_tests = run_platform_tests(Platform::Mac, &[]);
-    let migrations = check_postgres_and_protobuf_migrations();
-    let doctests = doctests();
-    let check_dependencies = check_dependencies();
-    let check_other_binaries = check_workspace_binaries();
-    let check_style = check_style();
+    let orchestrate = orchestrate(&[
+        &should_check_scripts,
+        &should_check_docs,
+        &should_check_licences,
+        &should_build_nix,
+        &should_run_tests,
+    ]);
 
     let jobs = [
-        windows_tests,
-        linux_tests,
-        mac_tests,
-        migrations,
-        doctests,
-        check_dependencies,
-        check_other_binaries,
-        check_style,
+        check_style(),
+        should_run_tests.guard(run_platform_tests(Platform::Windows)),
+        should_run_tests.guard(run_platform_tests(Platform::Linux)),
+        should_run_tests.guard(run_platform_tests(Platform::Mac)),
+        should_run_tests.guard(doctests()),
+        should_run_tests.guard(check_workspace_binaries()),
+        should_run_tests.guard(check_postgres_and_protobuf_migrations()), // could be more specific here?
+        should_run_tests.guard(check_dependencies()), // could be more specific here?
+        should_check_docs.guard(check_docs()),
+        should_check_licences.guard(check_licenses()),
+        should_check_scripts.guard(check_scripts()),
+        should_build_nix.guard(build_nix(
+            Platform::Linux,
+            Arch::X86_64,
+            "debug",
+            // *don't* cache the built output
+            Some("-zed-editor-[0-9.]*-nightly"),
+            &[],
+        )),
+        should_build_nix.guard(build_nix(
+            Platform::Mac,
+            Arch::ARM64,
+            "debug",
+            // *don't* cache the built output
+            Some("-zed-editor-[0-9.]*-nightly"),
+            &[],
+        )),
     ];
     let tests_pass = tests_pass(&jobs);
 
@@ -94,7 +88,8 @@ pub(crate) fn run_tests() -> Workflow {
         )
         .add_env(( "CARGO_TERM_COLOR", "always" ))
         .add_env(( "RUST_BACKTRACE", 1 ))
-        .add_env(( "CARGO_INCREMENTAL", 0 ));
+        .add_env(( "CARGO_INCREMENTAL", 0 ))
+        .add_job(orchestrate.name, orchestrate.job);
     for job in jobs {
         workflow = workflow.add_job(job.name, job.job)
     }
@@ -103,72 +98,74 @@ pub(crate) fn run_tests() -> Workflow {
 
 /// Generates a bash script that checks changed files against regex patterns
 /// and sets GitHub output variables accordingly
-// fn decide_which_actions_to_run() -> String {
-//     let rules = [
-//         ChangeDetectionRule {
-//             output_name: "run_tests",
-//             pattern: r"^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!ci)))",
-//             invert_match: true,
-//         },
-//         ChangeDetectionRule {
-//             output_name: "run_docs",
-//             pattern: r"^docs/",
-//             invert_match: false,
-//         },
-//         ChangeDetectionRule {
-//             output_name: "run_actionlint",
-//             pattern: r"^\.github/(workflows/|actions/|actionlint.yml)",
-//             invert_match: false,
-//         },
-//         ChangeDetectionRule {
-//             output_name: "run_license",
-//             pattern: r"^(Cargo.lock|script/.*licenses)",
-//             invert_match: false,
-//         },
-//         ChangeDetectionRule {
-//             output_name: "run_nix",
-//             pattern: r"^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)",
-//             invert_match: false,
-//         },
-//     ];
+fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
+    let name = "orchestrate".to_owned();
+    let step_name = "filter".to_owned();
+    let mut script = String::new();
 
-//     let mut script = String::new();
+    script.push_str(indoc::indoc! {r#"
+        if [ -z "$GITHUB_BASE_REF" ]; then
+          echo "Not in a PR context (i.e., push to main/stable/preview)"
+          COMPARE_REV="$(git rev-parse HEAD~1)"
+        else
+          echo "In a PR context comparing to pull_request.base.ref"
+          git fetch origin "$GITHUB_BASE_REF" --depth=350
+          COMPARE_REV="$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)"
+        fi
+        CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" ${{ github.sha }})"
 
-//     // Add the header that determines what to compare against
-//     script.push_str(indoc::indoc! {r#"
-//         if [ -z "$GITHUB_BASE_REF" ]; then
-//           echo "Not in a PR context (i.e., push to main/stable/preview)"
-//           COMPARE_REV="$(git rev-parse HEAD~1)"
-//         else
-//           echo "In a PR context comparing to pull_request.base.ref"
-//           git fetch origin "$GITHUB_BASE_REF" --depth=350
-//           COMPARE_REV="$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)"
-//         fi
-//         CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" ${{ github.sha }})"
+        check_pattern() {
+          local output_name="$1"
+          local pattern="$2"
+          local grep_arg="$3"
 
-//         check_pattern() {
-//           local output_name="$1"
-//           local pattern="$2"
-//           local grep_arg="$3"
+          echo "$CHANGED_FILES" | grep "$grep_arg" "$pattern" && \
+            echo "${output_name}=true" >> "$GITHUB_OUTPUT" || \
+            echo "${output_name}=false" >> "$GITHUB_OUTPUT"
+        }
 
-//           echo "$CHANGED_FILES" | grep "$grep_arg" "$pattern" && \
-//             echo "${output_name}=true" >> "$GITHUB_OUTPUT" || \
-//             echo "${output_name}=false" >> "$GITHUB_OUTPUT"
-//         }
+    "#});
 
-//     "#});
+    let mut outputs = IndexMap::new();
 
-//     // Generate a function call for each rule
-//     for rule in &rules {
-//         let grep_arg = if rule.invert_match { "-qvP" } else { "-qP" };
-//         script.push_str(&format!(
-//             "check_pattern \"{}\" '{}' {}\n",
-//             rule.output_name, rule.pattern, grep_arg
-//         ));
-//     }
+    for rule in rules {
+        assert!(
+            rule.set_by_step
+                .borrow_mut()
+                .replace(name.clone())
+                .is_none()
+        );
+        assert!(
+            outputs
+                .insert(
+                    rule.name.to_owned(),
+                    format!("${{{{ steps.{}.outputs.{} }}}}", step_name, rule.name)
+                )
+                .is_none()
+        );
 
-//     script
-// }
+        let grep_arg = if rule.invert { "-qvP" } else { "-qP" };
+        script.push_str(&format!(
+            "check_pattern \"{}\" '{}' {}\n",
+            rule.name, rule.pattern, grep_arg
+        ));
+    }
+
+    let job = Job::default()
+        .runs_on(runners::LINUX_SMALL)
+        .cond(Expression::new(
+            "github.repository_owner == 'zed-industries'",
+        ))
+        .outputs(outputs)
+        .add_step(
+            Step::new(step_name.clone())
+                .run(script)
+                .id(step_name)
+                .shell(BASH_SHELL),
+        );
+
+    NamedJob { name, job }
+}
 
 pub(crate) fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
     let mut script = String::from(indoc::indoc! {r#"
@@ -292,7 +289,7 @@ fn check_workspace_binaries() -> NamedJob {
     )
 }
 
-pub(crate) fn run_platform_tests(platform: Platform, deps: &[&NamedJob]) -> NamedJob {
+pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
     let runner = match platform {
         Platform::Windows => runners::WINDOWS_DEFAULT,
         Platform::Linux => runners::LINUX_DEFAULT,
@@ -300,7 +297,7 @@ pub(crate) fn run_platform_tests(platform: Platform, deps: &[&NamedJob]) -> Name
     };
     NamedJob {
         name: format!("run_tests_{platform}"),
-        job: release_job(deps)
+        job: release_job(&[])
             .cond(Expression::new("false"))
             .runs_on(runner)
             .add_step(steps::checkout_repo())
@@ -373,5 +370,83 @@ fn doctests() -> NamedJob {
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .add_step(run_doctests())
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
+    )
+}
+
+fn check_licenses() -> NamedJob {
+    named::job(
+        Job::default()
+            .runs_on(runners::LINUX_SMALL)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::script("./script/check-licenses"))
+            .add_step(steps::script("./script/generate-licenses")),
+    )
+}
+
+fn check_docs() -> NamedJob {
+    fn lychee_link_check(dir: &str) -> Step<Use> {
+        named::uses(
+            "lycheeverse",
+            "lychee-action",
+            "82202e5e9c2f4ef1a55a3d02563e1cb6041e5332",
+        ) // v2.4.1
+        .add_with(("args", format!("--no-progress --exclude '^http' '{dir}'")))
+        .add_with(("fail", true))
+    }
+
+    fn install_mdbook() -> Step<Use> {
+        named::uses(
+            "peaceiris",
+            "actions-mdbook",
+            "ee69d230fe19748b7abf22df32acaa93833fad08", // v2
+        )
+        .with(("mdbook-version", "0.4.37"))
+    }
+
+    fn build_docs() -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            mkdir -p target/deploy
+            mdbook build ./docs --dest-dir=../target/deploy/docs/
+        "#})
+    }
+
+    named::job(
+        release_job(&[])
+            .runs_on(runners::LINUX_LARGE)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_cargo_config(Platform::Linux))
+            // todo(ci): un-inline build_docs/action.yml here
+            .add_step(steps::cache_rust_dependencies())
+            .add_step(lychee_link_check("./docs/src/**/*")) // check markdown links
+            .map(steps::install_linux_dependencies)
+            .add_step(install_mdbook())
+            .add_step(build_docs())
+            .add_step(lychee_link_check("target/deploy/docs")), // check links in generated html
+    )
+}
+
+fn check_scripts() -> NamedJob {
+    fn download_actionlint() -> Step<Run> {
+        named::bash(
+            "bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)",
+        )
+    }
+
+    fn run_actionlint() -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            ${{ steps.get_actionlint.outputs.executable }} -color
+        "#})
+    }
+
+    fn run_shellcheck() -> Step<Run> {
+        named::bash("./script/shellcheck-scripts error")
+    }
+    named::job(
+        release_job(&[])
+            .runs_on(runners::LINUX_SMALL)
+            .add_step(steps::checkout_repo())
+            .add_step(download_actionlint())
+            .add_step(run_shellcheck())
+            .add_step(run_actionlint()),
     )
 }
