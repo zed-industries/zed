@@ -210,10 +210,7 @@ pub(crate) fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
         ))
         .add_step(named::bash(&script));
 
-    NamedJob {
-        name: "Tests Pass".to_string(),
-        job,
-    }
+    named::job(job)
 }
 
 fn check_style() -> NamedJob {

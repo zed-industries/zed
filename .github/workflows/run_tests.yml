@@ -498,7 +498,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
     continue-on-error: true
-  Tests Pass:
+  tests_pass:
     needs:
     - orchestrate
     - check_style
