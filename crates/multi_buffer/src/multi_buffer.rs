@@ -1541,6 +1541,24 @@ impl MultiBuffer {
         })
     }
 
+    pub fn buffer_anchor_to_anchor(
+        &self,
+        buffer: &Entity<Buffer>,
+        anchor: text::Anchor,
+        cx: &App,
+    ) -> Option<Anchor> {
+        let snapshot = buffer.read(cx).snapshot();
+        for (excerpt_id, range) in self.excerpts_for_buffer(snapshot.remote_id(), cx) {
+            if range.context.start.cmp(&anchor, &snapshot).is_le()
+                && range.context.end.cmp(&anchor, &snapshot).is_ge()
+            {
+                return Some(Anchor::in_buffer(excerpt_id, snapshot.remote_id(), anchor));
+            }
+        }
+
+        None
+    }
+
     pub fn remove_excerpts(
         &mut self,
         excerpt_ids: impl IntoIterator<Item = ExcerptId>,
@@ -5459,6 +5477,8 @@ impl MultiBufferSnapshot {
                     Some(OutlineItem {
                         depth: item.depth,
                         range: self.anchor_range_in_excerpt(*excerpt_id, item.range)?,
+                        source_range_for_text: self
+                            .anchor_range_in_excerpt(*excerpt_id, item.source_range_for_text)?,
                         text: item.text,
                         highlight_ranges: item.highlight_ranges,
                         name_ranges: item.name_ranges,
@@ -5492,6 +5512,11 @@ impl MultiBufferSnapshot {
                 .flat_map(|item| {
                     Some(OutlineItem {
                         depth: item.depth,
+                        source_range_for_text: Anchor::range_in_buffer(
+                            excerpt_id,
+                            buffer_id,
+                            item.source_range_for_text,
+                        ),
                         range: Anchor::range_in_buffer(excerpt_id, buffer_id, item.range),
                         text: item.text,
                         highlight_ranges: item.highlight_ranges,

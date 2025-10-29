@@ -290,40 +290,47 @@ impl RemoteConnection for SshRemoteConnection {
             self.build_scp_command(&src_path, &dest_path_str, Some(&["-C", "-r"]));
 
         cx.background_spawn(async move {
+            // We will try SFTP first, and if that fails, we will fall back to SCP.
+            // If SCP fails also, we give up and return an error.
+            // The reason we allow a fallback from SFTP to SCP is that if the user has to specify a password,
+            // depending on the implementation of SSH stack, SFTP may disable interactive password prompts in batch mode.
+            // This is for example the case on Windows as evidenced by this implementation snippet:
+            // https://github.com/PowerShell/openssh-portable/blob/b8c08ef9da9450a94a9c5ef717d96a7bd83f3332/sshconnect2.c#L417
             if Self::is_sftp_available().await {
                 log::debug!("using SFTP for directory upload");
                 let mut child = sftp_command.spawn()?;
                 if let Some(mut stdin) = child.stdin.take() {
                     use futures::AsyncWriteExt;
-                    let sftp_batch = format!("put -r {} {}\n", src_path.display(), dest_path_str);
+                    let sftp_batch = format!("put -r {src_path_display} {dest_path_str}\n");
                     stdin.write_all(sftp_batch.as_bytes()).await?;
                     drop(stdin);
                 }
 
                 let output = child.output().await?;
-                anyhow::ensure!(
-                    output.status.success(),
-                    "failed to upload directory via SFTP {} -> {}: {}",
-                    src_path_display,
-                    dest_path_str,
-                    String::from_utf8_lossy(&output.stderr)
-                );
+                if output.status.success() {
+                    return Ok(());
+                }
 
-                return Ok(());
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                log::debug!("failed to upload directory via SFTP {src_path_display} -> {dest_path_str}: {stderr}");
             }
 
             log::debug!("using SCP for directory upload");
             let output = scp_command.output().await?;
 
-            anyhow::ensure!(
-                output.status.success(),
-                "failed to upload directory via SCP {} -> {}: {}",
+            if output.status.success() {
+                return Ok(());
+            }
+
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::debug!("failed to upload directory via SCP {src_path_display} -> {dest_path_str}: {stderr}");
+
+            anyhow::bail!(
+                "failed to upload directory via SFTP/SCP {} -> {}: {}",
                 src_path_display,
                 dest_path_str,
-                String::from_utf8_lossy(&output.stderr)
+                stderr,
             );
-
-            Ok(())
         })
     }
 
@@ -790,12 +797,19 @@ impl SshRemoteConnection {
     async fn upload_file(&self, src_path: &Path, dest_path: &RelPath) -> Result<()> {
         log::debug!("uploading file {:?} to {:?}", src_path, dest_path);
 
+        let src_path_display = src_path.display().to_string();
         let dest_path_str = dest_path.display(self.path_style());
 
+        // We will try SFTP first, and if that fails, we will fall back to SCP.
+        // If SCP fails also, we give up and return an error.
+        // The reason we allow a fallback from SFTP to SCP is that if the user has to specify a password,
+        // depending on the implementation of SSH stack, SFTP may disable interactive password prompts in batch mode.
+        // This is for example the case on Windows as evidenced by this implementation snippet:
+        // https://github.com/PowerShell/openssh-portable/blob/b8c08ef9da9450a94a9c5ef717d96a7bd83f3332/sshconnect2.c#L417
         if Self::is_sftp_available().await {
             log::debug!("using SFTP for file upload");
             let mut command = self.build_sftp_command();
-            let sftp_batch = format!("put {} {}\n", src_path.display(), dest_path_str);
+            let sftp_batch = format!("put {src_path_display} {dest_path_str}\n");
 
             let mut child = command.spawn()?;
             if let Some(mut stdin) = child.stdin.take() {
@@ -805,30 +819,34 @@ impl SshRemoteConnection {
             }
 
             let output = child.output().await?;
-            anyhow::ensure!(
-                output.status.success(),
-                "failed to upload file via SFTP {} -> {}: {}",
-                src_path.display(),
-                dest_path_str,
-                String::from_utf8_lossy(&output.stderr)
+            if output.status.success() {
+                return Ok(());
+            }
+
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::debug!(
+                "failed to upload file via SFTP {src_path_display} -> {dest_path_str}: {stderr}"
             );
-
-            Ok(())
-        } else {
-            log::debug!("using SCP for file upload");
-            let mut command = self.build_scp_command(src_path, &dest_path_str, None);
-            let output = command.output().await?;
-
-            anyhow::ensure!(
-                output.status.success(),
-                "failed to upload file via SCP {} -> {}: {}",
-                src_path.display(),
-                dest_path_str,
-                String::from_utf8_lossy(&output.stderr)
-            );
-
-            Ok(())
         }
+
+        log::debug!("using SCP for file upload");
+        let mut command = self.build_scp_command(src_path, &dest_path_str, None);
+        let output = command.output().await?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        log::debug!(
+            "failed to upload file via SCP {src_path_display} -> {dest_path_str}: {stderr}",
+        );
+        anyhow::bail!(
+            "failed to upload file via STFP/SCP {} -> {}: {}",
+            src_path_display,
+            dest_path_str,
+            stderr,
+        );
     }
 
     async fn is_sftp_available() -> bool {

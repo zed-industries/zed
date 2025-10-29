@@ -3,6 +3,7 @@ use crate::{
     EditorSnapshot, GlobalDiagnosticRenderer, Hover,
     display_map::{InlayOffset, ToDisplayPoint, invisibles::is_invisible},
     hover_links::{InlayHighlight, RangeInEditor},
+    movement::TextLayoutDetails,
     scroll::ScrollAmount,
 };
 use anyhow::Context as _;
@@ -766,9 +767,13 @@ impl HoverState {
         snapshot: &EditorSnapshot,
         visible_rows: Range<DisplayRow>,
         max_size: Size<Pixels>,
+        text_layout_details: &TextLayoutDetails,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<(DisplayPoint, Vec<AnyElement>)> {
+        if !self.visible() {
+            return None;
+        }
         // If there is a diagnostic, position the popovers based on that.
         // Otherwise use the start of the hover range
         let anchor = self
@@ -791,11 +796,29 @@ impl HoverState {
                     }
                 })
             })?;
-        let point = anchor.to_display_point(&snapshot.display_snapshot);
+        let mut point = anchor.to_display_point(&snapshot.display_snapshot);
 
-        // Don't render if the relevant point isn't on screen
-        if !self.visible() || !visible_rows.contains(&point.row()) {
-            return None;
+        // Clamp the point within the visible rows in case the popup source spans multiple lines
+        if point.row() < visible_rows.start {
+            point = crate::movement::down_by_rows(
+                &snapshot.display_snapshot,
+                point,
+                (visible_rows.start - point.row()).0,
+                text::SelectionGoal::None,
+                true,
+                text_layout_details,
+            )
+            .0;
+        } else if visible_rows.end <= point.row() {
+            point = crate::movement::up_by_rows(
+                &snapshot.display_snapshot,
+                point,
+                (visible_rows.end - point.row()).0,
+                text::SelectionGoal::None,
+                true,
+                text_layout_details,
+            )
+            .0;
         }
 
         let mut elements = Vec::new();

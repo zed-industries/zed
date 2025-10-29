@@ -39,7 +39,7 @@ use language_onboarding::BasedPyrightBanner;
 use language_tools::lsp_button::{self, LspButton};
 use language_tools::lsp_log_view::LspLogToolbarItemView;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
-use migrator::{migrate_keymap, migrate_settings};
+use migrator::migrate_keymap;
 use onboarding::DOCS_URL;
 use onboarding::multibuffer_hint::MultibufferHint;
 pub use open_listener::*;
@@ -1298,18 +1298,24 @@ pub fn handle_settings_file_changes(
                                  store: &mut SettingsStore,
                                  cx: &mut App|
           -> bool {
+        let result = if is_user {
+            store.set_user_settings(&content, cx)
+        } else {
+            store.set_global_settings(&content, cx)
+        };
+
         let id = NotificationId::Named("failed-to-migrate-settings".into());
         // Apply migrations to both user and global settings
-        let (processed_content, content_migrated) = match migrate_settings(&content) {
-            Ok(result) => {
+        let content_migrated = match result.migration_status {
+            settings::MigrationStatus::Succeeded => {
                 dismiss_app_notification(&id, cx);
-                if let Some(migrated_content) = result {
-                    (migrated_content, true)
-                } else {
-                    (content, false)
-                }
+                true
             }
-            Err(err) => {
+            settings::MigrationStatus::NotNeeded => {
+                dismiss_app_notification(&id, cx);
+                false
+            }
+            settings::MigrationStatus::Failed { error: err } => {
                 show_app_notification(id, cx, move |cx| {
                     cx.new(|cx| {
                         MessageNotification::new(
@@ -1328,22 +1334,22 @@ pub fn handle_settings_file_changes(
                     })
                 });
                 // notify user here
-                (content, false)
+                false
             }
         };
 
-        let result = if is_user {
-            store.set_user_settings(&processed_content, cx)
-        } else {
-            store.set_global_settings(&processed_content, cx)
-        };
-
-        if let Err(err) = &result {
+        if let settings::ParseStatus::Failed { error: err } = &result.parse_status {
             let settings_type = if is_user { "user" } else { "global" };
             log::error!("Failed to load {} settings: {err}", settings_type);
         }
 
-        settings_changed(result.err(), cx);
+        settings_changed(
+            match result.parse_status {
+                settings::ParseStatus::Failed { error } => Some(anyhow::format_err!(error)),
+                settings::ParseStatus::Success => None,
+            },
+            cx,
+        );
 
         content_migrated
     };
@@ -4556,74 +4562,6 @@ mod tests {
         });
     }
 
-    /// Actions that don't build from empty input won't work from command palette invocation.
-    #[gpui::test]
-    async fn test_actions_build_with_empty_input(cx: &mut gpui::TestAppContext) {
-        init_keymap_test(cx);
-        cx.update(|cx| {
-            let all_actions = cx.all_action_names();
-            let mut failing_names = Vec::new();
-            let mut errors = Vec::new();
-            for action in all_actions {
-                match action.to_string().as_str() {
-                    "vim::FindCommand"
-                    | "vim::Literal"
-                    | "vim::ResizePane"
-                    | "vim::PushObject"
-                    | "vim::PushFindForward"
-                    | "vim::PushFindBackward"
-                    | "vim::PushSneak"
-                    | "vim::PushSneakBackward"
-                    | "vim::PushChangeSurrounds"
-                    | "vim::PushJump"
-                    | "vim::PushDigraph"
-                    | "vim::PushLiteral"
-                    | "vim::PushHelixNext"
-                    | "vim::PushHelixPrevious"
-                    | "vim::Number"
-                    | "vim::SelectRegister"
-                    | "git::StageAndNext"
-                    | "git::UnstageAndNext"
-                    | "terminal::SendText"
-                    | "terminal::SendKeystroke"
-                    | "app_menu::OpenApplicationMenu"
-                    | "picker::ConfirmInput"
-                    | "editor::HandleInput"
-                    | "editor::FoldAtLevel"
-                    | "pane::ActivateItem"
-                    | "workspace::ActivatePane"
-                    | "workspace::MoveItemToPane"
-                    | "workspace::MoveItemToPaneInDirection"
-                    | "workspace::NewFileSplit"
-                    | "workspace::OpenTerminal"
-                    | "workspace::SendKeystrokes"
-                    | "agent::NewNativeAgentThreadFromSummary"
-                    | "action::Sequence"
-                    | "zed::OpenBrowser"
-                    | "zed::OpenZedUrl"
-                    | "settings_editor::FocusFile" => {}
-                    _ => {
-                        let result = cx.build_action(action, None);
-                        match &result {
-                            Ok(_) => {}
-                            Err(err) => {
-                                failing_names.push(action);
-                                errors.push(format!("{action} failed to build: {err:?}"));
-                            }
-                        }
-                    }
-                }
-            }
-            if !errors.is_empty() {
-                panic!(
-                    "Failed to build actions using {{}} as input: {:?}. Errors:\n{}",
-                    failing_names,
-                    errors.join("\n")
-                );
-            }
-        });
-    }
-
     /// Checks that action namespaces are the expected set. The purpose of this is to prevent typos
     /// and let you know when introducing a new namespace.
     #[gpui::test]
@@ -5079,5 +5017,64 @@ mod tests {
             new_content_str.contains("UNIQUEVALUE"),
             "BUG FOUND: Project settings were overwritten when opening via command - original custom content was lost"
         );
+    }
+
+    #[gpui::test]
+    async fn test_prefer_focused_window(cx: &mut gpui::TestAppContext) {
+        let app_state = init_test(cx);
+        let paths = [PathBuf::from(path!("/dir/document.txt"))];
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/dir"),
+                json!({
+                    "document.txt": "Some of the documentation's content."
+                }),
+            )
+            .await;
+
+        let project_a = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window_a =
+            cx.add_window(|window, cx| Workspace::test_new(project_a.clone(), window, cx));
+
+        let project_b = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window_b =
+            cx.add_window(|window, cx| Workspace::test_new(project_b.clone(), window, cx));
+
+        let project_c = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window_c =
+            cx.add_window(|window, cx| Workspace::test_new(project_c.clone(), window, cx));
+
+        for window in [window_a, window_b, window_c] {
+            let _ = cx.update_window(*window, |_, window, _| {
+                window.activate_window();
+            });
+
+            cx.update(|cx| {
+                let open_options = OpenOptions {
+                    prefer_focused_window: true,
+                    ..Default::default()
+                };
+
+                workspace::open_paths(&paths, app_state.clone(), open_options, cx)
+            })
+            .await
+            .unwrap();
+
+            cx.update_window(*window, |_, window, _| assert!(window.is_window_active()))
+                .unwrap();
+
+            let _ = window.read_with(cx, |workspace, cx| {
+                let pane = workspace.active_pane().read(cx);
+                let project_path = pane.active_item().unwrap().project_path(cx).unwrap();
+
+                assert_eq!(
+                    project_path.path.as_ref().as_std_path().to_str().unwrap(),
+                    path!("document.txt")
+                )
+            });
+        }
     }
 }

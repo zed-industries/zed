@@ -1129,6 +1129,7 @@ impl VariableList {
                                         this.color(Color::from(color))
                                     }),
                             )
+                            .tooltip(Tooltip::text(value))
                     }
                 })
                 .into_any_element()

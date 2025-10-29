@@ -39,6 +39,7 @@ macos-blade = [
     "objc2-metal",
 ]
 wayland = [
+    "bitflags",
     "blade-graphics",
     "blade-macros",
     "blade-util",
@@ -52,6 +53,7 @@ wayland = [
     "wayland-cursor",
     "wayland-protocols",
     "wayland-protocols-plasma",
+    "wayland-protocols-wlr",
     "filedescriptor",
     "xkbcommon",
     "open",
@@ -85,7 +87,8 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 async-task = "4.7"
-backtrace = { version = "0.3", optional = true }
+backtrace = { workspace = true, optional = true }
+bitflags = { workspace = true, optional = true }
 blade-graphics = { workspace = true, optional = true }
 blade-macros = { workspace = true, optional = true }
 blade-util = { workspace = true, optional = true }
@@ -202,6 +205,9 @@ wayland-protocols = { version = "0.31.2", features = [
 wayland-protocols-plasma = { version = "0.2.0", features = [
     "client",
 ], optional = true }
+wayland-protocols-wlr = { version = "0.3.9", features = [
+    "client",
+], optional = true }
 
 # X11
 as-raw-xcb-connection = { version = "1", optional = true }
@@ -234,7 +240,7 @@ windows-numerics = "0.2"
 windows-registry = "0.5"
 
 [dev-dependencies]
-backtrace = "0.3"
+backtrace.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 http_client = { workspace = true, features = ["test-support"] }

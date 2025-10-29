@@ -658,7 +658,7 @@ impl WasmHost {
         };
         cx.spawn(async move |cx| {
             let (extension_task, manifest, work_dir, tx, zed_api_version) =
-                load_extension_task.await?;
+                cx.background_executor().spawn(load_extension_task).await?;
             // we need to run run the task in an extension context as wasmtime_wasi may
             // call into tokio, accessing its runtime handle
             let task = Arc::new(gpui_tokio::Tokio::spawn(cx, extension_task)?);

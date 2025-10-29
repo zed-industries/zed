@@ -483,7 +483,7 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
         cx: &mut AsyncApp,
     ) -> Task<anyhow::Result<PathBuf>> {
         cx.spawn(async move |cx| {
-            let binary_path = AutoUpdater::download_remote_server_release(
+            AutoUpdater::download_remote_server_release(
                 platform.os,
                 platform.arch,
                 release_channel,
@@ -500,8 +500,7 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
                     platform.os,
                     platform.arch,
                 )
-            })?;
-            Ok(binary_path)
+            })
         })
     }
 

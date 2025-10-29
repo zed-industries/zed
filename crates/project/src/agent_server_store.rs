@@ -773,9 +773,7 @@ fn get_or_npm_install_builtin_agent(
 ) -> Task<std::result::Result<AgentServerCommand, anyhow::Error>> {
     cx.spawn(async move |cx| {
         let node_path = node_runtime.binary_path().await?;
-        let dir = paths::data_dir()
-            .join("external_agents")
-            .join(binary_name.as_str());
+        let dir = paths::external_agents_dir().join(binary_name.as_str());
         fs.create_dir(&dir).await?;
 
         let mut stream = fs.read_dir(&dir).await?;
@@ -1246,7 +1244,7 @@ impl ExternalAgentServer for LocalCodex {
                 custom_command.env = Some(env);
                 custom_command
             } else {
-                let dir = paths::data_dir().join("external_agents").join(CODEX_NAME);
+                let dir = paths::external_agents_dir().join(CODEX_NAME);
                 fs.create_dir(&dir).await?;
 
                 // Find or install the latest Codex release (no update checks for now).
@@ -1418,7 +1416,7 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
             env.extend(extra_env);
 
             let cache_key = format!("{}/{}", extension_id, agent_id);
-            let dir = paths::data_dir().join("external_agents").join(&cache_key);
+            let dir = paths::external_agents_dir().join(&cache_key);
             fs.create_dir(&dir).await?;
 
             // Determine platform key
