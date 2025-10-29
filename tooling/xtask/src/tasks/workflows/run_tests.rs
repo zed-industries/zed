@@ -434,7 +434,7 @@ fn check_docs() -> NamedJob {
     )
 }
 
-fn check_scripts() -> NamedJob {
+pub(crate) fn check_scripts() -> NamedJob {
     fn download_actionlint() -> Step<Run> {
         named::bash(
             "bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)",
