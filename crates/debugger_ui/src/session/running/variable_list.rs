@@ -20,6 +20,8 @@ use std::{collections::HashMap, ops::Range, sync::Arc};
 use ui::{ContextMenu, ListItem, ScrollAxes, ScrollableHandle, Tooltip, WithScrollbar, prelude::*};
 use util::{debug_panic, maybe};
 
+static INDENT_STEP_SIZE: Pixels = px(10.0);
+
 actions!(
     variable_list,
     [
@@ -185,6 +187,7 @@ struct VariableColor {
 
 pub struct VariableList {
     entries: Vec<ListEntry>,
+    max_width_index: Option<usize>,
     entry_states: HashMap<EntryPath, EntryState>,
     selected_stack_frame_id: Option<StackFrameId>,
     list_handle: UniformListScrollHandle,
@@ -243,6 +246,7 @@ impl VariableList {
             disabled: false,
             edited_path: None,
             entries: Default::default(),
+            max_width_index: None,
             entry_states: Default::default(),
             weak_running,
             memory_view,
@@ -368,6 +372,29 @@ impl VariableList {
         }
 
         self.entries = entries;
+
+        self.max_width_index = self
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(idx, entry)| {
+                (
+                    idx,
+                    match &entry.entry {
+                        DapEntry::Scope(scope) => scope.name.len(),
+                        DapEntry::Variable(variable) => {
+                            // let name_width = variable.name.len() * ui::TextSize::Default
+                            // variable.name.len() + variable.value.len() + entry.path.indices.len() *
+                            todo!()
+                        }
+                        DapEntry::Watcher(watcher) => {
+                            todo!()
+                        }
+                    },
+                )
+            })
+            .max_by_key(|(_, key)| *key)
+            .map(|(idx, _)| idx);
         cx.notify();
     }
 
@@ -1244,7 +1271,7 @@ impl VariableList {
                 .disabled(self.disabled)
                 .selectable(false)
                 .indent_level(state.depth)
-                .indent_step_size(px(10.))
+                .indent_step_size(INDENT_STEP_SIZE)
                 .always_show_disclosure_icon(true)
                 .when(var_ref > 0, |list_item| {
                     list_item.toggle(state.is_expanded).on_toggle(cx.listener({
@@ -1445,7 +1472,7 @@ impl VariableList {
                 .disabled(self.disabled)
                 .selectable(false)
                 .indent_level(state.depth)
-                .indent_step_size(px(10.))
+                .indent_step_size(INDENT_STEP_SIZE)
                 .always_show_disclosure_icon(true)
                 .when(var_ref > 0, |list_item| {
                     list_item.toggle(state.is_expanded).on_toggle(cx.listener({
@@ -1502,23 +1529,6 @@ impl Focusable for VariableList {
 
 impl Render for VariableList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let max_width_index = self
-            .entries
-            .iter()
-            .enumerate()
-            .map(|(idx, entry)| {
-                (
-                    idx,
-                    entry
-                        .entry
-                        .as_variable()
-                        .map(|var| var.value.len())
-                        .unwrap_or_default(),
-                )
-            })
-            .max_by_key(|(_, key)| *key)
-            .map(|(idx, _)| idx);
-
         v_flex()
             .track_focus(&self.focus_handle)
             .key_context("VariableList")
@@ -1549,7 +1559,7 @@ impl Render for VariableList {
                     }),
                 )
                 .track_scroll(self.list_handle.clone())
-                .with_width_from_item(max_width_index)
+                .with_width_from_item(self.max_width_index)
                 .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
                 .with_horizontal_sizing_behavior(gpui::ListHorizontalSizingBehavior::Unconstrained)
                 .gap_1_5()
