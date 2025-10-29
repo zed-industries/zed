@@ -30,6 +30,7 @@ project.workspace = true
 serde.workspace = true
 telemetry.workspace = true
 text.workspace = true
+regex-syntax = "0.8.8"
 ui.workspace = true
 ui_input.workspace = true
 util.workspace = true
