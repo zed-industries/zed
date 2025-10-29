@@ -640,6 +640,16 @@ impl Vim {
                 vim.switch_mode(Mode::Normal, false, window, cx)
             });
 
+            Vim::action(editor, cx, |vim, _: &editor::actions::Paste, window, cx| {
+                // TODO!: Update this to actually call `vim.paste`?
+                // What should the action's fields be in that case?
+                if let Some(editor) = vim.editor() {
+                    editor.update(cx, |editor, cx| {
+                        editor.paste(&editor::actions::Paste, window, cx)
+                    });
+                }
+            });
+
             Vim::action(editor, cx, |vim, _: &SwitchToInsertMode, window, cx| {
                 vim.switch_mode(Mode::Insert, false, window, cx)
             });
