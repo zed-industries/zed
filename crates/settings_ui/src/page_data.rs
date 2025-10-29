@@ -5750,6 +5750,42 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             metadata: None,
                             files: USER,
                         }),
+                        SettingsPageItem::SettingItem(SettingItem {
+                            title: "Copilot Provider",
+                            description: "Set up GitHub Copilot as your edit prediction provider. You can toggle between it and Zed's default provider.",
+                            field: Box::new(
+                                SettingField {
+                                    json_path: Some("languages.$(language).wrap_guides"),
+                                    pick: |settings_content| {
+                                        settings_content.project.all_languages.edit_predictions.as_ref()?.copilot.as_ref()
+                                    },
+                                    write: |settings_content, value| {
+                                        settings_content.project.all_languages.edit_predictions.get_or_insert_default().copilot = value;
+                                    },
+                                }
+                                .unimplemented(),
+                            ),
+                            metadata: None,
+                            files: USER | PROJECT,
+                        }),
+                        SettingsPageItem::SettingItem(SettingItem {
+                            title: "Codestral Provider",
+                            description: "Set up Mistral's Codestral as your edit prediction provider. You can toggle between it and Zed's default provider.",
+                            field: Box::new(
+                                SettingField {
+                                    json_path: Some("languages.$(language).wrap_guides"),
+                                    pick: |settings_content| {
+                                        settings_content.project.all_languages.edit_predictions.as_ref()?.codestral.as_ref()
+                                    },
+                                    write: |settings_content, value| {
+                                        settings_content.project.all_languages.edit_predictions.get_or_insert_default().codestral = value;
+                                    },
+                                }
+                                .unimplemented(),
+                            ),
+                            metadata: None,
+                            files: USER | PROJECT,
+                        }),
                     ]
                 );
                 items
