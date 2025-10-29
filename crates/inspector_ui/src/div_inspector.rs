@@ -645,7 +645,7 @@ impl CompletionProvider for RustStyleCompletionProvider {
         buffer: &Entity<Buffer>,
         position: Anchor,
         _: editor::CompletionContext,
-        _snippets_only: bool,
+        _text: Option<&str>,
         _window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Vec<CompletionResponse>>> {

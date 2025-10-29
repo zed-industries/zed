@@ -220,8 +220,6 @@ pub struct ExpandExcerptsDown {
 pub struct ShowCompletions {
     #[serde(default)]
     pub(super) trigger: Option<String>,
-    #[serde(default)]
-    pub(super) snippets_only: bool,
 }
 
 /// Handles text input in the editor.
