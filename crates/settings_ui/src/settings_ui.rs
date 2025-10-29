@@ -1989,6 +1989,21 @@ impl SettingsWindow {
 
         let this = cx.entity();
 
+        let selected_file_ix = self
+            .files
+            .iter()
+            .enumerate()
+            .skip(OVERFLOW_LIMIT)
+            .find_map(|(ix, (file, _))| {
+                if file == &self.current_file {
+                    Some(ix)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(OVERFLOW_LIMIT);
+        let edit_in_json_id = SharedString::new(format!("edit-in-json-{}", selected_file_ix));
+
         h_flex()
             .w_full()
             .gap_1()
@@ -2005,20 +2020,6 @@ impl SettingsWindow {
                         ),
                     )
                     .when(self.files.len() > OVERFLOW_LIMIT, |div| {
-                        let selected_file_ix = self
-                            .files
-                            .iter()
-                            .enumerate()
-                            .skip(OVERFLOW_LIMIT)
-                            .find_map(|(ix, (file, _))| {
-                                if file == &self.current_file {
-                                    Some(ix)
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or(OVERFLOW_LIMIT);
-
                         let (file, focus_handle) = &self.files[selected_file_ix];
 
                         div.child(file_button(selected_file_ix, file, focus_handle, cx))
@@ -2081,11 +2082,11 @@ impl SettingsWindow {
                     }),
             )
             .child(
-                Button::new("edit-in-json", "Edit in settings.json")
+                Button::new(edit_in_json_id, "Edit in settings.json")
                     .tab_index(0_isize)
                     .style(ButtonStyle::OutlinedGhost)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.open_current_settings_file(cx);
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_current_settings_file(window, cx);
                     })),
             )
     }
@@ -2801,8 +2802,8 @@ impl SettingsWindow {
                             Button::new("fix-in-json", "Fix in settings.json")
                                 .tab_index(0_isize)
                                 .style(ButtonStyle::Tinted(ui::TintColor::Warning))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.open_current_settings_file(cx);
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_current_settings_file(window, cx);
                                 })),
                         ),
                     )
@@ -2941,7 +2942,7 @@ impl SettingsWindow {
     /// This function will create a new settings file if one doesn't exist
     /// if the current file is a project settings with a valid worktree id
     /// We do this because the settings ui allows initializing project settings
-    fn open_current_settings_file(&mut self, cx: &mut Context<Self>) {
+    fn open_current_settings_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match &self.current_file {
             SettingsUiFile::User => {
                 let Some(original_window) = self.original_window else {
@@ -2983,6 +2984,8 @@ impl SettingsWindow {
                             .detach();
                     })
                     .ok();
+
+                window.remove_window();
             }
             SettingsUiFile::Project((worktree_id, path)) => {
                 let settings_path = path.join(paths::local_settings_file_relative_path());
@@ -3066,8 +3069,11 @@ impl SettingsWindow {
                         .detach();
                     })
                     .ok();
+
+                window.remove_window();
             }
             SettingsUiFile::Server(_) => {
+                // Server files are not editable
                 return;
             }
         };
@@ -3186,8 +3192,8 @@ impl Render for SettingsWindow {
                         .id("settings-window")
                         .key_context("SettingsWindow")
                         .track_focus(&self.focus_handle)
-                        .on_action(cx.listener(|this, _: &OpenCurrentFile, _, cx| {
-                            this.open_current_settings_file(cx);
+                        .on_action(cx.listener(|this, _: &OpenCurrentFile, window, cx| {
+                            this.open_current_settings_file(window, cx);
                         }))
                         .on_action(|_: &Minimize, window, _cx| {
                             window.minimize_window();
