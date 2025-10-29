@@ -1642,7 +1642,9 @@ impl OutlinePanel {
         let mut buffers_to_unfold = HashSet::default();
         for cached_entry in &self.cached_entries {
             if let PanelEntry::Fs(FsEntry::File(FsEntryFile { buffer_id, .. }))
-            | PanelEntry::Fs(FsEntry::ExternalFile(FsEntryExternalFile { buffer_id, .. })) = &cached_entry.entry
+            | PanelEntry::Fs(FsEntry::ExternalFile(FsEntryExternalFile {
+                buffer_id, ..
+            })) = &cached_entry.entry
             {
                 buffers_to_unfold.insert(*buffer_id);
             }
