@@ -295,7 +295,6 @@ impl ScrollManager {
         }
 
         self.anchor = adjusted_anchor;
-        dbg!("????????????????????", &self.anchor);
         cx.emit(EditorEvent::ScrollPositionChanged { local, autoscroll });
         self.show_scrollbars(window, cx);
         if let Some(workspace_id) = workspace_id {

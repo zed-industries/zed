@@ -72,7 +72,7 @@ impl Editor {
             .flatten()
             .into_group_map_by(|&(depth, ..)| depth);
 
-        for (depth, bracket_highlights) in dbg!(bracket_matches) {
+        for (depth, bracket_highlights) in bracket_matches {
             let style = HighlightStyle {
                 color: Some({
                     // todo! these colors lack contrast for this/are not actually good for that?
@@ -87,13 +87,6 @@ impl Editor {
                 bracket_highlights
                     .into_iter()
                     .flat_map(|(_, open, close)| {
-                        dbg!((
-                            depth,
-                            multi_buffer_snapshot.offset_to_point(open.start)
-                                ..multi_buffer_snapshot.offset_to_point(open.end),
-                            multi_buffer_snapshot.offset_to_point(close.start)
-                                ..multi_buffer_snapshot.offset_to_point(close.end),
-                        ));
                         [
                             open.to_anchors(&multi_buffer_snapshot),
                             close.to_anchors(&multi_buffer_snapshot),
@@ -105,7 +98,7 @@ impl Editor {
             );
         }
 
-        if dbg!(refresh_reason) == BracketRefreshReason::ScrollPositionChanged {
+        if refresh_reason == BracketRefreshReason::ScrollPositionChanged {
             return;
         }
         self.clear_background_highlights::<MatchingBracketHighlight>(cx);
@@ -525,12 +518,9 @@ mod tests {
             }
         "#});
 
-        // let expected_ranges = self.ranges(marked_text);
         let snapshot = cx.update_editor(|editor, window, cx| editor.snapshot(window, cx));
-        let rainbow_highlights = (0..6000)
-            .flat_map(|key| snapshot.text_key_highlight_ranges::<RainbowBracketHighlight>(key))
-            .collect::<Vec<_>>();
-        let actual_ranges = dbg!(rainbow_highlights)
+        let actual_ranges = snapshot
+            .all_text_highlight_ranges::<RainbowBracketHighlight>()
             .iter()
             .flat_map(|ranges| {
                 ranges
@@ -539,10 +529,12 @@ mod tests {
                     .map(|range| (ranges.0.color, range.to_point(&snapshot.buffer_snapshot())))
             })
             .collect::<Vec<_>>();
-        dbg!(&actual_ranges);
-        let last_bracket = actual_ranges.last().unwrap().clone();
+        let last_bracket = actual_ranges
+            .iter()
+            .max_by_key(|(_, p)| p.end.row)
+            .unwrap()
+            .clone();
 
-        dbg!("~~~~~~~~~~~~~~~~~~~~~~~");
         cx.update_editor(|editor, window, cx| {
             let was_scrolled = editor.set_scroll_position(
                 gpui::Point::new(0.0, last_bracket.1.end.row as f64 * 2.0),
@@ -551,11 +543,11 @@ mod tests {
             );
             assert!(was_scrolled.0);
         });
+        cx.executor().run_until_parked();
+        let snapshot = cx.update_editor(|editor, window, cx| editor.snapshot(window, cx));
 
-        let rainbow_highlights = (0..6000)
-            .flat_map(|key| snapshot.text_key_highlight_ranges::<RainbowBracketHighlight>(key))
-            .collect::<Vec<_>>();
-        let actual_ranges = rainbow_highlights
+        let actual_ranges = snapshot
+            .all_text_highlight_ranges::<RainbowBracketHighlight>()
             .iter()
             .flat_map(|ranges| {
                 ranges
@@ -564,8 +556,11 @@ mod tests {
                     .map(|range| (ranges.0.color, range.to_point(&snapshot.buffer_snapshot())))
             })
             .collect::<Vec<_>>();
-        dbg!(&actual_ranges);
-        let new_last_bracket = actual_ranges.last().unwrap().clone();
+        let new_last_bracket = actual_ranges
+            .iter()
+            .max_by_key(|(_, p)| p.end.row)
+            .unwrap()
+            .clone();
         // todo! we do scroll down and get new brackets matched by tree-sitter,
         // but something still prevents the `text_key_highlight_ranges` to return the right, newest visible bracket on the lower row we scrolled to
         assert_ne!(

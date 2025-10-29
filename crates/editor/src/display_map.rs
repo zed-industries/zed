@@ -1372,14 +1372,18 @@ impl DisplaySnapshot {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn text_key_highlight_ranges<Tag: ?Sized + 'static>(
+    pub fn all_text_highlight_ranges<Tag: ?Sized + 'static>(
         &self,
-        key: usize,
-    ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
-        let type_id = TypeId::of::<Tag>();
+    ) -> Vec<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
+        let needed_type_id = TypeId::of::<Tag>();
         self.text_highlights
-            .get(&HighlightKey::TypePlus(type_id, key))
-            .cloned()
+            .iter()
+            .filter(|(key, _)| match key {
+                HighlightKey::Type(type_id) => type_id == &needed_type_id,
+                HighlightKey::TypePlus(type_id, _) => type_id == &needed_type_id,
+            })
+            .map(|(_, value)| value.clone())
+            .collect()
     }
 
     #[allow(unused)]

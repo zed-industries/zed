@@ -129,6 +129,7 @@ pub struct Buffer {
     tree_sitter_data: Arc<RwLock<TreeSitterData>>,
 }
 
+#[derive(Debug)]
 pub struct TreeSitterData {
     data_for_version: Global,
     chunks: Vec<BufferChunk>,
