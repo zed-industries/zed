@@ -13,7 +13,7 @@ use std::{any::TypeId, time::Duration};
 use ui::{Tooltip, prelude::*};
 use util::ResultExt;
 
-const NOTIFICATION_AUTO_DISMISS_DURATION: Duration = Duration::from_millis(5000);
+const NOTIFICATION_AUTO_DISMISS_DURATION_MILLIS: u64 = 5000;
 
 #[derive(Default)]
 pub struct Notifications {
@@ -111,7 +111,11 @@ impl Workspace {
                     let task = cx.spawn({
                         let id = id.clone();
                         async move |this, cx| {
-                            cx.background_executor().timer(NOTIFICATION_AUTO_DISMISS_DURATION).await;
+                            cx.background_executor()
+                                .timer(Duration::from_millis(
+                                    NOTIFICATION_AUTO_DISMISS_DURATION_MILLIS,
+                                ))
+                                .await;
                             let _ = this.update(cx, |workspace, cx| {
                                 workspace.dismiss_notification(&id, cx);
                             });
@@ -197,7 +201,9 @@ impl Workspace {
         if toast.autohide {
             cx.spawn(async move |workspace, cx| {
                 cx.background_executor()
-                    .timer(NOTIFICATION_AUTO_DISMISS_DURATION)
+                    .timer(Duration::from_millis(
+                        NOTIFICATION_AUTO_DISMISS_DURATION_MILLIS,
+                    ))
                     .await;
                 workspace
                     .update(cx, |workspace, cx| workspace.dismiss_toast(&toast.id, cx))
@@ -275,14 +281,18 @@ impl LanguageServerPrompt {
                 .context("Stream already closed")?;
 
             this.update(cx, |this, cx| {
-                this.cancel_dismiss_task();
-                cx.emit(DismissEvent)
+                this.dismiss_notification(cx);
             })?;
 
             anyhow::Ok(())
         })
         .await
         .log_err();
+    }
+
+    fn dismiss_notification(&mut self, cx: &mut Context<Self>) {
+        self.cancel_dismiss_task();
+        cx.emit(DismissEvent);
     }
 
     fn cancel_dismiss_task(&mut self) {
