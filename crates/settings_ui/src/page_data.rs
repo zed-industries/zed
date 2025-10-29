@@ -288,6 +288,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             },
                             write: |settings_content, value| {
                                 let Some(value) = value else {
+                                    settings_content.theme.theme = None;
                                     return;
                                 };
                                 let settings_value = settings_content.theme.theme.get_or_insert_with(|| {
@@ -457,6 +458,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             },
                             write: |settings_content, value| {
                                 let Some(value) = value else {
+                                    settings_content.theme.icon_theme = None;
                                     return;
                                 };
                                 let settings_value = settings_content.theme.icon_theme.get_or_insert_with(|| {
@@ -660,6 +662,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             },
                             write: |settings_content, value| {
                                 let Some(value) = value else {
+                                    settings_content.theme.buffer_line_height = None;
                                     return;
                                 };
                                 let settings_value = settings_content.theme.buffer_line_height.get_or_insert_with(|| {
@@ -1121,6 +1124,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 },
                                 write: |settings_content, value| {
                                     let Some(value) = value else {
+                                        settings_content.workspace.autosave = None;
                                         return;
                                     };
                                     let settings_value = settings_content.workspace.autosave.get_or_insert_with(|| {
@@ -1169,6 +1173,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             },
                                             write: |settings_content, value| {
                                                 let Some(value) = value else {
+                                                    settings_content.workspace.autosave = None;
                                                     return;
                                                 };
                                                 match settings_content
@@ -4447,6 +4452,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             },
                             write: |settings_content, value| {
                                 let Some(value) = value else {
+                                    if let Some(terminal) = settings_content.terminal.as_mut() {
+                                        terminal.project.shell = None;
+                                    }
                                     return;
                                 };
                                 let settings_value = settings_content
@@ -4630,6 +4638,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             },
                             write: |settings_content, value| {
                                 let Some(value) = value else {
+                                    if let Some(terminal) = settings_content.terminal.as_mut() {
+                                        terminal.project.working_directory = None;
+                                    }
                                     return;
                                 };
                                 let settings_value = settings_content

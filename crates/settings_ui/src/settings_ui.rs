@@ -962,9 +962,13 @@ fn render_settings_item(
                         .gap_1()
                         .child(Label::new(SharedString::new_static(setting_item.title)))
                         .when_some(
-                            setting_item
-                                .field
-                                .reset_to_default_fn(&file, &found_in_file, cx),
+                            if sub_field {
+                                None
+                            } else {
+                                setting_item
+                                    .field
+                                    .reset_to_default_fn(&file, &found_in_file, cx)
+                            },
                             |this, reset_to_default| {
                                 this.child(
                                     IconButton::new("reset-to-default-btn", IconName::Undo)
