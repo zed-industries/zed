@@ -91,9 +91,6 @@ pub struct SearchToolQuery {
     pub glob: String,
     /// A regular expression to match content within the files matched by the glob pattern
     pub regex: String,
-    /// Whether the regex is case-sensitive. Defaults to false (case-insensitive).
-    #[serde(default)]
-    pub case_sensitive: bool,
 }
 
 const RESULTS_MESSAGE: &str = indoc! {"
@@ -224,7 +221,7 @@ pub fn find_related_excerpts<'a>(
         let mut select_request_messages = Vec::with_capacity(5); // initial prompt, LLM response/thinking, tool use, tool result, select prompt
         select_request_messages.push(initial_prompt_message);
 
-        let mut search_queries = Vec::new();
+        let mut regex_by_glob: HashMap<String, String> = HashMap::default();
         let mut search_calls = Vec::new();
 
         while let Some(event) = search_stream.next().await {
@@ -235,10 +232,17 @@ pub fn find_related_excerpts<'a>(
                     }
 
                     if tool_use.name.as_ref() == SEARCH_TOOL_NAME {
-                        search_queries.extend(
-                            serde_json::from_value::<SearchToolInput>(tool_use.input.clone())?
-                                .queries,
-                        );
+                        let input =
+                            serde_json::from_value::<SearchToolInput>(tool_use.input.clone())?;
+
+                        for query in input.queries {
+                            let regex = regex_by_glob.entry(query.glob).or_default();
+                            if !regex.is_empty() {
+                                regex.push('|');
+                            }
+                            regex.push_str(&query.regex);
+                        }
+
                         search_calls.push(tool_use);
                     } else {
                         log::warn!(
@@ -323,8 +327,6 @@ pub fn find_related_excerpts<'a>(
             }
         }
 
-        dbg!(&search_queries);
-
         let search_tool_use = if search_calls.is_empty() {
             log::warn!("context model ran 0 searches");
             return anyhow::Ok(Default::default());
@@ -336,7 +338,13 @@ pub fn find_related_excerpts<'a>(
             // If it were to happen, here we would combine them into one.
             // The second request doesn't need to know it was actually two different calls ;)
             let input = serde_json::to_value(&SearchToolInput {
-                queries: search_queries.clone().into(),
+                queries: regex_by_glob
+                    .iter()
+                    .map(|(glob, regex)| SearchToolQuery {
+                        glob: glob.clone(),
+                        regex: regex.clone(),
+                    })
+                    .collect(),
             })
             .unwrap_or_default();
 
@@ -355,7 +363,13 @@ pub fn find_related_excerpts<'a>(
                     ZetaSearchQueryDebugInfo {
                         project: project.clone(),
                         timestamp: Instant::now(),
-                        queries: search_queries.clone(),
+                        queries: regex_by_glob
+                            .iter()
+                            .map(|(glob, regex)| SearchToolQuery {
+                                glob: glob.clone(),
+                                regex: regex.clone(),
+                            })
+                            .collect(),
                     },
                 ))
                 .ok();
@@ -363,13 +377,14 @@ pub fn find_related_excerpts<'a>(
 
         let (results_tx, mut results_rx) = mpsc::unbounded();
 
-        for query in search_queries {
+        for (glob, regex) in regex_by_glob {
             let exclude_matcher = exclude_matcher.clone();
             let results_tx = results_tx.clone();
             let project = project.clone();
             cx.spawn(async move |cx| {
                 run_query(
-                    query,
+                    &glob,
+                    &regex,
                     results_tx.clone(),
                     path_style,
                     exclude_matcher,
@@ -611,19 +626,20 @@ struct MatchedBuffer {
 }
 
 async fn run_query(
-    args: SearchToolQuery,
+    glob: &str,
+    regex: &str,
     results_tx: UnboundedSender<(Entity<Buffer>, MatchedBuffer)>,
     path_style: PathStyle,
     exclude_matcher: PathMatcher,
     project: &Entity<Project>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    let include_matcher = PathMatcher::new(vec![args.glob], path_style)?;
+    let include_matcher = PathMatcher::new(vec![glob], path_style)?;
 
     let query = SearchQuery::regex(
-        &args.regex,
+        regex,
         false,
-        args.case_sensitive,
+        true,
         false,
         true,
         include_matcher,

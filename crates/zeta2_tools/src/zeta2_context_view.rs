@@ -20,12 +20,11 @@ use project::Project;
 use text::OffsetRangeExt;
 use ui::{
     ButtonCommon, Clickable, Color, Disableable, FluentBuilder as _, Icon, IconButton, IconName,
-    IconSize, InteractiveElement, IntoElement, ListItem, StyledTypography, div, h_flex, v_flex,
+    IconSize, InteractiveElement, IntoElement, ListHeader, ListItem, StyledTypography, div, h_flex,
+    v_flex,
 };
 use workspace::{Item, ItemHandle as _};
-use zeta2::{
-    SearchToolQuery, Zeta, ZetaContextRetrievalDebugInfo, ZetaDebugInfo, ZetaSearchQueryDebugInfo,
-};
+use zeta2::{Zeta, ZetaContextRetrievalDebugInfo, ZetaDebugInfo, ZetaSearchQueryDebugInfo};
 
 pub struct Zeta2ContextView {
     empty_focus_handle: FocusHandle,
@@ -37,14 +36,20 @@ pub struct Zeta2ContextView {
 }
 
 #[derive(Debug)]
-pub struct RetrievalRun {
+struct RetrievalRun {
     editor: Entity<Editor>,
-    search_queries: Vec<SearchToolQuery>,
+    search_queries: Vec<GlobQueries>,
     started_at: Instant,
     search_results_generated_at: Option<Instant>,
     search_results_executed_at: Option<Instant>,
     search_results_filtered_at: Option<Instant>,
     finished_at: Option<Instant>,
+}
+
+#[derive(Debug)]
+struct GlobQueries {
+    glob: String,
+    alternations: Vec<String>,
 }
 
 actions!(
@@ -209,7 +214,23 @@ impl Zeta2ContextView {
         };
 
         run.search_results_generated_at = Some(info.timestamp);
-        run.search_queries = info.queries;
+        run.search_queries = info
+            .queries
+            .into_iter()
+            .map(|query| {
+                let mut regex_parser = regex_syntax::ast::parse::Parser::new();
+
+                GlobQueries {
+                    glob: query.glob,
+                    alternations: match regex_parser.parse(&query.regex) {
+                        Ok(regex_syntax::ast::Ast::Alternation(ref alt)) => {
+                            alt.asts.iter().map(|ast| ast.to_string()).collect()
+                        }
+                        _ => vec![query.regex],
+                    },
+                }
+            })
+            .collect();
         cx.notify();
     }
 
@@ -276,28 +297,37 @@ impl Zeta2ContextView {
         let run = &self.runs[self.current_ix];
 
         h_flex()
+            .p_2()
             .w_full()
             .font_buffer(cx)
             .text_xs()
             .border_t_1()
+            .gap_2()
             .child(
-                v_flex()
-                    .h_full()
-                    .flex_1()
-                    .children(run.search_queries.iter().enumerate().map(|(ix, query)| {
-                        ListItem::new(ix)
-                            .start_slot(
-                                Icon::new(IconName::MagnifyingGlass)
-                                    .color(Color::Muted)
-                                    .size(IconSize::Small),
-                            )
-                            .child(query.regex.clone())
-                    })),
+                v_flex().h_full().flex_1().children(
+                    run.search_queries
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(ix, query)| {
+                            std::iter::once(ListHeader::new(query.glob.clone()).into_any_element())
+                                .chain(query.alternations.iter().enumerate().map(
+                                    move |(alt_ix, alt)| {
+                                        ListItem::new(ix * 100 + alt_ix)
+                                            .start_slot(
+                                                Icon::new(IconName::MagnifyingGlass)
+                                                    .color(Color::Muted)
+                                                    .size(IconSize::Small),
+                                            )
+                                            .child(alt.clone())
+                                            .into_any_element()
+                                    },
+                                ))
+                        }),
+                ),
             )
             .child(
                 v_flex()
                     .h_full()
-                    .pr_2()
                     .text_align(TextAlign::Right)
                     .child(
                         h_flex()

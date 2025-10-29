@@ -21702,6 +21702,7 @@ dependencies = [
  "ordered-float 2.10.1",
  "pretty_assertions",
  "project",
+ "regex-syntax",
  "serde",
  "serde_json",
  "settings",
