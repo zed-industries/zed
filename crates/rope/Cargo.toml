@@ -18,6 +18,7 @@ rayon.workspace = true
 sum_tree.workspace = true
 unicode-segmentation.workspace = true
 util.workspace = true
+gpui.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
