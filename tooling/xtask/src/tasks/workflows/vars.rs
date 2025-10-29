@@ -1,4 +1,4 @@
-use gh_workflow::{Env, WorkflowCallInput};
+use gh_workflow::Env;
 
 macro_rules! secret {
     ($secret_name:ident) => {
@@ -10,10 +10,6 @@ macro_rules! var {
     ($secret_name:ident) => {
         pub const $secret_name: &str = concat!("${{ vars.", stringify!($secret_name), " }}");
     };
-}
-
-pub fn input(name: &str, input: WorkflowCallInput) -> (String, (&str, WorkflowCallInput)) {
-    return (format!("${{{{ inputs.{name} }}}}"), (name, input));
 }
 
 secret!(APPLE_NOTARIZATION_ISSUER_ID);

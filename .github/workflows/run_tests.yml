@@ -1,0 +1,265 @@
+# Generated from xtask::workflows::run_tests
+# Rebuild with `cargo xtask workflows`.
+name: run_tests
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+  CARGO_INCREMENTAL: '0'
+on:
+  pull_request:
+    branches:
+    - '**'
+    paths:
+    - '!docs/**'
+    - '!script/update_top_ranking_issues/**'
+    - '!.github/ISSUE_TEMPLATE/**'
+    - '!.github/workflows/**'
+    - .github/workflows/run_tests.yml
+  push:
+    branches:
+    - main
+    - v[0-9]+.[0-9]+.x
+    paths:
+    - '!docs/**'
+    - '!script/update_top_ranking_issues/**'
+    - '!.github/ISSUE_TEMPLATE/**'
+    - '!.github/workflows/**'
+    - .github/workflows/run_tests.yml
+jobs:
+  run_tests_windows:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: self-32vcpu-windows-2022
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        New-Item -ItemType Directory -Path "./../.cargo" -Force
+        Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
+      shell: pwsh
+    - name: steps::setup_node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '20'
+    - name: steps::clippy
+      run: ./script/clippy.ps1
+      shell: pwsh
+    - name: steps::cargo_install_nextest
+      run: cargo install cargo-nextest --locked
+      shell: pwsh
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than.ps1 250
+      shell: pwsh
+    - name: steps::cargo_nextest
+      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      shell: pwsh
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
+      shell: pwsh
+    timeout-minutes: 60
+  run_tests_linux:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      shell: bash -euxo pipefail {0}
+    - name: steps::setup_linux
+      run: ./script/linux
+      shell: bash -euxo pipefail {0}
+    - name: steps::install_mold
+      run: ./script/install-mold
+      shell: bash -euxo pipefail {0}
+    - name: steps::setup_node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '20'
+    - name: steps::clippy
+      run: ./script/clippy
+      shell: bash -euxo pipefail {0}
+    - name: steps::cargo_install_nextest
+      run: cargo install cargo-nextest --locked
+      shell: bash -euxo pipefail {0}
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than 100
+      shell: bash -euxo pipefail {0}
+    - name: steps::cargo_nextest
+      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      shell: bash -euxo pipefail {0}
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        rm -rf ./../.cargo
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 60
+  run_tests_mac:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: self-mini-macos
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      shell: bash -euxo pipefail {0}
+    - name: steps::setup_node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '20'
+    - name: steps::clippy
+      run: ./script/clippy
+      shell: bash -euxo pipefail {0}
+    - name: steps::cargo_install_nextest
+      run: cargo install cargo-nextest --locked
+      shell: bash -euxo pipefail {0}
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than 300
+      shell: bash -euxo pipefail {0}
+    - name: steps::cargo_nextest
+      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      shell: bash -euxo pipefail {0}
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        rm -rf ./../.cargo
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 60
+  check_postgres_and_protobuf_migrations:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: self-mini-macos
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        fetch-depth: 0
+    - name: run_tests::check_postgres_and_protobuf_migrations::remove_untracked_files
+      run: git clean -df
+      shell: bash -euxo pipefail {0}
+    - name: run_tests::check_postgres_and_protobuf_migrations::ensure_fresh_merge
+      run: |
+        if [ -z "$GITHUB_BASE_REF" ];
+        then
+          echo "BUF_BASE_BRANCH=$(git merge-base origin/main HEAD)" >> "$GITHUB_ENV"
+        else
+          git checkout -B temp
+          git merge -q "origin/$GITHUB_BASE_REF" -m "merge main into temp"
+          echo "BUF_BASE_BRANCH=$GITHUB_BASE_REF" >> "$GITHUB_ENV"
+        fi
+      shell: bash -euxo pipefail {0}
+    - name: run_tests::check_postgres_and_protobuf_migrations::bufbuild_setup_action
+      uses: bufbuild/buf-setup-action@v1
+      with:
+        version: v1.29.0
+    - name: run_tests::check_postgres_and_protobuf_migrations::bufbuild_breaking_action
+      uses: bufbuild/buf-breaking-action@v1
+      with:
+        input: crates/proto/proto/
+        against: https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/
+    timeout-minutes: 60
+  doctests:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::cache_rust_dependencies
+      uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
+      with:
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+    - name: steps::setup_linux
+      run: ./script/linux
+      shell: bash -euxo pipefail {0}
+    - name: steps::install_mold
+      run: ./script/install-mold
+      shell: bash -euxo pipefail {0}
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      shell: bash -euxo pipefail {0}
+    - id: run_doctests
+      name: run_tests::doctests::run_doctests
+      run: |
+        cargo test --workspace --doc --no-fail-fast
+      shell: bash -euxo pipefail {0}
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        rm -rf ./../.cargo
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 60
+  check_dependencies:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: run_tests::check_dependencies::install_cargo_machete
+      uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386
+      with:
+        command: install
+        args: cargo-machete@0.7.0
+    - name: run_tests::check_dependencies::run_cargo_machete
+      uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386
+      with:
+        command: machete
+    - name: run_tests::check_dependencies::check_cargo_lock
+      run: cargo update --locked --workspace
+      shell: bash -euxo pipefail {0}
+    - name: run_tests::check_dependencies::check_vulnerable_dependencies
+      if: github.event_name == 'pull_request'
+      uses: actions/dependency-review-action@67d4f4bd7a9b17a0db54d2a7519187c65e339de8
+      with:
+        license-check: false
+    timeout-minutes: 60
+  check_workspace_binaries:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: namespace-profile-8x16-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      shell: bash -euxo pipefail {0}
+    - name: steps::setup_linux
+      run: ./script/linux
+      shell: bash -euxo pipefail {0}
+    - name: steps::install_mold
+      run: ./script/install-mold
+      shell: bash -euxo pipefail {0}
+    - name: cargo build -p collab
+      run: cargo build -p collab
+      shell: bash -euxo pipefail {0}
+    - name: cargo build --workspace --bins --examples
+      run: cargo build --workspace --bins --examples
+      shell: bash -euxo pipefail {0}
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        rm -rf ./../.cargo
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 60
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
+  cancel-in-progress: true
