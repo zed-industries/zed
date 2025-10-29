@@ -5133,6 +5133,7 @@ impl EditorElement {
                 snapshot,
                 visible_display_row_range.clone(),
                 max_size,
+                &editor.text_layout_details(window),
                 window,
                 cx,
             )

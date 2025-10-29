@@ -281,7 +281,8 @@ impl BackgroundExecutor {
         });
         let mut cx = std::task::Context::from_waker(&waker);
 
-        let mut test_should_end_by = Instant::now() + Duration::from_secs(500);
+        let duration = Duration::from_secs(500);
+        let mut test_should_end_by = Instant::now() + duration;
 
         loop {
             match future.as_mut().poll(&mut cx) {
@@ -319,7 +320,7 @@ impl BackgroundExecutor {
                             test_should_end_by.saturating_duration_since(Instant::now()),
                         );
                         if Instant::now() > test_should_end_by {
-                            panic!("test timed out with allow_parking")
+                            panic!("test timed out after {duration:?} with allow_parking")
                         }
                     }
                 }
