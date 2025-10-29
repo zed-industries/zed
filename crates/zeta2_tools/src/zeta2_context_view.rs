@@ -43,6 +43,7 @@ pub struct RetrievalRun {
     started_at: Instant,
     search_results_generated_at: Option<Instant>,
     search_results_executed_at: Option<Instant>,
+    search_results_filtered_at: Option<Instant>,
     finished_at: Option<Instant>,
 }
 
@@ -108,6 +109,11 @@ impl Zeta2ContextView {
                     self.handle_search_queries_executed(info, window, cx);
                 }
             }
+            ZetaDebugInfo::SearchResultsFiltered(info) => {
+                if info.project == self.project {
+                    self.handle_search_results_filtered(info, window, cx);
+                }
+            }
             ZetaDebugInfo::ContextRetrievalFinished(info) => {
                 if info.project == self.project {
                     self.handle_context_retrieval_finished(info, window, cx);
@@ -145,6 +151,7 @@ impl Zeta2ContextView {
             started_at: info.timestamp,
             search_results_generated_at: None,
             search_results_executed_at: None,
+            search_results_filtered_at: None,
             finished_at: None,
         });
 
@@ -222,6 +229,20 @@ impl Zeta2ContextView {
         };
 
         run.search_results_executed_at = Some(info.timestamp);
+        cx.notify();
+    }
+
+    fn handle_search_results_filtered(
+        &mut self,
+        info: ZetaContextRetrievalDebugInfo,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(run) = self.runs.back_mut() else {
+            return;
+        };
+
+        run.search_results_filtered_at = Some(info.timestamp);
         cx.notify();
     }
 
@@ -325,25 +346,38 @@ impl Zeta2ContextView {
                             ),
                     )
                     .map(|mut div| {
-                        let t0 = run.started_at;
-                        let Some(t1) = run.search_results_generated_at else {
-                            return div.child("Planning search...");
-                        };
-                        div = div.child(format!("Planned search: {:>5} ms", (t1 - t0).as_millis()));
-
-                        let Some(t2) = run.search_results_executed_at else {
-                            return div.child("Running search...");
-                        };
-                        div = div.child(format!("Ran search: {:>5} ms", (t2 - t1).as_millis()));
-
-                        let Some(t3) = run.finished_at else {
+                        let pending_message = |div: ui::Div, msg: &'static str| {
                             if is_latest {
-                                return div.child("Filtering results...");
+                                return div.child(msg);
                             } else {
                                 return div.child("Canceled");
                             }
                         };
-                        div.child(format!("Filtered results: {:>5} ms", (t3 - t2).as_millis()))
+
+                        let t0 = run.started_at;
+                        let Some(t1) = run.search_results_generated_at else {
+                            return pending_message(div, "Planning search...");
+                        };
+                        div = div.child(format!("Planned search: {:>5} ms", (t1 - t0).as_millis()));
+
+                        let Some(t2) = run.search_results_executed_at else {
+                            return pending_message(div, "Running search...");
+                        };
+                        div = div.child(format!("Ran search: {:>5} ms", (t2 - t1).as_millis()));
+
+                        let Some(t3) = run.search_results_filtered_at else {
+                            return pending_message(div, "Filtering results...");
+                        };
+                        div =
+                            div.child(format!("Filtered results: {:>5} ms", (t3 - t2).as_millis()));
+
+                        let Some(t4) = run.finished_at else {
+                            return pending_message(div, "Building excerpts");
+                        };
+                        div = div
+                            .child(format!("Build excerpts: {:>5} µs", (t4 - t3).as_micros()))
+                            .child(format!("Total: {:>5} ms", (t4 - t0).as_millis()));
+                        div
                     }),
             )
     }

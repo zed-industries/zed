@@ -138,6 +138,7 @@ pub enum ZetaDebugInfo {
     ContextRetrievalStarted(ZetaContextRetrievalDebugInfo),
     SearchQueriesGenerated(ZetaSearchQueryDebugInfo),
     SearchQueriesExecuted(ZetaContextRetrievalDebugInfo),
+    SearchResultsFiltered(ZetaContextRetrievalDebugInfo),
     ContextRetrievalFinished(ZetaContextRetrievalDebugInfo),
     EditPredicted(ZetaEditPredictionDebugInfo),
 }

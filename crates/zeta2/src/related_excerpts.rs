@@ -523,6 +523,17 @@ pub fn find_related_excerpts<'a>(
                 }
             }
 
+            if let Some(debug_tx) = &debug_tx {
+                debug_tx
+                    .unbounded_send(ZetaDebugInfo::SearchResultsFiltered(
+                        ZetaContextRetrievalDebugInfo {
+                            project: project.clone(),
+                            timestamp: Instant::now(),
+                        },
+                    ))
+                    .ok();
+            }
+
             if selected_ranges.is_empty() {
                 log::trace!("context gathering selected no ranges")
             }
