@@ -1769,7 +1769,8 @@
       }
     },
     "Plain Text": {
-      "allow_rewrap": "anywhere"
+      "allow_rewrap": "anywhere",
+      "soft_wrap": "editor_width"
     },
     "Python": {
       "code_actions_on_format": {
