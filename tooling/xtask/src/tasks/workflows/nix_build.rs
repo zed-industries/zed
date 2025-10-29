@@ -1,7 +1,6 @@
 use crate::tasks::workflows::{
-    run_tests::run_tests_in,
     runners::{Arch, Platform},
-    steps::{FluentBuilder, NamedJob},
+    steps::NamedJob,
 };
 
 use super::{runners, steps, steps::named, vars};
@@ -10,35 +9,46 @@ use indoc::indoc;
 
 /// Generates the nix.yml workflow
 pub fn nix_build() -> Workflow {
+    // todo(ci) instead of having these as optional YAML inputs,
+    // should we just generate two copies of the job (one for release-nightly
+    // and one for CI?)
+    let (input_flake_output, flake_output) = vars::input(
+        "flake-output",
+        WorkflowCallInput {
+            input_type: "string".into(),
+            default: Some("default".into()),
+            ..Default::default()
+        },
+    );
+    let (input_cachix_filter, cachix_filter) = vars::input(
+        "cachix-filter",
+        WorkflowCallInput {
+            input_type: "string".into(),
+            ..Default::default()
+        },
+    );
+
     let linux_x86 = build_nix(
         Platform::Linux,
         Arch::X86_64,
-        "debug",
-        Some("-zed-editor-[0-9.]*-nightly"),
+        &input_flake_output,
+        Some(&input_cachix_filter),
         &[],
     );
     let mac_arm = build_nix(
         Platform::Mac,
         Arch::ARM64,
-        "debug",
-        Some("-zed-editor-[0-9.]*-nightly"),
+        &input_flake_output,
+        Some(&input_cachix_filter),
         &[],
     );
 
     named::workflow()
-        .map(|workflow| {
-            run_tests_in(
-                &[
-                    "nix/**",
-                    "flake.*",
-                    "Cargo.*",
-                    "rust-toolchain.toml",
-                    ".cargo/config.toml",
-                ],
-                workflow,
-            )
-        })
-        .add_event(Event::default().workflow_call(WorkflowCall::default()))
+        .on(Event::default().workflow_call(
+            WorkflowCall::default()
+                .add_input(flake_output.0, flake_output.1)
+                .add_input(cachix_filter.0, cachix_filter.1),
+        ))
         .add_job(linux_x86.name, linux_x86.job)
         .add_job(mac_arm.name, mac_arm.job)
 }

@@ -1,31 +1,14 @@
 # Generated from xtask::workflows::nix_build
 # Rebuild with `cargo xtask workflows`.
 name: nix_build
-env:
-  CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: '1'
-  CARGO_INCREMENTAL: '0'
 on:
-  pull_request:
-    branches:
-    - '**'
-    paths:
-    - nix/**
-    - flake.*
-    - Cargo.*
-    - rust-toolchain.toml
-    - .cargo/config.toml
-  push:
-    branches:
-    - main
-    - v[0-9]+.[0-9]+.x
-    paths:
-    - nix/**
-    - flake.*
-    - Cargo.*
-    - rust-toolchain.toml
-    - .cargo/config.toml
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      flake-output:
+        type: string
+        default: default
+      cachix-filter:
+        type: string
 jobs:
   build_nix_linux_x86_64:
     if: github.repository_owner == 'zed-industries'
@@ -50,9 +33,9 @@ jobs:
         name: zed
         authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
         cachixArgs: -v
-        pushFilter: -zed-editor-[0-9.]*-nightly
+        pushFilter: ${{ inputs.cachix-filter }}
     - name: nix_build::build
-      run: nix build .#debug -L --accept-flake-config
+      run: nix build .#${{ inputs.flake-output }} -L --accept-flake-config
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
     continue-on-error: true
@@ -80,9 +63,9 @@ jobs:
         name: zed
         authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
         cachixArgs: -v
-        pushFilter: -zed-editor-[0-9.]*-nightly
+        pushFilter: ${{ inputs.cachix-filter }}
     - name: nix_build::build
-      run: nix build .#debug -L --accept-flake-config
+      run: nix build .#${{ inputs.flake-output }} -L --accept-flake-config
       shell: bash -euxo pipefail {0}
     - name: nix_build::limit_store
       run: |-
@@ -92,6 +75,3 @@ jobs:
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
     continue-on-error: true
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
-  cancel-in-progress: true

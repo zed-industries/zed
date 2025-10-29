@@ -49,9 +49,6 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::clippy
-      run: ./script/clippy
-      shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
       run: cargo install cargo-nextest --locked
       shell: bash -euxo pipefail {0}
@@ -84,9 +81,6 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::clippy
-      run: ./script/clippy.ps1
-      shell: pwsh
     - name: steps::cargo_install_nextest
       run: cargo install cargo-nextest --locked
       shell: pwsh
