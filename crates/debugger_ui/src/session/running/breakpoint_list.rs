@@ -570,6 +570,8 @@ impl BreakpointList {
                     .collect()
             }),
         )
+        .with_horizontal_sizing_behavior(gpui::ListHorizontalSizingBehavior::Unconstrained)
+        // .with_width_from_item(item_index)
         .track_scroll(self.scroll_handle.clone())
         .flex_1()
     }

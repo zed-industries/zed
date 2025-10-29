@@ -17,7 +17,7 @@ use project::debugger::{
     session::{Session, SessionEvent, Watcher},
 };
 use std::{collections::HashMap, ops::Range, sync::Arc};
-use ui::{ContextMenu, ListItem, ScrollableHandle, Tooltip, WithScrollbar, prelude::*};
+use ui::{ContextMenu, ListItem, ScrollAxes, ScrollableHandle, Tooltip, WithScrollbar, prelude::*};
 use util::{debug_panic, maybe};
 
 actions!(
@@ -1502,12 +1502,28 @@ impl Focusable for VariableList {
 
 impl Render for VariableList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let max_width_index = self
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(idx, entry)| {
+                (
+                    idx,
+                    entry
+                        .entry
+                        .as_variable()
+                        .map(|var| var.value.len())
+                        .unwrap_or_default(),
+                )
+            })
+            .max_by_key(|(_, key)| *key)
+            .map(|(idx, _)| idx);
+
         v_flex()
             .track_focus(&self.focus_handle)
             .key_context("VariableList")
             .id("variable-list")
             .group("variable-list")
-            .overflow_y_scroll()
             .size_full()
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
@@ -1533,6 +1549,9 @@ impl Render for VariableList {
                     }),
                 )
                 .track_scroll(self.list_handle.clone())
+                .with_width_from_item(max_width_index)
+                .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
+                .with_horizontal_sizing_behavior(gpui::ListHorizontalSizingBehavior::Unconstrained)
                 .gap_1_5()
                 .size_full()
                 .flex_grow(),
@@ -1546,7 +1565,15 @@ impl Render for VariableList {
                 )
                 .with_priority(1)
             }))
-            .vertical_scrollbar_for(self.list_handle.clone(), window, cx)
+            // .vertical_scrollbar_for(self.list_handle.clone(), window, cx)
+            .custom_scrollbars(
+                ui::Scrollbars::new(ScrollAxes::Both)
+                    .tracked_scroll_handle(self.list_handle.clone())
+                    .with_track_along(ScrollAxes::Horizontal, cx.theme().colors().panel_background)
+                    .tracked_entity(cx.entity_id()),
+                window,
+                cx,
+            )
     }
 }
 
