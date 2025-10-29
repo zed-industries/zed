@@ -82,7 +82,7 @@ impl PathCondition {
         Self {
             name,
             pattern,
-            invert: false,
+            invert: true,
             set_by_step: Default::default(),
         }
     }
