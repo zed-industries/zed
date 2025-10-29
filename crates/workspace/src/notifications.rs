@@ -13,6 +13,8 @@ use std::{any::TypeId, time::Duration};
 use ui::{Tooltip, prelude::*};
 use util::ResultExt;
 
+const NOTIFICATION_AUTO_DISMISS_DURATION: Duration = Duration::from_millis(5000);
+
 #[derive(Default)]
 pub struct Notifications {
     notifications: Vec<(NotificationId, AnyView)>,
@@ -109,7 +111,7 @@ impl Workspace {
                     let task = cx.spawn({
                         let id = id.clone();
                         async move |this, cx| {
-                            gpui::Timer::after(Duration::from_secs(5)).await;
+                            cx.background_executor().timer(NOTIFICATION_AUTO_DISMISS_DURATION).await;
                             let _ = this.update(cx, |workspace, cx| {
                                 workspace.dismiss_notification(&id, cx);
                             });
@@ -195,7 +197,7 @@ impl Workspace {
         if toast.autohide {
             cx.spawn(async move |workspace, cx| {
                 cx.background_executor()
-                    .timer(Duration::from_millis(5000))
+                    .timer(NOTIFICATION_AUTO_DISMISS_DURATION)
                     .await;
                 workspace
                     .update(cx, |workspace, cx| workspace.dismiss_toast(&toast.id, cx))
