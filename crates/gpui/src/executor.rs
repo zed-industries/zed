@@ -38,7 +38,7 @@ pub struct BackgroundExecutor {
 /// This is intentionally `!Send` via the `not_send` marker field. This is because
 /// `ForegroundExecutor::spawn` does not require `Send` but checks at runtime that the future is
 /// only polled from the same thread it was spawned from. These checks would fail when spawning
-/// foreground tasks from from background threads.
+/// foreground tasks from background threads.
 #[derive(Clone)]
 pub struct ForegroundExecutor {
     #[doc(hidden)]
