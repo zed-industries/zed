@@ -2,8 +2,15 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
+      - "v[0-9]+.[0-9]+.x"
     tags:
       - "v*"
+
+  pull_request:
+    branches:
+      - "**"
 
 concurrency:
   # Allow only one workflow per any non-`main` branch.
@@ -266,12 +273,15 @@ jobs:
         uses: ./.github/actions/run_tests
 
       - name: Build collab
-        # we should do this on a linux x86 machinge
         run: cargo build -p collab
 
       - name: Build other binaries and features
         run: |
-          cargo build --workspace --bins --examples
+          cargo build --workspace --bins --all-features
+          cargo check -p gpui --features "macos-blade"
+          cargo check -p workspace
+          cargo build -p remote_server
+          cargo check -p gpui --examples
 
       # Since the macOS runners are stateful, so we need to remove the config file to prevent potential bug.
       - name: Clean CI config file
@@ -721,6 +731,10 @@ jobs:
       (contains(github.event.pull_request.labels.*.name, 'run-nix') ||
       needs.job_spec.outputs.run_nix == 'true')
     secrets: inherit
+    with:
+      flake-output: debug
+      # excludes the final package to only cache dependencies
+      cachix-filter: "-zed-editor-[0-9.]*-nightly"
 
   bundle-windows-x64:
     timeout-minutes: 120

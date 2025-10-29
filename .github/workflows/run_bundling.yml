@@ -109,10 +109,10 @@ jobs:
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
-    - name: steps::setup_linux
+    - name: ./script/linux
       run: ./script/linux
       shell: bash -euxo pipefail {0}
-    - name: steps::install_mold
+    - name: ./script/install-mold
       run: ./script/install-mold
       shell: bash -euxo pipefail {0}
     - name: ./script/bundle-linux
@@ -143,11 +143,8 @@ jobs:
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
-    - name: steps::setup_linux
+    - name: ./script/linux
       run: ./script/linux
-      shell: bash -euxo pipefail {0}
-    - name: steps::install_mold
-      run: ./script/install-mold
       shell: bash -euxo pipefail {0}
     - name: ./script/bundle-linux
       run: ./script/bundle-linux

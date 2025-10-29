@@ -105,34 +105,6 @@ pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
     }
 }
 
-pub(crate) fn clippy(platform: Platform) -> Step<Run> {
-    match platform {
-        Platform::Windows => named::pwsh("./script/clippy.ps1"),
-        _ => named::bash("./script/clippy"),
-    }
-}
-
-pub(crate) fn cache_rust_dependencies() -> Step<Use> {
-    named::uses(
-        "swatinem",
-        "rust-cache",
-        "9d47c6ad4b02e050fd481d890b2ea34778fd09d6", // v2
-    )
-    .with(("save-if", "${{ github.ref == 'refs/heads/main' }}"))
-}
-
-fn setup_linux() -> Step<Run> {
-    named::bash("./script/linux")
-}
-
-fn install_mold() -> Step<Run> {
-    named::bash("./script/install-mold")
-}
-
-pub(crate) fn install_linux_dependencies(job: Job) -> Job {
-    job.add_step(setup_linux()).add_step(install_mold())
-}
-
 pub fn script(name: &str) -> Step<Run> {
     if name.ends_with(".ps1") {
         Step::new(name).run(name).shell(PWSH_SHELL)
@@ -144,78 +116,6 @@ pub fn script(name: &str) -> Step<Run> {
 pub(crate) struct NamedJob {
     pub name: String,
     pub job: Job,
-}
-
-pub(crate) fn release_job(deps: &[&NamedJob]) -> Job {
-    let job = Job::default()
-        .cond(Expression::new(
-            "github.repository_owner == 'zed-industries'",
-        ))
-        .timeout_minutes(60u32);
-    if deps.len() > 0 {
-        job.needs(deps.iter().map(|j| j.name.clone()).collect::<Vec<_>>())
-    } else {
-        job
-    }
-}
-
-impl FluentBuilder for Job {}
-impl FluentBuilder for Workflow {}
-
-/// A helper trait for building complex objects with imperative conditionals in a fluent style.
-/// Copied from GPUI to avoid adding GPUI as dependency
-/// todo(ci) just put this in gh-workflow
-#[allow(unused)]
-pub(crate) trait FluentBuilder {
-    /// Imperatively modify self with the given closure.
-    fn map<U>(self, f: impl FnOnce(Self) -> U) -> U
-    where
-        Self: Sized,
-    {
-        f(self)
-    }
-
-    /// Conditionally modify self with the given closure.
-    fn when(self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
-    where
-        Self: Sized,
-    {
-        self.map(|this| if condition { then(this) } else { this })
-    }
-
-    /// Conditionally modify self with the given closure.
-    fn when_else(
-        self,
-        condition: bool,
-        then: impl FnOnce(Self) -> Self,
-        else_fn: impl FnOnce(Self) -> Self,
-    ) -> Self
-    where
-        Self: Sized,
-    {
-        self.map(|this| if condition { then(this) } else { else_fn(this) })
-    }
-
-    /// Conditionally unwrap and modify self with the given closure, if the given option is Some.
-    fn when_some<T>(self, option: Option<T>, then: impl FnOnce(Self, T) -> Self) -> Self
-    where
-        Self: Sized,
-    {
-        self.map(|this| {
-            if let Some(value) = option {
-                then(this, value)
-            } else {
-                this
-            }
-        })
-    }
-    /// Conditionally unwrap and modify self with the given closure, if the given option is None.
-    fn when_none<T>(self, option: &Option<T>, then: impl FnOnce(Self) -> Self) -> Self
-    where
-        Self: Sized,
-    {
-        self.map(|this| if option.is_some() { this } else { then(this) })
-    }
 }
 
 // (janky) helper to generate steps with a name that corresponds

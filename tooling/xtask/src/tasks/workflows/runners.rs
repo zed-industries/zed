@@ -1,8 +1,5 @@
-pub const LINUX_SMALL: Runner = Runner("namespace-profile-2x4-ubuntu-2404");
-pub const LINUX_DEFAULT: Runner = LINUX_XL;
-pub const LINUX_XL: Runner = Runner("namespace-profile-16x32-ubuntu-2204");
-pub const LINUX_LARGE: Runner = Runner("namespace-profile-8x16-ubuntu-2204");
-pub const LINUX_MEDIUM: Runner = Runner("namespace-profile-4x8-ubuntu-2204");
+pub const LINUX_CHEAP: Runner = Runner("namespace-profile-2x4-ubuntu-2404");
+pub const LINUX_DEFAULT: Runner = Runner("namespace-profile-16x32-ubuntu-2204");
 
 // Using Ubuntu 20.04 for minimal glibc version
 pub const LINUX_X86_BUNDLER: Runner = Runner("namespace-profile-32x64-ubuntu-2004");
