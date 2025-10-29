@@ -359,6 +359,7 @@ jobs:
       with:
         args: --no-progress --exclude '^http' './docs/src/**/*'
         fail: true
+        jobSummary: false
     - name: steps::setup_linux
       run: ./script/linux
       shell: bash -euxo pipefail {0}
@@ -379,6 +380,7 @@ jobs:
       with:
         args: --no-progress --exclude '^http' 'target/deploy/docs'
         fail: true
+        jobSummary: false
     timeout-minutes: 60
   check_licenses:
     needs:
@@ -496,7 +498,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
     continue-on-error: true
-  tests_pass:
+  Tests Pass:
     needs:
     - orchestrate
     - check_style

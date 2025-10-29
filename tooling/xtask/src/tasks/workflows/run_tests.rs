@@ -210,7 +210,10 @@ pub(crate) fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
         ))
         .add_step(named::bash(&script));
 
-    named::job(job)
+    NamedJob {
+        name: "Tests Pass".to_string(),
+        job,
+    }
 }
 
 fn check_style() -> NamedJob {
@@ -396,6 +399,7 @@ fn check_docs() -> NamedJob {
         ) // v2.4.1
         .add_with(("args", format!("--no-progress --exclude '^http' '{dir}'")))
         .add_with(("fail", true))
+        .add_with(("jobSummary", false))
     }
 
     fn install_mdbook() -> Step<Use> {
@@ -421,11 +425,15 @@ fn check_docs() -> NamedJob {
             .add_step(steps::setup_cargo_config(Platform::Linux))
             // todo(ci): un-inline build_docs/action.yml here
             .add_step(steps::cache_rust_dependencies())
-            .add_step(lychee_link_check("./docs/src/**/*")) // check markdown links
+            .add_step(
+                lychee_link_check("./docs/src/**/*"), // check markdown links
+            )
             .map(steps::install_linux_dependencies)
             .add_step(install_mdbook())
             .add_step(build_docs())
-            .add_step(lychee_link_check("target/deploy/docs")), // check links in generated html
+            .add_step(
+                lychee_link_check("target/deploy/docs"), // check links in generated html
+            ),
     )
 }
 
