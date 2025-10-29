@@ -6,10 +6,10 @@ use editor::{Editor, EditorEvent};
 use feature_flags::FeatureFlag;
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, App, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle, Focusable, Global,
-    KeyContext, ListState, ReadGlobal as _, ScrollHandle, Stateful, Subscription, Task,
-    TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions,
-    actions, div, list, point, prelude::*, px, uniform_list,
+    Action, App, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle,
+    Focusable, Global, KeyContext, ListState, ReadGlobal as _, ScrollHandle, Stateful,
+    Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
+    WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px, uniform_list,
 };
 use heck::ToTitleCase as _;
 use project::{Project, WorktreeId};
@@ -137,7 +137,7 @@ impl<T: 'static> SettingField<T> {
         SettingField {
             pick: |_| Some(&UnimplementedSettingField),
             write: |_, _| unreachable!(),
-            json_path: None,
+            json_path: self.json_path,
         }
     }
 }
@@ -239,6 +239,7 @@ struct SettingFieldRenderer {
                         &SettingItem,
                         SettingsUiFile,
                         Option<&SettingsFieldMetadata>,
+                        bool,
                         &mut Window,
                         &mut Context<SettingsWindow>,
                     ) -> Stateful<Div>,
@@ -268,6 +269,7 @@ impl SettingFieldRenderer {
                   field: SettingField<T>,
                   settings_file: SettingsUiFile,
                   metadata: Option<&SettingsFieldMetadata>,
+                  sub_field: bool,
                   window: &mut Window,
                   cx: &mut Context<SettingsWindow>| {
                 render_settings_item(
@@ -275,7 +277,7 @@ impl SettingFieldRenderer {
                     item,
                     settings_file.clone(),
                     render_control(field, settings_file, metadata, window, cx),
-                    window,
+                    sub_field,
                     cx,
                 )
             },
@@ -290,6 +292,7 @@ impl SettingFieldRenderer {
             SettingField<T>,
             SettingsUiFile,
             Option<&SettingsFieldMetadata>,
+            bool,
             &mut Window,
             &mut Context<SettingsWindow>,
         ) -> Stateful<Div>
@@ -301,6 +304,7 @@ impl SettingFieldRenderer {
                   item: &SettingItem,
                   settings_file: SettingsUiFile,
                   metadata: Option<&SettingsFieldMetadata>,
+                  sub_field: bool,
                   window: &mut Window,
                   cx: &mut Context<SettingsWindow>| {
                 let field = *item
@@ -315,6 +319,7 @@ impl SettingFieldRenderer {
                     field,
                     settings_file,
                     metadata,
+                    sub_field,
                     window,
                     cx,
                 )
@@ -515,43 +520,10 @@ pub fn open_settings_editor(
             return;
         }
 
-        settings_window.current_file = SettingsUiFile::User;
-        settings_window.build_ui(window, cx);
-
-        let mut item_info = None;
-        'search: for (nav_entry_index, entry) in settings_window.navbar_entries.iter().enumerate() {
-            if entry.is_root {
-                continue;
-            }
-            let page_index = entry.page_index;
-            let header_index = entry
-                .item_index
-                .expect("non-root entries should have an item index");
-            for item_index in header_index + 1..settings_window.pages[page_index].items.len() {
-                let item = &settings_window.pages[page_index].items[item_index];
-                if let SettingsPageItem::SectionHeader(_) = item {
-                    break;
-                }
-                if let SettingsPageItem::SettingItem(item) = item {
-                    if item.field.json_path() == Some(path) {
-                        if !item.files.contains(USER) {
-                            log::error!("Found item {}, but it is not a user setting", path);
-                            return;
-                        }
-                        item_info = Some((item_index, nav_entry_index));
-                        break 'search;
-                    }
-                }
-            }
-        }
-        let Some((item_index, navbar_entry_index)) = item_info else {
-            log::error!("Failed to find item for {}", path);
-            return;
-        };
-
-        settings_window.open_navbar_entry_page(navbar_entry_index);
-        window.focus(&settings_window.focus_handle_for_content_element(item_index, cx));
-        settings_window.scroll_to_content_item(item_index, window, cx);
+        settings_window.search_bar.update(cx, |editor, cx| {
+            editor.set_text(format!("#{path}"), window, cx);
+        });
+        settings_window.update_matches(cx);
     }
 
     let existing_window = cx
@@ -677,13 +649,14 @@ pub struct SettingsWindow {
 struct SearchIndex {
     bm25_engine: bm25::SearchEngine<usize>,
     fuzzy_match_candidates: Vec<StringMatchCandidate>,
-    key_lut: Vec<SearchItemKey>,
+    key_lut: Vec<SearchKeyLUTEntry>,
 }
 
-struct SearchItemKey {
+struct SearchKeyLUTEntry {
     page_index: usize,
     header_index: usize,
     item_index: usize,
+    json_path: Option<&'static str>,
 }
 
 struct SubPage {
@@ -742,18 +715,20 @@ impl SettingsPageItem {
     ) -> AnyElement {
         let file = settings_window.current_file.clone();
 
-        let border_variant = cx.theme().colors().border_variant;
         let apply_padding = |element: Stateful<Div>| -> Stateful<Div> {
             let element = element.pt_4();
             if is_last {
                 element.pb_10()
             } else {
-                element.pb_4().border_b_1().border_color(border_variant)
+                element.pb_4()
             }
         };
 
         let mut render_setting_item_inner =
-            |setting_item: &SettingItem, padding: bool, cx: &mut Context<SettingsWindow>| {
+            |setting_item: &SettingItem,
+             padding: bool,
+             sub_field: bool,
+             cx: &mut Context<SettingsWindow>| {
                 let renderer = cx.default_global::<SettingFieldRenderer>().clone();
                 let (_, found) = setting_item.field.file_set_in(file.clone(), cx);
 
@@ -777,6 +752,7 @@ impl SettingsPageItem {
                             setting_item,
                             file.clone(),
                             setting_item.metadata.as_deref(),
+                            sub_field,
                             window,
                             cx,
                         )
@@ -794,7 +770,7 @@ impl SettingsPageItem {
                             .tab_index(0_isize)
                             .tooltip(Tooltip::text(setting_item.field.type_name()))
                             .into_any_element(),
-                        window,
+                        sub_field,
                         cx,
                     ),
                 };
@@ -811,6 +787,7 @@ impl SettingsPageItem {
         match self {
             SettingsPageItem::SectionHeader(header) => v_flex()
                 .w_full()
+                .px_8()
                 .gap_1p5()
                 .child(
                     Label::new(SharedString::new_static(header))
@@ -821,56 +798,71 @@ impl SettingsPageItem {
                 .child(Divider::horizontal().color(DividerColor::BorderFaded))
                 .into_any_element(),
             SettingsPageItem::SettingItem(setting_item) => {
-                let (field_with_padding, _) = render_setting_item_inner(setting_item, true, cx);
-                field_with_padding.into_any_element()
+                let (field_with_padding, _) =
+                    render_setting_item_inner(setting_item, true, false, cx);
+
+                v_flex()
+                    .group("setting-item")
+                    .px_8()
+                    .child(field_with_padding)
+                    .when(!is_last, |this| this.child(Divider::horizontal()))
+                    .into_any_element()
             }
-            SettingsPageItem::SubPageLink(sub_page_link) => h_flex()
-                .id(sub_page_link.title.clone())
-                .w_full()
-                .min_w_0()
-                .justify_between()
-                .map(apply_padding)
+            SettingsPageItem::SubPageLink(sub_page_link) => v_flex()
+                .group("setting-item")
+                .px_8()
                 .child(
-                    v_flex()
+                    h_flex()
+                        .id(sub_page_link.title.clone())
                         .w_full()
-                        .max_w_1_2()
-                        .child(Label::new(sub_page_link.title.clone())),
+                        .min_w_0()
+                        .justify_between()
+                        .map(apply_padding)
+                        .child(
+                            v_flex()
+                                .w_full()
+                                .max_w_1_2()
+                                .child(Label::new(sub_page_link.title.clone())),
+                        )
+                        .child(
+                            Button::new(
+                                ("sub-page".into(), sub_page_link.title.clone()),
+                                "Configure",
+                            )
+                            .icon(IconName::ChevronRight)
+                            .tab_index(0_isize)
+                            .icon_position(IconPosition::End)
+                            .icon_color(Color::Muted)
+                            .icon_size(IconSize::Small)
+                            .style(ButtonStyle::OutlinedGhost)
+                            .size(ButtonSize::Medium)
+                            .on_click({
+                                let sub_page_link = sub_page_link.clone();
+                                cx.listener(move |this, _, _, cx| {
+                                    let mut section_index = item_index;
+                                    let current_page = this.current_page();
+
+                                    while !matches!(
+                                        current_page.items[section_index],
+                                        SettingsPageItem::SectionHeader(_)
+                                    ) {
+                                        section_index -= 1;
+                                    }
+
+                                    let SettingsPageItem::SectionHeader(header) =
+                                        current_page.items[section_index]
+                                    else {
+                                        unreachable!(
+                                            "All items always have a section header above them"
+                                        )
+                                    };
+
+                                    this.push_sub_page(sub_page_link.clone(), header, cx)
+                                })
+                            }),
+                        ),
                 )
-                .child(
-                    Button::new(
-                        ("sub-page".into(), sub_page_link.title.clone()),
-                        "Configure",
-                    )
-                    .icon(IconName::ChevronRight)
-                    .tab_index(0_isize)
-                    .icon_position(IconPosition::End)
-                    .icon_color(Color::Muted)
-                    .icon_size(IconSize::Small)
-                    .style(ButtonStyle::OutlinedGhost)
-                    .size(ButtonSize::Medium)
-                    .on_click({
-                        let sub_page_link = sub_page_link.clone();
-                        cx.listener(move |this, _, _, cx| {
-                            let mut section_index = item_index;
-                            let current_page = this.current_page();
-
-                            while !matches!(
-                                current_page.items[section_index],
-                                SettingsPageItem::SectionHeader(_)
-                            ) {
-                                section_index -= 1;
-                            }
-
-                            let SettingsPageItem::SectionHeader(header) =
-                                current_page.items[section_index]
-                            else {
-                                unreachable!("All items always have a section header above them")
-                            };
-
-                            this.push_sub_page(sub_page_link.clone(), header, cx)
-                        })
-                    }),
-                )
+                .when(!is_last, |this| this.child(Divider::horizontal()))
                 .into_any_element(),
             SettingsPageItem::DynamicItem(DynamicItem {
                 discriminant: discriminant_setting_item,
@@ -883,18 +875,22 @@ impl SettingsPageItem {
                     .1;
 
                 let (discriminant_element, rendered_ok) =
-                    render_setting_item_inner(discriminant_setting_item, true, cx);
+                    render_setting_item_inner(discriminant_setting_item, true, false, cx);
 
                 let has_sub_fields =
                     rendered_ok && discriminant.map(|d| !fields[d].is_empty()).unwrap_or(false);
 
-                let discriminant_element = if has_sub_fields {
-                    discriminant_element.pb_4().border_b_0()
-                } else {
-                    discriminant_element
-                };
-
-                let mut content = v_flex().id("dynamic-item").child(discriminant_element);
+                let mut content = v_flex()
+                    .id("dynamic-item")
+                    .child(
+                        div()
+                            .group("setting-item")
+                            .px_8()
+                            .child(discriminant_element.when(has_sub_fields, |this| this.pb_4())),
+                    )
+                    .when(!has_sub_fields, |this| {
+                        this.child(h_flex().px_8().child(Divider::horizontal()))
+                    });
 
                 if rendered_ok {
                     let discriminant =
@@ -904,12 +900,13 @@ impl SettingsPageItem {
 
                     for (index, field) in sub_fields.iter().enumerate() {
                         let is_last_sub_field = index == sub_field_count - 1;
-                        let (raw_field, _) = render_setting_item_inner(field, false, cx);
+                        let (raw_field, _) = render_setting_item_inner(field, false, true, cx);
 
                         content = content.child(
                             raw_field
+                                .group("setting-sub-item")
+                                .mx_8()
                                 .p_4()
-                                .border_x_1()
                                 .border_t_1()
                                 .when(is_last_sub_field, |this| this.border_b_1())
                                 .when(is_last_sub_field && is_last, |this| this.mb_8())
@@ -931,11 +928,25 @@ fn render_settings_item(
     setting_item: &SettingItem,
     file: SettingsUiFile,
     control: AnyElement,
-    _window: &mut Window,
+    sub_field: bool,
     cx: &mut Context<'_, SettingsWindow>,
 ) -> Stateful<Div> {
     let (found_in_file, _) = setting_item.field.file_set_in(file.clone(), cx);
     let file_set_in = SettingsUiFile::from_settings(found_in_file.clone());
+
+    let clipboard_has_link = cx
+        .read_from_clipboard()
+        .and_then(|entry| entry.text())
+        .map_or(false, |maybe_url| {
+            setting_item.field.json_path().is_some()
+                && maybe_url.strip_prefix("zed://settings/") == setting_item.field.json_path()
+        });
+
+    let (link_icon, link_icon_color) = if clipboard_has_link {
+        (IconName::Check, Color::Success)
+    } else {
+        (IconName::Link, Color::Muted)
+    };
 
     h_flex()
         .id(setting_item.title)
@@ -943,6 +954,7 @@ fn render_settings_item(
         .justify_between()
         .child(
             v_flex()
+                .relative()
                 .w_1_2()
                 .child(
                     h_flex()
@@ -950,9 +962,13 @@ fn render_settings_item(
                         .gap_1()
                         .child(Label::new(SharedString::new_static(setting_item.title)))
                         .when_some(
-                            setting_item
-                                .field
-                                .reset_to_default_fn(&file, &found_in_file, cx),
+                            if sub_field {
+                                None
+                            } else {
+                                setting_item
+                                    .field
+                                    .reset_to_default_fn(&file, &found_in_file, cx)
+                            },
                             |this, reset_to_default| {
                                 this.child(
                                     IconButton::new("reset-to-default-btn", IconName::Undo)
@@ -990,6 +1006,41 @@ fn render_settings_item(
                 ),
         )
         .child(control)
+        .when(sub_page_stack().is_empty(), |this| {
+            // Intentionally using the description to make the icon button
+            // unique because some items share the same title (e.g., "Font Size")
+            let icon_button_id =
+                SharedString::new(format!("copy-link-btn-{}", setting_item.description));
+
+            this.child(
+                div()
+                    .absolute()
+                    .top(rems_from_px(18.))
+                    .map(|this| {
+                        if sub_field {
+                            this.visible_on_hover("setting-sub-item")
+                                .left(rems_from_px(-8.5))
+                        } else {
+                            this.visible_on_hover("setting-item")
+                                .left(rems_from_px(-22.))
+                        }
+                    })
+                    .child({
+                        IconButton::new(icon_button_id, link_icon)
+                            .icon_color(link_icon_color)
+                            .icon_size(IconSize::Small)
+                            .shape(IconButtonShape::Square)
+                            .tooltip(Tooltip::text("Copy Link"))
+                            .when_some(setting_item.field.json_path(), |this, path| {
+                                this.on_click(cx.listener(move |_, _, _, cx| {
+                                    let link = format!("zed://settings/{}", path);
+                                    cx.write_to_clipboard(ClipboardItem::new_string(link));
+                                    cx.notify();
+                                }))
+                            })
+                    }),
+            )
+        })
 }
 
 struct SettingItem {
@@ -1478,7 +1529,7 @@ impl SettingsWindow {
 
     fn update_matches(&mut self, cx: &mut Context<SettingsWindow>) {
         self.search_task.take();
-        let query = self.search_bar.read(cx).text(cx);
+        let mut query = self.search_bar.read(cx).text(cx);
         if query.is_empty() || self.search_index.is_none() {
             for page in &mut self.filter_table {
                 page.fill(true);
@@ -1488,6 +1539,14 @@ impl SettingsWindow {
             self.reset_list_state();
             cx.notify();
             return;
+        }
+
+        let is_json_link_query;
+        if query.starts_with("#") {
+            query.remove(0);
+            is_json_link_query = true;
+        } else {
+            is_json_link_query = false;
         }
 
         let search_index = self.search_index.as_ref().unwrap().clone();
@@ -1503,10 +1562,11 @@ impl SettingsWindow {
             }
 
             for match_index in match_indices {
-                let SearchItemKey {
+                let SearchKeyLUTEntry {
                     page_index,
                     header_index,
                     item_index,
+                    ..
                 } = search_index.key_lut[match_index];
                 let page = &mut this.filter_table[page_index];
                 page[header_index] = true;
@@ -1520,6 +1580,29 @@ impl SettingsWindow {
         }
 
         self.search_task = Some(cx.spawn(async move |this, cx| {
+            if is_json_link_query {
+                let mut indices = vec![];
+                for (index, SearchKeyLUTEntry { json_path, .. }) in
+                    search_index.key_lut.iter().enumerate()
+                {
+                    let Some(json_path) = json_path else {
+                        continue;
+                    };
+
+                    if let Some(post) = query.strip_prefix(json_path)
+                        && (post.is_empty() || post.starts_with('.'))
+                    {
+                        indices.push(index);
+                    }
+                }
+                if !indices.is_empty() {
+                    this.update(cx, |this, cx| {
+                        update_matches_inner(this, search_index.as_ref(), indices.into_iter(), cx);
+                    })
+                    .ok();
+                    return;
+                }
+            }
             let bm25_task = cx.background_spawn({
                 let search_index = search_index.clone();
                 let max_results = search_index.key_lut.len();
@@ -1610,7 +1693,7 @@ impl SettingsWindow {
     }
 
     fn build_search_index(&mut self) {
-        let mut key_lut: Vec<SearchItemKey> = vec![];
+        let mut key_lut: Vec<SearchKeyLUTEntry> = vec![];
         let mut documents = Vec::default();
         let mut fuzzy_match_candidates = Vec::default();
 
@@ -1632,11 +1715,16 @@ impl SettingsWindow {
             let mut header_str = "";
             for (item_index, item) in page.items.iter().enumerate() {
                 let key_index = key_lut.len();
+                let mut json_path = None;
                 match item {
                     SettingsPageItem::DynamicItem(DynamicItem {
                         discriminant: item, ..
                     })
                     | SettingsPageItem::SettingItem(item) => {
+                        json_path = item
+                            .field
+                            .json_path()
+                            .map(|path| path.trim_end_matches('$'));
                         documents.push(bm25::Document {
                             id: key_index,
                             contents: [page.title, header_str, item.title, item.description]
@@ -1670,10 +1758,11 @@ impl SettingsWindow {
                 push_candidates(&mut fuzzy_match_candidates, key_index, page.title);
                 push_candidates(&mut fuzzy_match_candidates, key_index, header_str);
 
-                key_lut.push(SearchItemKey {
+                key_lut.push(SearchKeyLUTEntry {
                     page_index,
                     header_index,
                     item_index,
+                    json_path,
                 });
             }
         }
@@ -1901,7 +1990,6 @@ impl SettingsWindow {
 
         h_flex()
             .w_full()
-            .pb_4()
             .gap_1()
             .justify_between()
             .track_focus(&self.files_focus_handle)
@@ -2524,6 +2612,7 @@ impl SettingsWindow {
                 cx.processor(move |this, index, window, cx| {
                     if index == 0 {
                         return div()
+                            .px_8()
                             .when(sub_page_stack().is_empty(), |this| {
                                 this.when_some(root_nav_label, |this, title| {
                                     this.child(
@@ -2551,9 +2640,9 @@ impl SettingsWindow {
 
                     v_flex()
                         .id(("settings-page-item", actual_item_index))
+                        .track_focus(&item_focus_handle)
                         .w_full()
                         .min_w_0()
-                        .track_focus(&item_focus_handle)
                         .child(item.render(
                             this,
                             actual_item_index,
@@ -2668,7 +2757,6 @@ impl SettingsWindow {
         } else {
             page_header = h_flex()
                 .ml_neg_1p5()
-                .pb_4()
                 .gap_1()
                 .child(
                     IconButton::new("back-btn", IconName::ArrowLeft)
@@ -2708,7 +2796,7 @@ impl SettingsWindow {
                             .child(Label::new(error).size(LabelSize::Small).color(Color::Muted)),
                     )
                     .action_slot(
-                        div().pr_1().child(
+                        div().pr_1().pb_1().child(
                             Button::new("fix-in-json", "Fix in settings.json")
                                 .tab_index(0_isize)
                                 .style(ButtonStyle::Tinted(ui::TintColor::Warning))
@@ -2718,11 +2806,12 @@ impl SettingsWindow {
                         ),
                     )
             }
+
             let parse_error = error.parse_error();
             let parse_failed = parse_error.is_some();
+
             warning_banner = v_flex()
                 .gap_2()
-                .pb_4()
                 .when_some(parse_error, |this, err| {
                     this.child(banner(
                         "Failed to load your settings. Some values may be incorrect and changes may be lost.",
@@ -2827,14 +2916,20 @@ impl SettingsWindow {
                 this.vertical_scrollbar_for(self.sub_page_scroll_handle.clone(), window, cx)
             })
             .track_focus(&self.content_focus_handle.focus_handle(cx))
-            .flex_1()
             .pt_6()
-            .px_8()
+            .gap_4()
+            .flex_1()
             .bg(cx.theme().colors().editor_background)
-            .child(page_header)
-            .child(warning_banner)
+            .child(
+                v_flex()
+                    .px_8()
+                    .gap_2()
+                    .child(page_header)
+                    .child(warning_banner),
+            )
             .child(
                 div()
+                    .flex_1()
                     .size_full()
                     .tab_group()
                     .tab_index(CONTENT_GROUP_TAB_INDEX)

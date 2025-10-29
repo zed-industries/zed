@@ -177,18 +177,17 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SectionHeader("Scoped Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    // todo(settings_ui): Implement another setting item type that just shows an edit in settings.json
                     files: USER,
                     title: "Preview Channel",
                     description: "Which settings should be activated only in Preview build of Zed.",
                     field: Box::new(
                         SettingField {
-                            json_path: Some("use_system_prompts"),
+                            json_path: Some("preview_channel_settings"),
                             pick: |settings_content| {
-                                settings_content.workspace.use_system_prompts.as_ref()
+                                Some(settings_content)
                             },
-                            write: |settings_content, value| {
-                                settings_content.workspace.use_system_prompts = value;
+                            write: |_settings_content, _value| {
+
                             },
                         }
                         .unimplemented(),
@@ -201,12 +200,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Any number of settings profiles that are temporarily applied on top of your existing user settings.",
                     field: Box::new(
                         SettingField {
-                            json_path: Some(""),
+                            json_path: Some("settings_profiles"),
                             pick: |settings_content| {
-                                settings_content.workspace.use_system_prompts.as_ref()
+                                Some(settings_content)
                             },
-                            write: |settings_content, value| {
-                                settings_content.workspace.use_system_prompts = value;
+                            write: |_settings_content, _value| {
                             },
                         }
                         .unimplemented(),
@@ -290,6 +288,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             },
                             write: |settings_content, value| {
                                 let Some(value) = value else {
+                                    settings_content.theme.theme = None;
                                     return;
                                 };
                                 let settings_value = settings_content.theme.theme.get_or_insert_with(|| {
@@ -459,6 +458,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             },
                             write: |settings_content, value| {
                                 let Some(value) = value else {
+                                    settings_content.theme.icon_theme = None;
                                     return;
                                 };
                                 let settings_value = settings_content.theme.icon_theme.get_or_insert_with(|| {
@@ -662,6 +662,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             },
                             write: |settings_content, value| {
                                 let Some(value) = value else {
+                                    settings_content.theme.buffer_line_height = None;
                                     return;
                                 };
                                 let settings_value = settings_content.theme.buffer_line_height.get_or_insert_with(|| {
@@ -1123,6 +1124,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 },
                                 write: |settings_content, value| {
                                     let Some(value) = value else {
+                                        settings_content.workspace.autosave = None;
                                         return;
                                     };
                                     let settings_value = settings_content.workspace.autosave.get_or_insert_with(|| {
@@ -1171,6 +1173,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             },
                                             write: |settings_content, value| {
                                                 let Some(value) = value else {
+                                                    settings_content.workspace.autosave = None;
                                                     return;
                                                 };
                                                 match settings_content
@@ -2105,7 +2108,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         description: "A mapping from languages to files and file extensions that should be treated as that language.",
                         field: Box::new(
                             SettingField {
-                                json_path: Some("file_types"),
+                                json_path: Some("file_type_associations"),
                                 pick: |settings_content| {
                                     settings_content.project.all_languages.file_types.as_ref()
                                 },
@@ -4449,6 +4452,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             },
                             write: |settings_content, value| {
                                 let Some(value) = value else {
+                                    if let Some(terminal) = settings_content.terminal.as_mut() {
+                                        terminal.project.shell = None;
+                                    }
                                     return;
                                 };
                                 let settings_value = settings_content
@@ -4500,7 +4506,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     title: "Program",
                                     description: "The shell program to use.",
                                     field: Box::new(SettingField {
-                                        json_path: Some("terminal.shell.program"),
+                                        json_path: Some("terminal.shell"),
                                         pick: |settings_content| {
                                             match settings_content.terminal.as_ref()?.project.shell.as_ref() {
                                                 Some(settings::Shell::Program(program)) => Some(program),
@@ -4632,6 +4638,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             },
                             write: |settings_content, value| {
                                 let Some(value) = value else {
+                                    if let Some(terminal) = settings_content.terminal.as_mut() {
+                                        terminal.project.working_directory = None;
+                                    }
                                     return;
                                 };
                                 let settings_value = settings_content
@@ -7092,7 +7101,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             description: "Default Prettier options, in the format as in package.json section for Prettier.",
             field: Box::new(
                 SettingField {
-                    json_path: Some("languages.$(language).prettier"),
+                    json_path: Some("languages.$(language).prettier.options"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
                             language.prettier.as_ref()?.options.as_ref()
