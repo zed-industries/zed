@@ -3,8 +3,6 @@
 name: release
 on:
   push:
-    branches:
-    - gh-workflow-release
     tags:
     - v00.00.00-test
 jobs:
@@ -395,3 +393,6 @@ jobs:
         draft: true
         prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
         files: release-artifacts/*
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true

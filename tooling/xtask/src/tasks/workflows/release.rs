@@ -1,4 +1,4 @@
-use gh_workflow::{Event, Push, Step, Use, Workflow};
+use gh_workflow::{Concurrency, Event, Push, Step, Use, Workflow};
 
 use crate::tasks::workflows::{
     run_bundling, run_tests, runners,
@@ -41,11 +41,13 @@ pub(crate) fn release() -> Workflow {
     ]);
 
     named::workflow()
-        .on(Event::default().push(
-            Push::default()
-                .add_branch("gh-workflow-release")
-                .tags(vec!["v00.00.00-test".to_string()]),
-        ))
+        .on(Event::default().push(Push::default().tags(vec!["v00.00.00-test".to_string()])))
+        .concurrency(
+            // todo! what should actual concurrency be? We don't want two workflows trying to create the same release
+            Concurrency::default()
+                .group("${{ github.workflow }}")
+                .cancel_in_progress(true),
+        )
         .add_job(macos_tests.name, macos_tests.job)
         .add_job(linux_tests.name, linux_tests.job)
         .add_job(windows_tests.name, windows_tests.job)
