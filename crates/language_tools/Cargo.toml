@@ -16,6 +16,7 @@ doctest = false
 anyhow.workspace = true
 client.workspace = true
 collections.workspace = true
+command_palette_hooks.workspace = true
 copilot.workspace = true
 editor.workspace = true
 futures.workspace = true
@@ -24,6 +25,7 @@ itertools.workspace = true
 language.workspace = true
 lsp.workspace = true
 project.workspace = true
+proto.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 theme.workspace = true
@@ -32,7 +34,6 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

@@ -126,7 +126,7 @@ impl PickerDelegate for KernelPickerDelegate {
                 .collect()
         };
 
-        return Task::ready(());
+        Task::ready(())
     }
 
     fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -187,7 +187,7 @@ impl PickerDelegate for KernelPickerDelegate {
                                                     .size(LabelSize::Default),
                                             ),
                                         )
-                                        .when_some(path_or_url.clone(), |flex, path| {
+                                        .when_some(path_or_url, |flex, path| {
                                             flex.text_ellipsis().child(
                                                 Label::new(path)
                                                     .size(LabelSize::Small)
@@ -269,10 +269,9 @@ where
         };
 
         let picker_view = cx.new(|cx| {
-            let picker = Picker::uniform_list(delegate, window, cx)
+            Picker::uniform_list(delegate, window, cx)
                 .width(rems(30.))
-                .max_height(Some(rems(20.).into()));
-            picker
+                .max_height(Some(rems(20.).into()))
         });
 
         PopoverMenu::new("kernel-switcher")

@@ -24,6 +24,8 @@ pub(crate) const WM_GPUI_CLOSE_ONE_WINDOW: u32 = WM_USER + 2;
 pub(crate) const WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD: u32 = WM_USER + 3;
 pub(crate) const WM_GPUI_DOCK_MENU_ACTION: u32 = WM_USER + 4;
 pub(crate) const WM_GPUI_FORCE_UPDATE_WINDOW: u32 = WM_USER + 5;
+pub(crate) const WM_GPUI_KEYBOARD_LAYOUT_CHANGED: u32 = WM_USER + 6;
+pub(crate) const WM_GPUI_GPU_DEVICE_LOST: u32 = WM_USER + 7;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 const AUTO_HIDE_TASKBAR_THICKNESS_PX: i32 = 1;
@@ -39,7 +41,6 @@ impl WindowsWindowInner {
         let handled = match msg {
             WM_ACTIVATE => self.handle_activate_msg(wparam),
             WM_CREATE => self.handle_create_msg(handle),
-            WM_DEVICECHANGE => self.handle_device_change_msg(handle, wparam),
             WM_MOVE => self.handle_move_msg(handle, lparam),
             WM_SIZE => self.handle_size_msg(wparam, lparam),
             WM_GETMINMAXINFO => self.handle_get_min_max_info_msg(lparam),
@@ -56,7 +57,10 @@ impl WindowsWindowInner {
             WM_MOUSEMOVE => self.handle_mouse_move_msg(handle, lparam, wparam),
             WM_MOUSELEAVE | WM_NCMOUSELEAVE => self.handle_mouse_leave_msg(),
             WM_NCMOUSEMOVE => self.handle_nc_mouse_move_msg(handle, lparam),
-            WM_NCLBUTTONDOWN => {
+            // Treat double click as a second single click, since we track the double clicks ourselves.
+            // If you don't interact with any elements, this will fall through to the windows default
+            // behavior of toggling whether the window is maximized.
+            WM_NCLBUTTONDBLCLK | WM_NCLBUTTONDOWN => {
                 self.handle_nc_mouse_down_msg(handle, MouseButton::Left, wparam, lparam)
             }
             WM_NCRBUTTONDOWN => {
@@ -99,9 +103,11 @@ impl WindowsWindowInner {
             WM_IME_COMPOSITION => self.handle_ime_composition(handle, lparam),
             WM_SETCURSOR => self.handle_set_cursor(handle, lparam),
             WM_SETTINGCHANGE => self.handle_system_settings_changed(handle, wparam, lparam),
-            WM_INPUTLANGCHANGE => self.handle_input_language_changed(lparam),
+            WM_INPUTLANGCHANGE => self.handle_input_language_changed(),
+            WM_SHOWWINDOW => self.handle_window_visibility_changed(handle, wparam),
             WM_GPUI_CURSOR_STYLE_CHANGED => self.handle_cursor_changed(lparam),
             WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
+            WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
             _ => None,
         };
         if let Some(n) = handled {
@@ -263,8 +269,8 @@ impl WindowsWindowInner {
             callback();
         }
         unsafe {
-            PostThreadMessageW(
-                self.main_thread_id_win32,
+            PostMessageW(
+                Some(self.platform_window_handle),
                 WM_GPUI_CLOSE_ONE_WINDOW,
                 WPARAM(self.validation_number),
                 LPARAM(handle.0 as isize),
@@ -524,8 +530,18 @@ impl WindowsWindowInner {
         };
         let scale_factor = lock.scale_factor;
         let wheel_scroll_amount = match modifiers.shift {
-            true => lock.system_settings.mouse_wheel_settings.wheel_scroll_chars,
-            false => lock.system_settings.mouse_wheel_settings.wheel_scroll_lines,
+            true => {
+                self.system_settings
+                    .borrow()
+                    .mouse_wheel_settings
+                    .wheel_scroll_chars
+            }
+            false => {
+                self.system_settings
+                    .borrow()
+                    .mouse_wheel_settings
+                    .wheel_scroll_lines
+            }
         };
         drop(lock);
 
@@ -568,7 +584,11 @@ impl WindowsWindowInner {
             return Some(1);
         };
         let scale_factor = lock.scale_factor;
-        let wheel_scroll_chars = lock.system_settings.mouse_wheel_settings.wheel_scroll_chars;
+        let wheel_scroll_chars = self
+            .system_settings
+            .borrow()
+            .mouse_wheel_settings
+            .wheel_scroll_chars;
         drop(lock);
 
         let wheel_distance =
@@ -700,29 +720,25 @@ impl WindowsWindowInner {
         // Fix auto hide taskbar not showing. This solution is based on the approach
         // used by Chrome. However, it may result in one row of pixels being obscured
         // in our client area. But as Chrome says, "there seems to be no better solution."
-        if is_maximized {
-            if let Some(ref taskbar_position) = self
-                .state
-                .borrow()
-                .system_settings
-                .auto_hide_taskbar_position
-            {
-                // Fot the auto-hide taskbar, adjust in by 1 pixel on taskbar edge,
-                // so the window isn't treated as a "fullscreen app", which would cause
-                // the taskbar to disappear.
-                match taskbar_position {
-                    AutoHideTaskbarPosition::Left => {
-                        requested_client_rect[0].left += AUTO_HIDE_TASKBAR_THICKNESS_PX
-                    }
-                    AutoHideTaskbarPosition::Top => {
-                        requested_client_rect[0].top += AUTO_HIDE_TASKBAR_THICKNESS_PX
-                    }
-                    AutoHideTaskbarPosition::Right => {
-                        requested_client_rect[0].right -= AUTO_HIDE_TASKBAR_THICKNESS_PX
-                    }
-                    AutoHideTaskbarPosition::Bottom => {
-                        requested_client_rect[0].bottom -= AUTO_HIDE_TASKBAR_THICKNESS_PX
-                    }
+        if is_maximized
+            && let Some(ref taskbar_position) =
+                self.system_settings.borrow().auto_hide_taskbar_position
+        {
+            // For the auto-hide taskbar, adjust in by 1 pixel on taskbar edge,
+            // so the window isn't treated as a "fullscreen app", which would cause
+            // the taskbar to disappear.
+            match taskbar_position {
+                AutoHideTaskbarPosition::Left => {
+                    requested_client_rect[0].left += AUTO_HIDE_TASKBAR_THICKNESS_PX
+                }
+                AutoHideTaskbarPosition::Top => {
+                    requested_client_rect[0].top += AUTO_HIDE_TASKBAR_THICKNESS_PX
+                }
+                AutoHideTaskbarPosition::Right => {
+                    requested_client_rect[0].right -= AUTO_HIDE_TASKBAR_THICKNESS_PX
+                }
+                AutoHideTaskbarPosition::Bottom => {
+                    requested_client_rect[0].bottom -= AUTO_HIDE_TASKBAR_THICKNESS_PX
                 }
             }
         }
@@ -956,7 +972,7 @@ impl WindowsWindowInner {
                 click_count,
                 first_mouse: false,
             });
-            let result = func(input.clone());
+            let result = func(input);
             let handled = !result.propagate || result.default_prevented;
             self.state.borrow_mut().callbacks.input = Some(func);
 
@@ -1096,9 +1112,11 @@ impl WindowsWindowInner {
         if wparam.0 != 0 {
             let mut lock = self.state.borrow_mut();
             let display = lock.display;
-            lock.system_settings.update(display, wparam.0);
             lock.click_state.system_update(wparam.0);
             lock.border_offset.update(handle).log_err();
+            // system settings may emit a window message which wants to take the refcell lock, so drop it
+            drop(lock);
+            self.system_settings.borrow_mut().update(display, wparam.0);
         } else {
             self.handle_system_theme_changed(handle, lparam)?;
         };
@@ -1124,62 +1142,54 @@ impl WindowsWindowInner {
         // lParam is a pointer to a string that indicates the area containing the system parameter
         // that was changed.
         let parameter = PCWSTR::from_raw(lparam.0 as _);
-        if unsafe { !parameter.is_null() && !parameter.is_empty() } {
-            if let Some(parameter_string) = unsafe { parameter.to_string() }.log_err() {
-                log::info!("System settings changed: {}", parameter_string);
-                match parameter_string.as_str() {
-                    "ImmersiveColorSet" => {
-                        let new_appearance = system_appearance()
-                            .context(
-                                "unable to get system appearance when handling ImmersiveColorSet",
-                            )
-                            .log_err()?;
-                        let mut lock = self.state.borrow_mut();
-                        if new_appearance != lock.appearance {
-                            lock.appearance = new_appearance;
-                            let mut callback = lock.callbacks.appearance_changed.take()?;
-                            drop(lock);
-                            callback();
-                            self.state.borrow_mut().callbacks.appearance_changed = Some(callback);
-                            configure_dwm_dark_mode(handle, new_appearance);
-                        }
-                    }
-                    _ => {}
+        if unsafe { !parameter.is_null() && !parameter.is_empty() }
+            && let Some(parameter_string) = unsafe { parameter.to_string() }.log_err()
+        {
+            log::info!("System settings changed: {}", parameter_string);
+            if parameter_string.as_str() == "ImmersiveColorSet" {
+                let new_appearance = system_appearance()
+                    .context("unable to get system appearance when handling ImmersiveColorSet")
+                    .log_err()?;
+                let mut lock = self.state.borrow_mut();
+                if new_appearance != lock.appearance {
+                    lock.appearance = new_appearance;
+                    let mut callback = lock.callbacks.appearance_changed.take()?;
+                    drop(lock);
+                    callback();
+                    self.state.borrow_mut().callbacks.appearance_changed = Some(callback);
+                    configure_dwm_dark_mode(handle, new_appearance);
                 }
             }
         }
         Some(0)
     }
 
-    fn handle_input_language_changed(&self, lparam: LPARAM) -> Option<isize> {
-        let thread = self.main_thread_id_win32;
-        let validation = self.validation_number;
+    fn handle_input_language_changed(&self) -> Option<isize> {
         unsafe {
-            PostThreadMessageW(thread, WM_INPUTLANGCHANGE, WPARAM(validation), lparam).log_err();
+            PostMessageW(
+                Some(self.platform_window_handle),
+                WM_GPUI_KEYBOARD_LAYOUT_CHANGED,
+                WPARAM(self.validation_number),
+                LPARAM(0),
+            )
+            .log_err();
         }
         Some(0)
     }
 
-    fn handle_device_change_msg(&self, handle: HWND, wparam: WPARAM) -> Option<isize> {
-        if wparam.0 == DBT_DEVNODES_CHANGED as usize {
-            // The reason for sending this message is to actually trigger a redraw of the window.
-            unsafe {
-                PostMessageW(
-                    Some(handle),
-                    WM_GPUI_FORCE_UPDATE_WINDOW,
-                    WPARAM(0),
-                    LPARAM(0),
-                )
-                .log_err();
-            }
-            // If the GPU device is lost, this redraw will take care of recreating the device context.
-            // The WM_GPUI_FORCE_UPDATE_WINDOW message will take care of redrawing the window, after
-            // the device context has been recreated.
-            self.draw_window(handle, true)
-        } else {
-            // Other device change messages are not handled.
-            None
+    fn handle_window_visibility_changed(&self, handle: HWND, wparam: WPARAM) -> Option<isize> {
+        if wparam.0 == 1 {
+            self.draw_window(handle, false);
         }
+        None
+    }
+
+    fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
+        let mut lock = self.state.borrow_mut();
+        let devices = lparam.0 as *const DirectXDevices;
+        let devices = unsafe { &*devices };
+        lock.renderer.handle_device_lost(&devices);
+        Some(0)
     }
 
     #[inline]
@@ -1297,10 +1307,10 @@ where
     F: FnOnce(Keystroke) -> PlatformInput,
 {
     let virtual_key = VIRTUAL_KEY(wparam.loword());
-    let mut modifiers = current_modifiers();
+    let modifiers = current_modifiers();
 
     match virtual_key {
-        VK_SHIFT | VK_CONTROL | VK_MENU | VK_LWIN | VK_RWIN => {
+        VK_SHIFT | VK_CONTROL | VK_MENU | VK_LMENU | VK_RMENU | VK_LWIN | VK_RWIN => {
             if state
                 .last_reported_modifiers
                 .is_some_and(|prev_modifiers| prev_modifiers == modifiers)
@@ -1450,11 +1460,25 @@ fn is_virtual_key_pressed(vkey: VIRTUAL_KEY) -> bool {
     unsafe { GetKeyState(vkey.0 as i32) < 0 }
 }
 
+fn keyboard_uses_altgr() -> bool {
+    use crate::platform::windows::keyboard::WindowsKeyboardLayout;
+    WindowsKeyboardLayout::new()
+        .map(|layout| layout.uses_altgr())
+        .unwrap_or(false)
+}
+
 #[inline]
 pub(crate) fn current_modifiers() -> Modifiers {
+    let lmenu_pressed = is_virtual_key_pressed(VK_LMENU);
+    let rmenu_pressed = is_virtual_key_pressed(VK_RMENU);
+    let lcontrol_pressed = is_virtual_key_pressed(VK_LCONTROL);
+
+    // Only treat right Alt + left Ctrl as AltGr on keyboards that actually use it
+    let altgr = keyboard_uses_altgr() && rmenu_pressed && lcontrol_pressed;
+
     Modifiers {
-        control: is_virtual_key_pressed(VK_CONTROL),
-        alt: is_virtual_key_pressed(VK_MENU),
+        control: is_virtual_key_pressed(VK_CONTROL) && !altgr,
+        alt: (lmenu_pressed || rmenu_pressed) && !altgr,
         shift: is_virtual_key_pressed(VK_SHIFT),
         platform: is_virtual_key_pressed(VK_LWIN) || is_virtual_key_pressed(VK_RWIN),
         function: false,
@@ -1464,7 +1488,7 @@ pub(crate) fn current_modifiers() -> Modifiers {
 #[inline]
 pub(crate) fn current_capslock() -> Capslock {
     let on = unsafe { GetKeyState(VK_CAPITAL.0 as i32) & 1 } > 0;
-    Capslock { on: on }
+    Capslock { on }
 }
 
 fn get_client_area_insets(

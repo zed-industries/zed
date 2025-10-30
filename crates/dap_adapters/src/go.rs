@@ -36,7 +36,7 @@ impl GoDebugAdapter {
         delegate: &Arc<dyn DapDelegate>,
     ) -> Result<AdapterVersion> {
         let release = latest_github_release(
-            &"zed-industries/delve-shim-dap",
+            "zed-industries/delve-shim-dap",
             true,
             false,
             delegate.http_client(),
@@ -409,17 +409,18 @@ impl DebugAdapter for GoDebugAdapter {
         task_definition: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
+        user_env: Option<HashMap<String, String>>,
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
         let dlv_path = adapter_path.join("dlv");
 
         let delve_path = if let Some(path) = user_installed_path {
-            path.to_string_lossy().to_string()
+            path.to_string_lossy().into_owned()
         } else if let Some(path) = delegate.which(OsStr::new("dlv")).await {
-            path.to_string_lossy().to_string()
+            path.to_string_lossy().into_owned()
         } else if delegate.fs().is_file(&dlv_path).await {
-            dlv_path.to_string_lossy().to_string()
+            dlv_path.to_string_lossy().into_owned()
         } else {
             let go = delegate
                 .which(OsStr::new("go"))
@@ -443,7 +444,7 @@ impl DebugAdapter for GoDebugAdapter {
                 );
             }
 
-            adapter_path.join("dlv").to_string_lossy().to_string()
+            adapter_path.join("dlv").to_string_lossy().into_owned()
         };
 
         let cwd = Some(
@@ -460,7 +461,7 @@ impl DebugAdapter for GoDebugAdapter {
         let connection;
 
         let mut configuration = task_definition.config.clone();
-        let mut envs = HashMap::default();
+        let mut envs = user_env.unwrap_or_default();
 
         if let Some(configuration) = configuration.as_object_mut() {
             configuration

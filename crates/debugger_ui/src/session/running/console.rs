@@ -12,10 +12,10 @@ use gpui::{
     Action as _, AppContext, Context, Corner, Entity, FocusHandle, Focusable, HighlightStyle, Hsla,
     Render, Subscription, Task, TextStyle, WeakEntity, actions,
 };
-use language::{Anchor, Buffer, CodeLabel, TextBufferSnapshot, ToOffset};
+use language::{Anchor, Buffer, CharScopeContext, CodeLabel, TextBufferSnapshot, ToOffset};
 use menu::{Confirm, SelectNext, SelectPrevious};
 use project::{
-    Completion, CompletionResponse,
+    Completion, CompletionDisplayOptions, CompletionResponse,
     debugger::session::{CompletionsQuery, OutputToken, Session},
     lsp_store::CompletionDocumentation,
     search_history::{SearchHistory, SearchHistoryCursor},
@@ -83,7 +83,7 @@ impl Console {
         let this = cx.weak_entity();
         let query_bar = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Evaluate an expression", cx);
+            editor.set_placeholder_text("Evaluate an expression", window, cx);
             editor.set_use_autoclose(false);
             editor.set_show_gutter(false, cx);
             editor.set_show_wrap_guides(false, cx);
@@ -365,7 +365,7 @@ impl Console {
                         Some(ContextMenu::build(window, cx, |context_menu, _, _| {
                             context_menu
                                 .when_some(keybinding_target.clone(), |el, keybinding_target| {
-                                    el.context(keybinding_target.clone())
+                                    el.context(keybinding_target)
                                 })
                                 .action("Watch Expression", WatchExpression.boxed_clone())
                         }))
@@ -484,12 +484,11 @@ impl Render for Console {
                             .tooltip({
                                 let query_focus_handle = query_focus_handle.clone();
 
-                                move |window, cx| {
+                                move |_window, cx| {
                                     Tooltip::for_action_in(
                                         "Evaluate",
                                         &Confirm,
                                         &query_focus_handle,
-                                        window,
                                         cx,
                                     )
                                 }
@@ -575,7 +574,9 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
             return false;
         }
 
-        let classifier = snapshot.char_classifier_at(position).for_completion(true);
+        let classifier = snapshot
+            .char_classifier_at(position)
+            .scope_context(Some(CharScopeContext::Completion));
         if trigger_in_words && classifier.is_word(char) {
             return true;
         }
@@ -611,17 +612,16 @@ impl ConsoleQueryBarCompletionProvider {
             for variable in console.variable_list.update(cx, |variable_list, cx| {
                 variable_list.completion_variables(cx)
             }) {
-                if let Some(evaluate_name) = &variable.evaluate_name {
-                    if variables
+                if let Some(evaluate_name) = &variable.evaluate_name
+                    && variables
                         .insert(evaluate_name.clone(), variable.value.clone())
                         .is_none()
-                    {
-                        string_matches.push(StringMatchCandidate {
-                            id: 0,
-                            string: evaluate_name.clone(),
-                            char_bag: evaluate_name.chars().collect(),
-                        });
-                    }
+                {
+                    string_matches.push(StringMatchCandidate {
+                        id: 0,
+                        string: evaluate_name.clone(),
+                        char_bag: evaluate_name.chars().collect(),
+                    });
                 }
 
                 if variables
@@ -668,11 +668,7 @@ impl ConsoleQueryBarCompletionProvider {
                             &snapshot,
                         ),
                         new_text: string_match.string.clone(),
-                        label: CodeLabel {
-                            filter_range: 0..string_match.string.len(),
-                            text: string_match.string.clone(),
-                            runs: Vec::new(),
-                        },
+                        label: CodeLabel::plain(string_match.string.clone(), None),
                         icon_path: None,
                         documentation: Some(CompletionDocumentation::MultiLineMarkdown(
                             variable_value.into(),
@@ -686,6 +682,7 @@ impl ConsoleQueryBarCompletionProvider {
 
             Ok(vec![project::CompletionResponse {
                 is_incomplete: completions.len() >= LIMIT,
+                display_options: CompletionDisplayOptions::default(),
                 completions,
             }])
         })
@@ -697,7 +694,7 @@ impl ConsoleQueryBarCompletionProvider {
         new_bytes: &[u8],
         snapshot: &TextBufferSnapshot,
     ) -> Range<Anchor> {
-        let buffer_offset = buffer_position.to_offset(&snapshot);
+        let buffer_offset = buffer_position.to_offset(snapshot);
         let buffer_bytes = &buffer_text.as_bytes()[0..buffer_offset];
 
         let mut prefix_len = 0;
@@ -780,11 +777,7 @@ impl ConsoleQueryBarCompletionProvider {
                             &snapshot,
                         ),
                         new_text,
-                        label: CodeLabel {
-                            filter_range: 0..completion.label.len(),
-                            text: completion.label,
-                            runs: Vec::new(),
-                        },
+                        label: CodeLabel::plain(completion.label, None),
                         icon_path: None,
                         documentation: completion.detail.map(|detail| {
                             CompletionDocumentation::MultiLineMarkdown(detail.into())
@@ -798,6 +791,7 @@ impl ConsoleQueryBarCompletionProvider {
 
             Ok(vec![project::CompletionResponse {
                 completions,
+                display_options: CompletionDisplayOptions::default(),
                 is_incomplete: false,
             }])
         })
@@ -968,8 +962,12 @@ mod tests {
     ) {
         cx.set_state(input);
 
-        let buffer_position =
-            cx.editor(|editor, _, cx| editor.selections.newest::<Point>(cx).start);
+        let buffer_position = cx.editor(|editor, _, cx| {
+            editor
+                .selections
+                .newest::<Point>(&editor.display_snapshot(cx))
+                .start
+        });
 
         let snapshot = &cx.buffer_snapshot();
 
@@ -977,7 +975,7 @@ mod tests {
             &cx.buffer_text(),
             snapshot.anchor_before(buffer_position),
             replacement.as_bytes(),
-            &snapshot,
+            snapshot,
         );
 
         cx.update_editor(|editor, _, cx| {

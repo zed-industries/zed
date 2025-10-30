@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::Result;
+use language::rust_lang;
 use serde_json::json;
 
 use crate::{Editor, ToPoint};
@@ -18,7 +19,6 @@ use language::{
     point_to_lsp,
 };
 use lsp::{notification, request};
-use multi_buffer::ToPointUtf16;
 use project::Project;
 use smol::stream::StreamExt;
 use workspace::{AppState, Workspace, WorkspaceHandle};
@@ -29,56 +29,7 @@ pub struct EditorLspTestContext {
     pub cx: EditorTestContext,
     pub lsp: lsp::FakeLanguageServer,
     pub workspace: Entity<Workspace>,
-    pub buffer_lsp_url: lsp::Url,
-}
-
-pub(crate) fn rust_lang() -> Arc<Language> {
-    let language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            line_comments: vec!["// ".into(), "/// ".into(), "//! ".into()],
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::LANGUAGE.into()),
-    )
-    .with_queries(LanguageQueries {
-        indents: Some(Cow::from(indoc! {r#"
-            [
-                ((where_clause) _ @end)
-                (field_expression)
-                (call_expression)
-                (assignment_expression)
-                (let_declaration)
-                (let_chain)
-                (await_expression)
-            ] @indent
-
-            (_ "[" "]" @end) @indent
-            (_ "<" ">" @end) @indent
-            (_ "{" "}" @end) @indent
-            (_ "(" ")" @end) @indent"#})),
-        brackets: Some(Cow::from(indoc! {r#"
-            ("(" @open ")" @close)
-            ("[" @open "]" @close)
-            ("{" @open "}" @close)
-            ("<" @open ">" @close)
-            ("\"" @open "\"" @close)
-            (closure_parameters "|" @open "|" @close)"#})),
-        text_objects: Some(Cow::from(indoc! {r#"
-            (function_item
-                body: (_
-                    "{"
-                    (_)* @function.inside
-                    "}" )) @function.around
-        "#})),
-        ..Default::default()
-    })
-    .expect("Could not parse queries");
-    Arc::new(language)
+    pub buffer_lsp_url: lsp::Uri,
 }
 
 #[cfg(test)]
@@ -189,7 +140,7 @@ impl EditorLspTestContext {
             },
             lsp,
             workspace,
-            buffer_lsp_url: lsp::Url::from_file_path(root.join("dir").join(file_name)).unwrap(),
+            buffer_lsp_url: lsp::Uri::from_file_path(root.join("dir").join(file_name)).unwrap(),
         }
     }
 
@@ -262,6 +213,77 @@ impl EditorLspTestContext {
         Self::new(language, capabilities, cx).await
     }
 
+    pub async fn new_tsx(
+        capabilities: lsp::ServerCapabilities,
+        cx: &mut gpui::TestAppContext,
+    ) -> EditorLspTestContext {
+        let mut word_characters: HashSet<char> = Default::default();
+        word_characters.insert('$');
+        word_characters.insert('#');
+        let language = Language::new(
+            LanguageConfig {
+                name: "TSX".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["tsx".to_string()],
+                    ..Default::default()
+                },
+                brackets: language::BracketPairConfig {
+                    pairs: vec![language::BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: true,
+                    }],
+                    disabled_scopes_by_bracket_ix: Default::default(),
+                },
+                word_characters,
+                ..Default::default()
+            },
+            Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+        )
+        .with_queries(LanguageQueries {
+            brackets: Some(Cow::from(indoc! {r#"
+                ("(" @open ")" @close)
+                ("[" @open "]" @close)
+                ("{" @open "}" @close)
+                ("<" @open ">" @close)
+                ("<" @open "/>" @close)
+                ("</" @open ">" @close)
+                ("\"" @open "\"" @close)
+                ("'" @open "'" @close)
+                ("`" @open "`" @close)
+                ((jsx_element (jsx_opening_element) @open (jsx_closing_element) @close) (#set! newline.only))"#})),
+            indents: Some(Cow::from(indoc! {r#"
+                [
+                    (call_expression)
+                    (assignment_expression)
+                    (member_expression)
+                    (lexical_declaration)
+                    (variable_declaration)
+                    (assignment_expression)
+                    (if_statement)
+                    (for_statement)
+                ] @indent
+
+                (_ "[" "]" @end) @indent
+                (_ "<" ">" @end) @indent
+                (_ "{" "}" @end) @indent
+                (_ "(" ")" @end) @indent
+
+                (jsx_opening_element ">" @end) @indent
+
+                (jsx_element
+                  (jsx_opening_element) @start
+                  (jsx_closing_element)? @end) @indent
+                "#})),
+            ..Default::default()
+        })
+        .expect("Could not parse queries");
+
+        Self::new(language, capabilities, cx).await
+    }
+
     pub async fn new_html(cx: &mut gpui::TestAppContext) -> Self {
         let language = Language::new(
             LanguageConfig {
@@ -300,10 +322,11 @@ impl EditorLspTestContext {
         self.to_lsp_range(ranges[0].clone())
     }
 
+    #[expect(clippy::wrong_self_convention, reason = "This is test code")]
     pub fn to_lsp_range(&mut self, range: Range<usize>) -> lsp::Range {
         let snapshot = self.update_editor(|editor, window, cx| editor.snapshot(window, cx));
-        let start_point = range.start.to_point(&snapshot.buffer_snapshot);
-        let end_point = range.end.to_point(&snapshot.buffer_snapshot);
+        let start_point = range.start.to_point(&snapshot.buffer_snapshot());
+        let end_point = range.end.to_point(&snapshot.buffer_snapshot());
 
         self.editor(|editor, _, cx| {
             let buffer = editor.buffer().read(cx);
@@ -326,9 +349,10 @@ impl EditorLspTestContext {
         })
     }
 
+    #[expect(clippy::wrong_self_convention, reason = "This is test code")]
     pub fn to_lsp(&mut self, offset: usize) -> lsp::Position {
         let snapshot = self.update_editor(|editor, window, cx| editor.snapshot(window, cx));
-        let point = offset.to_point(&snapshot.buffer_snapshot);
+        let point = offset.to_point(&snapshot.buffer_snapshot());
 
         self.editor(|editor, _, cx| {
             let buffer = editor.buffer().read(cx);
@@ -356,7 +380,7 @@ impl EditorLspTestContext {
     where
         T: 'static + request::Request,
         T::Params: 'static + Send,
-        F: 'static + Send + FnMut(lsp::Url, T::Params, gpui::AsyncApp) -> Fut,
+        F: 'static + Send + FnMut(lsp::Uri, T::Params, gpui::AsyncApp) -> Fut,
         Fut: 'static + Future<Output = Result<T::Result>>,
     {
         let url = self.buffer_lsp_url.clone();
@@ -367,7 +391,7 @@ impl EditorLspTestContext {
     }
 
     pub fn notify<T: notification::Notification>(&self, params: T::Params) {
-        self.lsp.notify::<T>(&params);
+        self.lsp.notify::<T>(params);
     }
 
     #[cfg(target_os = "windows")]

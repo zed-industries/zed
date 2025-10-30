@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods, reason = "build scripts are exempt")]
 #![cfg_attr(any(not(target_os = "macos"), feature = "macos-blade"), allow(unused))]
 
 //TODO: consider generating shader code for WGSL
@@ -48,7 +49,7 @@ fn check_wgsl_shaders() {
             // All clear
         }
         Err(e) => {
-            eprintln!("WGSL shader compilation failed:\n{}", e);
+            println!("cargo::error=WGSL shader compilation failed:\n{}", e);
             process::exit(1);
         }
     }
@@ -219,8 +220,8 @@ mod macos {
             .unwrap();
 
         if !output.status.success() {
-            eprintln!(
-                "metal shader compilation failed:\n{}",
+            println!(
+                "cargo::error=metal shader compilation failed:\n{}",
                 String::from_utf8_lossy(&output.stderr)
             );
             process::exit(1);
@@ -235,8 +236,8 @@ mod macos {
             .unwrap();
 
         if !output.status.success() {
-            eprintln!(
-                "metallib compilation failed:\n{}",
+            println!(
+                "cargo::error=metallib compilation failed:\n{}",
                 String::from_utf8_lossy(&output.stderr)
             );
             process::exit(1);
@@ -327,10 +328,10 @@ mod windows {
     /// You can set the `GPUI_FXC_PATH` environment variable to specify the path to the fxc.exe compiler.
     fn find_fxc_compiler() -> String {
         // Check environment variable
-        if let Ok(path) = std::env::var("GPUI_FXC_PATH") {
-            if Path::new(&path).exists() {
-                return path;
-            }
+        if let Ok(path) = std::env::var("GPUI_FXC_PATH")
+            && Path::new(&path).exists()
+        {
+            return path;
         }
 
         // Try to find in PATH
@@ -338,11 +339,10 @@ mod windows {
         if let Ok(output) = std::process::Command::new("where.exe")
             .arg("fxc.exe")
             .output()
+            && output.status.success()
         {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout);
-                return path.trim().to_string();
-            }
+            let path = String::from_utf8_lossy(&output.stdout);
+            return path.trim().to_string();
         }
 
         // Check the default path
@@ -374,7 +374,7 @@ mod windows {
             shader_path,
             "vs_4_1",
         );
-        generate_rust_binding(&const_name, &output_file, &rust_binding_path);
+        generate_rust_binding(&const_name, &output_file, rust_binding_path);
 
         // Compile fragment shader
         let output_file = format!("{}/{}_ps.h", out_dir, module);
@@ -387,7 +387,7 @@ mod windows {
             shader_path,
             "ps_4_1",
         );
-        generate_rust_binding(&const_name, &output_file, &rust_binding_path);
+        generate_rust_binding(&const_name, &output_file, rust_binding_path);
     }
 
     fn compile_shader_impl(
@@ -418,15 +418,15 @@ mod windows {
                 if result.status.success() {
                     return;
                 }
-                eprintln!(
-                    "Shader compilation failed for {}:\n{}",
+                println!(
+                    "cargo::error=Shader compilation failed for {}:\n{}",
                     entry_point,
                     String::from_utf8_lossy(&result.stderr)
                 );
                 process::exit(1);
             }
             Err(e) => {
-                eprintln!("Failed to run fxc for {}: {}", entry_point, e);
+                println!("cargo::error=Failed to run fxc for {}: {}", entry_point, e);
                 process::exit(1);
             }
         }

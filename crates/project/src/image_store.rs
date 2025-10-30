@@ -13,10 +13,9 @@ use image::{ExtendedColorType, GenericImageView, ImageReader};
 use language::{DiskState, File};
 use rpc::{AnyProtoClient, ErrorExt as _};
 use std::num::NonZeroU64;
-use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::{ffi::OsStr, path::PathBuf};
-use util::ResultExt;
+use util::{ResultExt, rel_path::RelPath};
 use worktree::{LoadedBinaryFile, PathChange, Worktree};
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, PartialOrd, Ord, Eq)]
@@ -207,8 +206,7 @@ pub fn is_image_file(project: &Entity<Project>, path: &ProjectPath, cx: &App) ->
             .abs_path();
         path.path
             .extension()
-            .or_else(|| worktree_abs_path.extension())
-            .and_then(OsStr::to_str)
+            .or_else(|| worktree_abs_path.extension()?.to_str())
             .map(str::to_lowercase)
     });
 
@@ -224,7 +222,7 @@ impl ProjectItem for ImageItem {
         path: &ProjectPath,
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
-        if is_image_file(&project, &path, cx) {
+        if is_image_file(project, path, cx) {
             Some(cx.spawn({
                 let path = path.clone();
                 let project = project.clone();
@@ -244,7 +242,7 @@ impl ProjectItem for ImageItem {
     }
 
     fn project_path(&self, cx: &App) -> Option<ProjectPath> {
-        Some(self.project_path(cx).clone())
+        Some(self.project_path(cx))
     }
 
     fn is_dirty(&self) -> bool {
@@ -255,7 +253,7 @@ impl ProjectItem for ImageItem {
 trait ImageStoreImpl {
     fn open_image(
         &self,
-        path: Arc<Path>,
+        path: Arc<RelPath>,
         worktree: Entity<Worktree>,
         cx: &mut Context<ImageStore>,
     ) -> Task<Result<Entity<ImageItem>>>;
@@ -375,7 +373,6 @@ impl ImageStore {
                 let (mut tx, rx) = postage::watch::channel();
                 entry.insert(rx.clone());
 
-                let project_path = project_path.clone();
                 let load_image = self
                     .state
                     .open_image(project_path.path.clone(), worktree, cx);
@@ -446,15 +443,12 @@ impl ImageStore {
         event: &ImageItemEvent,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            ImageItemEvent::FileHandleChanged => {
-                if let Some(local) = self.state.as_local() {
-                    local.update(cx, |local, cx| {
-                        local.image_changed_file(image, cx);
-                    })
-                }
-            }
-            _ => {}
+        if let ImageItemEvent::FileHandleChanged = event
+            && let Some(local) = self.state.as_local()
+        {
+            local.update(cx, |local, cx| {
+                local.image_changed_file(image, cx);
+            })
         }
     }
 }
@@ -462,7 +456,7 @@ impl ImageStore {
 impl ImageStoreImpl for Entity<LocalImageStore> {
     fn open_image(
         &self,
-        path: Arc<Path>,
+        path: Arc<RelPath>,
         worktree: Entity<Worktree>,
         cx: &mut Context<ImageStore>,
     ) -> Task<Result<Entity<ImageItem>>> {
@@ -531,13 +525,10 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
 impl LocalImageStore {
     fn subscribe_to_worktree(&mut self, worktree: &Entity<Worktree>, cx: &mut Context<Self>) {
         cx.subscribe(worktree, |this, worktree, event, cx| {
-            if worktree.read(cx).is_local() {
-                match event {
-                    worktree::Event::UpdatedEntries(changes) => {
-                        this.local_worktree_entries_changed(&worktree, changes, cx);
-                    }
-                    _ => {}
-                }
+            if worktree.read(cx).is_local()
+                && let worktree::Event::UpdatedEntries(changes) = event
+            {
+                this.local_worktree_entries_changed(&worktree, changes, cx);
             }
         })
         .detach();
@@ -546,7 +537,7 @@ impl LocalImageStore {
     fn local_worktree_entries_changed(
         &mut self,
         worktree_handle: &Entity<Worktree>,
-        changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
+        changes: &[(Arc<RelPath>, ProjectEntryId, PathChange)],
         cx: &mut Context<Self>,
     ) {
         let snapshot = worktree_handle.read(cx).snapshot();
@@ -558,7 +549,7 @@ impl LocalImageStore {
     fn local_worktree_entry_changed(
         &mut self,
         entry_id: ProjectEntryId,
-        path: &Arc<Path>,
+        path: &Arc<RelPath>,
         worktree: &Entity<worktree::Worktree>,
         snapshot: &worktree::Snapshot,
         cx: &mut Context<Self>,
@@ -696,6 +687,7 @@ fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<gpui::Image>> {
             image::ImageFormat::Gif => gpui::ImageFormat::Gif,
             image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
             image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
+            image::ImageFormat::Ico => gpui::ImageFormat::Ico,
             format => anyhow::bail!("Image format {format:?} not supported"),
         },
         content,
@@ -705,7 +697,7 @@ fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<gpui::Image>> {
 impl ImageStoreImpl for Entity<RemoteImageStore> {
     fn open_image(
         &self,
-        _path: Arc<Path>,
+        _path: Arc<RelPath>,
         _worktree: Entity<Worktree>,
         _cx: &mut Context<ImageStore>,
     ) -> Task<Result<Entity<ImageItem>>> {
@@ -736,7 +728,7 @@ mod tests {
     use gpui::TestAppContext;
     use serde_json::json;
     use settings::SettingsStore;
-    use std::path::PathBuf;
+    use util::rel_path::rel_path;
 
     pub fn init_test(cx: &mut TestAppContext) {
         zlog::init_test();
@@ -775,7 +767,7 @@ mod tests {
 
         let project_path = ProjectPath {
             worktree_id,
-            path: PathBuf::from("image_1.png").into(),
+            path: rel_path("image_1.png").into(),
         };
 
         let (task1, task2) = project.update(cx, |project, cx| {

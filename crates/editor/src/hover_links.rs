@@ -1,18 +1,14 @@
 use crate::{
     Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
-    GoToTypeDefinition, GotoDefinitionKind, InlayId, Navigated, PointForPosition, SelectPhase,
-    editor_settings::GoToDefinitionFallback,
-    hover_popover::{self, InlayHover},
+    GoToDefinitionSplit, GoToTypeDefinition, GoToTypeDefinitionSplit, GotoDefinitionKind,
+    Navigated, PointForPosition, SelectPhase, editor_settings::GoToDefinitionFallback,
     scroll::ScrollAmount,
 };
 use gpui::{App, AsyncWindowContext, Context, Entity, Modifiers, Task, Window, px};
 use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
-use project::{
-    HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, LocationLink, Project,
-    ResolveState, ResolvedPath,
-};
+use project::{InlayId, LocationLink, Project, ResolvedPath};
 use settings::Settings;
 use std::ops::Range;
 use theme::ActiveTheme as _;
@@ -48,8 +44,8 @@ impl RangeInEditor {
     ) -> bool {
         match (self, trigger_point) {
             (Self::Text(range), TriggerPoint::Text(point)) => {
-                let point_after_start = range.start.cmp(point, &snapshot.buffer_snapshot).is_le();
-                point_after_start && range.end.cmp(point, &snapshot.buffer_snapshot).is_ge()
+                let point_after_start = range.start.cmp(point, &snapshot.buffer_snapshot()).is_le();
+                point_after_start && range.end.cmp(point, &snapshot.buffer_snapshot()).is_ge()
             }
             (Self::Inlay(highlight), TriggerPoint::InlayHint(point, _, _)) => {
                 highlight.inlay == point.inlay
@@ -130,17 +126,16 @@ impl Editor {
             Some(point) => {
                 let trigger_point = TriggerPoint::Text(
                     snapshot
-                        .buffer_snapshot
+                        .buffer_snapshot()
                         .anchor_before(point.to_offset(&snapshot.display_snapshot, Bias::Left)),
                 );
 
                 show_link_definition(modifiers.shift, self, trigger_point, snapshot, window, cx);
             }
             None => {
-                update_inlay_link_and_hover_points(
+                self.update_inlay_link_and_hover_points(
                     snapshot,
                     point_for_position,
-                    self,
                     hovered_link_modifier,
                     modifiers.shift,
                     window,
@@ -188,22 +183,26 @@ impl Editor {
 
     pub fn scroll_hover(
         &mut self,
-        amount: &ScrollAmount,
+        amount: ScrollAmount,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         let selection = self.selections.newest_anchor().head();
         let snapshot = self.snapshot(window, cx);
 
-        let Some(popover) = self.hover_state.info_popovers.iter().find(|popover| {
+        if let Some(popover) = self.hover_state.info_popovers.iter().find(|popover| {
             popover
                 .symbol_range
                 .point_within_range(&TriggerPoint::Text(selection), &snapshot)
-        }) else {
-            return false;
-        };
-        popover.scroll(amount, window, cx);
-        true
+        }) {
+            popover.scroll(amount, window, cx);
+            true
+        } else if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
+            context_menu.scroll_aside(amount, window, cx);
+            true
+        } else {
+            false
+        }
     }
 
     fn cmd_click_reveal_task(
@@ -262,196 +261,19 @@ impl Editor {
         );
 
         let navigate_task = if point.as_valid().is_some() {
-            if modifiers.shift {
-                self.go_to_type_definition(&GoToTypeDefinition, window, cx)
-            } else {
-                self.go_to_definition(&GoToDefinition, window, cx)
+            match (modifiers.shift, modifiers.alt) {
+                (true, true) => {
+                    self.go_to_type_definition_split(&GoToTypeDefinitionSplit, window, cx)
+                }
+                (true, false) => self.go_to_type_definition(&GoToTypeDefinition, window, cx),
+                (false, true) => self.go_to_definition_split(&GoToDefinitionSplit, window, cx),
+                (false, false) => self.go_to_definition(&GoToDefinition, window, cx),
             }
         } else {
             Task::ready(Ok(Navigated::No))
         };
         self.select(SelectPhase::End, window, cx);
-        return navigate_task;
-    }
-}
-
-pub fn update_inlay_link_and_hover_points(
-    snapshot: &EditorSnapshot,
-    point_for_position: PointForPosition,
-    editor: &mut Editor,
-    secondary_held: bool,
-    shift_held: bool,
-    window: &mut Window,
-    cx: &mut Context<Editor>,
-) {
-    let hovered_offset = if point_for_position.column_overshoot_after_line_end == 0 {
-        Some(snapshot.display_point_to_inlay_offset(point_for_position.exact_unclipped, Bias::Left))
-    } else {
-        None
-    };
-    let mut go_to_definition_updated = false;
-    let mut hover_updated = false;
-    if let Some(hovered_offset) = hovered_offset {
-        let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-        let previous_valid_anchor = buffer_snapshot.anchor_at(
-            point_for_position.previous_valid.to_point(snapshot),
-            Bias::Left,
-        );
-        let next_valid_anchor = buffer_snapshot.anchor_at(
-            point_for_position.next_valid.to_point(snapshot),
-            Bias::Right,
-        );
-        if let Some(hovered_hint) = editor
-            .visible_inlay_hints(cx)
-            .into_iter()
-            .skip_while(|hint| {
-                hint.position
-                    .cmp(&previous_valid_anchor, &buffer_snapshot)
-                    .is_lt()
-            })
-            .take_while(|hint| {
-                hint.position
-                    .cmp(&next_valid_anchor, &buffer_snapshot)
-                    .is_le()
-            })
-            .max_by_key(|hint| hint.id)
-        {
-            let inlay_hint_cache = editor.inlay_hint_cache();
-            let excerpt_id = previous_valid_anchor.excerpt_id;
-            if let Some(cached_hint) = inlay_hint_cache.hint_by_id(excerpt_id, hovered_hint.id) {
-                match cached_hint.resolve_state {
-                    ResolveState::CanResolve(_, _) => {
-                        if let Some(buffer_id) = previous_valid_anchor.buffer_id {
-                            inlay_hint_cache.spawn_hint_resolve(
-                                buffer_id,
-                                excerpt_id,
-                                hovered_hint.id,
-                                window,
-                                cx,
-                            );
-                        }
-                    }
-                    ResolveState::Resolved => {
-                        let mut extra_shift_left = 0;
-                        let mut extra_shift_right = 0;
-                        if cached_hint.padding_left {
-                            extra_shift_left += 1;
-                            extra_shift_right += 1;
-                        }
-                        if cached_hint.padding_right {
-                            extra_shift_right += 1;
-                        }
-                        match cached_hint.label {
-                            project::InlayHintLabel::String(_) => {
-                                if let Some(tooltip) = cached_hint.tooltip {
-                                    hover_popover::hover_at_inlay(
-                                        editor,
-                                        InlayHover {
-                                            tooltip: match tooltip {
-                                                InlayHintTooltip::String(text) => HoverBlock {
-                                                    text,
-                                                    kind: HoverBlockKind::PlainText,
-                                                },
-                                                InlayHintTooltip::MarkupContent(content) => {
-                                                    HoverBlock {
-                                                        text: content.value,
-                                                        kind: content.kind,
-                                                    }
-                                                }
-                                            },
-                                            range: InlayHighlight {
-                                                inlay: hovered_hint.id,
-                                                inlay_position: hovered_hint.position,
-                                                range: extra_shift_left
-                                                    ..hovered_hint.text.len() + extra_shift_right,
-                                            },
-                                        },
-                                        window,
-                                        cx,
-                                    );
-                                    hover_updated = true;
-                                }
-                            }
-                            project::InlayHintLabel::LabelParts(label_parts) => {
-                                let hint_start =
-                                    snapshot.anchor_to_inlay_offset(hovered_hint.position);
-                                if let Some((hovered_hint_part, part_range)) =
-                                    hover_popover::find_hovered_hint_part(
-                                        label_parts,
-                                        hint_start,
-                                        hovered_offset,
-                                    )
-                                {
-                                    let highlight_start =
-                                        (part_range.start - hint_start).0 + extra_shift_left;
-                                    let highlight_end =
-                                        (part_range.end - hint_start).0 + extra_shift_right;
-                                    let highlight = InlayHighlight {
-                                        inlay: hovered_hint.id,
-                                        inlay_position: hovered_hint.position,
-                                        range: highlight_start..highlight_end,
-                                    };
-                                    if let Some(tooltip) = hovered_hint_part.tooltip {
-                                        hover_popover::hover_at_inlay(
-                                            editor,
-                                            InlayHover {
-                                                tooltip: match tooltip {
-                                                    InlayHintLabelPartTooltip::String(text) => {
-                                                        HoverBlock {
-                                                            text,
-                                                            kind: HoverBlockKind::PlainText,
-                                                        }
-                                                    }
-                                                    InlayHintLabelPartTooltip::MarkupContent(
-                                                        content,
-                                                    ) => HoverBlock {
-                                                        text: content.value,
-                                                        kind: content.kind,
-                                                    },
-                                                },
-                                                range: highlight.clone(),
-                                            },
-                                            window,
-                                            cx,
-                                        );
-                                        hover_updated = true;
-                                    }
-                                    if let Some((language_server_id, location)) =
-                                        hovered_hint_part.location
-                                    {
-                                        if secondary_held
-                                            && !editor.has_pending_nonempty_selection()
-                                        {
-                                            go_to_definition_updated = true;
-                                            show_link_definition(
-                                                shift_held,
-                                                editor,
-                                                TriggerPoint::InlayHint(
-                                                    highlight,
-                                                    location,
-                                                    language_server_id,
-                                                ),
-                                                snapshot,
-                                                window,
-                                                cx,
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        };
-                    }
-                    ResolveState::Resolving => {}
-                }
-            }
-        }
-    }
-
-    if !go_to_definition_updated {
-        editor.hide_hovered_link(cx)
-    }
-    if !hover_updated {
-        hover_popover::hover_at(editor, None, window, cx);
+        navigate_task
     }
 }
 
@@ -489,22 +311,15 @@ pub fn show_link_definition(
     }
 
     let trigger_anchor = trigger_point.anchor();
-    let Some((buffer, buffer_position)) = editor
-        .buffer
-        .read(cx)
-        .text_anchor_for_position(*trigger_anchor, cx)
-    else {
+    let anchor = snapshot.buffer_snapshot().anchor_before(*trigger_anchor);
+    let Some(buffer) = editor.buffer().read(cx).buffer_for_anchor(anchor, cx) else {
         return;
     };
-
-    let Some((excerpt_id, _, _)) = editor
-        .buffer()
-        .read(cx)
-        .excerpt_containing(*trigger_anchor, cx)
-    else {
-        return;
-    };
-
+    let Anchor {
+        excerpt_id,
+        text_anchor,
+        ..
+    } = anchor;
     let same_kind = hovered_link_state.preferred_kind == preferred_kind
         || hovered_link_state
             .links
@@ -529,49 +344,45 @@ pub fn show_link_definition(
     let project = editor.project.clone();
     let provider = editor.semantics_provider.clone();
 
-    let snapshot = snapshot.buffer_snapshot.clone();
+    let snapshot = snapshot.buffer_snapshot().clone();
     hovered_link_state.task = Some(cx.spawn_in(window, async move |this, cx| {
         async move {
             let result = match &trigger_point {
                 TriggerPoint::Text(_) => {
-                    if let Some((url_range, url)) = find_url(&buffer, buffer_position, cx.clone()) {
+                    if let Some((url_range, url)) = find_url(&buffer, text_anchor, cx.clone()) {
                         this.read_with(cx, |_, _| {
                             let range = maybe!({
-                                let start =
-                                    snapshot.anchor_in_excerpt(excerpt_id, url_range.start)?;
-                                let end = snapshot.anchor_in_excerpt(excerpt_id, url_range.end)?;
-                                Some(RangeInEditor::Text(start..end))
+                                let range =
+                                    snapshot.anchor_range_in_excerpt(excerpt_id, url_range)?;
+                                Some(RangeInEditor::Text(range))
                             });
                             (range, vec![HoverLink::Url(url)])
                         })
                         .ok()
                     } else if let Some((filename_range, filename)) =
-                        find_file(&buffer, project.clone(), buffer_position, cx).await
+                        find_file(&buffer, project.clone(), text_anchor, cx).await
                     {
                         let range = maybe!({
-                            let start =
-                                snapshot.anchor_in_excerpt(excerpt_id, filename_range.start)?;
-                            let end = snapshot.anchor_in_excerpt(excerpt_id, filename_range.end)?;
-                            Some(RangeInEditor::Text(start..end))
+                            let range =
+                                snapshot.anchor_range_in_excerpt(excerpt_id, filename_range)?;
+                            Some(RangeInEditor::Text(range))
                         });
 
                         Some((range, vec![HoverLink::File(filename)]))
                     } else if let Some(provider) = provider {
                         let task = cx.update(|_, cx| {
-                            provider.definitions(&buffer, buffer_position, preferred_kind, cx)
+                            provider.definitions(&buffer, text_anchor, preferred_kind, cx)
                         })?;
                         if let Some(task) = task {
-                            task.await.ok().map(|definition_result| {
+                            task.await.ok().flatten().map(|definition_result| {
                                 (
                                     definition_result.iter().find_map(|link| {
                                         link.origin.as_ref().and_then(|origin| {
-                                            let start = snapshot.anchor_in_excerpt(
+                                            let range = snapshot.anchor_range_in_excerpt(
                                                 excerpt_id,
-                                                origin.range.start,
+                                                origin.range.clone(),
                                             )?;
-                                            let end = snapshot
-                                                .anchor_in_excerpt(excerpt_id, origin.range.end)?;
-                                            Some(RangeInEditor::Text(start..end))
+                                            Some(RangeInEditor::Text(range))
                                         })
                                     }),
                                     definition_result.into_iter().map(HoverLink::Text).collect(),
@@ -622,7 +433,7 @@ pub fn show_link_definition(
                                 TriggerPoint::Text(trigger_anchor) => {
                                     // If no symbol range returned from language server, use the surrounding word.
                                     let (offset_range, _) =
-                                        snapshot.surrounding_word(*trigger_anchor, false);
+                                        snapshot.surrounding_word(*trigger_anchor, None);
                                     RangeInEditor::Text(
                                         snapshot.anchor_before(offset_range.start)
                                             ..snapshot.anchor_after(offset_range.end),
@@ -657,13 +468,11 @@ pub fn show_link_definition(
 pub(crate) fn find_url(
     buffer: &Entity<language::Buffer>,
     position: text::Anchor,
-    mut cx: AsyncWindowContext,
+    cx: AsyncWindowContext,
 ) -> Option<(Range<text::Anchor>, String)> {
     const LIMIT: usize = 2048;
 
-    let Ok(snapshot) = buffer.read_with(&mut cx, |buffer, _| buffer.snapshot()) else {
-        return None;
-    };
+    let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot()).ok()?;
 
     let offset = position.to_offset(&snapshot);
     let mut token_start = offset;
@@ -719,11 +528,11 @@ pub(crate) fn find_url(
 pub(crate) fn find_url_from_range(
     buffer: &Entity<language::Buffer>,
     range: Range<text::Anchor>,
-    mut cx: AsyncWindowContext,
+    cx: AsyncWindowContext,
 ) -> Option<String> {
     const LIMIT: usize = 2048;
 
-    let Ok(snapshot) = buffer.read_with(&mut cx, |buffer, _| buffer.snapshot()) else {
+    let Ok(snapshot) = buffer.read_with(&cx, |buffer, _| buffer.snapshot()) else {
         return None;
     };
 
@@ -766,10 +575,11 @@ pub(crate) fn find_url_from_range(
     let mut finder = LinkFinder::new();
     finder.kinds(&[LinkKind::Url]);
 
-    if let Some(link) = finder.links(&text).next() {
-        if link.start() == 0 && link.end() == text.len() {
-            return Some(link.as_str().to_string());
-        }
+    if let Some(link) = finder.links(&text).next()
+        && link.start() == 0
+        && link.end() == text.len()
+    {
+        return Some(link.as_str().to_string());
     }
 
     None
@@ -794,7 +604,7 @@ pub(crate) async fn find_file(
     ) -> Option<ResolvedPath> {
         project
             .update(cx, |project, cx| {
-                project.resolve_path_in_buffer(&candidate_file_path, buffer, cx)
+                project.resolve_path_in_buffer(candidate_file_path, buffer, cx)
             })
             .ok()?
             .await
@@ -872,7 +682,7 @@ fn surrounding_filename(
         .peekable();
     while let Some(ch) = forwards.next() {
         // Skip escaped whitespace
-        if ch == '\\' && forwards.peek().map_or(false, |ch| ch.is_whitespace()) {
+        if ch == '\\' && forwards.peek().is_some_and(|ch| ch.is_whitespace()) {
             token_end += ch.len_utf8();
             let whitespace = forwards.next().unwrap();
             token_end += whitespace.len_utf8();
@@ -892,6 +702,7 @@ fn surrounding_filename(
             } else {
                 // Otherwise, we skip the quote
                 inside_quotes = true;
+                token_end += ch.len_utf8();
                 continue;
             }
         }
@@ -919,14 +730,14 @@ mod tests {
         DisplayPoint,
         display_map::ToDisplayPoint,
         editor_tests::init_test,
-        inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
+        inlays::inlay_hints::tests::{cached_hint_labels, visible_hint_labels},
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use futures::StreamExt;
     use gpui::Modifiers;
     use indoc::indoc;
-    use language::language_settings::InlayHintSettings;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
+    use settings::InlayHintSettingsContent;
     use util::{assert_set_eq, path};
     use workspace::item::Item;
 
@@ -1274,15 +1085,15 @@ mod tests {
     #[gpui::test]
     async fn test_inlay_hover_links(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                enabled: true,
-                show_value_hints: false,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                show_value_hints: Some(false),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -1350,7 +1161,7 @@ mod tests {
         cx.background_executor.run_until_parked();
         cx.update_editor(|editor, _window, cx| {
             let expected_layers = vec![hint_label.to_string()];
-            assert_eq!(expected_layers, cached_hint_labels(editor));
+            assert_eq!(expected_layers, cached_hint_labels(editor, cx));
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
         });
 
@@ -1391,7 +1202,7 @@ mod tests {
             let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
             let expected_highlight = InlayHighlight {
                 inlay: InlayId::Hint(0),
-                inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
+                inlay_position: buffer_snapshot.anchor_after(inlay_range.start),
                 range: 0..hint_label.len(),
             };
             assert_set_eq!(actual_highlights, vec![&expected_highlight]);
@@ -1539,6 +1350,10 @@ mod tests {
             ("'fˇile.txt'", Some("file.txt")),
             ("ˇ'file.txt'", Some("file.txt")),
             ("ˇ'fi\\ le.txt'", Some("fi le.txt")),
+            // Quoted multibyte characters
+            (" ˇ\"常\"", Some("常")),
+            (" \"ˇ常\"", Some("常")),
+            ("ˇ\"常\"", Some("常")),
         ];
 
         for (input, expected) in test_cases {
@@ -1836,6 +1651,44 @@ mod tests {
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
 
         // No highlight
+        cx.update_editor(|editor, window, cx| {
+            assert!(
+                editor
+                    .snapshot(window, cx)
+                    .text_highlight_ranges::<HoveredLinkState>()
+                    .unwrap_or_default()
+                    .1
+                    .is_empty()
+            );
+        });
+
+        // Does not open the directory
+        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        cx.update_workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 1));
+    }
+
+    #[gpui::test]
+    async fn test_hover_unicode(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            You can't open ˇ\"🤩\" because it's an emoji.
+        "});
+
+        // File does not exist
+        let screen_coord = cx.pixel_position(indoc! {"
+            You can't open ˇ\"🤩\" because it's an emoji.
+        "});
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+
+        // No highlight, does not panic...
         cx.update_editor(|editor, window, cx| {
             assert!(
                 editor

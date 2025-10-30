@@ -21,13 +21,10 @@ impl Global for GlobalLanguageModelRegistry {}
 pub enum ConfigurationError {
     #[error("Configure at least one LLM provider to start using the panel.")]
     NoProvider,
-    #[error("LLM Provider is not configured or does not support the configured model.")]
+    #[error("LLM provider is not configured or does not support the configured model.")]
     ModelNotFound,
     #[error("{} LLM provider is not configured.", .0.name().0)]
     ProviderNotAuthenticated(Arc<dyn LanguageModelProvider>),
-    #[error("Using the {} LLM provider requires accepting the Terms of Service.",
-    .0.name().0)]
-    ProviderPendingTermsAcceptance(Arc<dyn LanguageModelProvider>),
 }
 
 impl std::fmt::Debug for ConfigurationError {
@@ -37,9 +34,6 @@ impl std::fmt::Debug for ConfigurationError {
             Self::ModelNotFound => write!(f, "ModelNotFound"),
             Self::ProviderNotAuthenticated(provider) => {
                 write!(f, "ProviderNotAuthenticated({})", provider.id())
-            }
-            Self::ProviderPendingTermsAcceptance(provider) => {
-                write!(f, "ProviderPendingTermsAcceptance({})", provider.id())
             }
         }
     }
@@ -107,7 +101,7 @@ pub enum Event {
     InlineAssistantModelChanged,
     CommitMessageModelChanged,
     ThreadSummaryModelChanged,
-    ProviderStateChanged,
+    ProviderStateChanged(LanguageModelProviderId),
     AddedProvider(LanguageModelProviderId),
     RemovedProvider(LanguageModelProviderId),
 }
@@ -124,14 +118,14 @@ impl LanguageModelRegistry {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn test(cx: &mut App) -> crate::fake_provider::FakeLanguageModelProvider {
-        let fake_provider = crate::fake_provider::FakeLanguageModelProvider::default();
+    pub fn test(cx: &mut App) -> Arc<crate::fake_provider::FakeLanguageModelProvider> {
+        let fake_provider = Arc::new(crate::fake_provider::FakeLanguageModelProvider::default());
         let registry = cx.new(|cx| {
             let mut registry = Self::default();
             registry.register_provider(fake_provider.clone(), cx);
             let model = fake_provider.provided_models(cx)[0].clone();
             let configured_model = ConfiguredModel {
-                provider: Arc::new(fake_provider.clone()),
+                provider: fake_provider.clone(),
                 model,
             };
             registry.set_default_model(Some(configured_model), cx);
@@ -143,19 +137,22 @@ impl LanguageModelRegistry {
 
     pub fn register_provider<T: LanguageModelProvider + LanguageModelProviderState>(
         &mut self,
-        provider: T,
+        provider: Arc<T>,
         cx: &mut Context<Self>,
     ) {
         let id = provider.id();
 
-        let subscription = provider.subscribe(cx, |_, cx| {
-            cx.emit(Event::ProviderStateChanged);
+        let subscription = provider.subscribe(cx, {
+            let id = id.clone();
+            move |_, cx| {
+                cx.emit(Event::ProviderStateChanged(id.clone()));
+            }
         });
         if let Some(subscription) = subscription {
             subscription.detach();
         }
 
-        self.providers.insert(id.clone(), Arc::new(provider));
+        self.providers.insert(id.clone(), provider);
         cx.emit(Event::AddedProvider(id));
     }
 
@@ -197,12 +194,6 @@ impl LanguageModelRegistry {
             return Some(ConfigurationError::ProviderNotAuthenticated(model.provider));
         }
 
-        if model.provider.must_accept_terms(cx) {
-            return Some(ConfigurationError::ProviderPendingTermsAcceptance(
-                model.provider,
-            ));
-        }
-
         None
     }
 
@@ -217,6 +208,7 @@ impl LanguageModelRegistry {
     ) -> impl Iterator<Item = Arc<dyn LanguageModel>> + 'a {
         self.providers
             .values()
+            .filter(|provider| provider.is_authenticated(cx))
             .flat_map(|provider| provider.provided_models(cx))
     }
 
@@ -403,7 +395,7 @@ mod tests {
     fn test_register_providers(cx: &mut App) {
         let registry = cx.new(|_| LanguageModelRegistry::default());
 
-        let provider = FakeLanguageModelProvider::default();
+        let provider = Arc::new(FakeLanguageModelProvider::default());
         registry.update(cx, |registry, cx| {
             registry.register_provider(provider.clone(), cx);
         });

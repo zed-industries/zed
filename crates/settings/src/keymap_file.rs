@@ -3,7 +3,8 @@ use collections::{BTreeMap, HashMap, IndexMap};
 use fs::Fs;
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
-    KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, Keystroke, NoAction, SharedString,
+    KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, KeybindingKeystroke, Keystroke,
+    NoAction, SharedString, register_action,
 };
 use schemars::{JsonSchema, json_schema};
 use serde::Deserialize;
@@ -16,8 +17,9 @@ use util::{
     markdown::{MarkdownEscaped, MarkdownInlineCode, MarkdownString},
 };
 
-use crate::{
-    SettingsAssets, append_top_level_array_value_in_json_text, parse_json_with_comments,
+use crate::SettingsAssets;
+use settings_json::{
+    append_top_level_array_value_in_json_text, parse_json_with_comments,
     replace_top_level_array_value_in_json_text,
 };
 
@@ -149,6 +151,9 @@ pub enum KeymapFileLoadResult {
 
 impl KeymapFile {
     pub fn parse(content: &str) -> anyhow::Result<Self> {
+        if content.trim().is_empty() {
+            return Ok(Self(Vec::new()));
+        }
         parse_json_with_comments::<Self>(content)
     }
 
@@ -176,7 +181,6 @@ impl KeymapFile {
         }
     }
 
-    #[cfg(feature = "test-support")]
     pub fn load_asset_allow_partial_failure(
         asset_path: &str,
         cx: &App,
@@ -211,14 +215,6 @@ impl KeymapFile {
     }
 
     pub fn load(content: &str, cx: &App) -> KeymapFileLoadResult {
-        let key_equivalents =
-            crate::key_equivalents::get_key_equivalents(cx.keyboard_layout().id());
-
-        if content.is_empty() {
-            return KeymapFileLoadResult::Success {
-                key_bindings: Vec::new(),
-            };
-        }
         let keymap_file = match Self::parse(content) {
             Ok(keymap_file) => keymap_file,
             Err(error) => {
@@ -255,12 +251,6 @@ impl KeymapFile {
                 }
             };
 
-            let key_equivalents = if *use_key_equivalents {
-                key_equivalents.as_ref()
-            } else {
-                None
-            };
-
             let mut section_errors = String::new();
 
             if !unrecognized_fields.is_empty() {
@@ -278,7 +268,7 @@ impl KeymapFile {
                         keystrokes,
                         action,
                         context_predicate.clone(),
-                        key_equivalents,
+                        *use_key_equivalents,
                         cx,
                     );
                     match result {
@@ -336,10 +326,43 @@ impl KeymapFile {
         keystrokes: &str,
         action: &KeymapAction,
         context: Option<Rc<KeyBindingContextPredicate>>,
-        key_equivalents: Option<&HashMap<char, char>>,
+        use_key_equivalents: bool,
         cx: &App,
     ) -> std::result::Result<KeyBinding, String> {
-        let (build_result, action_input_string) = match &action.0 {
+        let (action, action_input_string) = Self::build_keymap_action(action, cx)?;
+
+        let key_binding = match KeyBinding::load(
+            keystrokes,
+            action,
+            context,
+            use_key_equivalents,
+            action_input_string.map(SharedString::from),
+            cx.keyboard_mapper().as_ref(),
+        ) {
+            Ok(key_binding) => key_binding,
+            Err(InvalidKeystrokeError { keystroke }) => {
+                return Err(format!(
+                    "invalid keystroke {}. {}",
+                    MarkdownInlineCode(&format!("\"{}\"", &keystroke)),
+                    KEYSTROKE_PARSE_EXPECTED_MESSAGE
+                ));
+            }
+        };
+
+        if let Some(validator) = KEY_BINDING_VALIDATORS.get(&key_binding.action().type_id()) {
+            match validator.validate(&key_binding) {
+                Ok(()) => Ok(key_binding),
+                Err(error) => Err(error.0),
+            }
+        } else {
+            Ok(key_binding)
+        }
+    }
+
+    pub fn parse_action(
+        action: &KeymapAction,
+    ) -> Result<Option<(&String, Option<&Value>)>, String> {
+        let name_and_input = match &action.0 {
             Value::Array(items) => {
                 if items.len() != 2 {
                     return Err(format!(
@@ -355,15 +378,10 @@ impl KeymapFile {
                         MarkdownInlineCode(&action.0.to_string())
                     ));
                 };
-                let action_input = items[1].clone();
-                let action_input_string = action_input.to_string();
-                (
-                    cx.build_action(&name, Some(action_input)),
-                    Some(action_input_string),
-                )
+                Some((name, Some(&items[1])))
             }
-            Value::String(name) => (cx.build_action(&name, None), None),
-            Value::Null => (Ok(NoAction.boxed_clone()), None),
+            Value::String(name) => Some((name, None)),
+            Value::Null => None,
             _ => {
                 return Err(format!(
                     "expected two-element array of `[name, input]`. \
@@ -371,6 +389,33 @@ impl KeymapFile {
                     MarkdownInlineCode(&action.0.to_string())
                 ));
             }
+        };
+        Ok(name_and_input)
+    }
+
+    fn build_keymap_action(
+        action: &KeymapAction,
+        cx: &App,
+    ) -> std::result::Result<(Box<dyn Action>, Option<String>), String> {
+        let (build_result, action_input_string) = match Self::parse_action(action)? {
+            Some((name, action_input)) if name.as_str() == ActionSequence::name_for_type() => {
+                match action_input {
+                    Some(action_input) => (
+                        ActionSequence::build_sequence(action_input.clone(), cx),
+                        None,
+                    ),
+                    None => (Err(ActionSequence::expected_array_error()), None),
+                }
+            }
+            Some((name, Some(action_input))) => {
+                let action_input_string = action_input.to_string();
+                (
+                    cx.build_action(name, Some(action_input.clone())),
+                    Some(action_input_string),
+                )
+            }
+            Some((name, None)) => (cx.build_action(name, None), None),
+            None => (Ok(NoAction.boxed_clone()), None),
         };
 
         let action = match build_result {
@@ -400,31 +445,7 @@ impl KeymapFile {
             },
         };
 
-        let key_binding = match KeyBinding::load(
-            keystrokes,
-            action,
-            context,
-            key_equivalents,
-            action_input_string.map(SharedString::from),
-        ) {
-            Ok(key_binding) => key_binding,
-            Err(InvalidKeystrokeError { keystroke }) => {
-                return Err(format!(
-                    "invalid keystroke {}. {}",
-                    MarkdownInlineCode(&format!("\"{}\"", &keystroke)),
-                    KEYSTROKE_PARSE_EXPECTED_MESSAGE
-                ));
-            }
-        };
-
-        if let Some(validator) = KEY_BINDING_VALIDATORS.get(&key_binding.action().type_id()) {
-            match validator.validate(&key_binding) {
-                Ok(()) => Ok(key_binding),
-                Err(error) => Err(error.0),
-            }
-        } else {
-            Ok(key_binding)
-        }
+        Ok((action, action_input_string))
     }
 
     /// Creates a JSON schema generator, suitable for generating json schemas
@@ -441,11 +462,13 @@ impl KeymapFile {
         let mut generator = Self::action_schema_generator();
 
         let action_schemas = cx.action_schemas(&mut generator);
+        let action_documentation = cx.action_documentation();
         let deprecations = cx.deprecated_actions_to_preferred_actions();
         let deprecation_messages = cx.action_deprecation_messages();
         KeymapFile::generate_json_schema(
             generator,
             action_schemas,
+            action_documentation,
             deprecations,
             deprecation_messages,
         )
@@ -454,6 +477,7 @@ impl KeymapFile {
     fn generate_json_schema(
         mut generator: schemars::SchemaGenerator,
         action_schemas: Vec<(&'static str, Option<schemars::Schema>)>,
+        action_documentation: &HashMap<&'static str, &'static str>,
         deprecations: &HashMap<&'static str, &'static str>,
         deprecation_messages: &HashMap<&'static str, &'static str>,
     ) -> serde_json::Value {
@@ -470,8 +494,11 @@ impl KeymapFile {
             add_deprecation(schema, format!("Deprecated, use {new_name}"));
         }
 
-        fn add_description(schema: &mut schemars::Schema, description: String) {
-            schema.insert("description".to_string(), Value::String(description));
+        fn add_description(schema: &mut schemars::Schema, description: &str) {
+            schema.insert(
+                "description".to_string(),
+                Value::String(description.to_string()),
+            );
         }
 
         let empty_object = json_schema!({
@@ -483,41 +510,26 @@ impl KeymapFile {
         //
         // In the case of the array validations, it would even provide an error saying that the name
         // must match the name of the first alternative.
-        let mut plain_action = json_schema!({
+        let mut empty_action_name = json_schema!({
             "type": "string",
             "const": ""
         });
         let no_action_message = "No action named this.";
-        add_description(&mut plain_action, no_action_message.to_owned());
-        add_deprecation(&mut plain_action, no_action_message.to_owned());
-
-        let mut matches_action_name = json_schema!({
-            "const": ""
-        });
-        let no_action_message_input = "No action named this that takes input.";
-        add_description(&mut matches_action_name, no_action_message_input.to_owned());
-        add_deprecation(&mut matches_action_name, no_action_message_input.to_owned());
-
-        let action_with_input = json_schema!({
+        add_description(&mut empty_action_name, no_action_message);
+        add_deprecation(&mut empty_action_name, no_action_message.to_string());
+        let empty_action_name_with_input = json_schema!({
             "type": "array",
             "items": [
-                matches_action_name,
+                empty_action_name,
                 true
             ],
             "minItems": 2,
             "maxItems": 2
         });
-        let mut keymap_action_alternatives = vec![plain_action, action_with_input];
+        let mut keymap_action_alternatives = vec![empty_action_name, empty_action_name_with_input];
 
+        let mut empty_schema_action_names = vec![];
         for (name, action_schema) in action_schemas.into_iter() {
-            let description = action_schema.as_ref().and_then(|schema| {
-                schema
-                    .as_object()
-                    .and_then(|obj| obj.get("description"))
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            });
-
             let deprecation = if name == NoAction.name() {
                 Some("null")
             } else {
@@ -534,8 +546,9 @@ impl KeymapFile {
             } else if let Some(new_name) = deprecation {
                 add_deprecation_preferred_name(&mut plain_action, new_name);
             }
-            if let Some(desc) = description.clone() {
-                add_description(&mut plain_action, desc);
+            let description = action_documentation.get(name);
+            if let Some(description) = &description {
+                add_description(&mut plain_action, description);
             }
             keymap_action_alternatives.push(plain_action);
 
@@ -543,28 +556,50 @@ impl KeymapFile {
             //
             // When a struct with no deserializable fields is added by deriving `Action`, an empty
             // object schema is produced. The action should be invoked without data in this case.
-            if let Some(schema) = action_schema {
-                if schema != empty_object {
-                    let mut matches_action_name = json_schema!({
-                        "const": name
-                    });
-                    if let Some(desc) = description.clone() {
-                        add_description(&mut matches_action_name, desc);
-                    }
-                    if let Some(message) = deprecation_messages.get(name) {
-                        add_deprecation(&mut matches_action_name, message.to_string());
-                    } else if let Some(new_name) = deprecation {
-                        add_deprecation_preferred_name(&mut matches_action_name, new_name);
-                    }
-                    let action_with_input = json_schema!({
-                        "type": "array",
-                        "items": [matches_action_name, schema],
-                        "minItems": 2,
-                        "maxItems": 2
-                    });
-                    keymap_action_alternatives.push(action_with_input);
+            if let Some(schema) = action_schema
+                && schema != empty_object
+            {
+                let mut matches_action_name = json_schema!({
+                    "const": name
+                });
+                if let Some(description) = &description {
+                    add_description(&mut matches_action_name, description);
                 }
+                if let Some(message) = deprecation_messages.get(name) {
+                    add_deprecation(&mut matches_action_name, message.to_string());
+                } else if let Some(new_name) = deprecation {
+                    add_deprecation_preferred_name(&mut matches_action_name, new_name);
+                }
+                let action_with_input = json_schema!({
+                    "type": "array",
+                    "items": [matches_action_name, schema],
+                    "minItems": 2,
+                    "maxItems": 2
+                });
+                keymap_action_alternatives.push(action_with_input);
+            } else {
+                empty_schema_action_names.push(name);
             }
+        }
+
+        if !empty_schema_action_names.is_empty() {
+            let action_names = json_schema!({ "enum": empty_schema_action_names });
+            let no_properties_allowed = json_schema!({
+                "type": "object",
+                "additionalProperties": false
+            });
+            let mut actions_with_empty_input = json_schema!({
+                "type": "array",
+                "items": [action_names, no_properties_allowed],
+                "minItems": 2,
+                "maxItems": 2
+            });
+            add_deprecation(
+                &mut actions_with_empty_input,
+                "This action does not take input - just the action name string should be used."
+                    .to_string(),
+            );
+            keymap_action_alternatives.push(actions_with_empty_input);
         }
 
         // Placing null first causes json-language-server to default assuming actions should be
@@ -593,10 +628,10 @@ impl KeymapFile {
         match fs.load(paths::keymap_file()).await {
             result @ Ok(_) => result,
             Err(err) => {
-                if let Some(e) = err.downcast_ref::<std::io::Error>() {
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        return Ok(crate::initial_keymap_content().to_string());
-                    }
+                if let Some(e) = err.downcast_ref::<std::io::Error>()
+                    && e.kind() == std::io::ErrorKind::NotFound
+                {
+                    return Ok(crate::initial_keymap_content().to_string());
                 }
                 Err(err)
             }
@@ -607,6 +642,7 @@ impl KeymapFile {
         mut operation: KeybindUpdateOperation<'a>,
         mut keymap_contents: String,
         tab_size: usize,
+        keyboard_mapper: &dyn gpui::PlatformKeyboardMapper,
     ) -> Result<String> {
         match operation {
             // if trying to replace a keybinding that is not user-defined, treat it as an add operation
@@ -646,14 +682,14 @@ impl KeymapFile {
                 .action_value()
                 .context("Failed to generate target action JSON value")?;
             let Some((index, keystrokes_str)) =
-                find_binding(&keymap, &target, &target_action_value)
+                find_binding(&keymap, &target, &target_action_value, keyboard_mapper)
             else {
                 anyhow::bail!("Failed to find keybinding to remove");
             };
             let is_only_binding = keymap.0[index]
                 .bindings
                 .as_ref()
-                .map_or(true, |bindings| bindings.len() == 1);
+                .is_none_or(|bindings| bindings.len() == 1);
             let key_path: &[&str] = if is_only_binding {
                 &[]
             } else {
@@ -666,8 +702,7 @@ impl KeymapFile {
                 None,
                 index,
                 tab_size,
-            )
-            .context("Failed to remove keybinding")?;
+            );
             keymap_contents.replace_range(replace_range, &replace_value);
             return Ok(keymap_contents);
         }
@@ -681,56 +716,50 @@ impl KeymapFile {
                 .context("Failed to generate source action JSON value")?;
 
             if let Some((index, keystrokes_str)) =
-                find_binding(&keymap, &target, &target_action_value)
+                find_binding(&keymap, &target, &target_action_value, keyboard_mapper)
             {
                 if target.context == source.context {
                     // if we are only changing the keybinding (common case)
                     // not the context, etc. Then just update the binding in place
 
-                    let (replace_range, replace_value) =
-                        replace_top_level_array_value_in_json_text(
-                            &keymap_contents,
-                            &["bindings", keystrokes_str],
-                            Some(&source_action_value),
-                            Some(&source.keystrokes_unparsed()),
-                            index,
-                            tab_size,
-                        )
-                        .context("Failed to replace keybinding")?;
+                    let (replace_range, replace_value) = replace_top_level_array_value_in_json_text(
+                        &keymap_contents,
+                        &["bindings", keystrokes_str],
+                        Some(&source_action_value),
+                        Some(&source.keystrokes_unparsed()),
+                        index,
+                        tab_size,
+                    );
                     keymap_contents.replace_range(replace_range, &replace_value);
 
                     return Ok(keymap_contents);
                 } else if keymap.0[index]
                     .bindings
                     .as_ref()
-                    .map_or(true, |bindings| bindings.len() == 1)
+                    .is_none_or(|bindings| bindings.len() == 1)
                 {
                     // if we are replacing the only binding in the section,
                     // just update the section in place, updating the context
                     // and the binding
 
-                    let (replace_range, replace_value) =
-                        replace_top_level_array_value_in_json_text(
-                            &keymap_contents,
-                            &["bindings", keystrokes_str],
-                            Some(&source_action_value),
-                            Some(&source.keystrokes_unparsed()),
-                            index,
-                            tab_size,
-                        )
-                        .context("Failed to replace keybinding")?;
+                    let (replace_range, replace_value) = replace_top_level_array_value_in_json_text(
+                        &keymap_contents,
+                        &["bindings", keystrokes_str],
+                        Some(&source_action_value),
+                        Some(&source.keystrokes_unparsed()),
+                        index,
+                        tab_size,
+                    );
                     keymap_contents.replace_range(replace_range, &replace_value);
 
-                    let (replace_range, replace_value) =
-                        replace_top_level_array_value_in_json_text(
-                            &keymap_contents,
-                            &["context"],
-                            source.context.map(Into::into).as_ref(),
-                            None,
-                            index,
-                            tab_size,
-                        )
-                        .context("Failed to replace keybinding")?;
+                    let (replace_range, replace_value) = replace_top_level_array_value_in_json_text(
+                        &keymap_contents,
+                        &["context"],
+                        source.context.map(Into::into).as_ref(),
+                        None,
+                        index,
+                        tab_size,
+                    );
                     keymap_contents.replace_range(replace_range, &replace_value);
                     return Ok(keymap_contents);
                 } else {
@@ -739,16 +768,14 @@ impl KeymapFile {
                     // section, then treat this operation as an add operation of the
                     // new binding with the updated context.
 
-                    let (replace_range, replace_value) =
-                        replace_top_level_array_value_in_json_text(
-                            &keymap_contents,
-                            &["bindings", keystrokes_str],
-                            None,
-                            None,
-                            index,
-                            tab_size,
-                        )
-                        .context("Failed to replace keybinding")?;
+                    let (replace_range, replace_value) = replace_top_level_array_value_in_json_text(
+                        &keymap_contents,
+                        &["bindings", keystrokes_str],
+                        None,
+                        None,
+                        index,
+                        tab_size,
+                    );
                     keymap_contents.replace_range(replace_range, &replace_value);
                     operation = KeybindUpdateOperation::Add {
                         source,
@@ -781,7 +808,7 @@ impl KeymapFile {
             }
             let use_key_equivalents = from.and_then(|from| {
                 let action_value = from.action_value().context("Failed to serialize action value. `use_key_equivalents` on new keybinding may be incorrect.").log_err()?;
-                let (index, _) = find_binding(&keymap, &from, &action_value)?;
+                let (index, _) = find_binding(&keymap, &from, &action_value, keyboard_mapper)?;
                 Some(keymap.0[index].use_key_equivalents)
             }).unwrap_or(false);
             if use_key_equivalents {
@@ -799,7 +826,7 @@ impl KeymapFile {
                 &keymap_contents,
                 &value.into(),
                 tab_size,
-            )?;
+            );
             keymap_contents.replace_range(replace_range, &replace_value);
         }
         return Ok(keymap_contents);
@@ -808,6 +835,7 @@ impl KeymapFile {
             keymap: &'b KeymapFile,
             target: &KeybindUpdateTarget<'a>,
             target_action_value: &Value,
+            keyboard_mapper: &dyn gpui::PlatformKeyboardMapper,
         ) -> Option<(usize, &'b str)> {
             let target_context_parsed =
                 KeyBindingContextPredicate::parse(target.context.unwrap_or("")).ok();
@@ -823,8 +851,15 @@ impl KeymapFile {
                 for (keystrokes_str, action) in bindings {
                     let Ok(keystrokes) = keystrokes_str
                         .split_whitespace()
-                        .map(Keystroke::parse)
-                        .collect::<Result<Vec<_>, _>>()
+                        .map(|source| {
+                            let keystroke = Keystroke::parse(source)?;
+                            Ok(KeybindingKeystroke::new_with_mapper(
+                                keystroke,
+                                false,
+                                keyboard_mapper,
+                            ))
+                        })
+                        .collect::<Result<Vec<_>, InvalidKeystrokeError>>()
                     else {
                         continue;
                     };
@@ -832,14 +867,14 @@ impl KeymapFile {
                         || !keystrokes
                             .iter()
                             .zip(target.keystrokes)
-                            .all(|(a, b)| a.should_match(b))
+                            .all(|(a, b)| a.inner().should_match(b))
                     {
                         continue;
                     }
                     if &action.0 != target_action_value {
                         continue;
                     }
-                    return Some((index, &keystrokes_str));
+                    return Some((index, keystrokes_str));
                 }
             }
             None
@@ -847,7 +882,7 @@ impl KeymapFile {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum KeybindUpdateOperation<'a> {
     Replace {
         /// Describes the keybind to create
@@ -916,7 +951,7 @@ impl<'a> KeybindUpdateOperation<'a> {
 #[derive(Debug, Clone)]
 pub struct KeybindUpdateTarget<'a> {
     pub context: Option<&'a str>,
-    pub keystrokes: &'a [Keystroke],
+    pub keystrokes: &'a [KeybindingKeystroke],
     pub action_name: &'a str,
     pub action_arguments: Option<&'a str>,
 }
@@ -928,19 +963,22 @@ impl<'a> KeybindUpdateTarget<'a> {
         }
         let action_name: Value = self.action_name.into();
         let value = match self.action_arguments {
-            Some(args) => {
+            Some(args) if !args.is_empty() => {
                 let args = serde_json::from_str::<Value>(args)
                     .context("Failed to parse action arguments as JSON")?;
                 serde_json::json!([action_name, args])
             }
-            None => action_name,
+            _ => action_name,
         };
-        return Ok(value);
+        Ok(value)
     }
 
     fn keystrokes_unparsed(&self) -> String {
         let mut keystrokes = String::with_capacity(self.keystrokes.len() * 8);
         for keystroke in self.keystrokes {
+            // The reason use `keystroke.unparse()` instead of `keystroke.inner.unparse()`
+            // here is that, we want the user to use `ctrl-shift-4` instead of `ctrl-$`
+            // by default on Windows.
             keystrokes.push_str(&keystroke.unparse());
             keystrokes.push(' ');
         }
@@ -959,7 +997,7 @@ impl<'a> KeybindUpdateTarget<'a> {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum KeybindSource {
     User,
     Vim,
@@ -1018,9 +1056,122 @@ impl From<KeybindSource> for KeyBindingMetaIndex {
     }
 }
 
+/// Runs a sequence of actions. Does not wait for asynchronous actions to complete before running
+/// the next action. Currently only works in workspace windows.
+///
+/// This action is special-cased in keymap parsing to allow it to access `App` while parsing, so
+/// that it can parse its input actions.
+pub struct ActionSequence(pub Vec<Box<dyn Action>>);
+
+register_action!(ActionSequence);
+
+impl ActionSequence {
+    fn build_sequence(
+        value: Value,
+        cx: &App,
+    ) -> std::result::Result<Box<dyn Action>, ActionBuildError> {
+        match value {
+            Value::Array(values) => {
+                let actions = values
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, action)| {
+                        match KeymapFile::build_keymap_action(&KeymapAction(action), cx) {
+                            Ok((action, _)) => Ok(action),
+                            Err(err) => {
+                                return Err(ActionBuildError::BuildError {
+                                    name: Self::name_for_type().to_string(),
+                                    error: anyhow::anyhow!(
+                                        "error at sequence index {index}: {err}"
+                                    ),
+                                });
+                            }
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Box::new(Self(actions)))
+            }
+            _ => Err(Self::expected_array_error()),
+        }
+    }
+
+    fn expected_array_error() -> ActionBuildError {
+        ActionBuildError::BuildError {
+            name: Self::name_for_type().to_string(),
+            error: anyhow::anyhow!("expected array of actions"),
+        }
+    }
+}
+
+impl Action for ActionSequence {
+    fn name(&self) -> &'static str {
+        Self::name_for_type()
+    }
+
+    fn name_for_type() -> &'static str
+    where
+        Self: Sized,
+    {
+        "action::Sequence"
+    }
+
+    fn partial_eq(&self, action: &dyn Action) -> bool {
+        action
+            .as_any()
+            .downcast_ref::<Self>()
+            .map_or(false, |other| {
+                self.0.len() == other.0.len()
+                    && self
+                        .0
+                        .iter()
+                        .zip(other.0.iter())
+                        .all(|(a, b)| a.partial_eq(b.as_ref()))
+            })
+    }
+
+    fn boxed_clone(&self) -> Box<dyn Action> {
+        Box::new(ActionSequence(
+            self.0
+                .iter()
+                .map(|action| action.boxed_clone())
+                .collect::<Vec<_>>(),
+        ))
+    }
+
+    fn build(_value: Value) -> Result<Box<dyn Action>> {
+        Err(anyhow::anyhow!(
+            "{} cannot be built directly",
+            Self::name_for_type()
+        ))
+    }
+
+    fn action_json_schema(generator: &mut schemars::SchemaGenerator) -> Option<schemars::Schema> {
+        let keymap_action_schema = generator.subschema_for::<KeymapAction>();
+        Some(json_schema!({
+            "type": "array",
+            "items": keymap_action_schema
+        }))
+    }
+
+    fn deprecated_aliases() -> &'static [&'static str] {
+        &[]
+    }
+
+    fn deprecation_message() -> Option<&'static str> {
+        None
+    }
+
+    fn documentation() -> Option<&'static str> {
+        Some(
+            "Runs a sequence of actions.\n\n\
+            NOTE: This does **not** wait for asynchronous actions to complete before running the next action.",
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use gpui::Keystroke;
+    use gpui::{DummyKeyboardMapper, KeybindingKeystroke, Keystroke};
     use unindent::Unindent;
 
     use crate::{
@@ -1049,17 +1200,28 @@ mod tests {
         operation: KeybindUpdateOperation,
         expected: impl ToString,
     ) {
-        let result = KeymapFile::update_keybinding(operation, input.to_string(), 4)
-            .expect("Update succeeded");
+        let result = KeymapFile::update_keybinding(
+            operation,
+            input.to_string(),
+            4,
+            &gpui::DummyKeyboardMapper,
+        )
+        .expect("Update succeeded");
         pretty_assertions::assert_eq!(expected.to_string(), result);
     }
 
     #[track_caller]
-    fn parse_keystrokes(keystrokes: &str) -> Vec<Keystroke> {
-        return keystrokes
+    fn parse_keystrokes(keystrokes: &str) -> Vec<KeybindingKeystroke> {
+        keystrokes
             .split(' ')
-            .map(|s| Keystroke::parse(s).expect("Keystrokes valid"))
-            .collect();
+            .map(|s| {
+                KeybindingKeystroke::new_with_mapper(
+                    Keystroke::parse(s).expect("Keystrokes valid"),
+                    false,
+                    &DummyKeyboardMapper,
+                )
+            })
+            .collect()
     }
 
     #[test]
@@ -1073,6 +1235,42 @@ mod tests {
                 action_name: "zed::SomeAction",
                 context: None,
                 action_arguments: None,
+            }),
+            r#"[
+                {
+                    "bindings": {
+                        "ctrl-a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            "[]",
+            KeybindUpdateOperation::add(KeybindUpdateTarget {
+                keystrokes: &parse_keystrokes("\\ a"),
+                action_name: "zed::SomeAction",
+                context: None,
+                action_arguments: None,
+            }),
+            r#"[
+                {
+                    "bindings": {
+                        "\\ a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            "[]",
+            KeybindUpdateOperation::add(KeybindUpdateTarget {
+                keystrokes: &parse_keystrokes("ctrl-a"),
+                action_name: "zed::SomeAction",
+                context: None,
+                action_arguments: Some(""),
             }),
             r#"[
                 {
@@ -1272,6 +1470,79 @@ mod tests {
             r#"[
                 {
                     "bindings": {
+                        "\\ a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Replace {
+                target: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("\\ a"),
+                    action_name: "zed::SomeAction",
+                    context: None,
+                    action_arguments: None,
+                },
+                source: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("\\ b"),
+                    action_name: "zed::SomeOtherAction",
+                    context: None,
+                    action_arguments: Some(r#"{"foo": "bar"}"#),
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"[
+                {
+                    "bindings": {
+                        "\\ b": [
+                            "zed::SomeOtherAction",
+                            {
+                                "foo": "bar"
+                            }
+                        ]
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "bindings": {
+                        "\\ a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Replace {
+                target: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("\\ a"),
+                    action_name: "zed::SomeAction",
+                    context: None,
+                    action_arguments: None,
+                },
+                source: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("\\ a"),
+                    action_name: "zed::SomeAction",
+                    context: None,
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"[
+                {
+                    "bindings": {
+                        "\\ a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "bindings": {
                         "ctrl-a": "zed::SomeAction"
                     }
                 }
@@ -1444,6 +1715,37 @@ mod tests {
                 target: KeybindUpdateTarget {
                     context: Some("SomeContext"),
                     keystrokes: &parse_keystrokes("a"),
+                    action_name: "foo::bar",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "c": "foo::baz",
+                    }
+                },
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "\\ a": "foo::bar",
+                        "c": "foo::baz",
+                    }
+                },
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Remove {
+                target: KeybindUpdateTarget {
+                    context: Some("SomeContext"),
+                    keystrokes: &parse_keystrokes("\\ a"),
                     action_name: "foo::bar",
                     action_arguments: None,
                 },

@@ -43,7 +43,7 @@ impl Session {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    // #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> Self {
         Self {
             session_id: Uuid::new_v4().to_string(),
@@ -70,11 +70,11 @@ impl AppSession {
         let _serialization_task = cx.spawn(async move |_, cx| {
             let mut current_window_stack = Vec::new();
             loop {
-                if let Some(windows) = cx.update(|cx| window_stack(cx)).ok().flatten() {
-                    if windows != current_window_stack {
-                        store_window_stack(&windows).await;
-                        current_window_stack = windows;
-                    }
+                if let Some(windows) = cx.update(|cx| window_stack(cx)).ok().flatten()
+                    && windows != current_window_stack
+                {
+                    store_window_stack(&windows).await;
+                    current_window_stack = windows;
                 }
 
                 cx.background_executor()

@@ -1,5 +1,5 @@
 use crate::{FakeFs, FakeFsEntry, Fs};
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use collections::{HashMap, HashSet};
 use futures::future::{self, BoxFuture, join_all};
 use git::{
@@ -9,14 +9,24 @@ use git::{
         AskPassDelegate, Branch, CommitDetails, CommitOptions, FetchOptions, GitRepository,
         GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode,
     },
-    status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
+    status::{
+        DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
+        UnmergedStatus,
+    },
 };
-use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task};
+use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task, TaskLabel};
 use ignore::gitignore::GitignoreBuilder;
 use parking_lot::Mutex;
 use rope::Rope;
 use smol::future::FutureExt as _;
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{Arc, LazyLock},
+};
+use util::{paths::PathStyle, rel_path::RelPath};
+
+pub static LOAD_INDEX_TEXT_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
+pub static LOAD_HEAD_TEXT_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
 
 #[derive(Clone)]
 pub struct FakeGitRepository {
@@ -34,6 +44,9 @@ pub struct FakeGitRepositoryState {
     pub unmerged_paths: HashMap<RepoPath, UnmergedStatus>,
     pub head_contents: HashMap<RepoPath, String>,
     pub index_contents: HashMap<RepoPath, String>,
+    // everything in commit contents is in oids
+    pub merge_base_contents: HashMap<RepoPath, Oid>,
+    pub oids: HashMap<Oid, String>,
     pub blames: HashMap<RepoPath, Blame>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
@@ -53,6 +66,8 @@ impl FakeGitRepositoryState {
             branches: Default::default(),
             simulated_index_write_error_message: Default::default(),
             refs: HashMap::from_iter([("HEAD".into(), "abc".into())]),
+            merge_base_contents: Default::default(),
+            oids: Default::default(),
         }
     }
 }
@@ -78,32 +93,35 @@ impl GitRepository for FakeGitRepository {
     fn reload_index(&self) {}
 
     fn load_index_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
-        async {
-            self.with_state_async(false, move |state| {
-                state
-                    .index_contents
-                    .get(path.as_ref())
-                    .context("not present in index")
-                    .cloned()
-            })
-            .await
-            .ok()
-        }
-        .boxed()
+        let fut = self.with_state_async(false, move |state| {
+            state
+                .index_contents
+                .get(&path)
+                .context("not present in index")
+                .cloned()
+        });
+        self.executor
+            .spawn_labeled(*LOAD_INDEX_TEXT_TASK, async move { fut.await.ok() })
+            .boxed()
     }
 
     fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
-        async {
-            self.with_state_async(false, move |state| {
-                state
-                    .head_contents
-                    .get(path.as_ref())
-                    .context("not present in HEAD")
-                    .cloned()
-            })
-            .await
-            .ok()
-        }
+        let fut = self.with_state_async(false, move |state| {
+            state
+                .head_contents
+                .get(&path)
+                .context("not present in HEAD")
+                .cloned()
+        });
+        self.executor
+            .spawn_labeled(*LOAD_HEAD_TEXT_TASK, async move { fut.await.ok() })
+            .boxed()
+    }
+
+    fn load_blob_content(&self, oid: git::Oid) -> BoxFuture<'_, Result<String>> {
+        self.with_state_async(false, move |state| {
+            state.oids.get(&oid).cloned().context("oid does not exist")
+        })
         .boxed()
     }
 
@@ -135,6 +153,34 @@ impl GitRepository for FakeGitRepository {
 
     fn remote_url(&self, _name: &str) -> Option<String> {
         None
+    }
+
+    fn diff_tree(&self, _request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
+        let mut entries = HashMap::default();
+        self.with_state_async(false, |state| {
+            for (path, content) in &state.head_contents {
+                let status = if let Some((oid, original)) = state
+                    .merge_base_contents
+                    .get(path)
+                    .map(|oid| (oid, &state.oids[oid]))
+                {
+                    if original == content {
+                        continue;
+                    }
+                    TreeDiffStatus::Modified { old: *oid }
+                } else {
+                    TreeDiffStatus::Added
+                };
+                entries.insert(path.clone(), status);
+            }
+            for (path, oid) in &state.merge_base_contents {
+                if !entries.contains_key(path) {
+                    entries.insert(path.clone(), TreeDiffStatus::Deleted { old: *oid });
+                }
+            }
+            Ok(TreeDiff { entries })
+        })
+        .boxed()
     }
 
     fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>> {
@@ -225,6 +271,7 @@ impl GitRepository for FakeGitRepository {
                     .read_file_sync(path)
                     .ok()
                     .map(|content| String::from_utf8(content).unwrap())?;
+                let repo_path = RelPath::new(repo_path, PathStyle::local()).ok()?;
                 Some((repo_path.into(), (content, is_ignored)))
             })
             .collect();
@@ -320,6 +367,10 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn stash_entries(&self) -> BoxFuture<'_, Result<git::stash::GitStash>> {
+        async { Ok(git::stash::GitStash::default()) }.boxed()
+    }
+
     fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>> {
         self.with_state_async(false, move |state| {
             let current_branch = &state.current_branch_name;
@@ -345,7 +396,20 @@ impl GitRepository for FakeGitRepository {
 
     fn create_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
-            state.branches.insert(name.to_owned());
+            state.branches.insert(name);
+            Ok(())
+        })
+    }
+
+    fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            if !state.branches.remove(&branch) {
+                bail!("no such branch: {branch}");
+            }
+            state.branches.insert(new_name.clone());
+            if state.current_branch_name == Some(branch) {
+                state.current_branch_name = Some(new_name);
+            }
             Ok(())
         })
     }
@@ -369,7 +433,11 @@ impl GitRepository for FakeGitRepository {
             let contents = paths
                 .into_iter()
                 .map(|path| {
-                    let abs_path = self.dot_git_path.parent().unwrap().join(&path);
+                    let abs_path = self
+                        .dot_git_path
+                        .parent()
+                        .unwrap()
+                        .join(&path.as_std_path());
                     Box::pin(async move { (path.clone(), self.fs.load(&abs_path).await.ok()) })
                 })
                 .collect::<Vec<_>>();
@@ -412,7 +480,27 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn stash_pop(&self, _env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>> {
+    fn stash_pop(
+        &self,
+        _index: Option<usize>,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        unimplemented!()
+    }
+
+    fn stash_apply(
+        &self,
+        _index: Option<usize>,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        unimplemented!()
+    }
+
+    fn stash_drop(
+        &self,
+        _index: Option<usize>,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
     }
 
@@ -478,7 +566,7 @@ impl GitRepository for FakeGitRepository {
         let repository_dir_path = self.repository_dir_path.parent().unwrap().to_path_buf();
         async move {
             executor.simulate_random_delay().await;
-            let oid = Oid::random(&mut executor.rng());
+            let oid = git::Oid::random(&mut executor.rng());
             let entry = fs.entry(&repository_dir_path)?;
             checkpoints.lock().insert(oid, entry);
             Ok(GitRepositoryCheckpoint { commit_sha: oid })
@@ -534,7 +622,7 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>> {
-        unimplemented!()
+        async { Ok(Some("main".into())) }.boxed()
     }
 }
 
@@ -565,7 +653,9 @@ mod tests {
         .await;
         fs.with_git_state(Path::new("/foo/.git"), true, |_git| {})
             .unwrap();
-        let repository = fs.open_repo(Path::new("/foo/.git")).unwrap();
+        let repository = fs
+            .open_repo(Path::new("/foo/.git"), Some("git".as_ref()))
+            .unwrap();
 
         let checkpoint_1 = repository.checkpoint().await.unwrap();
         fs.write(Path::new("/foo/b"), b"IPSUM").await.unwrap();
@@ -590,9 +680,9 @@ mod tests {
         assert_eq!(
             fs.files_with_contents(Path::new("")),
             [
-                (Path::new("/bar/baz").into(), b"qux".into()),
-                (Path::new("/foo/a").into(), b"lorem".into()),
-                (Path::new("/foo/b").into(), b"ipsum".into())
+                (Path::new(path!("/bar/baz")).into(), b"qux".into()),
+                (Path::new(path!("/foo/a")).into(), b"lorem".into()),
+                (Path::new(path!("/foo/b")).into(), b"ipsum".into())
             ]
         );
     }

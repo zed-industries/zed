@@ -1,5 +1,4 @@
-use crate::color_contrast;
-use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
+use editor::{CursorLayout, EditorSettings, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, DispatchPhase,
     Element, ElementId, Entity, FocusHandle, Font, FontFeatures, FontStyle, FontWeight,
@@ -27,6 +26,7 @@ use terminal::{
     terminal_settings::TerminalSettings,
 };
 use theme::{ActiveTheme, Theme, ThemeSettings};
+use ui::utils::ensure_minimum_contrast;
 use ui::{ParentElement, Tooltip};
 use util::ResultExt;
 use workspace::Workspace;
@@ -114,8 +114,20 @@ impl BatchedTextRun {
     }
 
     fn append_char(&mut self, c: char) {
+        self.append_char_internal(c, true);
+    }
+
+    fn append_zero_width_chars(&mut self, chars: &[char]) {
+        for &c in chars {
+            self.append_char_internal(c, false);
+        }
+    }
+
+    fn append_char_internal(&mut self, c: char, counts_cell: bool) {
         self.text.push(c);
-        self.cell_count += 1;
+        if counts_cell {
+            self.cell_count += 1;
+        }
         self.style.len += c.len_utf8();
     }
 
@@ -380,7 +392,8 @@ impl TerminalElement {
                     continue;
                 }
                 // Update tracking for next iteration
-                previous_cell_had_extras = cell.extra.is_some();
+                previous_cell_had_extras =
+                    matches!(cell.zerowidth(), Some(chars) if !chars.is_empty());
 
                 //Layout current cell text
                 {
@@ -397,6 +410,7 @@ impl TerminalElement {
                         );
 
                         let cell_point = AlacPoint::new(alac_line, cell.point.column.0 as i32);
+                        let zero_width_chars = cell.zerowidth();
 
                         // Try to batch with existing run
                         if let Some(ref mut batch) = current_batch {
@@ -406,25 +420,36 @@ impl TerminalElement {
                                     == cell_point.column
                             {
                                 batch.append_char(cell.c);
+                                if let Some(chars) = zero_width_chars {
+                                    batch.append_zero_width_chars(chars);
+                                }
                             } else {
                                 // Flush current batch and start new one
                                 let old_batch = current_batch.take().unwrap();
                                 batched_runs.push(old_batch);
-                                current_batch = Some(BatchedTextRun::new_from_char(
+                                let mut new_batch = BatchedTextRun::new_from_char(
                                     cell_point,
                                     cell.c,
                                     cell_style,
                                     text_style.font_size,
-                                ));
+                                );
+                                if let Some(chars) = zero_width_chars {
+                                    new_batch.append_zero_width_chars(chars);
+                                }
+                                current_batch = Some(new_batch);
                             }
                         } else {
                             // Start new batch
-                            current_batch = Some(BatchedTextRun::new_from_char(
+                            let mut new_batch = BatchedTextRun::new_from_char(
                                 cell_point,
                                 cell.c,
                                 cell_style,
                                 text_style.font_size,
-                            ));
+                            );
+                            if let Some(chars) = zero_width_chars {
+                                new_batch.append_zero_width_chars(chars);
+                            }
+                            current_batch = Some(new_batch);
                         }
                     };
                 }
@@ -534,7 +559,7 @@ impl TerminalElement {
 
         // Only apply contrast adjustment to non-decorative characters
         if !Self::is_decorative_character(indexed.c) {
-            fg = color_contrast::ensure_minimum_contrast(fg, bg, minimum_contrast);
+            fg = ensure_minimum_contrast(fg, bg, minimum_contrast);
         }
 
         // Ghostty uses (175/255) as the multiplier (~0.69), Alacritty uses 0.66, Kitty
@@ -583,15 +608,15 @@ impl TerminalElement {
             strikethrough,
         };
 
-        if let Some((style, range)) = hyperlink {
-            if range.contains(&indexed.point) {
-                if let Some(underline) = style.underline {
-                    result.underline = Some(underline);
-                }
+        if let Some((style, range)) = hyperlink
+            && range.contains(&indexed.point)
+        {
+            if let Some(underline) = style.underline {
+                result.underline = Some(underline);
+            }
 
-                if let Some(color) = style.color {
-                    result.color = color;
-                }
+            if let Some(color) = style.color {
+                result.color = color;
             }
         }
 
@@ -653,7 +678,7 @@ impl TerminalElement {
             let terminal = self.terminal.clone();
             let hitbox = hitbox.clone();
             let focus = focus.clone();
-            let terminal_view = terminal_view.clone();
+            let terminal_view = terminal_view;
             move |e: &MouseMoveEvent, phase, window, cx| {
                 if phase != DispatchPhase::Bubble {
                     return;
@@ -809,12 +834,11 @@ impl Element for TerminalElement {
                 total_lines: _,
             } => {
                 let rem_size = window.rem_size();
-                let line_height = window.text_style().font_size.to_pixels(rem_size)
+                let line_height = f32::from(window.text_style().font_size.to_pixels(rem_size))
                     * TerminalSettings::get_global(cx)
                         .line_height
                         .value()
-                        .to_pixels(rem_size)
-                        .0;
+                        .to_pixels(rem_size);
                 (displayed_lines * line_height).into()
             }
             ContentMode::Scrollable => {
@@ -939,7 +963,7 @@ impl Element for TerminalElement {
                     let rem_size = window.rem_size();
                     let font_pixels = text_style.font_size.to_pixels(rem_size);
                     // TODO: line_height should be an f32 not an AbsoluteLength.
-                    let line_height = font_pixels * line_height.to_pixels(rem_size).0;
+                    let line_height = f32::from(font_pixels) * line_height.to_pixels(rem_size);
                     let font_id = cx.text_system().resolve_font(&text_style.font());
 
                     let cell_width = text_system
@@ -1192,8 +1216,8 @@ impl Element for TerminalElement {
                 bounds.origin + Point::new(layout.gutter, px(0.)) - Point::new(px(0.), scroll_top);
 
             let marked_text_cloned: Option<String> = {
-                let ime_state = self.terminal_view.read(cx);
-                ime_state.marked_text.clone()
+                let ime_state = &self.terminal_view.read(cx).ime_state;
+                ime_state.as_ref().map(|state| state.marked_text.clone())
             };
 
             let terminal_input_handler = TerminalInputHandler {
@@ -1257,12 +1281,17 @@ impl Element for TerminalElement {
                         if let Some((start_y, highlighted_range_lines)) =
                             to_highlighted_range_lines(relative_highlighted_range, layout, origin)
                         {
+                            let corner_radius = if EditorSettings::get_global(cx).rounded_selection {
+                                0.15 * layout.dimensions.line_height
+                            } else {
+                                Pixels::ZERO
+                            };
                             let hr = HighlightedRange {
                                 start_y,
                                 line_height: layout.dimensions.line_height,
                                 lines: highlighted_range_lines,
                                 color: *color,
-                                corner_radius: 0.15 * layout.dimensions.line_height,
+                                corner_radius: corner_radius,
                             };
                             hr.paint(true, bounds, window);
                         }
@@ -1275,9 +1304,9 @@ impl Element for TerminalElement {
                     }
                     let text_paint_time = text_paint_start.elapsed();
 
-                    if let Some(text_to_mark) = &marked_text_cloned {
-                        if !text_to_mark.is_empty() {
-                            if let Some(cursor_layout) = &original_cursor {
+                    if let Some(text_to_mark) = &marked_text_cloned
+                        && !text_to_mark.is_empty()
+                            && let Some(cursor_layout) = &original_cursor {
                                 let ime_position = cursor_layout.bounding_rect(origin).origin;
                                 let mut ime_style = layout.base_text_style.clone();
                                 ime_style.underline = Some(UnderlineStyle {
@@ -1303,14 +1332,11 @@ impl Element for TerminalElement {
                                     .paint(ime_position, layout.dimensions.line_height, window, cx)
                                     .log_err();
                             }
-                        }
-                    }
 
-                    if self.cursor_visible && marked_text_cloned.is_none() {
-                        if let Some(mut cursor) = original_cursor {
+                    if self.cursor_visible && marked_text_cloned.is_none()
+                        && let Some(mut cursor) = original_cursor {
                             cursor.paint(origin, window, cx);
                         }
-                    }
 
                     if let Some(mut element) = block_below_cursor_element {
                         element.paint(window, cx);
@@ -1406,7 +1432,7 @@ impl InputHandler for TerminalInputHandler {
                 window.invalidate_character_coordinates();
                 let project = this.project().read(cx);
                 let telemetry = project.client().telemetry().clone();
-                telemetry.log_edit_event("terminal", project.is_via_ssh());
+                telemetry.log_edit_event("terminal", project.is_via_remote_server());
             })
             .ok();
     }
@@ -1419,11 +1445,9 @@ impl InputHandler for TerminalInputHandler {
         _window: &mut Window,
         cx: &mut App,
     ) {
-        if let Some(range) = new_marked_range {
-            self.terminal_view.update(cx, |view, view_cx| {
-                view.set_marked_text(new_text.to_string(), range, view_cx);
-            });
-        }
+        self.terminal_view.update(cx, |view, view_cx| {
+            view.set_marked_text(new_text.to_string(), new_marked_range, view_cx);
+        });
     }
 
     fn unmark_text(&mut self, _window: &mut Window, cx: &mut App) {
@@ -1481,7 +1505,7 @@ pub fn is_blank(cell: &IndexedCell) -> bool {
         return false;
     }
 
-    return true;
+    true
 }
 
 fn to_highlighted_range_lines(
@@ -1601,6 +1625,7 @@ pub fn convert_color(fg: &terminal::alacritty_terminal::vte::ansi::Color, theme:
 mod tests {
     use super::*;
     use gpui::{AbsoluteLength, Hsla, font};
+    use ui::utils::apca_contrast;
 
     #[test]
     fn test_is_decorative_character() {
@@ -1716,7 +1741,7 @@ mod tests {
         };
 
         // Should have poor contrast
-        let actual_contrast = color_contrast::apca_contrast(white_fg, light_gray_bg).abs();
+        let actual_contrast = apca_contrast(white_fg, light_gray_bg).abs();
         assert!(
             actual_contrast < 30.0,
             "White on light gray should have poor APCA contrast: {}",
@@ -1724,12 +1749,12 @@ mod tests {
         );
 
         // After adjustment with minimum APCA contrast of 45, should be darker
-        let adjusted = color_contrast::ensure_minimum_contrast(white_fg, light_gray_bg, 45.0);
+        let adjusted = ensure_minimum_contrast(white_fg, light_gray_bg, 45.0);
         assert!(
             adjusted.l < white_fg.l,
             "Adjusted color should be darker than original"
         );
-        let adjusted_contrast = color_contrast::apca_contrast(adjusted, light_gray_bg).abs();
+        let adjusted_contrast = apca_contrast(adjusted, light_gray_bg).abs();
         assert!(adjusted_contrast >= 45.0, "Should meet minimum contrast");
 
         // Test case 2: Dark colors (poor contrast)
@@ -1747,7 +1772,7 @@ mod tests {
         };
 
         // Should have poor contrast
-        let actual_contrast = color_contrast::apca_contrast(black_fg, dark_gray_bg).abs();
+        let actual_contrast = apca_contrast(black_fg, dark_gray_bg).abs();
         assert!(
             actual_contrast < 30.0,
             "Black on dark gray should have poor APCA contrast: {}",
@@ -1755,16 +1780,16 @@ mod tests {
         );
 
         // After adjustment with minimum APCA contrast of 45, should be lighter
-        let adjusted = color_contrast::ensure_minimum_contrast(black_fg, dark_gray_bg, 45.0);
+        let adjusted = ensure_minimum_contrast(black_fg, dark_gray_bg, 45.0);
         assert!(
             adjusted.l > black_fg.l,
             "Adjusted color should be lighter than original"
         );
-        let adjusted_contrast = color_contrast::apca_contrast(adjusted, dark_gray_bg).abs();
+        let adjusted_contrast = apca_contrast(adjusted, dark_gray_bg).abs();
         assert!(adjusted_contrast >= 45.0, "Should meet minimum contrast");
 
         // Test case 3: Already good contrast
-        let good_contrast = color_contrast::ensure_minimum_contrast(black_fg, white_fg, 45.0);
+        let good_contrast = ensure_minimum_contrast(black_fg, white_fg, 45.0);
         assert_eq!(
             good_contrast, black_fg,
             "Good contrast should not be adjusted"
@@ -1791,11 +1816,11 @@ mod tests {
         };
 
         // With minimum contrast of 0.0, no adjustment should happen
-        let no_adjust = color_contrast::ensure_minimum_contrast(white_fg, white_bg, 0.0);
+        let no_adjust = ensure_minimum_contrast(white_fg, white_bg, 0.0);
         assert_eq!(no_adjust, white_fg, "No adjustment with min_contrast 0.0");
 
         // With minimum APCA contrast of 15, it should adjust to a darker color
-        let adjusted = color_contrast::ensure_minimum_contrast(white_fg, white_bg, 15.0);
+        let adjusted = ensure_minimum_contrast(white_fg, white_bg, 15.0);
         assert!(
             adjusted.l < white_fg.l,
             "White on white should become darker, got l={}",
@@ -1803,7 +1828,7 @@ mod tests {
         );
 
         // Verify the contrast is now acceptable
-        let new_contrast = color_contrast::apca_contrast(adjusted, white_bg).abs();
+        let new_contrast = apca_contrast(adjusted, white_bg).abs();
         assert!(
             new_contrast >= 15.0,
             "Adjusted APCA contrast {} should be >= 15.0",
@@ -1841,8 +1866,7 @@ mod tests {
         };
 
         let font_size = AbsoluteLength::Pixels(px(12.0));
-        let batch =
-            BatchedTextRun::new_from_char(AlacPoint::new(0, 0), 'a', style1.clone(), font_size);
+        let batch = BatchedTextRun::new_from_char(AlacPoint::new(0, 0), 'a', style1, font_size);
 
         // Should be able to append same style
         assert!(batch.can_append(&style2));
@@ -1912,6 +1936,28 @@ mod tests {
         assert_eq!(batch.text, "xy😀");
         assert_eq!(batch.cell_count, 3);
         assert_eq!(batch.style.len, 6); // 1 + 1 + 4 bytes for emoji
+    }
+
+    #[test]
+    fn test_batched_text_run_append_zero_width_char() {
+        let style = TextRun {
+            len: 1,
+            font: font("Helvetica"),
+            color: Hsla::red(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+
+        let font_size = AbsoluteLength::Pixels(px(12.0));
+        let mut batch = BatchedTextRun::new_from_char(AlacPoint::new(0, 0), 'x', style, font_size);
+
+        let combining = '\u{0301}';
+        batch.append_zero_width_chars(&[combining]);
+
+        assert_eq!(batch.text, format!("x{}", combining));
+        assert_eq!(batch.cell_count, 1);
+        assert_eq!(batch.style.len, 1 + combining.len_utf8());
     }
 
     #[test]

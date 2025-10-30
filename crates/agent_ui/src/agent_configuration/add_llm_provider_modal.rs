@@ -5,13 +5,12 @@ use collections::HashSet;
 use fs::Fs;
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, Task};
 use language_model::LanguageModelRegistry;
-use language_models::{
-    AllLanguageModelSettings, OpenAiCompatibleSettingsContent,
-    provider::open_ai_compatible::AvailableModel,
+use language_models::provider::open_ai_compatible::{AvailableModel, ModelCapabilities};
+use settings::{OpenAiCompatibleSettingsContent, update_settings_file};
+use ui::{
+    Banner, Checkbox, KeyBinding, Modal, ModalFooter, ModalHeader, Section, ToggleState, prelude::*,
 };
-use settings::update_settings_file;
-use ui::{Banner, KeyBinding, Modal, ModalFooter, ModalHeader, Section, prelude::*};
-use ui_input::SingleLineInput;
+use ui_input::InputField;
 use workspace::{ModalView, Workspace};
 
 #[derive(Clone, Copy)]
@@ -34,9 +33,9 @@ impl LlmCompatibleProvider {
 }
 
 struct AddLlmProviderInput {
-    provider_name: Entity<SingleLineInput>,
-    api_url: Entity<SingleLineInput>,
-    api_key: Entity<SingleLineInput>,
+    provider_name: Entity<InputField>,
+    api_url: Entity<InputField>,
+    api_key: Entity<InputField>,
     models: Vec<ModelInput>,
 }
 
@@ -69,11 +68,19 @@ impl AddLlmProviderInput {
     }
 }
 
+struct ModelCapabilityToggles {
+    pub supports_tools: ToggleState,
+    pub supports_images: ToggleState,
+    pub supports_parallel_tool_calls: ToggleState,
+    pub supports_prompt_cache_key: ToggleState,
+}
+
 struct ModelInput {
-    name: Entity<SingleLineInput>,
-    max_completion_tokens: Entity<SingleLineInput>,
-    max_output_tokens: Entity<SingleLineInput>,
-    max_tokens: Entity<SingleLineInput>,
+    name: Entity<InputField>,
+    max_completion_tokens: Entity<InputField>,
+    max_output_tokens: Entity<InputField>,
+    max_tokens: Entity<InputField>,
+    capabilities: ModelCapabilityToggles,
 }
 
 impl ModelInput {
@@ -100,11 +107,23 @@ impl ModelInput {
             cx,
         );
         let max_tokens = single_line_input("Max Tokens", "Max Tokens", Some("200000"), window, cx);
+        let ModelCapabilities {
+            tools,
+            images,
+            parallel_tool_calls,
+            prompt_cache_key,
+        } = ModelCapabilities::default();
         Self {
             name: model_name,
             max_completion_tokens,
             max_output_tokens,
             max_tokens,
+            capabilities: ModelCapabilityToggles {
+                supports_tools: tools.into(),
+                supports_images: images.into(),
+                supports_parallel_tool_calls: parallel_tool_calls.into(),
+                supports_prompt_cache_key: prompt_cache_key.into(),
+            },
         }
     }
 
@@ -136,6 +155,12 @@ impl ModelInput {
                 .text(cx)
                 .parse::<u64>()
                 .map_err(|_| SharedString::from("Max Tokens must be a number"))?,
+            capabilities: ModelCapabilities {
+                tools: self.capabilities.supports_tools.selected(),
+                images: self.capabilities.supports_images.selected(),
+                parallel_tool_calls: self.capabilities.supports_parallel_tool_calls.selected(),
+                prompt_cache_key: self.capabilities.supports_prompt_cache_key.selected(),
+            },
         })
     }
 }
@@ -146,9 +171,9 @@ fn single_line_input(
     text: Option<&str>,
     window: &mut Window,
     cx: &mut App,
-) -> Entity<SingleLineInput> {
+) -> Entity<InputField> {
     cx.new(|cx| {
-        let input = SingleLineInput::new(window, cx, placeholder).label(label);
+        let input = InputField::new(window, cx, placeholder).label(label);
         if let Some(text) = text {
             input
                 .editor()
@@ -210,14 +235,19 @@ fn save_provider_to_settings(
         task.await
             .map_err(|_| "Failed to write API key to keychain")?;
         cx.update(|cx| {
-            update_settings_file::<AllLanguageModelSettings>(fs, cx, |settings, _cx| {
-                settings.openai_compatible.get_or_insert_default().insert(
-                    provider_name,
-                    OpenAiCompatibleSettingsContent {
-                        api_url,
-                        available_models: models,
-                    },
-                );
+            update_settings_file(fs, cx, |settings, _cx| {
+                settings
+                    .language_models
+                    .get_or_insert_default()
+                    .openai_compatible
+                    .get_or_insert_default()
+                    .insert(
+                        provider_name,
+                        OpenAiCompatibleSettingsContent {
+                            api_url,
+                            available_models: models,
+                        },
+                    );
             });
         })
         .ok();
@@ -322,6 +352,55 @@ impl AddLlmProviderModal {
                     .child(model.max_output_tokens.clone()),
             )
             .child(model.max_tokens.clone())
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Checkbox::new(("supports-tools", ix), model.capabilities.supports_tools)
+                            .label("Supports tools")
+                            .on_click(cx.listener(move |this, checked, _window, cx| {
+                                this.input.models[ix].capabilities.supports_tools = *checked;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Checkbox::new(("supports-images", ix), model.capabilities.supports_images)
+                            .label("Supports images")
+                            .on_click(cx.listener(move |this, checked, _window, cx| {
+                                this.input.models[ix].capabilities.supports_images = *checked;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Checkbox::new(
+                            ("supports-parallel-tool-calls", ix),
+                            model.capabilities.supports_parallel_tool_calls,
+                        )
+                        .label("Supports parallel_tool_calls")
+                        .on_click(cx.listener(
+                            move |this, checked, _window, cx| {
+                                this.input.models[ix]
+                                    .capabilities
+                                    .supports_parallel_tool_calls = *checked;
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        Checkbox::new(
+                            ("supports-prompt-cache-key", ix),
+                            model.capabilities.supports_prompt_cache_key,
+                        )
+                        .label("Supports prompt_cache_key")
+                        .on_click(cx.listener(
+                            move |this, checked, _window, cx| {
+                                this.input.models[ix].capabilities.supports_prompt_cache_key =
+                                    *checked;
+                                cx.notify();
+                            },
+                        )),
+                    ),
+            )
             .when(has_more_than_one_model, |this| {
                 this.child(
                     Button::new(("remove-model", ix), "Remove Model")
@@ -352,7 +431,7 @@ impl Focusable for AddLlmProviderModal {
 impl ModalView for AddLlmProviderModal {}
 
 impl Render for AddLlmProviderModal {
-    fn render(&mut self, window: &mut ui::Window, cx: &mut ui::Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut ui::Window, cx: &mut ui::Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
         div()
@@ -377,7 +456,7 @@ impl Render for AddLlmProviderModal {
                         this.section(
                             Section::new().child(
                                 Banner::new()
-                                    .severity(ui::Severity::Warning)
+                                    .severity(Severity::Warning)
                                     .child(div().text_xs().child(error)),
                             ),
                         )
@@ -405,7 +484,6 @@ impl Render for AddLlmProviderModal {
                                             KeyBinding::for_action_in(
                                                 &menu::Cancel,
                                                 &focus_handle,
-                                                window,
                                                 cx,
                                             )
                                             .map(|kb| kb.size(rems_from_px(12.))),
@@ -420,7 +498,6 @@ impl Render for AddLlmProviderModal {
                                             KeyBinding::for_action_in(
                                                 &menu::Confirm,
                                                 &focus_handle,
-                                                window,
                                                 cx,
                                             )
                                             .map(|kb| kb.size(rems_from_px(12.))),
@@ -540,10 +617,10 @@ mod tests {
         cx.update(|_window, cx| {
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
                 registry.register_provider(
-                    FakeLanguageModelProvider::new(
+                    Arc::new(FakeLanguageModelProvider::new(
                         LanguageModelProviderId::new("someprovider"),
                         LanguageModelProviderName::new("Some Provider"),
-                    ),
+                    )),
                     cx,
                 );
             });
@@ -560,6 +637,93 @@ mod tests {
             .await,
             Some("Provider Name is already taken by another provider".into())
         );
+    }
+
+    #[gpui::test]
+    async fn test_model_input_default_capabilities(cx: &mut TestAppContext) {
+        let cx = setup_test(cx).await;
+
+        cx.update(|window, cx| {
+            let model_input = ModelInput::new(window, cx);
+            model_input.name.update(cx, |input, cx| {
+                input.editor().update(cx, |editor, cx| {
+                    editor.set_text("somemodel", window, cx);
+                });
+            });
+            assert_eq!(
+                model_input.capabilities.supports_tools,
+                ToggleState::Selected
+            );
+            assert_eq!(
+                model_input.capabilities.supports_images,
+                ToggleState::Unselected
+            );
+            assert_eq!(
+                model_input.capabilities.supports_parallel_tool_calls,
+                ToggleState::Unselected
+            );
+            assert_eq!(
+                model_input.capabilities.supports_prompt_cache_key,
+                ToggleState::Unselected
+            );
+
+            let parsed_model = model_input.parse(cx).unwrap();
+            assert!(parsed_model.capabilities.tools);
+            assert!(!parsed_model.capabilities.images);
+            assert!(!parsed_model.capabilities.parallel_tool_calls);
+            assert!(!parsed_model.capabilities.prompt_cache_key);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_model_input_deselected_capabilities(cx: &mut TestAppContext) {
+        let cx = setup_test(cx).await;
+
+        cx.update(|window, cx| {
+            let mut model_input = ModelInput::new(window, cx);
+            model_input.name.update(cx, |input, cx| {
+                input.editor().update(cx, |editor, cx| {
+                    editor.set_text("somemodel", window, cx);
+                });
+            });
+
+            model_input.capabilities.supports_tools = ToggleState::Unselected;
+            model_input.capabilities.supports_images = ToggleState::Unselected;
+            model_input.capabilities.supports_parallel_tool_calls = ToggleState::Unselected;
+            model_input.capabilities.supports_prompt_cache_key = ToggleState::Unselected;
+
+            let parsed_model = model_input.parse(cx).unwrap();
+            assert!(!parsed_model.capabilities.tools);
+            assert!(!parsed_model.capabilities.images);
+            assert!(!parsed_model.capabilities.parallel_tool_calls);
+            assert!(!parsed_model.capabilities.prompt_cache_key);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_model_input_with_name_and_capabilities(cx: &mut TestAppContext) {
+        let cx = setup_test(cx).await;
+
+        cx.update(|window, cx| {
+            let mut model_input = ModelInput::new(window, cx);
+            model_input.name.update(cx, |input, cx| {
+                input.editor().update(cx, |editor, cx| {
+                    editor.set_text("somemodel", window, cx);
+                });
+            });
+
+            model_input.capabilities.supports_tools = ToggleState::Selected;
+            model_input.capabilities.supports_images = ToggleState::Unselected;
+            model_input.capabilities.supports_parallel_tool_calls = ToggleState::Selected;
+            model_input.capabilities.supports_prompt_cache_key = ToggleState::Unselected;
+
+            let parsed_model = model_input.parse(cx).unwrap();
+            assert_eq!(parsed_model.name, "somemodel");
+            assert!(parsed_model.capabilities.tools);
+            assert!(!parsed_model.capabilities.images);
+            assert!(parsed_model.capabilities.parallel_tool_calls);
+            assert!(!parsed_model.capabilities.prompt_cache_key);
+        });
     }
 
     async fn setup_test(cx: &mut TestAppContext) -> &mut VisualTestContext {
@@ -591,12 +755,7 @@ mod tests {
         models: Vec<(&str, &str, &str, &str)>,
         cx: &mut VisualTestContext,
     ) -> Option<SharedString> {
-        fn set_text(
-            input: &Entity<SingleLineInput>,
-            text: &str,
-            window: &mut Window,
-            cx: &mut App,
-        ) {
+        fn set_text(input: &Entity<InputField>, text: &str, window: &mut Window, cx: &mut App) {
             input.update(cx, |input, cx| {
                 input.editor().update(cx, |editor, cx| {
                     editor.set_text(text, window, cx);

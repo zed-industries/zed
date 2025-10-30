@@ -6,7 +6,7 @@ use crate::{
 use gpui::App;
 use rand::rngs::StdRng;
 use std::{env, ops::Range, sync::Arc};
-use text::{Buffer, BufferId};
+use text::{Buffer, BufferId, ReplicaId};
 use tree_sitter::Node;
 use unindent::Unindent as _;
 use util::test::marked_text_ranges;
@@ -58,8 +58,7 @@ fn test_splice_included_ranges() {
     assert_eq!(change, 0..1);
 
     // does not create overlapping ranges
-    let (new_ranges, change) =
-        splice_included_ranges(ranges.clone(), &[0..18], &[ts_range(20..32)]);
+    let (new_ranges, change) = splice_included_ranges(ranges, &[0..18], &[ts_range(20..32)]);
     assert_eq!(
         new_ranges,
         &[ts_range(20..32), ts_range(50..60), ts_range(80..90)]
@@ -89,7 +88,7 @@ fn test_syntax_map_layers_for_range(cx: &mut App) {
     registry.add(language.clone());
 
     let mut buffer = Buffer::new(
-        0,
+        ReplicaId::LOCAL,
         BufferId::new(1).unwrap(),
         r#"
             fn a() {
@@ -104,7 +103,7 @@ fn test_syntax_map_layers_for_range(cx: &mut App) {
     );
 
     let mut syntax_map = SyntaxMap::new(&buffer);
-    syntax_map.set_language_registry(registry.clone());
+    syntax_map.set_language_registry(registry);
     syntax_map.reparse(language.clone(), &buffer);
 
     assert_layers_for_range(
@@ -165,7 +164,7 @@ fn test_syntax_map_layers_for_range(cx: &mut App) {
     // Put the vec! macro back, adding back the syntactic layer.
     buffer.undo();
     syntax_map.interpolate(&buffer);
-    syntax_map.reparse(language.clone(), &buffer);
+    syntax_map.reparse(language, &buffer);
 
     assert_layers_for_range(
         &syntax_map,
@@ -190,7 +189,7 @@ fn test_dynamic_language_injection(cx: &mut App) {
     registry.add(Arc::new(ruby_lang()));
 
     let mut buffer = Buffer::new(
-        0,
+        ReplicaId::LOCAL,
         BufferId::new(1).unwrap(),
         r#"
             This is a code block:
@@ -252,8 +251,8 @@ fn test_dynamic_language_injection(cx: &mut App) {
     assert!(syntax_map.contains_unknown_injections());
 
     registry.add(Arc::new(html_lang()));
-    syntax_map.reparse(markdown.clone(), &buffer);
-    syntax_map.reparse(markdown_inline.clone(), &buffer);
+    syntax_map.reparse(markdown, &buffer);
+    syntax_map.reparse(markdown_inline, &buffer);
     assert_layers_for_range(
         &syntax_map,
         &buffer,
@@ -812,7 +811,7 @@ fn test_syntax_map_languages_loading_with_erb(cx: &mut App) {
     .unindent();
 
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), text);
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), text);
 
     let mut syntax_map = SyntaxMap::new(&buffer);
     syntax_map.set_language_registry(registry.clone());
@@ -862,7 +861,7 @@ fn test_syntax_map_languages_loading_with_erb(cx: &mut App) {
     log::info!("editing");
     buffer.edit_via_marked_text(&text);
     syntax_map.interpolate(&buffer);
-    syntax_map.reparse(language.clone(), &buffer);
+    syntax_map.reparse(language, &buffer);
 
     assert_capture_ranges(
         &syntax_map,
@@ -979,14 +978,14 @@ fn test_random_edits(
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(10);
 
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), text);
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), text);
 
     let mut syntax_map = SyntaxMap::new(&buffer);
     syntax_map.set_language_registry(registry.clone());
     syntax_map.reparse(language.clone(), &buffer);
 
     let mut reference_syntax_map = SyntaxMap::new(&buffer);
-    reference_syntax_map.set_language_registry(registry.clone());
+    reference_syntax_map.set_language_registry(registry);
 
     log::info!("initial text:\n{}", buffer.text());
 
@@ -1160,7 +1159,7 @@ fn test_edit_sequence(language_name: &str, steps: &[&str], cx: &mut App) -> (Buf
         .now_or_never()
         .unwrap()
         .unwrap();
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "");
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
 
     let mut mutated_syntax_map = SyntaxMap::new(&buffer);
     mutated_syntax_map.set_language_registry(registry.clone());
@@ -1410,12 +1409,15 @@ fn assert_capture_ranges(
 ) {
     let mut actual_ranges = Vec::<Range<usize>>::new();
     let captures = syntax_map.captures(0..buffer.len(), buffer, |grammar| {
-        grammar.highlights_query.as_ref()
+        grammar
+            .highlights_config
+            .as_ref()
+            .map(|config| &config.query)
     });
     let queries = captures
         .grammars()
         .iter()
-        .map(|grammar| grammar.highlights_query.as_ref().unwrap())
+        .map(|grammar| &grammar.highlights_config.as_ref().unwrap().query)
         .collect::<Vec<_>>();
     for capture in captures {
         let name = &queries[capture.grammar_index].capture_names()[capture.index as usize];

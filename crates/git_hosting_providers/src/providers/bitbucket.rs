@@ -126,6 +126,7 @@ impl GitHostingProvider for Bitbucket {
 
 #[cfg(test)]
 mod tests {
+    use git::repository::repo_path;
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -182,11 +183,7 @@ mod tests {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
             },
-            BuildPermalinkParams {
-                sha: "f00b4r",
-                path: "main.rs",
-                selection: None,
-            },
+            BuildPermalinkParams::new("f00b4r", &repo_path("main.rs"), None),
         );
 
         let expected_url = "https://bitbucket.org/zed-industries/zed/src/f00b4r/main.rs";
@@ -200,11 +197,7 @@ mod tests {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
             },
-            BuildPermalinkParams {
-                sha: "f00b4r",
-                path: "main.rs",
-                selection: Some(6..6),
-            },
+            BuildPermalinkParams::new("f00b4r", &repo_path("main.rs"), Some(6..6)),
         );
 
         let expected_url = "https://bitbucket.org/zed-industries/zed/src/f00b4r/main.rs#lines-7";
@@ -218,11 +211,7 @@ mod tests {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
             },
-            BuildPermalinkParams {
-                sha: "f00b4r",
-                path: "main.rs",
-                selection: Some(23..47),
-            },
+            BuildPermalinkParams::new("f00b4r", &repo_path("main.rs"), Some(23..47)),
         );
 
         let expected_url =

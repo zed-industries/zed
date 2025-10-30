@@ -1,21 +1,22 @@
 # Summary
 
-# General
+# Getting Started
 
 - [Getting Started](./getting-started.md)
-- [System Requirements](./system-requirements.md)
-- [Accounts](./accounts.md)
-- [Linux](./linux.md)
-- [Windows](./windows.md)
+- [Installation](./installation.md)
+  - [Update](./update.md)
+  - [Uninstall](./uninstall.md)
+- [Authenticate](./authentication.md)
 - [Telemetry](./telemetry.md)
-- [Workspace Persistence](./workspace-persistence.md)
-- [Additional Learning Materials](./additional-learning-materials.md)
+- [Troubleshooting](./troubleshooting.md)
 
 # Configuration
 
 - [Configuring Zed](./configuring-zed.md)
 - [Configuring Languages](./configuring-languages.md)
+  - [Toolchains](./toolchains.md)
 - [Key bindings](./key-bindings.md)
+  - [All Actions](./all-actions.md)
 - [Snippets](./snippets.md)
 - [Themes](./themes.md)
 - [Icon Themes](./icon-themes.md)
@@ -29,6 +30,8 @@
 # Using Zed
 
 - [Multibuffers](./multibuffers.md)
+- [Command Palette](./command-palette.md)
+- [Command-line Interface](./command-line-interface.md)
 - [Outline Panel](./outline-panel.md)
 - [Code Completions](./completions.md)
 - [Channels](./channels.md)
@@ -41,11 +44,17 @@
 - [Environment Variables](./environment.md)
 - [REPL](./repl.md)
 
+# Platform Support
+
+- [Windows](./windows.md)
+- [Linux](./linux.md)
+
 # AI
 
 - [Overview](./ai/overview.md)
 - [Agent Panel](./ai/agent-panel.md)
   - [Tools](./ai/tools.md)
+  - [External Agents](./ai/external-agents.md)
 - [Inline Assistant](./ai/inline-assistant.md)
 - [Edit Prediction](./ai/edit-prediction.md)
 - [Text Threads](./ai/text-threads.md)
@@ -55,9 +64,9 @@
   - [LLM Providers](./ai/llm-providers.md)
   - [Agent Settings](./ai/agent-settings.md)
 - [Subscription](./ai/subscription.md)
+  - [Models](./ai/models.md)
   - [Plans and Usage](./ai/plans-and-usage.md)
   - [Billing](./ai/billing.md)
-  - [Models](./ai/models.md)
 - [Privacy and Security](./ai/privacy-and-security.md)
   - [AI Improvement](./ai/ai-improvement.md)
 
@@ -155,5 +164,7 @@
   - [FreeBSD](./development/freebsd.md)
   - [Local Collaboration](./development/local-collaboration.md)
   - [Using Debuggers](./development/debuggers.md)
+  - [Glossary](./development/glossary.md)
 - [Release Process](./development/releases.md)
+- [Release Notes](./development/release-notes.md)
 - [Debugging Crashes](./development/debugging-crashes.md)

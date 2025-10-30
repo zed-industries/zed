@@ -1,8 +1,7 @@
-use std::path::Path;
-
 use agent_settings::AgentProfileId;
 use anyhow::Result;
 use async_trait::async_trait;
+use util::rel_path::RelPath;
 
 use crate::example::{Example, ExampleContext, ExampleMetadata, JudgeAssertion, LanguageServer};
 
@@ -28,14 +27,12 @@ impl Example for AddArgToTraitMethod {
 
     async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
         const FILENAME: &str = "assistant_tool.rs";
-        cx.push_user_message(format!(
+        let _ = cx.prompt(format!(
             r#"
             Add a `window: Option<gpui::AnyWindowHandle>` argument to the `Tool::run` trait method in {FILENAME},
             and update all the implementations of the trait and call sites accordingly.
             "#
-        ));
-
-        let _ = cx.run_to_end().await?;
+        )).await?;
 
         // Adds ignored argument to all but `batch_tool`
 
@@ -68,12 +65,12 @@ impl Example for AddArgToTraitMethod {
 
         for tool_name in add_ignored_window_paths {
             let path_str = format!("crates/assistant_tools/src/{}.rs", tool_name);
-            let edits = edits.get(Path::new(&path_str));
+            let edits = edits.get(RelPath::unix(&path_str).unwrap());
 
-            let ignored = edits.map_or(false, |edits| {
+            let ignored = edits.is_some_and(|edits| {
                 edits.has_added_line("        _window: Option<gpui::AnyWindowHandle>,\n")
             });
-            let uningored = edits.map_or(false, |edits| {
+            let uningored = edits.is_some_and(|edits| {
                 edits.has_added_line("        window: Option<gpui::AnyWindowHandle>,\n")
             });
 
@@ -86,10 +83,11 @@ impl Example for AddArgToTraitMethod {
 
         // Adds unignored argument to `batch_tool`
 
-        let batch_tool_edits = edits.get(Path::new("crates/assistant_tools/src/batch_tool.rs"));
+        let batch_tool_edits =
+            edits.get(RelPath::unix("crates/assistant_tools/src/batch_tool.rs").unwrap());
 
         cx.assert(
-            batch_tool_edits.map_or(false, |edits| {
+            batch_tool_edits.is_some_and(|edits| {
                 edits.has_added_line("        window: Option<gpui::AnyWindowHandle>,\n")
             }),
             "Argument:   batch_tool",

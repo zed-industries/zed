@@ -15,19 +15,12 @@ path = "src/feedback.rs"
 test-support = []
 
 [dependencies]
-client.workspace = true
 gpui.workspace = true
-human_bytes = "0.4.1"
-menu.workspace = true
-release_channel.workspace = true
-serde.workspace = true
-sysinfo.workspace = true
-ui.workspace = true
+system_specs.workspace = true
 urlencoding.workspace = true
 util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

@@ -69,7 +69,7 @@ impl Vim {
                                     let mut start_offset =
                                         selection.start.to_offset(map, Bias::Left);
                                     let classifier = map
-                                        .buffer_snapshot
+                                        .buffer_snapshot()
                                         .char_classifier_at(selection.start.to_point(map));
                                     for (ch, offset) in map.buffer_chars_at(start_offset) {
                                         if ch == '\n' || !classifier.is_whitespace(ch) {
@@ -153,14 +153,13 @@ fn expand_changed_word_selection(
 ) -> Option<MotionKind> {
     let is_in_word = || {
         let classifier = map
-            .buffer_snapshot
+            .buffer_snapshot()
             .char_classifier_at(selection.start.to_point(map));
-        let in_word = map
-            .buffer_chars_at(selection.head().to_offset(map, Bias::Left))
+
+        map.buffer_chars_at(selection.head().to_offset(map, Bias::Left))
             .next()
             .map(|(c, _)| !classifier.is_whitespace(c))
-            .unwrap_or_default();
-        in_word
+            .unwrap_or_default()
     };
     if (times.is_none() || times.unwrap() == 1) && is_in_word() {
         let next_char = map

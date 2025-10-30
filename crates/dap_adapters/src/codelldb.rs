@@ -1,7 +1,8 @@
-use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
+use std::{path::PathBuf, sync::OnceLock};
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
+use collections::HashMap;
 use dap::adapters::{DebugTaskDefinition, latest_github_release};
 use futures::StreamExt;
 use gpui::AsyncApp;
@@ -329,10 +330,11 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
+        user_env: Option<HashMap<String, String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let mut command = user_installed_path
-            .map(|p| p.to_string_lossy().to_string())
+            .map(|p| p.to_string_lossy().into_owned())
             .or(self.path_to_codelldb.get().cloned());
 
         if command.is_none() {
@@ -372,11 +374,12 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                 }
             };
             let adapter_dir = version_path.join("extension").join("adapter");
-            let path = adapter_dir.join("codelldb").to_string_lossy().to_string();
+            let path = adapter_dir.join("codelldb").to_string_lossy().into_owned();
             self.path_to_codelldb.set(path.clone()).ok();
             command = Some(path);
         };
         let mut json_config = config.config.clone();
+
         Ok(DebugAdapterBinary {
             command: Some(command.unwrap()),
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
@@ -385,7 +388,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                     && let Some(source_languages) = config.get("sourceLanguages").filter(|value| {
                         value
                             .as_array()
-                            .map_or(false, |array| array.iter().all(Value::is_string))
+                            .is_some_and(|array| array.iter().all(Value::is_string))
                     })
                 {
                     let ret = vec![
@@ -401,7 +404,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             request_args: self
                 .request_args(delegate, json_config, &config.label)
                 .await?,
-            envs: HashMap::default(),
+            envs: user_env.unwrap_or_default(),
             connection: None,
         })
     }

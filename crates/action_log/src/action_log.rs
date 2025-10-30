@@ -8,10 +8,7 @@ use language::{Anchor, Buffer, BufferEvent, DiskState, Point, ToPoint};
 use project::{Project, ProjectItem, lsp_store::OpenLspBufferHandle};
 use std::{cmp, ops::Range, sync::Arc};
 use text::{Edit, Patch, Rope};
-use util::{
-    RangeExt, ResultExt as _,
-    paths::{PathStyle, RemotePathBuf},
-};
+use util::{RangeExt, ResultExt as _};
 
 /// Tracks actions performed by tools in a thread
 pub struct ActionLog {
@@ -62,7 +59,13 @@ impl ActionLog {
                 let file_path = buffer
                     .read(cx)
                     .file()
-                    .map(|file| RemotePathBuf::new(file.full_path(cx), PathStyle::Posix).to_proto())
+                    .map(|file| {
+                        let mut path = file.full_path(cx).to_string_lossy().into_owned();
+                        if file.path_style(cx).is_windows() {
+                            path = path.replace('\\', "/");
+                        }
+                        path
+                    })
                     .unwrap_or_else(|| format!("buffer_{}", buffer.entity_id()));
 
                 let mut result = String::new();
@@ -116,7 +119,7 @@ impl ActionLog {
             } else if buffer
                 .read(cx)
                 .file()
-                .map_or(false, |file| file.disk_state().exists())
+                .is_some_and(|file| file.disk_state().exists())
             {
                 TrackedBufferStatus::Created {
                     existing_file_content: Some(buffer.read(cx).as_rope().clone()),
@@ -161,7 +164,7 @@ impl ActionLog {
                     diff_base,
                     last_seen_base,
                     unreviewed_edits,
-                    snapshot: text_snapshot.clone(),
+                    snapshot: text_snapshot,
                     status,
                     version: buffer.read(cx).version(),
                     diff,
@@ -190,7 +193,7 @@ impl ActionLog {
         cx: &mut Context<Self>,
     ) {
         match event {
-            BufferEvent::Edited { .. } => self.handle_buffer_edited(buffer, cx),
+            BufferEvent::Edited => self.handle_buffer_edited(buffer, cx),
             BufferEvent::FileHandleChanged => {
                 self.handle_buffer_file_changed(buffer, cx);
             }
@@ -215,7 +218,7 @@ impl ActionLog {
                 if buffer
                     .read(cx)
                     .file()
-                    .map_or(false, |file| file.disk_state() == DiskState::Deleted)
+                    .is_some_and(|file| file.disk_state() == DiskState::Deleted)
                 {
                     // If the buffer had been edited by a tool, but it got
                     // deleted externally, we want to stop tracking it.
@@ -227,7 +230,7 @@ impl ActionLog {
                 if buffer
                     .read(cx)
                     .file()
-                    .map_or(false, |file| file.disk_state() != DiskState::Deleted)
+                    .is_some_and(|file| file.disk_state() != DiskState::Deleted)
                 {
                     // If the buffer had been deleted by a tool, but it got
                     // resurrected externally, we want to clear the edits we
@@ -264,15 +267,14 @@ impl ActionLog {
             if let Some((git_diff, (buffer_repo, _))) = git_diff.as_ref().zip(buffer_repo) {
                 cx.update(|cx| {
                     let mut old_head = buffer_repo.read(cx).head_commit.clone();
-                    Some(cx.subscribe(git_diff, move |_, event, cx| match event {
-                        buffer_diff::BufferDiffEvent::DiffChanged { .. } => {
+                    Some(cx.subscribe(git_diff, move |_, event, cx| {
+                        if let buffer_diff::BufferDiffEvent::DiffChanged { .. } = event {
                             let new_head = buffer_repo.read(cx).head_commit.clone();
                             if new_head != old_head {
                                 old_head = new_head;
                                 git_diff_updates_tx.send(()).ok();
                             }
                         }
-                        _ => {}
                     }))
                 })?
             } else {
@@ -290,7 +292,7 @@ impl ActionLog {
                 }
                 _ = git_diff_updates_rx.changed().fuse() => {
                     if let Some(git_diff) = git_diff.as_ref() {
-                        Self::keep_committed_edits(&this, &buffer, &git_diff, cx).await?;
+                        Self::keep_committed_edits(&this, &buffer, git_diff, cx).await?;
                     }
                 }
             }
@@ -462,7 +464,7 @@ impl ActionLog {
             anyhow::Ok((
                 tracked_buffer.diff.clone(),
                 buffer.read(cx).language().cloned(),
-                buffer.read(cx).language_registry().clone(),
+                buffer.read(cx).language_registry(),
             ))
         })??;
         let diff_snapshot = BufferDiff::update_diff(
@@ -498,7 +500,7 @@ impl ActionLog {
                                     new: new_range,
                                 },
                                 &new_diff_base,
-                                &buffer_snapshot.as_rope(),
+                                buffer_snapshot.as_rope(),
                             ));
                         }
                         unreviewed_edits
@@ -530,12 +532,12 @@ impl ActionLog {
 
     /// Mark a buffer as created by agent, so we can refresh it in the context
     pub fn buffer_created(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        self.track_buffer_internal(buffer.clone(), true, cx);
+        self.track_buffer_internal(buffer, true, cx);
     }
 
     /// Mark a buffer as edited by agent, so we can refresh it in the context
     pub fn buffer_edited(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        let tracked_buffer = self.track_buffer_internal(buffer.clone(), false, cx);
+        let tracked_buffer = self.track_buffer_internal(buffer, false, cx);
         if let TrackedBufferStatus::Deleted = tracked_buffer.status {
             tracked_buffer.status = TrackedBufferStatus::Modified;
         }
@@ -614,10 +616,10 @@ impl ActionLog {
                         false
                     }
                 });
-                if tracked_buffer.unreviewed_edits.is_empty() {
-                    if let TrackedBufferStatus::Created { .. } = &mut tracked_buffer.status {
-                        tracked_buffer.status = TrackedBufferStatus::Modified;
-                    }
+                if tracked_buffer.unreviewed_edits.is_empty()
+                    && let TrackedBufferStatus::Created { .. } = &mut tracked_buffer.status
+                {
+                    tracked_buffer.status = TrackedBufferStatus::Modified;
                 }
                 tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
             }
@@ -811,7 +813,7 @@ impl ActionLog {
                 tracked.version != buffer.version
                     && buffer
                         .file()
-                        .map_or(false, |file| file.disk_state() != DiskState::Deleted)
+                        .is_some_and(|file| file.disk_state() != DiskState::Deleted)
             })
             .map(|(buffer, _)| buffer)
     }
@@ -847,7 +849,7 @@ fn apply_non_conflicting_edits(
                 conflict = true;
                 if new_edits
                     .peek()
-                    .map_or(false, |next_edit| next_edit.old.overlaps(&old_edit.new))
+                    .is_some_and(|next_edit| next_edit.old.overlaps(&old_edit.new))
                 {
                     new_edit = new_edits.next().unwrap();
                 } else {
@@ -964,7 +966,7 @@ impl TrackedBuffer {
     fn has_edits(&self, cx: &App) -> bool {
         self.diff
             .read(cx)
-            .hunks(&self.buffer.read(cx), cx)
+            .hunks(self.buffer.read(cx), cx)
             .next()
             .is_some()
     }
@@ -2219,7 +2221,7 @@ mod tests {
         action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
 
         for _ in 0..operations {
-            match rng.gen_range(0..100) {
+            match rng.random_range(0..100) {
                 0..25 => {
                     action_log.update(cx, |log, cx| {
                         let range = buffer.read(cx).random_byte_range(0, &mut rng);
@@ -2238,7 +2240,7 @@ mod tests {
                         .unwrap();
                 }
                 _ => {
-                    let is_agent_edit = rng.gen_bool(0.5);
+                    let is_agent_edit = rng.random_bool(0.5);
                     if is_agent_edit {
                         log::info!("agent edit");
                     } else {
@@ -2253,7 +2255,7 @@ mod tests {
                 }
             }
 
-            if rng.gen_bool(0.2) {
+            if rng.random_bool(0.2) {
                 quiesce(&action_log, &buffer, cx);
             }
         }
@@ -2268,7 +2270,7 @@ mod tests {
             log::info!("quiescing...");
             cx.run_until_parked();
             action_log.update(cx, |log, cx| {
-                let tracked_buffer = log.tracked_buffers.get(&buffer).unwrap();
+                let tracked_buffer = log.tracked_buffers.get(buffer).unwrap();
                 let mut old_text = tracked_buffer.diff_base.clone();
                 let new_text = buffer.read(cx).as_rope();
                 for edit in tracked_buffer.unreviewed_edits.edits() {
@@ -2302,7 +2304,7 @@ mod tests {
         .await;
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("file.txt".into(), "a\nb\nc\nd\ne\nf\ng\nh\ni\nj".into())],
+            &[("file.txt", "a\nb\nc\nd\ne\nf\ng\nh\ni\nj".into())],
             "0000000",
         );
         cx.run_until_parked();
@@ -2385,7 +2387,7 @@ mod tests {
         // - Ignores the last line edit (j stays as j)
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("file.txt".into(), "A\nb\nc\nf\nG\nh\ni\nj".into())],
+            &[("file.txt", "A\nb\nc\nf\nG\nh\ni\nj".into())],
             "0000001",
         );
         cx.run_until_parked();
@@ -2416,17 +2418,14 @@ mod tests {
         // Make another commit that accepts the NEW line but with different content
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[(
-                "file.txt".into(),
-                "A\nb\nc\nf\nGGG\nh\nDIFFERENT\ni\nj".into(),
-            )],
+            &[("file.txt", "A\nb\nc\nf\nGGG\nh\nDIFFERENT\ni\nj".into())],
             "0000002",
         );
         cx.run_until_parked();
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
             vec![(
-                buffer.clone(),
+                buffer,
                 vec![
                     HunkStatus {
                         range: Point::new(6, 0)..Point::new(7, 0),
@@ -2445,7 +2444,7 @@ mod tests {
         // Final commit that accepts all remaining edits
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("file.txt".into(), "A\nb\nc\nf\nGGG\nh\nNEW\ni\nJ".into())],
+            &[("file.txt", "A\nb\nc\nf\nGGG\nh\nNEW\ni\nJ".into())],
             "0000003",
         );
         cx.run_until_parked();

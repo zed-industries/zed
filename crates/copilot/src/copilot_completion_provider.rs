@@ -3,7 +3,6 @@ use anyhow::Result;
 use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
 use gpui::{App, Context, Entity, EntityId, Task};
 use language::{Buffer, OffsetRangeExt, ToOffset, language_settings::AllLanguageSettings};
-use project::Project;
 use settings::Settings;
 use std::{path::Path, time::Duration};
 
@@ -84,7 +83,6 @@ impl EditPredictionProvider for CopilotCompletionProvider {
 
     fn refresh(
         &mut self,
-        _project: Option<Entity<Project>>,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
@@ -249,7 +247,7 @@ impl EditPredictionProvider for CopilotCompletionProvider {
                 None
             } else {
                 let position = cursor_position.bias_right(buffer);
-                Some(EditPrediction {
+                Some(EditPrediction::Local {
                     id: None,
                     edits: vec![(position..position, completion_text.into())],
                     edit_preview: None,
@@ -281,14 +279,11 @@ mod tests {
     use indoc::indoc;
     use language::{
         Point,
-        language_settings::{
-            AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings, LspInsertMode,
-            WordsCompletionMode,
-        },
+        language_settings::{CompletionSettingsContent, LspInsertMode, WordsCompletionMode},
     };
     use project::Project;
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{AllLanguageSettingsContent, SettingsStore};
     use std::future::Future;
     use util::{
         path,
@@ -299,11 +294,11 @@ mod tests {
     async fn test_copilot(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         // flaky
         init_test(cx, |settings| {
-            settings.defaults.completions = Some(CompletionSettings {
-                words: WordsCompletionMode::Disabled,
-                lsp: true,
-                lsp_fetch_timeout_ms: 0,
-                lsp_insert_mode: LspInsertMode::Insert,
+            settings.defaults.completions = Some(CompletionSettingsContent {
+                words: Some(WordsCompletionMode::Disabled),
+                words_min_length: Some(0),
+                lsp_insert_mode: Some(LspInsertMode::Insert),
+                ..Default::default()
             });
         });
 
@@ -531,11 +526,11 @@ mod tests {
     ) {
         // flaky
         init_test(cx, |settings| {
-            settings.defaults.completions = Some(CompletionSettings {
-                words: WordsCompletionMode::Disabled,
-                lsp: true,
-                lsp_fetch_timeout_ms: 0,
-                lsp_insert_mode: LspInsertMode::Insert,
+            settings.defaults.completions = Some(CompletionSettingsContent {
+                words: Some(WordsCompletionMode::Disabled),
+                words_min_length: Some(0),
+                lsp_insert_mode: Some(LspInsertMode::Insert),
+                ..Default::default()
             });
         });
 
@@ -1083,7 +1078,7 @@ mod tests {
         let replace_range_marker: TextRangeMarker = ('<', '>').into();
         let (_, mut marked_ranges) = marked_text_ranges_by(
             marked_string,
-            vec![complete_from_marker.clone(), replace_range_marker.clone()],
+            vec![complete_from_marker, replace_range_marker.clone()],
         );
 
         let replace_range =
@@ -1126,7 +1121,7 @@ mod tests {
             Project::init_settings(cx);
             workspace::init_settings(cx);
             SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
-                store.update_user_settings::<AllLanguageSettings>(cx, f);
+                store.update_user_settings(cx, |settings| f(&mut settings.project.all_languages));
             });
         });
     }

@@ -4,10 +4,9 @@ use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
 use crate::{
     AppState, Error, Result, auth,
     db::{
-        self, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser,
-        CreatedChannelMessage, Database, InviteMemberResult, MembershipUpdated, MessageId,
-        NotificationId, ProjectId, RejoinedProject, RemoveChannelMemberResult,
-        RespondToChannelInvite, RoomId, ServerId, UpdatedChannelMessage, User, UserId,
+        self, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser, Database,
+        InviteMemberResult, MembershipUpdated, NotificationId, ProjectId, RejoinedProject,
+        RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, User, UserId,
     },
     executor::Executor,
 };
@@ -34,9 +33,10 @@ pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use futures::TryFutureExt as _;
 use reqwest_client::ReqwestClient;
-use rpc::proto::{MultiLspQuery, split_repository_update};
+use rpc::proto::split_repository_update;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 use tracing::Span;
+use util::paths::PathStyle;
 
 use futures::{
     FutureExt, SinkExt, StreamExt, TryStreamExt, channel::oneshot, future::BoxFuture,
@@ -66,7 +66,6 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use time::OffsetDateTime;
 use tokio::sync::{Semaphore, watch};
 use tower::ServiceBuilder;
 use tracing::{
@@ -80,8 +79,6 @@ pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 // kubernetes gives terminated pods 10s to shutdown gracefully. After they're gone, we can clean up old resources.
 pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(15);
 
-const MESSAGE_COUNT_PER_PAGE: usize = 100;
-const MAX_MESSAGE_LEN: usize = 1024;
 const NOTIFICATION_COUNT_PER_PAGE: usize = 50;
 const MAX_CONCURRENT_CONNECTIONS: usize = 512;
 
@@ -310,7 +307,7 @@ impl Server {
         let mut server = Self {
             id: parking_lot::Mutex::new(id),
             peer: Peer::new(id.0 as u32),
-            app_state: app_state.clone(),
+            app_state,
             connection_pool: Default::default(),
             handlers: Default::default(),
             teardown: watch::channel(false).0,
@@ -339,10 +336,6 @@ impl Server {
             .add_message_handler(update_language_server)
             .add_message_handler(update_diagnostic_summary)
             .add_message_handler(update_worktree_settings)
-            .add_request_handler(forward_read_only_project_request::<proto::GetHover>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetDefinition>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetTypeDefinition>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetReferences>)
             .add_request_handler(forward_read_only_project_request::<proto::FindSearchCandidates>)
             .add_request_handler(forward_read_only_project_request::<proto::GetDocumentHighlights>)
             .add_request_handler(forward_read_only_project_request::<proto::GetDocumentSymbols>)
@@ -350,12 +343,11 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferForSymbol>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferById>)
             .add_request_handler(forward_read_only_project_request::<proto::SynchronizeBuffers>)
-            .add_request_handler(forward_read_only_project_request::<proto::InlayHints>)
             .add_request_handler(forward_read_only_project_request::<proto::ResolveInlayHint>)
             .add_request_handler(forward_read_only_project_request::<proto::GetColorPresentation>)
-            .add_request_handler(forward_mutating_project_request::<proto::GetCodeLens>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferByPath>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetBranches>)
+            .add_request_handler(forward_read_only_project_request::<proto::GetDefaultBranch>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUnstagedDiff>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUncommittedDiff>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtExpandMacro>)
@@ -368,7 +360,6 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::LspExtCancelFlycheck>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtRunFlycheck>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtClearFlycheck>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetDocumentDiagnostics>)
             .add_request_handler(
                 forward_mutating_project_request::<proto::RegisterBufferWithLanguageServers>,
             )
@@ -381,7 +372,6 @@ impl Server {
             .add_request_handler(
                 forward_mutating_project_request::<proto::ResolveCompletionDocumentation>,
             )
-            .add_request_handler(forward_mutating_project_request::<proto::GetCodeActions>)
             .add_request_handler(forward_mutating_project_request::<proto::ApplyCodeAction>)
             .add_request_handler(forward_mutating_project_request::<proto::PrepareRename>)
             .add_request_handler(forward_mutating_project_request::<proto::PerformRename>)
@@ -399,7 +389,8 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::OnTypeFormatting>)
             .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
-            .add_request_handler(multi_lsp_query)
+            .add_request_handler(lsp_query)
+            .add_message_handler(broadcast_project_message_from_host::<proto::LspQueryResponse>)
             .add_request_handler(forward_mutating_project_request::<proto::RestartLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::StopLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::LinkedEditingRange>)
@@ -458,6 +449,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::Unstage>)
             .add_request_handler(forward_mutating_project_request::<proto::Stash>)
             .add_request_handler(forward_mutating_project_request::<proto::StashPop>)
+            .add_request_handler(forward_mutating_project_request::<proto::StashDrop>)
             .add_request_handler(forward_mutating_project_request::<proto::Commit>)
             .add_request_handler(forward_mutating_project_request::<proto::GitInit>)
             .add_request_handler(forward_read_only_project_request::<proto::GetRemotes>)
@@ -470,11 +462,15 @@ impl Server {
             .add_message_handler(broadcast_project_message_from_host::<proto::BreakpointsForFile>)
             .add_request_handler(forward_mutating_project_request::<proto::OpenCommitMessageBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::GitDiff>)
+            .add_request_handler(forward_mutating_project_request::<proto::GetTreeDiff>)
+            .add_request_handler(forward_mutating_project_request::<proto::GetBlobContent>)
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateBranch>)
             .add_request_handler(forward_mutating_project_request::<proto::GitChangeBranch>)
             .add_request_handler(forward_mutating_project_request::<proto::CheckForPushedCommits>)
             .add_message_handler(broadcast_project_message_from_host::<proto::AdvertiseContexts>)
-            .add_message_handler(update_context);
+            .add_message_handler(update_context)
+            .add_request_handler(forward_mutating_project_request::<proto::ToggleLspLogs>)
+            .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>);
 
         Arc::new(server)
     }
@@ -616,10 +612,10 @@ impl Server {
                             }
                         }
 
-                        if let Some(live_kit) = livekit_client.as_ref() {
-                            if delete_livekit_room {
-                                live_kit.delete_room(livekit_room).await.trace_err();
-                            }
+                        if let Some(live_kit) = livekit_client.as_ref()
+                            && delete_livekit_room
+                        {
+                            live_kit.delete_room(livekit_room).await.trace_err();
                         }
                     }
                 }
@@ -910,7 +906,7 @@ impl Server {
                                 user_id=field::Empty,
                                 login=field::Empty,
                                 impersonator=field::Empty,
-                                multi_lsp_query_request=field::Empty,
+                                lsp_query_request=field::Empty,
                                 release_channel=field::Empty,
                                 { TOTAL_DURATION_MS }=field::Empty,
                                 { PROCESSING_DURATION_MS }=field::Empty,
@@ -1015,47 +1011,47 @@ impl Server {
         inviter_id: UserId,
         invitee_id: UserId,
     ) -> Result<()> {
-        if let Some(user) = self.app_state.db.get_user_by_id(inviter_id).await? {
-            if let Some(code) = &user.invite_code {
-                let pool = self.connection_pool.lock();
-                let invitee_contact = contact_for_user(invitee_id, false, &pool);
-                for connection_id in pool.user_connection_ids(inviter_id) {
-                    self.peer.send(
-                        connection_id,
-                        proto::UpdateContacts {
-                            contacts: vec![invitee_contact.clone()],
-                            ..Default::default()
-                        },
-                    )?;
-                    self.peer.send(
-                        connection_id,
-                        proto::UpdateInviteInfo {
-                            url: format!("{}{}", self.app_state.config.invite_link_prefix, &code),
-                            count: user.invite_count as u32,
-                        },
-                    )?;
-                }
+        if let Some(user) = self.app_state.db.get_user_by_id(inviter_id).await?
+            && let Some(code) = &user.invite_code
+        {
+            let pool = self.connection_pool.lock();
+            let invitee_contact = contact_for_user(invitee_id, false, &pool);
+            for connection_id in pool.user_connection_ids(inviter_id) {
+                self.peer.send(
+                    connection_id,
+                    proto::UpdateContacts {
+                        contacts: vec![invitee_contact.clone()],
+                        ..Default::default()
+                    },
+                )?;
+                self.peer.send(
+                    connection_id,
+                    proto::UpdateInviteInfo {
+                        url: format!("{}{}", self.app_state.config.invite_link_prefix, &code),
+                        count: user.invite_count as u32,
+                    },
+                )?;
             }
         }
         Ok(())
     }
 
     pub async fn invite_count_updated(self: &Arc<Self>, user_id: UserId) -> Result<()> {
-        if let Some(user) = self.app_state.db.get_user_by_id(user_id).await? {
-            if let Some(invite_code) = &user.invite_code {
-                let pool = self.connection_pool.lock();
-                for connection_id in pool.user_connection_ids(user_id) {
-                    self.peer.send(
-                        connection_id,
-                        proto::UpdateInviteInfo {
-                            url: format!(
-                                "{}{}",
-                                self.app_state.config.invite_link_prefix, invite_code
-                            ),
-                            count: user.invite_count as u32,
-                        },
-                    )?;
-                }
+        if let Some(user) = self.app_state.db.get_user_by_id(user_id).await?
+            && let Some(invite_code) = &user.invite_code
+        {
+            let pool = self.connection_pool.lock();
+            for connection_id in pool.user_connection_ids(user_id) {
+                self.peer.send(
+                    connection_id,
+                    proto::UpdateInviteInfo {
+                        url: format!(
+                            "{}{}",
+                            self.app_state.config.invite_link_prefix, invite_code
+                        ),
+                        count: user.invite_count as u32,
+                    },
+                )?;
             }
         }
         Ok(())
@@ -1101,10 +1097,10 @@ fn broadcast<F>(
     F: FnMut(ConnectionId) -> anyhow::Result<()>,
 {
     for receiver_id in receiver_ids {
-        if Some(receiver_id) != sender_id {
-            if let Err(error) = f(receiver_id) {
-                tracing::error!("failed to send to {:?} {}", receiver_id, error);
-            }
+        if Some(receiver_id) != sender_id
+            && let Err(error) = f(receiver_id)
+        {
+            tracing::error!("failed to send to {:?} {}", receiver_id, error);
         }
     }
 }
@@ -1386,9 +1382,7 @@ async fn create_room(
         let live_kit = live_kit?;
         let user_id = session.user_id().to_string();
 
-        let token = live_kit
-            .room_token(&livekit_room, &user_id.to_string())
-            .trace_err()?;
+        let token = live_kit.room_token(&livekit_room, &user_id).trace_err()?;
 
         Some(proto::LiveKitConnectionInfo {
             server_url: live_kit.url().into(),
@@ -1888,6 +1882,7 @@ async fn share_project(
             session.connection_id,
             &request.worktrees,
             request.is_ssh_project,
+            request.windows_paths.unwrap_or(false),
         )
         .await?;
     response.send(proto::ShareProjectResponse {
@@ -2015,12 +2010,13 @@ async fn join_project(
         .unzip();
     response.send(proto::JoinProjectResponse {
         project_id: project.id.0 as u64,
-        worktrees: worktrees.clone(),
+        worktrees,
         replica_id: replica_id.0 as u32,
-        collaborators: collaborators.clone(),
+        collaborators,
         language_servers,
         language_server_capabilities,
         role: project.role.into(),
+        windows_paths: project.path_style == PathStyle::Windows,
     })?;
 
     for (worktree_id, worktree) in mem::take(&mut project.worktrees) {
@@ -2294,11 +2290,10 @@ async fn update_language_server(
     let db = session.db().await;
 
     if let Some(proto::update_language_server::Variant::MetadataUpdated(update)) = &request.variant
+        && let Some(capabilities) = update.capabilities.clone()
     {
-        if let Some(capabilities) = update.capabilities.clone() {
-            db.update_server_capabilities(project_id, request.language_server_id, capabilities)
-                .await?;
-        }
+        db.update_server_capabilities(project_id, request.language_server_id, capabilities)
+            .await?;
     }
 
     let project_connection_ids = db
@@ -2359,14 +2354,19 @@ where
     Ok(())
 }
 
-async fn multi_lsp_query(
-    request: MultiLspQuery,
-    response: Response<MultiLspQuery>,
+async fn lsp_query(
+    request: proto::LspQuery,
+    response: Response<proto::LspQuery>,
     session: MessageContext,
 ) -> Result<()> {
-    tracing::Span::current().record("multi_lsp_query_request", request.request_str());
-    tracing::info!("multi_lsp_query message received");
-    forward_mutating_project_request(request, response, session).await
+    let (name, should_write) = request.query_name_and_write_permissions();
+    tracing::Span::current().record("lsp_query_request", name);
+    tracing::info!("lsp_query message received");
+    if should_write {
+        forward_mutating_project_request(request, response, session).await
+    } else {
+        forward_read_only_project_request(request, response, session).await
+    }
 }
 
 /// Notify other participants that a new buffer has been created
@@ -3578,235 +3578,36 @@ fn send_notifications(
 
 /// Send a message to the channel
 async fn send_channel_message(
-    request: proto::SendChannelMessage,
-    response: Response<proto::SendChannelMessage>,
-    session: MessageContext,
+    _request: proto::SendChannelMessage,
+    _response: Response<proto::SendChannelMessage>,
+    _session: MessageContext,
 ) -> Result<()> {
-    // Validate the message body.
-    let body = request.body.trim().to_string();
-    if body.len() > MAX_MESSAGE_LEN {
-        return Err(anyhow!("message is too long"))?;
-    }
-    if body.is_empty() {
-        return Err(anyhow!("message can't be blank"))?;
-    }
-
-    // TODO: adjust mentions if body is trimmed
-
-    let timestamp = OffsetDateTime::now_utc();
-    let nonce = request.nonce.context("nonce can't be blank")?;
-
-    let channel_id = ChannelId::from_proto(request.channel_id);
-    let CreatedChannelMessage {
-        message_id,
-        participant_connection_ids,
-        notifications,
-    } = session
-        .db()
-        .await
-        .create_channel_message(
-            channel_id,
-            session.user_id(),
-            &body,
-            &request.mentions,
-            timestamp,
-            nonce.clone().into(),
-            request.reply_to_message_id.map(MessageId::from_proto),
-        )
-        .await?;
-
-    let message = proto::ChannelMessage {
-        sender_id: session.user_id().to_proto(),
-        id: message_id.to_proto(),
-        body,
-        mentions: request.mentions,
-        timestamp: timestamp.unix_timestamp() as u64,
-        nonce: Some(nonce),
-        reply_to_message_id: request.reply_to_message_id,
-        edited_at: None,
-    };
-    broadcast(
-        Some(session.connection_id),
-        participant_connection_ids.clone(),
-        |connection| {
-            session.peer.send(
-                connection,
-                proto::ChannelMessageSent {
-                    channel_id: channel_id.to_proto(),
-                    message: Some(message.clone()),
-                },
-            )
-        },
-    );
-    response.send(proto::SendChannelMessageResponse {
-        message: Some(message),
-    })?;
-
-    let pool = &*session.connection_pool().await;
-    let non_participants =
-        pool.channel_connection_ids(channel_id)
-            .filter_map(|(connection_id, _)| {
-                if participant_connection_ids.contains(&connection_id) {
-                    None
-                } else {
-                    Some(connection_id)
-                }
-            });
-    broadcast(None, non_participants, |peer_id| {
-        session.peer.send(
-            peer_id,
-            proto::UpdateChannels {
-                latest_channel_message_ids: vec![proto::ChannelMessageId {
-                    channel_id: channel_id.to_proto(),
-                    message_id: message_id.to_proto(),
-                }],
-                ..Default::default()
-            },
-        )
-    });
-    send_notifications(pool, &session.peer, notifications);
-
-    Ok(())
+    Err(anyhow!("chat has been removed in the latest version of Zed").into())
 }
 
 /// Delete a channel message
 async fn remove_channel_message(
-    request: proto::RemoveChannelMessage,
-    response: Response<proto::RemoveChannelMessage>,
-    session: MessageContext,
+    _request: proto::RemoveChannelMessage,
+    _response: Response<proto::RemoveChannelMessage>,
+    _session: MessageContext,
 ) -> Result<()> {
-    let channel_id = ChannelId::from_proto(request.channel_id);
-    let message_id = MessageId::from_proto(request.message_id);
-    let (connection_ids, existing_notification_ids) = session
-        .db()
-        .await
-        .remove_channel_message(channel_id, message_id, session.user_id())
-        .await?;
-
-    broadcast(
-        Some(session.connection_id),
-        connection_ids,
-        move |connection| {
-            session.peer.send(connection, request.clone())?;
-
-            for notification_id in &existing_notification_ids {
-                session.peer.send(
-                    connection,
-                    proto::DeleteNotification {
-                        notification_id: (*notification_id).to_proto(),
-                    },
-                )?;
-            }
-
-            Ok(())
-        },
-    );
-    response.send(proto::Ack {})?;
-    Ok(())
+    Err(anyhow!("chat has been removed in the latest version of Zed").into())
 }
 
 async fn update_channel_message(
-    request: proto::UpdateChannelMessage,
-    response: Response<proto::UpdateChannelMessage>,
-    session: MessageContext,
+    _request: proto::UpdateChannelMessage,
+    _response: Response<proto::UpdateChannelMessage>,
+    _session: MessageContext,
 ) -> Result<()> {
-    let channel_id = ChannelId::from_proto(request.channel_id);
-    let message_id = MessageId::from_proto(request.message_id);
-    let updated_at = OffsetDateTime::now_utc();
-    let UpdatedChannelMessage {
-        message_id,
-        participant_connection_ids,
-        notifications,
-        reply_to_message_id,
-        timestamp,
-        deleted_mention_notification_ids,
-        updated_mention_notifications,
-    } = session
-        .db()
-        .await
-        .update_channel_message(
-            channel_id,
-            message_id,
-            session.user_id(),
-            request.body.as_str(),
-            &request.mentions,
-            updated_at,
-        )
-        .await?;
-
-    let nonce = request.nonce.clone().context("nonce can't be blank")?;
-
-    let message = proto::ChannelMessage {
-        sender_id: session.user_id().to_proto(),
-        id: message_id.to_proto(),
-        body: request.body.clone(),
-        mentions: request.mentions.clone(),
-        timestamp: timestamp.assume_utc().unix_timestamp() as u64,
-        nonce: Some(nonce),
-        reply_to_message_id: reply_to_message_id.map(|id| id.to_proto()),
-        edited_at: Some(updated_at.unix_timestamp() as u64),
-    };
-
-    response.send(proto::Ack {})?;
-
-    let pool = &*session.connection_pool().await;
-    broadcast(
-        Some(session.connection_id),
-        participant_connection_ids,
-        |connection| {
-            session.peer.send(
-                connection,
-                proto::ChannelMessageUpdate {
-                    channel_id: channel_id.to_proto(),
-                    message: Some(message.clone()),
-                },
-            )?;
-
-            for notification_id in &deleted_mention_notification_ids {
-                session.peer.send(
-                    connection,
-                    proto::DeleteNotification {
-                        notification_id: (*notification_id).to_proto(),
-                    },
-                )?;
-            }
-
-            for notification in &updated_mention_notifications {
-                session.peer.send(
-                    connection,
-                    proto::UpdateNotification {
-                        notification: Some(notification.clone()),
-                    },
-                )?;
-            }
-
-            Ok(())
-        },
-    );
-
-    send_notifications(pool, &session.peer, notifications);
-
-    Ok(())
+    Err(anyhow!("chat has been removed in the latest version of Zed").into())
 }
 
 /// Mark a channel message as read
 async fn acknowledge_channel_message(
-    request: proto::AckChannelMessage,
-    session: MessageContext,
+    _request: proto::AckChannelMessage,
+    _session: MessageContext,
 ) -> Result<()> {
-    let channel_id = ChannelId::from_proto(request.channel_id);
-    let message_id = MessageId::from_proto(request.message_id);
-    let notifications = session
-        .db()
-        .await
-        .observe_channel_message(channel_id, session.user_id(), message_id)
-        .await?;
-    send_notifications(
-        &*session.connection_pool().await,
-        &session.peer,
-        notifications,
-    );
-    Ok(())
+    Err(anyhow!("chat has been removed in the latest version of Zed").into())
 }
 
 /// Mark a buffer version as synced
@@ -3859,84 +3660,37 @@ async fn get_supermaven_api_key(
 
 /// Start receiving chat updates for a channel
 async fn join_channel_chat(
-    request: proto::JoinChannelChat,
-    response: Response<proto::JoinChannelChat>,
-    session: MessageContext,
+    _request: proto::JoinChannelChat,
+    _response: Response<proto::JoinChannelChat>,
+    _session: MessageContext,
 ) -> Result<()> {
-    let channel_id = ChannelId::from_proto(request.channel_id);
-
-    let db = session.db().await;
-    db.join_channel_chat(channel_id, session.connection_id, session.user_id())
-        .await?;
-    let messages = db
-        .get_channel_messages(channel_id, session.user_id(), MESSAGE_COUNT_PER_PAGE, None)
-        .await?;
-    response.send(proto::JoinChannelChatResponse {
-        done: messages.len() < MESSAGE_COUNT_PER_PAGE,
-        messages,
-    })?;
-    Ok(())
+    Err(anyhow!("chat has been removed in the latest version of Zed").into())
 }
 
 /// Stop receiving chat updates for a channel
 async fn leave_channel_chat(
-    request: proto::LeaveChannelChat,
-    session: MessageContext,
+    _request: proto::LeaveChannelChat,
+    _session: MessageContext,
 ) -> Result<()> {
-    let channel_id = ChannelId::from_proto(request.channel_id);
-    session
-        .db()
-        .await
-        .leave_channel_chat(channel_id, session.connection_id, session.user_id())
-        .await?;
-    Ok(())
+    Err(anyhow!("chat has been removed in the latest version of Zed").into())
 }
 
 /// Retrieve the chat history for a channel
 async fn get_channel_messages(
-    request: proto::GetChannelMessages,
-    response: Response<proto::GetChannelMessages>,
-    session: MessageContext,
+    _request: proto::GetChannelMessages,
+    _response: Response<proto::GetChannelMessages>,
+    _session: MessageContext,
 ) -> Result<()> {
-    let channel_id = ChannelId::from_proto(request.channel_id);
-    let messages = session
-        .db()
-        .await
-        .get_channel_messages(
-            channel_id,
-            session.user_id(),
-            MESSAGE_COUNT_PER_PAGE,
-            Some(MessageId::from_proto(request.before_message_id)),
-        )
-        .await?;
-    response.send(proto::GetChannelMessagesResponse {
-        done: messages.len() < MESSAGE_COUNT_PER_PAGE,
-        messages,
-    })?;
-    Ok(())
+    Err(anyhow!("chat has been removed in the latest version of Zed").into())
 }
 
 /// Retrieve specific chat messages
 async fn get_channel_messages_by_id(
-    request: proto::GetChannelMessagesById,
-    response: Response<proto::GetChannelMessagesById>,
-    session: MessageContext,
+    _request: proto::GetChannelMessagesById,
+    _response: Response<proto::GetChannelMessagesById>,
+    _session: MessageContext,
 ) -> Result<()> {
-    let message_ids = request
-        .message_ids
-        .iter()
-        .map(|id| MessageId::from_proto(*id))
-        .collect::<Vec<_>>();
-    let messages = session
-        .db()
-        .await
-        .get_channel_messages_by_id(session.user_id(), &message_ids)
-        .await?;
-    response.send(proto::GetChannelMessagesResponse {
-        done: messages.len() < MESSAGE_COUNT_PER_PAGE,
-        messages,
-    })?;
-    Ok(())
+    Err(anyhow!("chat has been removed in the latest version of Zed").into())
 }
 
 /// Retrieve the current users notifications
@@ -4076,7 +3830,6 @@ fn build_update_user_channels(channels: &ChannelsForUser) -> proto::UpdateUserCh
             })
             .collect(),
         observed_channel_buffer_version: channels.observed_buffer_versions.clone(),
-        observed_channel_message_id: channels.observed_channel_messages.clone(),
     }
 }
 
@@ -4088,7 +3841,6 @@ fn build_channels_update(channels: ChannelsForUser) -> proto::UpdateChannels {
     }
 
     update.latest_channel_buffer_versions = channels.latest_buffer_versions;
-    update.latest_channel_message_ids = channels.latest_channel_messages;
 
     for (channel_id, participants) in channels.channel_participants {
         update

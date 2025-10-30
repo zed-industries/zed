@@ -1,36 +1,91 @@
 use collab_ui::collab_panel;
-use gpui::{Menu, MenuItem, OsAction};
-use settings_ui::keybindings;
+use gpui::{App, Menu, MenuItem, OsAction};
+use release_channel::ReleaseChannel;
 use terminal_view::terminal_panel;
+use zed_actions::{ToggleFocus as ToggleDebugPanel, agent::AddSelectionToThread, dev};
 
-pub fn app_menus() -> Vec<Menu> {
+pub fn app_menus(cx: &mut App) -> Vec<Menu> {
     use zed_actions::Quit;
+
+    let mut view_items = vec![
+        MenuItem::action(
+            "Zoom In",
+            zed_actions::IncreaseBufferFontSize { persist: false },
+        ),
+        MenuItem::action(
+            "Zoom Out",
+            zed_actions::DecreaseBufferFontSize { persist: false },
+        ),
+        MenuItem::action(
+            "Reset Zoom",
+            zed_actions::ResetBufferFontSize { persist: false },
+        ),
+        MenuItem::action(
+            "Reset All Zoom",
+            zed_actions::ResetAllZoom { persist: false },
+        ),
+        MenuItem::separator(),
+        MenuItem::action("Toggle Left Dock", workspace::ToggleLeftDock),
+        MenuItem::action("Toggle Right Dock", workspace::ToggleRightDock),
+        MenuItem::action("Toggle Bottom Dock", workspace::ToggleBottomDock),
+        MenuItem::action("Toggle All Docks", workspace::ToggleAllDocks),
+        MenuItem::submenu(Menu {
+            name: "Editor Layout".into(),
+            items: vec![
+                MenuItem::action("Split Up", workspace::SplitUp),
+                MenuItem::action("Split Down", workspace::SplitDown),
+                MenuItem::action("Split Left", workspace::SplitLeft),
+                MenuItem::action("Split Right", workspace::SplitRight),
+            ],
+        }),
+        MenuItem::separator(),
+        MenuItem::action("Project Panel", project_panel::ToggleFocus),
+        MenuItem::action("Outline Panel", outline_panel::ToggleFocus),
+        MenuItem::action("Collab Panel", collab_panel::ToggleFocus),
+        MenuItem::action("Terminal Panel", terminal_panel::ToggleFocus),
+        MenuItem::action("Debugger Panel", ToggleDebugPanel),
+        MenuItem::separator(),
+        MenuItem::action("Diagnostics", diagnostics::Deploy),
+        MenuItem::separator(),
+    ];
+
+    if ReleaseChannel::try_global(cx) == Some(ReleaseChannel::Dev) {
+        view_items.push(MenuItem::action(
+            "Toggle GPUI Inspector",
+            dev::ToggleInspector,
+        ));
+        view_items.push(MenuItem::separator());
+    }
 
     vec![
         Menu {
             name: "Zed".into(),
             items: vec![
-                MenuItem::action("About Zed…", zed_actions::About),
+                MenuItem::action("About Zed", zed_actions::About),
                 MenuItem::action("Check for Updates", auto_update::Check),
                 MenuItem::separator(),
                 MenuItem::submenu(Menu {
                     name: "Settings".into(),
                     items: vec![
-                        MenuItem::action("Open Settings", super::OpenSettings),
-                        MenuItem::action("Open Key Bindings", keybindings::OpenKeymapEditor),
+                        MenuItem::action("Open Settings", zed_actions::OpenSettings),
+                        MenuItem::action("Open Settings File", super::OpenSettingsFile),
+                        MenuItem::action("Open Project Settings", super::OpenProjectSettings),
                         MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
+                        MenuItem::separator(),
+                        MenuItem::action("Open Keymap", zed_actions::OpenKeymap),
+                        MenuItem::action("Open Keymap File", zed_actions::OpenKeymapFile),
                         MenuItem::action(
                             "Open Default Key Bindings",
                             zed_actions::OpenDefaultKeymap,
                         ),
-                        MenuItem::action("Open Project Settings", super::OpenProjectSettings),
-                        MenuItem::action(
-                            "Select Settings Profile...",
-                            zed_actions::settings_profile_selector::Toggle,
-                        ),
+                        MenuItem::separator(),
                         MenuItem::action(
                             "Select Theme...",
                             zed_actions::theme_selector::Toggle::default(),
+                        ),
+                        MenuItem::action(
+                            "Select Icon Theme...",
+                            zed_actions::icon_theme_selector::Toggle::default(),
                         ),
                     ],
                 }),
@@ -39,7 +94,8 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::os_submenu("Services", gpui::SystemMenuType::Services),
                 MenuItem::separator(),
                 MenuItem::action("Extensions", zed_actions::Extensions::default()),
-                MenuItem::action("Install CLI", install_cli::Install),
+                #[cfg(not(target_os = "windows"))]
+                MenuItem::action("Install CLI", install_cli::InstallCliBinary),
                 MenuItem::separator(),
                 #[cfg(target_os = "macos")]
                 MenuItem::action("Hide Zed", super::Hide),
@@ -127,59 +183,48 @@ pub fn app_menus() -> Vec<Menu> {
                 ),
                 MenuItem::action("Expand Selection", editor::actions::SelectLargerSyntaxNode),
                 MenuItem::action("Shrink Selection", editor::actions::SelectSmallerSyntaxNode),
+                MenuItem::action("Select Next Sibling", editor::actions::SelectNextSyntaxNode),
+                MenuItem::action(
+                    "Select Previous Sibling",
+                    editor::actions::SelectPreviousSyntaxNode,
+                ),
                 MenuItem::separator(),
-                MenuItem::action("Add Cursor Above", editor::actions::AddSelectionAbove),
-                MenuItem::action("Add Cursor Below", editor::actions::AddSelectionBelow),
+                MenuItem::action(
+                    "Add Cursor Above",
+                    editor::actions::AddSelectionAbove {
+                        skip_soft_wrap: true,
+                    },
+                ),
+                MenuItem::action(
+                    "Add Cursor Below",
+                    editor::actions::AddSelectionBelow {
+                        skip_soft_wrap: true,
+                    },
+                ),
                 MenuItem::action(
                     "Select Next Occurrence",
                     editor::actions::SelectNext {
                         replace_newest: false,
                     },
                 ),
+                MenuItem::action(
+                    "Select Previous Occurrence",
+                    editor::actions::SelectPrevious {
+                        replace_newest: false,
+                    },
+                ),
+                MenuItem::action("Select All Occurrences", editor::actions::SelectAllMatches),
                 MenuItem::separator(),
                 MenuItem::action("Move Line Up", editor::actions::MoveLineUp),
                 MenuItem::action("Move Line Down", editor::actions::MoveLineDown),
                 MenuItem::action("Duplicate Selection", editor::actions::DuplicateLineDown),
+                MenuItem::separator(),
+                MenuItem::action("Add to Agent Thread", AddSelectionToThread),
             ],
         },
         Menu {
             name: "View".into(),
-            items: vec![
-                MenuItem::action(
-                    "Zoom In",
-                    zed_actions::IncreaseBufferFontSize { persist: false },
-                ),
-                MenuItem::action(
-                    "Zoom Out",
-                    zed_actions::DecreaseBufferFontSize { persist: false },
-                ),
-                MenuItem::action(
-                    "Reset Zoom",
-                    zed_actions::ResetBufferFontSize { persist: false },
-                ),
-                MenuItem::separator(),
-                MenuItem::action("Toggle Left Dock", workspace::ToggleLeftDock),
-                MenuItem::action("Toggle Right Dock", workspace::ToggleRightDock),
-                MenuItem::action("Toggle Bottom Dock", workspace::ToggleBottomDock),
-                MenuItem::action("Close All Docks", workspace::CloseAllDocks),
-                MenuItem::submenu(Menu {
-                    name: "Editor Layout".into(),
-                    items: vec![
-                        MenuItem::action("Split Up", workspace::SplitUp),
-                        MenuItem::action("Split Down", workspace::SplitDown),
-                        MenuItem::action("Split Left", workspace::SplitLeft),
-                        MenuItem::action("Split Right", workspace::SplitRight),
-                    ],
-                }),
-                MenuItem::separator(),
-                MenuItem::action("Project Panel", project_panel::ToggleFocus),
-                MenuItem::action("Outline Panel", outline_panel::ToggleFocus),
-                MenuItem::action("Collab Panel", collab_panel::ToggleFocus),
-                MenuItem::action("Terminal Panel", terminal_panel::ToggleFocus),
-                MenuItem::separator(),
-                MenuItem::action("Diagnostics", diagnostics::Deploy),
-                MenuItem::separator(),
-            ],
+            items: view_items,
         },
         Menu {
             name: "Go".into(),
@@ -245,13 +290,16 @@ pub fn app_menus() -> Vec<Menu> {
             name: "Help".into(),
             items: vec![
                 MenuItem::action(
-                    "View Release Notes",
+                    "View Release Notes Locally",
                     auto_update_ui::ViewReleaseNotesLocally,
                 ),
                 MenuItem::action("View Telemetry", zed_actions::OpenTelemetryLog),
                 MenuItem::action("View Dependency Licenses", zed_actions::OpenLicenses),
                 MenuItem::action("Show Welcome", onboarding::ShowWelcome),
-                MenuItem::action("Give Feedback...", zed_actions::feedback::GiveFeedback),
+                MenuItem::separator(),
+                MenuItem::action("File Bug Report...", zed_actions::feedback::FileBugReport),
+                MenuItem::action("Request Feature...", zed_actions::feedback::RequestFeature),
+                MenuItem::action("Email Us...", zed_actions::feedback::EmailZed),
                 MenuItem::separator(),
                 MenuItem::action(
                     "Documentation",
@@ -259,6 +307,7 @@ pub fn app_menus() -> Vec<Menu> {
                         url: "https://zed.dev/docs".into(),
                     },
                 ),
+                MenuItem::action("Zed Repository", feedback::OpenZedRepo),
                 MenuItem::action(
                     "Zed Twitter",
                     super::OpenBrowser {

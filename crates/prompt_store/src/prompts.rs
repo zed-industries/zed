@@ -14,7 +14,9 @@ use std::{
     time::Duration,
 };
 use text::LineEnding;
-use util::{ResultExt, get_system_shell};
+use util::{
+    ResultExt, get_default_system_shell_preferring_bash, rel_path::RelPath, shell::ShellKind,
+};
 
 use crate::UserPromptId;
 
@@ -43,25 +45,10 @@ impl ProjectContext {
             user_rules: default_user_rules,
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
-            shell: get_system_shell(),
+            shell: ShellKind::new(&get_default_system_shell_preferring_bash(), cfg!(windows))
+                .to_string(),
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ModelContext {
-    pub available_tools: Vec<String>,
-}
-
-#[derive(Serialize)]
-struct PromptTemplateContext {
-    #[serde(flatten)]
-    project: ProjectContext,
-
-    #[serde(flatten)]
-    model: ModelContext,
-
-    has_tools: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -80,7 +67,7 @@ pub struct WorktreeContext {
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct RulesFileContext {
-    pub path_in_worktree: Arc<Path>,
+    pub path_in_worktree: Arc<RelPath>,
     pub text: String,
     // This used for opening rules files. TODO: Since it isn't related to prompt templating, this
     // should be moved elsewhere.
@@ -141,40 +128,9 @@ impl PromptBuilder {
         .unwrap_or_else(|| Arc::new(Self::new(None).unwrap()))
     }
 
-    /// Helper function for handlebars templates to check if a specific tool is enabled
-    fn has_tool_helper(
-        h: &handlebars::Helper,
-        _: &Handlebars,
-        ctx: &handlebars::Context,
-        _: &mut handlebars::RenderContext,
-        out: &mut dyn handlebars::Output,
-    ) -> handlebars::HelperResult {
-        let tool_name = h.param(0).and_then(|v| v.value().as_str()).ok_or_else(|| {
-            handlebars::RenderError::new("has_tool helper: missing or invalid tool name parameter")
-        })?;
-
-        let enabled_tools = ctx
-            .data()
-            .get("available_tools")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<&str>>())
-            .ok_or_else(|| {
-                handlebars::RenderError::new(
-                    "has_tool handlebars helper: available_tools not found or not an array",
-                )
-            })?;
-
-        if enabled_tools.contains(&tool_name) {
-            out.write("true")?;
-        }
-
-        Ok(())
-    }
-
     pub fn new(loading_params: Option<PromptLoadingParams>) -> Result<Self> {
         let mut handlebars = Handlebars::new();
         Self::register_built_in_templates(&mut handlebars)?;
-        handlebars.register_helper("has_tool", Box::new(Self::has_tool_helper));
 
         let handlebars = Arc::new(Mutex::new(handlebars));
 
@@ -229,12 +185,12 @@ impl PromptBuilder {
                         log_message.push_str(" -> ");
                         log_message.push_str(&target.display().to_string());
                     }
-                    log::info!("{}.", log_message);
+                    log::trace!("{}.", log_message);
                 } else {
                     if !found_dir_once {
-                        log::info!("No prompt template overrides directory found at {}. Using built-in prompts.", templates_dir.display());
+                        log::trace!("No prompt template overrides directory found at {}. Using built-in prompts.", templates_dir.display());
                         if let Some(target) = symlink_status {
-                            log::info!("Symlink found pointing to {}, but target is invalid.", target.display());
+                            log::trace!("Symlink found pointing to {}, but target is invalid.", target.display());
                         }
                     }
 
@@ -247,7 +203,7 @@ impl PromptBuilder {
                                     log_message.push_str(" -> ");
                                     log_message.push_str(&target.display().to_string());
                                 }
-                                log::info!("{}.", log_message);
+                                log::trace!("{}.", log_message);
                                 break;
                             }
                         }
@@ -261,13 +217,12 @@ impl PromptBuilder {
                 // Initial scan of the prompt overrides directory
                 if let Ok(mut entries) = params.fs.read_dir(&templates_dir).await {
                     while let Some(Ok(file_path)) = entries.next().await {
-                        if file_path.to_string_lossy().ends_with(".hbs") {
-                            if let Ok(content) = params.fs.load(&file_path).await {
+                        if file_path.to_string_lossy().ends_with(".hbs")
+                            && let Ok(content) = params.fs.load(&file_path).await {
                                 let file_name = file_path.file_stem().unwrap().to_string_lossy();
                                 log::debug!("Registering prompt template override: {}", file_name);
                                 handlebars.lock().register_template_string(&file_name, content).log_err();
                             }
-                        }
                     }
                 }
 
@@ -280,15 +235,14 @@ impl PromptBuilder {
                 let mut combined_changes = futures::stream::select(changes, parent_changes);
 
                 while let Some(changed_paths) = combined_changes.next().await {
-                    if changed_paths.iter().any(|p| &p.path == &templates_dir) {
-                        if !params.fs.is_dir(&templates_dir).await {
+                    if changed_paths.iter().any(|p| &p.path == &templates_dir)
+                        && !params.fs.is_dir(&templates_dir).await {
                             log::info!("Prompt template overrides directory removed. Restoring built-in prompt templates.");
                             Self::register_built_in_templates(&mut handlebars.lock()).log_err();
                             break;
                         }
-                    }
                     for event in changed_paths {
-                        if event.path.starts_with(&templates_dir) && event.path.extension().map_or(false, |ext| ext == "hbs") {
+                        if event.path.starts_with(&templates_dir) && event.path.extension().is_some_and(|ext| ext == "hbs") {
                             log::info!("Reloading prompt template override: {}", event.path.display());
                             if let Some(content) = params.fs.load(&event.path).await.log_err() {
                                 let file_name = event.path.file_stem().unwrap().to_string_lossy();
@@ -311,32 +265,15 @@ impl PromptBuilder {
                 .split('/')
                 .next_back()
                 .and_then(|s| s.strip_suffix(".hbs"))
+                && let Some(prompt) = Assets.load(path.as_ref()).log_err().flatten()
             {
-                if let Some(prompt) = Assets.load(path.as_ref()).log_err().flatten() {
-                    log::debug!("Registering built-in prompt template: {}", id);
-                    let prompt = String::from_utf8_lossy(prompt.as_ref());
-                    handlebars.register_template_string(id, LineEnding::normalize_cow(prompt))?
-                }
+                log::debug!("Registering built-in prompt template: {}", id);
+                let prompt = String::from_utf8_lossy(prompt.as_ref());
+                handlebars.register_template_string(id, LineEnding::normalize_cow(prompt))?
             }
         }
 
         Ok(())
-    }
-
-    pub fn generate_assistant_system_prompt(
-        &self,
-        context: &ProjectContext,
-        model_context: &ModelContext,
-    ) -> Result<String, RenderError> {
-        let template_context = PromptTemplateContext {
-            project: context.clone(),
-            model: model_context.clone(),
-            has_tools: !model_context.available_tools.is_empty(),
-        };
-
-        self.handlebars
-            .lock()
-            .render("assistant_system_prompt", &template_context)
     }
 
     pub fn generate_inline_transformation_prompt(
@@ -406,7 +343,7 @@ impl PromptBuilder {
                 ContentPromptDiagnosticContext {
                     line_number: (start.row + 1) as usize,
                     error_message: entry.diagnostic.message.clone(),
-                    code_content: buffer.text_for_range(entry.range.clone()).collect(),
+                    code_content: buffer.text_for_range(entry.range).collect(),
                 }
             })
             .collect();
@@ -443,100 +380,5 @@ impl PromptBuilder {
         self.handlebars
             .lock()
             .render("terminal_assistant_prompt", &context)
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use serde_json;
-    use uuid::Uuid;
-
-    #[test]
-    fn test_assistant_system_prompt_renders() {
-        let worktrees = vec![WorktreeContext {
-            root_name: "path".into(),
-            abs_path: Path::new("/path/to/root").into(),
-            rules_file: Some(RulesFileContext {
-                path_in_worktree: Path::new(".rules").into(),
-                text: "".into(),
-                project_entry_id: 0,
-            }),
-        }];
-        let default_user_rules = vec![UserRulesContext {
-            uuid: UserPromptId(Uuid::nil()),
-            title: Some("Rules title".into()),
-            contents: "Rules contents".into(),
-        }];
-        let project_context = ProjectContext::new(worktrees, default_user_rules);
-        let model_context = ModelContext {
-            available_tools: ["grep".into()].to_vec(),
-        };
-        let prompt = PromptBuilder::new(None)
-            .unwrap()
-            .generate_assistant_system_prompt(&project_context, &model_context)
-            .unwrap();
-        assert!(
-            prompt.contains("Rules contents"),
-            "Expected default user rules to be in rendered prompt"
-        );
-    }
-
-    #[test]
-    fn test_assistant_system_prompt_depends_on_enabled_tools() {
-        let worktrees = vec![WorktreeContext {
-            root_name: "path".into(),
-            abs_path: Path::new("/path/to/root").into(),
-            rules_file: None,
-        }];
-        let default_user_rules = vec![];
-        let project_context = ProjectContext::new(worktrees, default_user_rules);
-        let prompt_builder = PromptBuilder::new(None).unwrap();
-
-        // When the `grep` tool is enabled, it should be mentioned in the prompt
-        let model_context = ModelContext {
-            available_tools: ["grep".into()].to_vec(),
-        };
-        let prompt_with_grep = prompt_builder
-            .generate_assistant_system_prompt(&project_context, &model_context)
-            .unwrap();
-        assert!(
-            prompt_with_grep.contains("grep"),
-            "`grep` tool should be mentioned in prompt when the tool is enabled"
-        );
-
-        // When the `grep` tool is disabled, it should not be mentioned in the prompt
-        let model_context = ModelContext {
-            available_tools: [].to_vec(),
-        };
-        let prompt_without_grep = prompt_builder
-            .generate_assistant_system_prompt(&project_context, &model_context)
-            .unwrap();
-        assert!(
-            !prompt_without_grep.contains("grep"),
-            "`grep` tool should not be mentioned in prompt when the tool is disabled"
-        );
-    }
-
-    #[test]
-    fn test_has_tool_helper() {
-        let mut handlebars = Handlebars::new();
-        handlebars.register_helper("has_tool", Box::new(PromptBuilder::has_tool_helper));
-        handlebars
-            .register_template_string(
-                "test_template",
-                "{{#if (has_tool 'grep')}}grep is enabled{{else}}grep is disabled{{/if}}",
-            )
-            .unwrap();
-
-        // grep available
-        let data = serde_json::json!({"available_tools": ["grep", "fetch"]});
-        let result = handlebars.render("test_template", &data).unwrap();
-        assert_eq!(result, "grep is enabled");
-
-        // grep not available
-        let data = serde_json::json!({"available_tools": ["terminal", "fetch"]});
-        let result = handlebars.render("test_template", &data).unwrap();
-        assert_eq!(result, "grep is disabled");
     }
 }

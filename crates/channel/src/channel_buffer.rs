@@ -9,7 +9,7 @@ use rpc::{
     proto::{self, PeerId},
 };
 use std::{sync::Arc, time::Duration};
-use text::BufferId;
+use text::{BufferId, ReplicaId};
 use util::ResultExt;
 
 pub const ACKNOWLEDGE_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(250);
@@ -65,7 +65,12 @@ impl ChannelBuffer {
 
         let buffer = cx.new(|cx| {
             let capability = channel_store.read(cx).channel_capability(channel.id);
-            language::Buffer::remote(buffer_id, response.replica_id as u16, capability, base_text)
+            language::Buffer::remote(
+                buffer_id,
+                ReplicaId::new(response.replica_id as u16),
+                capability,
+                base_text,
+            )
         })?;
         buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx))?;
 
@@ -82,7 +87,7 @@ impl ChannelBuffer {
                 collaborators: Default::default(),
                 acknowledge_task: None,
                 channel_id: channel.id,
-                subscription: Some(subscription.set_entity(&cx.entity(), &mut cx.to_async())),
+                subscription: Some(subscription.set_entity(&cx.entity(), &cx.to_async())),
                 user_store,
                 channel_store,
             };
@@ -110,7 +115,7 @@ impl ChannelBuffer {
             let Ok(subscription) = self.client.subscribe_to_entity(self.channel_id.0) else {
                 return;
             };
-            self.subscription = Some(subscription.set_entity(&cx.entity(), &mut cx.to_async()));
+            self.subscription = Some(subscription.set_entity(&cx.entity(), &cx.to_async()));
             cx.emit(ChannelBufferEvent::Connected);
         }
     }
@@ -135,7 +140,7 @@ impl ChannelBuffer {
             }
         }
 
-        for (_, old_collaborator) in &self.collaborators {
+        for old_collaborator in self.collaborators.values() {
             if !new_collaborators.contains_key(&old_collaborator.peer_id) {
                 self.buffer.update(cx, |buffer, cx| {
                     buffer.remove_peer(old_collaborator.replica_id, cx)
@@ -191,12 +196,11 @@ impl ChannelBuffer {
                 operation,
                 is_local: true,
             } => {
-                if *ZED_ALWAYS_ACTIVE {
-                    if let language::Operation::UpdateSelections { selections, .. } = operation {
-                        if selections.is_empty() {
-                            return;
-                        }
-                    }
+                if *ZED_ALWAYS_ACTIVE
+                    && let language::Operation::UpdateSelections { selections, .. } = operation
+                    && selections.is_empty()
+                {
+                    return;
                 }
                 let operation = language::proto::serialize_operation(operation);
                 self.client
@@ -273,7 +277,7 @@ impl ChannelBuffer {
         self.connected
     }
 
-    pub fn replica_id(&self, cx: &App) -> u16 {
+    pub fn replica_id(&self, cx: &App) -> ReplicaId {
         self.buffer.read(cx).replica_id()
     }
 }

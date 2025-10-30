@@ -31,6 +31,7 @@ use theme::ThemeSettings;
 use ui::{IntoElement, prelude::*};
 
 use crate::outputs::OutputContent;
+use crate::repl_settings::ReplSettings;
 
 /// The `TerminalOutput` struct handles the parsing and rendering of text input,
 /// simulating a basic terminal environment within REPL output.
@@ -53,9 +54,6 @@ pub struct TerminalOutput {
     handler: alacritty_terminal::Term<VoidListener>,
 }
 
-const DEFAULT_NUM_LINES: usize = 32;
-const DEFAULT_NUM_COLUMNS: usize = 128;
-
 /// Returns the default text style for the terminal output.
 pub fn text_style(window: &mut Window, cx: &mut App) -> TextStyle {
     let settings = ThemeSettings::get_global(cx).clone();
@@ -68,7 +66,7 @@ pub fn text_style(window: &mut Window, cx: &mut App) -> TextStyle {
 
     let theme = cx.theme();
 
-    let text_style = TextStyle {
+    TextStyle {
         font_family,
         font_features,
         font_weight,
@@ -81,9 +79,7 @@ pub fn text_style(window: &mut Window, cx: &mut App) -> TextStyle {
         // These are going to be overridden per-cell
         color: theme.colors().terminal_foreground,
         ..Default::default()
-    };
-
-    text_style
+    }
 }
 
 /// Returns the default terminal size for the terminal output.
@@ -101,8 +97,8 @@ pub fn terminal_size(window: &mut Window, cx: &mut App) -> terminal::TerminalBou
         .unwrap()
         .width;
 
-    let num_lines = DEFAULT_NUM_LINES;
-    let columns = DEFAULT_NUM_COLUMNS;
+    let num_lines = ReplSettings::get_global(cx).max_lines;
+    let columns = ReplSettings::get_global(cx).max_columns;
 
     // Reversed math from terminal::TerminalSize to get pixel width according to terminal width
     let width = columns as f32 * cell_width;
@@ -173,9 +169,9 @@ impl TerminalOutput {
     ///
     /// Then append_text will be called twice, with the following arguments:
     ///
-    /// ```rust
-    /// terminal_output.append_text("Hello,")
-    /// terminal_output.append_text(" world!")
+    /// ```ignore
+    /// terminal_output.append_text("Hello,");
+    /// terminal_output.append_text(" world!");
     /// ```
     /// Resulting in a single output of "Hello, world!".
     ///
@@ -201,8 +197,17 @@ impl TerminalOutput {
         }
     }
 
-    fn full_text(&self) -> String {
-        let mut full_text = String::new();
+    pub fn full_text(&self) -> String {
+        fn sanitize(mut line: String) -> Option<String> {
+            line.retain(|ch| ch != '\u{0}' && ch != '\r');
+            if line.trim().is_empty() {
+                return None;
+            }
+            let trimmed = line.trim_end_matches([' ', '\t']);
+            Some(trimmed.to_owned())
+        }
+
+        let mut lines = Vec::new();
 
         // Get the total number of lines, including history
         let total_lines = self.handler.grid().total_lines();
@@ -214,11 +219,8 @@ impl TerminalOutput {
             let line_index = Line(-(line as i32) - 1);
             let start = Point::new(line_index, Column(0));
             let end = Point::new(line_index, Column(self.handler.columns() - 1));
-            let line_content = self.handler.bounds_to_string(start, end);
-
-            if !line_content.trim().is_empty() {
-                full_text.push_str(&line_content);
-                full_text.push('\n');
+            if let Some(cleaned) = sanitize(self.handler.bounds_to_string(start, end)) {
+                lines.push(cleaned);
             }
         }
 
@@ -227,16 +229,18 @@ impl TerminalOutput {
             let line_index = Line(line as i32);
             let start = Point::new(line_index, Column(0));
             let end = Point::new(line_index, Column(self.handler.columns() - 1));
-            let line_content = self.handler.bounds_to_string(start, end);
-
-            if !line_content.trim().is_empty() {
-                full_text.push_str(&line_content);
-                full_text.push('\n');
+            if let Some(cleaned) = sanitize(self.handler.bounds_to_string(start, end)) {
+                lines.push(cleaned);
             }
         }
 
-        // Trim any trailing newlines
-        full_text.trim_end().to_string()
+        if lines.is_empty() {
+            String::new()
+        } else {
+            let mut full_text = lines.join("\n");
+            full_text.push('\n');
+            full_text
+        }
     }
 }
 
@@ -278,7 +282,7 @@ impl Render for TerminalOutput {
         let cell_width = text_system
             .advance(font_id, font_pixels, 'w')
             .map(|advance| advance.width)
-            .unwrap_or(Pixels(0.0));
+            .unwrap_or(Pixels::ZERO);
 
         canvas(
             // prepaint

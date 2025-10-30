@@ -13,12 +13,12 @@ impl<T> From<T> for Unclipped<T> {
 impl<'a, T: sum_tree::Dimension<'a, ChunkSummary>> sum_tree::Dimension<'a, ChunkSummary>
     for Unclipped<T>
 {
-    fn zero(_: &()) -> Self {
-        Self(T::zero(&()))
+    fn zero(_: ()) -> Self {
+        Self(T::zero(()))
     }
 
-    fn add_summary(&mut self, summary: &'a ChunkSummary, _: &()) {
-        self.0.add_summary(summary, &());
+    fn add_summary(&mut self, summary: &'a ChunkSummary, _: ()) {
+        self.0.add_summary(summary, ());
     }
 }
 

@@ -10,8 +10,9 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
     Action, AppContext, ClickEvent, Entity, FocusHandle, Focusable, MouseButton, ScrollStrategy,
-    Stateful, Task, UniformListScrollHandle, WeakEntity, actions, uniform_list,
+    Task, UniformListScrollHandle, WeakEntity, actions, uniform_list,
 };
+use itertools::Itertools;
 use language::Point;
 use project::{
     Project,
@@ -23,9 +24,10 @@ use project::{
     worktree_store::WorktreeStore,
 };
 use ui::{
-    Divider, DividerColor, FluentBuilder as _, Indicator, IntoElement, ListItem, Render, Scrollbar,
-    ScrollbarState, StatefulInteractiveElement, Tooltip, prelude::*,
+    Divider, DividerColor, FluentBuilder as _, Indicator, IntoElement, ListItem, Render,
+    ScrollAxes, StatefulInteractiveElement, Tooltip, WithScrollbar, prelude::*,
 };
+use util::rel_path::RelPath;
 use workspace::Workspace;
 use zed_actions::{ToggleEnableBreakpoint, UnsetBreakpoint};
 
@@ -49,12 +51,12 @@ pub(crate) struct BreakpointList {
     breakpoint_store: Entity<BreakpointStore>,
     dap_store: Entity<DapStore>,
     worktree_store: Entity<WorktreeStore>,
-    scrollbar_state: ScrollbarState,
     breakpoints: Vec<BreakpointEntry>,
     session: Option<Entity<Session>>,
     focus_handle: FocusHandle,
     scroll_handle: UniformListScrollHandle,
     selected_ix: Option<usize>,
+    max_width_index: Option<usize>,
     input: Entity<Editor>,
     strip_mode: Option<ActiveBreakpointStripMode>,
     serialize_exception_breakpoints_task: Option<Task<anyhow::Result<()>>>,
@@ -87,7 +89,6 @@ impl BreakpointList {
         let dap_store = project.dap_store();
         let focus_handle = cx.focus_handle();
         let scroll_handle = UniformListScrollHandle::new();
-        let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
 
         let adapter_name = session.as_ref().map(|session| session.read(cx).adapter());
         cx.new(|cx| {
@@ -95,8 +96,8 @@ impl BreakpointList {
                 breakpoint_store,
                 dap_store,
                 worktree_store,
-                scrollbar_state,
                 breakpoints: Default::default(),
+                max_width_index: None,
                 workspace,
                 session,
                 focus_handle,
@@ -219,7 +220,7 @@ impl BreakpointList {
         });
 
         self.input.update(cx, |this, cx| {
-            this.set_placeholder_text(placeholder, cx);
+            this.set_placeholder_text(placeholder, window, cx);
             this.set_read_only(is_exception_breakpoint);
             this.set_text(active_value.as_deref().unwrap_or(""), window, cx);
         });
@@ -239,14 +240,12 @@ impl BreakpointList {
     }
 
     fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
-        if self.strip_mode.is_some() {
-            if self.input.focus_handle(cx).contains_focused(window, cx) {
-                cx.propagate();
-                return;
-            }
+        if self.strip_mode.is_some() && self.input.focus_handle(cx).contains_focused(window, cx) {
+            cx.propagate();
+            return;
         }
         let ix = match self.selected_ix {
-            _ if self.breakpoints.len() == 0 => None,
+            _ if self.breakpoints.is_empty() => None,
             None => Some(0),
             Some(ix) => {
                 if ix == self.breakpoints.len() - 1 {
@@ -265,14 +264,12 @@ impl BreakpointList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.strip_mode.is_some() {
-            if self.input.focus_handle(cx).contains_focused(window, cx) {
-                cx.propagate();
-                return;
-            }
+        if self.strip_mode.is_some() && self.input.focus_handle(cx).contains_focused(window, cx) {
+            cx.propagate();
+            return;
         }
         let ix = match self.selected_ix {
-            _ if self.breakpoints.len() == 0 => None,
+            _ if self.breakpoints.is_empty() => None,
             None => Some(self.breakpoints.len() - 1),
             Some(ix) => {
                 if ix == 0 {
@@ -286,13 +283,11 @@ impl BreakpointList {
     }
 
     fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
-        if self.strip_mode.is_some() {
-            if self.input.focus_handle(cx).contains_focused(window, cx) {
-                cx.propagate();
-                return;
-            }
+        if self.strip_mode.is_some() && self.input.focus_handle(cx).contains_focused(window, cx) {
+            cx.propagate();
+            return;
         }
-        let ix = if self.breakpoints.len() > 0 {
+        let ix = if !self.breakpoints.is_empty() {
             Some(0)
         } else {
             None
@@ -301,13 +296,11 @@ impl BreakpointList {
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut Context<Self>) {
-        if self.strip_mode.is_some() {
-            if self.input.focus_handle(cx).contains_focused(window, cx) {
-                cx.propagate();
-                return;
-            }
+        if self.strip_mode.is_some() && self.input.focus_handle(cx).contains_focused(window, cx) {
+            cx.propagate();
+            return;
         }
-        let ix = if self.breakpoints.len() > 0 {
+        let ix = if !self.breakpoints.is_empty() {
             Some(self.breakpoints.len() - 1)
         } else {
             None
@@ -337,8 +330,8 @@ impl BreakpointList {
                 let text = self.input.read(cx).text(cx);
 
                 match mode {
-                    ActiveBreakpointStripMode::Log => match &entry.kind {
-                        BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
+                    ActiveBreakpointStripMode::Log => {
+                        if let BreakpointEntryKind::LineBreakpoint(line_breakpoint) = &entry.kind {
                             Self::edit_line_breakpoint_inner(
                                 &self.breakpoint_store,
                                 line_breakpoint.breakpoint.path.clone(),
@@ -347,10 +340,9 @@ impl BreakpointList {
                                 cx,
                             );
                         }
-                        _ => {}
-                    },
-                    ActiveBreakpointStripMode::Condition => match &entry.kind {
-                        BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
+                    }
+                    ActiveBreakpointStripMode::Condition => {
+                        if let BreakpointEntryKind::LineBreakpoint(line_breakpoint) = &entry.kind {
                             Self::edit_line_breakpoint_inner(
                                 &self.breakpoint_store,
                                 line_breakpoint.breakpoint.path.clone(),
@@ -359,10 +351,9 @@ impl BreakpointList {
                                 cx,
                             );
                         }
-                        _ => {}
-                    },
-                    ActiveBreakpointStripMode::HitCondition => match &entry.kind {
-                        BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
+                    }
+                    ActiveBreakpointStripMode::HitCondition => {
+                        if let BreakpointEntryKind::LineBreakpoint(line_breakpoint) = &entry.kind {
                             Self::edit_line_breakpoint_inner(
                                 &self.breakpoint_store,
                                 line_breakpoint.breakpoint.path.clone(),
@@ -371,8 +362,7 @@ impl BreakpointList {
                                 cx,
                             );
                         }
-                        _ => {}
-                    },
+                    }
                 }
                 self.focus_handle.focus(window);
             } else {
@@ -401,11 +391,9 @@ impl BreakpointList {
         let Some(entry) = self.selected_ix.and_then(|ix| self.breakpoints.get_mut(ix)) else {
             return;
         };
-        if self.strip_mode.is_some() {
-            if self.input.focus_handle(cx).contains_focused(window, cx) {
-                cx.propagate();
-                return;
-            }
+        if self.strip_mode.is_some() && self.input.focus_handle(cx).contains_focused(window, cx) {
+            cx.propagate();
+            return;
         }
 
         match &mut entry.kind {
@@ -436,13 +424,10 @@ impl BreakpointList {
             return;
         };
 
-        match &mut entry.kind {
-            BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
-                let path = line_breakpoint.breakpoint.path.clone();
-                let row = line_breakpoint.breakpoint.row;
-                self.edit_line_breakpoint(path, row, BreakpointEditAction::Toggle, cx);
-            }
-            _ => {}
+        if let BreakpointEntryKind::LineBreakpoint(line_breakpoint) = &mut entry.kind {
+            let path = line_breakpoint.breakpoint.path.clone();
+            let row = line_breakpoint.breakpoint.row;
+            self.edit_line_breakpoint(path, row, BreakpointEditAction::Toggle, cx);
         }
         cx.notify();
     }
@@ -494,7 +479,7 @@ impl BreakpointList {
     fn toggle_data_breakpoint(&mut self, id: &str, cx: &mut Context<Self>) {
         if let Some(session) = &self.session {
             session.update(cx, |this, cx| {
-                this.toggle_data_breakpoint(&id, cx);
+                this.toggle_data_breakpoint(id, cx);
             });
         }
     }
@@ -502,7 +487,7 @@ impl BreakpointList {
     fn toggle_exception_breakpoint(&mut self, id: &str, cx: &mut Context<Self>) {
         if let Some(session) = &self.session {
             session.update(cx, |this, cx| {
-                this.toggle_exception_breakpoint(&id, cx);
+                this.toggle_exception_breakpoint(id, cx);
             });
             cx.notify();
             const EXCEPTION_SERIALIZATION_INTERVAL: Duration = Duration::from_secs(1);
@@ -538,7 +523,7 @@ impl BreakpointList {
             cx.background_executor()
                 .spawn(async move { KEY_VALUE_STORE.write_kvp(key, value?).await })
         } else {
-            return Task::ready(Result::Ok(()));
+            Task::ready(Result::Ok(()))
         }
     }
 
@@ -564,7 +549,7 @@ impl BreakpointList {
             .session
             .as_ref()
             .map(|session| SupportedBreakpointProperties::from(session.read(cx).capabilities()))
-            .unwrap_or_else(SupportedBreakpointProperties::empty);
+            .unwrap_or_else(SupportedBreakpointProperties::all);
         let strip_mode = self.strip_mode;
 
         uniform_list(
@@ -588,41 +573,10 @@ impl BreakpointList {
                     .collect()
             }),
         )
+        .with_horizontal_sizing_behavior(gpui::ListHorizontalSizingBehavior::Unconstrained)
+        .with_width_from_item(self.max_width_index)
         .track_scroll(self.scroll_handle.clone())
         .flex_1()
-    }
-
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .occlude()
-            .id("breakpoint-list-vertical-scrollbar")
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
     }
 
     pub(crate) fn render_control_strip(&self) -> AnyElement {
@@ -658,13 +612,12 @@ impl BreakpointList {
                 .when_some(toggle_label, |this, (label, meta)| {
                     this.tooltip({
                         let focus_handle = focus_handle.clone();
-                        move |window, cx| {
+                        move |_window, cx| {
                             Tooltip::with_meta_in(
                                 label,
                                 Some(&ToggleEnableBreakpoint),
                                 meta,
                                 &focus_handle,
-                                window,
                                 cx,
                             )
                         }
@@ -685,13 +638,12 @@ impl BreakpointList {
                     .when_some(remove_breakpoint_tooltip, |this, tooltip| {
                         this.tooltip({
                             let focus_handle = focus_handle.clone();
-                            move |window, cx| {
+                            move |_window, cx| {
                                 Tooltip::with_meta_in(
                                     "Remove Breakpoint",
                                     Some(&UnsetBreakpoint),
                                     tooltip,
                                     &focus_handle,
-                                    window,
                                     cx,
                                 )
                             }
@@ -701,7 +653,6 @@ impl BreakpointList {
                         selection_kind.map(|kind| kind.0) != Some(SelectedBreakpointKind::Source),
                     )
                     .on_click({
-                        let focus_handle = focus_handle.clone();
                         move |_, window, cx| {
                             focus_handle.focus(window);
                             window.dispatch_action(UnsetBreakpoint.boxed_clone(), cx)
@@ -716,6 +667,7 @@ impl Render for BreakpointList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let breakpoints = self.breakpoint_store.read(cx).all_source_breakpoints(cx);
         self.breakpoints.clear();
+        let path_style = self.worktree_store.read(cx).path_style();
         let weak = cx.weak_entity();
         let breakpoints = breakpoints.into_iter().flat_map(|(path, mut breakpoints)| {
             let relative_worktree_path = self
@@ -726,24 +678,20 @@ impl Render for BreakpointList {
                     worktree
                         .read(cx)
                         .is_visible()
-                        .then(|| Path::new(worktree.read(cx).root_name()).join(relative_path))
+                        .then(|| worktree.read(cx).root_name().join(&relative_path))
                 });
             breakpoints.sort_by_key(|breakpoint| breakpoint.row);
             let weak = weak.clone();
             breakpoints.into_iter().filter_map(move |breakpoint| {
                 debug_assert_eq!(&path, &breakpoint.path);
                 let file_name = breakpoint.path.file_name()?;
+                let breakpoint_path = RelPath::new(&breakpoint.path, path_style).ok();
 
                 let dir = relative_worktree_path
-                    .clone()
-                    .unwrap_or_else(|| PathBuf::from(&*breakpoint.path))
+                    .as_deref()
+                    .or(breakpoint_path.as_deref())?
                     .parent()
-                    .and_then(|parent| {
-                        parent
-                            .to_str()
-                            .map(ToOwned::to_owned)
-                            .map(SharedString::from)
-                    });
+                    .map(|parent| SharedString::from(parent.display(path_style).to_string()));
                 let name = file_name
                     .to_str()
                     .map(ToOwned::to_owned)
@@ -789,6 +737,26 @@ impl Render for BreakpointList {
                 .chain(exception_breakpoints),
         );
 
+        let text_pixels = ui::TextSize::Default.pixels(cx).to_f64() as f32;
+
+        self.max_width_index = self
+            .breakpoints
+            .iter()
+            .map(|entry| match &entry.kind {
+                BreakpointEntryKind::LineBreakpoint(line_bp) => {
+                    let name_and_line = format!("{}:{}", line_bp.name, line_bp.line);
+                    let dir_len = line_bp.dir.as_ref().map(|d| d.len()).unwrap_or(0);
+                    (name_and_line.len() + dir_len) as f32 * text_pixels
+                }
+                BreakpointEntryKind::ExceptionBreakpoint(exc_bp) => {
+                    exc_bp.data.label.len() as f32 * text_pixels
+                }
+                BreakpointEntryKind::DataBreakpoint(data_bp) => {
+                    data_bp.0.context.human_readable_label().len() as f32 * text_pixels
+                }
+            })
+            .position_max_by(|left, right| left.total_cmp(right));
+
         v_flex()
             .id("breakpoint-list")
             .key_context("BreakpointList")
@@ -806,7 +774,14 @@ impl Render for BreakpointList {
             .size_full()
             .pt_1()
             .child(self.render_list(cx))
-            .child(self.render_vertical_scrollbar(cx))
+            .custom_scrollbars(
+                ui::Scrollbars::new(ScrollAxes::Both)
+                    .tracked_scroll_handle(self.scroll_handle.clone())
+                    .with_track_along(ScrollAxes::Both, cx.theme().colors().panel_background)
+                    .tracked_entity(cx.entity_id()),
+                window,
+                cx,
+            )
             .when_some(self.strip_mode, |this, _| {
                 this.child(Divider::horizontal().color(DividerColor::Border))
                     .child(
@@ -874,7 +849,7 @@ impl LineBreakpoint {
             )
             .tooltip({
                 let focus_handle = focus_handle.clone();
-                move |window, cx| {
+                move |_window, cx| {
                     Tooltip::for_action_in(
                         if is_enabled {
                             "Disable Breakpoint"
@@ -883,7 +858,6 @@ impl LineBreakpoint {
                         },
                         &ToggleEnableBreakpoint,
                         &focus_handle,
-                        window,
                         cx,
                     )
                 }
@@ -977,7 +951,7 @@ impl LineBreakpoint {
                     props,
                     breakpoint: BreakpointEntry {
                         kind: BreakpointEntryKind::LineBreakpoint(self.clone()),
-                        weak: weak,
+                        weak,
                     },
                     is_selected,
                     focus_handle,
@@ -1035,7 +1009,7 @@ impl DataBreakpoint {
                 )
                 .tooltip({
                     let focus_handle = focus_handle.clone();
-                    move |window, cx| {
+                    move |_window, cx| {
                         Tooltip::for_action_in(
                             if is_enabled {
                                 "Disable Data Breakpoint"
@@ -1044,7 +1018,6 @@ impl DataBreakpoint {
                             },
                             &ToggleEnableBreakpoint,
                             &focus_handle,
-                            window,
                             cx,
                         )
                     }
@@ -1140,7 +1113,7 @@ impl ExceptionBreakpoint {
                 )
                 .tooltip({
                     let focus_handle = focus_handle.clone();
-                    move |window, cx| {
+                    move |_window, cx| {
                         Tooltip::for_action_in(
                             if is_enabled {
                                 "Disable Exception Breakpoint"
@@ -1149,13 +1122,11 @@ impl ExceptionBreakpoint {
                             },
                             &ToggleEnableBreakpoint,
                             &focus_handle,
-                            window,
                             cx,
                         )
                     }
                 })
                 .on_click({
-                    let list = list.clone();
                     move |_, _, cx| {
                         list.update(cx, |this, cx| {
                             this.toggle_exception_breakpoint(&id, cx);
@@ -1189,7 +1160,7 @@ impl ExceptionBreakpoint {
                     props,
                     breakpoint: BreakpointEntry {
                         kind: BreakpointEntryKind::ExceptionBreakpoint(self.clone()),
-                        weak: weak,
+                        weak,
                     },
                     is_selected,
                     focus_handle,
@@ -1437,8 +1408,10 @@ impl RenderOnce for BreakpointOptionsStrip {
         h_flex()
             .gap_px()
             .mr_3() // Space to avoid overlapping with the scrollbar
-            .child(
-                div()
+            .justify_end()
+            .when(has_logs || self.is_selected, |this| {
+                this.child(
+                    div()
                     .map(self.add_focus_styles(
                         ActiveBreakpointStripMode::Log,
                         supports_logs,
@@ -1458,56 +1431,55 @@ impl RenderOnce for BreakpointOptionsStrip {
                         .disabled(!supports_logs)
                         .toggle_state(self.is_toggled(ActiveBreakpointStripMode::Log))
                         .on_click(self.on_click_callback(ActiveBreakpointStripMode::Log))
-                        .tooltip(|window, cx| {
+                        .tooltip(|_window, cx|  {
                             Tooltip::with_meta(
                                 "Set Log Message",
                                 None,
                                 "Set log message to display (instead of stopping) when a breakpoint is hit.",
-                                window,
                                 cx,
                             )
                         }),
                     )
-                    .when(!has_logs && !self.is_selected, |this| this.invisible()),
-            )
-            .child(
-                div()
-                    .map(self.add_focus_styles(
-                        ActiveBreakpointStripMode::Condition,
-                        supports_condition,
-                        window,
-                        cx,
-                    ))
-                    .child(
-                        IconButton::new(
-                            SharedString::from(format!("{id}-condition-toggle")),
-                            IconName::SplitAlt,
-                        )
-                        .shape(ui::IconButtonShape::Square)
-                        .style(style_for_toggle(
+                )
+            })
+            .when(has_condition || self.is_selected, |this| {
+                this.child(
+                    div()
+                        .map(self.add_focus_styles(
                             ActiveBreakpointStripMode::Condition,
-                            has_condition,
+                            supports_condition,
+                            window,
+                            cx,
                         ))
-                        .icon_size(IconSize::Small)
-                        .icon_color(color_for_toggle(has_condition))
-                        .when(has_condition, |this| this.indicator(Indicator::dot().color(Color::Info)))
-                        .disabled(!supports_condition)
-                        .toggle_state(self.is_toggled(ActiveBreakpointStripMode::Condition))
-                        .on_click(self.on_click_callback(ActiveBreakpointStripMode::Condition))
-                        .tooltip(|window, cx| {
-                            Tooltip::with_meta(
-                                "Set Condition",
-                                None,
-                                "Set condition to evaluate when a breakpoint is hit. Program execution will stop only when the condition is met.",
-                                window,
-                                cx,
+                        .child(
+                            IconButton::new(
+                                SharedString::from(format!("{id}-condition-toggle")),
+                                IconName::SplitAlt,
                             )
-                        }),
-                    )
-                    .when(!has_condition && !self.is_selected, |this| this.invisible()),
-            )
-            .child(
-                div()
+                            .shape(ui::IconButtonShape::Square)
+                            .style(style_for_toggle(
+                                ActiveBreakpointStripMode::Condition,
+                                has_condition,
+                            ))
+                            .icon_size(IconSize::Small)
+                            .icon_color(color_for_toggle(has_condition))
+                            .when(has_condition, |this| this.indicator(Indicator::dot().color(Color::Info)))
+                            .disabled(!supports_condition)
+                            .toggle_state(self.is_toggled(ActiveBreakpointStripMode::Condition))
+                            .on_click(self.on_click_callback(ActiveBreakpointStripMode::Condition))
+                            .tooltip(|_window, cx|  {
+                                Tooltip::with_meta(
+                                    "Set Condition",
+                                    None,
+                                    "Set condition to evaluate when a breakpoint is hit. Program execution will stop only when the condition is met.",
+                                    cx,
+                                )
+                            }),
+                        )
+                )
+            })
+            .when(has_hit_condition || self.is_selected, |this| {
+                this.child(div()
                     .map(self.add_focus_styles(
                         ActiveBreakpointStripMode::HitCondition,
                         supports_hit_condition,
@@ -1530,19 +1502,16 @@ impl RenderOnce for BreakpointOptionsStrip {
                         .disabled(!supports_hit_condition)
                         .toggle_state(self.is_toggled(ActiveBreakpointStripMode::HitCondition))
                         .on_click(self.on_click_callback(ActiveBreakpointStripMode::HitCondition))
-                        .tooltip(|window, cx| {
+                        .tooltip(|_window, cx|  {
                             Tooltip::with_meta(
                                 "Set Hit Condition",
                                 None,
                                 "Set expression that controls how many hits of the breakpoint are ignored.",
-                                window,
                                 cx,
                             )
                         }),
-                    )
-                    .when(!has_hit_condition && !self.is_selected, |this| {
-                        this.invisible()
-                    }),
-            )
+                    ))
+
+            })
     }
 }

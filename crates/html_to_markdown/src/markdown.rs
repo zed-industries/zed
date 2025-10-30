@@ -34,15 +34,14 @@ impl HandleTag for ParagraphHandler {
         tag: &HtmlElement,
         writer: &mut MarkdownWriter,
     ) -> StartTagOutcome {
-        if tag.is_inline() && writer.is_inside("p") {
-            if let Some(parent) = writer.current_element_stack().iter().last() {
-                if !(parent.is_inline()
-                    || writer.markdown.ends_with(' ')
-                    || writer.markdown.ends_with('\n'))
-                {
-                    writer.push_str(" ");
-                }
-            }
+        if tag.is_inline()
+            && writer.is_inside("p")
+            && let Some(parent) = writer.current_element_stack().iter().last()
+            && !(parent.is_inline()
+                || writer.markdown.ends_with(' ')
+                || writer.markdown.ends_with('\n'))
+        {
+            writer.push_str(" ");
         }
 
         if tag.tag() == "p" {

@@ -5,6 +5,7 @@
 (primitive_type) @type.builtin
 (self) @variable.special
 (field_identifier) @property
+(shorthand_field_identifier) @property
 
 (trait_item name: (type_identifier) @type.interface)
 (impl_item trait: (type_identifier) @type.interface)
@@ -82,29 +83,20 @@
   "as"
   "async"
   "await"
-  "break"
   "const"
-  "continue"
   "default"
   "dyn"
-  "else"
   "enum"
   "extern"
   "fn"
-  "for"
-  "if"
   "impl"
-  "in"
   "let"
-  "loop"
   "macro_rules!"
-  "match"
   "mod"
   "move"
   "pub"
   "raw"
   "ref"
-  "return"
   "static"
   "struct"
   "trait"
@@ -113,12 +105,24 @@
   "unsafe"
   "use"
   "where"
-  "while"
-  "yield"
   (crate)
   (mutable_specifier)
   (super)
 ] @keyword
+
+[
+  "break"
+  "continue"
+  "else"
+  "for"
+  "if"
+  "in"
+  "loop"
+  "match"
+  "return"
+  "while"
+  "yield"
+] @keyword.control
 
 [
   (string_literal)
@@ -195,12 +199,13 @@ operator: "/" @operator
 (attribute_item (attribute [
   (identifier) @attribute
   (scoped_identifier name: (identifier) @attribute)
+  (token_tree (identifier) @attribute (#match? @attribute "^[a-z\\d_]*$"))
+  (token_tree (identifier) @none "::" (#match? @none "^[a-z\\d_]*$"))
 ]))
+
 (inner_attribute_item (attribute [
   (identifier) @attribute
   (scoped_identifier name: (identifier) @attribute)
+  (token_tree (identifier) @attribute (#match? @attribute "^[a-z\\d_]*$"))
+  (token_tree (identifier) @none "::" (#match? @none "^[a-z\\d_]*$"))
 ]))
-; Match nested snake case identifiers in attribute items.
-(token_tree (identifier) @attribute (#match? @attribute "^[a-z\\d_]*$"))
-; Override the attribute match for paths in scoped type/enum identifiers.
-(token_tree (identifier) @variable "::" (identifier) @type (#match? @type "^[A-Z]"))

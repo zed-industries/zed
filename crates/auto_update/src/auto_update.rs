@@ -3,16 +3,17 @@ use client::{Client, TelemetrySettings};
 use db::RELEASE_CHANNEL;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, Global, SemanticVersion, Task, Window, actions,
+    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, Global, SemanticVersion,
+    Task, Window, actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
 use release_channel::{AppCommitSha, ReleaseChannel};
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsStore};
+use settings::{Settings, SettingsStore};
 use smol::{fs, io::AsyncReadExt};
 use smol::{fs::File, process::Command};
+use std::mem;
 use std::{
     env::{
         self,
@@ -34,7 +35,7 @@ actions!(
         /// Checks for available updates.
         Check,
         /// Dismisses the update error message.
-        DismissErrorMessage,
+        DismissMessage,
         /// Opens the release notes for the current version in a browser.
         ViewReleaseNotes,
     ]
@@ -55,14 +56,14 @@ pub enum VersionCheckType {
     Semantic(SemanticVersion),
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub enum AutoUpdateStatus {
     Idle,
     Checking,
     Downloading { version: VersionCheckType },
     Installing { version: VersionCheckType },
     Updated { version: VersionCheckType },
-    Errored,
+    Errored { error: Arc<anyhow::Error> },
 }
 
 impl AutoUpdateStatus {
@@ -85,67 +86,49 @@ pub struct JsonRelease {
     pub url: String,
 }
 
-struct MacOsUnmounter {
+struct MacOsUnmounter<'a> {
     mount_path: PathBuf,
+    background_executor: &'a BackgroundExecutor,
 }
 
-impl Drop for MacOsUnmounter {
+impl Drop for MacOsUnmounter<'_> {
     fn drop(&mut self) {
-        let unmount_output = std::process::Command::new("hdiutil")
-            .args(["detach", "-force"])
-            .arg(&self.mount_path)
-            .output();
-
-        match unmount_output {
-            Ok(output) if output.status.success() => {
-                log::info!("Successfully unmounted the disk image");
-            }
-            Ok(output) => {
-                log::error!(
-                    "Failed to unmount disk image: {:?}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            }
-            Err(error) => {
-                log::error!("Error while trying to unmount disk image: {:?}", error);
-            }
-        }
+        let mount_path = mem::take(&mut self.mount_path);
+        self.background_executor
+            .spawn(async move {
+                let unmount_output = Command::new("hdiutil")
+                    .args(["detach", "-force"])
+                    .arg(&mount_path)
+                    .output()
+                    .await;
+                match unmount_output {
+                    Ok(output) if output.status.success() => {
+                        log::info!("Successfully unmounted the disk image");
+                    }
+                    Ok(output) => {
+                        log::error!(
+                            "Failed to unmount disk image: {:?}",
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                    }
+                    Err(error) => {
+                        log::error!("Error while trying to unmount disk image: {:?}", error);
+                    }
+                }
+            })
+            .detach();
     }
 }
 
+#[derive(Clone, Copy, Debug)]
 struct AutoUpdateSetting(bool);
 
 /// Whether or not to automatically check for updates.
 ///
 /// Default: true
-#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize)]
-#[serde(transparent)]
-struct AutoUpdateSettingContent(bool);
-
 impl Settings for AutoUpdateSetting {
-    const KEY: Option<&'static str> = Some("auto_update");
-
-    type FileContent = Option<AutoUpdateSettingContent>;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        let auto_update = [
-            sources.server,
-            sources.release_channel,
-            sources.operating_system,
-            sources.user,
-        ]
-        .into_iter()
-        .find_map(|value| value.copied().flatten())
-        .unwrap_or(sources.default.ok_or_else(Self::missing_default)?);
-
-        Ok(Self(auto_update.0))
-    }
-
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
-        vscode.enum_setting("update.mode", current, |s| match s {
-            "none" | "manual" => Some(AutoUpdateSettingContent(false)),
-            _ => Some(AutoUpdateSettingContent(true)),
-        });
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        Self(content.auto_update.unwrap())
     }
 }
 
@@ -327,10 +310,10 @@ impl AutoUpdater {
         // the app after an update, we use `set_restart_path` to run the auto
         // update helper instead of the app, so that it can overwrite the app
         // and then spawn the new binary.
-        let quit_subscription = Some(cx.on_app_quit(|_, _| async move {
-            #[cfg(target_os = "windows")]
-            finalize_auto_update_on_quit();
-        }));
+        #[cfg(target_os = "windows")]
+        let quit_subscription = Some(cx.on_app_quit(|_, _| finalize_auto_update_on_quit()));
+        #[cfg(not(target_os = "windows"))]
+        let quit_subscription = None;
 
         cx.on_app_restart(|this, _| {
             this.quit_subscription.take();
@@ -375,7 +358,9 @@ impl AutoUpdater {
                         }
                         UpdateCheckType::Manual => {
                             log::error!("auto-update failed: error:{:?}", error);
-                            AutoUpdateStatus::Errored
+                            AutoUpdateStatus::Errored {
+                                error: Arc::new(error),
+                            }
                         }
                     };
 
@@ -394,8 +379,8 @@ impl AutoUpdater {
         self.status.clone()
     }
 
-    pub fn dismiss_error(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.status == AutoUpdateStatus::Idle {
+    pub fn dismiss(&mut self, cx: &mut Context<Self>) -> bool {
+        if let AutoUpdateStatus::Idle = self.status {
             return false;
         }
         self.status = AutoUpdateStatus::Idle;
@@ -543,7 +528,7 @@ impl AutoUpdater {
 
     async fn update(this: Entity<Self>, mut cx: AsyncApp) -> Result<()> {
         let (client, installed_version, previous_status, release_channel) =
-            this.read_with(&mut cx, |this, cx| {
+            this.read_with(&cx, |this, cx| {
                 (
                     this.http_client.clone(),
                     this.current_version,
@@ -556,6 +541,7 @@ impl AutoUpdater {
 
         this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Checking;
+            log::info!("Auto Update: checking for updates");
             cx.notify();
         })?;
 
@@ -663,7 +649,7 @@ impl AutoUpdater {
         #[cfg(not(target_os = "windows"))]
         anyhow::ensure!(
             which::which("rsync").is_ok(),
-            "Aborting. Could not find rsync which is required for auto-updates."
+            "Could not auto-update because the required rsync utility was not found."
         );
         Ok(())
     }
@@ -672,7 +658,7 @@ impl AutoUpdater {
         let filename = match OS {
             "macos" => anyhow::Ok("Zed.dmg"),
             "linux" => Ok("zed.tar.gz"),
-            "windows" => Ok("zed_editor_installer.exe"),
+            "windows" => Ok("Zed.exe"),
             unsupported_os => anyhow::bail!("not supported: {unsupported_os}"),
         }?;
 
@@ -918,6 +904,7 @@ async fn install_release_macos(
     // Create an MacOsUnmounter that will be dropped (and thus unmount the disk) when this function exits
     let _unmounter = MacOsUnmounter {
         mount_path: mount_path.clone(),
+        background_executor: cx.background_executor(),
     };
 
     let output = Command::new("rsync")
@@ -955,11 +942,12 @@ async fn install_release_windows(downloaded_installer: PathBuf) -> Result<Option
     let helper_path = std::env::current_exe()?
         .parent()
         .context("No parent dir for Zed.exe")?
-        .join("tools\\auto_update_helper.exe");
+        .join("tools")
+        .join("auto_update_helper.exe");
     Ok(Some(helper_path))
 }
 
-pub fn finalize_auto_update_on_quit() {
+pub async fn finalize_auto_update_on_quit() {
     let Some(installer_path) = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.join("updates")))
@@ -972,18 +960,39 @@ pub fn finalize_auto_update_on_quit() {
     if flag_file.exists()
         && let Some(helper) = installer_path
             .parent()
-            .map(|p| p.join("tools\\auto_update_helper.exe"))
+            .map(|p| p.join("tools").join("auto_update_helper.exe"))
     {
-        let mut command = std::process::Command::new(helper);
+        let mut command = smol::process::Command::new(helper);
         command.arg("--launch");
         command.arg("false");
-        let _ = command.spawn();
+        if let Ok(mut cmd) = command.spawn() {
+            _ = cmd.status().await;
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use gpui::TestAppContext;
+    use settings::default_settings;
+
     use super::*;
+
+    #[gpui::test]
+    fn test_auto_update_defaults_to_true(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let mut store = SettingsStore::new(cx, &settings::default_settings());
+            store
+                .set_default_settings(&default_settings(), cx)
+                .expect("Unable to set default settings");
+            store
+                .set_user_settings("{}", cx)
+                .expect("Unable to set user settings");
+            cx.set_global(store);
+            AutoUpdateSetting::register(cx);
+            assert!(AutoUpdateSetting::get_global(cx).0);
+        });
+    }
 
     #[test]
     fn test_stable_does_not_update_when_fetched_version_is_not_higher() {

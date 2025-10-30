@@ -8,6 +8,7 @@ use crate::{
 use anyhow::Context as _;
 use smallvec::SmallVec;
 use std::{
+    borrow::Cow,
     cell::{Cell, RefCell},
     mem,
     ops::Range,
@@ -180,8 +181,7 @@ impl StyledText {
             "Can't use `with_default_highlights` and `with_highlights`"
         );
         let runs = Self::compute_runs(&self.text, default_style, highlights);
-        self.runs = Some(runs);
-        self
+        self.with_runs(runs)
     }
 
     /// Set the styling attributes for the given text, as well as
@@ -194,7 +194,15 @@ impl StyledText {
             self.runs.is_none(),
             "Can't use `with_highlights` and `with_default_highlights`"
         );
-        self.delayed_highlights = Some(highlights.into_iter().collect::<Vec<_>>());
+        self.delayed_highlights = Some(
+            highlights
+                .into_iter()
+                .inspect(|(run, _)| {
+                    debug_assert!(self.text.is_char_boundary(run.start));
+                    debug_assert!(self.text.is_char_boundary(run.end));
+                })
+                .collect::<Vec<_>>(),
+        );
         self
     }
 
@@ -207,8 +215,10 @@ impl StyledText {
         let mut ix = 0;
         for (range, highlight) in highlights {
             if ix < range.start {
+                debug_assert!(text.is_char_boundary(range.start));
                 runs.push(default_style.clone().to_run(range.start - ix));
             }
+            debug_assert!(text.is_char_boundary(range.end));
             runs.push(
                 default_style
                     .clone()
@@ -225,6 +235,11 @@ impl StyledText {
 
     /// Set the text runs for this piece of text.
     pub fn with_runs(mut self, runs: Vec<TextRun>) -> Self {
+        let mut text = &**self.text;
+        for run in &runs {
+            text = text.get(run.len..).expect("invalid text run");
+        }
+        assert!(text.is_empty(), "invalid text run");
         self.runs = Some(runs);
         self
     }
@@ -320,13 +335,12 @@ impl TextLayout {
             .line_height
             .to_pixels(font_size.into(), window.rem_size());
 
-        let mut runs = if let Some(runs) = runs {
+        let runs = if let Some(runs) = runs {
             runs
         } else {
             vec![text_style.to_run(text.len())]
         };
-
-        let layout_id = window.request_measured_layout(Default::default(), {
+        window.request_measured_layout(Default::default(), {
             let element_state = self.clone();
 
             move |known_dimensions, available_space, window, cx| {
@@ -356,24 +370,23 @@ impl TextLayout {
                         (None, "".into())
                     };
 
-                if let Some(text_layout) = element_state.0.borrow().as_ref() {
-                    if text_layout.size.is_some()
-                        && (wrap_width.is_none() || wrap_width == text_layout.wrap_width)
-                    {
-                        return text_layout.size.unwrap();
-                    }
+                if let Some(text_layout) = element_state.0.borrow().as_ref()
+                    && text_layout.size.is_some()
+                    && (wrap_width.is_none() || wrap_width == text_layout.wrap_width)
+                {
+                    return text_layout.size.unwrap();
                 }
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
-                let text = if let Some(truncate_width) = truncate_width {
+                let (text, runs) = if let Some(truncate_width) = truncate_width {
                     line_wrapper.truncate_line(
                         text.clone(),
                         truncate_width,
                         &truncation_suffix,
-                        &mut runs,
+                        &runs,
                     )
                 } else {
-                    text.clone()
+                    (text.clone(), Cow::Borrowed(&*runs))
                 };
                 let len = text.len();
 
@@ -417,9 +430,7 @@ impl TextLayout {
 
                 size
             }
-        });
-
-        layout_id
+        })
     }
 
     fn prepaint(&self, bounds: Bounds<Pixels>, text: &str) {
@@ -763,14 +774,13 @@ impl Element for InteractiveText {
                 let mut interactive_state = interactive_state.unwrap_or_default();
                 if let Some(click_listener) = self.click_listener.take() {
                     let mouse_position = window.mouse_position();
-                    if let Ok(ix) = text_layout.index_for_position(mouse_position) {
-                        if self
+                    if let Ok(ix) = text_layout.index_for_position(mouse_position)
+                        && self
                             .clickable_ranges
                             .iter()
                             .any(|range| range.contains(&ix))
-                        {
-                            window.set_cursor_style(crate::CursorStyle::PointingHand, hitbox)
-                        }
+                    {
+                        window.set_cursor_style(crate::CursorStyle::PointingHand, hitbox)
                     }
 
                     let text_layout = text_layout.clone();
@@ -803,13 +813,13 @@ impl Element for InteractiveText {
                     } else {
                         let hitbox = hitbox.clone();
                         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, _| {
-                            if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
-                                if let Ok(mouse_down_index) =
+                            if phase == DispatchPhase::Bubble
+                                && hitbox.is_hovered(window)
+                                && let Ok(mouse_down_index) =
                                     text_layout.index_for_position(event.position)
-                                {
-                                    mouse_down.set(Some(mouse_down_index));
-                                    window.refresh();
-                                }
+                            {
+                                mouse_down.set(Some(mouse_down_index));
+                                window.refresh();
                             }
                         });
                     }

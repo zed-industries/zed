@@ -6,9 +6,11 @@ use crate::{ToggleMarksView, ToggleRegistersView, UseSystemClipboard, Vim, VimAd
 use crate::{motion::Motion, object::Object};
 use anyhow::Result;
 use collections::HashMap;
-use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
-use db::define_connection;
-use db::sqlez_macros::sql;
+use command_palette_hooks::{CommandPaletteFilter, GlobalCommandPaletteInterceptor};
+use db::{
+    sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
+    sqlez_macros::sql,
+};
 use editor::display_map::{is_invisible, replacement};
 use editor::{Anchor, ClipboardSelection, Editor, MultiBuffer, ToPoint as EditorToPoint};
 use gpui::{
@@ -32,6 +34,7 @@ use ui::{
     StyledTypography, Window, h_flex, rems,
 };
 use util::ResultExt;
+use util::rel_path::RelPath;
 use workspace::searchable::Direction;
 use workspace::{Workspace, WorkspaceDb, WorkspaceId};
 
@@ -44,6 +47,7 @@ pub enum Mode {
     VisualLine,
     VisualBlock,
     HelixNormal,
+    HelixSelect,
 }
 
 impl Display for Mode {
@@ -55,7 +59,8 @@ impl Display for Mode {
             Mode::Visual => write!(f, "VISUAL"),
             Mode::VisualLine => write!(f, "VISUAL LINE"),
             Mode::VisualBlock => write!(f, "VISUAL BLOCK"),
-            Mode::HelixNormal => write!(f, "HELIX NORMAL"),
+            Mode::HelixNormal => write!(f, "NORMAL"),
+            Mode::HelixSelect => write!(f, "SELECT"),
         }
     }
 }
@@ -63,7 +68,7 @@ impl Display for Mode {
 impl Mode {
     pub fn is_visual(&self) -> bool {
         match self {
-            Self::Visual | Self::VisualLine | Self::VisualBlock => true,
+            Self::Visual | Self::VisualLine | Self::VisualBlock | Self::HelixSelect => true,
             Self::Normal | Self::Insert | Self::Replace | Self::HelixNormal => false,
         }
     }
@@ -104,6 +109,9 @@ pub enum Operator {
     },
     ChangeSurrounds {
         target: Option<Object>,
+        /// Represents whether the opening bracket was used for the target
+        /// object.
+        opening: bool,
     },
     DeleteSurrounds,
     Mark,
@@ -132,6 +140,13 @@ pub enum Operator {
     ToggleComments,
     ReplaceWithRegister,
     Exchange,
+    HelixMatch,
+    HelixNext {
+        around: bool,
+    },
+    HelixPrevious {
+        around: bool,
+    },
 }
 
 #[derive(Default, Clone, Debug)]
@@ -255,16 +270,11 @@ impl MarksState {
     pub fn new(workspace: &Workspace, cx: &mut App) -> Entity<MarksState> {
         cx.new(|cx| {
             let buffer_store = workspace.project().read(cx).buffer_store().clone();
-            let subscription =
-                cx.subscribe(
-                    &buffer_store,
-                    move |this: &mut Self, _, event, cx| match event {
-                        project::buffer_store::BufferStoreEvent::BufferAdded(buffer) => {
-                            this.on_buffer_loaded(buffer, cx);
-                        }
-                        _ => {}
-                    },
-                );
+            let subscription = cx.subscribe(&buffer_store, move |this: &mut Self, _, event, cx| {
+                if let project::buffer_store::BufferStoreEvent::BufferAdded(buffer) = event {
+                    this.on_buffer_loaded(buffer, cx);
+                }
+            });
 
             let mut this = Self {
                 workspace: workspace.weak_handle(),
@@ -337,9 +347,10 @@ impl MarksState {
                 .worktrees(cx)
                 .filter_map(|worktree| {
                     let relative = path.strip_prefix(worktree.read(cx).abs_path()).ok()?;
+                    let path = RelPath::new(relative, worktree.read(cx).path_style()).log_err()?;
                     Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path: relative.into(),
+                        path: path.into_arc(),
                     })
                 })
                 .next();
@@ -405,27 +416,27 @@ impl MarksState {
             } else {
                 HashMap::default()
             };
-        let old_points = self.serialized_marks.get(&path.clone());
+        let old_points = self.serialized_marks.get(&path);
         if old_points == Some(&new_points) {
             return;
         }
         let mut to_write = HashMap::default();
 
         for (key, value) in &new_points {
-            if self.is_global_mark(key) {
-                if self.global_marks.get(key) != Some(&MarkLocation::Path(path.clone())) {
-                    if let Some(workspace_id) = self.workspace_id(cx) {
-                        let path = path.clone();
-                        let key = key.clone();
-                        cx.background_spawn(async move {
-                            DB.set_global_mark_path(workspace_id, key, path).await
-                        })
-                        .detach_and_log_err(cx);
-                    }
-
-                    self.global_marks
-                        .insert(key.clone(), MarkLocation::Path(path.clone()));
+            if self.is_global_mark(key)
+                && self.global_marks.get(key) != Some(&MarkLocation::Path(path.clone()))
+            {
+                if let Some(workspace_id) = self.workspace_id(cx) {
+                    let path = path.clone();
+                    let key = key.clone();
+                    cx.background_spawn(async move {
+                        DB.set_global_mark_path(workspace_id, key, path).await
+                    })
+                    .detach_and_log_err(cx);
                 }
+
+                self.global_marks
+                    .insert(key.clone(), MarkLocation::Path(path.clone()));
             }
             if old_points.and_then(|o| o.get(key)) != Some(value) {
                 to_write.insert(key.clone(), value.clone());
@@ -456,15 +467,15 @@ impl MarksState {
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) {
-        if let MarkLocation::Buffer(entity_id) = old_path {
-            if let Some(old_marks) = self.multibuffer_marks.remove(&entity_id) {
-                let buffer_marks = old_marks
-                    .into_iter()
-                    .map(|(k, v)| (k, v.into_iter().map(|anchor| anchor.text_anchor).collect()))
-                    .collect();
-                self.buffer_marks
-                    .insert(buffer.read(cx).remote_id(), buffer_marks);
-            }
+        if let MarkLocation::Buffer(entity_id) = old_path
+            && let Some(old_marks) = self.multibuffer_marks.remove(&entity_id)
+        {
+            let buffer_marks = old_marks
+                .into_iter()
+                .map(|(k, v)| (k, v.into_iter().map(|anchor| anchor.text_anchor).collect()))
+                .collect();
+            self.buffer_marks
+                .insert(buffer.read(cx).remote_id(), buffer_marks);
         }
         self.watch_buffer(MarkLocation::Path(new_path.clone()), buffer, cx);
         self.serialize_buffer_marks(new_path, buffer, cx);
@@ -512,10 +523,9 @@ impl MarksState {
                     .watched_buffers
                     .get(&buffer_id.clone())
                     .map(|(path, _, _)| path.clone())
+                    && let Some(new_path) = this.path_for_buffer(&buffer, cx)
                 {
-                    if let Some(new_path) = this.path_for_buffer(&buffer, cx) {
-                        this.rename_buffer(old_path, new_path, &buffer, cx)
-                    }
+                    this.rename_buffer(old_path, new_path, &buffer, cx)
                 }
             }
             _ => {}
@@ -540,7 +550,7 @@ impl MarksState {
         cx: &mut Context<Self>,
     ) {
         let buffer = multibuffer.read(cx).as_singleton();
-        let abs_path = buffer.as_ref().and_then(|b| self.path_for_buffer(&b, cx));
+        let abs_path = buffer.as_ref().and_then(|b| self.path_for_buffer(b, cx));
 
         let Some(abs_path) = abs_path else {
             self.multibuffer_marks
@@ -549,7 +559,7 @@ impl MarksState {
                 .insert(name.clone(), anchors);
             if self.is_global_mark(&name) {
                 self.global_marks
-                    .insert(name.clone(), MarkLocation::Buffer(multibuffer.entity_id()));
+                    .insert(name, MarkLocation::Buffer(multibuffer.entity_id()));
             }
             if let Some(buffer) = buffer {
                 let buffer_id = buffer.read(cx).remote_id();
@@ -565,7 +575,7 @@ impl MarksState {
 
         let buffer_id = buffer.read(cx).remote_id();
         self.buffer_marks.entry(buffer_id).or_default().insert(
-            name.clone(),
+            name,
             anchors
                 .into_iter()
                 .map(|anchor| anchor.text_anchor)
@@ -597,7 +607,7 @@ impl MarksState {
             if let Some(anchors) = self.buffer_marks.get(&buffer_id) {
                 let text_anchors = anchors.get(name)?;
                 let anchors = text_anchors
-                    .into_iter()
+                    .iter()
                     .map(|anchor| Anchor::in_buffer(excerpt_id, buffer_id, *anchor))
                     .collect();
                 return Some(Mark::Local(anchors));
@@ -606,12 +616,12 @@ impl MarksState {
 
         match target? {
             MarkLocation::Buffer(entity_id) => {
-                let anchors = self.multibuffer_marks.get(&entity_id)?;
-                return Some(Mark::Buffer(*entity_id, anchors.get(name)?.clone()));
+                let anchors = self.multibuffer_marks.get(entity_id)?;
+                Some(Mark::Buffer(*entity_id, anchors.get(name)?.clone()))
             }
             MarkLocation::Path(path) => {
                 let points = self.serialized_marks.get(path)?;
-                return Some(Mark::Path(path.clone(), points.get(name)?.clone()));
+                Some(Mark::Path(path.clone(), points.get(name)?.clone()))
             }
         }
     }
@@ -636,7 +646,7 @@ impl MarksState {
             match target {
                 MarkLocation::Buffer(entity_id) => {
                     self.multibuffer_marks
-                        .get_mut(&entity_id)
+                        .get_mut(entity_id)
                         .map(|m| m.remove(&mark_name.clone()));
                     return;
                 }
@@ -660,9 +670,9 @@ impl MarksState {
                 return;
             }
         };
-        self.global_marks.remove(&mark_name.clone());
+        self.global_marks.remove(&mark_name);
         self.serialized_marks
-            .get_mut(&path.clone())
+            .get_mut(&path)
             .map(|m| m.remove(&mark_name.clone()));
         if let Some(workspace_id) = self.workspace_id(cx) {
             cx.background_spawn(async move { DB.delete_mark(workspace_id, path, mark_name).await })
@@ -708,9 +718,7 @@ impl VimGlobals {
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.show_namespace(Vim::NAMESPACE);
                 });
-                CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
-                    interceptor.set(Box::new(command_interceptor));
-                });
+                GlobalCommandPaletteInterceptor::set(cx, command_interceptor);
                 for window in cx.windows() {
                     if let Some(workspace) = window.downcast::<Workspace>() {
                         workspace
@@ -725,9 +733,7 @@ impl VimGlobals {
             } else {
                 KeyBinding::set_vim_mode(cx, false);
                 *Vim::globals(cx) = VimGlobals::default();
-                CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
-                    interceptor.clear();
-                });
+                GlobalCommandPaletteInterceptor::clear(cx);
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.hide_namespace(Vim::NAMESPACE);
                 });
@@ -800,11 +806,10 @@ impl VimGlobals {
                 self.last_yank.replace(content.text.clone());
                 cx.write_to_clipboard(content.clone().into());
             } else {
-                self.last_yank = cx
-                    .read_from_clipboard()
-                    .and_then(|item| item.text().map(|string| string.into()));
+                if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
+                    self.last_yank.replace(text.into());
+                }
             }
-
             self.registers.insert('"', content.clone());
             if is_yank {
                 self.registers.insert('0', content);
@@ -858,7 +863,9 @@ impl VimGlobals {
                 }
             }
             '%' => editor.and_then(|editor| {
-                let selection = editor.selections.newest::<Point>(cx);
+                let selection = editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx));
                 if let Some((_, buffer, _)) = editor
                     .buffer()
                     .read(cx)
@@ -867,7 +874,7 @@ impl VimGlobals {
                     buffer
                         .read(cx)
                         .file()
-                        .map(|file| file.path().to_string_lossy().to_string().into())
+                        .map(|file| file.path().display(file.path_style(cx)).into_owned().into())
                 } else {
                     None
                 }
@@ -878,10 +885,10 @@ impl VimGlobals {
 
     fn system_clipboard_is_newer(&self, cx: &App) -> bool {
         cx.read_from_clipboard().is_some_and(|item| {
-            if let Some(last_state) = &self.last_yank {
-                Some(last_state.as_ref()) != item.text().as_deref()
-            } else {
-                true
+            match (item.text().as_deref(), &self.last_yank) {
+                (Some(new), Some(last)) => last.as_ref() != new,
+                (Some(_), None) => true,
+                (None, _) => false,
             }
         })
     }
@@ -897,13 +904,13 @@ impl VimGlobals {
                 self.stop_recording_after_next_action = false;
             }
         }
-        if self.replayer.is_none() {
-            if let Some(recording_register) = self.recording_register {
-                self.recordings
-                    .entry(recording_register)
-                    .or_default()
-                    .push(ReplayableAction::Action(action));
-            }
+        if self.replayer.is_none()
+            && let Some(recording_register) = self.recording_register
+        {
+            self.recordings
+                .entry(recording_register)
+                .or_default()
+                .push(ReplayableAction::Action(action));
         }
     }
 
@@ -983,6 +990,7 @@ pub struct SearchState {
     pub prior_selections: Vec<Range<Anchor>>,
     pub prior_operator: Option<Operator>,
     pub prior_mode: Mode,
+    pub helix_select: bool,
 }
 
 impl Operator {
@@ -1024,19 +1032,33 @@ impl Operator {
             Operator::RecordRegister => "q",
             Operator::ReplayRegister => "@",
             Operator::ToggleComments => "gc",
+            Operator::HelixMatch => "helix_m",
+            Operator::HelixNext { .. } => "helix_next",
+            Operator::HelixPrevious { .. } => "helix_previous",
         }
     }
 
     pub fn status(&self) -> String {
+        fn make_visible(c: &str) -> &str {
+            match c {
+                "\n" => "enter",
+                "\t" => "tab",
+                " " => "space",
+                c => c,
+            }
+        }
         match self {
             Operator::Digraph {
                 first_char: Some(first_char),
-            } => format!("^K{first_char}"),
+            } => format!("^K{}", make_visible(&first_char.to_string())),
             Operator::Literal {
                 prefix: Some(prefix),
-            } => format!("^V{prefix}"),
+            } => format!("^V{}", make_visible(prefix)),
             Operator::AutoIndent => "=".to_string(),
             Operator::ShellCommand => "=".to_string(),
+            Operator::HelixMatch => "m".to_string(),
+            Operator::HelixNext { .. } => "]".to_string(),
+            Operator::HelixPrevious { .. } => "[".to_string(),
             _ => self.id().to_string(),
         }
     }
@@ -1056,7 +1078,9 @@ impl Operator {
             | Operator::Replace
             | Operator::Digraph { .. }
             | Operator::Literal { .. }
-            | Operator::ChangeSurrounds { target: Some(_) }
+            | Operator::ChangeSurrounds {
+                target: Some(_), ..
+            }
             | Operator::DeleteSurrounds => true,
             Operator::Change
             | Operator::Delete
@@ -1073,9 +1097,12 @@ impl Operator {
             | Operator::ReplaceWithRegister
             | Operator::Exchange
             | Operator::Object { .. }
-            | Operator::ChangeSurrounds { target: None }
+            | Operator::ChangeSurrounds { target: None, .. }
             | Operator::OppositeCase
-            | Operator::ToggleComments => false,
+            | Operator::ToggleComments
+            | Operator::HelixMatch
+            | Operator::HelixNext { .. }
+            | Operator::HelixPrevious { .. } => false,
         }
     }
 
@@ -1097,9 +1124,11 @@ impl Operator {
             | Operator::Rewrap
             | Operator::ShellCommand
             | Operator::AddSurrounds { target: None }
-            | Operator::ChangeSurrounds { target: None }
+            | Operator::ChangeSurrounds { target: None, .. }
             | Operator::DeleteSurrounds
-            | Operator::Exchange => true,
+            | Operator::Exchange
+            | Operator::HelixNext { .. }
+            | Operator::HelixPrevious { .. } => true,
             Operator::Yank
             | Operator::Object { .. }
             | Operator::FindForward { .. }
@@ -1114,7 +1143,8 @@ impl Operator {
             | Operator::Jump { .. }
             | Operator::Register
             | Operator::RecordRegister
-            | Operator::ReplayRegister => false,
+            | Operator::ReplayRegister
+            | Operator::HelixMatch => false,
         }
     }
 }
@@ -1169,10 +1199,7 @@ impl PickerDelegate for RegistersViewDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let register_match = self
-            .matches
-            .get(ix)
-            .expect("Invalid matches state: no element for index {ix}");
+        let register_match = self.matches.get(ix)?;
 
         let mut output = String::new();
         let mut runs = Vec::new();
@@ -1280,7 +1307,7 @@ impl RegistersView {
                 if let Some(register) = register {
                     matches.push(RegisterMatch {
                         name: '%',
-                        contents: register.text.clone(),
+                        contents: register.text,
                     })
                 }
             }
@@ -1322,10 +1349,10 @@ impl MarksMatchInfo {
         let mut offset = 0;
         for chunk in chunks {
             line.push_str(chunk.text);
-            if let Some(highlight_style) = chunk.syntax_highlight_id {
-                if let Some(highlight) = highlight_style.style(cx.theme().syntax()) {
-                    highlights.push((offset..offset + chunk.text.len(), highlight))
-                }
+            if let Some(highlight_style) = chunk.syntax_highlight_id
+                && let Some(highlight) = highlight_style.style(cx.theme().syntax())
+            {
+                highlights.push((offset..offset + chunk.text.len(), highlight))
             }
             offset += chunk.text.len();
         }
@@ -1372,7 +1399,7 @@ impl PickerDelegate for MarksViewDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> gpui::Task<()> {
-        let Some(workspace) = self.workspace.upgrade().clone() else {
+        let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(());
         };
         cx.spawn(async move |picker, cx| {
@@ -1561,10 +1588,7 @@ impl PickerDelegate for MarksViewDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let mark_match = self
-            .matches
-            .get(ix)
-            .expect("Invalid matches state: no element for index {ix}");
+        let mark_match = self.matches.get(ix)?;
 
         let mut left_output = String::new();
         let mut left_runs = Vec::new();
@@ -1588,7 +1612,7 @@ impl PickerDelegate for MarksViewDelegate {
 
         let (right_output, right_runs): (String, Vec<_>) = match &mark_match.info {
             MarksMatchInfo::Path(path) => {
-                let s = path.to_string_lossy().to_string();
+                let s = path.to_string_lossy().into_owned();
                 (
                     s.clone(),
                     vec![(0..s.len(), HighlightStyle::color(cx.theme().colors().text))],
@@ -1666,8 +1690,12 @@ impl MarksView {
     }
 }
 
-define_connection! (
-    pub static ref DB: VimDb<WorkspaceDb> = &[
+pub struct VimDb(ThreadSafeConnection);
+
+impl Domain for VimDb {
+    const NAME: &str = stringify!(VimDb);
+
+    const MIGRATIONS: &[&str] = &[
         sql! (
             CREATE TABLE vim_marks (
               workspace_id INTEGER,
@@ -1687,7 +1715,9 @@ define_connection! (
             ON vim_global_marks_paths(workspace_id, mark_name);
         ),
     ];
-);
+}
+
+db::static_connection!(DB, VimDb, [WorkspaceDb]);
 
 struct SerializedMark {
     path: Arc<Path>,
@@ -1703,26 +1733,25 @@ impl VimDb {
         marks: HashMap<String, Vec<Point>>,
     ) -> Result<()> {
         log::debug!("Setting path {path:?} for {} marks", marks.len());
-        let result = self
-            .write(move |conn| {
-                let mut query = conn.exec_bound(sql!(
-                    INSERT OR REPLACE INTO vim_marks
-                        (workspace_id, mark_name, path, value)
-                    VALUES
-                        (?, ?, ?, ?)
-                ))?;
-                for (mark_name, value) in marks {
-                    let pairs: Vec<(u32, u32)> = value
-                        .into_iter()
-                        .map(|point| (point.row, point.column))
-                        .collect();
-                    let serialized = serde_json::to_string(&pairs)?;
-                    query((workspace_id, mark_name, path.clone(), serialized))?;
-                }
-                Ok(())
-            })
-            .await;
-        result
+
+        self.write(move |conn| {
+            let mut query = conn.exec_bound(sql!(
+                INSERT OR REPLACE INTO vim_marks
+                    (workspace_id, mark_name, path, value)
+                VALUES
+                    (?, ?, ?, ?)
+            ))?;
+            for (mark_name, value) in marks {
+                let pairs: Vec<(u32, u32)> = value
+                    .into_iter()
+                    .map(|point| (point.row, point.column))
+                    .collect();
+                let serialized = serde_json::to_string(&pairs)?;
+                query((workspace_id, mark_name, path.clone(), serialized))?;
+            }
+            Ok(())
+        })
+        .await
     }
 
     fn get_marks(&self, workspace_id: WorkspaceId) -> Result<Vec<SerializedMark>> {

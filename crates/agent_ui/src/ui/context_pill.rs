@@ -11,13 +11,12 @@ use project::Project;
 use prompt_store::PromptStore;
 use rope::Point;
 use ui::{IconButtonShape, Tooltip, prelude::*, tooltip_container};
+use util::paths::PathStyle;
 
-use agent::context::{
-    AgentContext, AgentContextHandle, ContextId, ContextKind, DirectoryContext,
-    DirectoryContextHandle, FetchedUrlContext, FileContext, FileContextHandle, ImageContext,
-    ImageStatus, RulesContext, RulesContextHandle, SelectionContext, SelectionContextHandle,
-    SymbolContext, SymbolContextHandle, TextThreadContext, TextThreadContextHandle, ThreadContext,
-    ThreadContextHandle,
+use crate::context::{
+    AgentContextHandle, ContextId, ContextKind, DirectoryContextHandle, FetchedUrlContext,
+    FileContextHandle, ImageContext, ImageStatus, RulesContextHandle, SelectionContextHandle,
+    SymbolContextHandle, TextThreadContextHandle, ThreadContextHandle,
 };
 
 #[derive(IntoElement)]
@@ -245,8 +244,8 @@ impl RenderOnce for ContextPill {
                             .truncate(),
                     ),
                 )
-                .tooltip(|window, cx| {
-                    Tooltip::with_meta("Suggested Context", None, "Click to add it", window, cx)
+                .tooltip(|_window, cx| {
+                    Tooltip::with_meta("Suggested Context", None, "Click to add it", cx)
                 })
                 .when_some(on_click.as_ref(), |element, on_click| {
                     let on_click = on_click.clone();
@@ -305,55 +304,54 @@ impl AddedContext {
         cx: &App,
     ) -> Option<AddedContext> {
         match handle {
-            AgentContextHandle::File(handle) => Self::pending_file(handle, cx),
+            AgentContextHandle::File(handle) => {
+                Self::pending_file(handle, project.path_style(cx), cx)
+            }
             AgentContextHandle::Directory(handle) => Self::pending_directory(handle, project, cx),
-            AgentContextHandle::Symbol(handle) => Self::pending_symbol(handle, cx),
-            AgentContextHandle::Selection(handle) => Self::pending_selection(handle, cx),
+            AgentContextHandle::Symbol(handle) => {
+                Self::pending_symbol(handle, project.path_style(cx), cx)
+            }
+            AgentContextHandle::Selection(handle) => {
+                Self::pending_selection(handle, project.path_style(cx), cx)
+            }
             AgentContextHandle::FetchedUrl(handle) => Some(Self::fetched_url(handle)),
             AgentContextHandle::Thread(handle) => Some(Self::pending_thread(handle, cx)),
             AgentContextHandle::TextThread(handle) => Some(Self::pending_text_thread(handle, cx)),
             AgentContextHandle::Rules(handle) => Self::pending_rules(handle, prompt_store, cx),
-            AgentContextHandle::Image(handle) => Some(Self::image(handle, model, cx)),
+            AgentContextHandle::Image(handle) => {
+                Some(Self::image(handle, model, project.path_style(cx), cx))
+            }
         }
     }
 
-    pub fn new_attached(
-        context: &AgentContext,
-        model: Option<&Arc<dyn language_model::LanguageModel>>,
+    fn pending_file(
+        handle: FileContextHandle,
+        path_style: PathStyle,
+        cx: &App,
+    ) -> Option<AddedContext> {
+        let full_path = handle
+            .buffer
+            .read(cx)
+            .file()?
+            .full_path(cx)
+            .to_string_lossy()
+            .to_string();
+        Some(Self::file(handle, &full_path, path_style, cx))
+    }
+
+    fn file(
+        handle: FileContextHandle,
+        full_path: &str,
+        path_style: PathStyle,
         cx: &App,
     ) -> AddedContext {
-        match context {
-            AgentContext::File(context) => Self::attached_file(context, cx),
-            AgentContext::Directory(context) => Self::attached_directory(context),
-            AgentContext::Symbol(context) => Self::attached_symbol(context, cx),
-            AgentContext::Selection(context) => Self::attached_selection(context, cx),
-            AgentContext::FetchedUrl(context) => Self::fetched_url(context.clone()),
-            AgentContext::Thread(context) => Self::attached_thread(context),
-            AgentContext::TextThread(context) => Self::attached_text_thread(context),
-            AgentContext::Rules(context) => Self::attached_rules(context),
-            AgentContext::Image(context) => Self::image(context.clone(), model, cx),
-        }
-    }
-
-    fn pending_file(handle: FileContextHandle, cx: &App) -> Option<AddedContext> {
-        let full_path = handle.buffer.read(cx).file()?.full_path(cx);
-        Some(Self::file(handle, &full_path, cx))
-    }
-
-    fn attached_file(context: &FileContext, cx: &App) -> AddedContext {
-        Self::file(context.handle.clone(), &context.full_path, cx)
-    }
-
-    fn file(handle: FileContextHandle, full_path: &Path, cx: &App) -> AddedContext {
-        let full_path_string: SharedString = full_path.to_string_lossy().into_owned().into();
-        let (name, parent) =
-            extract_file_name_and_directory_from_full_path(full_path, &full_path_string);
+        let (name, parent) = extract_file_name_and_directory_from_full_path(full_path, path_style);
         AddedContext {
             kind: ContextKind::File,
             name,
             parent,
-            tooltip: Some(full_path_string),
-            icon_path: FileIcons::get_icon(&full_path, cx),
+            tooltip: Some(SharedString::new(full_path)),
+            icon_path: FileIcons::get_icon(Path::new(full_path), cx),
             status: ContextStatus::Ready,
             render_hover: None,
             handle: AgentContextHandle::File(handle),
@@ -367,23 +365,24 @@ impl AddedContext {
     ) -> Option<AddedContext> {
         let worktree = project.worktree_for_entry(handle.entry_id, cx)?.read(cx);
         let entry = worktree.entry_for_id(handle.entry_id)?;
-        let full_path = worktree.full_path(&entry.path);
-        Some(Self::directory(handle, &full_path))
+        let full_path = worktree
+            .full_path(&entry.path)
+            .to_string_lossy()
+            .to_string();
+        Some(Self::directory(handle, &full_path, project.path_style(cx)))
     }
 
-    fn attached_directory(context: &DirectoryContext) -> AddedContext {
-        Self::directory(context.handle.clone(), &context.full_path)
-    }
-
-    fn directory(handle: DirectoryContextHandle, full_path: &Path) -> AddedContext {
-        let full_path_string: SharedString = full_path.to_string_lossy().into_owned().into();
-        let (name, parent) =
-            extract_file_name_and_directory_from_full_path(full_path, &full_path_string);
+    fn directory(
+        handle: DirectoryContextHandle,
+        full_path: &str,
+        path_style: PathStyle,
+    ) -> AddedContext {
+        let (name, parent) = extract_file_name_and_directory_from_full_path(full_path, path_style);
         AddedContext {
             kind: ContextKind::Directory,
             name,
             parent,
-            tooltip: Some(full_path_string),
+            tooltip: Some(SharedString::new(full_path)),
             icon_path: None,
             status: ContextStatus::Ready,
             render_hover: None,
@@ -391,9 +390,17 @@ impl AddedContext {
         }
     }
 
-    fn pending_symbol(handle: SymbolContextHandle, cx: &App) -> Option<AddedContext> {
-        let excerpt =
-            ContextFileExcerpt::new(&handle.full_path(cx)?, handle.enclosing_line_range(cx), cx);
+    fn pending_symbol(
+        handle: SymbolContextHandle,
+        path_style: PathStyle,
+        cx: &App,
+    ) -> Option<AddedContext> {
+        let excerpt = ContextFileExcerpt::new(
+            &handle.full_path(cx)?.to_string_lossy(),
+            handle.enclosing_line_range(cx),
+            path_style,
+            cx,
+        );
         Some(AddedContext {
             kind: ContextKind::Symbol,
             name: handle.symbol.clone(),
@@ -411,27 +418,17 @@ impl AddedContext {
         })
     }
 
-    fn attached_symbol(context: &SymbolContext, cx: &App) -> AddedContext {
-        let excerpt = ContextFileExcerpt::new(&context.full_path, context.line_range.clone(), cx);
-        AddedContext {
-            kind: ContextKind::Symbol,
-            name: context.handle.symbol.clone(),
-            parent: Some(excerpt.file_name_and_range.clone()),
-            tooltip: None,
-            icon_path: None,
-            status: ContextStatus::Ready,
-            render_hover: {
-                let text = context.text.clone();
-                Some(Rc::new(move |_, cx| {
-                    excerpt.hover_view(text.clone(), cx).into()
-                }))
-            },
-            handle: AgentContextHandle::Symbol(context.handle.clone()),
-        }
-    }
-
-    fn pending_selection(handle: SelectionContextHandle, cx: &App) -> Option<AddedContext> {
-        let excerpt = ContextFileExcerpt::new(&handle.full_path(cx)?, handle.line_range(cx), cx);
+    fn pending_selection(
+        handle: SelectionContextHandle,
+        path_style: PathStyle,
+        cx: &App,
+    ) -> Option<AddedContext> {
+        let excerpt = ContextFileExcerpt::new(
+            &handle.full_path(cx)?.to_string_lossy(),
+            handle.line_range(cx),
+            path_style,
+            cx,
+        );
         Some(AddedContext {
             kind: ContextKind::Selection,
             name: excerpt.file_name_and_range.clone(),
@@ -447,25 +444,6 @@ impl AddedContext {
             },
             handle: AgentContextHandle::Selection(handle),
         })
-    }
-
-    fn attached_selection(context: &SelectionContext, cx: &App) -> AddedContext {
-        let excerpt = ContextFileExcerpt::new(&context.full_path, context.line_range.clone(), cx);
-        AddedContext {
-            kind: ContextKind::Selection,
-            name: excerpt.file_name_and_range.clone(),
-            parent: excerpt.parent_name.clone(),
-            tooltip: None,
-            icon_path: excerpt.icon_path.clone(),
-            status: ContextStatus::Ready,
-            render_hover: {
-                let text = context.text.clone();
-                Some(Rc::new(move |_, cx| {
-                    excerpt.hover_view(text.clone(), cx).into()
-                }))
-            },
-            handle: AgentContextHandle::Selection(context.handle.clone()),
-        }
     }
 
     fn fetched_url(context: FetchedUrlContext) -> AddedContext {
@@ -488,7 +466,7 @@ impl AddedContext {
             parent: None,
             tooltip: None,
             icon_path: None,
-            status: if handle.thread.read(cx).is_generating_detailed_summary() {
+            status: if handle.thread.read(cx).is_generating_summary() {
                 ContextStatus::Loading {
                     message: "Summarizing…".into(),
                 }
@@ -498,29 +476,15 @@ impl AddedContext {
             render_hover: {
                 let thread = handle.thread.clone();
                 Some(Rc::new(move |_, cx| {
-                    let text = thread.read(cx).latest_detailed_summary_or_text();
-                    ContextPillHover::new_text(text.clone(), cx).into()
+                    let text = thread
+                        .update(cx, |thread, cx| thread.summary(cx))
+                        .now_or_never()
+                        .flatten()
+                        .unwrap_or_else(|| SharedString::from(thread.read(cx).to_markdown()));
+                    ContextPillHover::new_text(text, cx).into()
                 }))
             },
             handle: AgentContextHandle::Thread(handle),
-        }
-    }
-
-    fn attached_thread(context: &ThreadContext) -> AddedContext {
-        AddedContext {
-            kind: ContextKind::Thread,
-            name: context.title.clone(),
-            parent: None,
-            tooltip: None,
-            icon_path: None,
-            status: ContextStatus::Ready,
-            render_hover: {
-                let text = context.text.clone();
-                Some(Rc::new(move |_, cx| {
-                    ContextPillHover::new_text(text.clone(), cx).into()
-                }))
-            },
-            handle: AgentContextHandle::Thread(context.handle.clone()),
         }
     }
 
@@ -533,31 +497,13 @@ impl AddedContext {
             icon_path: None,
             status: ContextStatus::Ready,
             render_hover: {
-                let context = handle.context.clone();
+                let text_thread = handle.text_thread.clone();
                 Some(Rc::new(move |_, cx| {
-                    let text = context.read(cx).to_xml(cx);
+                    let text = text_thread.read(cx).to_xml(cx);
                     ContextPillHover::new_text(text.into(), cx).into()
                 }))
             },
             handle: AgentContextHandle::TextThread(handle),
-        }
-    }
-
-    fn attached_text_thread(context: &TextThreadContext) -> AddedContext {
-        AddedContext {
-            kind: ContextKind::TextThread,
-            name: context.title.clone(),
-            parent: None,
-            tooltip: None,
-            icon_path: None,
-            status: ContextStatus::Ready,
-            render_hover: {
-                let text = context.text.clone();
-                Some(Rc::new(move |_, cx| {
-                    ContextPillHover::new_text(text.clone(), cx).into()
-                }))
-            },
-            handle: AgentContextHandle::TextThread(context.handle.clone()),
         }
     }
 
@@ -574,7 +520,7 @@ impl AddedContext {
             .unwrap_or_else(|| "Unnamed Rule".into());
         Some(AddedContext {
             kind: ContextKind::Rules,
-            name: title.clone(),
+            name: title,
             parent: None,
             tooltip: None,
             icon_path: None,
@@ -584,38 +530,16 @@ impl AddedContext {
         })
     }
 
-    fn attached_rules(context: &RulesContext) -> AddedContext {
-        let title = context
-            .title
-            .clone()
-            .unwrap_or_else(|| "Unnamed Rule".into());
-        AddedContext {
-            kind: ContextKind::Rules,
-            name: title,
-            parent: None,
-            tooltip: None,
-            icon_path: None,
-            status: ContextStatus::Ready,
-            render_hover: {
-                let text = context.text.clone();
-                Some(Rc::new(move |_, cx| {
-                    ContextPillHover::new_text(text.clone(), cx).into()
-                }))
-            },
-            handle: AgentContextHandle::Rules(context.handle.clone()),
-        }
-    }
-
     fn image(
         context: ImageContext,
         model: Option<&Arc<dyn language_model::LanguageModel>>,
+        path_style: PathStyle,
         cx: &App,
     ) -> AddedContext {
         let (name, parent, icon_path) = if let Some(full_path) = context.full_path.as_ref() {
-            let full_path_string: SharedString = full_path.to_string_lossy().into_owned().into();
             let (name, parent) =
-                extract_file_name_and_directory_from_full_path(full_path, &full_path_string);
-            let icon_path = FileIcons::get_icon(&full_path, cx);
+                extract_file_name_and_directory_from_full_path(full_path, path_style);
+            let icon_path = FileIcons::get_icon(Path::new(full_path), cx);
             (name, parent, icon_path)
         } else {
             ("Image".into(), None, None)
@@ -664,19 +588,20 @@ impl AddedContext {
 }
 
 fn extract_file_name_and_directory_from_full_path(
-    path: &Path,
-    name_fallback: &SharedString,
+    path: &str,
+    path_style: PathStyle,
 ) -> (SharedString, Option<SharedString>) {
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned().into())
-        .unwrap_or_else(|| name_fallback.clone());
-    let parent = path
-        .parent()
-        .and_then(|p| p.file_name())
-        .map(|n| n.to_string_lossy().into_owned().into());
-
-    (name, parent)
+    let (parent, file_name) = path_style.split(path);
+    let parent = parent.and_then(|parent| {
+        let parent = parent.trim_end_matches(path_style.separator());
+        let (_, parent) = path_style.split(parent);
+        if parent.is_empty() {
+            None
+        } else {
+            Some(SharedString::new(parent))
+        }
+    });
+    (SharedString::new(file_name), parent)
 }
 
 #[derive(Debug, Clone)]
@@ -688,25 +613,25 @@ struct ContextFileExcerpt {
 }
 
 impl ContextFileExcerpt {
-    pub fn new(full_path: &Path, line_range: Range<Point>, cx: &App) -> Self {
-        let full_path_string = full_path.to_string_lossy().into_owned();
-        let file_name = full_path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| full_path_string.clone());
-
+    pub fn new(full_path: &str, line_range: Range<Point>, path_style: PathStyle, cx: &App) -> Self {
+        let (parent, file_name) = path_style.split(full_path);
         let line_range_text = format!(" ({}-{})", line_range.start.row + 1, line_range.end.row + 1);
-        let mut full_path_and_range = full_path_string;
+        let mut full_path_and_range = full_path.to_owned();
         full_path_and_range.push_str(&line_range_text);
-        let mut file_name_and_range = file_name;
+        let mut file_name_and_range = file_name.to_owned();
         file_name_and_range.push_str(&line_range_text);
 
-        let parent_name = full_path
-            .parent()
-            .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().into_owned().into());
+        let parent_name = parent.and_then(|parent| {
+            let parent = parent.trim_end_matches(path_style.separator());
+            let (_, parent) = path_style.split(parent);
+            if parent.is_empty() {
+                None
+            } else {
+                Some(SharedString::new(parent))
+            }
+        });
 
-        let icon_path = FileIcons::get_icon(&full_path, cx);
+        let icon_path = FileIcons::get_icon(Path::new(full_path), cx);
 
         ContextFileExcerpt {
             file_name_and_range: file_name_and_range.into(),
@@ -783,7 +708,7 @@ impl ContextPillHover {
 
 impl Render for ContextPillHover {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        tooltip_container(window, cx, move |this, window, cx| {
+        tooltip_container(cx, move |this, cx| {
             this.occlude()
                 .on_mouse_move(|_, _, cx| cx.stop_propagation())
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -814,6 +739,7 @@ impl Component for AddedContext {
                     image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
                 },
                 None,
+                PathStyle::local(),
                 cx,
             ),
         );
@@ -834,6 +760,7 @@ impl Component for AddedContext {
                         .shared(),
                 },
                 None,
+                PathStyle::local(),
                 cx,
             ),
         );
@@ -849,6 +776,7 @@ impl Component for AddedContext {
                     image_task: Task::ready(None).shared(),
                 },
                 None,
+                PathStyle::local(),
                 cx,
             ),
         );
@@ -891,7 +819,8 @@ mod tests {
             full_path: None,
         };
 
-        let added_context = AddedContext::image(image_context, Some(&model), cx);
+        let added_context =
+            AddedContext::image(image_context, Some(&model), PathStyle::local(), cx);
 
         assert!(matches!(
             added_context.status,
@@ -914,7 +843,7 @@ mod tests {
             full_path: None,
         };
 
-        let added_context = AddedContext::image(image_context, None, cx);
+        let added_context = AddedContext::image(image_context, None, PathStyle::local(), cx);
 
         assert!(
             matches!(added_context.status, ContextStatus::Ready),

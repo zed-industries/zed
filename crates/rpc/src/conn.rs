@@ -56,7 +56,7 @@ impl Connection {
         ) {
             use anyhow::anyhow;
             use futures::channel::mpsc;
-            use std::io::{Error, ErrorKind};
+            use std::io::Error;
 
             let (tx, rx) = mpsc::unbounded::<WebSocketMessage>();
 
@@ -71,7 +71,7 @@ impl Connection {
 
                         // Writes to a half-open TCP connection will error.
                         if killed.load(SeqCst) {
-                            std::io::Result::Err(Error::new(ErrorKind::Other, "connection lost"))?;
+                            std::io::Result::Err(Error::other("connection lost"))?;
                         }
 
                         Ok(msg)
@@ -80,7 +80,6 @@ impl Connection {
             });
 
             let rx = rx.then({
-                let executor = executor.clone();
                 move |msg| {
                     let killed = killed.clone();
                     let executor = executor.clone();

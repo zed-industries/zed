@@ -691,7 +691,7 @@ impl CallToolResponse {
         let mut text = String::new();
         for chunk in &self.content {
             if let ToolResponseContent::Text { text: chunk } = chunk {
-                text.push_str(&chunk)
+                text.push_str(chunk)
             };
         }
         text
@@ -709,6 +709,16 @@ pub enum ToolResponseContent {
     Audio { data: String, mime_type: String },
     #[serde(rename = "resource")]
     Resource { resource: ResourceContents },
+}
+
+impl ToolResponseContent {
+    pub fn text(&self) -> Option<&str> {
+        if let ToolResponseContent::Text { text } = self {
+            Some(text)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

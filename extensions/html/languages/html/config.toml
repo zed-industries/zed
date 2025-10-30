@@ -3,6 +3,7 @@ grammar = "html"
 path_suffixes = ["html", "htm", "shtml"]
 autoclose_before = ">})"
 block_comment = { start = "<!--", prefix = "", end = "-->", tab_size = 0 }
+wrap_characters = { start_prefix = "<", start_suffix = ">", end_prefix = "</", end_suffix = ">" }
 brackets = [
     { start = "{", end = "}", close = true, newline = true },
     { start = "[", end = "]", close = true, newline = true },

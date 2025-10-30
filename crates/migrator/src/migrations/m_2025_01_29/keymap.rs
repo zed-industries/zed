@@ -156,6 +156,16 @@ static TRANSFORM_ARRAY: LazyLock<HashMap<(&str, &str), &str>> = LazyLock::new(||
         (("vim::ResizePane", "Narrow"), "vim::ResizePaneLeft"),
         (("vim::ResizePane", "Shorten"), "vim::ResizePaneDown"),
         (("vim::ResizePane", "Lengthen"), "vim::ResizePaneUp"),
+        // fold at level
+        (("editor::FoldAtLevel", "1"), "editor::FoldAtLevel1"),
+        (("editor::FoldAtLevel", "2"), "editor::FoldAtLevel2"),
+        (("editor::FoldAtLevel", "3"), "editor::FoldAtLevel3"),
+        (("editor::FoldAtLevel", "4"), "editor::FoldAtLevel4"),
+        (("editor::FoldAtLevel", "5"), "editor::FoldAtLevel5"),
+        (("editor::FoldAtLevel", "6"), "editor::FoldAtLevel6"),
+        (("editor::FoldAtLevel", "7"), "editor::FoldAtLevel7"),
+        (("editor::FoldAtLevel", "8"), "editor::FoldAtLevel8"),
+        (("editor::FoldAtLevel", "9"), "editor::FoldAtLevel9"),
     ])
 });
 
@@ -242,22 +252,22 @@ static STRING_REPLACE: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
             "inline_completion::ToggleMenu",
             "edit_prediction::ToggleMenu",
         ),
-        ("editor::NextEditPrediction", "editor::NextEditPrediction"),
+        ("editor::NextInlineCompletion", "editor::NextEditPrediction"),
         (
+            "editor::PreviousInlineCompletion",
             "editor::PreviousEditPrediction",
-            "editor::PreviousEditPrediction",
         ),
         (
+            "editor::AcceptPartialInlineCompletion",
             "editor::AcceptPartialEditPrediction",
-            "editor::AcceptPartialEditPrediction",
         ),
-        ("editor::ShowEditPrediction", "editor::ShowEditPrediction"),
+        ("editor::ShowInlineCompletion", "editor::ShowEditPrediction"),
         (
-            "editor::AcceptEditPrediction",
+            "editor::AcceptInlineCompletion",
             "editor::AcceptEditPrediction",
         ),
         (
-            "editor::ToggleEditPredictions",
+            "editor::ToggleInlineCompletions",
             "editor::ToggleEditPrediction",
         ),
     ])
@@ -279,7 +289,7 @@ fn rename_context_key(
         new_predicate = new_predicate.replace(old_key, new_key);
     }
     if new_predicate != old_predicate {
-        Some((context_predicate_range, new_predicate.to_string()))
+        Some((context_predicate_range, new_predicate))
     } else {
         None
     }

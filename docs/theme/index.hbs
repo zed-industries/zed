@@ -131,7 +131,7 @@
                             <i class="fa fa-bars"></i>
                         </label>
 
-                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change Theme" aria-label="Change Theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
                             <i class="fa fa-paint-brush"></i>
                         </button>
                         <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
@@ -139,8 +139,12 @@
                             <li role="none"><button role="menuitem" class="theme" id="dark">Dark</button></li>
                         </ul>
 
+                        <button id="copy-markdown-toggle" class="icon-button ib-hidden-mobile" type="button" title="Copy Page as Markdown" aria-label="Copy page as markdown">
+                            <i class="fa fa-copy"></i>
+                        </button>
+
                         {{#if search_enabled}}
-                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
                             <i class="fa fa-search"></i>
                         </button>
                         {{/if}}
@@ -148,7 +152,8 @@
 
                     <header class="menu-title">
                         <a href="/">
-                            <img src="https://zed.dev/logo_wordmark_1500.webp" alt="Zed Industries" style="height: 28px;">
+                            <img src="https://zed.dev/logo_wordmark_1500.webp" class="large-logo-img" alt="Zed Industries" style="height: 28px;">
+                            <img src="https://zed.dev/logo_icon.webp" class="icon-logo-img" alt="Zed Industries" style="height: 28px;">
                         </a>
                     </header>
 
@@ -307,7 +312,23 @@
           })();
         </script>
 
-
+        <!-- Amplitude Analytics -->
+        <script>
+          (function() {
+            var amplitudeKey = '#amplitude_key#';
+            if (amplitudeKey && amplitudeKey.indexOf('#') === -1) {
+              var script = document.createElement('script');
+              script.src = 'https://cdn.amplitude.com/script/' + amplitudeKey + '.js';
+              script.onload = function() {
+                window.amplitude.init(amplitudeKey, {
+                  fetchRemoteConfig: true,
+                  autocapture: true
+                });
+              };
+              document.head.appendChild(script);
+            }
+          })();
+        </script>
     </div>
     </body>
 </html>

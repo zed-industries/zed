@@ -145,7 +145,6 @@ let
         ]
         ++ lib.optionals stdenv'.hostPlatform.isDarwin [
           apple-sdk_15
-          darwin.apple_sdk.frameworks.System
           (darwinMinVersionHook "10.15")
         ];
 

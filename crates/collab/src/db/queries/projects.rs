@@ -33,6 +33,7 @@ impl Database {
         connection: ConnectionId,
         worktrees: &[proto::WorktreeMetadata],
         is_ssh_project: bool,
+        windows_paths: bool,
     ) -> Result<TransactionGuard<(ProjectId, proto::Room)>> {
         self.room_transaction(room_id, |tx| async move {
             let participant = room_participant::Entity::find()
@@ -69,6 +70,7 @@ impl Database {
                     connection.owner_id as i32,
                 ))),
                 id: ActiveValue::NotSet,
+                windows_paths: ActiveValue::set(windows_paths),
             }
             .insert(&*tx)
             .await?;
@@ -89,14 +91,18 @@ impl Database {
                 .await?;
             }
 
-            let replica_id = if is_ssh_project { 1 } else { 0 };
+            let replica_id = if is_ssh_project {
+                clock::ReplicaId::REMOTE_SERVER
+            } else {
+                clock::ReplicaId::LOCAL
+            };
 
             project_collaborator::ActiveModel {
                 project_id: ActiveValue::set(project.id),
                 connection_id: ActiveValue::set(connection.id as i32),
                 connection_server_id: ActiveValue::set(ServerId(connection.owner_id as i32)),
                 user_id: ActiveValue::set(participant.user_id),
-                replica_id: ActiveValue::set(ReplicaId(replica_id)),
+                replica_id: ActiveValue::set(ReplicaId(replica_id.as_u16() as i32)),
                 is_host: ActiveValue::set(true),
                 id: ActiveValue::NotSet,
                 committer_name: ActiveValue::Set(None),
@@ -280,6 +286,7 @@ impl Database {
                         git_status: ActiveValue::set(None),
                         is_external: ActiveValue::set(entry.is_external),
                         is_deleted: ActiveValue::set(false),
+                        is_hidden: ActiveValue::set(entry.is_hidden),
                         scan_id: ActiveValue::set(update.scan_id as i64),
                         is_fifo: ActiveValue::set(entry.is_fifo),
                     }
@@ -298,6 +305,7 @@ impl Database {
                         worktree_entry::Column::MtimeNanos,
                         worktree_entry::Column::CanonicalPath,
                         worktree_entry::Column::IsIgnored,
+                        worktree_entry::Column::IsHidden,
                         worktree_entry::Column::ScanId,
                     ])
                     .to_owned(),
@@ -349,11 +357,11 @@ impl Database {
                                     serde_json::to_string(&repository.current_merge_conflicts)
                                         .unwrap(),
                                 )),
-
-                                // Old clients do not use abs path, entry ids or head_commit_details.
+                                // Old clients do not use abs path, entry ids, head_commit_details, or merge_message.
                                 abs_path: ActiveValue::set(String::new()),
                                 entry_ids: ActiveValue::set("[]".into()),
                                 head_commit_details: ActiveValue::set(None),
+                                merge_message: ActiveValue::set(None),
                             }
                         }),
                     )
@@ -502,6 +510,7 @@ impl Database {
                 current_merge_conflicts: ActiveValue::Set(Some(
                     serde_json::to_string(&update.current_merge_conflicts).unwrap(),
                 )),
+                merge_message: ActiveValue::set(update.merge_message.clone()),
             })
             .on_conflict(
                 OnConflict::columns([
@@ -515,6 +524,7 @@ impl Database {
                     project_repository::Column::AbsPath,
                     project_repository::Column::CurrentMergeConflicts,
                     project_repository::Column::HeadCommitDetails,
+                    project_repository::Column::MergeMessage,
                 ])
                 .to_owned(),
             )
@@ -692,6 +702,7 @@ impl Database {
                 project_id: ActiveValue::set(project_id),
                 id: ActiveValue::set(server.id as i64),
                 name: ActiveValue::set(server.name.clone()),
+                worktree_id: ActiveValue::set(server.worktree_id.map(|id| id as i64)),
                 capabilities: ActiveValue::set(update.capabilities.clone()),
             })
             .on_conflict(
@@ -702,6 +713,7 @@ impl Database {
                 .update_columns([
                     language_server::Column::Name,
                     language_server::Column::Capabilities,
+                    language_server::Column::WorktreeId,
                 ])
                 .to_owned(),
             )
@@ -833,7 +845,7 @@ impl Database {
             .iter()
             .map(|c| c.replica_id)
             .collect::<HashSet<_>>();
-        let mut replica_id = ReplicaId(1);
+        let mut replica_id = ReplicaId(clock::ReplicaId::FIRST_COLLAB_ID.as_u16() as i32);
         while replica_ids.contains(&replica_id) {
             replica_id.0 += 1;
         }
@@ -899,6 +911,7 @@ impl Database {
                         canonical_path: db_entry.canonical_path,
                         is_ignored: db_entry.is_ignored,
                         is_external: db_entry.is_external,
+                        is_hidden: db_entry.is_hidden,
                         // This is only used in the summarization backlog, so if it's None,
                         // that just means we won't be able to detect when to resummarize
                         // based on total number of backlogged bytes - instead, we'd go
@@ -943,21 +956,21 @@ impl Database {
                 let current_merge_conflicts = db_repository_entry
                     .current_merge_conflicts
                     .as_ref()
-                    .map(|conflicts| serde_json::from_str(&conflicts))
+                    .map(|conflicts| serde_json::from_str(conflicts))
                     .transpose()?
                     .unwrap_or_default();
 
                 let branch_summary = db_repository_entry
                     .branch_summary
                     .as_ref()
-                    .map(|branch_summary| serde_json::from_str(&branch_summary))
+                    .map(|branch_summary| serde_json::from_str(branch_summary))
                     .transpose()?
                     .unwrap_or_default();
 
                 let head_commit_details = db_repository_entry
                     .head_commit_details
                     .as_ref()
-                    .map(|head_commit_details| serde_json::from_str(&head_commit_details))
+                    .map(|head_commit_details| serde_json::from_str(head_commit_details))
                     .transpose()?
                     .unwrap_or_default();
 
@@ -990,6 +1003,8 @@ impl Database {
                         head_commit_details,
                         scan_id: db_repository_entry.scan_id as u64,
                         is_last_update: true,
+                        merge_message: db_repository_entry.merge_message,
+                        stash_entries: Vec::new(),
                     });
                 }
             }
@@ -1040,6 +1055,12 @@ impl Database {
             .all(tx)
             .await?;
 
+        let path_style = if project.windows_paths {
+            PathStyle::Windows
+        } else {
+            PathStyle::Posix
+        };
+
         let project = Project {
             id: project.id,
             role,
@@ -1062,11 +1083,12 @@ impl Database {
                     server: proto::LanguageServer {
                         id: language_server.id as u64,
                         name: language_server.name,
-                        worktree_id: None,
+                        worktree_id: language_server.worktree_id.map(|id| id as u64),
                     },
                     capabilities: language_server.capabilities,
                 })
                 .collect(),
+            path_style,
         };
         Ok((project, replica_id as ReplicaId))
     }
@@ -1318,10 +1340,10 @@ impl Database {
             .await?;
 
         let mut connection_ids = HashSet::default();
-        if let Some(host_connection) = project.host_connection().log_err() {
-            if !exclude_dev_server {
-                connection_ids.insert(host_connection);
-            }
+        if let Some(host_connection) = project.host_connection().log_err()
+            && !exclude_dev_server
+        {
+            connection_ids.insert(host_connection);
         }
 
         while let Some(collaborator) = collaborators.next().await {

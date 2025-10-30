@@ -1,10 +1,10 @@
 use gpui::{
     Action, App, AppContext as _, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyBindingContextPredicate, KeyContext, Keystroke, MouseButton, Render, Subscription, actions,
+    KeyBindingContextPredicate, KeyContext, Keystroke, MouseButton, Render, Subscription, Task,
+    actions,
 };
 use itertools::Itertools;
 use serde_json::json;
-use settings::get_key_equivalents;
 use ui::{Button, ButtonStyle};
 use ui::{
     ButtonCommon, Clickable, Context, FluentBuilder, InteractiveElement, Label, LabelCommon,
@@ -71,12 +71,10 @@ impl KeyContextView {
                         } else {
                             None
                         }
+                    } else if this.action_matches(&e.action, binding.action()) {
+                        Some(true)
                     } else {
-                        if this.action_matches(&e.action, binding.action()) {
-                            Some(true)
-                        } else {
-                            Some(false)
-                        }
+                        Some(false)
                     };
                     let predicate = if let Some(predicate) = binding.predicate() {
                         format!("{}", predicate)
@@ -98,9 +96,7 @@ impl KeyContextView {
             cx.notify();
         });
         let sub2 = cx.observe_pending_input(window, |this, window, cx| {
-            this.pending_keystrokes = window
-                .pending_input_keystrokes()
-                .map(|k| k.iter().cloned().collect());
+            this.pending_keystrokes = window.pending_input_keystrokes().map(|k| k.to_vec());
             if this.pending_keystrokes.is_some() {
                 this.last_keystrokes.take();
             }
@@ -157,23 +153,28 @@ impl Item for KeyContextView {
         None
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| KeyContextView::new(window, cx)))
+        Task::ready(Some(cx.new(|cx| KeyContextView::new(window, cx))))
     }
 }
 
 impl Render for KeyContextView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         use itertools::Itertools;
-        let key_equivalents = get_key_equivalents(cx.keyboard_layout().id());
+
+        let key_equivalents = cx.keyboard_mapper().get_key_equivalents();
         v_flex()
             .id("key-context-view")
             .overflow_scroll()
@@ -211,11 +212,10 @@ impl Render for KeyContextView {
                             .on_click(|_, _, cx| cx.open_url("https://zed.dev/docs/key-bindings")),
                     )
                     .child(
-                        Button::new("view_default_keymap", "View default keymap")
+                        Button::new("view_default_keymap", "View Default Keymap")
                             .style(ButtonStyle::Filled)
                             .key_binding(ui::KeyBinding::for_action(
                                 &zed_actions::OpenDefaultKeymap,
-                                window,
                                 cx
                             ))
                             .on_click(|_, window, cx| {
@@ -223,11 +223,11 @@ impl Render for KeyContextView {
                             }),
                     )
                     .child(
-                        Button::new("edit_your_keymap", "Edit your keymap")
+                        Button::new("edit_your_keymap", "Edit Keymap File")
                             .style(ButtonStyle::Filled)
-                            .key_binding(ui::KeyBinding::for_action(&zed_actions::OpenKeymap, window, cx))
+                            .key_binding(ui::KeyBinding::for_action(&zed_actions::OpenKeymapFile, cx))
                             .on_click(|_, window, cx| {
-                                window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
+                                window.dispatch_action(zed_actions::OpenKeymapFile.boxed_clone(), cx);
                             }),
                     ),
             )

@@ -35,7 +35,7 @@ impl MarkdownView {
         });
 
         Self {
-            raw_text: text.clone(),
+            raw_text: text,
             image_cache: RetainAllImageCache::new(cx),
             contents: None,
             parsing_markdown_task: Some(task),

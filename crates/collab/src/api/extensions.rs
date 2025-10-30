@@ -337,8 +337,7 @@ async fn fetch_extensions_from_blob_store(
             if known_versions
                 .binary_search_by_key(&published_version, |known_version| known_version)
                 .is_err()
-            {
-                if let Some(extension) = fetch_extension_manifest(
+                && let Some(extension) = fetch_extension_manifest(
                     blob_store_client,
                     blob_store_bucket,
                     extension_id,
@@ -346,12 +345,11 @@ async fn fetch_extensions_from_blob_store(
                 )
                 .await
                 .log_err()
-                {
-                    new_versions
-                        .entry(extension_id)
-                        .or_default()
-                        .push(extension);
-                }
+            {
+                new_versions
+                    .entry(extension_id)
+                    .or_default()
+                    .push(extension);
             }
         }
     }

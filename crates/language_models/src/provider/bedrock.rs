@@ -23,12 +23,8 @@ use bedrock::{
 };
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
-use editor::{Editor, EditorElement, EditorStyle};
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{
-    AnyView, App, AsyncApp, Context, Entity, FontStyle, FontWeight, Subscription, Task, TextStyle,
-    WhiteSpace,
-};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, FontWeight, Subscription, Task};
 use gpui_tokio::Tokio;
 use http_client::HttpClient;
 use language_model::{
@@ -42,11 +38,11 @@ use language_model::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::{Settings, SettingsStore};
+use settings::{BedrockAvailableModel as AvailableModel, Settings, SettingsStore};
 use smol::lock::OnceCell;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
-use theme::ThemeSettings;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
+use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
@@ -83,15 +79,14 @@ pub enum BedrockAuthMethod {
     Automatic,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub max_tokens: u64,
-    pub cache_configuration: Option<LanguageModelCacheConfiguration>,
-    pub max_output_tokens: Option<u64>,
-    pub default_temperature: Option<f32>,
-    pub mode: Option<ModelMode>,
+impl From<settings::BedrockAuthMethodContent> for BedrockAuthMethod {
+    fn from(value: settings::BedrockAuthMethodContent) -> Self {
+        match value {
+            settings::BedrockAuthMethodContent::SingleSignOn => BedrockAuthMethod::SingleSignOn,
+            settings::BedrockAuthMethodContent::Automatic => BedrockAuthMethod::Automatic,
+            settings::BedrockAuthMethodContent::NamedProfile => BedrockAuthMethod::NamedProfile,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -150,7 +145,7 @@ impl State {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .delete_credentials(AMAZON_AWS_URL, &cx)
+                .delete_credentials(AMAZON_AWS_URL, cx)
                 .await
                 .log_err();
             this.update(cx, |this, cx| {
@@ -174,7 +169,7 @@ impl State {
                     AMAZON_AWS_URL,
                     "Bearer",
                     &serde_json::to_vec(&credentials)?,
-                    &cx,
+                    cx,
                 )
                 .await?;
             this.update(cx, |this, cx| {
@@ -206,7 +201,7 @@ impl State {
                     (credentials, true)
                 } else {
                     let (_, credentials) = credentials_provider
-                        .read_credentials(AMAZON_AWS_URL, &cx)
+                        .read_credentials(AMAZON_AWS_URL, cx)
                         .await?
                         .ok_or_else(|| AuthenticateError::CredentialsNotFound)?;
                     (
@@ -244,7 +239,7 @@ impl State {
 pub struct BedrockLanguageModelProvider {
     http_client: AwsHttpClient,
     handle: tokio::runtime::Handle,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
 }
 
 impl BedrockLanguageModelProvider {
@@ -348,7 +343,12 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
             .into()
     }
@@ -362,7 +362,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
 impl LanguageModelProviderState for BedrockLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }
@@ -373,7 +373,7 @@ struct BedrockModel {
     http_client: AwsHttpClient,
     handle: tokio::runtime::Handle,
     client: OnceCell<BedrockClient>,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
     request_limiter: RateLimiter,
 }
 
@@ -407,10 +407,10 @@ impl BedrockModel {
                     .region(Region::new(region))
                     .timeout_config(TimeoutConfig::disabled());
 
-                if let Some(endpoint_url) = endpoint {
-                    if !endpoint_url.is_empty() {
-                        config_builder = config_builder.endpoint_url(endpoint_url);
-                    }
+                if let Some(endpoint_url) = endpoint
+                    && !endpoint_url.is_empty()
+                {
+                    config_builder = config_builder.endpoint_url(endpoint_url);
                 }
 
                 match auth_method {
@@ -460,7 +460,7 @@ impl BedrockModel {
         Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>,
     > {
         let Ok(runtime_client) = self
-            .get_or_init_client(&cx)
+            .get_or_init_client(cx)
             .cloned()
             .context("Bedrock client not initialized")
         else {
@@ -723,11 +723,11 @@ pub fn into_bedrock(
                     Role::Assistant => bedrock::BedrockRole::Assistant,
                     Role::System => unreachable!("System role should never occur here"),
                 };
-                if let Some(last_message) = new_messages.last_mut() {
-                    if last_message.role == bedrock_role {
-                        last_message.content.extend(bedrock_message_content);
-                        continue;
-                    }
+                if let Some(last_message) = new_messages.last_mut()
+                    && last_message.role == bedrock_role
+                {
+                    last_message.content.extend(bedrock_message_content);
+                    continue;
                 }
                 new_messages.push(
                     BedrockMessage::builder()
@@ -912,7 +912,7 @@ pub fn map_to_language_model_completion_events(
                             Some(ContentBlockDelta::ReasoningContent(thinking)) => match thinking {
                                 ReasoningContentBlockDelta::Text(thoughts) => {
                                     Some(Ok(LanguageModelCompletionEvent::Thinking {
-                                        text: thoughts.clone(),
+                                        text: thoughts,
                                         signature: None,
                                     }))
                                 }
@@ -963,7 +963,7 @@ pub fn map_to_language_model_completion_events(
                                         id: tool_use.id.into(),
                                         name: tool_use.name.into(),
                                         is_input_complete: true,
-                                        raw_input: tool_use.input_json.clone(),
+                                        raw_input: tool_use.input_json,
                                         input,
                                     },
                                 ))
@@ -1006,11 +1006,11 @@ pub fn map_to_language_model_completion_events(
 }
 
 struct ConfigurationView {
-    access_key_id_editor: Entity<Editor>,
-    secret_access_key_editor: Entity<Editor>,
-    session_token_editor: Entity<Editor>,
-    region_editor: Entity<Editor>,
-    state: gpui::Entity<State>,
+    access_key_id_editor: Entity<InputField>,
+    secret_access_key_editor: Entity<InputField>,
+    session_token_editor: Entity<InputField>,
+    region_editor: Entity<InputField>,
+    state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
 
@@ -1021,7 +1021,7 @@ impl ConfigurationView {
     const PLACEHOLDER_SESSION_TOKEN_TEXT: &'static str = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
     const PLACEHOLDER_REGION: &'static str = "us-east-1";
 
-    fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
@@ -1047,25 +1047,19 @@ impl ConfigurationView {
 
         Self {
             access_key_id_editor: cx.new(|cx| {
-                let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_ACCESS_KEY_ID_TEXT, cx);
-                editor
+                InputField::new(window, cx, Self::PLACEHOLDER_ACCESS_KEY_ID_TEXT)
+                    .label("Access Key ID")
             }),
             secret_access_key_editor: cx.new(|cx| {
-                let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_SECRET_ACCESS_KEY_TEXT, cx);
-                editor
+                InputField::new(window, cx, Self::PLACEHOLDER_SECRET_ACCESS_KEY_TEXT)
+                    .label("Secret Access Key")
             }),
             session_token_editor: cx.new(|cx| {
-                let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_SESSION_TOKEN_TEXT, cx);
-                editor
+                InputField::new(window, cx, Self::PLACEHOLDER_SESSION_TOKEN_TEXT)
+                    .label("Session Token (Optional)")
             }),
-            region_editor: cx.new(|cx| {
-                let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_REGION, cx);
-                editor
-            }),
+            region_editor: cx
+                .new(|cx| InputField::new(window, cx, Self::PLACEHOLDER_REGION).label("Region")),
             state,
             load_credentials_task,
         }
@@ -1081,21 +1075,18 @@ impl ConfigurationView {
             .access_key_id_editor
             .read(cx)
             .text(cx)
-            .to_string()
             .trim()
             .to_string();
         let secret_access_key = self
             .secret_access_key_editor
             .read(cx)
             .text(cx)
-            .to_string()
             .trim()
             .to_string();
         let session_token = self
             .session_token_editor
             .read(cx)
             .text(cx)
-            .to_string()
             .trim()
             .to_string();
         let session_token = if session_token.is_empty() {
@@ -1103,13 +1094,7 @@ impl ConfigurationView {
         } else {
             Some(session_token)
         };
-        let region = self
-            .region_editor
-            .read(cx)
-            .text(cx)
-            .to_string()
-            .trim()
-            .to_string();
+        let region = self.region_editor.read(cx).text(cx).trim().to_string();
         let region = if region.is_empty() {
             "us-east-1".to_string()
         } else {
@@ -1151,41 +1136,6 @@ impl ConfigurationView {
                 .await
         })
         .detach_and_log_err(cx);
-    }
-
-    fn make_text_style(&self, cx: &Context<Self>) -> TextStyle {
-        let settings = ThemeSettings::get_global(cx);
-        TextStyle {
-            color: cx.theme().colors().text,
-            font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features.clone(),
-            font_fallbacks: settings.ui_font.fallbacks.clone(),
-            font_size: rems(0.875).into(),
-            font_weight: settings.ui_font.weight,
-            font_style: FontStyle::Normal,
-            line_height: relative(1.3),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-            white_space: WhiteSpace::Normal,
-            text_overflow: None,
-            text_align: Default::default(),
-            line_clamp: None,
-        }
-    }
-
-    fn make_input_styles(&self, cx: &Context<Self>) -> Div {
-        let bg_color = cx.theme().colors().editor_background;
-        let border_color = cx.theme().colors().border;
-
-        h_flex()
-            .w_full()
-            .px_2()
-            .py_1()
-            .bg(bg_color)
-            .border_1()
-            .border_color(border_color)
-            .rounded_sm()
     }
 
     fn should_render_editor(&self, cx: &Context<Self>) -> bool {
@@ -1270,8 +1220,8 @@ impl Render for ConfigurationView {
                         )
                     )
             )
-            .child(self.render_static_credentials_ui(cx))
-            .child(self.render_common_fields(cx))
+            .child(self.render_static_credentials_ui())
+            .child(self.region_editor.clone())
             .child(
                 Label::new(
                     format!("You can also assign the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR} AND {ZED_BEDROCK_REGION_VAR} environment variables and restart Zed."),
@@ -1292,63 +1242,7 @@ impl Render for ConfigurationView {
 }
 
 impl ConfigurationView {
-    fn render_access_key_id_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let text_style = self.make_text_style(cx);
-
-        EditorElement::new(
-            &self.access_key_id_editor,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
-    }
-
-    fn render_secret_key_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let text_style = self.make_text_style(cx);
-
-        EditorElement::new(
-            &self.secret_access_key_editor,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
-    }
-
-    fn render_session_token_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let text_style = self.make_text_style(cx);
-
-        EditorElement::new(
-            &self.session_token_editor,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
-    }
-
-    fn render_region_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let text_style = self.make_text_style(cx);
-
-        EditorElement::new(
-            &self.region_editor,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
-    }
-
-    fn render_static_credentials_ui(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_static_credentials_ui(&self) -> AnyElement {
         v_flex()
             .my_2()
             .gap_1p5()
@@ -1381,41 +1275,10 @@ impl ConfigurationView {
                         "Enter these credentials below",
                     )),
             )
-            .child(
-                v_flex()
-                    .gap_0p5()
-                    .child(Label::new("Access Key ID").size(LabelSize::Small))
-                    .child(
-                        self.make_input_styles(cx)
-                            .child(self.render_access_key_id_editor(cx)),
-                    ),
-            )
-            .child(
-                v_flex()
-                    .gap_0p5()
-                    .child(Label::new("Secret Access Key").size(LabelSize::Small))
-                    .child(self.make_input_styles(cx).child(self.render_secret_key_editor(cx))),
-            )
-            .child(
-                v_flex()
-                    .gap_0p5()
-                    .child(Label::new("Session Token (Optional)").size(LabelSize::Small))
-                    .child(
-                        self.make_input_styles(cx)
-                            .child(self.render_session_token_editor(cx)),
-                    ),
-            )
-            .into_any_element()
-    }
-
-    fn render_common_fields(&self, cx: &mut Context<Self>) -> AnyElement {
-        v_flex()
-            .gap_0p5()
-            .child(Label::new("Region").size(LabelSize::Small))
-            .child(
-                self.make_input_styles(cx)
-                    .child(self.render_region_editor(cx)),
-            )
+            .child(self.access_key_id_editor.clone())
+            .child(self.secret_access_key_editor.clone())
+            .child(self.session_token_editor.clone())
+            .child(self.region_editor.clone())
             .into_any_element()
     }
 }

@@ -28,25 +28,33 @@ pub struct CommitDetails {
 }
 
 pub struct CommitAvatar<'a> {
-    commit: &'a CommitDetails,
+    sha: &'a SharedString,
+    remote: Option<&'a GitRemote>,
 }
 
 impl<'a> CommitAvatar<'a> {
-    pub fn new(details: &'a CommitDetails) -> Self {
-        Self { commit: details }
+    pub fn new(sha: &'a SharedString, remote: Option<&'a GitRemote>) -> Self {
+        Self { sha, remote }
+    }
+
+    pub fn from_commit_details(details: &'a CommitDetails) -> Self {
+        Self {
+            sha: &details.sha,
+            remote: details
+                .message
+                .as_ref()
+                .and_then(|details| details.remote.as_ref()),
+        }
     }
 }
 
 impl<'a> CommitAvatar<'a> {
     pub fn render(&'a self, window: &mut Window, cx: &mut App) -> Option<impl IntoElement + use<>> {
         let remote = self
-            .commit
-            .message
-            .as_ref()
-            .and_then(|details| details.remote.clone())
+            .remote
             .filter(|remote| remote.host_supports_avatars())?;
 
-        let avatar_url = CommitAvatarAsset::new(remote, self.commit.sha.clone());
+        let avatar_url = CommitAvatarAsset::new(remote.clone(), self.sha.clone());
 
         let element = match window.use_asset::<CommitAvatarAsset>(&avatar_url, cx) {
             // Loading or no avatar found
@@ -169,7 +177,7 @@ impl CommitTooltip {
 
 impl Render for CommitTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let avatar = CommitAvatar::new(&self.commit).render(window, cx);
+        let avatar = CommitAvatar::from_commit_details(&self.commit).render(window, cx);
 
         let author = self.commit.author_name.clone();
 
@@ -181,7 +189,7 @@ impl Render for CommitTooltip {
             .get(0..8)
             .map(|sha| sha.to_string().into())
             .unwrap_or_else(|| self.commit.sha.clone());
-        let full_sha = self.commit.sha.to_string().clone();
+        let full_sha = self.commit.sha.to_string();
         let absolute_timestamp = format_local_timestamp(
             self.commit.commit_time,
             OffsetDateTime::now_utc(),
@@ -229,10 +237,11 @@ impl Render for CommitTooltip {
                         .into()
                 }),
             commit_timestamp: self.commit.commit_time.unix_timestamp(),
+            author_name: self.commit.author_name.clone(),
             has_parent: false,
         };
 
-        tooltip_container(window, cx, move |this, _, cx| {
+        tooltip_container(cx, move |this, cx| {
             this.occlude()
                 .on_mouse_move(|_, _, cx| cx.stop_propagation())
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -309,9 +318,10 @@ impl Render for CommitTooltip {
                                             .on_click(
                                                 move |_, window, cx| {
                                                     CommitView::open(
-                                                        commit_summary.clone(),
+                                                        commit_summary.sha.to_string(),
                                                         repo.downgrade(),
                                                         workspace.clone(),
+                                                        None,
                                                         window,
                                                         cx,
                                                     );

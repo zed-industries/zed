@@ -1,20 +1,20 @@
 mod key_context_view;
-mod lsp_log;
-pub mod lsp_tool;
+pub mod lsp_button;
+pub mod lsp_log_view;
 mod syntax_tree_view;
 
 #[cfg(test)]
-mod lsp_log_tests;
+mod lsp_log_view_tests;
 
 use gpui::{App, AppContext, Entity};
 
-pub use lsp_log::{LogStore, LspLogToolbarItemView, LspLogView};
+pub use lsp_log_view::LspLogView;
 pub use syntax_tree_view::{SyntaxTreeToolbarItemView, SyntaxTreeView};
 use ui::{Context, Window};
 use workspace::{Item, ItemHandle, SplitDirection, Workspace};
 
 pub fn init(cx: &mut App) {
-    lsp_log::init(cx);
+    lsp_log_view::init(false, cx);
     syntax_tree_view::init(cx);
     key_context_view::init(cx);
 }

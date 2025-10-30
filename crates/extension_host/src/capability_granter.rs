@@ -107,6 +107,7 @@ mod tests {
             grammars: BTreeMap::default(),
             language_servers: BTreeMap::default(),
             context_servers: BTreeMap::default(),
+            agent_servers: BTreeMap::default(),
             slash_commands: BTreeMap::default(),
             snippets: None,
             capabilities: vec![],
@@ -145,7 +146,7 @@ mod tests {
                 command: "*".to_string(),
                 args: vec!["**".to_string()],
             })],
-            manifest.clone(),
+            manifest,
         );
         assert!(granter.grant_exec("ls", &["-la"]).is_ok());
     }

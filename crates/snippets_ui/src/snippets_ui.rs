@@ -163,13 +163,12 @@ impl ScopeSelectorDelegate {
             for entry in read_dir {
                 if let Some(entry) = entry.log_err() {
                     let path = entry.path();
-                    if let (Some(stem), Some(extension)) = (path.file_stem(), path.extension()) {
-                        if extension.to_os_string().to_str() == Some("json") {
-                            if let Ok(file_name) = stem.to_os_string().into_string() {
-                                existing_scopes
-                                    .insert(ScopeName::from(ScopeFileName(Cow::Owned(file_name))));
-                            }
-                        }
+                    if let (Some(stem), Some(extension)) = (path.file_stem(), path.extension())
+                        && extension.to_os_string().to_str() == Some("json")
+                        && let Ok(file_name) = stem.to_os_string().into_string()
+                    {
+                        existing_scopes
+                            .insert(ScopeName::from(ScopeFileName(Cow::Owned(file_name))));
                     }
                 }
             }
@@ -222,15 +221,19 @@ impl PickerDelegate for ScopeSelectorDelegate {
 
                     workspace.update_in(cx, |workspace, window, cx| {
                         workspace
-                            .open_abs_path(
-                                snippets_dir().join(scope_file_name.with_extension()),
-                                OpenOptions {
-                                    visible: Some(OpenVisible::None),
-                                    ..Default::default()
-                                },
-                                window,
-                                cx,
-                            )
+                            .with_local_workspace(window, cx, |workspace, window, cx| {
+                                workspace
+                                    .open_abs_path(
+                                        snippets_dir().join(scope_file_name.with_extension()),
+                                        OpenOptions {
+                                            visible: Some(OpenVisible::None),
+                                            ..Default::default()
+                                        },
+                                        window,
+                                        cx,
+                                    )
+                                    .detach();
+                            })
                             .detach();
                     })
                 })
@@ -311,7 +314,7 @@ impl PickerDelegate for ScopeSelectorDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let mat = &self.matches[ix];
+        let mat = &self.matches.get(ix)?;
         let name_label = mat.string.clone();
 
         let scope_name = ScopeName(Cow::Owned(

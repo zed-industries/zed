@@ -9,9 +9,39 @@ C++ support is available natively in Zed.
 
 You can configure which `clangd` binary Zed should use.
 
-To use a binary in a custom location, add the following to your `settings.json`:
+By default, Zed will try to find a `clangd` in your `$PATH` and try to use that. If that binary successfully executes, it's used. Otherwise, Zed will fall back to installing its own `clangd` version and use that.
 
-```json
+If you want to install a pre-release `clangd` version instead you can instruct Zed to do so by setting `pre_release` to `true` in your `settings.json`:
+
+```json [settings]
+{
+  "lsp": {
+    "clangd": {
+      "fetch": {
+        "pre_release": true
+      }
+    }
+  }
+}
+```
+
+If you want to disable Zed looking for a `clangd` binary, you can set `ignore_system_version` to `true` in your `settings.json`:
+
+```json [settings]
+{
+  "lsp": {
+    "clangd": {
+      "binary": {
+        "ignore_system_version": true
+      }
+    }
+  }
+}
+```
+
+If you want to use a binary in a custom location, you can specify a `path` and optional `arguments`:
+
+```json [settings]
 {
   "lsp": {
     "clangd": {
@@ -24,25 +54,13 @@ To use a binary in a custom location, add the following to your `settings.json`:
 }
 ```
 
-If you want to disable Zed looking for a `clangd` binary, you can set `ignore_system_version` to `true`:
-
-```json
-{
-  "lsp": {
-    "clangd": {
-      "binary": {
-        "ignore_system_version": true
-      }
-    }
-  }
-}
-```
+This `"path"` has to be an absolute path.
 
 ## Arguments
 
 You can pass any number of arguments to clangd. To see a full set of available options, run `clangd --help` from the command line. For example with `--function-arg-placeholders=0` completions contain only parentheses for function calls, while the default (`--function-arg-placeholders=1`) completions also contain placeholders for method parameters.
 
-```json
+```json [settings]
 {
   "lsp": {
     "clangd": {
@@ -75,7 +93,7 @@ See [Clang-Format Style Options](https://clang.llvm.org/docs/ClangFormatStyleOpt
 
 You can trigger formatting via {#kb editor::Format} or the `editor: format` action from the command palette or by adding `format_on_save` to your Zed settings:
 
-```json
+```json [settings]
   "languages": {
     "C++": {
       "format_on_save": "on",
@@ -117,9 +135,13 @@ After building your project, CMake will generate the `compile_commands.json` fil
 
 You can use CodeLLDB or GDB to debug native binaries. (Make sure that your build process passes `-g` to the C++ compiler, so that debug information is included in the resulting binary.) See below for examples of debug configurations that you can add to `.zed/debug.json`.
 
+- [CodeLLDB configuration documentation](https://github.com/vadimcn/codelldb/blob/master/MANUAL.md#starting-a-new-debug-session)
+- [GDB configuration documentation](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Debugger-Adapter-Protocol.html)
+  - GDB needs to be at least v14.1
+
 ### Build and Debug Binary
 
-```json
+```json [debug]
 [
   {
     "label": "Debug native binary",

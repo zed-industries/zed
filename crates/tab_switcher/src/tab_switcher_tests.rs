@@ -4,8 +4,7 @@ use gpui::{TestAppContext, VisualTestContext};
 use menu::SelectPrevious;
 use project::{Project, ProjectPath};
 use serde_json::json;
-use std::path::Path;
-use util::path;
+use util::{path, rel_path::rel_path};
 use workspace::{AppState, Workspace};
 
 #[ctor::ctor]
@@ -331,7 +330,7 @@ async fn open_buffer(
     });
     let project_path = ProjectPath {
         worktree_id,
-        path: Arc::from(Path::new(file_path)),
+        path: rel_path(file_path).into(),
     };
     workspace
         .update_in(cx, move |workspace, window, cx| {

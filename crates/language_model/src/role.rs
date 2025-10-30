@@ -19,7 +19,7 @@ impl Role {
         }
     }
 
-    pub fn to_proto(&self) -> proto::LanguageModelRole {
+    pub fn to_proto(self) -> proto::LanguageModelRole {
         match self {
             Role::User => proto::LanguageModelRole::LanguageModelUser,
             Role::Assistant => proto::LanguageModelRole::LanguageModelAssistant,

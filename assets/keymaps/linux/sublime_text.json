@@ -28,8 +28,8 @@
   {
     "context": "Editor",
     "bindings": {
-      "ctrl-alt-up": "editor::AddSelectionAbove",
-      "ctrl-alt-down": "editor::AddSelectionBelow",
+      "ctrl-alt-up": ["editor::AddSelectionAbove", { "skip_soft_wrap": false }],
+      "ctrl-alt-down": ["editor::AddSelectionBelow", { "skip_soft_wrap": false }],
       "ctrl-shift-up": "editor::MoveLineUp",
       "ctrl-shift-down": "editor::MoveLineDown",
       "ctrl-shift-m": "editor::SelectLargerSyntaxNode",
@@ -50,8 +50,8 @@
       "ctrl-k ctrl-u": "editor::ConvertToUpperCase",
       "ctrl-k ctrl-l": "editor::ConvertToLowerCase",
       "shift-alt-m": "markdown::OpenPreviewToTheSide",
-      "ctrl-backspace": "editor::DeleteToPreviousWordStart",
-      "ctrl-delete": "editor::DeleteToNextWordEnd",
+      "ctrl-backspace": ["editor::DeleteToPreviousWordStart", { "ignore_newlines": false, "ignore_brackets": false }],
+      "ctrl-delete": ["editor::DeleteToNextWordEnd", { "ignore_newlines": false, "ignore_brackets": false }],
       "alt-right": "editor::MoveToNextSubwordEnd",
       "alt-left": "editor::MoveToPreviousSubwordStart",
       "alt-shift-right": "editor::SelectToNextSubwordEnd",

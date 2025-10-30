@@ -201,3 +201,9 @@ impl Drop for Subscription {
         }
     }
 }
+
+impl std::fmt::Debug for Subscription {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Subscription").finish()
+    }
+}

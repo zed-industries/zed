@@ -98,7 +98,7 @@ impl SearchOption {
     pub fn label(&self) -> &'static str {
         match self {
             SearchOption::WholeWord => "Match Whole Words",
-            SearchOption::CaseSensitive => "Match Case Sensitively",
+            SearchOption::CaseSensitive => "Match Case Sensitivity",
             SearchOption::IncludeIgnored => "Also search files ignored by configuration",
             SearchOption::Regex => "Use Regular Expressions",
             SearchOption::OneMatchPerLine => "One Match Per Line",
@@ -116,8 +116,8 @@ impl SearchOption {
         }
     }
 
-    pub fn to_toggle_action(&self) -> &'static dyn Action {
-        match *self {
+    pub fn to_toggle_action(self) -> &'static dyn Action {
+        match self {
             SearchOption::WholeWord => &ToggleWholeWord,
             SearchOption::CaseSensitive => &ToggleCaseSensitive,
             SearchOption::IncludeIgnored => &ToggleIncludeIgnored,
@@ -142,7 +142,7 @@ impl SearchOption {
             SearchSource::Buffer => {
                 let focus_handle = focus_handle.clone();
                 button.on_click(move |_: &ClickEvent, window, cx| {
-                    if !focus_handle.is_focused(&window) {
+                    if !focus_handle.is_focused(window) {
                         window.focus(&focus_handle);
                     }
                     window.dispatch_action(action.boxed_clone(), cx);
@@ -158,9 +158,7 @@ impl SearchOption {
         .style(ButtonStyle::Subtle)
         .shape(IconButtonShape::Square)
         .toggle_state(active.contains(self.as_options()))
-        .tooltip({
-            move |window, cx| Tooltip::for_action_in(label, action, &focus_handle, window, cx)
-        })
+        .tooltip(move |_window, cx| Tooltip::for_action_in(label, action, &focus_handle, cx))
     }
 }
 

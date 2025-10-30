@@ -21,10 +21,10 @@
   {
     "context": "Editor",
     "bindings": {
-      "alt-backspace": "editor::DeleteToPreviousWordStart",
-      "alt-shift-backspace": "editor::DeleteToNextWordEnd",
-      "alt-delete": "editor::DeleteToNextWordEnd",
-      "alt-shift-delete": "editor::DeleteToNextWordEnd",
+      "alt-backspace": ["editor::DeleteToPreviousWordStart", { "ignore_newlines": false, "ignore_brackets": false }],
+      "alt-shift-backspace": ["editor::DeleteToNextWordEnd", { "ignore_newlines": false, "ignore_brackets": false }],
+      "alt-delete": ["editor::DeleteToNextWordEnd", { "ignore_newlines": false, "ignore_brackets": false }],
+      "alt-shift-delete": ["editor::DeleteToNextWordEnd", { "ignore_newlines": false, "ignore_brackets": false }],
       "ctrl-backspace": "editor::DeleteToPreviousSubwordStart",
       "ctrl-delete": "editor::DeleteToNextSubwordEnd",
       "alt-left": ["editor::MoveToPreviousWordStart", { "stop_at_soft_wraps": true }],

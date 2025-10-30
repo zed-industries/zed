@@ -9,7 +9,7 @@ use futures::AsyncReadExt as _;
 use gpui::{App, Task};
 use gpui_tokio::Tokio;
 use http_client::http::request;
-use http_client::{AsyncBody, HttpClientWithUrl, Method, Request, StatusCode};
+use http_client::{AsyncBody, HttpClientWithUrl, HttpRequestExt, Method, Request, StatusCode};
 use parking_lot::RwLock;
 use yawc::WebSocket;
 
@@ -102,13 +102,7 @@ impl CloudApiClient {
         let credentials = credentials.as_ref().context("no credentials provided")?;
         let authorization_header = format!("{} {}", credentials.user_id, credentials.access_token);
 
-        Ok(cx.spawn(async move |cx| {
-            let handle = cx
-                .update(|cx| Tokio::handle(cx))
-                .ok()
-                .context("failed to get Tokio handle")?;
-            let _guard = handle.enter();
-
+        Ok(Tokio::spawn_result(cx, async move {
             let ws = WebSocket::connect(connect_url)
                 .with_request(
                     request::Builder::new()
@@ -121,47 +115,20 @@ impl CloudApiClient {
         }))
     }
 
-    pub async fn accept_terms_of_service(&self) -> Result<AcceptTermsOfServiceResponse> {
-        let request = self.build_request(
-            Request::builder().method(Method::POST).uri(
-                self.http_client
-                    .build_zed_cloud_url("/client/terms_of_service/accept", &[])?
-                    .as_ref(),
-            ),
-            AsyncBody::default(),
-        )?;
-
-        let mut response = self.http_client.send(request).await?;
-
-        if !response.status().is_success() {
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await?;
-
-            anyhow::bail!(
-                "Failed to accept terms of service.\nStatus: {:?}\nBody: {body}",
-                response.status()
-            )
-        }
-
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-
-        Ok(serde_json::from_str(&body)?)
-    }
-
     pub async fn create_llm_token(
         &self,
         system_id: Option<String>,
     ) -> Result<CreateLlmTokenResponse> {
-        let mut request_builder = Request::builder().method(Method::POST).uri(
-            self.http_client
-                .build_zed_cloud_url("/client/llm_tokens", &[])?
-                .as_ref(),
-        );
-
-        if let Some(system_id) = system_id {
-            request_builder = request_builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id);
-        }
+        let request_builder = Request::builder()
+            .method(Method::POST)
+            .uri(
+                self.http_client
+                    .build_zed_cloud_url("/client/llm_tokens", &[])?
+                    .as_ref(),
+            )
+            .when_some(system_id, |builder, system_id| {
+                builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
+            });
 
         let request = self.build_request(request_builder, AsyncBody::default())?;
 
@@ -205,12 +172,12 @@ impl CloudApiClient {
             let mut body = String::new();
             response.body_mut().read_to_string(&mut body).await?;
             if response.status() == StatusCode::UNAUTHORIZED {
-                return Ok(false);
+                Ok(false)
             } else {
-                return Err(anyhow!(
+                Err(anyhow!(
                     "Failed to get authenticated user.\nStatus: {:?}\nBody: {body}",
                     response.status()
-                ));
+                ))
             }
         }
     }

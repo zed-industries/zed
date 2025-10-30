@@ -14,12 +14,13 @@ use client::Client;
 use cloud_llm_client::{CompletionMode, CompletionRequestStatus};
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
+use gpui::{AnyView, App, AsyncApp, SharedString, Task, Window};
 use http_client::{StatusCode, http};
 use icons::IconName;
+use open_router::OpenRouterError;
 use parking_lot::Mutex;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
+pub use settings::LanguageModelCacheConfiguration;
 use std::ops::{Add, Sub};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -48,25 +49,20 @@ pub const OPEN_AI_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId
 pub const OPEN_AI_PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("OpenAI");
 
+pub const X_AI_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("x_ai");
+pub const X_AI_PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("xAI");
+
 pub const ZED_CLOUD_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("zed.dev");
 pub const ZED_CLOUD_PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("Zed");
 
 pub fn init(client: Arc<Client>, cx: &mut App) {
     init_settings(cx);
-    RefreshLlmTokenListener::register(client.clone(), cx);
+    RefreshLlmTokenListener::register(client, cx);
 }
 
 pub fn init_settings(cx: &mut App) {
     registry::init(cx);
-}
-
-/// Configuration for caching language model messages.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct LanguageModelCacheConfiguration {
-    pub max_cache_anchors: usize,
-    pub should_speculate: bool,
-    pub min_total_token: u64,
 }
 
 /// A completion event from a language model.
@@ -300,7 +296,7 @@ impl From<AnthropicError> for LanguageModelCompletionError {
             },
             AnthropicError::ServerOverloaded { retry_after } => Self::ServerOverloaded {
                 provider,
-                retry_after: retry_after,
+                retry_after,
             },
             AnthropicError::ApiError(api_error) => api_error.into(),
         }
@@ -343,6 +339,72 @@ impl From<anthropic::ApiError> for LanguageModelCompletionError {
                 },
             },
             None => Self::Other(error.into()),
+        }
+    }
+}
+
+impl From<OpenRouterError> for LanguageModelCompletionError {
+    fn from(error: OpenRouterError) -> Self {
+        let provider = LanguageModelProviderName::new("OpenRouter");
+        match error {
+            OpenRouterError::SerializeRequest(error) => Self::SerializeRequest { provider, error },
+            OpenRouterError::BuildRequestBody(error) => Self::BuildRequestBody { provider, error },
+            OpenRouterError::HttpSend(error) => Self::HttpSend { provider, error },
+            OpenRouterError::DeserializeResponse(error) => {
+                Self::DeserializeResponse { provider, error }
+            }
+            OpenRouterError::ReadResponse(error) => Self::ApiReadResponseError { provider, error },
+            OpenRouterError::RateLimit { retry_after } => Self::RateLimitExceeded {
+                provider,
+                retry_after: Some(retry_after),
+            },
+            OpenRouterError::ServerOverloaded { retry_after } => Self::ServerOverloaded {
+                provider,
+                retry_after,
+            },
+            OpenRouterError::ApiError(api_error) => api_error.into(),
+        }
+    }
+}
+
+impl From<open_router::ApiError> for LanguageModelCompletionError {
+    fn from(error: open_router::ApiError) -> Self {
+        use open_router::ApiErrorCode::*;
+        let provider = LanguageModelProviderName::new("OpenRouter");
+        match error.code {
+            InvalidRequestError => Self::BadRequestFormat {
+                provider,
+                message: error.message,
+            },
+            AuthenticationError => Self::AuthenticationError {
+                provider,
+                message: error.message,
+            },
+            PaymentRequiredError => Self::AuthenticationError {
+                provider,
+                message: format!("Payment required: {}", error.message),
+            },
+            PermissionError => Self::PermissionError {
+                provider,
+                message: error.message,
+            },
+            RequestTimedOut => Self::HttpResponseError {
+                provider,
+                status_code: StatusCode::REQUEST_TIMEOUT,
+                message: error.message,
+            },
+            RateLimitError => Self::RateLimitExceeded {
+                provider,
+                retry_after: None,
+            },
+            ApiError => Self::ApiInternalServerError {
+                provider,
+                message: error.message,
+            },
+            OverloadedError => Self::ServerOverloaded {
+                provider,
+                retry_after: None,
+            },
         }
     }
 }
@@ -538,7 +600,7 @@ pub trait LanguageModel: Send + Sync {
             if let Some(first_event) = events.next().await {
                 match first_event {
                     Ok(LanguageModelCompletionEvent::StartMessage { message_id: id }) => {
-                        message_id = Some(id.clone());
+                        message_id = Some(id);
                     }
                     Ok(LanguageModelCompletionEvent::Text(text)) => {
                         first_item_text = Some(text);
@@ -606,14 +668,11 @@ pub trait LanguageModelExt: LanguageModel {
 }
 impl LanguageModelExt for dyn LanguageModel {}
 
-pub trait LanguageModelTool: 'static + DeserializeOwned + JsonSchema {
-    fn name() -> String;
-    fn description() -> String;
-}
-
 /// An error that occurred when trying to authenticate the language model provider.
 #[derive(Debug, Error)]
 pub enum AuthenticateError {
+    #[error("connection refused")]
+    ConnectionRefused,
     #[error("credentials not found")]
     CredentialsNotFound,
     #[error(transparent)]
@@ -634,18 +693,20 @@ pub trait LanguageModelProvider: 'static {
     }
     fn is_authenticated(&self, cx: &App) -> bool;
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>>;
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView;
-    fn must_accept_terms(&self, _cx: &App) -> bool {
-        false
-    }
-    fn render_accept_terms(
+    fn configuration_view(
         &self,
-        _view: LanguageModelProviderTosView,
-        _cx: &mut App,
-    ) -> Option<AnyElement> {
-        None
-    }
+        target_agent: ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView;
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>>;
+}
+
+#[derive(Default, Clone)]
+pub enum ConfigurationViewTargetAgent {
+    #[default]
+    ZedAgent,
+    Other(SharedString),
 }
 
 #[derive(PartialEq, Eq)]

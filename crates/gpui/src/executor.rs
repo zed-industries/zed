@@ -2,21 +2,20 @@ use crate::{App, PlatformDispatcher};
 use async_task::Runnable;
 use futures::channel::mpsc;
 use smol::prelude::*;
-use std::mem::ManuallyDrop;
-use std::panic::Location;
-use std::thread::{self, ThreadId};
 use std::{
     fmt::Debug,
     marker::PhantomData,
-    mem,
+    mem::{self, ManuallyDrop},
     num::NonZeroUsize,
+    panic::Location,
     pin::Pin,
     rc::Rc,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicUsize, Ordering},
     },
     task::{Context, Poll},
+    thread::{self, ThreadId},
     time::{Duration, Instant},
 };
 use util::TryFutureExt;
@@ -39,7 +38,7 @@ pub struct BackgroundExecutor {
 /// This is intentionally `!Send` via the `not_send` marker field. This is because
 /// `ForegroundExecutor::spawn` does not require `Send` but checks at runtime that the future is
 /// only polled from the same thread it was spawned from. These checks would fail when spawning
-/// foreground tasks from from background threads.
+/// foreground tasks from background threads.
 #[derive(Clone)]
 pub struct ForegroundExecutor {
     #[doc(hidden)]
@@ -123,7 +122,12 @@ impl TaskLabel {
     /// Construct a new task label.
     pub fn new() -> Self {
         static NEXT_TASK_LABEL: AtomicUsize = AtomicUsize::new(1);
-        Self(NEXT_TASK_LABEL.fetch_add(1, SeqCst).try_into().unwrap())
+        Self(
+            NEXT_TASK_LABEL
+                .fetch_add(1, Ordering::SeqCst)
+                .try_into()
+                .unwrap(),
+        )
     }
 }
 
@@ -210,7 +214,8 @@ impl BackgroundExecutor {
         }
         let deadline = timeout.map(|timeout| Instant::now() + timeout);
 
-        let unparker = self.dispatcher.unparker();
+        let parker = parking::Parker::new();
+        let unparker = parker.unparker();
         let waker = waker_fn(move || {
             unparker.unpark();
         });
@@ -222,10 +227,14 @@ impl BackgroundExecutor {
                 Poll::Pending => {
                     let timeout =
                         deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
-                    if !self.dispatcher.park(timeout)
-                        && deadline.is_some_and(|deadline| deadline < Instant::now())
-                    {
-                        return Err(future);
+                    if let Some(timeout) = timeout {
+                        if !parker.park_timeout(timeout)
+                            && deadline.is_some_and(|deadline| deadline < Instant::now())
+                        {
+                            return Err(future);
+                        }
+                    } else {
+                        parker.park();
                     }
                 }
             }
@@ -242,6 +251,8 @@ impl BackgroundExecutor {
     ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<Fut>> {
         use std::sync::atomic::AtomicBool;
 
+        use parking::Parker;
+
         let mut future = Box::pin(future);
         if timeout == Some(Duration::ZERO) {
             return Err(future);
@@ -255,16 +266,23 @@ impl BackgroundExecutor {
         } else {
             usize::MAX
         };
-        let unparker = self.dispatcher.unparker();
+
+        let parker = Parker::new();
+        let unparker = parker.unparker();
+
         let awoken = Arc::new(AtomicBool::new(false));
         let waker = waker_fn({
             let awoken = awoken.clone();
+            let unparker = unparker.clone();
             move || {
-                awoken.store(true, SeqCst);
+                awoken.store(true, Ordering::SeqCst);
                 unparker.unpark();
             }
         });
         let mut cx = std::task::Context::from_waker(&waker);
+
+        let duration = Duration::from_secs(500);
+        let mut test_should_end_by = Instant::now() + duration;
 
         loop {
             match future.as_mut().poll(&mut cx) {
@@ -276,7 +294,7 @@ impl BackgroundExecutor {
                     max_ticks -= 1;
 
                     if !dispatcher.tick(background_only) {
-                        if awoken.swap(false, SeqCst) {
+                        if awoken.swap(false, Ordering::SeqCst) {
                             continue;
                         }
 
@@ -297,7 +315,13 @@ impl BackgroundExecutor {
                                 "parked with nothing left to run{waiting_message}{backtrace_message}",
                             )
                         }
-                        self.dispatcher.park(None);
+                        dispatcher.set_unparker(unparker.clone());
+                        parker.park_timeout(
+                            test_should_end_by.saturating_duration_since(Instant::now()),
+                        );
+                        if Instant::now() > test_should_end_by {
+                            panic!("test timed out after {duration:?} with allow_parking")
+                        }
                     }
                 }
             }
@@ -391,7 +415,7 @@ impl BackgroundExecutor {
     }
 
     /// in tests, run all tasks that are ready to run. If after doing so
-    /// the test still has outstanding tasks, this will panic. (See also `allow_parking`)
+    /// the test still has outstanding tasks, this will panic. (See also [`Self::allow_parking`])
     #[cfg(any(test, feature = "test-support"))]
     pub fn run_until_parked(&self) {
         self.dispatcher.as_test().unwrap().run_until_parked()
@@ -405,7 +429,7 @@ impl BackgroundExecutor {
         self.dispatcher.as_test().unwrap().allow_parking();
     }
 
-    /// undoes the effect of [`allow_parking`].
+    /// undoes the effect of [`Self::allow_parking`].
     #[cfg(any(test, feature = "test-support"))]
     pub fn forbid_parking(&self) {
         self.dispatcher.as_test().unwrap().forbid_parking();
@@ -455,7 +479,6 @@ impl ForegroundExecutor {
     }
 
     /// Enqueues the given Task to run on the main thread at some point in the future.
-    #[track_caller]
     pub fn spawn<R>(&self, future: impl Future<Output = R> + 'static) -> Task<R>
     where
         R: 'static,
@@ -480,7 +503,7 @@ impl ForegroundExecutor {
 /// Variant of `async_task::spawn_local` that includes the source location of the spawn in panics.
 ///
 /// Copy-modified from:
-/// https://github.com/smol-rs/async-task/blob/ca9dbe1db9c422fd765847fa91306e30a6bb58a9/src/runnable.rs#L405
+/// <https://github.com/smol-rs/async-task/blob/ca9dbe1db9c422fd765847fa91306e30a6bb58a9/src/runnable.rs#L405>
 #[track_caller]
 fn spawn_local_with_source_location<Fut, S>(
     future: Fut,
@@ -513,9 +536,7 @@ where
                 "local task dropped by a thread that didn't spawn it. Task spawned at {}",
                 self.location
             );
-            unsafe {
-                ManuallyDrop::drop(&mut self.inner);
-            }
+            unsafe { ManuallyDrop::drop(&mut self.inner) };
         }
     }
 

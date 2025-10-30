@@ -16,6 +16,13 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
     let mut deprecated = None;
     let mut doc_str: Option<String> = None;
 
+    /*
+    *
+    * #[action()]
+    * Struct Foo {
+    *  bar: bool // is bar considered an attribute
+    }
+    */
     for attr in &input.attrs {
         if attr.path().is_ident("action") {
             attr.parse_nested_meta(|meta| {

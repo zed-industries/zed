@@ -64,19 +64,19 @@ impl DapRegistry {
             .and_then(|adapter| adapter.adapter_language_name())
     }
 
-    pub async fn adapters_schema(&self) -> task::AdapterSchemas {
-        let mut schemas = AdapterSchemas(vec![]);
+    pub fn adapters_schema(&self) -> task::AdapterSchemas {
+        let mut schemas = vec![];
 
-        let adapters = self.0.read().adapters.clone();
+        let adapters = &self.0.read().adapters;
 
         for (name, adapter) in adapters.into_iter() {
-            schemas.0.push(AdapterSchema {
-                adapter: name.into(),
+            schemas.push(AdapterSchema {
+                adapter: name.clone().into(),
                 schema: adapter.dap_schema(),
             });
         }
 
-        schemas
+        AdapterSchemas(schemas)
     }
 
     pub fn locators(&self) -> FxHashMap<SharedString, Arc<dyn DapLocator>> {

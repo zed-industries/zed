@@ -5,18 +5,23 @@ pub mod fs;
 pub mod markdown;
 pub mod paths;
 pub mod redact;
+pub mod rel_path;
 pub mod schemars;
 pub mod serde;
+pub mod shell;
+pub mod shell_builder;
 pub mod shell_env;
 pub mod size;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 pub mod time;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use futures::Future;
 use itertools::Either;
+use paths::PathExt;
 use regex::Regex;
+use std::path::PathBuf;
 use std::sync::{LazyLock, OnceLock};
 use std::{
     borrow::Cow,
@@ -128,11 +133,9 @@ pub fn truncate_lines_to_byte_limit(s: &str, max_bytes: usize) -> &str {
     }
 
     for i in (0..max_bytes).rev() {
-        if s.is_char_boundary(i) {
-            if s.as_bytes()[i] == b'\n' {
-                // Since the i-th character is \n, valid to slice at i + 1.
-                return &s[..i + 1];
-            }
+        if s.is_char_boundary(i) && s.as_bytes()[i] == b'\n' {
+            // Since the i-th character is \n, valid to slice at i + 1.
+            return &s[..i + 1];
         }
     }
 
@@ -258,6 +261,9 @@ fn load_shell_from_passwd() -> Result<()> {
             &mut result,
         )
     };
+    anyhow::ensure!(!result.is_null(), "passwd entry for uid {} not found", uid);
+
+    // SAFETY: If `getpwuid_r` doesn't error, we have the entry here.
     let entry = unsafe { pwd.assume_init() };
 
     anyhow::ensure!(
@@ -266,7 +272,6 @@ fn load_shell_from_passwd() -> Result<()> {
         uid,
         status
     );
-    anyhow::ensure!(!result.is_null(), "passwd entry for uid {} not found", uid);
     anyhow::ensure!(
         entry.pw_uid == uid,
         "passwd entry has different uid ({}) than getuid ({}) returned",
@@ -275,7 +280,11 @@ fn load_shell_from_passwd() -> Result<()> {
     );
 
     let shell = unsafe { std::ffi::CStr::from_ptr(entry.pw_shell).to_str().unwrap() };
-    if env::var("SHELL").map_or(true, |shell_env| shell_env != shell) {
+    let should_set_shell = env::var("SHELL").map_or(true, |shell_env| {
+        shell_env != shell && !std::path::Path::new(&shell_env).exists()
+    });
+
+    if should_set_shell {
         log::info!(
             "updating SHELL environment variable to value from passwd entry: {:?}",
             shell,
@@ -286,28 +295,58 @@ fn load_shell_from_passwd() -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 /// Returns a shell escaped path for the current zed executable
-pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
-    use anyhow::Context;
+pub fn get_shell_safe_zed_path(shell_kind: shell::ShellKind) -> anyhow::Result<String> {
+    let zed_path =
+        std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
-    let zed_path = std::env::current_exe()
-        .context("Failed to determine current zed executable path.")?
-        .to_string_lossy()
-        .trim_end_matches(" (deleted)") // see https://github.com/rust-lang/rust/issues/69343
-        .to_string();
+    zed_path
+        .try_shell_safe(shell_kind)
+        .context("Failed to shell-escape Zed executable path.")
+}
 
-    // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
-    // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
-    // errors are introduced in the future :(
-    let zed_path_escaped =
-        shlex::try_quote(&zed_path).context("Failed to shell-escape Zed executable path.")?;
+/// Returns a path for the zed cli executable, this function
+/// should be called from the zed executable, not zed-cli.
+pub fn get_zed_cli_path() -> Result<PathBuf> {
+    let zed_path =
+        std::env::current_exe().context("Failed to determine current zed executable path.")?;
+    let parent = zed_path
+        .parent()
+        .context("Failed to determine parent directory of zed executable path.")?;
 
-    return Ok(zed_path_escaped.to_string());
+    let possible_locations: &[&str] = if cfg!(target_os = "macos") {
+        // On macOS, the zed executable and zed-cli are inside the app bundle,
+        // so here ./cli is for both installed and development builds.
+        &["./cli"]
+    } else if cfg!(target_os = "windows") {
+        // bin/zed.exe is for installed builds, ./cli.exe is for development builds.
+        &["bin/zed.exe", "./cli.exe"]
+    } else if cfg!(target_os = "linux") || cfg!(target_os = "freebsd") {
+        // bin is the standard, ./cli is for the target directory in development builds.
+        &["../bin/zed", "./cli"]
+    } else {
+        anyhow::bail!("unsupported platform for determining zed-cli path");
+    };
+
+    possible_locations
+        .iter()
+        .find_map(|p| {
+            parent
+                .join(p)
+                .canonicalize()
+                .ok()
+                .filter(|p| p != &zed_path)
+        })
+        .with_context(|| {
+            format!(
+                "could not find zed-cli from any of: {}",
+                possible_locations.join(", ")
+            )
+        })
 }
 
 #[cfg(unix)]
-pub fn load_login_shell_environment() -> Result<()> {
+pub async fn load_login_shell_environment() -> Result<()> {
     load_shell_from_passwd().log_err();
 
     // If possible, we want to `cd` in the user's `$HOME` to trigger programs
@@ -315,7 +354,10 @@ pub fn load_login_shell_environment() -> Result<()> {
     // into shell's `cd` command (and hooks) to manipulate env.
     // We do this so that we get the env a user would have when spawning a shell
     // in home directory.
-    for (name, value) in shell_env::capture(paths::home_dir())? {
+    for (name, value) in shell_env::capture(get_system_shell(), &[], paths::home_dir())
+        .await
+        .with_context(|| format!("capturing environment with {:?}", get_system_shell()))?
+    {
         unsafe { env::set_var(&name, &value) };
     }
 
@@ -331,7 +373,7 @@ pub fn load_login_shell_environment() -> Result<()> {
 /// Configures the process to start a new session, to prevent interactive shells from taking control
 /// of the terminal.
 ///
-/// For more details: https://registerspill.thorstenball.com/p/how-to-lose-control-of-your-shell
+/// For more details: <https://registerspill.thorstenball.com/p/how-to-lose-control-of-your-shell>
 pub fn set_pre_exec_to_start_new_session(
     command: &mut std::process::Command,
 ) -> &mut std::process::Command {
@@ -503,108 +545,6 @@ pub fn wrapped_usize_outward_from(
     })
 }
 
-#[cfg(target_os = "windows")]
-pub fn get_windows_system_shell() -> String {
-    use std::path::PathBuf;
-
-    fn find_pwsh_in_programfiles(find_alternate: bool, find_preview: bool) -> Option<PathBuf> {
-        #[cfg(target_pointer_width = "64")]
-        let env_var = if find_alternate {
-            "ProgramFiles(x86)"
-        } else {
-            "ProgramFiles"
-        };
-
-        #[cfg(target_pointer_width = "32")]
-        let env_var = if find_alternate {
-            "ProgramW6432"
-        } else {
-            "ProgramFiles"
-        };
-
-        let install_base_dir = PathBuf::from(std::env::var_os(env_var)?).join("PowerShell");
-        install_base_dir
-            .read_dir()
-            .ok()?
-            .filter_map(Result::ok)
-            .filter(|entry| matches!(entry.file_type(), Ok(ft) if ft.is_dir()))
-            .filter_map(|entry| {
-                let dir_name = entry.file_name();
-                let dir_name = dir_name.to_string_lossy();
-
-                let version = if find_preview {
-                    let dash_index = dir_name.find('-')?;
-                    if &dir_name[dash_index + 1..] != "preview" {
-                        return None;
-                    };
-                    dir_name[..dash_index].parse::<u32>().ok()?
-                } else {
-                    dir_name.parse::<u32>().ok()?
-                };
-
-                let exe_path = entry.path().join("pwsh.exe");
-                if exe_path.exists() {
-                    Some((version, exe_path))
-                } else {
-                    None
-                }
-            })
-            .max_by_key(|(version, _)| *version)
-            .map(|(_, path)| path)
-    }
-
-    fn find_pwsh_in_msix(find_preview: bool) -> Option<PathBuf> {
-        let msix_app_dir =
-            PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("Microsoft\\WindowsApps");
-        if !msix_app_dir.exists() {
-            return None;
-        }
-
-        let prefix = if find_preview {
-            "Microsoft.PowerShellPreview_"
-        } else {
-            "Microsoft.PowerShell_"
-        };
-        msix_app_dir
-            .read_dir()
-            .ok()?
-            .filter_map(|entry| {
-                let entry = entry.ok()?;
-                if !matches!(entry.file_type(), Ok(ft) if ft.is_dir()) {
-                    return None;
-                }
-
-                if !entry.file_name().to_string_lossy().starts_with(prefix) {
-                    return None;
-                }
-
-                let exe_path = entry.path().join("pwsh.exe");
-                exe_path.exists().then_some(exe_path)
-            })
-            .next()
-    }
-
-    fn find_pwsh_in_scoop() -> Option<PathBuf> {
-        let pwsh_exe =
-            PathBuf::from(std::env::var_os("USERPROFILE")?).join("scoop\\shims\\pwsh.exe");
-        pwsh_exe.exists().then_some(pwsh_exe)
-    }
-
-    static SYSTEM_SHELL: LazyLock<String> = LazyLock::new(|| {
-        find_pwsh_in_programfiles(false, false)
-            .or_else(|| find_pwsh_in_programfiles(true, false))
-            .or_else(|| find_pwsh_in_msix(false))
-            .or_else(|| find_pwsh_in_programfiles(false, true))
-            .or_else(|| find_pwsh_in_msix(true))
-            .or_else(|| find_pwsh_in_programfiles(true, true))
-            .or_else(find_pwsh_in_scoop)
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or("powershell.exe".to_string())
-    });
-
-    (*SYSTEM_SHELL).clone()
-}
-
 pub trait ResultExt<E> {
     type Ok;
 
@@ -673,13 +613,15 @@ where
     // so discard the prefix up to that segment to find the crate name
     let target = file
         .split_once("crates/")
-        .and_then(|(_, s)| s.split_once('/'))
-        .map(|(p, _)| p);
+        .and_then(|(_, s)| s.split_once("/src/"));
 
+    let module_path = target.map(|(krate, module)| {
+        krate.to_owned() + "::" + &module.trim_end_matches(".rs").replace('/', "::")
+    });
     log::logger().log(
         &log::Record::builder()
-            .target(target.unwrap_or(""))
-            .module_path(target)
+            .target(target.map_or("", |(krate, _)| krate))
+            .module_path(module_path.as_deref())
             .args(format_args!("{:?}", error))
             .file(Some(caller.file()))
             .line(Some(caller.line()))
@@ -689,7 +631,7 @@ where
 }
 
 pub fn log_err<E: std::fmt::Debug>(error: &E) {
-    log_error_with_caller(*Location::caller(), error, log::Level::Warn);
+    log_error_with_caller(*Location::caller(), error, log::Level::Error);
 }
 
 pub trait TryFutureExt {
@@ -817,7 +759,8 @@ pub fn defer<F: FnOnce()>(f: F) -> Deferred<F> {
 
 #[cfg(any(test, feature = "test-support"))]
 mod rng {
-    use rand::{Rng, seq::SliceRandom};
+    use rand::prelude::*;
+
     pub struct RandomCharIter<T: Rng> {
         rng: T,
         simple_text: bool,
@@ -827,7 +770,7 @@ mod rng {
         pub fn new(rng: T) -> Self {
             Self {
                 rng,
-                simple_text: std::env::var("SIMPLE_TEXT").map_or(false, |v| !v.is_empty()),
+                simple_text: std::env::var("SIMPLE_TEXT").is_ok_and(|v| !v.is_empty()),
             }
         }
 
@@ -842,18 +785,18 @@ mod rng {
 
         fn next(&mut self) -> Option<Self::Item> {
             if self.simple_text {
-                return if self.rng.gen_range(0..100) < 5 {
+                return if self.rng.random_range(0..100) < 5 {
                     Some('\n')
                 } else {
-                    Some(self.rng.gen_range(b'a'..b'z' + 1).into())
+                    Some(self.rng.random_range(b'a'..b'z' + 1).into())
                 };
             }
 
-            match self.rng.gen_range(0..100) {
+            match self.rng.random_range(0..100) {
                 // whitespace
                 0..=19 => [' ', '\n', '\r', '\t'].choose(&mut self.rng).copied(),
                 // two-byte greek letters
-                20..=32 => char::from_u32(self.rng.gen_range(('α' as u32)..('ω' as u32 + 1))),
+                20..=32 => char::from_u32(self.rng.random_range(('α' as u32)..('ω' as u32 + 1))),
                 // // three-byte characters
                 33..=45 => ['✋', '✅', '❌', '❎', '⭐']
                     .choose(&mut self.rng)
@@ -861,7 +804,7 @@ mod rng {
                 // // four-byte characters
                 46..=58 => ['🍐', '🏀', '🍗', '🎉'].choose(&mut self.rng).copied(),
                 // ascii letters
-                _ => Some(self.rng.gen_range(b'a'..b'z' + 1).into()),
+                _ => Some(self.rng.random_range(b'a'..b'z' + 1).into()),
             }
         }
     }
@@ -1047,17 +990,9 @@ pub fn default<D: Default>() -> D {
     Default::default()
 }
 
-pub fn get_system_shell() -> String {
-    #[cfg(target_os = "windows")]
-    {
-        get_windows_system_shell()
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        std::env::var("SHELL").unwrap_or("/bin/sh".to_string())
-    }
-}
+pub use self::shell::{
+    get_default_system_shell, get_default_system_shell_preferring_bash, get_system_shell,
+};
 
 #[derive(Debug)]
 pub enum ConnectionResult<O> {
@@ -1080,6 +1015,15 @@ impl<O> From<anyhow::Result<O>> for ConnectionResult<O> {
     fn from(result: anyhow::Result<O>) -> Self {
         ConnectionResult::Result(result)
     }
+}
+
+#[track_caller]
+pub fn some_or_debug_panic<T>(option: Option<T>) -> Option<T> {
+    #[cfg(debug_assertions)]
+    if option.is_none() {
+        panic!("Unexpected None");
+    }
+    option
 }
 
 #[cfg(test)]

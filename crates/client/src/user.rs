@@ -1,11 +1,12 @@
 use super::{Client, Status, TypedEnvelope, proto};
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use cloud_api_client::websocket_protocol::MessageToClient;
 use cloud_api_client::{GetAuthenticatedUserResponse, PlanInfo};
 use cloud_llm_client::{
     EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME,
-    MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME, MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
+    MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME, MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME, Plan,
+    UsageLimit,
 };
 use collections::{HashMap, HashSet, hash_map::Entry};
 use derive_more::Deref;
@@ -41,15 +42,10 @@ impl std::fmt::Display for ChannelId {
 pub struct ProjectId(pub u64);
 
 impl ProjectId {
-    pub fn to_proto(&self) -> u64 {
+    pub fn to_proto(self) -> u64 {
         self.0
     }
 }
-
-#[derive(
-    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
-)]
-pub struct DevServerProjectId(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParticipantIndex(pub u32);
@@ -116,7 +112,6 @@ pub struct UserStore {
     edit_prediction_usage: Option<EditPredictionUsage>,
     plan_info: Option<PlanInfo>,
     current_user: watch::Receiver<Option<Arc<User>>>,
-    accepted_tos_at: Option<Option<cloud_api_client::Timestamp>>,
     contacts: Vec<Arc<Contact>>,
     incoming_contact_requests: Vec<Arc<User>>,
     outgoing_contact_requests: Vec<Arc<User>>,
@@ -194,7 +189,6 @@ impl UserStore {
             plan_info: None,
             model_request_usage: None,
             edit_prediction_usage: None,
-            accepted_tos_at: None,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
             participant_indices: Default::default(),
@@ -223,7 +217,9 @@ impl UserStore {
                         return Ok(());
                     };
                     match status {
-                        Status::Authenticated | Status::Connected { .. } => {
+                        Status::Authenticated
+                        | Status::Reauthenticated
+                        | Status::Connected { .. } => {
                             if let Some(user_id) = client.user_id() {
                                 let response = client
                                     .cloud_client()
@@ -271,7 +267,6 @@ impl UserStore {
                         Status::SignedOut => {
                             current_user_tx.send(None).await.ok();
                             this.update(cx, |this, cx| {
-                                this.accepted_tos_at = None;
                                 cx.emit(Event::PrivateUserInfoUpdated);
                                 cx.notify();
                                 this.clear_contacts()
@@ -332,9 +327,9 @@ impl UserStore {
     async fn handle_update_contacts(
         this: Entity<Self>,
         message: TypedEnvelope<proto::UpdateContacts>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<()> {
-        this.read_with(&mut cx, |this, _| {
+        this.read_with(&cx, |this, _| {
             this.update_contacts_tx
                 .unbounded_send(UpdateContacts::Update(message.payload))
                 .unwrap();
@@ -698,20 +693,22 @@ impl UserStore {
         self.current_user.borrow().clone()
     }
 
-    pub fn plan(&self) -> Option<cloud_llm_client::Plan> {
+    pub fn plan(&self) -> Option<Plan> {
         #[cfg(debug_assertions)]
         if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
+            use cloud_llm_client::PlanV1;
+
             return match plan.as_str() {
-                "free" => Some(cloud_llm_client::Plan::ZedFree),
-                "trial" => Some(cloud_llm_client::Plan::ZedProTrial),
-                "pro" => Some(cloud_llm_client::Plan::ZedPro),
+                "free" => Some(Plan::V1(PlanV1::ZedFree)),
+                "trial" => Some(Plan::V1(PlanV1::ZedProTrial)),
+                "pro" => Some(Plan::V1(PlanV1::ZedPro)),
                 _ => {
                     panic!("ZED_SIMULATE_PLAN must be one of 'free', 'trial', or 'pro'");
                 }
             };
         }
 
-        self.plan_info.as_ref().map(|info| info.plan)
+        self.plan_info.as_ref().map(|info| info.plan())
     }
 
     pub fn subscription_period(&self) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
@@ -757,6 +754,10 @@ impl UserStore {
     }
 
     pub fn model_request_usage(&self) -> Option<ModelRequestUsage> {
+        if self.plan().is_some_and(|plan| plan.is_v2()) {
+            return None;
+        }
+
         self.model_request_usage
     }
 
@@ -791,19 +792,6 @@ impl UserStore {
                 .set_authenticated_user_info(Some(response.user.metrics_id.clone()), staff);
         }
 
-        let accepted_tos_at = {
-            #[cfg(debug_assertions)]
-            if std::env::var("ZED_IGNORE_ACCEPTED_TOS").is_ok() {
-                None
-            } else {
-                response.user.accepted_tos_at
-            }
-
-            #[cfg(not(debug_assertions))]
-            response.user.accepted_tos_at
-        };
-
-        self.accepted_tos_at = Some(accepted_tos_at);
         self.model_request_usage = Some(ModelRequestUsage(RequestUsage {
             limit: response.plan.usage.model_requests.limit,
             amount: response.plan.usage.model_requests.used as i32,
@@ -846,32 +834,6 @@ impl UserStore {
         self.current_user.clone()
     }
 
-    pub fn has_accepted_terms_of_service(&self) -> bool {
-        self.accepted_tos_at
-            .map_or(false, |accepted_tos_at| accepted_tos_at.is_some())
-    }
-
-    pub fn accept_terms_of_service(&self, cx: &Context<Self>) -> Task<Result<()>> {
-        if self.current_user().is_none() {
-            return Task::ready(Err(anyhow!("no current user")));
-        };
-
-        let client = self.client.clone();
-        cx.spawn(async move |this, cx| -> anyhow::Result<()> {
-            let client = client.upgrade().context("client not found")?;
-            let response = client
-                .cloud_client()
-                .accept_terms_of_service()
-                .await
-                .context("error accepting tos")?;
-            this.update(cx, |this, cx| {
-                this.accepted_tos_at = Some(response.user.accepted_tos_at);
-                cx.emit(Event::PrivateUserInfoUpdated);
-            })?;
-            Ok(())
-        })
-    }
-
     fn load_users(
         &self,
         request: impl RequestMessage<Response = UsersResponse>,
@@ -894,10 +856,10 @@ impl UserStore {
         let mut ret = Vec::with_capacity(users.len());
         for user in users {
             let user = User::new(user);
-            if let Some(old) = self.users.insert(user.id, user.clone()) {
-                if old.github_login != user.github_login {
-                    self.by_github_login.remove(&old.github_login);
-                }
+            if let Some(old) = self.users.insert(user.id, user.clone())
+                && old.github_login != user.github_login
+            {
+                self.by_github_login.remove(&old.github_login);
             }
             self.by_github_login
                 .insert(user.github_login.clone(), user.id);
@@ -981,7 +943,7 @@ impl Collaborator {
     pub fn from_proto(message: proto::Collaborator) -> Result<Self> {
         Ok(Self {
             peer_id: message.peer_id.context("invalid peer id")?,
-            replica_id: message.replica_id as ReplicaId,
+            replica_id: ReplicaId::new(message.replica_id as u16),
             user_id: message.user_id as UserId,
             is_host: message.is_host,
             committer_name: message.committer_name,

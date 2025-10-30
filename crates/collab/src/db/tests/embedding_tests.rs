@@ -8,7 +8,7 @@ use time::{Duration, OffsetDateTime, PrimitiveDateTime};
 // SQLite does not support array arguments, so we only test this against a real postgres instance
 #[gpui::test]
 async fn test_get_embeddings_postgres(cx: &mut gpui::TestAppContext) {
-    let test_db = TestDb::postgres(cx.executor().clone());
+    let test_db = TestDb::postgres(cx.executor());
     let db = test_db.db();
 
     let provider = "test_model";
@@ -38,7 +38,7 @@ async fn test_get_embeddings_postgres(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_purge_old_embeddings(cx: &mut gpui::TestAppContext) {
-    let test_db = TestDb::postgres(cx.executor().clone());
+    let test_db = TestDb::postgres(cx.executor());
     let db = test_db.db();
 
     let model = "test_model";

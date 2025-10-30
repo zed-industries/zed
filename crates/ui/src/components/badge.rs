@@ -58,7 +58,7 @@ impl RenderOnce for Badge {
             .child(Divider::vertical().color(DividerColor::Border))
             .child(Label::new(self.label.clone()).size(LabelSize::Small).ml_1())
             .when_some(tooltip, |this, tooltip| {
-                this.tooltip(move |window, cx| tooltip(window, cx))
+                this.hoverable_tooltip(move |window, cx| tooltip(window, cx))
             })
     }
 }

@@ -1,11 +1,11 @@
 use std::rc::Rc;
 
 use acp_thread::AgentModelSelector;
-use agent_client_protocol as acp;
 use gpui::{Entity, FocusHandle};
 use picker::popover_menu::PickerPopoverMenu;
 use ui::{
-    ButtonLike, Context, IntoElement, PopoverMenuHandle, SharedString, Tooltip, Window, prelude::*,
+    ButtonLike, Context, IntoElement, PopoverMenuHandle, SharedString, TintColor, Tooltip, Window,
+    prelude::*,
 };
 use zed_actions::agent::ToggleModelSelector;
 
@@ -19,7 +19,6 @@ pub struct AcpModelSelectorPopover {
 
 impl AcpModelSelectorPopover {
     pub(crate) fn new(
-        session_id: acp::SessionId,
         selector: Rc<dyn AgentModelSelector>,
         menu_handle: PopoverMenuHandle<AcpModelSelector>,
         focus_handle: FocusHandle,
@@ -27,7 +26,7 @@ impl AcpModelSelectorPopover {
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
-            selector: cx.new(move |cx| acp_model_selector(session_id, selector, window, cx)),
+            selector: cx.new(move |cx| acp_model_selector(selector, window, cx)),
             menu_handle,
             focus_handle,
         }
@@ -35,6 +34,14 @@ impl AcpModelSelectorPopover {
 
     pub fn toggle(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.menu_handle.toggle(window, cx);
+    }
+
+    pub fn active_model_name(&self, cx: &App) -> Option<SharedString> {
+        self.selector
+            .read(cx)
+            .delegate
+            .active_model()
+            .map(|model| model.name.clone())
     }
 }
 
@@ -50,31 +57,28 @@ impl Render for AcpModelSelectorPopover {
 
         let focus_handle = self.focus_handle.clone();
 
+        let (color, icon) = if self.menu_handle.is_deployed() {
+            (Color::Accent, IconName::ChevronUp)
+        } else {
+            (Color::Muted, IconName::ChevronDown)
+        };
+
         PickerPopoverMenu::new(
             self.selector.clone(),
             ButtonLike::new("active-model")
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .when_some(model_icon, |this, icon| {
-                    this.child(Icon::new(icon).color(Color::Muted).size(IconSize::XSmall))
+                    this.child(Icon::new(icon).color(color).size(IconSize::XSmall))
                 })
                 .child(
                     Label::new(model_name)
-                        .color(Color::Muted)
+                        .color(color)
                         .size(LabelSize::Small)
                         .ml_0p5(),
                 )
-                .child(
-                    Icon::new(IconName::ChevronDown)
-                        .color(Color::Muted)
-                        .size(IconSize::XSmall),
-                ),
-            move |window, cx| {
-                Tooltip::for_action_in(
-                    "Change Model",
-                    &ToggleModelSelector,
-                    &focus_handle,
-                    window,
-                    cx,
-                )
+                .child(Icon::new(icon).color(Color::Muted).size(IconSize::XSmall)),
+            move |_window, cx| {
+                Tooltip::for_action_in("Change Model", &ToggleModelSelector, &focus_handle, cx)
             },
             gpui::Corner::BottomRight,
             cx,
