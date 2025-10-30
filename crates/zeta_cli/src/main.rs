@@ -579,17 +579,16 @@ async fn zeta1_context(
     };
 
     let prompt_for_events = move || (events, 0);
-    Ok(cx
-        .update(|cx| {
-            zeta::gather_context(
-                full_path_str,
-                &snapshot,
-                clipped_cursor,
-                prompt_for_events,
-                cx,
-            )
-        })?
-        .await?)
+    cx.update(|cx| {
+        zeta::gather_context(
+            full_path_str,
+            &snapshot,
+            clipped_cursor,
+            prompt_for_events,
+            cx,
+        )
+    })?
+    .await
 }
 
 fn main() {
