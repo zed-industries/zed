@@ -1627,93 +1627,94 @@ impl OutlinePanel {
     }
 
     pub fn expand_all_entries(
-            &mut self,
-            _: &ExpandAllEntries,
-            window: &mut Window,
-            cx: &mut Context<Self>,
-        ) {
-            let Some(active_editor) = self.active_editor() else {
-                return;
-            };
+        &mut self,
+        _: &ExpandAllEntries,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(active_editor) = self.active_editor() else {
+            return;
+        };
 
-            let mut to_uncollapse: HashSet<CollapsedEntry> = HashSet::default();
-            let mut buffers_to_unfold: HashSet<BufferId> = HashSet::default();
+        let mut to_uncollapse: HashSet<CollapsedEntry> = HashSet::default();
+        let mut buffers_to_unfold: HashSet<BufferId> = HashSet::default();
 
-            for fs_entry in &self.fs_entries {
-                match fs_entry {
-                    FsEntry::File(FsEntryFile {
-                        worktree_id,
-                        buffer_id,
-                        ..
-                    }) => {
-                        to_uncollapse.insert(CollapsedEntry::File(*worktree_id, *buffer_id));
-                        buffers_to_unfold.insert(*buffer_id);
-                    }
-                    FsEntry::ExternalFile(FsEntryExternalFile { buffer_id, .. }) => {
-                        to_uncollapse.insert(CollapsedEntry::ExternalFile(*buffer_id));
-                        buffers_to_unfold.insert(*buffer_id);
-                    }
-                    FsEntry::Directory(FsEntryDirectory {
-                        worktree_id,
-                        entry,
-                        ..
-                    }) => {
-                        to_uncollapse.insert(CollapsedEntry::Dir(*worktree_id, entry.id));
-                    }
+        for fs_entry in &self.fs_entries {
+            match fs_entry {
+                FsEntry::File(FsEntryFile {
+                    worktree_id,
+                    buffer_id,
+                    ..
+                }) => {
+                    to_uncollapse.insert(CollapsedEntry::File(*worktree_id, *buffer_id));
+                    buffers_to_unfold.insert(*buffer_id);
                 }
-            }
-
-            for (&buffer_id, excerpts) in &self.excerpts {
-                for (&excerpt_id, excerpt) in excerpts {
-                    match &excerpt.outlines {
-                        ExcerptOutlines::Outlines(outlines) => {
-                            for outline in outlines {
-                                to_uncollapse.insert(CollapsedEntry::Outline(
-                                    buffer_id,
-                                    excerpt_id,
-                                    outline.range.clone(),
-                                ));
-                            }
-                        }
-                        ExcerptOutlines::Invalidated(outlines) => {
-                            for outline in outlines {
-                                to_uncollapse.insert(CollapsedEntry::Outline(
-                                    buffer_id,
-                                    excerpt_id,
-                                    outline.range.clone(),
-                                ));
-                            }
-                        }
-                        ExcerptOutlines::NotFetched => {
-                        }
-                    }
-                    to_uncollapse.insert(CollapsedEntry::Excerpt(buffer_id, excerpt_id));
+                FsEntry::ExternalFile(FsEntryExternalFile { buffer_id, .. }) => {
+                    to_uncollapse.insert(CollapsedEntry::ExternalFile(*buffer_id));
+                    buffers_to_unfold.insert(*buffer_id);
                 }
-            }
-
-            for cached in &self.cached_entries {
-                if let PanelEntry::FoldedDirs(FoldedDirsEntry { worktree_id, entries, .. }) =
-                    &cached.entry
-                {
-                    if let Some(last) = entries.last() {
-                        to_uncollapse.insert(CollapsedEntry::Dir(*worktree_id, last.id));
-                    }
+                FsEntry::Directory(FsEntryDirectory {
+                    worktree_id, entry, ..
+                }) => {
+                    to_uncollapse.insert(CollapsedEntry::Dir(*worktree_id, entry.id));
                 }
-            }
-
-            self.collapsed_entries.retain(|entry| !to_uncollapse.contains(entry));
-
-            active_editor.update(cx, |editor, cx| {
-                buffers_to_unfold.retain(|buffer_id| editor.is_buffer_folded(*buffer_id, cx));
-            });
-
-            if buffers_to_unfold.is_empty() {
-                self.update_cached_entries(None, window, cx);
-            } else {
-                self.toggle_buffers_fold(buffers_to_unfold, false, window, cx)
-                    .detach();
             }
         }
+
+        for (&buffer_id, excerpts) in &self.excerpts {
+            for (&excerpt_id, excerpt) in excerpts {
+                match &excerpt.outlines {
+                    ExcerptOutlines::Outlines(outlines) => {
+                        for outline in outlines {
+                            to_uncollapse.insert(CollapsedEntry::Outline(
+                                buffer_id,
+                                excerpt_id,
+                                outline.range.clone(),
+                            ));
+                        }
+                    }
+                    ExcerptOutlines::Invalidated(outlines) => {
+                        for outline in outlines {
+                            to_uncollapse.insert(CollapsedEntry::Outline(
+                                buffer_id,
+                                excerpt_id,
+                                outline.range.clone(),
+                            ));
+                        }
+                    }
+                    ExcerptOutlines::NotFetched => {}
+                }
+                to_uncollapse.insert(CollapsedEntry::Excerpt(buffer_id, excerpt_id));
+            }
+        }
+
+        for cached in &self.cached_entries {
+            if let PanelEntry::FoldedDirs(FoldedDirsEntry {
+                worktree_id,
+                entries,
+                ..
+            }) = &cached.entry
+            {
+                if let Some(last) = entries.last() {
+                    to_uncollapse.insert(CollapsedEntry::Dir(*worktree_id, last.id));
+                }
+            }
+        }
+
+        self.collapsed_entries
+            .retain(|entry| !to_uncollapse.contains(entry));
+
+        active_editor.update(cx, |editor, cx| {
+            buffers_to_unfold.retain(|buffer_id| editor.is_buffer_folded(*buffer_id, cx));
+        });
+
+        if buffers_to_unfold.is_empty() {
+            self.update_cached_entries(None, window, cx);
+        } else {
+            self.toggle_buffers_fold(buffers_to_unfold, false, window, cx)
+                .detach();
+        }
+    }
 
     pub fn collapse_all_entries(
         &mut self,
