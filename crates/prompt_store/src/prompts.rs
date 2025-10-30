@@ -52,22 +52,6 @@ impl ProjectContext {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ModelContext {
-    pub available_tools: Vec<String>,
-}
-
-#[derive(Serialize)]
-struct PromptTemplateContext {
-    #[serde(flatten)]
-    project: ProjectContext,
-
-    #[serde(flatten)]
-    model: ModelContext,
-
-    has_tools: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct UserRulesContext {
     pub uuid: UserPromptId,
     pub title: Option<String>,
@@ -144,40 +128,9 @@ impl PromptBuilder {
         .unwrap_or_else(|| Arc::new(Self::new(None).unwrap()))
     }
 
-    /// Helper function for handlebars templates to check if a specific tool is enabled
-    fn has_tool_helper(
-        h: &handlebars::Helper,
-        _: &Handlebars,
-        ctx: &handlebars::Context,
-        _: &mut handlebars::RenderContext,
-        out: &mut dyn handlebars::Output,
-    ) -> handlebars::HelperResult {
-        let tool_name = h.param(0).and_then(|v| v.value().as_str()).ok_or_else(|| {
-            handlebars::RenderError::new("has_tool helper: missing or invalid tool name parameter")
-        })?;
-
-        let enabled_tools = ctx
-            .data()
-            .get("available_tools")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<&str>>())
-            .ok_or_else(|| {
-                handlebars::RenderError::new(
-                    "has_tool handlebars helper: available_tools not found or not an array",
-                )
-            })?;
-
-        if enabled_tools.contains(&tool_name) {
-            out.write("true")?;
-        }
-
-        Ok(())
-    }
-
     pub fn new(loading_params: Option<PromptLoadingParams>) -> Result<Self> {
         let mut handlebars = Handlebars::new();
         Self::register_built_in_templates(&mut handlebars)?;
-        handlebars.register_helper("has_tool", Box::new(Self::has_tool_helper));
 
         let handlebars = Arc::new(Mutex::new(handlebars));
 
@@ -323,22 +276,6 @@ impl PromptBuilder {
         Ok(())
     }
 
-    pub fn generate_assistant_system_prompt(
-        &self,
-        context: &ProjectContext,
-        model_context: &ModelContext,
-    ) -> Result<String, RenderError> {
-        let template_context = PromptTemplateContext {
-            project: context.clone(),
-            model: model_context.clone(),
-            has_tools: !model_context.available_tools.is_empty(),
-        };
-
-        self.handlebars
-            .lock()
-            .render("assistant_system_prompt", &template_context)
-    }
-
     pub fn generate_inline_transformation_prompt(
         &self,
         user_prompt: String,
@@ -443,101 +380,5 @@ impl PromptBuilder {
         self.handlebars
             .lock()
             .render("terminal_assistant_prompt", &context)
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use serde_json;
-    use util::rel_path::rel_path;
-    use uuid::Uuid;
-
-    #[test]
-    fn test_assistant_system_prompt_renders() {
-        let worktrees = vec![WorktreeContext {
-            root_name: "path".into(),
-            abs_path: Path::new("/path/to/root").into(),
-            rules_file: Some(RulesFileContext {
-                path_in_worktree: rel_path(".rules").into(),
-                text: "".into(),
-                project_entry_id: 0,
-            }),
-        }];
-        let default_user_rules = vec![UserRulesContext {
-            uuid: UserPromptId(Uuid::nil()),
-            title: Some("Rules title".into()),
-            contents: "Rules contents".into(),
-        }];
-        let project_context = ProjectContext::new(worktrees, default_user_rules);
-        let model_context = ModelContext {
-            available_tools: ["grep".into()].to_vec(),
-        };
-        let prompt = PromptBuilder::new(None)
-            .unwrap()
-            .generate_assistant_system_prompt(&project_context, &model_context)
-            .unwrap();
-        assert!(
-            prompt.contains("Rules contents"),
-            "Expected default user rules to be in rendered prompt"
-        );
-    }
-
-    #[test]
-    fn test_assistant_system_prompt_depends_on_enabled_tools() {
-        let worktrees = vec![WorktreeContext {
-            root_name: "path".into(),
-            abs_path: Path::new("/path/to/root").into(),
-            rules_file: None,
-        }];
-        let default_user_rules = vec![];
-        let project_context = ProjectContext::new(worktrees, default_user_rules);
-        let prompt_builder = PromptBuilder::new(None).unwrap();
-
-        // When the `grep` tool is enabled, it should be mentioned in the prompt
-        let model_context = ModelContext {
-            available_tools: ["grep".into()].to_vec(),
-        };
-        let prompt_with_grep = prompt_builder
-            .generate_assistant_system_prompt(&project_context, &model_context)
-            .unwrap();
-        assert!(
-            prompt_with_grep.contains("grep"),
-            "`grep` tool should be mentioned in prompt when the tool is enabled"
-        );
-
-        // When the `grep` tool is disabled, it should not be mentioned in the prompt
-        let model_context = ModelContext {
-            available_tools: [].to_vec(),
-        };
-        let prompt_without_grep = prompt_builder
-            .generate_assistant_system_prompt(&project_context, &model_context)
-            .unwrap();
-        assert!(
-            !prompt_without_grep.contains("grep"),
-            "`grep` tool should not be mentioned in prompt when the tool is disabled"
-        );
-    }
-
-    #[test]
-    fn test_has_tool_helper() {
-        let mut handlebars = Handlebars::new();
-        handlebars.register_helper("has_tool", Box::new(PromptBuilder::has_tool_helper));
-        handlebars
-            .register_template_string(
-                "test_template",
-                "{{#if (has_tool 'grep')}}grep is enabled{{else}}grep is disabled{{/if}}",
-            )
-            .unwrap();
-
-        // grep available
-        let data = serde_json::json!({"available_tools": ["grep", "fetch"]});
-        let result = handlebars.render("test_template", &data).unwrap();
-        assert_eq!(result, "grep is enabled");
-
-        // grep not available
-        let data = serde_json::json!({"available_tools": ["terminal", "fetch"]});
-        let result = handlebars.render("test_template", &data).unwrap();
-        assert_eq!(result, "grep is disabled");
     }
 }

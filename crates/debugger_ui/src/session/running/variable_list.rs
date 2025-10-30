@@ -1129,6 +1129,7 @@ impl VariableList {
                                         this.color(Color::from(color))
                                     }),
                             )
+                            .tooltip(Tooltip::text(value))
                     }
                 })
                 .into_any_element()
@@ -1306,14 +1307,8 @@ impl VariableList {
                             .ok();
                         }
                     })
-                    .tooltip(move |window, cx| {
-                        Tooltip::for_action_in(
-                            "Remove Watch",
-                            &RemoveWatch,
-                            &focus_handle,
-                            window,
-                            cx,
-                        )
+                    .tooltip(move |_window, cx| {
+                        Tooltip::for_action_in("Remove Watch", &RemoveWatch, &focus_handle, cx)
                     })
                     .icon_size(ui::IconSize::Indicator),
                 ),

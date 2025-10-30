@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::Result;
+use language::rust_lang;
 use serde_json::json;
 
 use crate::{Editor, ToPoint};
@@ -18,7 +19,6 @@ use language::{
     point_to_lsp,
 };
 use lsp::{notification, request};
-use multi_buffer::ToPointUtf16;
 use project::Project;
 use smol::stream::StreamExt;
 use workspace::{AppState, Workspace, WorkspaceHandle};
@@ -30,55 +30,6 @@ pub struct EditorLspTestContext {
     pub lsp: lsp::FakeLanguageServer,
     pub workspace: Entity<Workspace>,
     pub buffer_lsp_url: lsp::Uri,
-}
-
-pub(crate) fn rust_lang() -> Arc<Language> {
-    let language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            line_comments: vec!["// ".into(), "/// ".into(), "//! ".into()],
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::LANGUAGE.into()),
-    )
-    .with_queries(LanguageQueries {
-        indents: Some(Cow::from(indoc! {r#"
-            [
-                ((where_clause) _ @end)
-                (field_expression)
-                (call_expression)
-                (assignment_expression)
-                (let_declaration)
-                (let_chain)
-                (await_expression)
-            ] @indent
-
-            (_ "[" "]" @end) @indent
-            (_ "<" ">" @end) @indent
-            (_ "{" "}" @end) @indent
-            (_ "(" ")" @end) @indent"#})),
-        brackets: Some(Cow::from(indoc! {r#"
-            ("(" @open ")" @close)
-            ("[" @open "]" @close)
-            ("{" @open "}" @close)
-            ("<" @open ">" @close)
-            ("\"" @open "\"" @close)
-            (closure_parameters "|" @open "|" @close)"#})),
-        text_objects: Some(Cow::from(indoc! {r#"
-            (function_item
-                body: (_
-                    "{"
-                    (_)* @function.inside
-                    "}" )) @function.around
-        "#})),
-        ..Default::default()
-    })
-    .expect("Could not parse queries");
-    Arc::new(language)
 }
 
 #[cfg(test)]

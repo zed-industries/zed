@@ -4,11 +4,20 @@ This guide covers common troubleshooting techniques for Zed.
 Sometimes you'll be able to identify and resolve issues on your own using this information.
 Other times, troubleshooting means gathering the right information—logs, profiles, or reproduction steps—to help us diagnose and fix the problem.
 
+> **Note**: To open the command palette, use `cmd-shift-p` on macOS or `ctrl-shift-p` on Windows / Linux.
+
+## Retrieve Zed and System Information
+
+When reporting issues or seeking help, it's useful to know your Zed version and system specifications. You can retrieve this information using the following actions from the command palette:
+
+- {#action zed::About}: Find your Zed version number
+- {#action zed::CopySystemSpecsIntoClipboard}: Populate your clipboard with Zed version number, operating system version, and hardware specs
+
 ## Zed Log
 
 Often, a good first place to look when troubleshooting any issue in Zed is the Zed log, which might contain clues about what's going wrong.
-You can review the most recent 1000 lines of the log by running the {#action zed::OpenLog} command from the command palette (`cmd-shift-p` on macOS or `ctrl-shift-p` on Windows/Linux).
-If you want to view the full file, you can reveal it in your operating system's native file manager via {#action zed::RevealLogInFileManager}.
+You can review the most recent 1000 lines of the log by running the {#action zed::OpenLog} action from the command palette.
+If you want to view the full file, you can reveal it in your operating system's native file manager via {#action zed::RevealLogInFileManager} from the command palette.
 
 You'll find the Zed log in the respective location on each operating system:
 
@@ -62,10 +71,10 @@ While rare, we've seen a few cases where workspace databases became corrupted, w
 If you're experiencing startup issues, you can test whether it's workspace-related by temporarily moving the database from its location, then trying to start Zed again.
 
 > **Note**: Moving the workspace database will cause Zed to create a fresh one.
-> You will lose your recent projects, open tabs, and cursor locations in active files.
+> Your recent projects, open tabs, etc. will be reset to "factory".
 
 If your issue persists after regenerating the database, please [file an issue](https://github.com/zed-industries/zed/issues/new/choose).
 
 ## Language Server Issues
 
-If you're experiencing language-server related issues, such as stale diagnostics or issues jumping to definitions, restarting the language server via {#action editor::RestartLanguageServer} can be a quick fix.
+If you're experiencing language-server related issues, such as stale diagnostics or issues jumping to definitions, restarting the language server via {#action editor::RestartLanguageServer} from the command palette will often resolve the issue.

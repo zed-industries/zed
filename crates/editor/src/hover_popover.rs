@@ -3,6 +3,7 @@ use crate::{
     EditorSnapshot, GlobalDiagnosticRenderer, Hover,
     display_map::{InlayOffset, ToDisplayPoint, invisibles::is_invisible},
     hover_links::{InlayHighlight, RangeInEditor},
+    movement::TextLayoutDetails,
     scroll::ScrollAmount,
 };
 use anyhow::Context as _;
@@ -27,7 +28,6 @@ use ui::{Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
 use url::Url;
 use util::TryFutureExt;
 use workspace::{OpenOptions, OpenVisible, Workspace};
-pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
 pub const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
@@ -290,15 +290,18 @@ fn show_hover(
             let delay = if ignore_timeout {
                 None
             } else {
+                let lsp_request_early = hover_popover_delay / 2;
+                cx.background_executor()
+                    .timer(Duration::from_millis(
+                        hover_popover_delay - lsp_request_early,
+                    ))
+                    .await;
+
                 // Construct delay task to wait for later
                 let total_delay = Some(
                     cx.background_executor()
-                        .timer(Duration::from_millis(hover_popover_delay)),
+                        .timer(Duration::from_millis(lsp_request_early)),
                 );
-
-                cx.background_executor()
-                    .timer(Duration::from_millis(HOVER_REQUEST_DELAY_MILLIS))
-                    .await;
                 total_delay
             };
 
@@ -307,7 +310,6 @@ fn show_hover(
             if let Some(delay) = delay {
                 delay.await;
             }
-
             let offset = anchor.to_offset(&snapshot.buffer_snapshot());
             let local_diagnostic = if all_diagnostics_active {
                 None
@@ -765,9 +767,13 @@ impl HoverState {
         snapshot: &EditorSnapshot,
         visible_rows: Range<DisplayRow>,
         max_size: Size<Pixels>,
+        text_layout_details: &TextLayoutDetails,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<(DisplayPoint, Vec<AnyElement>)> {
+        if !self.visible() {
+            return None;
+        }
         // If there is a diagnostic, position the popovers based on that.
         // Otherwise use the start of the hover range
         let anchor = self
@@ -790,11 +796,29 @@ impl HoverState {
                     }
                 })
             })?;
-        let point = anchor.to_display_point(&snapshot.display_snapshot);
+        let mut point = anchor.to_display_point(&snapshot.display_snapshot);
 
-        // Don't render if the relevant point isn't on screen
-        if !self.visible() || !visible_rows.contains(&point.row()) {
-            return None;
+        // Clamp the point within the visible rows in case the popup source spans multiple lines
+        if point.row() < visible_rows.start {
+            point = crate::movement::down_by_rows(
+                &snapshot.display_snapshot,
+                point,
+                (visible_rows.start - point.row()).0,
+                text::SelectionGoal::None,
+                true,
+                text_layout_details,
+            )
+            .0;
+        } else if visible_rows.end <= point.row() {
+            point = crate::movement::up_by_rows(
+                &snapshot.display_snapshot,
+                point,
+                (visible_rows.end - point.row()).0,
+                text::SelectionGoal::None,
+                true,
+                text_layout_details,
+            )
+            .0;
         }
 
         let mut elements = Vec::new();
@@ -986,17 +1010,17 @@ impl DiagnosticPopover {
 mod tests {
     use super::*;
     use crate::{
-        InlayId, PointForPosition,
+        PointForPosition,
         actions::ConfirmCompletion,
         editor_tests::{handle_completion_request, init_test},
-        hover_links::update_inlay_link_and_hover_points,
-        inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
+        inlays::inlay_hints::tests::{cached_hint_labels, visible_hint_labels},
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use collections::BTreeSet;
     use gpui::App;
     use indoc::indoc;
     use markdown::parser::MarkdownEvent;
+    use project::InlayId;
     use settings::InlayHintSettingsContent;
     use smol::stream::StreamExt;
     use std::sync::atomic;
@@ -1648,7 +1672,7 @@ mod tests {
         cx.background_executor.run_until_parked();
         cx.update_editor(|editor, _, cx| {
             let expected_layers = vec![entire_hint_label.to_string()];
-            assert_eq!(expected_layers, cached_hint_labels(editor));
+            assert_eq!(expected_layers, cached_hint_labels(editor, cx));
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
         });
 
@@ -1687,10 +1711,9 @@ mod tests {
             }
         });
         cx.update_editor(|editor, window, cx| {
-            update_inlay_link_and_hover_points(
+            editor.update_inlay_link_and_hover_points(
                 &editor.snapshot(window, cx),
                 new_type_hint_part_hover_position,
-                editor,
                 true,
                 false,
                 window,
@@ -1758,10 +1781,9 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         cx.update_editor(|editor, window, cx| {
-            update_inlay_link_and_hover_points(
+            editor.update_inlay_link_and_hover_points(
                 &editor.snapshot(window, cx),
                 new_type_hint_part_hover_position,
-                editor,
                 true,
                 false,
                 window,
@@ -1813,10 +1835,9 @@ mod tests {
             }
         });
         cx.update_editor(|editor, window, cx| {
-            update_inlay_link_and_hover_points(
+            editor.update_inlay_link_and_hover_points(
                 &editor.snapshot(window, cx),
                 struct_hint_part_hover_position,
-                editor,
                 true,
                 false,
                 window,

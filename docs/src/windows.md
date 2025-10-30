@@ -15,17 +15,9 @@ Your settings and extensions live in your user profile. When uninstalling, you c
 
 ## Remote Development (SSH)
 
-Zed supports SSH remoting on Windows and will prompt for credentials when needed.
+Zed supports remote development on Windows through both SSH and WSL. You can connect to remote servers via SSH or work with files inside WSL distributions directly from Zed.
 
-If you encounter authentication issues, confirm that your SSH key agent is running (e.g., ssh-agent or your Git client’s agent) and that ssh.exe is on PATH.
-
-## WSL Support
-
-Zed supports opening folders inside of WSL natively.
-
-To open a local folder inside a WSL container use the `projects: open in wsl` action and select the folder you want to open, after which you will be presented with a list of available WSL distributions to open the folder in.
-
-To open a folder that's already located inside of a WSL container use the `projects: open wsl` action and select the WSL distribution, after which you the distro will be added to the `Remote Projects` window where you will be able to open the folder, see [Remote Development](./remote-development.md)
+For detailed instructions on setting up and using remote development features, including SSH configuration, WSL setup, and troubleshooting, see the [Remote Development documentation](./remote-development.md).
 
 ## Troubleshooting
 

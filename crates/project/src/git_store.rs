@@ -1,3 +1,4 @@
+pub mod branch_diff;
 mod conflict_set;
 pub mod git_traversal;
 
@@ -30,7 +31,8 @@ use git::{
     },
     stash::{GitStash, StashEntry},
     status::{
-        FileStatus, GitSummary, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
+        DiffTreeType, FileStatus, GitSummary, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
+        UnmergedStatus, UnmergedStatusCode,
     },
 };
 use gpui::{
@@ -55,6 +57,7 @@ use std::{
     mem,
     ops::Range,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::{
         Arc,
         atomic::{self, AtomicU64},
@@ -301,9 +304,13 @@ pub enum RepositoryState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RepositoryEvent {
-    Updated { full_scan: bool, new_instance: bool },
+    StatusesChanged {
+        // TODO could report which statuses changed here
+        full_scan: bool,
+    },
     MergeHeadsChanged,
-    PathsChanged,
+    BranchChanged,
+    StashEntriesChanged,
 }
 
 #[derive(Clone, Debug)]
@@ -313,7 +320,7 @@ pub struct JobsUpdated;
 pub enum GitStoreEvent {
     ActiveRepositoryChanged(Option<RepositoryId>),
     RepositoryUpdated(RepositoryId, RepositoryEvent, bool),
-    RepositoryAdded(RepositoryId),
+    RepositoryAdded,
     RepositoryRemoved(RepositoryId),
     IndexWriteError(anyhow::Error),
     JobsUpdated,
@@ -428,6 +435,8 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_askpass);
         client.add_entity_request_handler(Self::handle_check_for_pushed_commits);
         client.add_entity_request_handler(Self::handle_git_diff);
+        client.add_entity_request_handler(Self::handle_tree_diff);
+        client.add_entity_request_handler(Self::handle_get_blob_content);
         client.add_entity_request_handler(Self::handle_open_unstaged_diff);
         client.add_entity_request_handler(Self::handle_open_uncommitted_diff);
         client.add_entity_message_handler(Self::handle_update_diff_bases);
@@ -613,6 +622,52 @@ impl GitStore {
             .clone();
 
         cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+    }
+
+    pub fn open_diff_since(
+        &mut self,
+        oid: Option<git::Oid>,
+        buffer: Entity<Buffer>,
+        repo: Entity<Repository>,
+        languages: Arc<LanguageRegistry>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<BufferDiff>>> {
+        cx.spawn(async move |this, cx| {
+            let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+            let content = match oid {
+                None => None,
+                Some(oid) => Some(
+                    repo.update(cx, |repo, cx| repo.load_blob_content(oid, cx))?
+                        .await?,
+                ),
+            };
+            let buffer_diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, cx))?;
+
+            buffer_diff
+                .update(cx, |buffer_diff, cx| {
+                    buffer_diff.set_base_text(
+                        content.map(Arc::new),
+                        buffer_snapshot.language().cloned(),
+                        Some(languages.clone()),
+                        buffer_snapshot.text,
+                        cx,
+                    )
+                })?
+                .await?;
+            let unstaged_diff = this
+                .update(cx, |this, cx| this.open_unstaged_diff(buffer.clone(), cx))?
+                .await?;
+            buffer_diff.update(cx, |buffer_diff, _| {
+                buffer_diff.set_secondary_diff(unstaged_diff);
+            })?;
+
+            this.update(cx, |_, cx| {
+                cx.subscribe(&buffer_diff, Self::on_buffer_diff_event)
+                    .detach();
+            })?;
+
+            Ok(buffer_diff)
+        })
     }
 
     pub fn open_uncommitted_diff(
@@ -1218,7 +1273,7 @@ impl GitStore {
                 self._subscriptions
                     .push(cx.subscribe(&repo, Self::on_jobs_updated));
                 self.repositories.insert(id, repo);
-                cx.emit(GitStoreEvent::RepositoryAdded(id));
+                cx.emit(GitStoreEvent::RepositoryAdded);
                 self.active_repo_id.get_or_insert_with(|| {
                     cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
                     id
@@ -1485,11 +1540,10 @@ impl GitStore {
             let id = RepositoryId::from_proto(update.id);
             let client = this.upstream_client().context("no upstream client")?;
 
-            let mut is_new = false;
+            let mut repo_subscription = None;
             let repo = this.repositories.entry(id).or_insert_with(|| {
-                is_new = true;
                 let git_store = cx.weak_entity();
-                cx.new(|cx| {
+                let repo = cx.new(|cx| {
                     Repository::remote(
                         id,
                         Path::new(&update.abs_path).into(),
@@ -1499,16 +1553,16 @@ impl GitStore {
                         git_store,
                         cx,
                     )
-                })
+                });
+                repo_subscription = Some(cx.subscribe(&repo, Self::on_repository_event));
+                cx.emit(GitStoreEvent::RepositoryAdded);
+                repo
             });
-            if is_new {
-                this._subscriptions
-                    .push(cx.subscribe(repo, Self::on_repository_event))
-            }
+            this._subscriptions.extend(repo_subscription);
 
             repo.update(cx, {
                 let update = update.clone();
-                |repo, cx| repo.apply_remote_update(update, is_new, cx)
+                |repo, cx| repo.apply_remote_update(update, cx)
             })?;
 
             this.active_repo_id.get_or_insert_with(|| {
@@ -2163,6 +2217,75 @@ impl GitStore {
         }
 
         Ok(proto::GitDiffResponse { diff })
+    }
+
+    async fn handle_tree_diff(
+        this: Entity<Self>,
+        request: TypedEnvelope<proto::GetTreeDiff>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GetTreeDiffResponse> {
+        let repository_id = RepositoryId(request.payload.repository_id);
+        let diff_type = if request.payload.is_merge {
+            DiffTreeType::MergeBase {
+                base: request.payload.base.into(),
+                head: request.payload.head.into(),
+            }
+        } else {
+            DiffTreeType::Since {
+                base: request.payload.base.into(),
+                head: request.payload.head.into(),
+            }
+        };
+
+        let diff = this
+            .update(&mut cx, |this, cx| {
+                let repository = this.repositories().get(&repository_id)?;
+                Some(repository.update(cx, |repo, cx| repo.diff_tree(diff_type, cx)))
+            })?
+            .context("missing repository")?
+            .await??;
+
+        Ok(proto::GetTreeDiffResponse {
+            entries: diff
+                .entries
+                .into_iter()
+                .map(|(path, status)| proto::TreeDiffStatus {
+                    path: path.0.to_proto(),
+                    status: match status {
+                        TreeDiffStatus::Added {} => proto::tree_diff_status::Status::Added.into(),
+                        TreeDiffStatus::Modified { .. } => {
+                            proto::tree_diff_status::Status::Modified.into()
+                        }
+                        TreeDiffStatus::Deleted { .. } => {
+                            proto::tree_diff_status::Status::Deleted.into()
+                        }
+                    },
+                    oid: match status {
+                        TreeDiffStatus::Deleted { old } | TreeDiffStatus::Modified { old } => {
+                            Some(old.to_string())
+                        }
+                        TreeDiffStatus::Added => None,
+                    },
+                })
+                .collect(),
+        })
+    }
+
+    async fn handle_get_blob_content(
+        this: Entity<Self>,
+        request: TypedEnvelope<proto::GetBlobContent>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GetBlobContentResponse> {
+        let oid = git::Oid::from_str(&request.payload.oid)?;
+        let repository_id = RepositoryId(request.payload.repository_id);
+        let content = this
+            .update(&mut cx, |this, cx| {
+                let repository = this.repositories().get(&repository_id)?;
+                Some(repository.update(cx, |repo, cx| repo.load_blob_content(oid, cx)))
+            })?
+            .context("missing repository")?
+            .await?;
+        Ok(proto::GetBlobContentResponse { content })
     }
 
     async fn handle_open_unstaged_diff(
@@ -3615,6 +3738,7 @@ impl Repository {
                             .read(cx)
                             .file()
                             .is_some_and(|file| file.disk_state().exists())
+                        && buffer.read(cx).has_unsaved_edits()
                     {
                         save_futures.push(buffer_store.save_buffer(buffer, cx));
                     }
@@ -3681,6 +3805,7 @@ impl Repository {
                             .read(cx)
                             .file()
                             .is_some_and(|file| file.disk_state().exists())
+                        && buffer.read(cx).has_unsaved_edits()
                     {
                         save_futures.push(buffer_store.save_buffer(buffer, cx));
                     }
@@ -3877,18 +4002,15 @@ impl Repository {
                     environment,
                     ..
                 } => {
+                    // TODO would be nice to not have to do this manually
                     let result = backend.stash_drop(index, environment).await;
                     if result.is_ok()
                         && let Ok(stash_entries) = backend.stash_entries().await
                     {
                         let snapshot = this.update(&mut cx, |this, cx| {
                             this.snapshot.stash_entries = stash_entries;
-                            let snapshot = this.snapshot.clone();
-                            cx.emit(RepositoryEvent::Updated {
-                                full_scan: false,
-                                new_instance: false,
-                            });
-                            snapshot
+                            cx.emit(RepositoryEvent::StashEntriesChanged);
+                            this.snapshot.clone()
                         })?;
                         if let Some(updates_tx) = updates_tx {
                             updates_tx
@@ -4048,18 +4170,15 @@ impl Repository {
                                 cx.clone(),
                             )
                             .await;
+                        // TODO would be nice to not have to do this manually
                         if result.is_ok() {
                             let branches = backend.branches().await?;
                             let branch = branches.into_iter().find(|branch| branch.is_head);
                             log::info!("head branch after scan is {branch:?}");
                             let snapshot = this.update(&mut cx, |this, cx| {
                                 this.snapshot.branch = branch;
-                                let snapshot = this.snapshot.clone();
-                                cx.emit(RepositoryEvent::Updated {
-                                    full_scan: false,
-                                    new_instance: false,
-                                });
-                                snapshot
+                                cx.emit(RepositoryEvent::BranchChanged);
+                                this.snapshot.clone()
                             })?;
                             if let Some(updates_tx) = updates_tx {
                                 updates_tx
@@ -4304,6 +4423,62 @@ impl Repository {
         })
     }
 
+    pub fn diff_tree(
+        &mut self,
+        diff_type: DiffTreeType,
+        _cx: &App,
+    ) -> oneshot::Receiver<Result<TreeDiff>> {
+        let repository_id = self.snapshot.id;
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local { backend, .. } => backend.diff_tree(diff_type).await,
+                RepositoryState::Remote { client, project_id } => {
+                    let response = client
+                        .request(proto::GetTreeDiff {
+                            project_id: project_id.0,
+                            repository_id: repository_id.0,
+                            is_merge: matches!(diff_type, DiffTreeType::MergeBase { .. }),
+                            base: diff_type.base().to_string(),
+                            head: diff_type.head().to_string(),
+                        })
+                        .await?;
+
+                    let entries = response
+                        .entries
+                        .into_iter()
+                        .filter_map(|entry| {
+                            let status = match entry.status() {
+                                proto::tree_diff_status::Status::Added => TreeDiffStatus::Added,
+                                proto::tree_diff_status::Status::Modified => {
+                                    TreeDiffStatus::Modified {
+                                        old: git::Oid::from_str(
+                                            &entry.oid.context("missing oid").log_err()?,
+                                        )
+                                        .log_err()?,
+                                    }
+                                }
+                                proto::tree_diff_status::Status::Deleted => {
+                                    TreeDiffStatus::Deleted {
+                                        old: git::Oid::from_str(
+                                            &entry.oid.context("missing oid").log_err()?,
+                                        )
+                                        .log_err()?,
+                                    }
+                                }
+                            };
+                            Some((
+                                RepoPath(RelPath::from_proto(&entry.path).log_err()?),
+                                status,
+                            ))
+                        })
+                        .collect();
+
+                    Ok(TreeDiff { entries })
+                }
+            }
+        })
+    }
+
     pub fn diff(&mut self, diff_type: DiffType, _cx: &App) -> oneshot::Receiver<Result<String>> {
         let id = self.id;
         self.send_job(None, move |repo, _cx| async move {
@@ -4458,7 +4633,6 @@ impl Repository {
     pub(crate) fn apply_remote_update(
         &mut self,
         update: proto::UpdateRepository,
-        is_new: bool,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let conflicted_paths = TreeSet::from_ordered_entries(
@@ -4467,21 +4641,30 @@ impl Repository {
                 .into_iter()
                 .filter_map(|path| RepoPath::from_proto(&path).log_err()),
         );
-        self.snapshot.branch = update.branch_summary.as_ref().map(proto_to_branch);
-        self.snapshot.head_commit = update
+        let new_branch = update.branch_summary.as_ref().map(proto_to_branch);
+        let new_head_commit = update
             .head_commit_details
             .as_ref()
             .map(proto_to_commit_details);
+        if self.snapshot.branch != new_branch || self.snapshot.head_commit != new_head_commit {
+            cx.emit(RepositoryEvent::BranchChanged)
+        }
+        self.snapshot.branch = new_branch;
+        self.snapshot.head_commit = new_head_commit;
 
         self.snapshot.merge.conflicted_paths = conflicted_paths;
         self.snapshot.merge.message = update.merge_message.map(SharedString::from);
-        self.snapshot.stash_entries = GitStash {
+        let new_stash_entries = GitStash {
             entries: update
                 .stash_entries
                 .iter()
                 .filter_map(|entry| proto_to_stash(entry).ok())
                 .collect(),
         };
+        if self.snapshot.stash_entries != new_stash_entries {
+            cx.emit(RepositoryEvent::StashEntriesChanged)
+        }
+        self.snapshot.stash_entries = new_stash_entries;
 
         let edits = update
             .removed_statuses
@@ -4500,14 +4683,13 @@ impl Repository {
                     }),
             )
             .collect::<Vec<_>>();
+        if !edits.is_empty() {
+            cx.emit(RepositoryEvent::StatusesChanged { full_scan: true });
+        }
         self.snapshot.statuses_by_path.edit(edits, ());
         if update.is_last_update {
             self.snapshot.scan_id = update.scan_id;
         }
-        cx.emit(RepositoryEvent::Updated {
-            full_scan: true,
-            new_instance: is_new,
-        });
         Ok(())
     }
 
@@ -4769,6 +4951,25 @@ impl Repository {
 
         cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
+    fn load_blob_content(&mut self, oid: Oid, cx: &App) -> Task<Result<String>> {
+        let repository_id = self.snapshot.id;
+        let rx = self.send_job(None, move |state, _| async move {
+            match state {
+                RepositoryState::Local { backend, .. } => backend.load_blob_content(oid).await,
+                RepositoryState::Remote { client, project_id } => {
+                    let response = client
+                        .request(proto::GetBlobContent {
+                            project_id: project_id.to_proto(),
+                            repository_id: repository_id.0,
+                            oid: oid.to_string(),
+                        })
+                        .await?;
+                    Ok(response.content)
+                }
+            }
+        });
+        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
+    }
 
     fn paths_changed(
         &mut self,
@@ -4830,21 +5031,17 @@ impl Repository {
                     .await;
 
                 this.update(&mut cx, |this, cx| {
-                    let needs_update = !changed_path_statuses.is_empty()
-                        || this.snapshot.stash_entries != stash_entries;
-                    this.snapshot.stash_entries = stash_entries;
+                    if this.snapshot.stash_entries != stash_entries {
+                        cx.emit(RepositoryEvent::StashEntriesChanged);
+                        this.snapshot.stash_entries = stash_entries;
+                    }
+
                     if !changed_path_statuses.is_empty() {
+                        cx.emit(RepositoryEvent::StatusesChanged { full_scan: false });
                         this.snapshot
                             .statuses_by_path
                             .edit(changed_path_statuses, ());
                         this.snapshot.scan_id += 1;
-                    }
-
-                    if needs_update {
-                        cx.emit(RepositoryEvent::Updated {
-                            full_scan: false,
-                            new_instance: false,
-                        });
                     }
 
                     if let Some(updates_tx) = updates_tx {
@@ -4854,7 +5051,6 @@ impl Repository {
                             ))
                             .ok();
                     }
-                    cx.emit(RepositoryEvent::PathsChanged);
                 })
             },
         );
@@ -5117,20 +5313,12 @@ async fn compute_snapshot(
         MergeDetails::load(&backend, &statuses_by_path, &prev_snapshot).await?;
     log::debug!("new merge details (changed={merge_heads_changed:?}): {merge_details:?}");
 
-    if merge_heads_changed
-        || branch != prev_snapshot.branch
-        || statuses_by_path != prev_snapshot.statuses_by_path
-    {
-        events.push(RepositoryEvent::Updated {
-            full_scan: true,
-            new_instance: false,
-        });
-    }
-
-    // Cache merge conflict paths so they don't change from staging/unstaging,
-    // until the merge heads change (at commit time, etc.).
     if merge_heads_changed {
         events.push(RepositoryEvent::MergeHeadsChanged);
+    }
+
+    if statuses_by_path != prev_snapshot.statuses_by_path {
+        events.push(RepositoryEvent::StatusesChanged { full_scan: true })
     }
 
     // Useful when branch is None in detached head state
@@ -5138,6 +5326,10 @@ async fn compute_snapshot(
         Some(head_sha) => backend.show(head_sha).await.log_err(),
         None => None,
     };
+
+    if branch != prev_snapshot.branch || head_commit != prev_snapshot.head_commit {
+        events.push(RepositoryEvent::BranchChanged);
+    }
 
     // Used by edit prediction data collection
     let remote_origin_url = backend.remote_url("origin");

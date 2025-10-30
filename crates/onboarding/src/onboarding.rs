@@ -337,10 +337,9 @@ impl Render for Onboarding {
                                                 KeyBinding::for_action_in(
                                                     &Finish,
                                                     &self.focus_handle,
-                                                    window,
                                                     cx,
                                                 )
-                                                .map(|kb| kb.size(rems_from_px(12.))),
+                                                .size(rems_from_px(12.)),
                                             )
                                             .on_click(|_, window, cx| {
                                                 window.dispatch_action(Finish.boxed_clone(), cx);
@@ -377,6 +376,10 @@ impl Item for Onboarding {
 
     fn show_toolbar(&self) -> bool {
         false
+    }
+
+    fn can_split(&self) -> bool {
+        true
     }
 
     fn clone_on_split(

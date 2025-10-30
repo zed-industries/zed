@@ -235,6 +235,21 @@ async fn copy_extension_resources(
         .with_context(|| "failed to copy icons")?;
     }
 
+    for (_, agent_entry) in &manifest.agent_servers {
+        if let Some(icon_path) = &agent_entry.icon {
+            let source_icon = extension_path.join(icon_path);
+            let dest_icon = output_dir.join(icon_path);
+
+            // Create parent directory if needed
+            if let Some(parent) = dest_icon.parent() {
+                fs::create_dir_all(parent)?;
+            }
+
+            fs::copy(&source_icon, &dest_icon)
+                .with_context(|| format!("failed to copy agent server icon '{}'", icon_path))?;
+        }
+    }
+
     if !manifest.languages.is_empty() {
         let output_languages_dir = output_dir.join("languages");
         fs::create_dir_all(&output_languages_dir)?;

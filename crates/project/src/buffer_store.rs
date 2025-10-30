@@ -909,7 +909,14 @@ impl BufferStore {
         };
         cx.spawn(async move |this, cx| {
             task.await?;
-            this.update(cx, |_, cx| {
+            this.update(cx, |this, cx| {
+                old_file.clone().and_then(|file| {
+                    this.path_to_buffer_id.remove(&ProjectPath {
+                        worktree_id: file.worktree_id(cx),
+                        path: file.path().clone(),
+                    })
+                });
+
                 cx.emit(BufferStoreEvent::BufferChangedFilePath { buffer, old_file });
             })
         })

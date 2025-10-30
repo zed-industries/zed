@@ -24,13 +24,8 @@ impl Render for SearchButton {
         button.child(
             IconButton::new("project-search-indicator", SEARCH_ICON)
                 .icon_size(IconSize::Small)
-                .tooltip(|window, cx| {
-                    Tooltip::for_action(
-                        "Project Search",
-                        &workspace::DeploySearch::default(),
-                        window,
-                        cx,
-                    )
+                .tooltip(|_window, cx| {
+                    Tooltip::for_action("Project Search", &workspace::DeploySearch::default(), cx)
                 })
                 .on_click(cx.listener(|_this, _, window, cx| {
                     window.dispatch_action(Box::new(workspace::DeploySearch::default()), cx);

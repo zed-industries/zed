@@ -566,7 +566,7 @@ impl ConfigureContextServerModal {
             .into_any_element()
     }
 
-    fn render_modal_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> ModalFooter {
+    fn render_modal_footer(&self, cx: &mut Context<Self>) -> ModalFooter {
         let focus_handle = self.focus_handle(cx);
         let is_connecting = matches!(self.state, State::Waiting);
 
@@ -584,12 +584,11 @@ impl ConfigureContextServerModal {
                             .icon_size(IconSize::Small)
                             .tooltip({
                                 let repository_url = repository_url.clone();
-                                move |window, cx| {
+                                move |_window, cx| {
                                     Tooltip::with_meta(
                                         "Open Repository",
                                         None,
                                         repository_url.clone(),
-                                        window,
                                         cx,
                                     )
                                 }
@@ -616,7 +615,7 @@ impl ConfigureContextServerModal {
                             },
                         )
                         .key_binding(
-                            KeyBinding::for_action_in(&menu::Cancel, &focus_handle, window, cx)
+                            KeyBinding::for_action_in(&menu::Cancel, &focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(
@@ -634,7 +633,7 @@ impl ConfigureContextServerModal {
                         )
                         .disabled(is_connecting)
                         .key_binding(
-                            KeyBinding::for_action_in(&menu::Confirm, &focus_handle, window, cx)
+                            KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(
@@ -709,7 +708,7 @@ impl Render for ConfigureContextServerModal {
                                 State::Error(error) => Self::render_modal_error(error.clone()),
                             }),
                     )
-                    .footer(self.render_modal_footer(window, cx)),
+                    .footer(self.render_modal_footer(cx)),
             )
     }
 }

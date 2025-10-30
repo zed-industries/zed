@@ -1344,9 +1344,13 @@ impl pet_core::os_environment::Environment for EnvironmentApi<'_> {
 
     fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
         if self.global_search_locations.lock().is_empty() {
-            let mut paths =
-                std::env::split_paths(&self.get_env_var("PATH".to_string()).unwrap_or_default())
-                    .collect::<Vec<PathBuf>>();
+            let mut paths = std::env::split_paths(
+                &self
+                    .get_env_var("PATH".to_string())
+                    .or_else(|| self.get_env_var("Path".to_string()))
+                    .unwrap_or_default(),
+            )
+            .collect::<Vec<PathBuf>>();
 
             log::trace!("Env PATH: {:?}", paths);
             for p in self.pet_env.get_know_global_search_locations() {
@@ -1862,12 +1866,8 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 }
                 // Basedpyright by default uses `strict` type checking, we tone it down as to not surpris users
                 maybe!({
-                    let basedpyright = object
-                        .entry("basedpyright")
-                        .or_insert(Value::Object(serde_json::Map::default()));
-                    let analysis = basedpyright
-                        .as_object_mut()?
-                        .entry("analysis")
+                    let analysis = object
+                        .entry("basedpyright.analysis")
                         .or_insert(Value::Object(serde_json::Map::default()));
                     if let serde_json::map::Entry::Vacant(v) =
                         analysis.as_object_mut()?.entry("typeCheckingMode")

@@ -1,0 +1,62 @@
+[package]
+name = "assistant_text_thread"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/assistant_text_thread.rs"
+
+[features]
+test-support = []
+
+[dependencies]
+agent_settings.workspace = true
+anyhow.workspace = true
+assistant_slash_command.workspace = true
+assistant_slash_commands.workspace = true
+chrono.workspace = true
+client.workspace = true
+clock.workspace = true
+cloud_llm_client.workspace = true
+collections.workspace = true
+context_server.workspace = true
+fs.workspace = true
+futures.workspace = true
+fuzzy.workspace = true
+gpui.workspace = true
+language.workspace = true
+language_model.workspace = true
+log.workspace = true
+open_ai.workspace = true
+parking_lot.workspace = true
+paths.workspace = true
+project.workspace = true
+prompt_store.workspace = true
+proto.workspace = true
+regex.workspace = true
+rpc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+smallvec.workspace = true
+smol.workspace = true
+telemetry_events.workspace = true
+text.workspace = true
+ui.workspace = true
+util.workspace = true
+uuid.workspace = true
+workspace.workspace = true
+zed_env_vars.workspace = true
+
+[dev-dependencies]
+indoc.workspace = true
+language_model = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
+rand.workspace = true
+unindent.workspace = true
+workspace = { workspace = true, features = ["test-support"] }

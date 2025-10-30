@@ -278,6 +278,15 @@ impl<D: PickerDelegate> Picker<D> {
     /// A picker, which displays its matches using `gpui::list`, matches can have different heights.
     /// The picker allows the user to perform search items by text.
     /// If `PickerDelegate::render_match` only returns items with the same height, use `Picker::uniform_list` as its implementation is optimized for that.
+    pub fn nonsearchable_list(delegate: D, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let head = Head::empty(Self::on_empty_head_blur, window, cx);
+
+        Self::new(delegate, ContainerKind::List, head, window, cx)
+    }
+
+    /// A picker, which displays its matches using `gpui::list`, matches can have different heights.
+    /// The picker allows the user to perform search items by text.
+    /// If `PickerDelegate::render_match` only returns items with the same height, use `Picker::uniform_list` as its implementation is optimized for that.
     pub fn list(delegate: D, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let head = Head::editor(
             delegate.placeholder_text(window, cx),
@@ -349,6 +358,16 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn modal(mut self, modal: bool) -> Self {
         self.is_modal = modal;
+        self
+    }
+
+    pub fn list_measure_all(mut self) -> Self {
+        match self.element_container {
+            ElementContainer::List(state) => {
+                self.element_container = ElementContainer::List(state.measure_all());
+            }
+            _ => {}
+        }
         self
     }
 

@@ -182,7 +182,7 @@ TBD: Centered layout related settings
   "show_whitespaces": "selection",
   "whitespace_map": { // Which characters to show when `show_whitespaces` enabled
     "space": "•",
-    "tab": "→"
+    "tab": "⟶"       // use "→", for a shorter arrow
   },
 
   "unnecessary_code_fade": 0.3, // How much to fade out unused code.
