@@ -71,9 +71,7 @@ Zed’s PHP extension provides a debug adapter for PHP and Xdebug. The adapter n
     "label": "PHP: Listen to Xdebug",
     "adapter": "Xdebug",
     "request": "launch",
-    "initialize_args": {
-      "port": 9003
-    }
+    "port": 9003
   },
   {
     "label": "PHP: Debug this test",
