@@ -1020,7 +1020,8 @@
     "context": "CollabPanel",
     "bindings": {
       "alt-up": "collab_panel::MoveChannelUp",
-      "alt-down": "collab_panel::MoveChannelDown"
+      "alt-down": "collab_panel::MoveChannelDown",
+      "alt-enter": "collab_panel::OpenSelectedChannelNotes"
     }
   },
   {
