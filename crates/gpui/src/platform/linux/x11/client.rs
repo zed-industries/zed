@@ -793,7 +793,9 @@ impl X11Client {
                     // window "x" button clicked by user
                     if window.should_close() {
                         // Rest of the close logic is handled in drop_window()
+                        drop(state);
                         window.close();
+                        state = self.0.borrow_mut();
                     }
                 } else if atom == state.atoms._NET_WM_SYNC_REQUEST {
                     window.state.borrow_mut().last_sync_counter =
@@ -1216,6 +1218,33 @@ impl X11Client {
             Event::XinputMotion(event) => {
                 let window = self.get_window(event.event)?;
                 let mut state = self.0.borrow_mut();
+                if window.is_blocked() {
+                    // We want to set the cursor to the default arrow
+                    // when the window is blocked
+                    let style = CursorStyle::Arrow;
+
+                    let current_style = state
+                        .cursor_styles
+                        .get(&window.x_window)
+                        .unwrap_or(&CursorStyle::Arrow);
+                    if *current_style != style
+                        && let Some(cursor) = state.get_cursor_icon(style)
+                    {
+                        state.cursor_styles.insert(window.x_window, style);
+                        check_reply(
+                            || "Failed to set cursor style",
+                            state.xcb_connection.change_window_attributes(
+                                window.x_window,
+                                &ChangeWindowAttributesAux {
+                                    cursor: Some(cursor),
+                                    ..Default::default()
+                                },
+                            ),
+                        )
+                        .log_err();
+                        state.xcb_connection.flush().log_err();
+                    };
+                }
                 let pressed_button = pressed_button_from_mask(event.button_mask[0]);
                 let position = point(
                     px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
@@ -1544,7 +1573,15 @@ impl LinuxClient for X11Client {
             .cursor_styles
             .get(&focused_window)
             .unwrap_or(&CursorStyle::Arrow);
-        if *current_style == style {
+
+        let window = state
+            .mouse_focused_window
+            .and_then(|w| state.windows.get(&w));
+
+        let should_change = *current_style != style
+            && (window.is_none() || window.is_some_and(|w| !w.is_blocked()));
+
+        if !should_change {
             return;
         }
 
