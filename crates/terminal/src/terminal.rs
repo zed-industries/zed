@@ -2849,7 +2849,7 @@ mod tests {
 const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?<path>[^"]+)", line (?P<line>[0-9]+)"#;
 
 #[cfg(any(test, feature = "bench-support"))]
-const DEFAULT_LINE_COLUMN_REGEX: &str = r#"(?xs)
+const DEFAULT_LINE_COLUMN_REGEX: &str = r#"(?x)
     ((?<=[ ])|^)
     (?<paren>[(])?(?<brace>[{])?(?<bracket>[\[])?(?<angle>[<])?(?<quote>["'`])?
     (?<path>[^ ]+
@@ -2865,7 +2865,7 @@ const DEFAULT_LINE_COLUMN_REGEX: &str = r#"(?xs)
     \k<suffix>"#;
 
 #[cfg(any(test, feature = "bench-support"))]
-const DEFAULT_LINE_REGEX: &str = r#"(?xs)
+const DEFAULT_LINE_REGEX: &str = r#"(?x)
     ((?<=[ ])|^)
     (?<paren>[(])?(?<brace>[{])?(?<bracket>[\[])?(?<angle>[<])?(?<quote>["'`])?
     (?<path>[^ ]+
@@ -2881,7 +2881,7 @@ const DEFAULT_LINE_REGEX: &str = r#"(?xs)
     \k<suffix>"#;
 
 #[cfg(any(test, feature = "bench-support"))]
-const DEFAULT_REGEX: &str = r#"(?xs)
+const DEFAULT_REGEX: &str = r#"(?x)
     ((?<=[ ])|^)
     (?<paren>[(])?(?<brace>[{])?(?<bracket>[\[])?(?<angle>[<])?(?<quote>["'`])?
     (?<path>[^ ]+

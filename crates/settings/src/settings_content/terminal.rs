@@ -144,7 +144,7 @@ pub struct TerminalSettingsContent {
     ///   // Common path syntax with optional line, column, description,
     ///   // trailing punctuation, or surrounding symbols or quotes
     ///   [
-    ///     "(?xs)",
+    ///     "(?x)",
     ///     // must follow space or start of the line
     ///     "((?<=[ ])|^)",
     ///     // optionally starts with prefix symbols or quotes not part of path
@@ -166,7 +166,7 @@ pub struct TerminalSettingsContent {
     ///     "\\k<suffix>"
     ///   ],
     ///   [
-    ///     "(?xs)",
+    ///     "(?x)",
     ///     "((?<=[ ])|^)",
     ///     "(?<paren>[(])?(?<brace>[{])?(?<bracket>[\\[])?(?<angle>[<])?(?<quote>[\"'`])?",
     ///     "(?<path>[^ ]+",
@@ -182,7 +182,7 @@ pub struct TerminalSettingsContent {
     ///     "\\k<suffix>"
     ///   ],
     ///   [
-    ///     "(?xs)",
+    ///     "(?x)",
     ///     "((?<=[ ])|^)",
     ///     "(?<paren>[(])?(?<brace>[{])?(?<bracket>[\\[])?(?<angle>[<])?(?<quote>[\"'`])?",
     ///     "(?<path>[^ ]+",
