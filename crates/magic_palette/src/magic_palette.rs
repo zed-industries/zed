@@ -163,8 +163,9 @@ impl PickerDelegate for MagicPaletteDelegate {
                 };
                 let temperature = AgentSettings::temperature_for_model(&model, cx);
                 let query = self.query.clone();
-                let actions = window.available_actions(cx);
                 self.llm_generation_task = cx.spawn_in(window, async move |this, cx| {
+                    let actions = cx.update(|_, cx| cx.action_documentation().clone())?;
+
                     if let Some(task) = cx.update(|_, cx| {
                         if !provider.is_authenticated(cx) {
                             Some(provider.authenticate(cx))
@@ -177,8 +178,8 @@ impl PickerDelegate for MagicPaletteDelegate {
 
                     let actions = actions
                         .into_iter()
-                        .map(|actions| actions.name())
-                        .collect::<Vec<&'static str>>();
+                        .map(|(name, descriptiopn)| format!("{} – {}", name, descriptiopn))
+                        .collect::<Vec<String>>();
                     let actions = actions.join("\n");
                     let prompt = format!(
                         "You are helping a user find the most relevant actions in Zed editor based on their natural language query.
