@@ -592,7 +592,7 @@
   // to both the horizontal and vertical delta values while scrolling. Fast scrolling
   // happens when a user holds the alt or option key while scrolling.
   "fast_scroll_sensitivity": 4.0,
-  "relative_line_numbers": "disabled",
+  "relative_line_numbers": false,
   // If 'search_wrap' is disabled, search result do not wrap around the end of the file.
   "search_wrap": true,
   // Search options to enable by default when opening new project and buffer searches.
@@ -1329,7 +1329,7 @@
       "model": null,
       "max_tokens": null
     },
-    // Whether edit predictions are enabled when editing text threads.
+    // Whether edit predictions are enabled when editing text threads in the agent panel.
     // This setting has no effect if globally disabled.
     "enabled_in_text_threads": true
   },
@@ -1700,6 +1700,7 @@
       "preferred_line_length": 72
     },
     "Go": {
+      "hard_tabs": true,
       "code_actions_on_format": {
         "source.organizeImports": true
       },
@@ -1769,7 +1770,8 @@
       }
     },
     "Plain Text": {
-      "allow_rewrap": "anywhere"
+      "allow_rewrap": "anywhere",
+      "soft_wrap": "editor_width"
     },
     "Python": {
       "code_actions_on_format": {

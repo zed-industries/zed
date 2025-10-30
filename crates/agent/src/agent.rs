@@ -1035,12 +1035,13 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         let session_id = params.session_id.clone();
         log::info!("Received prompt request for session: {}", session_id);
         log::debug!("Prompt blocks count: {}", params.prompt.len());
+        let path_style = self.0.read(cx).project.read(cx).path_style(cx);
 
-        self.run_turn(session_id, cx, |thread, cx| {
+        self.run_turn(session_id, cx, move |thread, cx| {
             let content: Vec<UserMessageContent> = params
                 .prompt
                 .into_iter()
-                .map(Into::into)
+                .map(|block| UserMessageContent::from_content_block(block, path_style))
                 .collect::<Vec<_>>();
             log::debug!("Converted prompt to message: {} chars", content.len());
             log::debug!("Message id: {:?}", id);

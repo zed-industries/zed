@@ -68,6 +68,18 @@ impl KeyBinding {
     pub fn for_action_in(action: &dyn Action, focus: &FocusHandle, cx: &App) -> Self {
         Self::new(action, Some(focus.clone()), cx)
     }
+    pub fn has_binding(&self, window: &Window) -> bool {
+        match &self.source {
+            Source::Action {
+                action,
+                focus_handle: Some(focus),
+            } => window
+                .highest_precedence_binding_for_action_in(action.as_ref(), focus)
+                .or_else(|| window.highest_precedence_binding_for_action(action.as_ref()))
+                .is_some(),
+            _ => false,
+        }
+    }
 
     pub fn set_vim_mode(cx: &mut App, enabled: bool) {
         cx.set_global(VimStyle(enabled));

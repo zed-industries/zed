@@ -679,7 +679,7 @@
       "cmd-alt-b": "workspace::ToggleRightDock",
       "cmd-r": "workspace::ToggleRightDock",
       "cmd-j": "workspace::ToggleBottomDock",
-      "alt-cmd-y": "workspace::CloseAllDocks",
+      "alt-cmd-y": "workspace::ToggleAllDocks",
       // For 0px parameter, uses UI font size value.
       "ctrl-alt-0": "workspace::ResetActiveDockSize",
       "ctrl-alt--": ["workspace::DecreaseActiveDockSize", { "px": 0 }],
@@ -799,6 +799,14 @@
       "enter": "editor::ConfirmCompletion",
       "shift-enter": "editor::ConfirmCompletionReplace",
       "tab": "editor::ComposeCompletion"
+    }
+  },
+  {
+    "context": "Editor && in_snippet",
+    "use_key_equivalents": true,
+    "bindings": {
+      "alt-right": "editor::NextSnippetTabstop",
+      "alt-left": "editor::PreviousSnippetTabstop"
     }
   },
   {
@@ -1077,7 +1085,8 @@
     "use_key_equivalents": true,
     "bindings": {
       "alt-up": "collab_panel::MoveChannelUp",
-      "alt-down": "collab_panel::MoveChannelDown"
+      "alt-down": "collab_panel::MoveChannelDown",
+      "alt-enter": "collab_panel::OpenSelectedChannelNotes"
     }
   },
   {
@@ -1209,6 +1218,7 @@
       "ctrl-alt-down": "pane::SplitDown",
       "ctrl-alt-left": "pane::SplitLeft",
       "ctrl-alt-right": "pane::SplitRight",
+      "cmd-d": "pane::SplitRight",
       "cmd-alt-r": "terminal::RerunTask"
     }
   },
@@ -1403,6 +1413,13 @@
       "enter": "editor::Newline",
       "cmd-enter up": "dev::Zeta2RatePredictionPositive",
       "cmd-enter down": "dev::Zeta2RatePredictionNegative"
+    }
+  },
+  {
+    "context": "Zeta2Context > Editor",
+    "bindings": {
+      "alt-left": "dev::Zeta2ContextGoBack",
+      "alt-right": "dev::Zeta2ContextGoForward"
     }
   }
 ]
