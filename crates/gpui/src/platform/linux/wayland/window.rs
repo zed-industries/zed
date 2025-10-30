@@ -528,7 +528,7 @@ impl WaylandWindowStatePtr {
         state.children.insert(child);
     }
 
-    pub fn has_children(&self) -> bool {
+    pub fn is_blocked(&self) -> bool {
         let state = self.state.borrow();
         !state.children.is_empty()
     }
@@ -850,6 +850,9 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn handle_ime(&self, ime: ImeInput) {
+        if self.is_blocked() {
+            return;
+        }
         let mut state = self.state.borrow_mut();
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
@@ -948,6 +951,9 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn handle_input(&self, input: PlatformInput) {
+        if self.is_blocked() {
+            return;
+        }
         if let Some(ref mut fun) = self.callbacks.borrow_mut().input
             && !fun(input.clone()).propagate
         {

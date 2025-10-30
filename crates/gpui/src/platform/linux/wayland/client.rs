@@ -753,7 +753,12 @@ impl LinuxClient for WaylandClient {
     fn set_cursor_style(&self, style: CursorStyle) {
         let mut state = self.0.borrow_mut();
 
-        let need_update = state.cursor_style != Some(style);
+        let need_update = state.cursor_style != Some(style)
+            && (state.mouse_focused_window.is_none()
+                || state
+                    .mouse_focused_window
+                    .as_ref()
+                    .is_some_and(|w| !w.is_blocked()));
 
         if need_update {
             let serial = state.serial_tracker.get(SerialKind::MouseEnter);
@@ -1296,7 +1301,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
             }
             wl_keyboard::Event::Enter { surface, .. } => {
                 let window = get_window(&mut state, &surface.id());
-                if !window.as_ref().is_some_and(|w| w.has_children()) {
+                if window.as_ref().is_some() {
                     state.keyboard_focused_window = window;
 
                     state.enter_token = Some(());
@@ -1608,9 +1613,6 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 state.button_pressed = None;
 
                 if let Some(window) = get_window(&mut state, &surface.id()) {
-                    if window.has_children() {
-                        return;
-                    }
                     state.mouse_focused_window = Some(window.clone());
 
                     if state.enter_token.is_some() {
@@ -1663,6 +1665,30 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 state.mouse_location = Some(point(px(surface_x as f32), px(surface_y as f32)));
 
                 if let Some(window) = state.mouse_focused_window.clone() {
+                    if window.is_blocked() {
+                        let default_style = CursorStyle::Arrow;
+                        if state.cursor_style != Some(default_style) {
+                            let serial = state.serial_tracker.get(SerialKind::MouseEnter);
+                            state.cursor_style = Some(default_style);
+
+                            if let Some(cursor_shape_device) = &state.cursor_shape_device {
+                                cursor_shape_device.set_shape(serial, default_style.to_shape());
+                            } else {
+                                // cursor-shape-v1 isn't supported, set the cursor using a surface.
+                                let wl_pointer = state
+                                    .wl_pointer
+                                    .clone()
+                                    .expect("window is focused by pointer");
+                                let scale = window.primary_output_scale();
+                                state.cursor.set_icon(
+                                    &wl_pointer,
+                                    serial,
+                                    default_style.to_icon_names(),
+                                    scale,
+                                );
+                            }
+                        }
+                    }
                     if state
                         .keyboard_focused_window
                         .as_ref()
