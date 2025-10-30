@@ -3,6 +3,7 @@ use clap::Parser;
 use std::fs;
 use std::path::Path;
 
+mod compare_perf;
 mod danger;
 mod nix_build;
 mod release_nightly;
@@ -24,6 +25,7 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         ("run_bundling.yml", run_bundling::run_bundling()),
         ("release_nightly.yml", release_nightly::release_nightly()),
         ("run_tests.yml", run_tests::run_tests()),
+        ("compare_perf.yml", compare_perf::compare_perf()),
     ];
     fs::create_dir_all(dir)
         .with_context(|| format!("Failed to create directory: {}", dir.display()))?;
