@@ -53,6 +53,9 @@ jobs:
       with:
         name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-macos-x86_64.gz
         path: target/zed-remote-server-macos-x86_64.gz
+    outputs:
+      zed: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
+      remote-server: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-macos-x86_64.gz
     timeout-minutes: 60
   bundle_mac_arm64:
     if: |-
@@ -94,6 +97,9 @@ jobs:
       with:
         name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-macos-aarch64.gz
         path: target/zed-remote-server-macos-aarch64.gz
+    outputs:
+      zed: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg
+      remote-server: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-macos-aarch64.gz
     timeout-minutes: 60
   bundle_linux_x86_64:
     if: |-
@@ -128,6 +134,9 @@ jobs:
       with:
         name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
         path: target/release/zed-remote-server-*.tar.gz
+    outputs:
+      zed: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
+      remote-server: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
     timeout-minutes: 60
   bundle_linux_arm64:
     if: |-
@@ -162,6 +171,9 @@ jobs:
       with:
         name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
         path: target/release/zed-remote-server-*.tar.gz
+    outputs:
+      zed: zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
+      remote-server: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
     timeout-minutes: 60
   bundle_windows_x86_64:
     if: |-
@@ -196,6 +208,8 @@ jobs:
       with:
         name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.exe
         path: ${{ env.SETUP_PATH }}
+    outputs:
+      zed: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.exe
     timeout-minutes: 60
   bundle_windows_arm64:
     if: |-
@@ -230,6 +244,8 @@ jobs:
       with:
         name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.exe
         path: ${{ env.SETUP_PATH }}
+    outputs:
+      zed: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.exe
     timeout-minutes: 60
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}

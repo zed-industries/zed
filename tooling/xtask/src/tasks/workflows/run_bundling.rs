@@ -5,6 +5,7 @@ use crate::tasks::workflows::{
 
 use super::{runners, steps, vars};
 use gh_workflow::*;
+use indexmap::IndexMap;
 
 pub fn run_bundling() -> Workflow {
     named::workflow()
@@ -60,6 +61,8 @@ fn bundle_job(deps: &[&NamedJob]) -> Job {
 
 pub(crate) fn bundle_mac_job(arch: runners::Arch, deps: &[&NamedJob]) -> Job {
     use vars::GITHUB_SHA;
+    let artifact_name = format!("Zed_{GITHUB_SHA}-{arch}.dmg");
+    let remote_server_artifact_name = format!("zed-remote-server-{GITHUB_SHA}-macos-{arch}.gz");
     bundle_job(deps)
         .runs_on(runners::MAC_DEFAULT)
         .envs(mac_bundle_envs())
@@ -69,13 +72,21 @@ pub(crate) fn bundle_mac_job(arch: runners::Arch, deps: &[&NamedJob]) -> Job {
         .add_step(steps::clear_target_dir_if_large(runners::Platform::Mac))
         .add_step(bundle_mac(arch))
         .add_step(steps::upload_artifact(
-            &format!("Zed_{GITHUB_SHA}-{arch}.dmg"),
+            &artifact_name,
             &format!("target/{arch}-apple-darwin/release/Zed.dmg"),
         ))
         .add_step(steps::upload_artifact(
-            &format!("zed-remote-server-{GITHUB_SHA}-macos-{arch}.gz"),
+            &remote_server_artifact_name,
             &format!("target/zed-remote-server-macos-{arch}.gz"),
         ))
+        .outputs(
+            [
+                ("zed".to_string(), artifact_name),
+                ("remote-server".to_string(), remote_server_artifact_name),
+            ]
+            .into_iter()
+            .collect::<IndexMap<_, _>>(),
+        )
 }
 
 pub fn bundle_mac(arch: runners::Arch) -> Step<Run> {
@@ -103,10 +114,19 @@ pub(crate) fn bundle_linux_job(arch: runners::Arch, deps: &[&NamedJob]) -> Job {
             &remote_server_artifact_name,
             "target/release/zed-remote-server-*.tar.gz",
         ))
+        .outputs(
+            [
+                ("zed".to_string(), artifact_name),
+                ("remote-server".to_string(), remote_server_artifact_name),
+            ]
+            .into_iter()
+            .collect::<IndexMap<_, _>>(),
+        )
 }
 
 pub(crate) fn bundle_windows_job(arch: runners::Arch, deps: &[&NamedJob]) -> Job {
     use vars::GITHUB_SHA;
+    let artifact_name = format!("Zed_{GITHUB_SHA}-{arch}.exe");
     bundle_job(deps)
         .runs_on(runners::WINDOWS_DEFAULT)
         .envs(windows_bundle_envs())
@@ -114,9 +134,14 @@ pub(crate) fn bundle_windows_job(arch: runners::Arch, deps: &[&NamedJob]) -> Job
         .add_step(steps::setup_sentry())
         .add_step(bundle_windows(arch))
         .add_step(steps::upload_artifact(
-            &format!("Zed_{GITHUB_SHA}-{arch}.exe"),
+            &artifact_name,
             "${{ env.SETUP_PATH }}",
         ))
+        .outputs(
+            [("zed".to_string(), artifact_name)]
+                .into_iter()
+                .collect::<IndexMap<_, _>>(),
+        )
 }
 
 fn bundle_windows(arch: runners::Arch) -> Step<Run> {
