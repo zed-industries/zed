@@ -11,6 +11,7 @@ use gpui::{
     FocusHandle, Focusable, Hsla, MouseDownEvent, Point, Subscription, TextStyleRefinement,
     UniformListScrollHandle, WeakEntity, actions, anchored, deferred, uniform_list,
 };
+use itertools::Itertools;
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::debugger::{
     dap_command::DataBreakpointContext,
@@ -373,28 +374,25 @@ impl VariableList {
 
         self.entries = entries;
 
+        let text_pixels = ui::TextSize::Default.pixels(cx).to_f64() as f32;
+        let indent_size = INDENT_STEP_SIZE.to_f64() as f32;
+
         self.max_width_index = self
             .entries
             .iter()
-            .enumerate()
-            .map(|(idx, entry)| {
-                (
-                    idx,
-                    match &entry.entry {
-                        DapEntry::Scope(scope) => scope.name.len(),
-                        DapEntry::Variable(variable) => {
-                            // let name_width = variable.name.len() * ui::TextSize::Default
-                            // variable.name.len() + variable.value.len() + entry.path.indices.len() *
-                            todo!()
-                        }
-                        DapEntry::Watcher(watcher) => {
-                            todo!()
-                        }
-                    },
-                )
+            .map(|entry| match &entry.entry {
+                DapEntry::Scope(scope) => scope.name.len() as f32 * text_pixels,
+                DapEntry::Variable(variable) => {
+                    (variable.value.len() + variable.name.len()) as f32 * text_pixels
+                        + (entry.path.indices.len() as f32 * indent_size)
+                }
+                DapEntry::Watcher(watcher) => {
+                    (watcher.value.len() + watcher.expression.len()) as f32 * text_pixels
+                        + (entry.path.indices.len() as f32 * indent_size)
+                }
             })
-            .max_by_key(|(_, key)| *key)
-            .map(|(idx, _)| idx);
+            .position_max_by(|left, right| left.total_cmp(right));
+
         cx.notify();
     }
 
