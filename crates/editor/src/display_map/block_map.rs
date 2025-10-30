@@ -257,6 +257,16 @@ pub enum BlockId {
     ExcerptBoundary(ExcerptId),
     FoldedBuffer(ExcerptId),
     Custom(CustomBlockId),
+    Spacer(SpacerId),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash)]
+pub struct SpacerId(pub usize);
+
+impl From<SpacerId> for EntityId {
+    fn from(value: SpacerId) -> Self {
+        EntityId::from(value.0 as u64)
+    }
 }
 
 impl From<BlockId> for ElementId {
@@ -267,6 +277,7 @@ impl From<BlockId> for ElementId {
                 ("ExcerptBoundary", EntityId::from(excerpt_id)).into()
             }
             BlockId::FoldedBuffer(id) => ("FoldedBuffer", EntityId::from(id)).into(),
+            BlockId::Spacer(id) => ("Spacer", EntityId::from(id)).into(),
         }
     }
 }
@@ -277,6 +288,7 @@ impl std::fmt::Display for BlockId {
             Self::Custom(id) => write!(f, "Block({id:?})"),
             Self::ExcerptBoundary(id) => write!(f, "ExcerptHeader({id:?})"),
             Self::FoldedBuffer(id) => write!(f, "FoldedBuffer({id:?})"),
+            Self::Spacer(id) => write!(f, "Spacer({id:?})"),
         }
     }
 }
@@ -302,6 +314,10 @@ pub enum Block {
         excerpt: ExcerptInfo,
         height: u32,
     },
+    Spacer {
+        height: u32,
+        id: SpacerId,
+    },
 }
 
 impl Block {
@@ -317,6 +333,7 @@ impl Block {
                 excerpt: next_excerpt,
                 ..
             } => BlockId::ExcerptBoundary(next_excerpt.id),
+            Block::Spacer { id, .. } => BlockId::Spacer(*id),
         }
     }
 
@@ -325,7 +342,8 @@ impl Block {
             Block::Custom(block) => block.height.is_some(),
             Block::ExcerptBoundary { .. }
             | Block::FoldedBuffer { .. }
-            | Block::BufferHeader { .. } => true,
+            | Block::BufferHeader { .. }
+            | Block::Spacer { .. } => true,
         }
     }
 
@@ -334,7 +352,8 @@ impl Block {
             Block::Custom(block) => block.height.unwrap_or(0),
             Block::ExcerptBoundary { height, .. }
             | Block::FoldedBuffer { height, .. }
-            | Block::BufferHeader { height, .. } => *height,
+            | Block::BufferHeader { height, .. }
+            | Block::Spacer { height, .. } => *height,
         }
     }
 
@@ -343,7 +362,8 @@ impl Block {
             Block::Custom(block) => block.style,
             Block::ExcerptBoundary { .. }
             | Block::FoldedBuffer { .. }
-            | Block::BufferHeader { .. } => BlockStyle::Sticky,
+            | Block::BufferHeader { .. }
+            | Block::Spacer { .. } => BlockStyle::Sticky,
         }
     }
 
@@ -353,6 +373,7 @@ impl Block {
             Block::FoldedBuffer { .. } => false,
             Block::ExcerptBoundary { .. } => true,
             Block::BufferHeader { .. } => true,
+            Block::Spacer { .. } => false,
         }
     }
 
@@ -362,6 +383,7 @@ impl Block {
             Block::FoldedBuffer { .. } => false,
             Block::ExcerptBoundary { .. } => false,
             Block::BufferHeader { .. } => false,
+            Block::Spacer { .. } => false,
         }
     }
 
@@ -374,6 +396,7 @@ impl Block {
             Block::FoldedBuffer { .. } => false,
             Block::ExcerptBoundary { .. } => false,
             Block::BufferHeader { .. } => false,
+            Block::Spacer { .. } => false,
         }
     }
 
@@ -383,6 +406,7 @@ impl Block {
             Block::FoldedBuffer { .. } => true,
             Block::ExcerptBoundary { .. } => false,
             Block::BufferHeader { .. } => false,
+            Block::Spacer { .. } => true,
         }
     }
 
@@ -392,6 +416,7 @@ impl Block {
             Block::FoldedBuffer { .. } => true,
             Block::ExcerptBoundary { .. } => true,
             Block::BufferHeader { .. } => true,
+            Block::Spacer { .. } => false,
         }
     }
 
@@ -401,6 +426,7 @@ impl Block {
             Block::FoldedBuffer { .. } => true,
             Block::ExcerptBoundary { .. } => false,
             Block::BufferHeader { .. } => true,
+            Block::Spacer { .. } => false,
         }
     }
 }
@@ -426,6 +452,11 @@ impl Debug for Block {
                 .debug_struct("BufferHeader")
                 .field("excerpt", excerpt)
                 .field("height", height)
+                .finish(),
+            Self::Spacer { height, id } => f
+                .debug_struct("Spacer")
+                .field("height", height)
+                .field("id", id)
                 .finish(),
         }
     }
@@ -540,8 +571,29 @@ impl BlockMap {
         let mut edits = edits.into_iter().peekable();
 
         while let Some(edit) = edits.next() {
-            let mut old_start = WrapRow(edit.old.start);
+            // FIXME biases?
+
+            let mut old_buffer_start = self
+                .wrap_snapshot
+                .borrow()
+                .to_point(WrapPoint::new(edit.old.start, 0), Bias::Left);
+            old_buffer_start.column = 0;
+            let mut old_start = WrapRow(
+                self.wrap_snapshot
+                    .borrow()
+                    .make_wrap_point(old_buffer_start, Bias::Left)
+                    .row(),
+            );
+
+            let mut new_buffer_start =
+                wrap_snapshot.to_point(WrapPoint::new(edit.new.start, 0), Bias::Left);
+            new_buffer_start.column = 0;
             let mut new_start = WrapRow(edit.new.start);
+            let mut new_start = WrapRow(
+                wrap_snapshot
+                    .make_wrap_point(new_buffer_start, Bias::Left)
+                    .row(),
+            );
 
             // Only preserve transforms that:
             // * Strictly precedes this edit
@@ -693,6 +745,10 @@ impl BlockMap {
             ));
 
             BlockMap::sort_blocks(&mut blocks_in_edit);
+
+            let hunks = buffer
+                .diff_hunks_in_range(new_buffer_start..new_buffer_end)
+                .collect::<Vec<_>>();
 
             // For each of these blocks, insert a new isomorphic transform preceding the block,
             // and then insert the block itself.
@@ -918,6 +974,19 @@ impl BlockMap {
             _ => false,
         });
     }
+
+    // fn spacer_blocks<'a, R, T>(
+    //     &'a self,
+    //     buffer: &'a multi_buffer::MultiBufferSnapshot,
+    //     range: R,
+    //     wrap_snapshot: &'a WrapSnapshot,
+    // ) -> impl Iterator<Item = (BlockPlacement<WrapRow>, Block)> + 'a
+    // where
+    //     R: RangeBounds<T>,
+    //     T: multi_buffer::ToOffset,
+    // {
+    //     let start_row = range.start_bound().map(|x| x.to_offset(snapshot))
+    // }
 }
 
 fn push_isomorphic(tree: &mut SumTree<Transform>, rows: u32, wrap_snapshot: &WrapSnapshot) {
@@ -1429,31 +1498,42 @@ impl BlockSnapshot {
 
     pub fn block_for_id(&self, block_id: BlockId) -> Option<Block> {
         let buffer = self.wrap_snapshot.buffer_snapshot();
-        let wrap_point = match block_id {
+        let wrap_row = match block_id {
             BlockId::Custom(custom_block_id) => {
                 let custom_block = self.custom_blocks_by_id.get(&custom_block_id)?;
                 return Some(Block::Custom(custom_block.clone()));
             }
             BlockId::ExcerptBoundary(next_excerpt_id) => {
                 let excerpt_range = buffer.range_for_excerpt(next_excerpt_id)?;
-                self.wrap_snapshot
-                    .make_wrap_point(excerpt_range.start, Bias::Left)
+                Some(
+                    self.wrap_snapshot
+                        .make_wrap_point(excerpt_range.start, Bias::Left)
+                        .row(),
+                )
             }
-            BlockId::FoldedBuffer(excerpt_id) => self
-                .wrap_snapshot
-                .make_wrap_point(buffer.range_for_excerpt(excerpt_id)?.start, Bias::Left),
+            BlockId::FoldedBuffer(excerpt_id) => Some(
+                self.wrap_snapshot
+                    .make_wrap_point(buffer.range_for_excerpt(excerpt_id)?.start, Bias::Left)
+                    .row(),
+            ),
+            BlockId::Spacer(_) => None,
         };
-        let wrap_row = WrapRow(wrap_point.row());
 
         let mut cursor = self.transforms.cursor::<WrapRow>(());
-        cursor.seek(&wrap_row, Bias::Left);
+        if let Some(wrap_row) = wrap_row {
+            cursor.seek(&WrapRow(wrap_row), Bias::Left);
+        } else {
+            cursor.next();
+        }
 
         while let Some(transform) = cursor.item() {
             if let Some(block) = transform.block.as_ref() {
                 if block.id() == block_id {
                     return Some(block.clone());
                 }
-            } else if *cursor.start() > wrap_row {
+            } else if let Some(wrap_row) = wrap_row
+                && *cursor.start() > WrapRow(wrap_row)
+            {
                 break;
             }
 
@@ -2211,10 +2291,10 @@ mod tests {
         let (_, inlay_snapshot) = InlayMap::new(multi_buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
-        let (_, wraps_snapshot) = WrapMap::new(tab_snapshot, font, font_size, Some(wrap_width), cx);
+        let (_, wrap_snapshot) = WrapMap::new(tab_snapshot, font, font_size, Some(wrap_width), cx);
 
-        let block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
-        let snapshot = block_map.read(wraps_snapshot, Default::default());
+        let block_map = BlockMap::new(wrap_snapshot.clone(), 1, 1);
+        let snapshot = block_map.read(wrap_snapshot.clone(), Default::default());
 
         // Each excerpt has a header above and footer below. Excerpts are also *separated* by a newline.
         assert_eq!(snapshot.text(), "\nBuff\ner 1\n\nBuff\ner 2\n\nBuff\ner 3");
@@ -2231,6 +2311,9 @@ mod tests {
                 (6..7, BlockId::ExcerptBoundary(excerpt_ids[2])), // path, header
             ]
         );
+
+        dbg!(wrap_snapshot.row_infos(0).collect::<Vec<_>>());
+        // dbg!(block_map.transforms.borrow().iter().collect::<Vec<_>>());
     }
 
     #[gpui::test]

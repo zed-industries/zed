@@ -31,18 +31,21 @@ pub struct WrapMap {
 #[derive(Clone)]
 pub struct WrapSnapshot {
     pub(super) tab_snapshot: TabSnapshot,
-    transforms: SumTree<Transform>,
+    // FIXME
+    pub(crate) transforms: SumTree<Transform>,
     interpolated: bool,
 }
 
+// FIXME
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct Transform {
+pub(crate) struct Transform {
     summary: TransformSummary,
     display_text: Option<&'static str>,
 }
 
+// FIXME
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct TransformSummary {
+pub(crate) struct TransformSummary {
     input: TextSummary,
     output: TextSummary,
 }
