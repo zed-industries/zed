@@ -133,7 +133,7 @@ pub struct LlmContextOptions {
 
 pub const MODEL_PROVIDER_ID: LanguageModelProviderId = language_model::ANTHROPIC_PROVIDER_ID;
 
-pub fn find_related_excerpts<'a>(
+pub fn find_related_excerpts(
     buffer: Entity<language::Buffer>,
     cursor_position: Anchor,
     project: &Entity<Project>,
