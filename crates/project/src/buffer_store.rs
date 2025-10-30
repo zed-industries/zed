@@ -620,7 +620,6 @@ impl LocalBufferStore {
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {
         let load_file = worktree.update(cx, |worktree, cx| worktree.load_file(path.as_ref(), cx));
-        // todo(lw): hot foreground spawn
         cx.spawn(async move |this, cx| {
             let path = path.clone();
             let buffer = match load_file.await.with_context(|| {
