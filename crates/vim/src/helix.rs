@@ -278,7 +278,13 @@ impl Vim {
                             };
 
                             let (point, _goal) = motion
-                                .move_point(map, cursor, selection.goal, times, &text_layout_details)
+                                .move_point(
+                                    map,
+                                    cursor,
+                                    selection.goal,
+                                    times,
+                                    &text_layout_details,
+                                )
                                 .unwrap_or((cursor, goal));
 
                             // Move left by one character to position on the last character
@@ -1525,9 +1531,9 @@ mod test {
         cx.enable_helix();
 
         // Test g l moves to last character, not after it
-        cx.set_state("hello ˇworld", Mode::HelixNormal);
+        cx.set_state("hello ˇworld!", Mode::HelixNormal);
         cx.simulate_keystrokes("g l");
-        cx.assert_state("hello worlˇd", Mode::HelixNormal);
+        cx.assert_state("hello worldˇ!", Mode::HelixNormal);
 
         // Test with Chinese characters, test if work with UTF-8?
         cx.set_state("ˇ你好世界", Mode::HelixNormal);
