@@ -1693,7 +1693,7 @@ impl Thread {
                 };
 
                 let final_summary = if need_split {
-                    // Remove final prompt for splitting.
+                    // Remove final prompt for splitting; we will append it per chunk.
                     let prompt_msg = full_request.messages.pop();
                     let all = &full_request.messages;
                     if all.is_empty() {
@@ -1703,76 +1703,220 @@ impl Thread {
                         }
                         run_summary_request(this, &model, req, cx)
                     } else {
-                        let n = all.len();
-                        let overlap = (n / 10).clamp(1, 4);
-                        let mid = n / 2;
-                        let left_end = mid.saturating_sub(1);
-                        let right_start = mid.saturating_sub(overlap.min(mid));
-                        let left_overlap_end =
-                            (left_end + overlap.min(n - left_end - 1)).min(n - 1);
+                        let max_tokens = model.max_token_count() as u64;
+                        let overlap = (all.len() / 20).clamp(1, 4);
+                        log::debug!(
+                            "summary: hierarchical splitting start total_messages={} overlap={}",
+                            all.len(),
+                            overlap
+                        );
 
-                        let part1_range_end = left_overlap_end.min(n - 1);
-                        let part2_range_start = right_start.min(n - 1);
-
-                        let build_part_request =
-                            |slice: &[LanguageModelRequestMessage]| -> LanguageModelRequest {
+                        // Build maximal chunks without exceeding token limit (greedy).
+                        let mut chunks: Vec<(usize, usize)> = Vec::new(); // (start, end_exclusive)
+                        let mut start = 0;
+                        while start < all.len() {
+                            let mut end = start;
+                            let mut last_fit_end = start;
+                            while end < all.len() {
+                                let slice = &all[start..=end];
                                 let mut req = LanguageModelRequest {
                                     intent: Some(CompletionIntent::ThreadContextSummarization),
                                     temperature: full_request.temperature,
                                     ..Default::default()
                                 };
                                 req.messages.extend_from_slice(slice);
-                                req.messages.push(LanguageModelRequestMessage {
-                                    role: Role::User,
-                                    content: vec![SUMMARIZE_THREAD_DETAILED_PROMPT.into()],
-                                    cache: false,
-                                });
-                                req
+                                if let Some(p) = prompt_msg.clone() {
+                                    req.messages.push(p.clone());
+                                }
+                                // Count tokens for candidate slice.
+                                let fits = if let Ok(fut) =
+                                    cx.update(|app| model.count_tokens(req.clone(), app))
+                                {
+                                    match fut.await {
+                                        Ok(token_count) => {
+                                            if token_count <= max_tokens {
+                                                last_fit_end = end + 1; // exclusive
+                                                true
+                                            } else {
+                                                false
+                                            }
+                                        }
+                                        Err(e) => {
+                                            log::debug!(
+                                                "summary: token count error during chunk build: {e}"
+                                            );
+                                            // On error, conservatively stop expanding.
+                                            false
+                                        }
+                                    }
+                                } else {
+                                    log::debug!(
+                                        "summary: failed to create token count future for chunk"
+                                    );
+                                    false
+                                };
+                                if !fits {
+                                    break;
+                                }
+                                end += 1;
+                            }
+
+                            // Ensure at least one message progresses.
+                            if last_fit_end == start {
+                                last_fit_end = (start + 1).min(all.len());
+                            }
+
+                            chunks.push((start, last_fit_end));
+                            log::debug!(
+                                "summary: chunk {} range=({},{}) size={}",
+                                chunks.len(),
+                                start,
+                                last_fit_end,
+                                last_fit_end - start
+                            );
+
+                            if last_fit_end >= all.len() {
+                                break;
+                            }
+                            // Advance with overlap.
+                            start = last_fit_end.saturating_sub(overlap);
+                        }
+
+                        // Summarize each chunk (parallel).
+                        let build_chunk_request = |slice: &[LanguageModelRequestMessage]| {
+                            let mut req = LanguageModelRequest {
+                                intent: Some(CompletionIntent::ThreadContextSummarization),
+                                temperature: full_request.temperature,
+                                ..Default::default()
+                            };
+                            req.messages.extend_from_slice(slice);
+                            if let Some(p) = prompt_msg.clone() {
+                                req.messages.push(p);
+                            }
+                            req
+                        };
+
+                        let mut chunk_reqs: Vec<LanguageModelRequest> = Vec::with_capacity(chunks.len());
+                        for (s, e) in &chunks {
+                            chunk_reqs.push(build_chunk_request(&all[*s..*e]));
+                        }
+
+                        let partial_futs = chunk_reqs.into_iter().map(|req| {
+                            async {
+                                let part = run_summary_request(this, &model, req, cx);
+                                part
+                            }
+                        });
+                        let partial_results: Vec<Option<String>> = futures::future::join_all(partial_futs).await;
+                        let mut partial_summaries: Vec<String> = Vec::new();
+                        for (i, opt) in partial_results.into_iter().enumerate() {
+                            let len = opt.as_ref().map(|s| s.len()).unwrap_or(0);
+                            log::debug!("summary: partial {} length={}", i + 1, len);
+                            if let Some(s) = opt {
+                                partial_summaries.push(s);
+                            }
+                        }
+
+                        if partial_summaries.is_empty() {
+                            log::error!("summary: all chunk summaries failed");
+                            return None;
+                        }
+
+                        // Hierarchical merge passes until all fit in one final request.
+                        let mut layer = partial_summaries;
+                        let mut pass = 0;
+                        loop {
+                            pass += 1;
+                            // Build combined merge prompt from current layer.
+                            let mut merge_block = String::new();
+                            for (i, s) in layer.iter().enumerate() {
+                                use std::fmt::Write;
+                                let _ = write!(
+                                    merge_block,
+                                    "Partial summary {}:\n{}\n\n",
+                                    i + 1,
+                                    s
+                                );
+                            }
+                            merge_block.push_str("Combine these into one concise, comprehensive summary without duplication.");
+
+                            let mut merge_req = LanguageModelRequest {
+                                intent: Some(CompletionIntent::ThreadContextSummarization),
+                                temperature: full_request.temperature,
+                                ..Default::default()
+                            };
+                            merge_req.messages.push(LanguageModelRequestMessage {
+                                role: Role::User,
+                                content: vec![merge_block.clone().into()],
+                                cache: false,
+                            });
+
+                            // Check token size of merge attempt.
+                            let merge_fits = if let Ok(fut) =
+                                cx.update(|app| model.count_tokens(merge_req.clone(), app))
+                            {
+                                match fut.await {
+                                    Ok(token_count) => {
+                                        log::debug!(
+                                            "summary: merge pass {} candidate token_count={} layer_size={}",
+                                            pass,
+                                            token_count,
+                                            layer.len()
+                                        );
+                                        token_count <= max_tokens
+                                    }
+                                    Err(e) => {
+                                        log::debug!(
+                                            "summary: merge pass {} token count error: {e}",
+                                            pass
+                                        );
+                                        // On error attempt anyway.
+                                        true
+                                    }
+                                }
+                            } else {
+                                log::debug!("summary: merge pass {} failed to create token count future", pass);
+                                true
                             };
 
-                        let part1_msgs = &all[..=part1_range_end];
-                        let part2_msgs = &all[part2_range_start..];
-
-                        let req1 = build_part_request(part1_msgs);
-                        let req2 = build_part_request(part2_msgs);
-
-                        let (s1_opt, s2_opt) = futures::join!(
-                            async { run_summary_request(this, &model, req1, cx) },
-                            async { run_summary_request(this, &model, req2, cx) }
-                        );
-                        let part1_len = s1_opt.as_ref().map(|s| s.len()).unwrap_or(0);
-                        let part2_len = s2_opt.as_ref().map(|s| s.len()).unwrap_or(0);
-                        log::debug!(
-                            "summary: partial summaries generated (part1_len={}, part2_len={})",
-                            part1_len,
-                            part2_len
-                        );
-
-                        let s1 = s1_opt.unwrap_or(String::new());
-                        let s2 = s2_opt.unwrap_or(String::new());
-
-                        // Merge pass.
-                        let merge_prompt = format!(
-                            "Partial summary A:\n{}\n\nPartial summary B:\n{}\n\nCombine these into one concise, comprehensive summary without duplication.",
-                            s1, s2
-                        );
-                        log::debug!("summary: merging partial summaries");
-                        let mut merge_req = LanguageModelRequest {
-                            intent: Some(CompletionIntent::ThreadContextSummarization),
-                            temperature: full_request.temperature,
-                            ..Default::default()
-                        };
-                        merge_req.messages.push(LanguageModelRequestMessage {
-                            role: Role::User,
-                            content: vec![merge_prompt.into()],
-                            cache: false,
-                        });
-                        let merged = run_summary_request(this, &model, merge_req, cx);
-                        log::debug!(
-                            "summary: multi-pass merge finished merged_len={}",
-                            merged.as_ref().map(|s| s.len()).unwrap_or(0)
-                        );
-                        merged
+                            if merge_fits {
+                                let merged = run_summary_request(this, &model, merge_req, cx);
+                                if let Some(ref m) = merged {
+                                    log::debug!(
+                                        "summary: hierarchical merge success pass={} final_len={}",
+                                        pass,
+                                        m.len()
+                                    );
+                                }
+                                break merged;
+                            } else {
+                                // Reduce layer by pairwise merging.
+                                if layer.len() == 1 {
+                                    // Cannot reduce further.
+                                    let merged = run_summary_request(this, &model, merge_req, cx);
+                                    break merged;
+                                }
+                                let mut next_layer = Vec::new();
+                                let mut i = 0;
+                                while i < layer.len() {
+                                    if i + 1 < layer.len() {
+                                        next_layer.push(format!("{}\n\n{}", layer[i], layer[i + 1]));
+                                        i += 2;
+                                    } else {
+                                        next_layer.push(layer[i].clone());
+                                        i += 1;
+                                    }
+                                }
+                                log::debug!(
+                                    "summary: merge pass {} reducing layer {} -> {}",
+                                    pass,
+                                    layer.len(),
+                                    next_layer.len()
+                                );
+                                layer = next_layer;
+                                // continue loop
+                            }
+                        }
                     }
                 } else {
                     run_summary_request(this, &model, full_request.clone(), cx)
