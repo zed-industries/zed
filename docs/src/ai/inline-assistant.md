@@ -16,7 +16,7 @@ You can do that by:
 
 If you have already set up an LLM provider to interact with [the Agent Panel](./agent-panel.md#getting-started), then that will also work for the Inline Assistant.
 
-> Different the Agent Panel, though, the only exception at the moment is [external agents](./external-agents.md).
+> Unlike the Agent Panel, though, the only exception at the moment is [external agents](./external-agents.md).
 > They currently can't be used for generating changes with the Inline Assistant.
 
 ## Adding Context
@@ -26,7 +26,7 @@ You can add context in the Inline Assistant the same way you can in [the Agent P
 - @-mention files, directories, past threads, rules, and symbols
 - paste images that are copied on your clipboard
 
-Additionally, an useful pattern is to create a thread in the Agent Panel, and then mention it with `@thread` in the Inline Assistant to include it as context.
+Additionally, a useful pattern is to create a thread in the Agent Panel, and then mention it with `@thread` in the Inline Assistant to include it as context.
 That often serves as a way to more quickly iterate over a specific part of a change that happened in the context of a larger thread.
 
 ## Parallel Generations
@@ -97,7 +97,7 @@ Users often ask what's the difference between these two AI-powered features in Z
 Here's how they are different:
 
 - The Inline Assistant is more similar to the Agent Panel as in you're still writing a prompt yourself and crafting context. It works from within the buffer and is mostly centered around your selections.
-- [Edit Predictions](./edit-prediction.md) is an AI-powered completion mechanism that intelligently suggest what you likely want to add next, based on context automatically gathered from your previous edits, recently visited files, and more.
+- [Edit Predictions](./edit-prediction.md) is an AI-powered completion mechanism that intelligently suggests what you likely want to add next, based on context automatically gathered from your previous edits, recently visited files, and more.
 
 In summary, the key difference is that in the Inline Assistant, you're still manually prompting, whereas Edit Prediction will _automatically suggest_ edits to you.
 
