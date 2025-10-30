@@ -9,6 +9,7 @@ use ::util::paths::PathStyle;
 use anyhow::{Result, anyhow};
 use clap::{Args, Parser, Subcommand};
 use cloud_llm_client::predict_edits_v3::{self, Excerpt};
+use cloud_zeta2_prompt::write_codeblock;
 use edit_prediction_context::{
     EditPredictionContextOptions, EditPredictionExcerptOptions, EditPredictionScoreOptions, Line,
 };
@@ -425,6 +426,7 @@ async fn zeta2_llm_context(
     #[derive(Serialize)]
     struct Output {
         excerpts: Vec<OutputExcerpt>,
+        formatted_excerpts: String,
         meta: OutputMeta,
     }
 
@@ -457,6 +459,7 @@ async fn zeta2_llm_context(
 
     cx.update(|cx| {
         let mut excerpts = Vec::new();
+        let mut formatted_excerpts = String::new();
 
         for (buffer, ranges) in related_excerpts {
             let snapshot = buffer.read(cx).snapshot();
@@ -477,10 +480,25 @@ async fn zeta2_llm_context(
                     path: path.clone(),
                     excerpt,
                 });
+
+            let excerpt_start_ix = excerpts.len();
             excerpts.extend(merged_excerpts);
+
+            write_codeblock(
+                &path,
+                excerpts[excerpt_start_ix..].iter().map(|e| &e.excerpt),
+                &[],
+                Line(snapshot.max_point().row),
+                true,
+                &mut formatted_excerpts,
+            );
         }
 
-        let output = Output { excerpts, meta };
+        let output = Output {
+            excerpts,
+            formatted_excerpts,
+            meta,
+        };
 
         Ok(serde_json::to_string_pretty(&output)?)
     })

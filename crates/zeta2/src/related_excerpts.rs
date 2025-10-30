@@ -1,13 +1,13 @@
 use std::{
-    cmp::Reverse, collections::hash_map::Entry, fmt::Write, ops::Range, path::PathBuf, sync::Arc,
-    time::Instant,
+    cmp::Reverse, collections::hash_map::Entry, ops::Range, path::PathBuf, sync::Arc, time::Instant,
 };
 
 use crate::{
     ZetaContextRetrievalDebugInfo, ZetaContextRetrievalStartedDebugInfo, ZetaDebugInfo,
-    ZetaSearchQueryDebugInfo, merge_excerpts::write_merged_excerpts,
+    ZetaSearchQueryDebugInfo, merge_excerpts::merge_excerpts,
 };
 use anyhow::{Result, anyhow};
+use cloud_zeta2_prompt::write_codeblock;
 use collections::HashMap;
 use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions, Line};
 use futures::{
@@ -64,7 +64,7 @@ const SEARCH_PROMPT: &str = indoc! {r#"
 
     ## Current cursor context
 
-    `````filename={current_file_path}
+    `````path={current_file_path}
     {cursor_excerpt}
     `````
 
@@ -435,19 +435,14 @@ pub fn find_related_excerpts(
                         .line_ranges
                         .sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
 
-                    writeln!(
-                        &mut merged_result,
-                        "`````filename={}",
-                        matched.full_path.display()
-                    )
-                    .unwrap();
-                    write_merged_excerpts(
-                        &matched.snapshot,
-                        matched.line_ranges,
+                    write_codeblock(
+                        &matched.full_path,
+                        merge_excerpts(&matched.snapshot, matched.line_ranges).iter(),
                         &[],
+                        Line(matched.snapshot.max_point().row),
+                        true,
                         &mut merged_result,
                     );
-                    merged_result.push_str("`````\n\n");
 
                     result_buffers_by_path.insert(
                         matched.full_path,
