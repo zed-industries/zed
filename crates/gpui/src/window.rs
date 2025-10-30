@@ -33,7 +33,7 @@ use refineable::Refineable;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Mutex, atomic};
+use std::sync::atomic;
 use std::{
     any::{Any, TypeId},
     borrow::Cow,
