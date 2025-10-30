@@ -1,8 +1,10 @@
 use acp_thread::AgentSessionModes;
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
+use agent_settings::AgentSettings;
 use fs::Fs;
 use gpui::{Context, Entity, FocusHandle, WeakEntity, Window, prelude::*};
+use settings::Settings as _;
 use std::{rc::Rc, sync::Arc};
 use ui::{
     Button, ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, KeyBinding,
@@ -84,6 +86,14 @@ impl ModeSelector {
             let current_mode = self.connection.current_mode();
             let default_mode = self.agent_server.default_mode(cx);
 
+            let settings = AgentSettings::get_global(cx);
+            let side = match settings.dock {
+                settings::DockPosition::Left => DocumentationSide::Right,
+                settings::DockPosition::Bottom | settings::DockPosition::Right => {
+                    DocumentationSide::Left
+                }
+            };
+
             for mode in all_modes {
                 let is_selected = &mode.id == &current_mode;
                 let is_default = Some(&mode.id) == default_mode.as_ref();
@@ -91,7 +101,7 @@ impl ModeSelector {
                     .toggleable(IconPosition::End, is_selected);
 
                 let entry = if let Some(description) = &mode.description {
-                    entry.documentation_aside(DocumentationSide::Left, DocumentationEdge::Bottom, {
+                    entry.documentation_aside(side, DocumentationEdge::Bottom, {
                         let description = description.clone();
 
                         move |cx| {
