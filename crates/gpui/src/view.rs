@@ -45,8 +45,9 @@ impl<V: Render> Element for Entity<V> {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut element = self.update(cx, |view, cx| {
-            let mut hot_fn = subsecond::HotFn::current(V::render);
-            hot_fn.call((view, window, cx)).into_any_element()
+            subsecond::HotFn::current(V::render)
+                .call((view, window, cx))
+                .into_any_element()
         });
         let layout_id = window.with_rendered_view(self.entity_id(), |window| {
             element.request_layout(window, cx)
@@ -363,8 +364,9 @@ mod any_view {
     ) -> AnyElement {
         let view = view.clone().downcast::<V>().unwrap();
         view.update(cx, |view, cx| {
-            let mut hot_fn = subsecond::HotFn::current(V::render);
-            hot_fn.call((view, window, cx)).into_any_element()
+            subsecond::HotFn::current(V::render)
+                .call((view, window, cx))
+                .into_any_element()
         })
     }
 }
