@@ -619,7 +619,8 @@ impl Vim {
         }
 
         let mut was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
-        cx.observe_global_in::<SettingsStore>(window, move |editor, _, cx| {
+        let mut was_enabled = Vim::enabled(cx);
+        cx.observe_global_in::<SettingsStore>(window, move |editor, window, cx| {
             let toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
             if toggle != was_toggle {
                 if toggle {
@@ -632,6 +633,16 @@ impl Vim {
                 }
             }
             was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
+
+            let enabled = Vim::enabled(cx);
+            if was_enabled != enabled {
+                if let Some(vim) = editor.addon::<VimAddon>() {
+                    vim.entity.update(cx, |_, cx| {
+                        cx.defer_in(window, |vim, window, cx| vim.sync_vim_settings(window, cx))
+                    });
+                }
+            }
+            was_enabled = enabled;
         })
         .detach();
 
