@@ -9610,6 +9610,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "magic_palette"
+version = "0.1.0"
+dependencies = [
+ "agent_settings",
+ "anyhow",
+ "client",
+ "cloud_llm_client",
+ "collections",
+ "futures 0.3.31",
+ "gpui",
+ "language_model",
+ "log",
+ "menu",
+ "picker",
+ "settings",
+ "telemetry",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "malloc_buf"
 version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -21198,6 +21222,7 @@ dependencies = [
  "languages",
  "line_ending_selector",
  "log",
+ "magic_palette",
  "markdown",
  "markdown_preview",
  "menu",

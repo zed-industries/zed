@@ -21,6 +21,7 @@ use open_router::OpenRouterError;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 pub use settings::LanguageModelCacheConfiguration;
+use std::fmt::Debug;
 use std::ops::{Add, Sub};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -508,6 +509,14 @@ pub struct LanguageModelTextStream {
     pub stream: BoxStream<'static, Result<String, LanguageModelCompletionError>>,
     // Has complete token usage after the stream has finished
     pub last_token_usage: Arc<Mutex<TokenUsage>>,
+}
+
+impl Debug for LanguageModelTextStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LanguageModelTextStream")
+            .field("message_id", &self.message_id)
+            .finish()
+    }
 }
 
 impl Default for LanguageModelTextStream {

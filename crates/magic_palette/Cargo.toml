@@ -1,0 +1,33 @@
+[package]
+name = "magic_palette"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/magic_palette.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+agent_settings.workspace = true
+cloud_llm_client.workspace = true
+language_model.workspace = true
+client.workspace = true
+collections.workspace = true
+gpui.workspace = true
+menu.workspace = true
+log.workspace = true
+picker.workspace = true
+settings.workspace = true
+theme.workspace = true
+futures.workspace = true
+ui.workspace = true
+util.workspace = true
+telemetry.workspace = true
+workspace.workspace = true
+zed_actions.workspace = true
