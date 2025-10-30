@@ -35,6 +35,7 @@ jobs:
       with:
         clean: false
   create_draft_release:
+    if: github.repository_owner == 'zed-industries'
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: release::create_draft_release
@@ -42,6 +43,7 @@ jobs:
       with:
         draft: true
         prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
+    timeout-minutes: 60
   bundle_linux_arm64:
     needs:
     - run_tests_linux
@@ -319,15 +321,18 @@ jobs:
         mv ./artifacts/${{ needs.bundle_mac_x86_64.outputs.remote-server }}/* release-artifacts/zed-remote-server-macos-x86_64.gz
         mv ./artifacts/${{ needs.bundle_mac_arm64.outputs.remote-server }}/* release-artifacts/zed-remote-server-macos-aarch64.gz
       shell: bash -euxo pipefail {0}
-    - name: gh release upload "$GITHUB_REF_NAME" release-artifacts/*
-      run: gh release upload "$GITHUB_REF_NAME" release-artifacts/*
+    - name: gh release upload "$GITHUB_REF_NAME" --repo=zed-industries/zed release-artifacts/*
+      run: gh release upload "$GITHUB_REF_NAME" --repo=zed-industries/zed release-artifacts/*
       shell: bash -euxo pipefail {0}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   auto_release_preview:
     needs:
     - upload_release_assets
-    if: 'false'
+    if: |
+      false
+      && startsWith(github.ref, 'refs/tags/v')
+      && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: gh release edit "$GITHUB_REF_NAME" --draft=false
@@ -335,6 +340,14 @@ jobs:
       shell: bash -euxo pipefail {0}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: release::create_sentry_release
+      uses: getsentry/action-release@526942b68292201ac6bbb99b9a0747d4abee354c
+      with:
+        environment: production
+      env:
+        SENTRY_ORG: zed-dev
+        SENTRY_PROJECT: zed
+        SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: true

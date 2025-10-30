@@ -2,7 +2,7 @@ use gh_workflow::{Concurrency, Event, Expression, Job, Push, Run, Step, Use, Wor
 
 use crate::tasks::workflows::{
     run_bundling, run_tests, runners,
-    steps::{self, NamedJob, dependant_job, named},
+    steps::{self, NamedJob, dependant_job, named, release_job},
 };
 
 // ideal release flow:
@@ -64,13 +64,31 @@ fn auto_release_preview(deps: &[&NamedJob; 1]) -> NamedJob {
     named::job(
         dependant_job(deps)
             .runs_on(runners::LINUX_SMALL)
-            .cond(Expression::new("false")) // todo! enable
+            .cond(Expression::new(indoc::indoc!(
+                r#"
+                false
+                && startsWith(github.ref, 'refs/tags/v')
+                && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
+            "# // todo! enable
+            )))
             .add_step(
                 steps::script(r#"gh release edit "$GITHUB_REF_NAME" --draft=false"#)
                     .add_env(("GITHUB_TOKEN", "${{ secrets.GITHUB_TOKEN }}")),
-            ),
-        // todo! sentry release
+            )
+            .add_step(create_sentry_release()),
     )
+}
+
+fn create_sentry_release() -> Step<Use> {
+    named::uses(
+        "getsentry",
+        "action-release",
+        "526942b68292201ac6bbb99b9a0747d4abee354c", // v3
+    )
+    .add_env(("SENTRY_ORG", "zed-dev"))
+    .add_env(("SENTRY_PROJECT", "zed"))
+    .add_env(("SENTRY_AUTH_TOKEN", "${{ secrets.SENTRY_AUTH_TOKEN }}"))
+    .add_with(("environment", "production"))
 }
 
 fn use_fake_job_instead(_: Job) -> Job {
@@ -164,7 +182,7 @@ fn upload_release_assets(deps: &[&NamedJob], bundle_jobs: &ReleaseBundleJobs) ->
             .add_step(steps::script("ls -lR ./artifacts"))
             .add_step(prep_release_artifacts(bundle_jobs))
             .add_step(
-                steps::script("gh release upload \"$GITHUB_REF_NAME\" release-artifacts/*")
+                steps::script("gh release upload \"$GITHUB_REF_NAME\" --repo=zed-industries/zed release-artifacts/*")
                     .add_env(("GITHUB_TOKEN", "${{ secrets.GITHUB_TOKEN }}")),
             ),
     )
@@ -172,7 +190,7 @@ fn upload_release_assets(deps: &[&NamedJob], bundle_jobs: &ReleaseBundleJobs) ->
 
 fn create_draft_release() -> NamedJob {
     named::job(
-        dependant_job(&[]).runs_on(runners::LINUX_SMALL).add_step(
+        release_job(&[]).runs_on(runners::LINUX_SMALL).add_step(
             named::uses(
                 "softprops",
                 "action-gh-release",
