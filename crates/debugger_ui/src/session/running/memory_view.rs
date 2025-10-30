@@ -10,8 +10,9 @@ use std::{
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     Action, Along, AppContext, Axis, DismissEvent, DragMoveEvent, Empty, Entity, FocusHandle,
-    Focusable, MouseButton, Point, ScrollStrategy, ScrollWheelEvent, Subscription, Task, TextStyle,
-    UniformList, UniformListScrollHandle, WeakEntity, actions, anchored, deferred, uniform_list,
+    Focusable, ListHorizontalSizingBehavior, MouseButton, Point, ScrollStrategy, ScrollWheelEvent,
+    Subscription, Task, TextStyle, UniformList, UniformListScrollHandle, WeakEntity, actions,
+    anchored, deferred, uniform_list,
 };
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::debugger::{MemoryCell, dap_command::DataBreakpointContext, session::Session};
@@ -229,6 +230,7 @@ impl MemoryView {
             },
         )
         .track_scroll(view_state.scroll_handle)
+        .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
         .on_scroll_wheel(cx.listener(|this, evt: &ScrollWheelEvent, window, _| {
             let mut view_state = this.view_state();
             let delta = evt.delta.pixel_delta(window.line_height());
@@ -917,7 +919,17 @@ impl Render for MemoryView {
                         )
                         .with_priority(1)
                     }))
-                    .vertical_scrollbar_for(self.view_state_handle.clone(), window, cx),
+                    .custom_scrollbars(
+                        ui::Scrollbars::new(ui::ScrollAxes::Both)
+                            .tracked_scroll_handle(self.view_state_handle.clone())
+                            .with_track_along(
+                                ui::ScrollAxes::Both,
+                                cx.theme().colors().panel_background,
+                            )
+                            .tracked_entity(cx.entity_id()),
+                        window,
+                        cx,
+                    ),
             )
     }
 }

@@ -12,6 +12,7 @@ use gpui::{
     Action, AppContext, ClickEvent, Entity, FocusHandle, Focusable, MouseButton, ScrollStrategy,
     Task, UniformListScrollHandle, WeakEntity, actions, uniform_list,
 };
+use itertools::Itertools;
 use language::Point;
 use project::{
     Project,
@@ -24,7 +25,7 @@ use project::{
 };
 use ui::{
     Divider, DividerColor, FluentBuilder as _, Indicator, IntoElement, ListItem, Render,
-    StatefulInteractiveElement, Tooltip, WithScrollbar, prelude::*,
+    ScrollAxes, StatefulInteractiveElement, Tooltip, WithScrollbar, prelude::*,
 };
 use util::rel_path::RelPath;
 use workspace::Workspace;
@@ -55,6 +56,7 @@ pub(crate) struct BreakpointList {
     focus_handle: FocusHandle,
     scroll_handle: UniformListScrollHandle,
     selected_ix: Option<usize>,
+    max_width_index: Option<usize>,
     input: Entity<Editor>,
     strip_mode: Option<ActiveBreakpointStripMode>,
     serialize_exception_breakpoints_task: Option<Task<anyhow::Result<()>>>,
@@ -95,6 +97,7 @@ impl BreakpointList {
                 dap_store,
                 worktree_store,
                 breakpoints: Default::default(),
+                max_width_index: None,
                 workspace,
                 session,
                 focus_handle,
@@ -570,6 +573,8 @@ impl BreakpointList {
                     .collect()
             }),
         )
+        .with_horizontal_sizing_behavior(gpui::ListHorizontalSizingBehavior::Unconstrained)
+        .with_width_from_item(self.max_width_index)
         .track_scroll(self.scroll_handle.clone())
         .flex_1()
     }
@@ -732,6 +737,25 @@ impl Render for BreakpointList {
                 .chain(exception_breakpoints),
         );
 
+        let text_pixels = ui::TextSize::Default.pixels(cx).to_f64() as f32;
+
+        self.max_width_index = self
+            .breakpoints
+            .iter()
+            .map(|entry| match &entry.kind {
+                BreakpointEntryKind::LineBreakpoint(line_bp) => {
+                    let name_and_line = format!("{}:{}", line_bp.name, line_bp.line);
+                    let dir_len = line_bp.dir.as_ref().map(|d| d.len()).unwrap_or(0);
+                    (name_and_line.len() + dir_len) as f32 * text_pixels
+                }
+                BreakpointEntryKind::ExceptionBreakpoint(exc_bp) => {
+                    exc_bp.data.label.len() as f32 * text_pixels
+                }
+                BreakpointEntryKind::DataBreakpoint(data_bp) => {
+                    data_bp.0.context.human_readable_label().len() as f32 * text_pixels
+                }
+            })
+            .position_max_by(|left, right| left.total_cmp(right));
 
         v_flex()
             .id("breakpoint-list")
@@ -750,7 +774,14 @@ impl Render for BreakpointList {
             .size_full()
             .pt_1()
             .child(self.render_list(cx))
-            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
+            .custom_scrollbars(
+                ui::Scrollbars::new(ScrollAxes::Both)
+                    .tracked_scroll_handle(self.scroll_handle.clone())
+                    .with_track_along(ScrollAxes::Both, cx.theme().colors().panel_background)
+                    .tracked_entity(cx.entity_id()),
+                window,
+                cx,
+            )
             .when_some(self.strip_mode, |this, _| {
                 this.child(Divider::horizontal().color(DividerColor::Border))
                     .child(
