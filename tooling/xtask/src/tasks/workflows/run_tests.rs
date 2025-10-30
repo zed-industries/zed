@@ -302,7 +302,9 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
     NamedJob {
         name: format!("run_tests_{platform}"),
         job: release_job(&[])
-            .cond(Expression::new("false"))
+            .cond(Expression::new(
+                "github.repository_owner == 'zed-industries'",
+            ))
             .runs_on(runner)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
