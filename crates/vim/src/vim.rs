@@ -640,15 +640,34 @@ impl Vim {
                 vim.switch_mode(Mode::Normal, false, window, cx)
             });
 
-            Vim::action(editor, cx, |vim, _: &editor::actions::Paste, window, cx| {
-                // TODO!: Update this to actually call `vim.paste`?
-                // What should the action's fields be in that case?
-                if let Some(editor) = vim.editor() {
-                    editor.update(cx, |editor, cx| {
-                        editor.paste(&editor::actions::Paste, window, cx)
-                    });
-                }
-            });
+            Vim::action(
+                editor,
+                cx,
+                |vim, _: &editor::actions::Paste, window, cx| match vim.mode {
+                    Mode::Replace => {
+                        let text = vim.update_editor(cx, |vim, editor, cx| {
+                            let selected_register = vim.selected_register.take();
+
+                            Vim::update_globals(cx, |globals, cx| {
+                                globals.read_register(selected_register, Some(editor), cx)
+                            })
+                            .filter(|reg| !reg.text.is_empty())
+                        });
+
+                        if let Some(text) = text {
+                            if let Some(register) = text {
+                                vim.push_operator(Operator::Replace, window, cx);
+                                vim.normal_replace(Arc::from(register.text), window, cx);
+                            }
+                        }
+                    }
+                    _ => {
+                        vim.update_editor(cx, |_vim, editor, cx| {
+                            editor.paste(&editor::actions::Paste, window, cx)
+                        });
+                    }
+                },
+            );
 
             Vim::action(editor, cx, |vim, _: &SwitchToInsertMode, window, cx| {
                 vim.switch_mode(Mode::Insert, false, window, cx)
