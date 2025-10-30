@@ -2843,8 +2843,60 @@ mod tests {
     }
 }
 
+#[cfg(any(test, feature = "bench-support"))]
+const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?<path>[^"]+)", line (?P<line>[0-9]+)"#;
+
+#[cfg(any(test, feature = "bench-support"))]
+const DEFAULT_LINE_COLUMN_REGEX: &str = r#"(?xs)
+    ((?<=[ ])|^)
+    (?<paren>[(])?(?<brace>[{])?(?<bracket>[\[])?(?<angle>[<])?(?<quote>["'`])?
+    (?<path>[^ ]+
+        (?=
+            (?<line_column>:+[0-9]+:[0-9]+|:?\([0-9]+[,:][0-9]+\))
+            (?<suffix>
+                (?(<quote>)\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\]]?)(?(<angle>)[>]?)
+                (?(<line_column>)((:[^ 0-9]?[^ ]*|[:)}\]>]+)?([ ]+|$))|([.,]*([ ]+|$)))
+            )
+        )
+        \k<line_column>
+    )
+    \k<suffix>"#;
+
+#[cfg(any(test, feature = "bench-support"))]
+const DEFAULT_LINE_REGEX: &str = r#"(?xs)
+    ((?<=[ ])|^)
+    (?<paren>[(])?(?<brace>[{])?(?<bracket>[\[])?(?<angle>[<])?(?<quote>["'`])?
+    (?<path>[^ ]+
+        (?=
+            (?<line>:+[0-9]+|:?\([0-9]+\))
+            (?<suffix>
+                (?(<quote>)\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\]]?)(?(<angle>)[>]?)
+                (?(<line>)((:[^ 0-9]?[^ ]*|[:)}\]>]+)?([ ]+|$))|([.,]*([ ]+|$)))
+            )
+        )
+        \k<line>
+    )
+    \k<suffix>"#;
+
+#[cfg(any(test, feature = "bench-support"))]
+const DEFAULT_REGEX: &str = r#"(?xs)
+    ((?<=[ ])|^)
+    (?<paren>[(])?(?<brace>[{])?(?<bracket>[\[])?(?<angle>[<])?(?<quote>["'`])?
+    (?<path>[^ ]+
+        (?=
+            (?<suffix>
+                (?(<quote>)\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\]]?)(?(<angle>)[>]?)
+                [.,:)}\]>]*([ ]+|$)
+            )
+        )
+    )
+    \k<suffix>"#;
+
 #[cfg(feature = "bench-support")]
 pub mod bench {
+    use super::{
+        DEFAULT_LINE_COLUMN_REGEX, DEFAULT_LINE_REGEX, DEFAULT_REGEX, PYTHON_FILE_LINE_REGEX,
+    };
     use crate::terminal_hyperlinks::{RegexSearches, find_from_grid_point};
     use alacritty_terminal::{
         event::VoidListener,
@@ -2857,14 +2909,11 @@ pub mod bench {
         term: &Term<VoidListener>,
         point: AlacPoint,
     ) -> Option<(String, bool, Match)> {
-        const PATH_HYPERLINK_REGEXES: [&str; 2] = [
-            r#"File "(?<path>[^"]+)", line (?P<line>[0-9]+)"#,
-            concat!(
-                r#"((?<=[ ])|^)(?<paren>[(])?(?<brace>[{])?(?<bracket>[\[])?(?<angle>[<])?(?<quote>["'`])?"#,
-                r#"(?<path>[^ ]+?(:+[0-9]+(:[0-9]+)?|:?\([0-9]+([,:][0-9]+)?\))?)"#,
-                r#"(?(<quote>)\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\]]?)(?(<angle>)[>]?)"#,
-                r#"(:[^ 0-9]|[:.,]*([ ]+|$))"#
-            ),
+        const PATH_HYPERLINK_REGEXES: [&str; 4] = [
+            PYTHON_FILE_LINE_REGEX,
+            DEFAULT_LINE_COLUMN_REGEX,
+            DEFAULT_LINE_REGEX,
+            DEFAULT_REGEX,
         ];
         const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
 

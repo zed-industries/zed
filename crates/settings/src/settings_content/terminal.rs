@@ -139,10 +139,64 @@ pub struct TerminalSettingsContent {
     /// Regexes used to identify paths for hyperlink navigation.
     ///
     /// Default: [
-    ///   "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
-    ///   "((?<=[ ])|^)(?<paren>[(])?(?<brace>[{])?(?<bracket>[\\[])?(?<angle>[<])?(?<quote>[\"'`])?(?<path>[^ ]+?(:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))?)(?(<quote>)\\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\\]]?)(?(<angle>)[>]?)(:[^ 0-9]|[:.,]*([ ]+|$))"
-    /// ],
-    pub path_hyperlink_regexes: Option<Vec<String>>,
+    ///   // Python-style diagnostics
+    ///   ["File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)"],
+    ///   // Common path syntax with optional line, column, description,
+    ///   // trailing punctuation, or surrounding symbols or quotes
+    ///   [
+    ///     "(?xs)",
+    ///     // must follow space or start of the line
+    ///     "((?<=[ ])|^)",
+    ///     // optionally starts with prefix symbols or quotes not part of path
+    ///     "(?<paren>[(])?(?<brace>[{])?(?<bracket>[\\[])?(?<angle>[<])?(?<quote>[\"'`])?",
+    ///     // `path` is the longest sequence of any non-space character
+    ///     "(?<path>[^ ]+",
+    ///     // which is followed by a line, column, and suffix
+    ///     "    (?=",
+    ///     "        (?<line_column>:+[0-9]+:[0-9]+|:?\\([0-9]+[,:][0-9]+\\))",
+    ///     "        (?<suffix>",
+    ///     "            (?(<quote>)\\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\\]]?)(?(<angle>)[>]?)",
+    ///     "            (?(<line_column>)((:[^ 0-9]?[^ ]*|[:)}\\]>]+)?([ ]+|$))|([.,]*([ ]+|$)))",
+    ///     "        )",
+    ///     "    )",
+    ///     // appended with the line and column
+    ///     "    \\k<line_column>",
+    ///     ")",
+    ///     // followed by the suffix
+    ///     "\\k<suffix>"
+    ///   ],
+    ///   [
+    ///     "(?xs)",
+    ///     "((?<=[ ])|^)",
+    ///     "(?<paren>[(])?(?<brace>[{])?(?<bracket>[\\[])?(?<angle>[<])?(?<quote>[\"'`])?",
+    ///     "(?<path>[^ ]+",
+    ///     "    (?=",
+    ///     "        (?<line>:+[0-9]+|:?\\([0-9]+\\))",
+    ///     "        (?<suffix>",
+    ///     "            (?(<quote>)\\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\\]]?)(?(<angle>)[>]?)",
+    ///     "            (?(<line>)((:[^ 0-9]?[^ ]*|[:)}\\]>]+)?([ ]+|$))|([.,]*([ ]+|$)))",
+    ///     "        )",
+    ///     "    )",
+    ///     "    \\k<line>",
+    ///     ")",
+    ///     "\\k<suffix>"
+    ///   ],
+    ///   [
+    ///     "(?xs)",
+    ///     "((?<=[ ])|^)",
+    ///     "(?<paren>[(])?(?<brace>[{])?(?<bracket>[\\[])?(?<angle>[<])?(?<quote>[\"'`])?",
+    ///     "(?<path>[^ ]+",
+    ///     "    (?=",
+    ///     "        (?<suffix>",
+    ///     "            (?(<quote>)\\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\\]]?)(?(<angle>)[>]?)",
+    ///     "            [.,:)}\\]>]*([ ]+|$)",
+    ///     "        )",
+    ///     "    )",
+    ///     ")",
+    ///     "\\k<suffix>"
+    ///   ]
+    /// ]
+    pub path_hyperlink_regexes: Option<Vec<Vec<String>>>,
     /// Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
     ///
     /// Default: 10

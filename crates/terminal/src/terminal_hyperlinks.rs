@@ -51,6 +51,7 @@ impl RegexSearches {
                                 ),
                                 error
                             );
+                            info!("Failed regex was: \n{}", regex.as_ref());
                         })
                         .ok()
                 })
@@ -312,6 +313,9 @@ fn regex_match_at<T>(term: &Term<T>, point: AlacPoint, regex: &mut RegexSearch) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        DEFAULT_LINE_COLUMN_REGEX, DEFAULT_LINE_REGEX, DEFAULT_REGEX, PYTHON_FILE_LINE_REGEX,
+    };
     use alacritty_terminal::{
         event::VoidListener,
         grid::Dimensions,
@@ -520,9 +524,9 @@ mod tests {
             test_path!("/test/cool.rs(4,2)👉:", "What is this?");
 
             // path, line, column, and description
-            test_path!("‹«/test/co👉ol.rs»:«4»:«2»›:Error!");
             test_path!("/test/cool.rs:4:2👉:Error!");
             test_path!("/test/cool.rs:4:2:👉Error!");
+            test_path!("‹«/test/co👉ol.rs»:«4»:«2»›:Error!");
             test_path!("‹«/test/co👉ol.rs»(«4»,«2»)›:Error!");
 
             // Cargo output
@@ -597,6 +601,7 @@ mod tests {
             test_path!("‹«/test/co👉ol.rs»::«42»›");
             test_path!("‹«/test/co👉ol.rs»::«42»›:");
             test_path!("‹«/test/co👉ol.rs:4:2»(«1»,«618»)›");
+            test_path!("‹«/test/co👉ol.rs:4:2»(«1»,«618»)›:");
             test_path!("‹«/test/co👉ol.rs»(«1»,«618»)›::");
         }
 
@@ -616,9 +621,9 @@ mod tests {
 
             // Imbalanced
             test_path!("([‹«/test/co👉ol.rs»:«4»›] was here...)");
-            test_path!("[Here's <‹«/test/co👉ol.rs:4>]»›");
+            test_path!("[Here's <‹«/test/co👉ol.rs»:«4»›>]");
             test_path!("('‹«/test/co👉ol.rs»:«4»›' was here...)");
-            test_path!("[Here's ‹«`/test/co👉ol.rs:4`]»›");
+            test_path!("[Here's `‹«/test/co👉ol.rs»:«4»›`]");
         }
 
         #[test]
@@ -628,7 +633,7 @@ mod tests {
             test_path!("[\"‹«/test/co👉ol.rs»:«4»›\"]:,");
             test_path!("'‹«(/test/co👉ol.rs:4),,»›'..");
             test_path!("('‹«/test/co👉ol.rs»:«4»›'::: was here...)");
-            test_path!("[Here's <‹«/test/co👉ol.rs:4>]»›::: ");
+            test_path!("[Here's <‹«/test/co👉ol.rs»:«4»›>]::: ");
         }
 
         #[test]
@@ -806,6 +811,20 @@ mod tests {
             fn invalid_row_column_should_be_part_of_path() {
                 test_path!("‹«/👉test/cool.rs:1:618033988749»›");
                 test_path!("‹«/👉test/cool.rs(1,618033988749)»›");
+            }
+
+            #[test]
+            #[cfg_attr(
+                not(target_os = "windows"),
+                should_panic(expected = "Path = «/te:st/co:ol.r:s:4:2::::::»")
+            )]
+            #[cfg_attr(
+                target_os = "windows",
+                should_panic(expected = r#"Path = «C:\\te:st\\co:ol.r:s:4:2::::::»"#)
+            )]
+            fn many_trailing_colons_should_be_parsed_as_part_of_the_path() {
+                test_path!("‹«/te:st/👉co:ol.r:s:4:2::::::»›");
+                test_path!("/test/cool.rs:::👉:");
             }
         }
 
@@ -1417,19 +1436,10 @@ mod tests {
         hyperlink_kind: HyperlinkKind,
         source_location: &str,
     ) {
-        const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?<path>[^"]+)", line (?P<line>[0-9]+)"#;
         const CARGO_DIR_REGEX: &str = r#"\s+(Compiling|Checking|Documenting) [^(]+\((?<path>.+)\)"#;
         const RUST_DIAGNOSTIC_REGEX: &str = r#"\s+(-->|:::|at) (?<path>.+?)(:$|$)"#;
         const ISSUE_12338_REGEX: &str = r#"[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} (?<path>.+)"#;
         const MULTIPLE_SAME_LINE_REGEX: &str = r#"(?<path>🦀 multiple_same_line 🦀):"#;
-        // Matches MSBuild diagnostic suffixes for path parsing in PathWithPosition
-        // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
-        const DEFAULT_REGEXES: &str = concat!(
-            r#"((?<=[ ])|^)(?<paren>[(])?(?<brace>[{])?(?<bracket>[\[])?(?<angle>[<])?(?<quote>["'`])?"#,
-            r#"(?<path>[^ ]+?(:+[0-9]+(:[0-9]+)?|:?\([0-9]+([,:][0-9]+)?\))?)"#,
-            r#"(?(<quote>)\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\]]?)(?(<angle>)[>]?)"#,
-            r#"(:[^ 0-9]|[:.,]*([ ]+|$))"#
-        );
         const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
 
         thread_local! {
@@ -1441,7 +1451,9 @@ mod tests {
                         CARGO_DIR_REGEX,
                         ISSUE_12338_REGEX,
                         MULTIPLE_SAME_LINE_REGEX,
-                        DEFAULT_REGEXES,
+                        DEFAULT_LINE_COLUMN_REGEX,
+                        DEFAULT_LINE_REGEX,
+                        DEFAULT_REGEX,
                     ],
                     PATH_HYPERLINK_TIMEOUT_MS)
                 });
