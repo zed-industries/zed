@@ -275,7 +275,7 @@ impl VsCodeSettings {
             }),
             redact_private_values: None,
             relative_line_numbers: self.read_enum("editor.lineNumbers", |s| match s {
-                "relative" => Some(RelativeLineNumbers::Enabled),
+                "relative" => Some(true),
                 _ => None,
             }),
             rounded_selection: self.read_bool("editor.roundedSelection"),
@@ -855,6 +855,7 @@ impl VsCodeSettings {
     fn worktree_settings_content(&self) -> WorktreeSettingsContent {
         WorktreeSettingsContent {
             project_name: crate::Maybe::Unset,
+            prevent_sharing_in_public_channels: false,
             file_scan_exclusions: self
                 .read_value("files.watcherExclude")
                 .and_then(|v| v.as_array())

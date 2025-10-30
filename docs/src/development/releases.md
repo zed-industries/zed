@@ -44,7 +44,7 @@ This is mostly a formality on Wednesday's minor update releases, but can be bene
 1. Check the stable release assets.
 
    - Ensure the stable release job has finished without error.
-   - Ensure the draft has the proper number of assets—releases currently have 11 assets each.
+   - Ensure the draft has the proper number of assets—releases currently have 12 assets each (as of v0.211).
    - Download the artifacts for the stable release draft and test that you can run them locally.
 
 1. Publish the stable draft on [GitHub Releases](https://github.com/zed-industries/zed/releases).
@@ -70,7 +70,7 @@ This is mostly a formality on Wednesday's minor update releases, but can be bene
 
    - Take the script's output and build release notes by organizing each release note line into a category.
    - Use a prior release for the initial outline.
-   - Make sure to append the `Credit` line, if present, to the end of the release note line.
+   - Make sure to append the `Credit` line, if present, to the end of each release note line.
 
 1. Once the preview release draft is up on [GitHub Releases](https://github.com/zed-industries/zed/releases), paste the preview release notes into it and **save**.
 
@@ -79,7 +79,7 @@ This is mostly a formality on Wednesday's minor update releases, but can be bene
 1. Check the preview release assets.
 
    - Ensure the preview release job has finished without error.
-   - Ensure the draft has the proper number of assets—releases currently have 11 assets each.
+   - Ensure the draft has the proper number of assets—releases currently have 12 assets each (as of v0.211).
    - Download the artifacts for the preview release draft and test that you can run them locally.
 
 1. Publish the preview draft on [GitHub Releases](https://github.com/zed-industries/zed/releases).

@@ -568,18 +568,15 @@ impl WrapSnapshot {
             let mut old_start = old_cursor.start().output.lines;
             old_start += tab_edit.old.start.0 - old_cursor.start().input.lines;
 
-            // todo(lw): Should these be seek_forward?
-            old_cursor.seek(&tab_edit.old.end, Bias::Right);
+            old_cursor.seek_forward(&tab_edit.old.end, Bias::Right);
             let mut old_end = old_cursor.start().output.lines;
             old_end += tab_edit.old.end.0 - old_cursor.start().input.lines;
 
-            // todo(lw): Should these be seek_forward?
             new_cursor.seek(&tab_edit.new.start, Bias::Right);
             let mut new_start = new_cursor.start().output.lines;
             new_start += tab_edit.new.start.0 - new_cursor.start().input.lines;
 
-            // todo(lw): Should these be seek_forward?
-            new_cursor.seek(&tab_edit.new.end, Bias::Right);
+            new_cursor.seek_forward(&tab_edit.new.end, Bias::Right);
             let mut new_end = new_cursor.start().output.lines;
             new_end += tab_edit.new.end.0 - new_cursor.start().input.lines;
 
@@ -1017,7 +1014,6 @@ impl Iterator for WrapRows<'_> {
                 multibuffer_row: None,
                 diff_status,
                 expand_info: None,
-                wrapped_buffer_row: buffer_row.buffer_row,
             }
         } else {
             buffer_row

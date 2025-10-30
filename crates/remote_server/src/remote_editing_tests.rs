@@ -10,7 +10,7 @@ use language_model::LanguageModelToolResultContent;
 
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
-use gpui::{AppContext as _, Entity, SemanticVersion, TestAppContext};
+use gpui::{AppContext as _, Entity, SemanticVersion, SharedString, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
@@ -19,7 +19,7 @@ use language::{
 use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::{
-    Project,
+    ProgressToken, Project,
     agent_server_store::AgentServerCommand,
     search::{SearchQuery, SearchResult},
 };
@@ -710,7 +710,11 @@ async fn test_remote_cancel_language_server_work(
         cx.executor().run_until_parked();
 
         project.update(cx, |project, cx| {
-            project.cancel_language_server_work(server_id, Some(progress_token.into()), cx)
+            project.cancel_language_server_work(
+                server_id,
+                Some(ProgressToken::String(SharedString::from(progress_token))),
+                cx,
+            )
         });
 
         cx.executor().run_until_parked();
@@ -721,7 +725,7 @@ async fn test_remote_cancel_language_server_work(
             .await;
         assert_eq!(
             cancel_notification.token,
-            lsp::NumberOrString::String(progress_token.into())
+            lsp::NumberOrString::String(progress_token.to_owned())
         );
     }
 }

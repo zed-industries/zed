@@ -67,7 +67,7 @@ struct HintForId {
 /// <https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#inlayHintParams>
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BufferChunk {
-    id: usize,
+    pub id: usize,
     pub start: BufferRow,
     pub end: BufferRow,
 }
@@ -217,5 +217,9 @@ impl BufferInlayHints {
             .get_mut(hint_for_id.position)?;
         debug_assert_eq!(*hint_id, id, "Invalid pointer {hint_for_id:?}");
         Some(hint)
+    }
+
+    pub fn buffer_chunks_len(&self) -> usize {
+        self.buffer_chunks.len()
     }
 }

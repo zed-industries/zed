@@ -1377,11 +1377,12 @@ impl Render for ConfigurationView {
 
                         v_flex().gap_2().child(Label::new(LABEL)).child(
                             Button::new("sign_in", "Sign in to use GitHub Copilot")
+                                .full_width()
+                                .style(ButtonStyle::Outlined)
                                 .icon_color(Color::Muted)
                                 .icon(IconName::Github)
                                 .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::Medium)
-                                .full_width()
+                                .icon_size(IconSize::Small)
                                 .on_click(|_, window, cx| copilot::initiate_sign_in(window, cx)),
                         )
                     }

@@ -4,14 +4,12 @@ Zed is designed to be configured: we want to fit your workflow and preferences e
 
 In addition to the settings described here, you may also want to change your [theme](./themes.md), configure your [key bindings](./key-bindings.md), set up [tasks](./tasks.md) or install [extensions](https://github.com/zed-industries/extensions).
 
-## Settings Window
+## Settings Editor
 
-You can browse through many of the supported settings by using the settings window, which can be opened with the {#kb zed::OpenSettings} keybinding, or through the `zed: open settings` action in the command palette.
+You can browse through many of the supported settings via the Settings Editor, which can be opened with the {#kb zed::OpenSettings} keybinding, or through the `zed: open settings` action in the command palette. Through it, you can customize your local, user settings as well as project settings.
 
-Through it, you can customize your local, user settings as well as project settings.
-
-> Note that not all settings that Zed supports are available through the UI yet.
-> Some more intricate ones—for example, language formatters—can only be changed through the JSON settings file.
+> Note that not all settings that Zed supports are available through the Settings Editor yet.
+> Some more intricate ones, such as language formatters, can only be changed through the JSON settings file {#kb zed::OpenSettingsFile}.
 
 ## User Settings File
 
@@ -29,8 +27,8 @@ Whatever you have added to your user settings file gets merged with any local co
 
 ### Default Settings
 
-When visiting the settings UI, the values you see set are the default ones.
-You can also verify all of them in JSON form by running {#action zed::OpenDefaultSettings} from the command palette.
+In the Settings Editor, the values you see set are the default ones.
+You can also verify them in JSON by running {#action zed::OpenDefaultSettings} from the command palette.
 
 Extensions that provide language servers may also provide default settings for those language servers.
 
@@ -67,9 +65,9 @@ They are merged into the base configuration with settings from these keys taking
 
 With this configuration, Stable keeps all base preferences, Preview switches to `zed-dark`, and Nightly enables Vim mode with a different theme.
 
-Changing settings via the UI will always apply the change across all channels.
+Changing settings in the Settings Editorwill always apply the change across all channels.
 
----
+# Settings
 
 Find below an extensive run-through of many supported settings by Zed.
 
