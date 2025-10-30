@@ -1300,16 +1300,12 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 this.handle_keyboard_layout_change();
             }
             wl_keyboard::Event::Enter { surface, .. } => {
-                let window = get_window(&mut state, &surface.id());
-                if window.as_ref().is_some() {
-                    state.keyboard_focused_window = window;
+                state.keyboard_focused_window = get_window(&mut state, &surface.id());
+                state.enter_token = Some(());
 
-                    state.enter_token = Some(());
-
-                    if let Some(window) = state.keyboard_focused_window.clone() {
-                        drop(state);
-                        window.set_focused(true);
-                    }
+                if let Some(window) = state.keyboard_focused_window.clone() {
+                    drop(state);
+                    window.set_focused(true);
                 }
             }
             wl_keyboard::Event::Leave { surface, .. } => {
