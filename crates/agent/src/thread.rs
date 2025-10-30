@@ -1660,15 +1660,34 @@ impl Thread {
                     Some(acc)
                 }
 
+                // Pre-token-count log (single line, existing locals only).
+                log::debug!(
+                    "summary: preparing token count (messages={}, max_tokens={})",
+                    full_request.messages.len(),
+                    model.max_token_count()
+                );
+
                 // Attempt token counting to decide split.
                 let need_split = {
                     let max_tokens = model.max_token_count() as u64;
                     if let Ok(fut) = cx.update(|app| model.count_tokens(full_request.clone(), app)) {
                         match fut.await {
-                            Ok(token_count) => token_count > max_tokens,
-                            Err(_) => false,
+                            Ok(token_count) => {
+                                log::debug!(
+                                    "summary: token_count={} max_tokens={} messages={}",
+                                    token_count,
+                                    max_tokens,
+                                    full_request.messages.len()
+                                );
+                                token_count > max_tokens
+                            }
+                            Err(e) => {
+                                log::debug!("summary: token counting failed: {e}");
+                                false
+                            }
                         }
                     } else {
+                        log::debug!("summary: token counting future creation failed");
                         false
                     }
                 };
@@ -1717,18 +1736,27 @@ impl Thread {
                         let req1 = build_part_request(part1_msgs);
                         let req2 = build_part_request(part2_msgs);
 
-                        let (s1, s2) = futures::join!(
+                        let (s1_opt, s2_opt) = futures::join!(
                             async { run_summary_request(this, &model, req1, cx) },
                             async { run_summary_request(this, &model, req2, cx) }
                         );
-                        let s1 = s1.unwrap_or_default();
-                        let s2 = s2.unwrap_or_default();
+                        let part1_len = s1_opt.as_ref().map(|s| s.len()).unwrap_or(0);
+                        let part2_len = s2_opt.as_ref().map(|s| s.len()).unwrap_or(0);
+                        log::debug!(
+                            "summary: partial summaries generated (part1_len={}, part2_len={})",
+                            part1_len,
+                            part2_len
+                        );
+
+                        let s1 = s1_opt.unwrap_or(String::new());
+                        let s2 = s2_opt.unwrap_or(String::new());
 
                         // Merge pass.
                         let merge_prompt = format!(
                             "Partial summary A:\n{}\n\nPartial summary B:\n{}\n\nCombine these into one concise, comprehensive summary without duplication.",
                             s1, s2
                         );
+                        log::debug!("summary: merging partial summaries");
                         let mut merge_req = LanguageModelRequest {
                             intent: Some(CompletionIntent::ThreadContextSummarization),
                             temperature: full_request.temperature,
@@ -1739,7 +1767,12 @@ impl Thread {
                             content: vec![merge_prompt.into()],
                             cache: false,
                         });
-                        run_summary_request(this, &model, merge_req, cx)
+                        let merged = run_summary_request(this, &model, merge_req, cx);
+                        log::debug!(
+                            "summary: multi-pass merge finished merged_len={}",
+                            merged.as_ref().map(|s| s.len()).unwrap_or(0)
+                        );
+                        merged
                     }
                 } else {
                     run_summary_request(this, &model, full_request.clone(), cx)
