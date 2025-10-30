@@ -4,7 +4,7 @@ The Agent Panel allows you to interact with many LLMs and coding agents that can
 
 To open it, use the `agent: new thread` action in [the Command Palette](../getting-started.md#command-palette) or click the ✨ (sparkles) icon in the status bar.
 
-## Getting Started
+## Getting Started {#getting-started}
 
 If you're using the Agent Panel for the first time, you need to have at least one LLM provider or external agent configured.
 You can do that by:
