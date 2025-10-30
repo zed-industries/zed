@@ -289,14 +289,15 @@ jobs:
     steps:
     - name: release::upload_release_assets::download_workflow_artifacts
       uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+      with:
+        path: ./
+        merge-multiple: true
     - name: release::upload_release_assets::prep_release_artifacts
       run: |-
         mkdir -p release-artifacts/
 
         mv ${{ needs.bundle_linux_arm64.outputs.zed }} release-artifacts/zed-linux-aarch64.tar.gz
-        mv ${{ needs.bundle_linux_arm64.outputs.remote-server }} release-artifacts/zed-remote-server-linux-aarch64.gz
         mv ${{ needs.bundle_linux_x86_64.outputs.zed }} release-artifacts/zed-linux-x86_64.tar.gz
-        mv ${{ needs.bundle_linux_arm64.outputs.zed }} release-artifacts/zed-linux-aarch64.tar.gz
         mv ${{ needs.bundle_mac_x86_64.outputs.zed }} release-artifacts/Zed-x86_64.dmg
         mv ${{ needs.bundle_mac_arm64.outputs.zed }} release-artifacts/Zed-aarch64.dmg
         mv ${{ needs.bundle_windows_x86_64.outputs.zed }} release-artifacts/Zed-x86_64.exe

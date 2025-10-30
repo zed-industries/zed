@@ -79,18 +79,16 @@ fn upload_release_assets(deps: &[&NamedJob], bundle_jobs: &ReleaseBundleJobs) ->
             "download-artifact",
             "018cc2cf5baa6db3ef3c5f8a56943fffe632ef53", // v6.0.0
         )
+        .add_with(("path", "./"))
+        .add_with(("merge-multiple", true))
     }
 
+    // todo! split this up per release
+    // upload_release_artifacts_job(platform, arm64_job, x86_64_job)
     fn prep_release_artifacts(bundle: &ReleaseBundleJobs) -> Step<Run> {
         let assets = [
             (&bundle.linux_arm64.name, "zed", "zed-linux-aarch64.tar.gz"),
-            (
-                &bundle.linux_arm64.name,
-                "remote-server",
-                "zed-remote-server-linux-aarch64.gz",
-            ),
             (&bundle.linux_x86_64.name, "zed", "zed-linux-x86_64.tar.gz"),
-            (&bundle.linux_arm64.name, "zed", "zed-linux-aarch64.tar.gz"),
             (&bundle.mac_x86_64.name, "zed", "Zed-x86_64.dmg"),
             (&bundle.mac_arm64.name, "zed", "Zed-aarch64.dmg"),
             (&bundle.windows_x86_64.name, "zed", "Zed-x86_64.exe"),
