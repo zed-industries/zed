@@ -16,6 +16,9 @@ You can do that by:
 
 If you have already set up an LLM provider to interact with [the Agent Panel](./agent-panel.md#getting-started), then that will also work for the Inline Assistant.
 
+> Different the Agent Panel, though, the only exception at the moment is [external agents](./external-agents.md).
+> They currently can't be used for generating changes with the Inline Assistant.
+
 ## Adding Context
 
 You can add context in the Inline Assistant the same way you can in [the Agent Panel](./agent-panel.md#adding-context):
