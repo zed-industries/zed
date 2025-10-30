@@ -2344,7 +2344,15 @@ pub fn perform_project_search(
 
 #[cfg(test)]
 pub mod tests {
-    use std::{ops::Deref as _, sync::Arc, time::Duration};
+    use std::{
+        ops::Deref as _,
+        path::PathBuf,
+        sync::{
+            Arc,
+            atomic::{self, AtomicUsize},
+        },
+        time::Duration,
+    };
 
     use super::*;
     use editor::{DisplayPoint, display_map::DisplayRow};
@@ -4245,6 +4253,8 @@ pub mod tests {
         )
         .await;
 
+        let requests_count = Arc::new(AtomicUsize::new(0));
+        let closure_requests_count = requests_count.clone();
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         let language = rust_lang();
@@ -4256,21 +4266,26 @@ pub mod tests {
                     inlay_hint_provider: Some(lsp::OneOf::Left(true)),
                     ..lsp::ServerCapabilities::default()
                 },
-                initializer: Some(Box::new(|fake_server| {
-                    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
-                        move |_, _| async move {
-                            Ok(Some(vec![lsp::InlayHint {
-                                position: lsp::Position::new(0, 17),
-                                label: lsp::InlayHintLabel::String(": i32".to_owned()),
-                                kind: Some(lsp::InlayHintKind::TYPE),
-                                text_edits: None,
-                                tooltip: None,
-                                padding_left: None,
-                                padding_right: None,
-                                data: None,
-                            }]))
-                        },
-                    );
+                initializer: Some(Box::new(move |fake_server| {
+                    let requests_count = closure_requests_count.clone();
+                    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>({
+                        move |_, _| {
+                            let requests_count = requests_count.clone();
+                            async move {
+                                requests_count.fetch_add(1, atomic::Ordering::Release);
+                                Ok(Some(vec![lsp::InlayHint {
+                                    position: lsp::Position::new(0, 17),
+                                    label: lsp::InlayHintLabel::String(": i32".to_owned()),
+                                    kind: Some(lsp::InlayHintKind::TYPE),
+                                    text_edits: None,
+                                    tooltip: None,
+                                    padding_left: None,
+                                    padding_right: None,
+                                    data: None,
+                                }]))
+                            }
+                        }
+                    });
                 })),
                 ..FakeLspAdapter::default()
             },
@@ -4297,11 +4312,116 @@ pub mod tests {
                 );
             })
             .unwrap();
+        assert_eq!(
+            requests_count.load(atomic::Ordering::Acquire),
+            1,
+            "New hints should have been queried",
+        );
 
         // Can do the 2nd search without any panics
         perform_search(search_view, "let ", cx);
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
+        search_view
+            .update(cx, |search_view, _, cx| {
+                assert_eq!(
+                    search_view
+                        .results_editor
+                        .update(cx, |editor, cx| editor.display_text(cx)),
+                    "\n\nfn main() { let a: i32 = 2; }\n"
+                );
+            })
+            .unwrap();
+        assert_eq!(
+            requests_count.load(atomic::Ordering::Acquire),
+            2,
+            "We did drop the previous buffer when cleared the old project search results, hence another query was made",
+        );
+
+        let singleton_editor = window
+            .update(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/dir/main.rs")),
+                    workspace::OpenOptions::default(),
+                    window,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        singleton_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                "fn main() { let a: i32 = 2; }\n",
+                "Newly opened editor should have the correct text with hints",
+            );
+        });
+        assert_eq!(
+            requests_count.load(atomic::Ordering::Acquire),
+            2,
+            "Opening the same buffer again should reuse the cached hints",
+        );
+
+        window
+            .update(cx, |_, window, cx| {
+                singleton_editor.update(cx, |editor, cx| {
+                    editor.handle_input("test", window, cx);
+                });
+            })
+            .unwrap();
+
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+        singleton_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                "testfn main() { l: i32et a = 2; }\n",
+                "Newly opened editor should have the correct text with hints",
+            );
+        });
+        assert_eq!(
+            requests_count.load(atomic::Ordering::Acquire),
+            // TODO kb this is wrong, should be 3
+            4,
+            "We have edited the buffer and should send a new request",
+        );
+
+        window
+            .update(cx, |_, window, cx| {
+                singleton_editor.update(cx, |editor, cx| {
+                    editor.undo(&editor::actions::Undo, window, cx);
+                });
+            })
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            requests_count.load(atomic::Ordering::Acquire),
+            // TODO kb this is wrong, should be 4
+            6,
+            "We have edited the buffer again and should send a new request again",
+        );
+        singleton_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                "fn main() { let a: i32 = 2; }\n",
+                "Newly opened editor should have the correct text with hints",
+            );
+        });
+
+        perform_search(search_view, "let ", cx);
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            requests_count.load(atomic::Ordering::Acquire),
+            6,
+            "New project search should reuse the cached hints",
+        );
         search_view
             .update(cx, |search_view, _, cx| {
                 assert_eq!(

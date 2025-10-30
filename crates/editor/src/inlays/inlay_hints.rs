@@ -370,6 +370,12 @@ impl Editor {
             let Some(buffer) = multi_buffer.read(cx).buffer(buffer_id) else {
                 continue;
             };
+            dbg!((
+                self.buffer.read(cx).is_singleton(),
+                buffer.read(cx).file().map(|f| f.path()),
+                invalidate_cache,
+                ignore_previous_fetches,
+            ));
             let fetched_tasks = inlay_hints.hint_chunk_fetched.entry(buffer_id).or_default();
             if visible_excerpts
                 .buffer_version
