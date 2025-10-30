@@ -165,7 +165,7 @@ fn upload_release_assets(deps: &[&NamedJob], bundle_jobs: &ReleaseBundleJobs) ->
             .add_step(prep_release_artifacts(bundle_jobs))
             .add_step(
                 steps::script("gh release upload \"$GITHUB_REF_NAME\" release-artifacts/*")
-                    .add_env(("GH_TOKEN", "${{ secrets.GITHUB_TOKEN }}")),
+                    .add_env(("GITHUB_TOKEN", "${{ secrets.GITHUB_TOKEN }}")),
             ),
     )
 }

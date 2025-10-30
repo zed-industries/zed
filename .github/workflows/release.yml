@@ -323,7 +323,7 @@ jobs:
       run: gh release upload "$GITHUB_REF_NAME" release-artifacts/*
       shell: bash -euxo pipefail {0}
       env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   auto_release_preview:
     needs:
     - upload_release_assets
