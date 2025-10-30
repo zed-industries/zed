@@ -2270,4 +2270,19 @@ mod test {
             assert_eq!(workspace.active_pane().read(cx).active_item_index(), 1);
         });
     }
+
+    #[gpui::test]
+    async fn test_paste_on_replace(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(indoc! {"ˇ123"}, Mode::Replace);
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("456".to_string()));
+        cx.dispatch_action(editor::actions::Paste);
+        cx.assert_state(indoc! {"45ˇ6"}, Mode::Replace);
+
+        cx.set_state(indoc! {"ˇ123"}, Mode::Replace);
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("4567".to_string()));
+        cx.dispatch_action(editor::actions::Paste);
+        cx.assert_state(indoc! {"ˇ123"}, Mode::Replace);
+    }
 }
