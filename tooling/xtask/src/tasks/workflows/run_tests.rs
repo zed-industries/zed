@@ -25,7 +25,7 @@ pub(crate) fn run_tests() -> Workflow {
     let should_check_docs = PathCondition::new("run_docs", r"^docs/");
     let should_check_scripts = PathCondition::new(
         "run_action_checks",
-        r"^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask",
+        r"^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask|script/",
     );
     let should_check_licences =
         PathCondition::new("run_licenses", r"^(Cargo.lock|script/.*licenses)");
