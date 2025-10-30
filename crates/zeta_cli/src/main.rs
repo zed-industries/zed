@@ -4,20 +4,24 @@ mod syntax_retrieval_stats;
 mod util;
 
 use crate::syntax_retrieval_stats::retrieval_stats;
+use ::serde::Serialize;
 use ::util::paths::PathStyle;
 use anyhow::{Result, anyhow};
 use clap::{Args, Parser, Subcommand};
-use cloud_llm_client::predict_edits_v3::{self};
+use cloud_llm_client::predict_edits_v3::{self, Excerpt};
 use edit_prediction_context::{
-    EditPredictionContextOptions, EditPredictionExcerptOptions, EditPredictionScoreOptions,
+    EditPredictionContextOptions, EditPredictionExcerptOptions, EditPredictionScoreOptions, Line,
 };
+use futures::StreamExt as _;
+use futures::channel::mpsc;
 use gpui::{Application, AsyncApp, Entity, prelude::*};
-use language::{Bias, Buffer, BufferSnapshot, Point};
+use language::{Bias, Buffer, BufferSnapshot, OffsetRangeExt, Point};
+use language_model::LanguageModelRegistry;
 use project::{Project, Worktree};
 use reqwest_client::ReqwestClient;
 use serde_json::json;
 use std::{collections::HashSet, path::PathBuf, process::exit, str::FromStr, sync::Arc};
-use zeta2::ContextMode;
+use zeta2::{ContextMode, LlmContextOptions, SearchToolQuery};
 
 use crate::headless::ZetaCliAppState;
 use crate::source_location::SourceLocation;
@@ -55,6 +59,8 @@ enum Zeta1Command {
 #[derive(Subcommand, Debug)]
 enum Zeta2Command {
     Syntax {
+        #[clap(flatten)]
+        syntax_args: Zeta2SyntaxArgs,
         #[command(subcommand)]
         command: Zeta2SyntaxCommand,
     },
@@ -121,33 +127,56 @@ struct Zeta2Args {
     output_format: OutputFormat,
     #[arg(long, default_value_t = 42)]
     file_indexing_parallelism: usize,
+}
+
+#[derive(Debug, Args)]
+struct Zeta2SyntaxArgs {
     #[arg(long, default_value_t = false)]
     disable_imports_gathering: bool,
     #[arg(long, default_value_t = u8::MAX)]
     max_retrieved_definitions: u8,
 }
 
-impl Zeta2Args {
-    fn to_options(&self, omit_excerpt_overlaps: bool) -> zeta2::ZetaOptions {
-        zeta2::ZetaOptions {
-            context: ContextMode::Syntax(EditPredictionContextOptions {
-                max_retrieved_declarations: self.max_retrieved_definitions,
-                use_imports: !self.disable_imports_gathering,
-                excerpt: EditPredictionExcerptOptions {
-                    max_bytes: self.max_excerpt_bytes,
-                    min_bytes: self.min_excerpt_bytes,
-                    target_before_cursor_over_total_bytes: self
-                        .target_before_cursor_over_total_bytes,
-                },
-                score: EditPredictionScoreOptions {
-                    omit_excerpt_overlaps,
-                },
-            }),
-            max_diagnostic_bytes: self.max_diagnostic_bytes,
-            max_prompt_bytes: self.max_prompt_bytes,
-            prompt_format: self.prompt_format.clone().into(),
-            file_indexing_parallelism: self.file_indexing_parallelism,
-        }
+fn syntax_args_to_options(
+    zeta2_args: &Zeta2Args,
+    syntax_args: &Zeta2SyntaxArgs,
+    omit_excerpt_overlaps: bool,
+) -> zeta2::ZetaOptions {
+    zeta2::ZetaOptions {
+        context: ContextMode::Syntax(EditPredictionContextOptions {
+            max_retrieved_declarations: syntax_args.max_retrieved_definitions,
+            use_imports: !syntax_args.disable_imports_gathering,
+            excerpt: EditPredictionExcerptOptions {
+                max_bytes: zeta2_args.max_excerpt_bytes,
+                min_bytes: zeta2_args.min_excerpt_bytes,
+                target_before_cursor_over_total_bytes: zeta2_args
+                    .target_before_cursor_over_total_bytes,
+            },
+            score: EditPredictionScoreOptions {
+                omit_excerpt_overlaps,
+            },
+        }),
+        max_diagnostic_bytes: zeta2_args.max_diagnostic_bytes,
+        max_prompt_bytes: zeta2_args.max_prompt_bytes,
+        prompt_format: zeta2_args.prompt_format.clone().into(),
+        file_indexing_parallelism: zeta2_args.file_indexing_parallelism,
+    }
+}
+
+fn llm_args_to_options(zeta2_args: &Zeta2Args) -> zeta2::ZetaOptions {
+    zeta2::ZetaOptions {
+        context: ContextMode::Llm(LlmContextOptions {
+            excerpt: EditPredictionExcerptOptions {
+                max_bytes: zeta2_args.max_excerpt_bytes,
+                min_bytes: zeta2_args.min_excerpt_bytes,
+                target_before_cursor_over_total_bytes: zeta2_args
+                    .target_before_cursor_over_total_bytes,
+            },
+        }),
+        max_diagnostic_bytes: zeta2_args.max_diagnostic_bytes,
+        max_prompt_bytes: zeta2_args.max_prompt_bytes,
+        prompt_format: zeta2_args.prompt_format.clone().into(),
+        file_indexing_parallelism: zeta2_args.file_indexing_parallelism,
     }
 }
 
@@ -299,6 +328,7 @@ async fn load_context(
 
 async fn zeta2_syntax_context(
     zeta2_args: Zeta2Args,
+    syntax_args: Zeta2SyntaxArgs,
     args: ContextArgs,
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
@@ -324,7 +354,7 @@ async fn zeta2_syntax_context(
                 zeta2::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx)
             });
             let indexing_done_task = zeta.update(cx, |zeta, cx| {
-                zeta.set_options(zeta2_args.to_options(true));
+                zeta.set_options(syntax_args_to_options(&zeta2_args, &syntax_args, true));
                 zeta.register_buffer(&buffer, &project, cx);
                 zeta.wait_for_initial_indexing(&project, cx)
             });
@@ -361,9 +391,112 @@ async fn zeta2_llm_context(
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) -> Result<String> {
-    let LoadedContext { .. } = load_context(&context_args, app_state, cx).await?;
+    let LoadedContext {
+        buffer,
+        clipped_cursor,
+        snapshot,
+        project,
+        ..
+    } = load_context(&context_args, app_state, cx).await?;
 
-    todo!();
+    let cursor_position = snapshot.anchor_after(clipped_cursor);
+
+    cx.update(|cx| {
+        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry
+                .provider(&zeta2::related_excerpts::MODEL_PROVIDER_ID)
+                .unwrap()
+                .authenticate(cx)
+        })
+    })?
+    .await?;
+
+    let (debug_tx, mut debug_rx) = mpsc::unbounded();
+
+    let related_excerpts = cx
+        .update(|cx| {
+            zeta2::related_excerpts::find_related_excerpts(
+                buffer,
+                cursor_position,
+                &project,
+                [].into_iter(),
+                &LlmContextOptions {
+                    excerpt: EditPredictionExcerptOptions {
+                        max_bytes: zeta2_args.max_excerpt_bytes,
+                        min_bytes: zeta2_args.min_excerpt_bytes,
+                        target_before_cursor_over_total_bytes: zeta2_args
+                            .target_before_cursor_over_total_bytes,
+                    },
+                },
+                Some(debug_tx),
+                cx,
+            )
+        })?
+        .await?;
+
+    #[derive(Serialize)]
+    struct Output {
+        excerpts: Vec<OutputExcerpt>,
+        meta: OutputMeta,
+    }
+
+    #[derive(Default, Serialize)]
+    struct OutputMeta {
+        search_prompt: String,
+        search_queries: Vec<SearchToolQuery>,
+    }
+
+    #[derive(Serialize)]
+    struct OutputExcerpt {
+        path: PathBuf,
+        #[serde(flatten)]
+        excerpt: Excerpt,
+    }
+
+    let mut meta = OutputMeta::default();
+
+    while let Some(debug_info) = debug_rx.next().await {
+        match debug_info {
+            zeta2::ZetaDebugInfo::ContextRetrievalStarted(info) => {
+                meta.search_prompt = info.search_prompt;
+            }
+            zeta2::ZetaDebugInfo::SearchQueriesGenerated(info) => {
+                meta.search_queries = info.queries
+            }
+            _ => {}
+        }
+    }
+
+    cx.update(|cx| {
+        let mut excerpts = Vec::new();
+
+        for (buffer, ranges) in related_excerpts {
+            let snapshot = buffer.read(cx).snapshot();
+
+            let line_ranges = ranges.into_iter().map(|range| {
+                let point_range = range.to_point(&snapshot);
+                Line(point_range.start.row)..Line(point_range.end.row)
+            });
+
+            let Some(file) = snapshot.file() else {
+                continue;
+            };
+            let path = file.full_path(cx);
+
+            let merged_excerpts = zeta2::merge_excerpts::merge_excerpts(&snapshot, line_ranges)
+                .into_iter()
+                .map(|excerpt| OutputExcerpt {
+                    path: path.clone(),
+                    excerpt,
+                });
+            excerpts.extend(merged_excerpts);
+        }
+
+        let output = Output { excerpts, meta };
+
+        Ok(serde_json::to_string_pretty(&output)?)
+    })
+    .unwrap()
 }
 
 async fn zeta1_context(
@@ -415,9 +548,13 @@ fn main() {
                     serde_json::to_string_pretty(&context.body).map_err(|err| anyhow::anyhow!(err))
                 }
                 Command::Zeta2 { args, command } => match command {
-                    Zeta2Command::Syntax { command } => match command {
+                    Zeta2Command::Syntax {
+                        syntax_args,
+                        command,
+                    } => match command {
                         Zeta2SyntaxCommand::Context { context_args } => {
-                            zeta2_syntax_context(args, context_args, &app_state, cx).await
+                            zeta2_syntax_context(args, syntax_args, context_args, &app_state, cx)
+                                .await
                         }
                         Zeta2SyntaxCommand::Stats {
                             worktree,
@@ -431,7 +568,7 @@ fn main() {
                                 extension,
                                 limit,
                                 skip,
-                                (&args).to_options(false),
+                                syntax_args_to_options(&args, &syntax_args, false),
                                 cx,
                             )
                             .await

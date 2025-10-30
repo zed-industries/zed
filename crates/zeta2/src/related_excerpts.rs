@@ -4,8 +4,8 @@ use std::{
 };
 
 use crate::{
-    ZetaContextRetrievalDebugInfo, ZetaDebugInfo, ZetaSearchQueryDebugInfo,
-    merge_excerpts::write_merged_excerpts,
+    ZetaContextRetrievalDebugInfo, ZetaContextRetrievalStartedDebugInfo, ZetaDebugInfo,
+    ZetaSearchQueryDebugInfo, merge_excerpts::write_merged_excerpts,
 };
 use anyhow::{Result, anyhow};
 use collections::HashMap;
@@ -22,8 +22,9 @@ use language::{
 };
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolUse, MessageContent, Role,
+    LanguageModelProviderId, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
+    LanguageModelToolUse, MessageContent, Role,
 };
 use project::{
     Project, WorktreeSettings,
@@ -130,6 +131,8 @@ pub struct LlmContextOptions {
     pub excerpt: EditPredictionExcerptOptions,
 }
 
+pub const MODEL_PROVIDER_ID: LanguageModelProviderId = language_model::ANTHROPIC_PROVIDER_ID;
+
 pub fn find_related_excerpts<'a>(
     buffer: Entity<language::Buffer>,
     cursor_position: Anchor,
@@ -144,11 +147,11 @@ pub fn find_related_excerpts<'a>(
         .read(cx)
         .available_models(cx)
         .find(|model| {
-            model.provider_id() == language_model::ANTHROPIC_PROVIDER_ID
+            model.provider_id() == MODEL_PROVIDER_ID
                 && model.id() == LanguageModelId("claude-haiku-4-5-latest".into())
         })
     else {
-        return Task::ready(Err(anyhow!("could not find claude model")));
+        return Task::ready(Err(anyhow!("could not find context model")));
     };
 
     let mut edits_string = String::new();
@@ -181,6 +184,18 @@ pub fn find_related_excerpts<'a>(
         .replace("{edits}", &edits_string)
         .replace("{current_file_path}", &current_file_path)
         .replace("{cursor_excerpt}", &cursor_excerpt.text(&snapshot).body);
+
+    if let Some(debug_tx) = &debug_tx {
+        debug_tx
+            .unbounded_send(ZetaDebugInfo::ContextRetrievalStarted(
+                ZetaContextRetrievalStartedDebugInfo {
+                    project: project.clone(),
+                    timestamp: Instant::now(),
+                    search_prompt: prompt.clone(),
+                },
+            ))
+            .ok();
+    }
 
     let path_style = project.read(cx).path_style(cx);
 

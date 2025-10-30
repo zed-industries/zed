@@ -38,10 +38,10 @@ use util::ResultExt as _;
 use util::rel_path::RelPathBuf;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
-mod merge_excerpts;
+pub mod merge_excerpts;
 mod prediction;
 mod provider;
-mod related_excerpts;
+pub mod related_excerpts;
 
 use crate::merge_excerpts::merge_excerpts;
 use crate::prediction::EditPrediction;
@@ -135,12 +135,18 @@ impl ContextMode {
 }
 
 pub enum ZetaDebugInfo {
-    ContextRetrievalStarted(ZetaContextRetrievalDebugInfo),
+    ContextRetrievalStarted(ZetaContextRetrievalStartedDebugInfo),
     SearchQueriesGenerated(ZetaSearchQueryDebugInfo),
     SearchQueriesExecuted(ZetaContextRetrievalDebugInfo),
     SearchResultsFiltered(ZetaContextRetrievalDebugInfo),
     ContextRetrievalFinished(ZetaContextRetrievalDebugInfo),
     EditPredicted(ZetaEditPredictionDebugInfo),
+}
+
+pub struct ZetaContextRetrievalStartedDebugInfo {
+    pub project: Entity<Project>,
+    pub timestamp: Instant,
+    pub search_prompt: String,
 }
 
 pub struct ZetaContextRetrievalDebugInfo {
@@ -1086,17 +1092,6 @@ impl Zeta {
         zeta_project
             .refresh_context_task
             .get_or_insert(cx.spawn(async move |this, cx| {
-                if let Some(debug_tx) = &debug_tx {
-                    debug_tx
-                        .unbounded_send(ZetaDebugInfo::ContextRetrievalStarted(
-                            ZetaContextRetrievalDebugInfo {
-                                project: project.clone(),
-                                timestamp: Instant::now(),
-                            },
-                        ))
-                        .ok();
-                }
-
                 let related_excerpts = this
                     .update(cx, |this, cx| {
                         let Some(zeta_project) = this.projects.get(&project.entity_id()) else {
