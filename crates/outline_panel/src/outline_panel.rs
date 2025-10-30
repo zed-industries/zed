@@ -6644,9 +6644,7 @@ outline: struct OutlineEntryExcerpt
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                format!(
-                    r#"frontend-project/"#
-                )
+                format!(r#"frontend-project/"#)
             );
         });
 
