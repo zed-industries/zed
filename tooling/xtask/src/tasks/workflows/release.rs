@@ -3,7 +3,6 @@ use gh_workflow::{Concurrency, Event, Job, Push, Run, Step, Use, Workflow};
 use crate::tasks::workflows::{
     run_bundling, run_tests, runners,
     steps::{self, NamedJob, dependant_job, named},
-    vars,
 };
 
 // ideal release flow:
@@ -43,6 +42,7 @@ pub(crate) fn release() -> Workflow {
                 .group("${{ github.workflow }}")
                 .cancel_in_progress(true),
         )
+        // todo! re-enable tests
         .add_job(macos_tests.name, use_fake_job_instead(macos_tests.job))
         .add_job(linux_tests.name, use_fake_job_instead(linux_tests.job))
         .add_job(windows_tests.name, use_fake_job_instead(windows_tests.job))
@@ -83,16 +83,18 @@ fn upload_release_assets(deps: &[&NamedJob], bundle_jobs: &ReleaseBundleJobs) ->
         .add_with(("merge-multiple", true))
     }
 
-    // todo! split this up per release
-    // upload_release_artifacts_job(platform, arm64_job, x86_64_job)
+    // todo! consider splitting this up per release
+    // upload_release_artifacts_job(platform, arm64_job, x86_64_job) -> NamedJob;
+    // pro - when doing releases, once assets appear, you know it's all of them
+    // con - no testing Windows assets while waiting for Linux to finish
     fn prep_release_artifacts(bundle: &ReleaseBundleJobs) -> Step<Run> {
         let assets = [
-            (&bundle.linux_arm64.name, "zed", "zed-linux-aarch64.tar.gz"),
-            (&bundle.linux_x86_64.name, "zed", "zed-linux-x86_64.tar.gz"),
             (&bundle.mac_x86_64.name, "zed", "Zed-x86_64.dmg"),
             (&bundle.mac_arm64.name, "zed", "Zed-aarch64.dmg"),
             (&bundle.windows_x86_64.name, "zed", "Zed-x86_64.exe"),
             (&bundle.windows_arm64.name, "zed", "Zed-aarch64.exe"),
+            (&bundle.linux_arm64.name, "zed", "zed-linux-aarch64.tar.gz"),
+            (&bundle.linux_x86_64.name, "zed", "zed-linux-x86_64.tar.gz"),
             (
                 &bundle.linux_x86_64.name,
                 "remote-server",

@@ -74,7 +74,7 @@ jobs:
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
         name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
-        path: target/release/zed-remote-server-*.tar.gz
+        path: target/release/zed-remote-server-*.gz
     outputs:
       zed: zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
       remote-server: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
@@ -111,7 +111,7 @@ jobs:
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
         name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
-        path: target/release/zed-remote-server-*.tar.gz
+        path: target/release/zed-remote-server-*.gz
     outputs:
       zed: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
       remote-server: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
@@ -296,12 +296,12 @@ jobs:
       run: |-
         mkdir -p release-artifacts/
 
-        mv ${{ needs.bundle_linux_arm64.outputs.zed }} release-artifacts/zed-linux-aarch64.tar.gz
-        mv ${{ needs.bundle_linux_x86_64.outputs.zed }} release-artifacts/zed-linux-x86_64.tar.gz
         mv ${{ needs.bundle_mac_x86_64.outputs.zed }} release-artifacts/Zed-x86_64.dmg
         mv ${{ needs.bundle_mac_arm64.outputs.zed }} release-artifacts/Zed-aarch64.dmg
         mv ${{ needs.bundle_windows_x86_64.outputs.zed }} release-artifacts/Zed-x86_64.exe
         mv ${{ needs.bundle_windows_arm64.outputs.zed }} release-artifacts/Zed-aarch64.exe
+        mv ${{ needs.bundle_linux_arm64.outputs.zed }} release-artifacts/zed-linux-aarch64.tar.gz
+        mv ${{ needs.bundle_linux_x86_64.outputs.zed }} release-artifacts/zed-linux-x86_64.tar.gz
         mv ${{ needs.bundle_linux_x86_64.outputs.remote-server }} release-artifacts/zed-remote-server-linux-x86_64.gz
         mv ${{ needs.bundle_linux_arm64.outputs.remote-server }} release-artifacts/zed-remote-server-linux-aarch64.gz
         mv ${{ needs.bundle_mac_x86_64.outputs.remote-server }} release-artifacts/zed-remote-server-macos-x86_64.gz

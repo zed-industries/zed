@@ -112,7 +112,7 @@ pub(crate) fn bundle_linux_job(arch: runners::Arch, deps: &[&NamedJob]) -> Job {
         ))
         .add_step(steps::upload_artifact(
             &remote_server_artifact_name,
-            "target/release/zed-remote-server-*.tar.gz",
+            "target/release/zed-remote-server-*.gz",
         ))
         .outputs(
             [
