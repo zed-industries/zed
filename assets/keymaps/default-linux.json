@@ -43,7 +43,8 @@
       "f11": "zed::ToggleFullScreen",
       "ctrl-alt-z": "edit_prediction::RateCompletions",
       "ctrl-alt-shift-i": "edit_prediction::ToggleMenu",
-      "ctrl-alt-l": "lsp_tool::ToggleMenu"
+      "ctrl-alt-l": "lsp_tool::ToggleMenu",
+      "ctrl-alt-.": "project_panel::ToggleHideHidden"
     }
   },
   {

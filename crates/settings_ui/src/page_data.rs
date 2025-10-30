@@ -3744,6 +3744,24 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
+                    title: "Hidden Files",
+                    description: "Globs to match files that will be considered \"hidden\" and can be hidden from the project panel.",
+                    field: Box::new(
+                        SettingField {
+                            json_path: Some("worktree.hidden_files"),
+                            pick: |settings_content| {
+                                settings_content.project.worktree.hidden_files.as_ref()
+                            },
+                            write: |settings_content, value| {
+                                settings_content.project.worktree.hidden_files = value;
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
                     title: "Open File on Paste",
                     description: "Whether to automatically open files when pasting them in the project panel.",
                     field: Box::new(SettingField {

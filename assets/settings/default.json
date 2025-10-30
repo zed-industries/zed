@@ -1247,6 +1247,9 @@
   // that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes
   // precedence over these inclusions.
   "file_scan_inclusions": [".env*"],
+  // Globs to match files that will be considered "hidden". These files can be hidden from the
+  // project panel by toggling the "hide_hidden" setting.
+  "hidden_files": ["**/.*"],
   // Git gutter behavior configuration.
   "git": {
     // Control whether the git gutter is shown. May take 2 values:
