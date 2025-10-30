@@ -10,6 +10,11 @@ use anyhow::Result;
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
+const EDIT_HISTORY_HEADING: &str = "Edit History";
+const EXPECTED_HUNKS_HEADING: &str = "Expected Hunks";
+const EXPECTED_PATCH_HEADING: &str = "Expected Patch";
+const EXPECTED_EXCERPTS_HEADING: &str = "Expected Excerpts";
+
 pub struct NamedExample {
     name: String,
     example: Example,
@@ -45,10 +50,14 @@ impl NamedExample {
         let ext = path.extension();
 
         match ext.map(|s| s.as_bytes()) {
-            Some(b"json") => Ok(Self {
-                name: path.file_name().unwrap_or_default().display().to_string(),
-                example: serde_json::from_reader(file)?,
-            }),
+            Some(b"json") => {
+                let mut content = Vec::new();
+                file.read_to_end(&mut content)?;
+                Ok(Self {
+                    name: path.file_name().unwrap_or_default().display().to_string(),
+                    example: serde_json::from_slice(&content)?,
+                })
+            }
             Some(b"toml") => {
                 let mut content = String::new();
                 file.read_to_string(&mut content)?;
@@ -60,7 +69,7 @@ impl NamedExample {
             Some(b"md") => {
                 let mut content = String::new();
                 file.read_to_string(&mut content)?;
-                anyhow::bail!("md todo");
+                Self::parse_md(&content)
             }
             Some(_) => {
                 anyhow::bail!("Unrecognized example extension: {}", ext.unwrap().display());
@@ -74,31 +83,123 @@ impl NamedExample {
     }
 
     pub fn parse_md(input: &str) -> Result<Self> {
-        // use pulldown_cmark::{Event, Parser};
+        use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Parser, Tag, TagEnd};
 
-        // let parser = Parser::new(input);
+        let parser = Parser::new(input);
 
-        // for event in parser {
-        //     match event {
-        //         Event::Start(tag) => {}
-        //         Event::End(tag_end) => {}
-        //         Event::Text(cow_str) => {}
-        //         Event::Code(cow_str) => {
-        //             dbg!(cow_str);
-        //         }
-        //         Event::InlineMath(cow_str) => {}
-        //         Event::DisplayMath(cow_str) => {}
-        //         Event::Html(cow_str) => {}
-        //         Event::InlineHtml(cow_str) => {}
-        //         Event::FootnoteReference(cow_str) => {}
-        //         Event::SoftBreak => {}
-        //         Event::HardBreak => {}
-        //         Event::Rule => {}
-        //         Event::TaskListMarker(_) => {}
-        //     }
-        // }
+        let mut name = String::new();
+        let mut repository_url = String::new();
+        let mut commit = String::new();
+        let mut edit_history = Vec::new();
+        let mut expected_hunks = Vec::new();
+        let mut expected_patch = String::new();
+        let mut expected_excerpts = Vec::new();
 
-        todo!();
+        let mut current_heading_level: Option<HeadingLevel> = None;
+        let mut current_heading_text = String::new();
+        let mut current_section = String::new();
+        let mut in_code_block = false;
+        let mut current_code_block = String::new();
+        let mut current_code_info = String::new();
+
+        for event in parser {
+            match event {
+                Event::Start(Tag::Heading { level, .. }) => {
+                    current_heading_level = Some(level);
+                    current_heading_text.clear();
+                }
+                Event::End(TagEnd::Heading(_)) => {
+                    let heading_text = current_heading_text.trim();
+                    if let Some(HeadingLevel::H1) = current_heading_level {
+                        if !name.is_empty() {
+                            anyhow::bail!(
+                                "Found multiple H1 headings. There should only be one with the name of the example."
+                            );
+                        }
+                        name = heading_text.to_string();
+                    } else if let Some(HeadingLevel::H2) = current_heading_level {
+                        current_section = heading_text.to_string();
+                    }
+                    current_heading_level = None;
+                }
+                Event::Start(Tag::CodeBlock(kind)) => {
+                    in_code_block = true;
+                    current_code_block.clear();
+                    current_code_info = match kind {
+                        CodeBlockKind::Fenced(info) => info.to_string(),
+                        CodeBlockKind::Indented => String::new(),
+                    };
+                }
+                Event::End(TagEnd::CodeBlock) => {
+                    in_code_block = false;
+
+                    match current_section.as_str() {
+                        EDIT_HISTORY_HEADING => {
+                            edit_history.push(current_code_block.clone());
+                        }
+                        EXPECTED_HUNKS_HEADING => {
+                            expected_hunks.push(current_code_block.clone());
+                        }
+                        EXPECTED_PATCH_HEADING => {
+                            expected_patch = current_code_block.clone();
+                        }
+                        EXPECTED_EXCERPTS_HEADING => {
+                            if let Some(path_start) = current_code_info.find("path=") {
+                                let path_str = &current_code_info[path_start + 5..];
+                                let path = PathBuf::from(path_str.trim());
+                                expected_excerpts.push(ExpectedExcerpt {
+                                    path,
+                                    text: current_code_block.clone(),
+                                });
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Event::Text(text) => {
+                    if let Some(_) = current_heading_level {
+                        current_heading_text.push_str(&text);
+                    } else if in_code_block {
+                        current_code_block.push_str(&text);
+                    } else if current_section.is_empty()
+                        && let Some(eq_pos) = text.find('=')
+                    {
+                        let key = text[..eq_pos].trim();
+                        let value = text[eq_pos + 1..].trim();
+                        match key {
+                            "repository_url" => repository_url = dbg!(value.to_string()),
+                            "commit" => commit = value.to_string(),
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if name.is_empty() {
+            anyhow::bail!("Missing required H1 heading for example name");
+        }
+
+        if repository_url.is_empty() {
+            anyhow::bail!("Missing required field: repository_url");
+        }
+
+        if commit.is_empty() {
+            anyhow::bail!("Missing required field: commit");
+        }
+
+        Ok(Self {
+            name,
+            example: Example {
+                repository_url,
+                commit,
+                edit_history,
+                expected_hunks,
+                expected_patch,
+                expected_excerpts,
+            },
+        })
     }
 
     pub fn write(&self, format: ExampleFormat, mut out: impl Write) -> Result<()> {
@@ -115,9 +216,9 @@ impl NamedExample {
 impl Display for NamedExample {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "# {}\n\n", self.name)?;
-        write!(f, "respository_url = {}\n", self.example.repository_url)?;
+        write!(f, "repository_url = {}\n", self.example.repository_url)?;
         write!(f, "commit = {}\n\n", self.example.commit)?;
-        write!(f, "## Edit history\n\n")?;
+        write!(f, "## {EDIT_HISTORY_HEADING}\n\n")?;
 
         if !self.example.edit_history.is_empty() {
             write!(f, "`````diff\n")?;
@@ -128,7 +229,7 @@ impl Display for NamedExample {
         }
 
         if !self.example.expected_hunks.is_empty() {
-            write!(f, "\n## Expected Hunks\n\n`````diff\n")?;
+            write!(f, "\n## {EXPECTED_HUNKS_HEADING}\n\n`````diff\n")?;
             for hunk in &self.example.expected_hunks {
                 write!(f, "{hunk}")?;
             }
@@ -138,13 +239,13 @@ impl Display for NamedExample {
         if !self.example.expected_patch.is_empty() {
             write!(
                 f,
-                "\n## Expected Patch\n\n`````diff\n{}`````\n",
+                "\n## {EXPECTED_PATCH_HEADING}\n\n`````diff\n{}`````\n",
                 self.example.expected_patch
             )?;
         }
 
         if !self.example.expected_excerpts.is_empty() {
-            write!(f, "\n## Expected Excerpts\n\n")?;
+            write!(f, "\n## {EXPECTED_EXCERPTS_HEADING}\n\n")?;
 
             for excerpt in &self.example.expected_excerpts {
                 write!(
@@ -153,7 +254,7 @@ impl Display for NamedExample {
                     excerpt
                         .path
                         .extension()
-                        .map(|ext| format!("{} ", ext.to_string_lossy().to_string()))
+                        .map(|ext| format!("{} ", ext.to_string_lossy()))
                         .unwrap_or_default(),
                     excerpt.path.display(),
                     excerpt.text
