@@ -292,20 +292,23 @@ jobs:
       with:
         path: ./
         merge-multiple: true
+    - name: ls -la
+      run: ls -la
+      shell: bash -euxo pipefail {0}
     - name: release::upload_release_assets::prep_release_artifacts
       run: |-
         mkdir -p release-artifacts/
 
-        mv ${{ needs.bundle_mac_x86_64.outputs.zed }} release-artifacts/Zed-x86_64.dmg
-        mv ${{ needs.bundle_mac_arm64.outputs.zed }} release-artifacts/Zed-aarch64.dmg
-        mv ${{ needs.bundle_windows_x86_64.outputs.zed }} release-artifacts/Zed-x86_64.exe
-        mv ${{ needs.bundle_windows_arm64.outputs.zed }} release-artifacts/Zed-aarch64.exe
-        mv ${{ needs.bundle_linux_arm64.outputs.zed }} release-artifacts/zed-linux-aarch64.tar.gz
-        mv ${{ needs.bundle_linux_x86_64.outputs.zed }} release-artifacts/zed-linux-x86_64.tar.gz
-        mv ${{ needs.bundle_linux_x86_64.outputs.remote-server }} release-artifacts/zed-remote-server-linux-x86_64.gz
-        mv ${{ needs.bundle_linux_arm64.outputs.remote-server }} release-artifacts/zed-remote-server-linux-aarch64.gz
-        mv ${{ needs.bundle_mac_x86_64.outputs.remote-server }} release-artifacts/zed-remote-server-macos-x86_64.gz
-        mv ${{ needs.bundle_mac_arm64.outputs.remote-server }} release-artifacts/zed-remote-server-macos-aarch64.gz
+        mv ./${{ needs.bundle_mac_x86_64.outputs.zed }} release-artifacts/Zed-x86_64.dmg
+        mv ./${{ needs.bundle_mac_arm64.outputs.zed }} release-artifacts/Zed-aarch64.dmg
+        mv ./${{ needs.bundle_windows_x86_64.outputs.zed }} release-artifacts/Zed-x86_64.exe
+        mv ./${{ needs.bundle_windows_arm64.outputs.zed }} release-artifacts/Zed-aarch64.exe
+        mv ./${{ needs.bundle_linux_arm64.outputs.zed }} release-artifacts/zed-linux-aarch64.tar.gz
+        mv ./${{ needs.bundle_linux_x86_64.outputs.zed }} release-artifacts/zed-linux-x86_64.tar.gz
+        mv ./${{ needs.bundle_linux_x86_64.outputs.remote-server }} release-artifacts/zed-remote-server-linux-x86_64.gz
+        mv ./${{ needs.bundle_linux_arm64.outputs.remote-server }} release-artifacts/zed-remote-server-linux-aarch64.gz
+        mv ./${{ needs.bundle_mac_x86_64.outputs.remote-server }} release-artifacts/zed-remote-server-macos-x86_64.gz
+        mv ./${{ needs.bundle_mac_arm64.outputs.remote-server }} release-artifacts/zed-remote-server-macos-aarch64.gz
       shell: bash -euxo pipefail {0}
     - name: gh release upload ${{ github.ref }} release-artifacts/*
       run: gh release upload ${{ github.ref }} release-artifacts/*

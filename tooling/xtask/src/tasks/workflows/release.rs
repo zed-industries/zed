@@ -55,6 +55,7 @@ pub(crate) fn release() -> Workflow {
         .add_job(bundle.windows_arm64.name, bundle.windows_arm64.job)
         .add_job(bundle.windows_x86_64.name, bundle.windows_x86_64.job)
         .add_job(upload_release_assets.name, upload_release_assets.job)
+    // todo! auto-release preview
 }
 
 fn use_fake_job_instead(_: Job) -> Job {
@@ -122,7 +123,7 @@ fn upload_release_assets(deps: &[&NamedJob], bundle_jobs: &ReleaseBundleJobs) ->
             let artifact_path =
                 ["${{ needs.", job_name, ".outputs.", artifact_kind, " }}"].join("");
             let mv_command =
-                format!("mv {artifact_path} release-artifacts/{release_artifact_name}");
+                format!("mv ./{artifact_path} release-artifacts/{release_artifact_name}");
             script_lines.push(mv_command)
         }
 
@@ -143,6 +144,7 @@ fn upload_release_assets(deps: &[&NamedJob], bundle_jobs: &ReleaseBundleJobs) ->
         dependant_job(&deps)
             .runs_on(runners::LINUX_MEDIUM)
             .add_step(download_workflow_artifacts())
+            .add_step(steps::script("ls -la"))
             .add_step(prep_release_artifacts(bundle_jobs))
             .add_step(steps::script(
                 "gh release upload ${{ github.ref }} release-artifacts/*",
