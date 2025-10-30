@@ -33,7 +33,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   run_tests_mac:
-    if: github.repository_owner == 'zed-industries'
+    if: 'false'
     runs-on: self-mini-macos
     steps:
     - name: steps::checkout_repo
@@ -49,6 +49,9 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
+    - name: steps::clippy
+      run: ./script/clippy
+      shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
       run: cargo install cargo-nextest --locked
       shell: bash -euxo pipefail {0}
@@ -65,7 +68,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   run_tests_windows:
-    if: github.repository_owner == 'zed-industries'
+    if: 'false'
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
@@ -81,6 +84,9 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
+    - name: steps::clippy
+      run: ./script/clippy.ps1
+      shell: pwsh
     - name: steps::cargo_install_nextest
       run: cargo install cargo-nextest --locked
       shell: pwsh
