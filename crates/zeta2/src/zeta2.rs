@@ -28,6 +28,7 @@ use project::Project;
 use release_channel::AppVersion;
 use serde::de::DeserializeOwned;
 use std::collections::{VecDeque, hash_map};
+use std::fmt::Write;
 use std::ops::Range;
 use std::path::Path;
 use std::str::FromStr as _;
@@ -1102,11 +1103,19 @@ impl Zeta {
                             return Task::ready(anyhow::Ok(HashMap::default()));
                         };
 
+                        let mut edit_history_unified_diff = String::new();
+
+                        for event in zeta_project.events.iter() {
+                            if let Some(event) = event.to_request_event(cx) {
+                                writeln!(&mut edit_history_unified_diff, "{event}").ok();
+                            }
+                        }
+
                         find_related_excerpts(
                             buffer.clone(),
                             cursor_position,
                             &project,
-                            zeta_project.events.iter(),
+                            edit_history_unified_diff,
                             options,
                             debug_tx,
                             cx,

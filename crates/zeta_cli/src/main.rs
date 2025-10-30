@@ -106,7 +106,7 @@ struct ContextArgs {
     #[arg(long)]
     use_language_server: bool,
     #[arg(long)]
-    events: Option<FileOrStdin>,
+    edit_history: Option<FileOrStdin>,
 }
 
 #[derive(Debug, Args)]
@@ -154,23 +154,6 @@ fn syntax_args_to_options(
             },
             score: EditPredictionScoreOptions {
                 omit_excerpt_overlaps,
-            },
-        }),
-        max_diagnostic_bytes: zeta2_args.max_diagnostic_bytes,
-        max_prompt_bytes: zeta2_args.max_prompt_bytes,
-        prompt_format: zeta2_args.prompt_format.clone().into(),
-        file_indexing_parallelism: zeta2_args.file_indexing_parallelism,
-    }
-}
-
-fn llm_args_to_options(zeta2_args: &Zeta2Args) -> zeta2::ZetaOptions {
-    zeta2::ZetaOptions {
-        context: ContextMode::Llm(LlmContextOptions {
-            excerpt: EditPredictionExcerptOptions {
-                max_bytes: zeta2_args.max_excerpt_bytes,
-                min_bytes: zeta2_args.min_excerpt_bytes,
-                target_before_cursor_over_total_bytes: zeta2_args
-                    .target_before_cursor_over_total_bytes,
             },
         }),
         max_diagnostic_bytes: zeta2_args.max_diagnostic_bytes,
@@ -411,6 +394,11 @@ async fn zeta2_llm_context(
     })?
     .await?;
 
+    let edit_history_unified_diff = match context_args.edit_history {
+        Some(events) => events.read_to_string().await?,
+        None => String::new(),
+    };
+
     let (debug_tx, mut debug_rx) = mpsc::unbounded();
 
     let related_excerpts = cx
@@ -419,7 +407,7 @@ async fn zeta2_llm_context(
                 buffer,
                 cursor_position,
                 &project,
-                [].into_iter(),
+                edit_history_unified_diff,
                 &LlmContextOptions {
                     excerpt: EditPredictionExcerptOptions {
                         max_bytes: zeta2_args.max_excerpt_bytes,
@@ -511,7 +499,7 @@ async fn zeta1_context(
         ..
     } = load_context(&args, app_state, cx).await?;
 
-    let events = match args.events {
+    let events = match args.edit_history {
         Some(events) => events.read_to_string().await?,
         None => String::new(),
     };

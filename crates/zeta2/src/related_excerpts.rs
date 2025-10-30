@@ -137,7 +137,7 @@ pub fn find_related_excerpts<'a>(
     buffer: Entity<language::Buffer>,
     cursor_position: Anchor,
     project: &Entity<Project>,
-    events: impl Iterator<Item = &'a crate::Event>,
+    mut edit_history_unified_diff: String,
     options: &LlmContextOptions,
     debug_tx: Option<mpsc::UnboundedSender<ZetaDebugInfo>>,
     cx: &App,
@@ -154,16 +154,8 @@ pub fn find_related_excerpts<'a>(
         return Task::ready(Err(anyhow!("could not find context model")));
     };
 
-    let mut edits_string = String::new();
-
-    for event in events {
-        if let Some(event) = event.to_request_event(cx) {
-            writeln!(&mut edits_string, "{event}").ok();
-        }
-    }
-
-    if edits_string.is_empty() {
-        edits_string.push_str("(No user edits yet)");
+    if edit_history_unified_diff.is_empty() {
+        edit_history_unified_diff.push_str("(No user edits yet)");
     }
 
     // TODO [zeta2] include breadcrumbs?
@@ -181,7 +173,7 @@ pub fn find_related_excerpts<'a>(
         .unwrap_or_else(|| "untitled".to_string());
 
     let prompt = SEARCH_PROMPT
-        .replace("{edits}", &edits_string)
+        .replace("{edits}", &edit_history_unified_diff)
         .replace("{current_file_path}", &current_file_path)
         .replace("{cursor_excerpt}", &cursor_excerpt.text(&snapshot).body);
 
