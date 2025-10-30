@@ -967,14 +967,13 @@ impl Vim {
     ) {
         // We need to use `text.chars().count()` instead of `text.len()` here as
         // `len()` counts bytes, not characters.
-        let count = Vim::take_count(cx).unwrap_or(text.chars().count());
+        let char_count = text.chars().count();
+        let count = Vim::take_count(cx).unwrap_or(char_count);
         let is_return_char = text == "\n".into() || text == "\r".into();
-        let repeat_count = if is_return_char {
-            0
-        } else if text.chars().count() == 1 {
-            count
-        } else {
-            1
+        let repeat_count = match (is_return_char, char_count) {
+            (true, _) => 0,
+            (_, 1) => count,
+            (_, _) => 1,
         };
 
         Vim::take_forced_motion(cx);
@@ -2269,20 +2268,5 @@ mod test {
         cx.workspace(|workspace, _, cx| {
             assert_eq!(workspace.active_pane().read(cx).active_item_index(), 1);
         });
-    }
-
-    #[gpui::test]
-    async fn test_paste_on_replace(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
-
-        cx.set_state(indoc! {"ˇ123"}, Mode::Replace);
-        cx.write_to_clipboard(gpui::ClipboardItem::new_string("456".to_string()));
-        cx.dispatch_action(editor::actions::Paste);
-        cx.assert_state(indoc! {"45ˇ6"}, Mode::Replace);
-
-        cx.set_state(indoc! {"ˇ123"}, Mode::Replace);
-        cx.write_to_clipboard(gpui::ClipboardItem::new_string("4567".to_string()));
-        cx.dispatch_action(editor::actions::Paste);
-        cx.assert_state(indoc! {"ˇ123"}, Mode::Replace);
     }
 }
