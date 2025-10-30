@@ -274,8 +274,7 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleVimMode, _, cx| {
             let fs = workspace.app_state().fs.clone();
-            let currently_enabled =
-                VimModeSetting::get_global(cx).0 || HelixModeSetting::get_global(cx).0;
+            let currently_enabled = VimModeSetting::get_global(cx).0;
             update_settings_file(fs, cx, move |setting, _| {
                 setting.vim_mode = Some(!currently_enabled)
             })
@@ -1409,6 +1408,10 @@ impl Vim {
         }
         context.set("vim_mode", mode);
         context.set("vim_operator", operator_id);
+
+        if !Vim::enabled(cx) {
+            context.add("vim_mode_off");
+        }
     }
 
     fn focused(&mut self, preserve_selection: bool, window: &mut Window, cx: &mut Context<Self>) {
