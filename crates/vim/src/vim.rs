@@ -953,7 +953,6 @@ impl Vim {
     fn deactivate(editor: &mut Editor, cx: &mut Context<Editor>) {
         editor.set_cursor_shape(CursorShape::Bar, cx);
         editor.set_clip_at_line_ends(false, cx);
-        editor.set_collapse_matches(false);
         editor.set_input_enabled(true);
         editor.set_autoindent(true);
         editor.selections.set_line_mode(false);
@@ -1929,7 +1928,6 @@ impl Vim {
         self.update_editor(cx, |vim, editor, cx| {
             editor.set_cursor_shape(vim.cursor_shape(cx), cx);
             editor.set_clip_at_line_ends(vim.clip_at_line_ends(), cx);
-            editor.set_collapse_matches(true);
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
             editor

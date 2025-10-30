@@ -1069,7 +1069,6 @@ pub struct Editor {
     searchable: bool,
     cursor_shape: CursorShape,
     current_line_highlight: Option<CurrentLineHighlight>,
-    collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
     workspace: Option<(WeakEntity<Workspace>, Option<WorkspaceId>)>,
     input_enabled: bool,
@@ -2119,7 +2118,7 @@ impl Editor {
                 .unwrap_or_default(),
             current_line_highlight: None,
             autoindent_mode: Some(AutoindentMode::EachLine),
-            collapse_matches: false,
+
             workspace: None,
             input_enabled: !is_minimap,
             use_modal_editing: full_mode,
@@ -2272,7 +2271,7 @@ impl Editor {
                     }
                 }
                 EditorEvent::Edited { .. } => {
-                    if !vim_enabled(cx) {
+                    if vim_flavor(cx).is_none() {
                         let display_map = editor.display_snapshot(cx);
                         let selections = editor.selections.all_adjusted_display(&display_map);
                         let pop_state = editor
@@ -2881,12 +2880,12 @@ impl Editor {
         self.current_line_highlight = current_line_highlight;
     }
 
-    pub fn set_collapse_matches(&mut self, collapse_matches: bool) {
-        self.collapse_matches = collapse_matches;
-    }
-
-    pub fn range_for_match<T: std::marker::Copy>(&self, range: &Range<T>) -> Range<T> {
-        if self.collapse_matches {
+    pub fn range_for_match<T: std::marker::Copy>(
+        &self,
+        range: &Range<T>,
+        collapse: bool,
+    ) -> Range<T> {
+        if collapse {
             return range.start..range.start;
         }
         range.clone()
@@ -16654,7 +16653,7 @@ impl Editor {
 
                 editor.update_in(cx, |editor, window, cx| {
                     let range = target_range.to_point(target_buffer.read(cx));
-                    let range = editor.range_for_match(&range);
+                    let range = editor.range_for_match(&range, false);
                     let range = collapse_multiline_range(range);
 
                     if !split
@@ -21457,7 +21456,7 @@ impl Editor {
             .and_then(|e| e.to_str())
             .map(|a| a.to_string()));
 
-        let vim_mode = vim_enabled(cx);
+        let vim_mode = vim_flavor(cx).is_some();
 
         let edit_predictions_provider = all_language_settings(file, cx).edit_predictions.provider;
         let copilot_enabled = edit_predictions_provider
@@ -22088,10 +22087,26 @@ fn edit_for_markdown_paste<'a>(
     (range, new_text)
 }
 
-fn vim_enabled(cx: &App) -> bool {
-    vim_mode_setting::VimModeSetting::try_get(cx)
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum VimFlavor {
+    Vim,
+    Helix,
+}
+
+pub fn vim_flavor(cx: &App) -> Option<VimFlavor> {
+    if vim_mode_setting::HelixModeSetting::try_get(cx)
+        .map(|helix_mode| helix_mode.0)
+        .unwrap_or(false)
+    {
+        Some(VimFlavor::Helix)
+    } else if vim_mode_setting::VimModeSetting::try_get(cx)
         .map(|vim_mode| vim_mode.0)
         .unwrap_or(false)
+    {
+        Some(VimFlavor::Vim)
+    } else {
+        None // neither vim nor helix mode
+    }
 }
 
 fn process_completion_for_edit(

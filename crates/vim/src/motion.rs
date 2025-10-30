@@ -673,7 +673,8 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 impl Vim {
     pub(crate) fn search_motion(&mut self, m: Motion, window: &mut Window, cx: &mut Context<Self>) {
         if let Motion::ZedSearchResult {
-            prior_selections, ..
+            prior_selections,
+            new_selections: _new_selections,
         } = &m
         {
             match self.mode {
@@ -692,11 +693,20 @@ impl Vim {
                     }
                 }
 
-                Mode::HelixNormal | Mode::HelixSelect => {}
+                Mode::HelixNormal => {}
+                Mode::HelixSelect => {}
             }
         }
 
-        self.motion(m, window, cx)
+        self.motion(m, window, cx);
+
+        // if self.mode == Mode::HelixNormal {
+        //     self.update_editor(cx, |_, editor, cx| {
+        //         editor.change_selections(Default::default(), window, cx, |s| {
+        //             s.select_ranges(new_selections.iter().cloned())
+        //         });
+        //     });
+        // }
     }
 
     pub(crate) fn motion(&mut self, motion: Motion, window: &mut Window, cx: &mut Context<Self>) {

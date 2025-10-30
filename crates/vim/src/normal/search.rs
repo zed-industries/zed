@@ -1,12 +1,13 @@
-use editor::{Editor, EditorSettings};
+use editor::{AnchorRangeExt, Editor, EditorSettings, VimFlavor};
 use gpui::{Action, Context, Window, actions};
+use itertools::Itertools;
 use language::Point;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions, buffer_search};
 use serde::Deserialize;
 use settings::Settings;
 use std::{iter::Peekable, str::Chars};
-use util::serde::default_true;
+use util::{serde::default_true, test::generate_marked_text};
 use workspace::{notifications::NotifyResultExt, searchable::Direction};
 
 use crate::{
@@ -240,7 +241,7 @@ impl Vim {
                     count = count.saturating_sub(1)
                 }
                 self.search.count = 1;
-                search_bar.select_match(direction, count, window, cx);
+                search_bar.select_match(direction, count, true, window, cx);
                 search_bar.focus_editor(&Default::default(), window, cx);
 
                 let prior_selections: Vec<_> = self.search.prior_selections.drain(..).collect();
@@ -292,6 +293,15 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let snapshot = self
+            .editor()
+            .unwrap()
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .snapshot(cx);
+        let text = snapshot.text();
+
         let Some(pane) = self.pane(window, cx) else {
             return;
         };
@@ -307,7 +317,8 @@ impl Vim {
                 if !search_bar.has_active_match() || !search_bar.show(window, cx) {
                     return false;
                 }
-                search_bar.select_match(direction, count, window, cx);
+                // TODO!: change this in helix mode
+                search_bar.select_match(direction, count, true, window, cx);
                 true
             })
         });
@@ -316,6 +327,24 @@ impl Vim {
         }
 
         let new_selections = self.editor_selections(window, cx);
+
+        let prior = generate_marked_text(
+            &text,
+            &prior_selections
+                .iter()
+                .map(|r| r.to_offset(&snapshot))
+                .collect_vec(),
+            true,
+        );
+        let new = generate_marked_text(
+            &text,
+            &new_selections
+                .iter()
+                .map(|r| r.to_offset(&snapshot))
+                .collect_vec(),
+            true,
+        );
+
         self.search_motion(
             Motion::ZedSearchResult {
                 prior_selections,
@@ -381,7 +410,8 @@ impl Vim {
             cx.spawn_in(window, async move |_, cx| {
                 search.await?;
                 search_bar.update_in(cx, |search_bar, window, cx| {
-                    search_bar.select_match(direction, count, window, cx);
+                    let collapse = editor::vim_flavor(cx) == Some(VimFlavor::Vim);
+                    search_bar.select_match(direction, count, collapse, window, cx);
 
                     vim.update(cx, |vim, cx| {
                         let new_selections = vim.editor_selections(window, cx);
@@ -444,7 +474,7 @@ impl Vim {
                 cx.spawn_in(window, async move |_, cx| {
                     search.await?;
                     search_bar.update_in(cx, |search_bar, window, cx| {
-                        search_bar.select_match(direction, 1, window, cx)
+                        search_bar.select_match(direction, 1, true, window, cx)
                     })?;
                     anyhow::Ok(())
                 })
