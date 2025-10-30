@@ -72,8 +72,10 @@ fn auto_release_preview(deps: &[&NamedJob; 1]) -> NamedJob {
             "# // todo! enable
             )))
             .add_step(
-                steps::script(r#"gh release edit "$GITHUB_REF_NAME" --draft=false"#)
-                    .add_env(("GITHUB_TOKEN", "${{ secrets.GITHUB_TOKEN }}")),
+                steps::script(
+                    r#"gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false"#,
+                )
+                .add_env(("GITHUB_TOKEN", "${{ secrets.GITHUB_TOKEN }}")),
             )
             .add_step(create_sentry_release()),
     )

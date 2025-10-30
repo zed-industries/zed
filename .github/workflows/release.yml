@@ -335,8 +335,8 @@ jobs:
       && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
-    - name: gh release edit "$GITHUB_REF_NAME" --draft=false
-      run: gh release edit "$GITHUB_REF_NAME" --draft=false
+    - name: gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false
+      run: gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false
       shell: bash -euxo pipefail {0}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
