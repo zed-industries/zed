@@ -3163,6 +3163,12 @@ Non-negative `integer` values
 - Setting: `search_wrap`
 - Default: `true`
 
+## Center on Match
+
+- Description: If `center_on_match` is enabled, the editor will center the cursor on the current match when searching.
+- Setting: `center_on_match`
+- Default: `false`
+
 ## Seed Search Query From Cursor
 
 - Description: When to populate a new search's query based on the text under the cursor.

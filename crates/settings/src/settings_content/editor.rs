@@ -699,6 +699,8 @@ pub struct SearchSettingsContent {
     pub case_sensitive: Option<bool>,
     pub include_ignored: Option<bool>,
     pub regex: Option<bool>,
+    /// Whether to center the cursor on each search match when navigating.
+    pub center_on_match: Option<bool>,
 }
 
 #[skip_serializing_none]
