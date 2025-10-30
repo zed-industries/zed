@@ -488,17 +488,39 @@ impl EditPredictionButton {
 
             for provider in other_providers {
                 let fs = self.fs.clone();
-                let provider_name = match provider {
-                    EditPredictionProvider::Zed => "Zed AI",
-                    EditPredictionProvider::Copilot => "GitHub Copilot",
-                    EditPredictionProvider::Supermaven => "Supermaven",
-                    EditPredictionProvider::Codestral => "Codestral",
+
+                menu = match provider {
+                    EditPredictionProvider::Zed => menu.item(
+                        ContextMenuEntry::new("Zed AI")
+                            .documentation_aside(
+                                DocumentationSide::Left,
+                                DocumentationEdge::Top,
+                                |_| {
+                                    Label::new("Zed's edit prediction is powered by Zeta, an open-source, dataset mode.")
+                                        .into_any_element()
+                                },
+                            )
+                            .handler(move |_, cx| {
+                                set_completion_provider(fs.clone(), cx, provider);
+                            }),
+                    ),
+                    EditPredictionProvider::Copilot => {
+                        menu.entry("GitHub Copilot", None, move |_, cx| {
+                            set_completion_provider(fs.clone(), cx, provider);
+                        })
+                    }
+                    EditPredictionProvider::Supermaven => {
+                        menu.entry("Supermaven", None, move |_, cx| {
+                            set_completion_provider(fs.clone(), cx, provider);
+                        })
+                    }
+                    EditPredictionProvider::Codestral => {
+                        menu.entry("Codestral", None, move |_, cx| {
+                            set_completion_provider(fs.clone(), cx, provider);
+                        })
+                    }
                     EditPredictionProvider::None => continue,
                 };
-
-                menu = menu.entry(provider_name, None, move |_, cx| {
-                    set_completion_provider(fs.clone(), cx, provider);
-                });
             }
         }
 
