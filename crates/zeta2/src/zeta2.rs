@@ -1083,63 +1083,61 @@ impl Zeta {
 
         let debug_tx = self.debug_tx.clone();
 
-        zeta_project
-            .refresh_context_task
-            .get_or_insert(cx.spawn(async move |this, cx| {
-                if let Some(debug_tx) = &debug_tx {
+        zeta_project.refresh_context_task = Some(cx.spawn(async move |this, cx| {
+            if let Some(debug_tx) = &debug_tx {
+                debug_tx
+                    .unbounded_send(ZetaDebugInfo::ContextRetrievalStarted(
+                        ZetaContextRetrievalDebugInfo {
+                            project: project.clone(),
+                            timestamp: Instant::now(),
+                        },
+                    ))
+                    .ok();
+            }
+
+            let related_excerpts = this
+                .update(cx, |this, cx| {
+                    let Some(zeta_project) = this.projects.get(&project.entity_id()) else {
+                        return Task::ready(anyhow::Ok(HashMap::default()));
+                    };
+
+                    let ContextMode::Llm(options) = &this.options().context else {
+                        return Task::ready(anyhow::Ok(HashMap::default()));
+                    };
+
+                    find_related_excerpts(
+                        buffer.clone(),
+                        cursor_position,
+                        &project,
+                        zeta_project.events.iter(),
+                        options,
+                        debug_tx,
+                        cx,
+                    )
+                })
+                .ok()?
+                .await
+                .log_err()
+                .unwrap_or_default();
+            this.update(cx, |this, _cx| {
+                let Some(zeta_project) = this.projects.get_mut(&project.entity_id()) else {
+                    return;
+                };
+                zeta_project.context = Some(related_excerpts);
+                zeta_project.refresh_context_task.take();
+                if let Some(debug_tx) = &this.debug_tx {
                     debug_tx
-                        .unbounded_send(ZetaDebugInfo::ContextRetrievalStarted(
+                        .unbounded_send(ZetaDebugInfo::ContextRetrievalFinished(
                             ZetaContextRetrievalDebugInfo {
-                                project: project.clone(),
+                                project,
                                 timestamp: Instant::now(),
                             },
                         ))
                         .ok();
                 }
-
-                let related_excerpts = this
-                    .update(cx, |this, cx| {
-                        let Some(zeta_project) = this.projects.get(&project.entity_id()) else {
-                            return Task::ready(anyhow::Ok(HashMap::default()));
-                        };
-
-                        let ContextMode::Llm(options) = &this.options().context else {
-                            return Task::ready(anyhow::Ok(HashMap::default()));
-                        };
-
-                        find_related_excerpts(
-                            buffer.clone(),
-                            cursor_position,
-                            &project,
-                            zeta_project.events.iter(),
-                            options,
-                            debug_tx,
-                            cx,
-                        )
-                    })
-                    .ok()?
-                    .await
-                    .log_err()
-                    .unwrap_or_default();
-                this.update(cx, |this, _cx| {
-                    let Some(zeta_project) = this.projects.get_mut(&project.entity_id()) else {
-                        return;
-                    };
-                    zeta_project.context = Some(related_excerpts);
-                    zeta_project.refresh_context_task.take();
-                    if let Some(debug_tx) = &this.debug_tx {
-                        debug_tx
-                            .unbounded_send(ZetaDebugInfo::ContextRetrievalFinished(
-                                ZetaContextRetrievalDebugInfo {
-                                    project,
-                                    timestamp: Instant::now(),
-                                },
-                            ))
-                            .ok();
-                    }
-                })
-                .ok()
-            }));
+            })
+            .ok()
+        }));
     }
 
     fn gather_nearby_diagnostics(
