@@ -546,7 +546,7 @@ impl BreakpointList {
             .session
             .as_ref()
             .map(|session| SupportedBreakpointProperties::from(session.read(cx).capabilities()))
-            .unwrap_or_else(SupportedBreakpointProperties::empty);
+            .unwrap_or_else(SupportedBreakpointProperties::all);
         let strip_mode = self.strip_mode;
 
         uniform_list(
@@ -731,6 +731,7 @@ impl Render for BreakpointList {
                 .chain(data_breakpoints)
                 .chain(exception_breakpoints),
         );
+
 
         v_flex()
             .id("breakpoint-list")
@@ -1376,8 +1377,10 @@ impl RenderOnce for BreakpointOptionsStrip {
         h_flex()
             .gap_px()
             .mr_3() // Space to avoid overlapping with the scrollbar
-            .child(
-                div()
+            .justify_end()
+            .when(has_logs || self.is_selected, |this| {
+                this.child(
+                    div()
                     .map(self.add_focus_styles(
                         ActiveBreakpointStripMode::Log,
                         supports_logs,
@@ -1406,45 +1409,46 @@ impl RenderOnce for BreakpointOptionsStrip {
                             )
                         }),
                     )
-                    .when(!has_logs && !self.is_selected, |this| this.invisible()),
-            )
-            .child(
-                div()
-                    .map(self.add_focus_styles(
-                        ActiveBreakpointStripMode::Condition,
-                        supports_condition,
-                        window,
-                        cx,
-                    ))
-                    .child(
-                        IconButton::new(
-                            SharedString::from(format!("{id}-condition-toggle")),
-                            IconName::SplitAlt,
-                        )
-                        .shape(ui::IconButtonShape::Square)
-                        .style(style_for_toggle(
+                )
+            })
+            .when(has_condition || self.is_selected, |this| {
+                this.child(
+                    div()
+                        .map(self.add_focus_styles(
                             ActiveBreakpointStripMode::Condition,
-                            has_condition,
+                            supports_condition,
+                            window,
+                            cx,
                         ))
-                        .icon_size(IconSize::Small)
-                        .icon_color(color_for_toggle(has_condition))
-                        .when(has_condition, |this| this.indicator(Indicator::dot().color(Color::Info)))
-                        .disabled(!supports_condition)
-                        .toggle_state(self.is_toggled(ActiveBreakpointStripMode::Condition))
-                        .on_click(self.on_click_callback(ActiveBreakpointStripMode::Condition))
-                        .tooltip(|_window, cx|  {
-                            Tooltip::with_meta(
-                                "Set Condition",
-                                None,
-                                "Set condition to evaluate when a breakpoint is hit. Program execution will stop only when the condition is met.",
-                                cx,
+                        .child(
+                            IconButton::new(
+                                SharedString::from(format!("{id}-condition-toggle")),
+                                IconName::SplitAlt,
                             )
-                        }),
-                    )
-                    .when(!has_condition && !self.is_selected, |this| this.invisible()),
-            )
-            .child(
-                div()
+                            .shape(ui::IconButtonShape::Square)
+                            .style(style_for_toggle(
+                                ActiveBreakpointStripMode::Condition,
+                                has_condition,
+                            ))
+                            .icon_size(IconSize::Small)
+                            .icon_color(color_for_toggle(has_condition))
+                            .when(has_condition, |this| this.indicator(Indicator::dot().color(Color::Info)))
+                            .disabled(!supports_condition)
+                            .toggle_state(self.is_toggled(ActiveBreakpointStripMode::Condition))
+                            .on_click(self.on_click_callback(ActiveBreakpointStripMode::Condition))
+                            .tooltip(|_window, cx|  {
+                                Tooltip::with_meta(
+                                    "Set Condition",
+                                    None,
+                                    "Set condition to evaluate when a breakpoint is hit. Program execution will stop only when the condition is met.",
+                                    cx,
+                                )
+                            }),
+                        )
+                )
+            })
+            .when(has_hit_condition || self.is_selected, |this| {
+                this.child(div()
                     .map(self.add_focus_styles(
                         ActiveBreakpointStripMode::HitCondition,
                         supports_hit_condition,
@@ -1475,10 +1479,8 @@ impl RenderOnce for BreakpointOptionsStrip {
                                 cx,
                             )
                         }),
-                    )
-                    .when(!has_hit_condition && !self.is_selected, |this| {
-                        this.invisible()
-                    }),
-            )
+                    ))
+
+            })
     }
 }
