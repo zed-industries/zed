@@ -201,7 +201,7 @@ The default value is `false`.
 
 ### Message Editor Size
 
-Use the `message_editor_min_lines` setting to control minimum number of lines of height the agent message editor should have.
+Use the `message_editor_min_lines` setting to control the minimum number of lines of height the agent message editor should have.
 It is set to `4` by default, and the max number of lines is always double of the minimum.
 
 ```json [settings]
@@ -254,7 +254,7 @@ It is set to `true` by default, but if set to false, the card will be fully coll
 
 ### Feedback Controls
 
-Control whether to display the thumbs up/down buttons at the bottom of each agent response, allowing to give Zed feedback about the agent's performance.
+Control whether to display the thumbs up/down buttons at the bottom of each agent response, allowing you to give Zed feedback about the agent's performance.
 The default value is `true`.
 
 ```json [settings]
