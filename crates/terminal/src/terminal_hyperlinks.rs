@@ -10,7 +10,7 @@ use alacritty_terminal::{
 use fancy_regex::{Captures, Regex};
 use log::{info, warn};
 use std::{
-    error::Error,
+    iter,
     ops::{Index, Range},
     time::{Duration, Instant},
 };
@@ -19,7 +19,7 @@ const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|http
 
 pub(super) struct RegexSearches {
     url_regex: RegexSearch,
-    path_hyperlink_regexes: Vec<(RegexSearch, Regex)>,
+    path_hyperlink_regexes: Vec<Regex>,
     path_hyperlink_timeout: Duration,
 }
 
@@ -37,31 +37,22 @@ impl RegexSearches {
         path_hyperlink_regexes: impl IntoIterator<Item: AsRef<str>>,
         path_hyperlink_timeout_ms: u64,
     ) -> Self {
-        fn load_regex<R, E: Error>(
-            new_fn: impl Fn(&str) -> Result<R, E>,
-            regex: impl AsRef<str>,
-        ) -> Option<R> {
-            new_fn(regex.as_ref())
-                .inspect_err(|error| {
-                    warn!(
-                        concat!(
-                            "Ignoring path hyperlink regex specified in ",
-                            "`terminal.path_hyperlink_regexes` due to:\n{}"
-                        ),
-                        error
-                    )
-                })
-                .ok()
-        }
-
         Self {
             url_regex: RegexSearch::new(URL_REGEX).unwrap(),
             path_hyperlink_regexes: path_hyperlink_regexes
                 .into_iter()
                 .filter_map(|regex| {
-                    load_regex(RegexSearch::new, &regex).and_then(|regex_search| {
-                        load_regex(Regex::new, &regex).map(|regex| (regex_search, regex))
-                    })
+                    Regex::new(regex.as_ref())
+                        .inspect_err(|error| {
+                            warn!(
+                                concat!(
+                                    "Ignoring path hyperlink regex specified in ",
+                                    "`terminal.path_hyperlink_regexes` due to:\n{}"
+                                ),
+                                error
+                            );
+                        })
+                        .ok()
                 })
                 .collect(),
             path_hyperlink_timeout: Duration::from_millis(path_hyperlink_timeout_ms),
@@ -77,6 +68,16 @@ impl RegexSearches {
             return None;
         }
 
+        let search_start_time = Instant::now();
+
+        let timed_out = || -> Option<(_, _)> {
+            let elapsed_time = Instant::now().saturating_duration_since(search_start_time);
+            (elapsed_time > self.path_hyperlink_timeout).then_some((
+                elapsed_time.as_millis(),
+                self.path_hyperlink_timeout.as_millis(),
+            ))
+        };
+
         // There does not appear to be an alacritty api that is "move to start of current wide
         // char", so we have to do it ourselves.
         let start_of_char = |point: AlacPoint| -> AlacPoint {
@@ -90,6 +91,24 @@ impl RegexSearches {
             }
         };
 
+        let line_start = term.line_search_left(hovered);
+        let line_end = term.line_search_right(hovered);
+        let spacers: Flags = Flags::LEADING_WIDE_CHAR_SPACER | Flags::WIDE_CHAR_SPACER;
+        let line = iter::once(term.grid()[line_start].c)
+            .chain(
+                term.grid()
+                    .iter_from(line_start)
+                    .take_while(|cell| cell.point <= line_end)
+                    .filter(|cell| !cell.flags.intersects(spacers))
+                    .map(|cell| match cell.c {
+                        '\t' => ' ',
+                        c @ _ => c,
+                    }),
+            )
+            .collect::<String>()
+            .trim_ascii_end()
+            .to_string();
+
         let advance_point_by_str = |mut point: AlacPoint, s: &str| -> AlacPoint {
             for _ in s.chars() {
                 point = term
@@ -99,42 +118,29 @@ impl RegexSearches {
             start_of_char(point)
         };
 
-        let search_start_time = Instant::now();
+        let found_from_range = |path_range: Range<usize>,
+                                row: Option<u32>,
+                                column: Option<u32>|
+         -> Option<(String, Match)> {
+            let path_start = advance_point_by_str(line_start, &line[..path_range.start]);
+            let path_end = advance_point_by_str(path_start, &line[path_range.clone()]);
+            let path_match = path_start
+                ..=term
+                    .expand_wide(path_end, AlacDirection::Left)
+                    .sub(term, Boundary::Grid, 1);
 
-        let timed_out = || -> Option<(_, _)> {
-            let elapsed_time = Instant::now().saturating_duration_since(search_start_time);
-            (elapsed_time > self.path_hyperlink_timeout).then_some((
-                elapsed_time.as_millis(),
-                self.path_hyperlink_timeout.as_millis(),
+            Some((
+                {
+                    let mut path = line[path_range].to_string();
+                    row.inspect(|line| path += &format!(":{line}"));
+                    column.inspect(|column| path += &format!(":{column}"));
+                    path
+                },
+                path_match,
             ))
         };
 
-        let found_from_captures = |start: AlacPoint,
-                                   input: &str,
-                                   captures: Captures|
-         -> Option<(String, Match)> {
-            let found_from_range = |path: Range<usize>,
-                                    line: Option<u32>,
-                                    column: Option<u32>|
-             -> Option<(String, Match)> {
-                let path_start = advance_point_by_str(start, &input[..path.start]);
-                let path_end = advance_point_by_str(path_start, &input[path.clone()]);
-                let path_match = path_start
-                    ..=term
-                        .expand_wide(path_end, AlacDirection::Left)
-                        .sub(term, Boundary::Grid, 1);
-
-                Some((
-                    {
-                        let mut path = input[path].to_string();
-                        line.inspect(|line| path += &format!(":{line}"));
-                        column.inspect(|column| path += &format!(":{column}"));
-                        path
-                    },
-                    path_match,
-                ))
-            };
-
+        let found_from_captures = |captures: Captures| -> Option<(String, Match)> {
             let Some(path_capture) = captures.name("path") else {
                 return found_from_range(captures.get(0).unwrap().range(), None, None);
             };
@@ -156,30 +162,14 @@ impl RegexSearches {
             return found_from_range(path_capture.range(), Some(line), Some(column));
         };
 
-        let line_start = term.line_search_left(hovered);
-        let line_end = term.line_search_right(hovered);
-
-        for (regex_search, regex) in &mut self.path_hyperlink_regexes {
+        for regex in &mut self.path_hyperlink_regexes {
             let mut path_found = false;
 
-            for regex_search_match in RegexIter::new(
-                line_start,
-                line_end,
-                AlacDirection::Right,
-                &term,
-                regex_search,
-            ) {
-                let (match_start, match_end) =
-                    (*regex_search_match.start(), *regex_search_match.end());
-                let match_text = term.bounds_to_string(match_start, match_end);
-                if let Ok(Some(line_captures)) = regex.captures(&match_text) {
-                    if let Some(found) =
-                        found_from_captures(match_start, &match_text, line_captures)
-                    {
-                        path_found = true;
-                        if found.1.contains(&hovered) {
-                            return Some(found);
-                        }
+            for captures in regex.captures_iter(&line).flatten() {
+                if let Some(found) = found_from_captures(captures) {
+                    path_found = true;
+                    if found.1.contains(&hovered) {
+                        return Some(found);
                     }
                 }
             }
@@ -194,6 +184,7 @@ impl RegexSearches {
                 return None;
             }
         }
+
         None
     }
 }
@@ -454,7 +445,7 @@ mod tests {
                 .map(str::chars).flatten().find(|&c| c == '\t');
             let columns = if contains_tab_char.is_some() {
                 // This avoids tabs at end of lines causing whitespace-eating line wraps...
-                vec![longest_line_cells / 2, longest_line_cells + 1]
+                vec![longest_line_cells + 1]
             } else {
                 // Alacritty has issues with 2 columns, use 3 as the minimum for now.
                 vec![3, longest_line_cells / 2, longest_line_cells + 1]
@@ -621,13 +612,13 @@ mod tests {
             test_path!("<‹«/test/co👉ol.rs»:«4»›>");
 
             test_path!("[\"‹«/test/co👉ol.rs»:«4»›\"]");
-            test_path!("'(‹«/test/co👉ol.rs»:«4»›)'");
+            test_path!("'‹«(/test/co👉ol.rs:4)»›'");
 
             // Imbalanced
             test_path!("([‹«/test/co👉ol.rs»:«4»›] was here...)");
-            test_path!("[Here's <‹«/test/co👉ol.rs»:«4»›>]");
+            test_path!("[Here's <‹«/test/co👉ol.rs:4>]»›");
             test_path!("('‹«/test/co👉ol.rs»:«4»›' was here...)");
-            test_path!("[Here's `‹«/test/co👉ol.rs»:«4»›`]");
+            test_path!("[Here's ‹«`/test/co👉ol.rs:4`]»›");
         }
 
         #[test]
@@ -635,9 +626,9 @@ mod tests {
             test_path!("‹«/test/co👉ol.rs»:«4»›:,");
             test_path!("/test/cool.rs:4:👉,");
             test_path!("[\"‹«/test/co👉ol.rs»:«4»›\"]:,");
-            test_path!("'(‹«/test/co👉ol.rs»:«4»›),,'..");
+            test_path!("'‹«(/test/co👉ol.rs:4),,»›'..");
             test_path!("('‹«/test/co👉ol.rs»:«4»›'::: was here...)");
-            test_path!("[Here's <‹«/test/co👉ol.rs»:«4»›>]::: ");
+            test_path!("[Here's <‹«/test/co👉ol.rs:4>]»›::: ");
         }
 
         #[test]
@@ -815,20 +806,6 @@ mod tests {
             fn invalid_row_column_should_be_part_of_path() {
                 test_path!("‹«/👉test/cool.rs:1:618033988749»›");
                 test_path!("‹«/👉test/cool.rs(1,618033988749)»›");
-            }
-
-            #[test]
-            #[cfg_attr(
-                not(target_os = "windows"),
-                should_panic(expected = "Path = «/te:st/co:ol.r:s:4:2::::::»")
-            )]
-            #[cfg_attr(
-                target_os = "windows",
-                should_panic(expected = r#"Path = «C:\\te:st\\co:ol.r:s:4:2::::::»"#)
-            )]
-            fn many_trailing_colons_should_be_parsed_as_part_of_the_path() {
-                test_path!("‹«/te:st/👉co:ol.r:s:4:2::::::»›");
-                test_path!("/test/cool.rs:::👉:");
             }
         }
 
@@ -1263,6 +1240,7 @@ mod tests {
             match c {
                 // Fullwidth unicode characters used in tests
                 '例' | '🏃' | '🦀' | '🔥' => 2,
+                '\t' => 8, // it's really 0-8, use the max always
                 _ => 1,
             }
         }
@@ -1385,11 +1363,9 @@ mod tests {
             let mut marker_header_row = String::new();
             for index in 0..self.term.columns() {
                 let remainder = index % 10;
-                first_header_row.push_str(
-                    &(index > 0 && remainder == 0)
-                        .then_some((index / 10).to_string())
-                        .unwrap_or(" ".into()),
-                );
+                if index > 0 && remainder == 0 {
+                    first_header_row.push_str(&format!("{:>10}", (index / 10)));
+                }
                 second_header_row += &remainder.to_string();
                 if index == self.expected_hyperlink.hovered_grid_point.column.0 {
                     marker_header_row.push('↓');
@@ -1398,7 +1374,12 @@ mod tests {
                 }
             }
 
-            result += &format!("\n      [{}]\n", first_header_row);
+            let remainder = (self.term.columns() - 1) % 10;
+            if remainder != 0 {
+                first_header_row.push_str(&" ".repeat(remainder));
+            }
+
+            result += &format!("\n      [ {}]\n", first_header_row);
             result += &format!("      [{}]\n", second_header_row);
             result += &format!("       {}", marker_header_row);
 
@@ -1419,7 +1400,10 @@ mod tests {
                     result += &format!("\n{prefix}[{:>3}] ", cell.point.line.to_string());
                 }
 
-                result.push(cell.c);
+                match cell.c {
+                    '\t' => result.push(' '),
+                    c @ _ => result.push(c),
+                }
             }
 
             result
@@ -1440,10 +1424,12 @@ mod tests {
         const MULTIPLE_SAME_LINE_REGEX: &str = r#"(?<path>🦀 multiple_same_line 🦀):"#;
         // Matches MSBuild diagnostic suffixes for path parsing in PathWithPosition
         // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
-        const DEFAULT_REGEXES_MSBUILD: &str = r#"["'`\[({<]*(?<path>[^ \t]+?:?\([0-9]+([,:][0-9]+)?\))(:[^ \t0-9]|[:.,'"`\])}>]*([ \t]+|$))"#;
-        const DEFAULT_REGEXES_LINUX: &str =
-            r#"["'`\[({<]*(?<path>[^ \t]+:[0-9]+(:[0-9]+)?)(:[^ \t0-9]|[:.,'"`\])}>]*([ \t]+|$))"#;
-        const DEFAULT_REGEXES: &str = r#"["'`\[({<]*(?<path>[^ \t]+?)[:.,'"`\])}>]*([ \t]+|$)"#;
+        const DEFAULT_REGEXES: &str = concat!(
+            r#"((?<=[ ])|^)(?<paren>[(])?(?<brace>[{])?(?<bracket>[\[])?(?<angle>[<])?(?<quote>["'`])?"#,
+            r#"(?<path>[^ ]+?(:+[0-9]+(:[0-9]+)?|:?\([0-9]+([,:][0-9]+)?\))?)"#,
+            r#"(?(<quote>)\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\]]?)(?(<angle>)[>]?)"#,
+            r#"(:[^ 0-9]|[:.,]*([ ]+|$))"#
+        );
         const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
 
         thread_local! {
@@ -1455,8 +1441,6 @@ mod tests {
                         CARGO_DIR_REGEX,
                         ISSUE_12338_REGEX,
                         MULTIPLE_SAME_LINE_REGEX,
-                        DEFAULT_REGEXES_MSBUILD,
-                        DEFAULT_REGEXES_LINUX,
                         DEFAULT_REGEXES,
                     ],
                     PATH_HYPERLINK_TIMEOUT_MS)

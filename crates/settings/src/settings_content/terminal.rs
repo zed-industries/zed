@@ -140,9 +140,7 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: [
     ///   "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
-    ///   "[\"'`\\[({<]*(?<path>[^ \\t]+?:?\\([0-9]+([,:][0-9]+)?\\))(:[^ \\t0-9]|[:.,'\"`\\])}>]*([ \\t]+|$))",
-    ///   "[\"'`\\[({<]*(?<path>[^ \\t]+:[0-9]+(:[0-9]+)?)(:[^ \\t0-9]|[:.,'\"`\\])}>]*([ \\t]+|$))",
-    ///   "[\"'`\\[({<]*(?<path>[^ \\t]+?)[:.,'\"`\\])}>]*([ \\t]+|$)"
+    ///   "((?<=[ ])|^)(?<paren>[(])?(?<brace>[{])?(?<bracket>[\\[])?(?<angle>[<])?(?<quote>[\"'`])?(?<path>[^ ]+?(:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))?)(?(<quote>)\\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\\]]?)(?(<angle>)[>]?)(:[^ 0-9]|[:.,]*([ ]+|$))"
     /// ],
     pub path_hyperlink_regexes: Option<Vec<String>>,
     /// Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.

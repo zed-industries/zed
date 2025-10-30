@@ -2857,11 +2857,14 @@ pub mod bench {
         term: &Term<VoidListener>,
         point: AlacPoint,
     ) -> Option<(String, bool, Match)> {
-        const PATH_HYPERLINK_REGEXES: [&str; 4] = [
+        const PATH_HYPERLINK_REGEXES: [&str; 2] = [
             r#"File "(?<path>[^"]+)", line (?P<line>[0-9]+)"#,
-            r#"["'`\[({<]*(?<path>[^ \t]+?:?\([0-9]+([,:][0-9]+)?\))(:[^ \t0-9]|[:.,'"`\])}>]*([ \t]+|$))"#,
-            r#"["'`\[({<]*(?<path>[^ \t]+:[0-9]+(:[0-9]+)?)(:[^ \t0-9]|[:.,'"`\])}>]*([ \t]+|$))"#,
-            r#"["'`\[({<]*(?<path>[^ \t]+?)[:.,'"`\])}>]*([ \t]+|$)"#,
+            concat!(
+                r#"((?<=[ ])|^)(?<paren>[(])?(?<brace>[{])?(?<bracket>[\[])?(?<angle>[<])?(?<quote>["'`])?"#,
+                r#"(?<path>[^ ]+?(:+[0-9]+(:[0-9]+)?|:?\([0-9]+([,:][0-9]+)?\))?)"#,
+                r#"(?(<quote>)\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\]]?)(?(<angle>)[>]?)"#,
+                r#"(:[^ 0-9]|[:.,]*([ ]+|$))"#
+            ),
         ];
         const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
 

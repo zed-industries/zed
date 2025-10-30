@@ -1546,9 +1546,7 @@
     // performance it is recommended to order regexes from most common to least common.
     "path_hyperlink_regexes": [
       "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
-      "[\"'`\\[({<]*(?<path>[^ \\t]+?:?\\([0-9]+([,:][0-9]+)?\\))(:[^ \\t0-9]|[:.,'\"`\\])}>]*([ \\t]+|$))",
-      "[\"'`\\[({<]*(?<path>[^ \\t]+:[0-9]+(:[0-9]+)?)(:[^ \\t0-9]|[:.,'\"`\\])}>]*([ \\t]+|$))",
-      "[\"'`\\[({<]*(?<path>[^ \\t]+?)[:.,'\"`\\])}>]*([ \\t]+|$)"
+      "((?<=[ ])|^)(?<paren>[(])?(?<brace>[{])?(?<bracket>[\\[])?(?<angle>[<])?(?<quote>[\"'`])?(?<path>[^ ]+?(:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))?)(?(<quote>)\\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\\]]?)(?(<angle>)[>]?)(:[^ 0-9]|[:.,]*([ ]+|$))"
     ],
     // Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
     "path_hyperlink_timeout_ms": 10
