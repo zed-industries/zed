@@ -33,6 +33,8 @@ use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use refineable::Refineable;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Mutex, atomic};
 use std::{
     any::{Any, TypeId},
     borrow::Cow,
@@ -1123,6 +1125,14 @@ impl Window {
             let needs_present = needs_present.clone();
             let next_frame_callbacks = next_frame_callbacks.clone();
             let input_rate_tracker = input_rate_tracker.clone();
+            let reloaded = Arc::new(AtomicBool::new(false));
+            subsecond::register_handler({
+                let reloaded = reloaded.clone();
+                Arc::new(move || {
+                    reloaded.store(true, atomic::Ordering::Release);
+                })
+            });
+
             move |request_frame_options| {
                 let next_frame_callbacks = next_frame_callbacks.take();
                 if !next_frame_callbacks.is_empty() {
@@ -1142,7 +1152,10 @@ impl Window {
                     || needs_present.get()
                     || (active.get() && input_rate_tracker.borrow_mut().is_high_rate());
 
-                if invalidator.is_dirty() || request_frame_options.force_render {
+                if invalidator.is_dirty()
+                    || request_frame_options.force_render
+                    || reloaded.swap(false, atomic::Ordering::AcqRel)
+                {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
