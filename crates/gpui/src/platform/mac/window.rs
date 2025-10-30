@@ -62,8 +62,11 @@ static mut BLURRED_VIEW_CLASS: *const Class = ptr::null();
 #[allow(non_upper_case_globals)]
 const NSWindowStyleMaskNonactivatingPanel: NSWindowStyleMask =
     NSWindowStyleMask::from_bits_retain(1 << 7);
+// WindowLevel const value ref: https://docs.rs/core-graphics2/0.4.1/src/core_graphics2/window_level.rs.html
 #[allow(non_upper_case_globals)]
 const NSNormalWindowLevel: NSInteger = 0;
+#[allow(non_upper_case_globals)]
+const NSFloatingWindowLevel: NSInteger = 3;
 #[allow(non_upper_case_globals)]
 const NSPopUpWindowLevel: NSInteger = 101;
 #[allow(non_upper_case_globals)]
@@ -622,11 +625,14 @@ impl MacWindow {
             }
 
             let native_window: id = match kind {
-                WindowKind::Normal | WindowKind::Floating | WindowKind::Dialog => {
+                WindowKind::Normal => {
                     msg_send![WINDOW_CLASS, alloc]
                 }
                 WindowKind::PopUp => {
                     style_mask |= NSWindowStyleMaskNonactivatingPanel;
+                    msg_send![PANEL_CLASS, alloc]
+                }
+                WindowKind::Floating | WindowKind::Dialog => {
                     msg_send![PANEL_CLASS, alloc]
                 }
             };
@@ -781,9 +787,16 @@ impl MacWindow {
             content_view.addSubview_(native_view.autorelease());
             native_window.makeFirstResponder_(native_view);
 
+            let app: id = NSApplication::sharedApplication(nil);
+            let main_window: id = msg_send![app, mainWindow];
             match kind {
-                WindowKind::Normal | WindowKind::Floating | WindowKind::Dialog => {
-                    native_window.setLevel_(NSNormalWindowLevel);
+                WindowKind::Normal | WindowKind::Floating => {
+                    if kind == WindowKind::Floating {
+                        // Let the window float keep above normal windows.
+                        native_window.setLevel_(NSFloatingWindowLevel);
+                    } else {
+                        native_window.setLevel_(NSNormalWindowLevel);
+                    }
                     native_window.setAcceptsMouseMovedEvents_(YES);
 
                     if let Some(tabbing_identifier) = tabbing_identifier {
@@ -818,10 +831,13 @@ impl MacWindow {
                         NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenAuxiliary
                     );
                 }
+                WindowKind::Dialog => {
+                    if !main_window.is_null() {
+                        let _: () = msg_send![main_window, beginSheet: native_window completionHandler: nil];
+                    }
+                }
             }
 
-            let app = NSApplication::sharedApplication(nil);
-            let main_window: id = msg_send![app, mainWindow];
             if allows_automatic_window_tabbing
                 && !main_window.is_null()
                 && main_window != native_window
