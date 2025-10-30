@@ -408,6 +408,15 @@ impl ShellKind {
         }
     }
 
+    pub fn prepend_command_prefix<'a>(&self, command: &'a str) -> Cow<'a, str> {
+        match self.command_prefix() {
+            Some(prefix) if !command.starts_with(prefix) => {
+                Cow::Owned(format!("{prefix}{command}"))
+            }
+            _ => Cow::Borrowed(command),
+        }
+    }
+
     pub const fn sequential_commands_separator(&self) -> char {
         match self {
             ShellKind::Cmd => '&',
@@ -419,6 +428,20 @@ impl ShellKind {
             | ShellKind::PowerShell
             | ShellKind::Nushell
             | ShellKind::Xonsh => ';',
+        }
+    }
+
+    pub const fn sequential_and_commands_separator(&self) -> &'static str {
+        match self {
+            ShellKind::Cmd
+            | ShellKind::Posix
+            | ShellKind::Csh
+            | ShellKind::Tcsh
+            | ShellKind::Rc
+            | ShellKind::Fish
+            | ShellKind::PowerShell
+            | ShellKind::Xonsh => "&&",
+            ShellKind::Nushell => ";",
         }
     }
 
@@ -436,6 +459,42 @@ impl ShellKind {
             | ShellKind::Nushell
             | ShellKind::Xonsh => arg,
         })
+    }
+
+    /// Quotes the given argument if necessary, taking into account the command prefix.
+    ///
+    /// In other words, this will consider quoting arg without its command prefix to not break the command.
+    /// You should use this over `try_quote` when you want to quote a shell command.
+    pub fn try_quote_prefix_aware<'a>(&self, arg: &'a str) -> Option<Cow<'a, str>> {
+        if let Some(char) = self.command_prefix() {
+            if let Some(arg) = arg.strip_prefix(char) {
+                // we have a command that is prefixed
+                for quote in ['\'', '"'] {
+                    if let Some(arg) = arg
+                        .strip_prefix(quote)
+                        .and_then(|arg| arg.strip_suffix(quote))
+                    {
+                        // and the command itself is wrapped as a literal, that
+                        // means the prefix exists to interpret a literal as a
+                        // command. So strip the quotes, quote the command, and
+                        // re-add the quotes if they are missing after requoting
+                        let quoted = self.try_quote(arg)?;
+                        return Some(if quoted.starts_with(['\'', '"']) {
+                            Cow::Owned(self.prepend_command_prefix(&quoted).into_owned())
+                        } else {
+                            Cow::Owned(
+                                self.prepend_command_prefix(&format!("{quote}{quoted}{quote}"))
+                                    .into_owned(),
+                            )
+                        });
+                    }
+                }
+                return self
+                    .try_quote(arg)
+                    .map(|quoted| Cow::Owned(self.prepend_command_prefix(&quoted).into_owned()));
+            }
+        }
+        self.try_quote(arg)
     }
 
     pub fn split(&self, input: &str) -> Option<Vec<String>> {
@@ -523,6 +582,77 @@ mod tests {
                 .unwrap()
                 .into_owned(),
             "\"C:\\Users\\johndoe\\dev\\python\\39007\\tests\\.venv\\Scripts\\python.exe -m pytest \\\"test_foo.py::test_foo\\\"\"".to_string()
+        );
+    }
+
+    #[test]
+    fn test_try_quote_nu_command() {
+        let shell_kind = ShellKind::Nushell;
+        assert_eq!(
+            shell_kind.try_quote("'uname'").unwrap().into_owned(),
+            "\"'uname'\"".to_string()
+        );
+        assert_eq!(
+            shell_kind
+                .try_quote_prefix_aware("'uname'")
+                .unwrap()
+                .into_owned(),
+            "\"'uname'\"".to_string()
+        );
+        assert_eq!(
+            shell_kind.try_quote("^uname").unwrap().into_owned(),
+            "'^uname'".to_string()
+        );
+        assert_eq!(
+            shell_kind
+                .try_quote_prefix_aware("^uname")
+                .unwrap()
+                .into_owned(),
+            "^uname".to_string()
+        );
+        assert_eq!(
+            shell_kind.try_quote("^'uname'").unwrap().into_owned(),
+            "'^'\"'uname\'\"".to_string()
+        );
+        assert_eq!(
+            shell_kind
+                .try_quote_prefix_aware("^'uname'")
+                .unwrap()
+                .into_owned(),
+            "^'uname'".to_string()
+        );
+        assert_eq!(
+            shell_kind.try_quote("'uname a'").unwrap().into_owned(),
+            "\"'uname a'\"".to_string()
+        );
+        assert_eq!(
+            shell_kind
+                .try_quote_prefix_aware("'uname a'")
+                .unwrap()
+                .into_owned(),
+            "\"'uname a'\"".to_string()
+        );
+        assert_eq!(
+            shell_kind.try_quote("^'uname a'").unwrap().into_owned(),
+            "'^'\"'uname a'\"".to_string()
+        );
+        assert_eq!(
+            shell_kind
+                .try_quote_prefix_aware("^'uname a'")
+                .unwrap()
+                .into_owned(),
+            "^'uname a'".to_string()
+        );
+        assert_eq!(
+            shell_kind.try_quote("uname").unwrap().into_owned(),
+            "uname".to_string()
+        );
+        assert_eq!(
+            shell_kind
+                .try_quote_prefix_aware("uname")
+                .unwrap()
+                .into_owned(),
+            "uname".to_string()
         );
     }
 }
