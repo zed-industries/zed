@@ -28,6 +28,7 @@ smol.workspace = true
 tempfile.workspace = true
 util.workspace = true
 workspace.workspace = true
+util.workspace = true
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 which.workspace = true
