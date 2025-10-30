@@ -40,7 +40,7 @@ use crate::{
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
     Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph,
-    ShapedRun, SharedString, Size, SvgRenderer, SvgSize, SystemWindowTab, Task, TaskLabel, Window,
+    ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, TaskLabel, Window,
     WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
@@ -82,6 +82,9 @@ pub(crate) use test::*;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::*;
 
+#[cfg(all(target_os = "linux", feature = "wayland"))]
+pub use linux::layer_shell;
+
 #[cfg(any(test, feature = "test-support"))]
 pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
 
@@ -120,6 +123,15 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
     }
 }
 
+#[cfg(target_os = "windows")]
+pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
+    Rc::new(
+        WindowsPlatform::new()
+            .inspect_err(|err| show_error("Failed to launch", err.to_string()))
+            .unwrap(),
+    )
+}
+
 /// Return which compositor we're guessing we'll use.
 /// Does not attempt to connect to the given compositor
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -149,15 +161,6 @@ pub fn guess_compositor() -> &'static str {
     } else {
         "Headless"
     }
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
-    Rc::new(
-        WindowsPlatform::new()
-            .inspect_err(|err| show_error("Failed to launch", err.to_string()))
-            .unwrap(),
-    )
 }
 
 pub(crate) trait Platform: 'static {
@@ -1293,7 +1296,7 @@ pub struct TitlebarOptions {
 }
 
 /// The kind of window to create
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WindowKind {
     /// A normal application window
     Normal,
@@ -1304,6 +1307,11 @@ pub enum WindowKind {
 
     /// A floating window that appears on top of its parent window
     Floating,
+
+    /// A Wayland LayerShell window, used to draw overlays or backgrounds for applications such as
+    /// docks, notifications or wallpapers.
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    LayerShell(layer_shell::LayerShellOptions),
 }
 
 /// The appearance of the window, as defined by the operating system.
@@ -1817,13 +1825,9 @@ impl Image {
             ImageFormat::Tiff => frames_for_image(&self.bytes, image::ImageFormat::Tiff)?,
             ImageFormat::Ico => frames_for_image(&self.bytes, image::ImageFormat::Ico)?,
             ImageFormat::Svg => {
-                let pixmap = svg_renderer.render_pixmap(&self.bytes, SvgSize::ScaleFactor(1.0))?;
-
-                let buffer =
-                    image::ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take())
-                        .unwrap();
-
-                SmallVec::from_elem(Frame::new(buffer), 1)
+                return svg_renderer
+                    .render_single_frame(&self.bytes, 1.0, false)
+                    .map_err(Into::into);
             }
         };
 

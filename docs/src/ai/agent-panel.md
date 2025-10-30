@@ -78,11 +78,14 @@ Edit diffs also appear in individual buffers. If your active tab had edits made 
 
 ## Adding Context {#adding-context}
 
-Although Zed's agent is very efficient at reading through your code base to autonomously pick up relevant files, directories, and other context, manually adding context is still encouraged as a way to speed up and improve the AI's response quality.
+Although Zed's agent is very efficient at reading through your code base to autonomously pick up relevant context, manually adding whatever would be useful to fulfill your prompt is still very encouraged as a way to not only improve the AI's response quality but also to speed its response time up.
 
-To add any file, directory, symbol, previous threads, rules files, or even web pages as context, type `@` to mention them in the editor.
+In Zed's Agent Panel, all pieces of context are added as mentions in the panel's message editor.
+You can type `@` to mention files, directories, symbols, previous threads, and rules files.
 
-Pasting images as context is also supported by the Agent Panel.
+Additionally, you can also select text in a buffer and add it as context by using the {#kb agent::AddSelectionToThread} keybinding, running the {#action agent::AddSelectionToThread} action, or choosing the "Selection" item in the `@` menu.
+
+Copying images and pasting them in the panel's message editor is also supported.
 
 ### Token Usage {#token-usage}
 

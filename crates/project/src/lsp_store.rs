@@ -75,12 +75,12 @@ use language::{
     range_from_lsp, range_to_lsp,
 };
 use lsp::{
-    AdapterServerCapabilities, CodeActionKind, CompletionContext, DiagnosticSeverity,
-    DiagnosticTag, DidChangeWatchedFilesRegistrationOptions, Edit, FileOperationFilter,
-    FileOperationPatternKind, FileOperationRegistrationOptions, FileRename, FileSystemWatcher,
-    LSP_REQUEST_TIMEOUT, LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions,
-    LanguageServerId, LanguageServerName, LanguageServerSelector, LspRequestFuture,
-    MessageActionItem, MessageType, OneOf, RenameFilesParams, SymbolKind,
+    AdapterServerCapabilities, CodeActionKind, CompletionContext, DiagnosticServerCapabilities,
+    DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions, Edit,
+    FileOperationFilter, FileOperationPatternKind, FileOperationRegistrationOptions, FileRename,
+    FileSystemWatcher, LSP_REQUEST_TIMEOUT, LanguageServer, LanguageServerBinary,
+    LanguageServerBinaryOptions, LanguageServerId, LanguageServerName, LanguageServerSelector,
+    LspRequestFuture, MessageActionItem, MessageType, OneOf, RenameFilesParams, SymbolKind,
     TextDocumentSyncSaveOptions, TextEdit, Uri, WillRenameFiles, WorkDoneProgressCancelParams,
     WorkspaceFolder, notification::DidRenameFiles,
 };
@@ -138,6 +138,54 @@ pub use worktree::{
 
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 pub const SERVER_PROGRESS_THROTTLE_TIMEOUT: Duration = Duration::from_millis(100);
+const WORKSPACE_DIAGNOSTICS_TOKEN_START: &str = "id:";
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+pub enum ProgressToken {
+    Number(i32),
+    String(SharedString),
+}
+
+impl std::fmt::Display for ProgressToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Number(number) => write!(f, "{number}"),
+            Self::String(string) => write!(f, "{string}"),
+        }
+    }
+}
+
+impl ProgressToken {
+    fn from_lsp(value: lsp::NumberOrString) -> Self {
+        match value {
+            lsp::NumberOrString::Number(number) => Self::Number(number),
+            lsp::NumberOrString::String(string) => Self::String(SharedString::new(string)),
+        }
+    }
+
+    fn to_lsp(&self) -> lsp::NumberOrString {
+        match self {
+            Self::Number(number) => lsp::NumberOrString::Number(*number),
+            Self::String(string) => lsp::NumberOrString::String(string.to_string()),
+        }
+    }
+
+    fn from_proto(value: proto::ProgressToken) -> Option<Self> {
+        Some(match value.value? {
+            proto::progress_token::Value::Number(number) => Self::Number(number),
+            proto::progress_token::Value::String(string) => Self::String(SharedString::new(string)),
+        })
+    }
+
+    fn to_proto(&self) -> proto::ProgressToken {
+        proto::ProgressToken {
+            value: Some(match self {
+                Self::Number(number) => proto::progress_token::Value::Number(*number),
+                Self::String(string) => proto::progress_token::Value::String(string.to_string()),
+            }),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormatTrigger {
@@ -190,6 +238,12 @@ pub struct DocumentDiagnostics {
     version: Option<i32>,
 }
 
+#[derive(Default)]
+struct DynamicRegistrations {
+    did_change_watched_files: HashMap<String, Vec<FileSystemWatcher>>,
+    diagnostics: HashMap<Option<String>, DiagnosticServerCapabilities>,
+}
+
 pub struct LocalLspStore {
     weak: WeakEntity<LspStore>,
     worktree_store: Entity<WorktreeStore>,
@@ -207,8 +261,7 @@ pub struct LocalLspStore {
     watched_manifest_filenames: HashSet<ManifestName>,
     language_server_paths_watched_for_rename:
         HashMap<LanguageServerId, RenamePathsWatchedForServer>,
-    language_server_watcher_registrations:
-        HashMap<LanguageServerId, HashMap<String, Vec<FileSystemWatcher>>>,
+    language_server_dynamic_registrations: HashMap<LanguageServerId, DynamicRegistrations>,
     supplementary_language_servers:
         HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
     prettier_store: Entity<PrettierStore>,
@@ -707,9 +760,10 @@ impl LocalLspStore {
                     async move {
                         this.update(&mut cx, |this, _| {
                             if let Some(status) = this.language_server_statuses.get_mut(&server_id)
-                                && let lsp::NumberOrString::String(token) = params.token
                             {
-                                status.progress_tokens.insert(token);
+                                status
+                                    .progress_tokens
+                                    .insert(ProgressToken::from_lsp(params.token));
                             }
                         })?;
 
@@ -2487,7 +2541,7 @@ impl LocalLspStore {
                         uri.clone(),
                         adapter.language_id(&language.name()),
                         0,
-                        initial_snapshot.text_with_original_line_endings(),
+                        initial_snapshot.text(),
                     );
 
                     vec![snapshot]
@@ -3184,7 +3238,7 @@ impl LocalLspStore {
 
         for watcher in watchers {
             if let Some((worktree, literal_prefix, pattern)) =
-                self.worktree_and_path_for_file_watcher(&worktrees, watcher, cx)
+                Self::worktree_and_path_for_file_watcher(&worktrees, watcher, cx)
             {
                 worktree.update(cx, |worktree, _| {
                     if let Some((tree, glob)) =
@@ -3282,7 +3336,6 @@ impl LocalLspStore {
     }
 
     fn worktree_and_path_for_file_watcher(
-        &self,
         worktrees: &[Entity<Worktree>],
         watcher: &FileSystemWatcher,
         cx: &App,
@@ -3330,15 +3383,18 @@ impl LocalLspStore {
         language_server_id: LanguageServerId,
         cx: &mut Context<LspStore>,
     ) {
-        let Some(watchers) = self
-            .language_server_watcher_registrations
+        let Some(registrations) = self
+            .language_server_dynamic_registrations
             .get(&language_server_id)
         else {
             return;
         };
 
-        let watch_builder =
-            self.rebuild_watched_paths_inner(language_server_id, watchers.values().flatten(), cx);
+        let watch_builder = self.rebuild_watched_paths_inner(
+            language_server_id,
+            registrations.did_change_watched_files.values().flatten(),
+            cx,
+        );
         let watcher = watch_builder.build(self.fs.clone(), language_server_id, cx);
         self.language_server_watched_paths
             .insert(language_server_id, watcher);
@@ -3354,11 +3410,13 @@ impl LocalLspStore {
         cx: &mut Context<LspStore>,
     ) {
         let registrations = self
-            .language_server_watcher_registrations
+            .language_server_dynamic_registrations
             .entry(language_server_id)
             .or_default();
 
-        registrations.insert(registration_id.to_string(), params.watchers);
+        registrations
+            .did_change_watched_files
+            .insert(registration_id.to_string(), params.watchers);
 
         self.rebuild_watched_paths(language_server_id, cx);
     }
@@ -3370,11 +3428,15 @@ impl LocalLspStore {
         cx: &mut Context<LspStore>,
     ) {
         let registrations = self
-            .language_server_watcher_registrations
+            .language_server_dynamic_registrations
             .entry(language_server_id)
             .or_default();
 
-        if registrations.remove(registration_id).is_some() {
+        if registrations
+            .did_change_watched_files
+            .remove(registration_id)
+            .is_some()
+        {
             log::info!(
                 "language server {}: unregistered workspace/DidChangeWatchedFiles capability with id {}",
                 language_server_id,
@@ -3619,9 +3681,9 @@ pub enum LspStoreEvent {
 #[derive(Clone, Debug, Serialize)]
 pub struct LanguageServerStatus {
     pub name: LanguageServerName,
-    pub pending_work: BTreeMap<String, LanguageServerProgress>,
+    pub pending_work: BTreeMap<ProgressToken, LanguageServerProgress>,
     pub has_pending_diagnostic_updates: bool,
-    progress_tokens: HashSet<String>,
+    progress_tokens: HashSet<ProgressToken>,
     pub worktree: Option<WorktreeId>,
 }
 
@@ -3782,7 +3844,7 @@ impl LspStore {
                 last_workspace_edits_by_language_server: Default::default(),
                 language_server_watched_paths: Default::default(),
                 language_server_paths_watched_for_rename: Default::default(),
-                language_server_watcher_registrations: Default::default(),
+                language_server_dynamic_registrations: Default::default(),
                 buffers_being_formatted: Default::default(),
                 buffer_snapshots: Default::default(),
                 prettier_store,
@@ -4367,7 +4429,7 @@ impl LspStore {
         cx: &App,
     ) -> bool
     where
-        F: Fn(&lsp::ServerCapabilities) -> bool,
+        F: FnMut(&lsp::ServerCapabilities) -> bool,
     {
         let Some(language) = buffer.read(cx).language().cloned() else {
             return false;
@@ -4471,7 +4533,7 @@ impl LspStore {
                     this.update(cx, |this, cx| {
                         this.on_lsp_work_start(
                             language_server.server_id(),
-                            id.to_string(),
+                            ProgressToken::Number(id),
                             LanguageServerProgress {
                                 is_disk_based_diagnostics_progress: false,
                                 is_cancellable: false,
@@ -4489,7 +4551,11 @@ impl LspStore {
                 Some(defer(|| {
                     cx.update(|cx| {
                         this.update(cx, |this, cx| {
-                            this.on_lsp_work_end(language_server.server_id(), id.to_string(), cx);
+                            this.on_lsp_work_end(
+                                language_server.server_id(),
+                                ProgressToken::Number(id),
+                                cx,
+                            );
                         })
                     })
                     .log_err();
@@ -6447,12 +6513,30 @@ impl LspStore {
         let buffer_id = buffer.read(cx).remote_id();
 
         if let Some((client, upstream_project_id)) = self.upstream_client() {
+            let mut suitable_capabilities = None;
+            // Are we capable for proto request?
+            let any_server_has_diagnostics_provider = self.check_if_capable_for_proto_request(
+                &buffer,
+                |capabilities| {
+                    if let Some(caps) = &capabilities.diagnostic_provider {
+                        suitable_capabilities = Some(caps.clone());
+                        true
+                    } else {
+                        false
+                    }
+                },
+                cx,
+            );
+            // We don't really care which caps are passed into the request, as they're ignored by RPC anyways.
+            let Some(dynamic_caps) = suitable_capabilities else {
+                return Task::ready(Ok(None));
+            };
+            assert!(any_server_has_diagnostics_provider);
+
             let request = GetDocumentDiagnostics {
                 previous_result_id: None,
+                dynamic_caps,
             };
-            if !self.is_capable_for_proto_request(&buffer, &request, cx) {
-                return Task::ready(Ok(None));
-            }
             let request_task = client.request_lsp(
                 upstream_project_id,
                 None,
@@ -6468,23 +6552,44 @@ impl LspStore {
                 Ok(None)
             })
         } else {
-            let server_ids = buffer.update(cx, |buffer, cx| {
+            let servers = buffer.update(cx, |buffer, cx| {
                 self.language_servers_for_local_buffer(buffer, cx)
-                    .map(|(_, server)| server.server_id())
+                    .map(|(_, server)| server.clone())
                     .collect::<Vec<_>>()
             });
-            let pull_diagnostics = server_ids
+
+            let pull_diagnostics = servers
                 .into_iter()
-                .map(|server_id| {
-                    let result_id = self.result_id(server_id, buffer_id, cx);
-                    self.request_lsp(
-                        buffer.clone(),
-                        LanguageServerToQuery::Other(server_id),
-                        GetDocumentDiagnostics {
-                            previous_result_id: result_id,
-                        },
-                        cx,
-                    )
+                .flat_map(|server| {
+                    let result = maybe!({
+                        let local = self.as_local()?;
+                        let server_id = server.server_id();
+                        let providers_with_identifiers = local
+                            .language_server_dynamic_registrations
+                            .get(&server_id)
+                            .into_iter()
+                            .flat_map(|registrations| registrations.diagnostics.values().cloned())
+                            .collect::<Vec<_>>();
+                        Some(
+                            providers_with_identifiers
+                                .into_iter()
+                                .map(|dynamic_caps| {
+                                    let result_id = self.result_id(server_id, buffer_id, cx);
+                                    self.request_lsp(
+                                        buffer.clone(),
+                                        LanguageServerToQuery::Other(server_id),
+                                        GetDocumentDiagnostics {
+                                            previous_result_id: result_id,
+                                            dynamic_caps,
+                                        },
+                                        cx,
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    });
+
+                    result.unwrap_or_default()
                 })
                 .collect::<Vec<_>>();
 
@@ -6556,9 +6661,9 @@ impl LspStore {
             return HashMap::default();
         }
 
-        let last_chunk_number = applicable_chunks.len() - 1;
+        let last_chunk_number = existing_inlay_hints.buffer_chunks_len() - 1;
 
-        for (i, row_chunk) in applicable_chunks.into_iter().enumerate() {
+        for row_chunk in applicable_chunks {
             match (
                 existing_inlay_hints
                     .cached_hints(&row_chunk)
@@ -6571,7 +6676,7 @@ impl LspStore {
                     .cloned(),
             ) {
                 (None, None) => {
-                    let end = if last_chunk_number == i {
+                    let end = if last_chunk_number == row_chunk.id {
                         Point::new(row_chunk.end, buffer_snapshot.line_len(row_chunk.end))
                     } else {
                         Point::new(row_chunk.end, 0)
@@ -6792,7 +6897,7 @@ impl LspStore {
                                 && range.start.is_valid(&buffer_snapshot)
                                 && range.end.is_valid(&buffer_snapshot)
                                 && hint.position.cmp(&range.start, &buffer_snapshot).is_ge()
-                                && hint.position.cmp(&range.end, &buffer_snapshot).is_le()
+                                && hint.position.cmp(&range.end, &buffer_snapshot).is_lt()
                         });
                         (server_id, new_hints)
                     })
@@ -7522,7 +7627,6 @@ impl LspStore {
             let previous_snapshot = buffer_snapshots.last()?;
 
             let build_incremental_change = || {
-                let line_ending = next_snapshot.line_ending();
                 buffer
                     .edits_since::<Dimensions<PointUtf16, usize>>(
                         previous_snapshot.snapshot.version(),
@@ -7530,18 +7634,16 @@ impl LspStore {
                     .map(|edit| {
                         let edit_start = edit.new.start.0;
                         let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);
+                        let new_text = next_snapshot
+                            .text_for_range(edit.new.start.1..edit.new.end.1)
+                            .collect();
                         lsp::TextDocumentContentChangeEvent {
                             range: Some(lsp::Range::new(
                                 point_to_lsp(edit_start),
                                 point_to_lsp(edit_end),
                             )),
                             range_length: None,
-                            // Collect changed text and preserve line endings.
-                            // text_for_range returns chunks with normalized \n, so we need to
-                            // convert to the buffer's actual line ending for LSP.
-                            text: line_ending.into_string(
-                                next_snapshot.text_for_range(edit.new.start.1..edit.new.end.1),
-                            ),
+                            text: new_text,
                         }
                     })
                     .collect()
@@ -7561,7 +7663,7 @@ impl LspStore {
                     vec![lsp::TextDocumentContentChangeEvent {
                         range: None,
                         range_length: None,
-                        text: next_snapshot.text_with_original_line_endings(),
+                        text: next_snapshot.text(),
                     }]
                 }
                 Some(lsp::TextDocumentSyncKind::INCREMENTAL) => build_incremental_change(),
@@ -8876,7 +8978,8 @@ impl LspStore {
                 proto::update_language_server::Variant::WorkStart(payload) => {
                     lsp_store.on_lsp_work_start(
                         language_server_id,
-                        payload.token,
+                        ProgressToken::from_proto(payload.token.context("missing progress token")?)
+                            .context("invalid progress token value")?,
                         LanguageServerProgress {
                             title: payload.title,
                             is_disk_based_diagnostics_progress: false,
@@ -8891,7 +8994,8 @@ impl LspStore {
                 proto::update_language_server::Variant::WorkProgress(payload) => {
                     lsp_store.on_lsp_work_progress(
                         language_server_id,
-                        payload.token,
+                        ProgressToken::from_proto(payload.token.context("missing progress token")?)
+                            .context("invalid progress token value")?,
                         LanguageServerProgress {
                             title: None,
                             is_disk_based_diagnostics_progress: false,
@@ -8905,7 +9009,12 @@ impl LspStore {
                 }
 
                 proto::update_language_server::Variant::WorkEnd(payload) => {
-                    lsp_store.on_lsp_work_end(language_server_id, payload.token, cx);
+                    lsp_store.on_lsp_work_end(
+                        language_server_id,
+                        ProgressToken::from_proto(payload.token.context("missing progress token")?)
+                            .context("invalid progress token value")?,
+                        cx,
+                    );
                 }
 
                 proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(_) => {
@@ -9298,38 +9407,38 @@ impl LspStore {
 
     fn on_lsp_progress(
         &mut self,
-        progress: lsp::ProgressParams,
+        progress_params: lsp::ProgressParams,
         language_server_id: LanguageServerId,
         disk_based_diagnostics_progress_token: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        let token = match progress.token {
-            lsp::NumberOrString::String(token) => token,
-            lsp::NumberOrString::Number(token) => {
-                log::info!("skipping numeric progress token {}", token);
-                return;
-            }
-        };
-
-        match progress.value {
+        match progress_params.value {
             lsp::ProgressParamsValue::WorkDone(progress) => {
                 self.handle_work_done_progress(
                     progress,
                     language_server_id,
                     disk_based_diagnostics_progress_token,
-                    token,
+                    ProgressToken::from_lsp(progress_params.token),
                     cx,
                 );
             }
             lsp::ProgressParamsValue::WorkspaceDiagnostic(report) => {
+                let identifier = match progress_params.token {
+                    lsp::NumberOrString::Number(_) => None,
+                    lsp::NumberOrString::String(token) => token
+                        .split_once(WORKSPACE_DIAGNOSTICS_TOKEN_START)
+                        .map(|(_, id)| id.to_owned()),
+                };
                 if let Some(LanguageServerState::Running {
-                    workspace_refresh_task: Some(workspace_refresh_task),
+                    workspace_diagnostics_refresh_tasks,
                     ..
                 }) = self
                     .as_local_mut()
                     .and_then(|local| local.language_servers.get_mut(&language_server_id))
+                    && let Some(workspace_diagnostics) =
+                        workspace_diagnostics_refresh_tasks.get_mut(&identifier)
                 {
-                    workspace_refresh_task.progress_tx.try_send(()).ok();
+                    workspace_diagnostics.progress_tx.try_send(()).ok();
                     self.apply_workspace_diagnostic_report(language_server_id, report, cx)
                 }
             }
@@ -9341,7 +9450,7 @@ impl LspStore {
         progress: lsp::WorkDoneProgress,
         language_server_id: LanguageServerId,
         disk_based_diagnostics_progress_token: Option<String>,
-        token: String,
+        token: ProgressToken,
         cx: &mut Context<Self>,
     ) {
         let language_server_status =
@@ -9355,9 +9464,14 @@ impl LspStore {
             return;
         }
 
-        let is_disk_based_diagnostics_progress = disk_based_diagnostics_progress_token
-            .as_ref()
-            .is_some_and(|disk_based_token| token.starts_with(disk_based_token));
+        let is_disk_based_diagnostics_progress =
+            if let (Some(disk_based_token), ProgressToken::String(token)) =
+                (&disk_based_diagnostics_progress_token, &token)
+            {
+                token.starts_with(disk_based_token)
+            } else {
+                false
+            };
 
         match progress {
             lsp::WorkDoneProgress::Begin(report) => {
@@ -9404,7 +9518,7 @@ impl LspStore {
     fn on_lsp_work_start(
         &mut self,
         language_server_id: LanguageServerId,
-        token: String,
+        token: ProgressToken,
         progress: LanguageServerProgress,
         cx: &mut Context<Self>,
     ) {
@@ -9418,7 +9532,7 @@ impl LspStore {
                 .language_server_adapter_for_id(language_server_id)
                 .map(|adapter| adapter.name()),
             message: proto::update_language_server::Variant::WorkStart(proto::LspWorkStart {
-                token,
+                token: Some(token.to_proto()),
                 title: progress.title,
                 message: progress.message,
                 percentage: progress.percentage.map(|p| p as u32),
@@ -9430,7 +9544,7 @@ impl LspStore {
     fn on_lsp_work_progress(
         &mut self,
         language_server_id: LanguageServerId,
-        token: String,
+        token: ProgressToken,
         progress: LanguageServerProgress,
         cx: &mut Context<Self>,
     ) {
@@ -9470,7 +9584,7 @@ impl LspStore {
                     .map(|adapter| adapter.name()),
                 message: proto::update_language_server::Variant::WorkProgress(
                     proto::LspWorkProgress {
-                        token,
+                        token: Some(token.to_proto()),
                         message: progress.message,
                         percentage: progress.percentage.map(|p| p as u32),
                         is_cancellable: Some(progress.is_cancellable),
@@ -9483,7 +9597,7 @@ impl LspStore {
     fn on_lsp_work_end(
         &mut self,
         language_server_id: LanguageServerId,
-        token: String,
+        token: ProgressToken,
         cx: &mut Context<Self>,
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
@@ -9500,7 +9614,9 @@ impl LspStore {
             name: self
                 .language_server_adapter_for_id(language_server_id)
                 .map(|adapter| adapter.name()),
-            message: proto::update_language_server::Variant::WorkEnd(proto::LspWorkEnd { token }),
+            message: proto::update_language_server::Variant::WorkEnd(proto::LspWorkEnd {
+                token: Some(token.to_proto()),
+            }),
         })
     }
 
@@ -9912,25 +10028,33 @@ impl LspStore {
     }
 
     pub async fn handle_cancel_language_server_work(
-        this: Entity<Self>,
+        lsp_store: Entity<Self>,
         envelope: TypedEnvelope<proto::CancelLanguageServerWork>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        this.update(&mut cx, |this, cx| {
+        lsp_store.update(&mut cx, |lsp_store, cx| {
             if let Some(work) = envelope.payload.work {
                 match work {
                     proto::cancel_language_server_work::Work::Buffers(buffers) => {
                         let buffers =
-                            this.buffer_ids_to_buffers(buffers.buffer_ids.into_iter(), cx);
-                        this.cancel_language_server_work_for_buffers(buffers, cx);
+                            lsp_store.buffer_ids_to_buffers(buffers.buffer_ids.into_iter(), cx);
+                        lsp_store.cancel_language_server_work_for_buffers(buffers, cx);
                     }
                     proto::cancel_language_server_work::Work::LanguageServerWork(work) => {
                         let server_id = LanguageServerId::from_proto(work.language_server_id);
-                        this.cancel_language_server_work(server_id, work.token, cx);
+                        let token = work
+                            .token
+                            .map(|token| {
+                                ProgressToken::from_proto(token)
+                                    .context("invalid work progress token")
+                            })
+                            .transpose()?;
+                        lsp_store.cancel_language_server_work(server_id, token, cx);
                     }
                 }
             }
-        })?;
+            anyhow::Ok(())
+        })??;
 
         Ok(proto::Ack {})
     }
@@ -10784,13 +10908,28 @@ impl LspStore {
         let workspace_folders = workspace_folders.lock().clone();
         language_server.set_workspace_folders(workspace_folders);
 
+        let workspace_diagnostics_refresh_tasks = language_server
+            .capabilities()
+            .diagnostic_provider
+            .and_then(|provider| {
+                local
+                    .language_server_dynamic_registrations
+                    .entry(server_id)
+                    .or_default()
+                    .diagnostics
+                    .entry(None)
+                    .or_insert(provider.clone());
+                let workspace_refresher =
+                    lsp_workspace_diagnostics_refresh(None, provider, language_server.clone(), cx)?;
+
+                Some((None, workspace_refresher))
+            })
+            .into_iter()
+            .collect();
         local.language_servers.insert(
             server_id,
             LanguageServerState::Running {
-                workspace_refresh_task: lsp_workspace_diagnostics_refresh(
-                    language_server.clone(),
-                    cx,
-                ),
+                workspace_diagnostics_refresh_tasks,
                 adapter: adapter.clone(),
                 server: language_server.clone(),
                 simulate_disk_based_diagnostics_completion: None,
@@ -10925,12 +11064,13 @@ impl LspStore {
 
                     let snapshot = versions.last().unwrap();
                     let version = snapshot.version;
+                    let initial_snapshot = &snapshot.snapshot;
                     let uri = lsp::Uri::from_file_path(file.abs_path(cx)).unwrap();
                     language_server.register_buffer(
                         uri,
                         adapter.language_id(&language.name()),
                         version,
-                        buffer_handle.read(cx).text_with_original_line_endings(),
+                        initial_snapshot.text(),
                     );
                     buffer_paths_registered.push((buffer_id, file.abs_path(cx)));
                     local
@@ -11025,7 +11165,7 @@ impl LspStore {
     pub(crate) fn cancel_language_server_work(
         &mut self,
         server_id: LanguageServerId,
-        token_to_cancel: Option<String>,
+        token_to_cancel: Option<ProgressToken>,
         cx: &mut Context<Self>,
     ) {
         if let Some(local) = self.as_local() {
@@ -11043,7 +11183,7 @@ impl LspStore {
                         server
                             .notify::<lsp::notification::WorkDoneProgressCancel>(
                                 WorkDoneProgressCancelParams {
-                                    token: lsp::NumberOrString::String(token.clone()),
+                                    token: token.to_lsp(),
                                 },
                             )
                             .ok();
@@ -11057,7 +11197,7 @@ impl LspStore {
                     proto::cancel_language_server_work::Work::LanguageServerWork(
                         proto::cancel_language_server_work::LanguageServerWork {
                             language_server_id: server_id.to_proto(),
-                            token: token_to_cancel,
+                            token: token_to_cancel.map(|token| token.to_proto()),
                         },
                     ),
                 ),
@@ -11495,13 +11635,15 @@ impl LspStore {
 
     pub fn pull_workspace_diagnostics(&mut self, server_id: LanguageServerId) {
         if let Some(LanguageServerState::Running {
-            workspace_refresh_task: Some(workspace_refresh_task),
+            workspace_diagnostics_refresh_tasks,
             ..
         }) = self
             .as_local_mut()
             .and_then(|local| local.language_servers.get_mut(&server_id))
         {
-            workspace_refresh_task.refresh_tx.try_send(()).ok();
+            for diagnostics in workspace_diagnostics_refresh_tasks.values_mut() {
+                diagnostics.refresh_tx.try_send(()).ok();
+            }
         }
     }
 
@@ -11517,11 +11659,13 @@ impl LspStore {
             local.language_server_ids_for_buffer(buffer, cx)
         }) {
             if let Some(LanguageServerState::Running {
-                workspace_refresh_task: Some(workspace_refresh_task),
+                workspace_diagnostics_refresh_tasks,
                 ..
             }) = local.language_servers.get_mut(&server_id)
             {
-                workspace_refresh_task.refresh_tx.try_send(()).ok();
+                for diagnostics in workspace_diagnostics_refresh_tasks.values_mut() {
+                    diagnostics.refresh_tx.try_send(()).ok();
+                }
             }
         }
     }
@@ -11847,26 +11991,49 @@ impl LspStore {
                 "textDocument/diagnostic" => {
                     if let Some(caps) = reg
                         .register_options
-                        .map(serde_json::from_value)
+                        .map(serde_json::from_value::<DiagnosticServerCapabilities>)
                         .transpose()?
                     {
-                        let state = self
+                        let local = self
                             .as_local_mut()
-                            .context("Expected LSP Store to be local")?
+                            .context("Expected LSP Store to be local")?;
+                        let state = local
                             .language_servers
                             .get_mut(&server_id)
                             .context("Could not obtain Language Servers state")?;
-                        server.update_capabilities(|capabilities| {
-                            capabilities.diagnostic_provider = Some(caps);
-                        });
+                        local
+                            .language_server_dynamic_registrations
+                            .get_mut(&server_id)
+                            .and_then(|registrations| {
+                                registrations
+                                    .diagnostics
+                                    .insert(Some(reg.id.clone()), caps.clone())
+                            });
+
+                        let mut can_now_provide_diagnostics = false;
                         if let LanguageServerState::Running {
-                            workspace_refresh_task,
+                            workspace_diagnostics_refresh_tasks,
                             ..
                         } = state
-                            && workspace_refresh_task.is_none()
+                            && let Some(task) = lsp_workspace_diagnostics_refresh(
+                                Some(reg.id.clone()),
+                                caps.clone(),
+                                server.clone(),
+                                cx,
+                            )
                         {
-                            *workspace_refresh_task =
-                                lsp_workspace_diagnostics_refresh(server.clone(), cx)
+                            workspace_diagnostics_refresh_tasks.insert(Some(reg.id), task);
+                            can_now_provide_diagnostics = true;
+                        }
+
+                        // We don't actually care about capabilities.diagnostic_provider, but it IS relevant for the remote peer
+                        // to know that there's at least one provider. Otherwise, it will never ask us to issue documentdiagnostic calls on their behalf,
+                        // as it'll think that they're not supported.
+                        if can_now_provide_diagnostics {
+                            server.update_capabilities(|capabilities| {
+                                debug_assert!(capabilities.diagnostic_provider.is_none());
+                                capabilities.diagnostic_provider = Some(caps);
+                            });
                         }
 
                         notify_server_capabilities_updated(&server, cx);
@@ -12029,22 +12196,45 @@ impl LspStore {
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/diagnostic" => {
-                    server.update_capabilities(|capabilities| {
-                        capabilities.diagnostic_provider = None;
-                    });
-                    let state = self
+                    let local = self
                         .as_local_mut()
-                        .context("Expected LSP Store to be local")?
+                        .context("Expected LSP Store to be local")?;
+
+                    let state = local
                         .language_servers
                         .get_mut(&server_id)
                         .context("Could not obtain Language Servers state")?;
-                    if let LanguageServerState::Running {
-                        workspace_refresh_task,
-                        ..
-                    } = state
+                    let options = local
+                        .language_server_dynamic_registrations
+                        .get_mut(&server_id)
+                        .with_context(|| {
+                            format!("Expected dynamic registration to exist for server {server_id}")
+                        })?.diagnostics
+                        .remove(&Some(unreg.id.clone()))
+                        .with_context(|| format!(
+                            "Attempted to unregister non-existent diagnostic registration with ID {}",
+                            unreg.id)
+                        )?;
+
+                    let mut has_any_diagnostic_providers_still = true;
+                    if let Some(identifier) = diagnostic_identifier(&options)
+                        && let LanguageServerState::Running {
+                            workspace_diagnostics_refresh_tasks,
+                            ..
+                        } = state
                     {
-                        _ = workspace_refresh_task.take();
+                        workspace_diagnostics_refresh_tasks.remove(&identifier);
+                        has_any_diagnostic_providers_still =
+                            !workspace_diagnostics_refresh_tasks.is_empty();
                     }
+
+                    if !has_any_diagnostic_providers_still {
+                        server.update_capabilities(|capabilities| {
+                            debug_assert!(capabilities.diagnostic_provider.is_some());
+                            capabilities.diagnostic_provider = None;
+                        });
+                    }
+
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/documentColor" => {
@@ -12333,24 +12523,12 @@ fn subscribe_to_binary_statuses(
 }
 
 fn lsp_workspace_diagnostics_refresh(
+    registration_id: Option<String>,
+    options: DiagnosticServerCapabilities,
     server: Arc<LanguageServer>,
     cx: &mut Context<'_, LspStore>,
 ) -> Option<WorkspaceRefreshTask> {
-    let identifier = match server.capabilities().diagnostic_provider? {
-        lsp::DiagnosticServerCapabilities::Options(diagnostic_options) => {
-            if !diagnostic_options.workspace_diagnostics {
-                return None;
-            }
-            diagnostic_options.identifier
-        }
-        lsp::DiagnosticServerCapabilities::RegistrationOptions(registration_options) => {
-            let diagnostic_options = registration_options.diagnostic_options;
-            if !diagnostic_options.workspace_diagnostics {
-                return None;
-            }
-            diagnostic_options.identifier
-        }
-    };
+    let identifier = diagnostic_identifier(&options)?;
 
     let (progress_tx, mut progress_rx) = mpsc::channel(1);
     let (mut refresh_tx, mut refresh_rx) = mpsc::channel(1);
@@ -12396,7 +12574,14 @@ fn lsp_workspace_diagnostics_refresh(
                     return;
                 };
 
-                let token = format!("workspace/diagnostic-{}-{}", server.server_id(), requests);
+                let token = if let Some(identifier) = &registration_id {
+                    format!(
+                        "workspace/diagnostic/{}/{requests}/{WORKSPACE_DIAGNOSTICS_TOKEN_START}{identifier}",
+                        server.server_id(),
+                    )
+                } else {
+                    format!("workspace/diagnostic/{}/{requests}", server.server_id())
+                };
 
                 progress_rx.try_recv().ok();
                 let timer =
@@ -12460,6 +12645,24 @@ fn lsp_workspace_diagnostics_refresh(
         progress_tx,
         task: workspace_query_language_server,
     })
+}
+
+fn diagnostic_identifier(options: &DiagnosticServerCapabilities) -> Option<Option<String>> {
+    match &options {
+        lsp::DiagnosticServerCapabilities::Options(diagnostic_options) => {
+            if !diagnostic_options.workspace_diagnostics {
+                return None;
+            }
+            Some(diagnostic_options.identifier.clone())
+        }
+        lsp::DiagnosticServerCapabilities::RegistrationOptions(registration_options) => {
+            let diagnostic_options = &registration_options.diagnostic_options;
+            if !diagnostic_options.workspace_diagnostics {
+                return None;
+            }
+            Some(diagnostic_options.identifier.clone())
+        }
+    }
 }
 
 fn resolve_word_completion(snapshot: &BufferSnapshot, completion: &mut Completion) {
@@ -12866,7 +13069,7 @@ pub enum LanguageServerState {
         adapter: Arc<CachedLspAdapter>,
         server: Arc<LanguageServer>,
         simulate_disk_based_diagnostics_completion: Option<Task<()>>,
-        workspace_refresh_task: Option<WorkspaceRefreshTask>,
+        workspace_diagnostics_refresh_tasks: HashMap<Option<String>, WorkspaceRefreshTask>,
     },
 }
 

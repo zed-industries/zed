@@ -1,18 +1,9 @@
 use anyhow::Result;
-use gpui::SharedString;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::{ops::Range, sync::LazyLock};
 use tree_sitter::{Query, StreamingIterator as _};
 use util::RangeExt;
-
-/// Parameters that are used when generating some JSON schemas at runtime.
-pub struct SettingsJsonSchemaParams<'a> {
-    pub language_names: &'a [String],
-    pub font_names: &'a [String],
-    pub theme_names: &'a [SharedString],
-    pub icon_theme_names: &'a [SharedString],
-}
 
 pub fn update_value_in_json_text<'a>(
     text: &mut String,

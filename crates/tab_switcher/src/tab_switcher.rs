@@ -155,9 +155,9 @@ impl TabSwitcher {
         Self {
             picker: cx.new(|cx| {
                 if is_global {
-                    Picker::uniform_list(delegate, window, cx)
+                    Picker::list(delegate, window, cx)
                 } else {
-                    Picker::nonsearchable_uniform_list(delegate, window, cx)
+                    Picker::nonsearchable_list(delegate, window, cx)
                 }
             }),
             init_modifiers,

@@ -3833,6 +3833,32 @@ impl BufferSnapshot {
         include_extra_context: bool,
         theme: Option<&SyntaxTheme>,
     ) -> Vec<OutlineItem<Anchor>> {
+        self.outline_items_containing_internal(
+            range,
+            include_extra_context,
+            theme,
+            |this, range| this.anchor_after(range.start)..this.anchor_before(range.end),
+        )
+    }
+
+    pub fn outline_items_as_points_containing<T: ToOffset>(
+        &self,
+        range: Range<T>,
+        include_extra_context: bool,
+        theme: Option<&SyntaxTheme>,
+    ) -> Vec<OutlineItem<Point>> {
+        self.outline_items_containing_internal(range, include_extra_context, theme, |_, range| {
+            range
+        })
+    }
+
+    fn outline_items_containing_internal<T: ToOffset, U>(
+        &self,
+        range: Range<T>,
+        include_extra_context: bool,
+        theme: Option<&SyntaxTheme>,
+        range_callback: fn(&Self, Range<Point>) -> Range<U>,
+    ) -> Vec<OutlineItem<U>> {
         let range = range.to_offset(self);
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
             grammar.outline_config.as_ref().map(|c| &c.query)
@@ -3905,19 +3931,16 @@ impl BufferSnapshot {
 
             anchor_items.push(OutlineItem {
                 depth: item_ends_stack.len(),
-                range: self.anchor_after(item.range.start)..self.anchor_before(item.range.end),
+                range: range_callback(self, item.range.clone()),
+                source_range_for_text: range_callback(self, item.source_range_for_text.clone()),
                 text: item.text,
                 highlight_ranges: item.highlight_ranges,
                 name_ranges: item.name_ranges,
-                body_range: item
-                    .body_range
-                    .map(|r| self.anchor_after(r.start)..self.anchor_before(r.end)),
+                body_range: item.body_range.map(|r| range_callback(self, r)),
                 annotation_range: annotation_row_range.map(|annotation_range| {
-                    self.anchor_after(Point::new(annotation_range.start, 0))
-                        ..self.anchor_before(Point::new(
-                            annotation_range.end,
-                            self.line_len(annotation_range.end),
-                        ))
+                    let point_range = Point::new(annotation_range.start, 0)
+                        ..Point::new(annotation_range.end, self.line_len(annotation_range.end));
+                    range_callback(self, point_range)
                 }),
             });
             item_ends_stack.push(item.range.end);
@@ -3984,14 +4007,13 @@ impl BufferSnapshot {
         if buffer_ranges.is_empty() {
             return None;
         }
+        let source_range_for_text =
+            buffer_ranges.first().unwrap().0.start..buffer_ranges.last().unwrap().0.end;
 
         let mut text = String::new();
         let mut highlight_ranges = Vec::new();
         let mut name_ranges = Vec::new();
-        let mut chunks = self.chunks(
-            buffer_ranges.first().unwrap().0.start..buffer_ranges.last().unwrap().0.end,
-            true,
-        );
+        let mut chunks = self.chunks(source_range_for_text.clone(), true);
         let mut last_buffer_range_end = 0;
         for (buffer_range, is_name) in buffer_ranges {
             let space_added = !text.is_empty() && buffer_range.start > last_buffer_range_end;
@@ -4037,6 +4059,7 @@ impl BufferSnapshot {
         Some(OutlineItem {
             depth: 0, // We'll calculate the depth later
             range: item_point_range,
+            source_range_for_text: source_range_for_text.to_point(self),
             text,
             highlight_ranges,
             name_ranges,
