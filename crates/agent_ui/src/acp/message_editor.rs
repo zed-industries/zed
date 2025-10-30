@@ -647,29 +647,23 @@ impl MessageEditor {
         available_commands: &[acp::AvailableCommand],
         agent_name: &str,
     ) -> Result<()> {
-        if let Some(parsed_command) = SlashCommandCompletion::try_parse(text, 0) {
-            if let Some(command_name) = parsed_command.command {
-                // Check if this command is in the list of available commands from the server
-                let is_supported = available_commands
-                    .iter()
-                    .any(|cmd| cmd.name == command_name);
-
-                if !is_supported {
-                    return Err(anyhow!(
-                        "The /{} command is not supported by {}.\n\nAvailable commands: {}",
-                        command_name,
-                        agent_name,
-                        if available_commands.is_empty() {
-                            "none".to_string()
-                        } else {
-                            available_commands
-                                .iter()
-                                .map(|cmd| format!("/{}", cmd.name))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        }
-                    ));
-                }
+        if text.starts_with('/') {
+            let text = text.trim_start_matches('/');
+            if !available_commands.iter().any(|c| text.starts_with(&c.name)) {
+                return Err(anyhow!(
+                    "The /{} command is not supported by {}.\n\nAvailable commands: {}",
+                    text,
+                    agent_name,
+                    if available_commands.is_empty() {
+                        "none".to_string()
+                    } else {
+                        available_commands
+                            .iter()
+                            .map(|cmd| format!("/{}", cmd.name))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    }
+                ));
             }
         }
         Ok(())
