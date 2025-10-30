@@ -16495,7 +16495,7 @@ dependencies = [
  "editor",
  "file_icons",
  "gpui",
- "multi_buffer",
+ "language",
  "ui",
  "workspace",
 ]
@@ -21702,6 +21702,7 @@ dependencies = [
  "ordered-float 2.10.1",
  "pretty_assertions",
  "project",
+ "regex-syntax",
  "serde",
  "serde_json",
  "settings",

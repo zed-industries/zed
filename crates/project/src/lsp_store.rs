@@ -138,6 +138,54 @@ pub use worktree::{
 
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 pub const SERVER_PROGRESS_THROTTLE_TIMEOUT: Duration = Duration::from_millis(100);
+const WORKSPACE_DIAGNOSTICS_TOKEN_START: &str = "id:";
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+pub enum ProgressToken {
+    Number(i32),
+    String(SharedString),
+}
+
+impl std::fmt::Display for ProgressToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Number(number) => write!(f, "{number}"),
+            Self::String(string) => write!(f, "{string}"),
+        }
+    }
+}
+
+impl ProgressToken {
+    fn from_lsp(value: lsp::NumberOrString) -> Self {
+        match value {
+            lsp::NumberOrString::Number(number) => Self::Number(number),
+            lsp::NumberOrString::String(string) => Self::String(SharedString::new(string)),
+        }
+    }
+
+    fn to_lsp(&self) -> lsp::NumberOrString {
+        match self {
+            Self::Number(number) => lsp::NumberOrString::Number(*number),
+            Self::String(string) => lsp::NumberOrString::String(string.to_string()),
+        }
+    }
+
+    fn from_proto(value: proto::ProgressToken) -> Option<Self> {
+        Some(match value.value? {
+            proto::progress_token::Value::Number(number) => Self::Number(number),
+            proto::progress_token::Value::String(string) => Self::String(SharedString::new(string)),
+        })
+    }
+
+    fn to_proto(&self) -> proto::ProgressToken {
+        proto::ProgressToken {
+            value: Some(match self {
+                Self::Number(number) => proto::progress_token::Value::Number(*number),
+                Self::String(string) => proto::progress_token::Value::String(string.to_string()),
+            }),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormatTrigger {
@@ -712,9 +760,10 @@ impl LocalLspStore {
                     async move {
                         this.update(&mut cx, |this, _| {
                             if let Some(status) = this.language_server_statuses.get_mut(&server_id)
-                                && let lsp::NumberOrString::String(token) = params.token
                             {
-                                status.progress_tokens.insert(token);
+                                status
+                                    .progress_tokens
+                                    .insert(ProgressToken::from_lsp(params.token));
                             }
                         })?;
 
@@ -3632,9 +3681,9 @@ pub enum LspStoreEvent {
 #[derive(Clone, Debug, Serialize)]
 pub struct LanguageServerStatus {
     pub name: LanguageServerName,
-    pub pending_work: BTreeMap<String, LanguageServerProgress>,
+    pub pending_work: BTreeMap<ProgressToken, LanguageServerProgress>,
     pub has_pending_diagnostic_updates: bool,
-    progress_tokens: HashSet<String>,
+    progress_tokens: HashSet<ProgressToken>,
     pub worktree: Option<WorktreeId>,
 }
 
@@ -4484,7 +4533,7 @@ impl LspStore {
                     this.update(cx, |this, cx| {
                         this.on_lsp_work_start(
                             language_server.server_id(),
-                            id.to_string(),
+                            ProgressToken::Number(id),
                             LanguageServerProgress {
                                 is_disk_based_diagnostics_progress: false,
                                 is_cancellable: false,
@@ -4502,7 +4551,11 @@ impl LspStore {
                 Some(defer(|| {
                     cx.update(|cx| {
                         this.update(cx, |this, cx| {
-                            this.on_lsp_work_end(language_server.server_id(), id.to_string(), cx);
+                            this.on_lsp_work_end(
+                                language_server.server_id(),
+                                ProgressToken::Number(id),
+                                cx,
+                            );
                         })
                     })
                     .log_err();
@@ -8925,7 +8978,8 @@ impl LspStore {
                 proto::update_language_server::Variant::WorkStart(payload) => {
                     lsp_store.on_lsp_work_start(
                         language_server_id,
-                        payload.token,
+                        ProgressToken::from_proto(payload.token.context("missing progress token")?)
+                            .context("invalid progress token value")?,
                         LanguageServerProgress {
                             title: payload.title,
                             is_disk_based_diagnostics_progress: false,
@@ -8940,7 +8994,8 @@ impl LspStore {
                 proto::update_language_server::Variant::WorkProgress(payload) => {
                     lsp_store.on_lsp_work_progress(
                         language_server_id,
-                        payload.token,
+                        ProgressToken::from_proto(payload.token.context("missing progress token")?)
+                            .context("invalid progress token value")?,
                         LanguageServerProgress {
                             title: None,
                             is_disk_based_diagnostics_progress: false,
@@ -8954,7 +9009,12 @@ impl LspStore {
                 }
 
                 proto::update_language_server::Variant::WorkEnd(payload) => {
-                    lsp_store.on_lsp_work_end(language_server_id, payload.token, cx);
+                    lsp_store.on_lsp_work_end(
+                        language_server_id,
+                        ProgressToken::from_proto(payload.token.context("missing progress token")?)
+                            .context("invalid progress token value")?,
+                        cx,
+                    );
                 }
 
                 proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(_) => {
@@ -9347,31 +9407,28 @@ impl LspStore {
 
     fn on_lsp_progress(
         &mut self,
-        progress: lsp::ProgressParams,
+        progress_params: lsp::ProgressParams,
         language_server_id: LanguageServerId,
         disk_based_diagnostics_progress_token: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        let token = match progress.token {
-            lsp::NumberOrString::String(token) => token,
-            lsp::NumberOrString::Number(token) => {
-                log::info!("skipping numeric progress token {}", token);
-                return;
-            }
-        };
-
-        match progress.value {
+        match progress_params.value {
             lsp::ProgressParamsValue::WorkDone(progress) => {
                 self.handle_work_done_progress(
                     progress,
                     language_server_id,
                     disk_based_diagnostics_progress_token,
-                    token,
+                    ProgressToken::from_lsp(progress_params.token),
                     cx,
                 );
             }
             lsp::ProgressParamsValue::WorkspaceDiagnostic(report) => {
-                let identifier = token.split_once("id:").map(|(_, id)| id.to_owned());
+                let identifier = match progress_params.token {
+                    lsp::NumberOrString::Number(_) => None,
+                    lsp::NumberOrString::String(token) => token
+                        .split_once(WORKSPACE_DIAGNOSTICS_TOKEN_START)
+                        .map(|(_, id)| id.to_owned()),
+                };
                 if let Some(LanguageServerState::Running {
                     workspace_diagnostics_refresh_tasks,
                     ..
@@ -9393,7 +9450,7 @@ impl LspStore {
         progress: lsp::WorkDoneProgress,
         language_server_id: LanguageServerId,
         disk_based_diagnostics_progress_token: Option<String>,
-        token: String,
+        token: ProgressToken,
         cx: &mut Context<Self>,
     ) {
         let language_server_status =
@@ -9407,9 +9464,14 @@ impl LspStore {
             return;
         }
 
-        let is_disk_based_diagnostics_progress = disk_based_diagnostics_progress_token
-            .as_ref()
-            .is_some_and(|disk_based_token| token.starts_with(disk_based_token));
+        let is_disk_based_diagnostics_progress =
+            if let (Some(disk_based_token), ProgressToken::String(token)) =
+                (&disk_based_diagnostics_progress_token, &token)
+            {
+                token.starts_with(disk_based_token)
+            } else {
+                false
+            };
 
         match progress {
             lsp::WorkDoneProgress::Begin(report) => {
@@ -9456,7 +9518,7 @@ impl LspStore {
     fn on_lsp_work_start(
         &mut self,
         language_server_id: LanguageServerId,
-        token: String,
+        token: ProgressToken,
         progress: LanguageServerProgress,
         cx: &mut Context<Self>,
     ) {
@@ -9470,7 +9532,7 @@ impl LspStore {
                 .language_server_adapter_for_id(language_server_id)
                 .map(|adapter| adapter.name()),
             message: proto::update_language_server::Variant::WorkStart(proto::LspWorkStart {
-                token,
+                token: Some(token.to_proto()),
                 title: progress.title,
                 message: progress.message,
                 percentage: progress.percentage.map(|p| p as u32),
@@ -9482,7 +9544,7 @@ impl LspStore {
     fn on_lsp_work_progress(
         &mut self,
         language_server_id: LanguageServerId,
-        token: String,
+        token: ProgressToken,
         progress: LanguageServerProgress,
         cx: &mut Context<Self>,
     ) {
@@ -9522,7 +9584,7 @@ impl LspStore {
                     .map(|adapter| adapter.name()),
                 message: proto::update_language_server::Variant::WorkProgress(
                     proto::LspWorkProgress {
-                        token,
+                        token: Some(token.to_proto()),
                         message: progress.message,
                         percentage: progress.percentage.map(|p| p as u32),
                         is_cancellable: Some(progress.is_cancellable),
@@ -9535,7 +9597,7 @@ impl LspStore {
     fn on_lsp_work_end(
         &mut self,
         language_server_id: LanguageServerId,
-        token: String,
+        token: ProgressToken,
         cx: &mut Context<Self>,
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
@@ -9552,7 +9614,9 @@ impl LspStore {
             name: self
                 .language_server_adapter_for_id(language_server_id)
                 .map(|adapter| adapter.name()),
-            message: proto::update_language_server::Variant::WorkEnd(proto::LspWorkEnd { token }),
+            message: proto::update_language_server::Variant::WorkEnd(proto::LspWorkEnd {
+                token: Some(token.to_proto()),
+            }),
         })
     }
 
@@ -9964,25 +10028,33 @@ impl LspStore {
     }
 
     pub async fn handle_cancel_language_server_work(
-        this: Entity<Self>,
+        lsp_store: Entity<Self>,
         envelope: TypedEnvelope<proto::CancelLanguageServerWork>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        this.update(&mut cx, |this, cx| {
+        lsp_store.update(&mut cx, |lsp_store, cx| {
             if let Some(work) = envelope.payload.work {
                 match work {
                     proto::cancel_language_server_work::Work::Buffers(buffers) => {
                         let buffers =
-                            this.buffer_ids_to_buffers(buffers.buffer_ids.into_iter(), cx);
-                        this.cancel_language_server_work_for_buffers(buffers, cx);
+                            lsp_store.buffer_ids_to_buffers(buffers.buffer_ids.into_iter(), cx);
+                        lsp_store.cancel_language_server_work_for_buffers(buffers, cx);
                     }
                     proto::cancel_language_server_work::Work::LanguageServerWork(work) => {
                         let server_id = LanguageServerId::from_proto(work.language_server_id);
-                        this.cancel_language_server_work(server_id, work.token, cx);
+                        let token = work
+                            .token
+                            .map(|token| {
+                                ProgressToken::from_proto(token)
+                                    .context("invalid work progress token")
+                            })
+                            .transpose()?;
+                        lsp_store.cancel_language_server_work(server_id, token, cx);
                     }
                 }
             }
-        })?;
+            anyhow::Ok(())
+        })??;
 
         Ok(proto::Ack {})
     }
@@ -11093,7 +11165,7 @@ impl LspStore {
     pub(crate) fn cancel_language_server_work(
         &mut self,
         server_id: LanguageServerId,
-        token_to_cancel: Option<String>,
+        token_to_cancel: Option<ProgressToken>,
         cx: &mut Context<Self>,
     ) {
         if let Some(local) = self.as_local() {
@@ -11111,7 +11183,7 @@ impl LspStore {
                         server
                             .notify::<lsp::notification::WorkDoneProgressCancel>(
                                 WorkDoneProgressCancelParams {
-                                    token: lsp::NumberOrString::String(token.clone()),
+                                    token: token.to_lsp(),
                                 },
                             )
                             .ok();
@@ -11125,7 +11197,7 @@ impl LspStore {
                     proto::cancel_language_server_work::Work::LanguageServerWork(
                         proto::cancel_language_server_work::LanguageServerWork {
                             language_server_id: server_id.to_proto(),
-                            token: token_to_cancel,
+                            token: token_to_cancel.map(|token| token.to_proto()),
                         },
                     ),
                 ),
@@ -12504,7 +12576,7 @@ fn lsp_workspace_diagnostics_refresh(
 
                 let token = if let Some(identifier) = &registration_id {
                     format!(
-                        "workspace/diagnostic/{}/{requests}/id:{identifier}",
+                        "workspace/diagnostic/{}/{requests}/{WORKSPACE_DIAGNOSTICS_TOKEN_START}{identifier}",
                         server.server_id(),
                     )
                 } else {

@@ -3104,7 +3104,7 @@ impl Window {
         let Some(tile) =
             self.sprite_atlas
                 .get_or_insert_with(&params.clone().into(), &mut || {
-                    let Some((size, bytes)) = cx.svg_renderer.render(&params)? else {
+                    let Some((size, bytes)) = cx.svg_renderer.render_alpha_mask(&params)? else {
                         return Ok(None);
                     };
                     Ok(Some((size, Cow::Owned(bytes))))
