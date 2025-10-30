@@ -2860,16 +2860,20 @@ mod tests {
         });
 
         // Split the pane with the first entry, then open the second entry again.
-        let (task1, task2) = window
+        window
             .update(cx, |w, window, cx| {
-                (
-                    w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, window, cx),
-                    w.open_path(file2.clone(), None, true, window, cx),
-                )
+                w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, window, cx)
             })
+            .unwrap()
+            .await
             .unwrap();
-        task1.await.unwrap();
-        task2.await.unwrap();
+        window
+            .update(cx, |w, window, cx| {
+                w.open_path(file2.clone(), None, true, window, cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
 
         window
             .read_with(cx, |w, cx| {

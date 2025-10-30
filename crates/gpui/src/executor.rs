@@ -479,7 +479,6 @@ impl ForegroundExecutor {
     }
 
     /// Enqueues the given Task to run on the main thread at some point in the future.
-    #[track_caller]
     pub fn spawn<R>(&self, future: impl Future<Output = R> + 'static) -> Task<R>
     where
         R: 'static,

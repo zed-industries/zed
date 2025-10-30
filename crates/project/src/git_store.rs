@@ -709,6 +709,7 @@ impl GitStore {
                     repo.load_committed_text(buffer_id, repo_path, cx)
                 });
 
+                // todo(lw): hot foreground spawn
                 cx.spawn(async move |this, cx| {
                     Self::open_diff_internal(this, DiffKind::Uncommitted, changes.await, buffer, cx)
                         .await

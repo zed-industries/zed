@@ -322,18 +322,25 @@ impl ProjectSearch {
 
             let mut limit_reached = false;
             while let Some(results) = matches.next().await {
-                let mut buffers_with_ranges = Vec::with_capacity(results.len());
-                for result in results {
-                    match result {
-                        project::search::SearchResult::Buffer { buffer, ranges } => {
-                            buffers_with_ranges.push((buffer, ranges));
+                let (buffers_with_ranges, has_reached_limit) = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let mut limit_reached = false;
+                        let mut buffers_with_ranges = Vec::with_capacity(results.len());
+                        for result in results {
+                            match result {
+                                project::search::SearchResult::Buffer { buffer, ranges } => {
+                                    buffers_with_ranges.push((buffer, ranges));
+                                }
+                                project::search::SearchResult::LimitReached => {
+                                    limit_reached = true;
+                                }
+                            }
                         }
-                        project::search::SearchResult::LimitReached => {
-                            limit_reached = true;
-                        }
-                    }
-                }
-
+                        (buffers_with_ranges, limit_reached)
+                    })
+                    .await;
+                limit_reached |= has_reached_limit;
                 let mut new_ranges = project_search
                     .update(cx, |project_search, cx| {
                         project_search.excerpts.update(cx, |excerpts, cx| {
@@ -352,7 +359,6 @@ impl ProjectSearch {
                         })
                     })
                     .ok()?;
-
                 while let Some(new_ranges) = new_ranges.next().await {
                     project_search
                         .update(cx, |project_search, cx| {
