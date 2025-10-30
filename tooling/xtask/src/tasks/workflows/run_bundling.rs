@@ -32,11 +32,11 @@ pub fn run_bundling() -> Workflow {
         )
         .add_job(
             "bundle_linux_x86_64",
-            bundle_linux(runners::Arch::X86_64, &[]),
+            bundle_linux_job(runners::Arch::X86_64, &[]),
         )
         .add_job(
             "bundle_linux_arm64",
-            bundle_linux(runners::Arch::ARM64, &[]),
+            bundle_linux_job(runners::Arch::ARM64, &[]),
         )
         .add_job(
             "bundle_windows_x86_64",
@@ -82,7 +82,7 @@ pub fn bundle_mac(arch: runners::Arch) -> Step<Run> {
     named::bash(&format!("./script/bundle-mac {arch}-apple-darwin"))
 }
 
-pub(crate) fn bundle_linux(arch: runners::Arch, deps: &[&NamedJob]) -> Job {
+pub(crate) fn bundle_linux_job(arch: runners::Arch, deps: &[&NamedJob]) -> Job {
     let artifact_name = format!("zed-{}-{}.tar.gz", vars::GITHUB_SHA, arch.triple());
     let remote_server_artifact_name = format!(
         "zed-remote-server-{}-{}.tar.gz",

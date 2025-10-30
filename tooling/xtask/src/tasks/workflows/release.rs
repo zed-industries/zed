@@ -1,8 +1,9 @@
-use gh_workflow::{Concurrency, Event, Push, Step, Use, Workflow};
+use gh_workflow::{Concurrency, Event, Job, Push, Step, Use, Workflow};
 
 use crate::tasks::workflows::{
     run_bundling, run_tests, runners,
-    steps::{NamedJob, dependant_job, named},
+    steps::{self, NamedJob, dependant_job, named},
+    vars,
 };
 
 // ideal release flow:
@@ -39,7 +40,6 @@ pub(crate) fn release() -> Workflow {
         &bundle_windows_x86_64,
         &create_draft_release,
     ]);
-
     named::workflow()
         .on(Event::default().push(Push::default().tags(vec!["v00.00.00-test".to_string()])))
         .concurrency(
@@ -48,10 +48,10 @@ pub(crate) fn release() -> Workflow {
                 .group("${{ github.workflow }}")
                 .cancel_in_progress(true),
         )
-        .add_job(macos_tests.name, macos_tests.job)
-        .add_job(linux_tests.name, linux_tests.job)
-        .add_job(windows_tests.name, windows_tests.job)
-        .add_job(check_scripts.name, check_scripts.job)
+        .add_job(macos_tests.name, use_fake_job_instead(macos_tests.job))
+        .add_job(linux_tests.name, use_fake_job_instead(linux_tests.job))
+        .add_job(windows_tests.name, use_fake_job_instead(windows_tests.job))
+        .add_job(check_scripts.name, use_fake_job_instead(check_scripts.job))
         .add_job(create_draft_release.name, create_draft_release.job)
         .add_job(bundle_linux_arm64.name, bundle_linux_arm64.job)
         .add_job(bundle_linux_x86_64.name, bundle_linux_x86_64.job)
@@ -60,6 +60,10 @@ pub(crate) fn release() -> Workflow {
         .add_job(bundle_windows_arm64.name, bundle_windows_arm64.job)
         .add_job(bundle_windows_x86_64.name, bundle_windows_x86_64.job)
         .add_job(upload_release_assets.name, upload_release_assets.job)
+}
+
+fn use_fake_job_instead(_: Job) -> Job {
+    Job::default().add_step(steps::checkout_repo())
 }
 
 fn upload_release_assets(deps: &[&NamedJob]) -> NamedJob {
@@ -113,10 +117,10 @@ fn bundle_mac_arm64(deps: &[&NamedJob]) -> NamedJob {
     named::job(run_bundling::bundle_mac_job(runners::Arch::ARM64, deps))
 }
 fn bundle_linux_x86_64(deps: &[&NamedJob]) -> NamedJob {
-    named::job(run_bundling::bundle_linux(runners::Arch::X86_64, deps))
+    named::job(run_bundling::bundle_linux_job(runners::Arch::X86_64, deps))
 }
 fn bundle_linux_arm64(deps: &[&NamedJob]) -> NamedJob {
-    named::job(run_bundling::bundle_linux(runners::Arch::ARM64, deps))
+    named::job(run_bundling::bundle_linux_job(runners::Arch::ARM64, deps))
 }
 fn bundle_windows_x86_64(deps: &[&NamedJob]) -> NamedJob {
     named::job(run_bundling::bundle_windows_job(
