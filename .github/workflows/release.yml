@@ -301,8 +301,8 @@ jobs:
       uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
       with:
         path: ./artifacts/
-    - name: ls -laR ./artifacts
-      run: ls -laR ./artifacts
+    - name: ls -lR ./artifacts
+      run: ls -lR ./artifacts
       shell: bash -euxo pipefail {0}
     - name: release::upload_release_assets::prep_release_artifacts
       run: |-
@@ -322,6 +322,8 @@ jobs:
     - name: gh release upload ${{ github.ref }} release-artifacts/*
       run: gh release upload ${{ github.ref }} release-artifacts/*
       shell: bash -euxo pipefail {0}
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: true

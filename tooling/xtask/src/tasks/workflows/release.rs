@@ -88,6 +88,8 @@ fn upload_release_assets(deps: &[&NamedJob], bundle_jobs: &ReleaseBundleJobs) ->
     // pro - when doing releases, once assets appear, you know it's all of them
     // con - no testing Windows assets while waiting for Linux to finish
     fn prep_release_artifacts(bundle: &ReleaseBundleJobs) -> Step<Run> {
+        // todo! is it worth it to try and make the
+        // "zed" and "remote-server" output names here type safe/codified?
         let assets = [
             (&bundle.mac_x86_64.name, "zed", "Zed-x86_64.dmg"),
             (&bundle.mac_arm64.name, "zed", "Zed-aarch64.dmg"),
@@ -144,11 +146,12 @@ fn upload_release_assets(deps: &[&NamedJob], bundle_jobs: &ReleaseBundleJobs) ->
         dependant_job(&deps)
             .runs_on(runners::LINUX_MEDIUM)
             .add_step(download_workflow_artifacts())
-            .add_step(steps::script("ls -laR ./artifacts"))
+            .add_step(steps::script("ls -lR ./artifacts"))
             .add_step(prep_release_artifacts(bundle_jobs))
-            .add_step(steps::script(
-                "gh release upload ${{ github.ref }} release-artifacts/*",
-            )),
+            .add_step(
+                steps::script("gh release upload ${{ github.ref }} release-artifacts/*")
+                    .add_env(("GH_TOKEN", "${{ secrets.GITHUB_TOKEN }}")),
+            ),
     )
 }
 
