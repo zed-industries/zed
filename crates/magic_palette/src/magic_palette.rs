@@ -1,6 +1,7 @@
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use cloud_llm_client::CompletionIntent;
+use command_palette::humanize_action_name;
 use futures::StreamExt as _;
 use gpui::{
     Action, AppContext as _, DismissEvent, Entity, EventEmitter, Focusable, IntoElement, Task,
@@ -26,6 +27,7 @@ gpui::actions!(magic_palette, [Toggle]);
 
 struct MagicPalette {
     picker: Entity<Picker<MagicPaletteDelegate>>,
+    matches: Vec<Command>,
 }
 
 impl ModalView for MagicPalette {}
@@ -62,7 +64,10 @@ impl MagicPalette {
             let picker = Picker::uniform_list(delegate, window, cx);
             picker
         });
-        Self { picker }
+        Self {
+            picker,
+            matches: vec![],
+        }
     }
 }
 
@@ -75,6 +80,7 @@ impl Render for MagicPalette {
     }
 }
 
+#[derive(Debug)]
 struct Command {
     name: String,
     action: Box<dyn Action>,
@@ -224,24 +230,36 @@ Format your response as a simple list of action names, one per line, with no add
 
                     dbg!(&buffer);
 
-                    // Split result by ';` and for each string, call `cx.build_action`.
-                    let _ = cx.update(move |_window, cx| {
-                        let mut actions: Vec<Box<dyn Action>> = vec![];
+                    // Split result by `\n` and for each string, call `cx.build_action`.
+                    let commands = cx.update(move |_window, cx| {
+                        let mut commands: Vec<Command> = vec![];
 
-                        for line in buffer.lines() {
-                            dbg!(line);
+                        for name in buffer.lines() {
+                            dbg!(name);
 
-                            let action = cx.build_action(line, None);
+                            let action = cx.build_action(name, None);
                             match action {
-                                Ok(action) => actions.push(action),
+                                Ok(action) => {
+                                    commands.push(Command { action: action, name: humanize_action_name(name) })
+                                    },
                                 Err(err) => {
                                     log::error!("Failed to build action: {}", err);
                                 }
                             }
                         }
 
-                        dbg!(&actions);
+                        commands
                     });
+
+                    dbg!(&commands);
+                    if let Ok(commands) = commands {
+                        let _ = this.update(cx, |this, cx| {
+                            let _ = this.delegate.magic_palette.update(cx, |magic_palette, _| {
+                                magic_palette.matches = commands;
+                            });
+                        });
+                    }
+
                     //
                     Ok(())
                 });

@@ -9618,6 +9618,7 @@ dependencies = [
  "client",
  "cloud_llm_client",
  "collections",
+ "command_palette",
  "futures 0.3.31",
  "gpui",
  "language_model",

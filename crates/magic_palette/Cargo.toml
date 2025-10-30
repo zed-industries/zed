@@ -19,6 +19,7 @@ cloud_llm_client.workspace = true
 language_model.workspace = true
 client.workspace = true
 collections.workspace = true
+command_palette.workspace = true
 gpui.workspace = true
 menu.workspace = true
 log.workspace = true
