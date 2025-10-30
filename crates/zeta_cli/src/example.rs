@@ -167,7 +167,7 @@ impl NamedExample {
                         let key = text[..eq_pos].trim();
                         let value = text[eq_pos + 1..].trim();
                         match key {
-                            "repository_url" => repository_url = dbg!(value.to_string()),
+                            "repository_url" => repository_url = value.to_string(),
                             "commit" => commit = value.to_string(),
                             _ => {}
                         }
