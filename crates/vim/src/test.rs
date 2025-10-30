@@ -2393,6 +2393,7 @@ async fn test_vim_disabled_goto_last_modification(cx: &mut gpui::TestAppContext)
     cx.assert_editor_state("hello zed ˇworld");
 }
 
+#[gpui::test]
 async fn test_wrap_selections_in_tag_line_mode(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
 
