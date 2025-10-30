@@ -210,7 +210,7 @@ pub fn write_codeblock<'a>(
     sorted_insertions: &[(Point, &str)],
     file_line_count: Line,
     include_line_numbers: bool,
-    output: &mut String,
+    output: &'a mut String,
 ) {
     writeln!(output, "`````path={}", path.display()).unwrap();
     write_excerpts(

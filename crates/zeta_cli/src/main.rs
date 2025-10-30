@@ -6,12 +6,13 @@ mod util;
 use crate::syntax_retrieval_stats::retrieval_stats;
 use ::serde::Serialize;
 use ::util::paths::PathStyle;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use clap::{Args, Parser, Subcommand};
 use cloud_llm_client::predict_edits_v3::{self, Excerpt};
-use cloud_zeta2_prompt::write_codeblock;
+use cloud_zeta2_prompt::{CURSOR_MARKER, write_codeblock};
 use edit_prediction_context::{
-    EditPredictionContextOptions, EditPredictionExcerptOptions, EditPredictionScoreOptions, Line,
+    EditPredictionContextOptions, EditPredictionExcerpt, EditPredictionExcerptOptions,
+    EditPredictionScoreOptions, Line,
 };
 use futures::StreamExt as _;
 use futures::channel::mpsc;
@@ -378,12 +379,12 @@ async fn zeta2_llm_context(
     let LoadedContext {
         buffer,
         clipped_cursor,
-        snapshot,
+        snapshot: cursor_snapshot,
         project,
         ..
     } = load_context(&context_args, app_state, cx).await?;
 
-    let cursor_position = snapshot.anchor_after(clipped_cursor);
+    let cursor_position = cursor_snapshot.anchor_after(clipped_cursor);
 
     cx.update(|cx| {
         LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
@@ -402,6 +403,12 @@ async fn zeta2_llm_context(
 
     let (debug_tx, mut debug_rx) = mpsc::unbounded();
 
+    let excerpt_options = EditPredictionExcerptOptions {
+        max_bytes: zeta2_args.max_excerpt_bytes,
+        min_bytes: zeta2_args.min_excerpt_bytes,
+        target_before_cursor_over_total_bytes: zeta2_args.target_before_cursor_over_total_bytes,
+    };
+
     let related_excerpts = cx
         .update(|cx| {
             zeta2::related_excerpts::find_related_excerpts(
@@ -410,18 +417,21 @@ async fn zeta2_llm_context(
                 &project,
                 edit_history_unified_diff,
                 &LlmContextOptions {
-                    excerpt: EditPredictionExcerptOptions {
-                        max_bytes: zeta2_args.max_excerpt_bytes,
-                        min_bytes: zeta2_args.min_excerpt_bytes,
-                        target_before_cursor_over_total_bytes: zeta2_args
-                            .target_before_cursor_over_total_bytes,
-                    },
+                    excerpt: excerpt_options.clone(),
                 },
                 Some(debug_tx),
                 cx,
             )
         })?
         .await?;
+
+    let cursor_excerpt = EditPredictionExcerpt::select_from_buffer(
+        clipped_cursor,
+        &cursor_snapshot,
+        &excerpt_options,
+        None,
+    )
+    .context("line didn't fit")?;
 
     #[derive(Serialize)]
     struct Output {
@@ -461,25 +471,53 @@ async fn zeta2_llm_context(
         let mut excerpts = Vec::new();
         let mut formatted_excerpts = String::new();
 
+        let cursor_insertions = [(
+            predict_edits_v3::Point {
+                line: Line(clipped_cursor.row),
+                column: clipped_cursor.column,
+            },
+            CURSOR_MARKER,
+        )];
+
+        let mut cursor_excerpt_added = false;
+
         for (buffer, ranges) in related_excerpts {
-            let snapshot = buffer.read(cx).snapshot();
+            let excerpt_snapshot = buffer.read(cx).snapshot();
 
-            let line_ranges = ranges.into_iter().map(|range| {
-                let point_range = range.to_point(&snapshot);
-                Line(point_range.start.row)..Line(point_range.end.row)
-            });
+            let mut line_ranges = ranges
+                .into_iter()
+                .map(|range| {
+                    let point_range = range.to_point(&excerpt_snapshot);
+                    Line(point_range.start.row)..Line(point_range.end.row)
+                })
+                .collect::<Vec<_>>();
 
-            let Some(file) = snapshot.file() else {
+            let Some(file) = excerpt_snapshot.file() else {
                 continue;
             };
             let path = file.full_path(cx);
 
-            let merged_excerpts = zeta2::merge_excerpts::merge_excerpts(&snapshot, line_ranges)
-                .into_iter()
-                .map(|excerpt| OutputExcerpt {
-                    path: path.clone(),
-                    excerpt,
-                });
+            let is_cursor_file = path == cursor_snapshot.file().unwrap().full_path(cx);
+            if is_cursor_file {
+                let insertion_ix = line_ranges
+                    .binary_search_by(|probe| {
+                        probe
+                            .start
+                            .cmp(&cursor_excerpt.line_range.start)
+                            .then(cursor_excerpt.line_range.end.cmp(&probe.end))
+                    })
+                    .unwrap_or_else(|ix| ix);
+                line_ranges.insert(insertion_ix, cursor_excerpt.line_range.clone());
+                cursor_excerpt_added = true;
+            }
+
+            let merged_excerpts =
+                zeta2::merge_excerpts::merge_excerpts(&excerpt_snapshot, line_ranges)
+                    .into_iter()
+                    .map(|excerpt| OutputExcerpt {
+                        path: path.clone(),
+                        excerpt,
+                    });
 
             let excerpt_start_ix = excerpts.len();
             excerpts.extend(merged_excerpts);
@@ -487,8 +525,26 @@ async fn zeta2_llm_context(
             write_codeblock(
                 &path,
                 excerpts[excerpt_start_ix..].iter().map(|e| &e.excerpt),
-                &[],
-                Line(snapshot.max_point().row),
+                if is_cursor_file {
+                    &cursor_insertions
+                } else {
+                    &[]
+                },
+                Line(excerpt_snapshot.max_point().row),
+                true,
+                &mut formatted_excerpts,
+            );
+        }
+
+        if !cursor_excerpt_added {
+            write_codeblock(
+                &cursor_snapshot.file().unwrap().full_path(cx),
+                &[Excerpt {
+                    start_line: cursor_excerpt.line_range.start,
+                    text: cursor_excerpt.text(&cursor_snapshot).body.into(),
+                }],
+                &cursor_insertions,
+                Line(cursor_snapshot.max_point().row),
                 true,
                 &mut formatted_excerpts,
             );
