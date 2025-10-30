@@ -17,6 +17,7 @@ pub fn run_perf() -> NamedJob {
     named::job(
         Job::default()
             .runs_on(runners::LINUX_SMALL)
-            .add_step(steps::checkout_repo()),
+            .add_step(steps::checkout_repo())
+            .add_step(steps::cargo_fmt()),
     )
 }

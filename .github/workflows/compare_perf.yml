@@ -11,3 +11,6 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::cargo_fmt
+      run: cargo fmt --all -- --check
+      shell: bash -euxo pipefail {0}
