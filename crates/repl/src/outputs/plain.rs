@@ -197,7 +197,7 @@ impl TerminalOutput {
         }
     }
 
-    fn full_text(&self) -> String {
+    pub fn full_text(&self) -> String {
         fn sanitize(mut line: String) -> Option<String> {
             line.retain(|ch| ch != '\u{0}' && ch != '\r');
             if line.trim().is_empty() {

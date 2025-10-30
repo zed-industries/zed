@@ -3,9 +3,8 @@
 Edit Prediction is Zed's mechanism for predicting the code you want to write through AI.
 Each keystroke sends a new request to the edit prediction provider, which returns individual or multi-line suggestions that can be quickly accepted by pressing `tab`.
 
-The default provider is [Zeta, a proprietary open source and open dataset model](https://huggingface.co/zed-industries/zeta), which [requires being signed into Zed](../accounts.md#what-features-require-signing-in).
-
-Alternatively, you can use other providers like [GitHub Copilot](#github-copilot) (or [Enterprise](#github-copilot-enterprise)) or [Supermaven](#supermaven).
+The default provider is [Zeta, a proprietary open source and open dataset model](https://huggingface.co/zed-industries/zeta), which [requires being signed into Zed](../authentication.md#what-features-require-signing-in).
+Alternatively, you can also use [other providers](#other-providers) like GitHub Copilot and Codestral.
 
 ## Configuring Zeta
 
@@ -257,7 +256,12 @@ To completely turn off edit prediction across all providers, explicitly set the 
 },
 ```
 
-## Configuring GitHub Copilot {#github-copilot}
+## Configuring Other Providers {#other-providers}
+
+Zed's Edit Prediction also work with other completion model providers aside from Zeta.
+Learn about the available ones below.
+
+### GitHub Copilot {#github-copilot}
 
 To use GitHub Copilot as your provider, set this within `settings.json`:
 
@@ -271,7 +275,7 @@ To use GitHub Copilot as your provider, set this within `settings.json`:
 
 You should be able to sign-in to GitHub Copilot by clicking on the Copilot icon in the status bar and following the setup instructions.
 
-### Using GitHub Copilot Enterprise {#github-copilot-enterprise}
+#### Using GitHub Copilot Enterprise
 
 If your organization uses GitHub Copilot Enterprise, you can configure Zed to use your enterprise instance by specifying the enterprise URI in your `settings.json`:
 
@@ -287,14 +291,16 @@ If your organization uses GitHub Copilot Enterprise, you can configure Zed to us
 
 Replace `"https://your.enterprise.domain"` with the URL provided by your GitHub Enterprise administrator (e.g., `https://foo.ghe.com`).
 
-Once set, Zed will route Copilot requests through your enterprise endpoint. When you sign in by clicking the Copilot icon in the status bar, you will be redirected to your configured enterprise URL to complete authentication. All other Copilot features and usage remain the same.
+Once set, Zed will route Copilot requests through your enterprise endpoint.
+When you sign in by clicking the Copilot icon in the status bar, you will be redirected to your configured enterprise URL to complete authentication.
+All other Copilot features and usage remain the same.
 
 Copilot can provide multiple completion alternatives, and these can be navigated with the following actions:
 
 - {#action editor::NextEditPrediction} ({#kb editor::NextEditPrediction}): To cycle to the next edit prediction
 - {#action editor::PreviousEditPrediction} ({#kb editor::PreviousEditPrediction}): To cycle to the previous edit prediction
 
-## Configuring Supermaven {#supermaven}
+### Supermaven {#supermaven}
 
 To use Supermaven as your provider, set this within `settings.json`:
 
@@ -308,6 +314,21 @@ To use Supermaven as your provider, set this within `settings.json`:
 
 You should be able to sign-in to Supermaven by clicking on the Supermaven icon in the status bar and following the setup instructions.
 
+### Codestral {#codestral}
+
+To use Mistral's Codestral as your provider, start by going to the the Agent Panel settings view by running the {#action agent::OpenSettings} action.
+Look for the Mistral item and add a Codestral API key in the corresponding text input.
+
+After that, you should be able to switch your provider to it in your `settings.json` file:
+
+```json [settings]
+{
+  "features": {
+    "edit_prediction_provider": "codestral"
+  }
+}
+```
+
 ## See also
 
-You may also use the [Agent Panel](./agent-panel.md) or the [Inline Assistant](./inline-assistant.md) to interact with language models, see the [AI documentation](./overview.md) for more information on the other AI features in Zed.
+To learn about other ways to interact with AI in Zed, you may also want to see more about the [Agent Panel](./agent-panel.md) or the [Inline Assistant](./inline-assistant.md) feature.

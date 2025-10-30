@@ -539,6 +539,10 @@ actions!(
         GoToParentModule,
         /// Goes to the previous change in the file.
         GoToPreviousChange,
+        /// Goes to the next reference to the symbol under the cursor.
+        GoToNextReference,
+        /// Goes to the previous reference to the symbol under the cursor.
+        GoToPreviousReference,
         /// Goes to the type definition of the symbol at cursor.
         GoToTypeDefinition,
         /// Goes to type definition in a split pane.
@@ -617,6 +621,8 @@ actions!(
         NextEditPrediction,
         /// Scrolls to the next screen.
         NextScreen,
+        /// Goes to the next snippet tabstop if one exists.
+        NextSnippetTabstop,
         /// Opens the context menu at cursor position.
         OpenContextMenu,
         /// Opens excerpts from the current file.
@@ -650,6 +656,8 @@ actions!(
         Paste,
         /// Navigates to the previous edit prediction.
         PreviousEditPrediction,
+        /// Goes to the previous snippet tabstop if one exists.
+        PreviousSnippetTabstop,
         /// Redoes the last undone edit.
         Redo,
         /// Redoes the last selection change.

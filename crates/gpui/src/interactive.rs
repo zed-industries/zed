@@ -115,6 +115,16 @@ impl InputEvent for MouseDownEvent {
 }
 impl MouseEvent for MouseDownEvent {}
 
+impl MouseDownEvent {
+    /// Returns true if this mouse up event should focus the element.
+    pub fn is_focusing(&self) -> bool {
+        match self.button {
+            MouseButton::Left => true,
+            _ => false,
+        }
+    }
+}
+
 /// A mouse up event from the platform
 #[derive(Clone, Debug, Default)]
 pub struct MouseUpEvent {
@@ -137,7 +147,18 @@ impl InputEvent for MouseUpEvent {
         PlatformInput::MouseUp(self)
     }
 }
+
 impl MouseEvent for MouseUpEvent {}
+
+impl MouseUpEvent {
+    /// Returns true if this mouse up event should focus the element.
+    pub fn is_focusing(&self) -> bool {
+        match self.button {
+            MouseButton::Left => true,
+            _ => false,
+        }
+    }
+}
 
 /// A click event, generated when a mouse button is pressed and released.
 #[derive(Clone, Debug, Default)]
@@ -482,6 +503,7 @@ impl InputEvent for MouseExitEvent {
         PlatformInput::MouseExited(self)
     }
 }
+
 impl MouseEvent for MouseExitEvent {}
 
 impl Deref for MouseExitEvent {

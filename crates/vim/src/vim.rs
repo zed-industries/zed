@@ -260,6 +260,8 @@ actions!(
     [
         /// Toggles Vim mode on or off.
         ToggleVimMode,
+        /// Toggles Helix mode on or off.
+        ToggleHelixMode,
     ]
 );
 
@@ -276,7 +278,21 @@ pub fn init(cx: &mut App) {
             let fs = workspace.app_state().fs.clone();
             let currently_enabled = VimModeSetting::get_global(cx).0;
             update_settings_file(fs, cx, move |setting, _| {
-                setting.vim_mode = Some(!currently_enabled)
+                setting.vim_mode = Some(!currently_enabled);
+                if let Some(helix_mode) = &mut setting.helix_mode {
+                    *helix_mode = false;
+                }
+            })
+        });
+
+        workspace.register_action(|workspace, _: &ToggleHelixMode, _, cx| {
+            let fs = workspace.app_state().fs.clone();
+            let currently_enabled = HelixModeSetting::get_global(cx).0;
+            update_settings_file(fs, cx, move |setting, _| {
+                setting.helix_mode = Some(!currently_enabled);
+                if let Some(vim_mode) = &mut setting.vim_mode {
+                    *vim_mode = false;
+                }
             })
         });
 

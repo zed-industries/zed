@@ -1,6 +1,7 @@
 use crate::Editor;
 use anyhow::Result;
 use collections::HashMap;
+use futures::StreamExt;
 use git::{
     GitHostingProviderRegistry, GitRemote, Oid,
     blame::{Blame, BlameEntry, ParsedCommitMessage},
@@ -507,7 +508,7 @@ impl GitBlame {
                     let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
 
                     let blame_buffer = project.blame_buffer(&buffer, None, cx);
-                    Some((id, snapshot, buffer_edits, blame_buffer))
+                    Some(async move { (id, snapshot, buffer_edits, blame_buffer.await) })
                 })
                 .collect::<Vec<_>>()
         });
@@ -517,10 +518,14 @@ impl GitBlame {
             let (result, errors) = cx
                 .background_spawn({
                     async move {
+                        let blame = futures::stream::iter(blame)
+                            .buffered(4)
+                            .collect::<Vec<_>>()
+                            .await;
                         let mut res = vec![];
                         let mut errors = vec![];
                         for (id, snapshot, buffer_edits, blame) in blame {
-                            match blame.await {
+                            match blame {
                                 Ok(Some(Blame {
                                     entries,
                                     messages,
