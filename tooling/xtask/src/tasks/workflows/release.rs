@@ -58,7 +58,9 @@ pub(crate) fn release() -> Workflow {
 }
 
 fn use_fake_job_instead(_: Job) -> Job {
-    Job::default().add_step(steps::checkout_repo())
+    Job::default()
+        .add_step(steps::checkout_repo())
+        .runs_on(runners::LINUX_SMALL)
 }
 
 struct ReleaseBundleJobs {
