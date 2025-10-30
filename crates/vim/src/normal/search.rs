@@ -1,13 +1,13 @@
-use editor::{AnchorRangeExt, Editor, EditorSettings, VimFlavor};
+use editor::{Editor, EditorSettings, VimFlavor};
 use gpui::{Action, Context, Window, actions};
-use itertools::Itertools;
+
 use language::Point;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions, buffer_search};
 use serde::Deserialize;
 use settings::Settings;
 use std::{iter::Peekable, str::Chars};
-use util::{serde::default_true, test::generate_marked_text};
+use util::serde::default_true;
 use workspace::{notifications::NotifyResultExt, searchable::Direction};
 
 use crate::{
@@ -196,7 +196,7 @@ impl Vim {
                         prior_selections,
                         prior_operator: self.operator_stack.last().cloned(),
                         prior_mode,
-                        helix_select: false,
+                        is_helix_regex_search: false,
                     }
                 });
             }
@@ -220,7 +220,7 @@ impl Vim {
         let new_selections = self.editor_selections(window, cx);
         let result = pane.update(cx, |pane, cx| {
             let search_bar = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()?;
-            if self.search.helix_select {
+            if self.search.is_helix_regex_search {
                 search_bar.update(cx, |search_bar, cx| {
                     search_bar.select_all_matches(&Default::default(), window, cx)
                 });
@@ -241,7 +241,8 @@ impl Vim {
                     count = count.saturating_sub(1)
                 }
                 self.search.count = 1;
-                search_bar.select_match(direction, count, true, window, cx);
+                let collapse = !self.mode.is_helix();
+                search_bar.select_match(direction, count, collapse, window, cx);
                 search_bar.focus_editor(&Default::default(), window, cx);
 
                 let prior_selections: Vec<_> = self.search.prior_selections.drain(..).collect();
@@ -293,15 +294,6 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let snapshot = self
-            .editor()
-            .unwrap()
-            .read(cx)
-            .buffer()
-            .read(cx)
-            .snapshot(cx);
-        let text = snapshot.text();
-
         let Some(pane) = self.pane(window, cx) else {
             return;
         };
@@ -317,8 +309,8 @@ impl Vim {
                 if !search_bar.has_active_match() || !search_bar.show(window, cx) {
                     return false;
                 }
-                // TODO!: change this in helix mode
-                search_bar.select_match(direction, count, true, window, cx);
+                let collapse = !self.mode.is_helix();
+                search_bar.select_match(direction, count, collapse, window, cx);
                 true
             })
         });
@@ -327,23 +319,6 @@ impl Vim {
         }
 
         let new_selections = self.editor_selections(window, cx);
-
-        let prior = generate_marked_text(
-            &text,
-            &prior_selections
-                .iter()
-                .map(|r| r.to_offset(&snapshot))
-                .collect_vec(),
-            true,
-        );
-        let new = generate_marked_text(
-            &text,
-            &new_selections
-                .iter()
-                .map(|r| r.to_offset(&snapshot))
-                .collect_vec(),
-            true,
-        );
 
         self.search_motion(
             Motion::ZedSearchResult {
