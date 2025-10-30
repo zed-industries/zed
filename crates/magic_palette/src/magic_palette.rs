@@ -222,7 +222,26 @@ Format your response as a simple list of action names, one per line, with no add
                         buffer.push_str(&message);
                     }
 
-                    dbg!(buffer);
+                    dbg!(&buffer);
+
+                    // Split result by ';` and for each string, call `cx.build_action`.
+                    let _ = cx.update(move |_window, cx| {
+                        let mut actions: Vec<Box<dyn Action>> = vec![];
+
+                        for line in buffer.lines() {
+                            dbg!(line);
+
+                            let action = cx.build_action(line, None);
+                            match action {
+                                Ok(action) => actions.push(action),
+                                Err(err) => {
+                                    log::error!("Failed to build action: {}", err);
+                                }
+                            }
+                        }
+
+                        dbg!(&actions);
+                    });
                     //
                     Ok(())
                 });
