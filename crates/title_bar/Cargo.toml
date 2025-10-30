@@ -30,6 +30,7 @@ test-support = [
 anyhow.workspace = true
 auto_update.workspace = true
 call.workspace = true
+channel.workspace = true
 chrono.workspace = true
 client.workspace = true
 cloud_llm_client.workspace = true

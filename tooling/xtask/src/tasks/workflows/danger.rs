@@ -21,7 +21,7 @@ pub fn danger() -> Workflow {
                 .cond(Expression::new(
                     "github.repository_owner == 'zed-industries'",
                 ))
-                .runs_on(runners::LINUX_CHEAP)
+                .runs_on(runners::LINUX_SMALL)
                 .add_step(steps::checkout_repo())
                 .add_step(steps::setup_pnpm())
                 .add_step(

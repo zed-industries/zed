@@ -1181,17 +1181,17 @@ pub mod tests {
             })
             .unwrap();
 
-        let progress_token = "test_progress_token";
+        let progress_token = 42;
         fake_server
             .request::<lsp::request::WorkDoneProgressCreate>(lsp::WorkDoneProgressCreateParams {
-                token: lsp::ProgressToken::String(progress_token.to_string()),
+                token: lsp::ProgressToken::Number(progress_token),
             })
             .await
             .into_response()
             .expect("work done progress create request failed");
         cx.executor().run_until_parked();
         fake_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
-            token: lsp::ProgressToken::String(progress_token.to_string()),
+            token: lsp::ProgressToken::Number(progress_token),
             value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Begin(
                 lsp::WorkDoneProgressBegin::default(),
             )),
@@ -1211,7 +1211,7 @@ pub mod tests {
             .unwrap();
 
         fake_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
-            token: lsp::ProgressToken::String(progress_token.to_string()),
+            token: lsp::ProgressToken::Number(progress_token),
             value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::End(
                 lsp::WorkDoneProgressEnd::default(),
             )),
@@ -2695,7 +2695,7 @@ let c = 3;"#
                 ),
                 (
                     "main.rs",
-                    lsp::Range::new(lsp::Position::new(50, 0), lsp::Position::new(100, 11))
+                    lsp::Range::new(lsp::Position::new(50, 0), lsp::Position::new(100, 0))
                 ),
             ],
             lsp_request_ranges
@@ -2754,7 +2754,7 @@ let c = 3;"#
                 ),
                 (
                     "main.rs",
-                    lsp::Range::new(lsp::Position::new(50, 0), lsp::Position::new(100, 11))
+                    lsp::Range::new(lsp::Position::new(50, 0), lsp::Position::new(100, 0))
                 ),
             ],
             lsp_request_ranges

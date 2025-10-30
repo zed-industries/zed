@@ -66,6 +66,14 @@ impl CodestralCompletionProvider {
         Self::api_key(cx).is_some()
     }
 
+    /// This is so we can immediately show Codestral as a provider users can
+    /// switch to in the edit prediction menu, if the API has been added
+    pub fn ensure_api_key_loaded(http_client: Arc<dyn HttpClient>, cx: &mut App) {
+        MistralLanguageModelProvider::global(http_client, cx)
+            .load_codestral_api_key(cx)
+            .detach();
+    }
+
     fn api_key(cx: &App) -> Option<Arc<str>> {
         MistralLanguageModelProvider::try_global(cx)
             .and_then(|provider| provider.codestral_api_key(CODESTRAL_API_URL, cx))

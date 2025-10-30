@@ -142,6 +142,7 @@ impl Render for FallbackPromptRenderer {
                     .id(ix)
                     .on_click(cx.listener(move |_, _, _, cx| {
                         cx.emit(PromptResponse(ix));
+                        cx.stop_propagation();
                     }))
             }));
 

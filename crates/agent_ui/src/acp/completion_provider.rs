@@ -575,6 +575,7 @@ impl ContextPickerCompletionProvider {
             .unwrap_or_default();
         let workspace = workspace.read(cx);
         let project = workspace.project().read(cx);
+        let include_root_name = workspace.visible_worktrees(cx).count() > 1;
 
         if let Some(agent_panel) = workspace.panel::<AgentPanel>(cx)
             && let Some(thread) = agent_panel.read(cx).active_agent_thread(cx)
@@ -601,7 +602,11 @@ impl ContextPickerCompletionProvider {
                     project
                         .worktree_for_id(project_path.worktree_id, cx)
                         .map(|worktree| {
-                            let path_prefix = worktree.read(cx).root_name().into();
+                            let path_prefix = if include_root_name {
+                                worktree.read(cx).root_name().into()
+                            } else {
+                                RelPath::empty().into()
+                            };
                             Match::File(FileMatch {
                                 mat: fuzzy::PathMatch {
                                     score: 1.,
@@ -828,9 +833,21 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                         path: mat.path.clone(),
                                     };
 
+                                    // If path is empty, this means we're matching with the root directory itself
+                                    // so we use the path_prefix as the name
+                                    let path_prefix = if mat.path.is_empty() {
+                                        project
+                                            .read(cx)
+                                            .worktree_for_id(project_path.worktree_id, cx)
+                                            .map(|wt| wt.read(cx).root_name().into())
+                                            .unwrap_or_else(|| mat.path_prefix.clone())
+                                    } else {
+                                        mat.path_prefix.clone()
+                                    };
+
                                     Self::completion_for_path(
                                         project_path,
-                                        &mat.path_prefix,
+                                        &path_prefix,
                                         is_recent,
                                         mat.is_dir,
                                         source_range.clone(),

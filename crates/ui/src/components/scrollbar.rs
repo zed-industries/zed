@@ -1171,12 +1171,14 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                     .apply_along(axis, |_| thumb_end - thumb_offset),
                             );
 
+                            let needs_scroll_track = reserved_space.needs_scroll_track();
+
                             ScrollbarLayout {
                                 thumb_bounds,
                                 track_bounds: padded_bounds,
                                 axis,
                                 cursor_hitbox: window.insert_hitbox(
-                                    if reserved_space.needs_scroll_track() {
+                                    if needs_scroll_track {
                                         padded_bounds
                                     } else {
                                         thumb_bounds
@@ -1184,6 +1186,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                     HitboxBehavior::BlockMouseExceptScroll,
                                 ),
                                 track_background: track_color
+                                    .filter(|_| needs_scroll_track)
                                     .map(|color| (padded_bounds.dilate(SCROLLBAR_PADDING), color)),
                                 reserved_space,
                             }
@@ -1292,10 +1295,15 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                     }
 
                     if let Some((track_bounds, color)) = track_background {
+                        let mut color = *color;
+                        if let Some(fade) = autohide_fade {
+                            color.fade_out(fade);
+                        }
+
                         window.paint_quad(quad(
                             *track_bounds,
                             Corners::default(),
-                            *color,
+                            color,
                             Edges::default(),
                             Hsla::transparent_black(),
                             BorderStyle::default(),

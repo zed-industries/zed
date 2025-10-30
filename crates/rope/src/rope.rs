@@ -191,9 +191,9 @@ impl Rope {
             (),
         );
 
-        #[cfg(not(test))]
+        #[cfg(all(test, not(rust_analyzer)))]
         const NUM_CHUNKS: usize = 16;
-        #[cfg(test)]
+        #[cfg(not(all(test, not(rust_analyzer))))]
         const NUM_CHUNKS: usize = 4;
 
         // We accommodate for NUM_CHUNKS chunks of size MAX_BASE
@@ -248,9 +248,9 @@ impl Rope {
             text = remainder;
         }
 
-        #[cfg(test)]
+        #[cfg(all(test, not(rust_analyzer)))]
         const PARALLEL_THRESHOLD: usize = 4;
-        #[cfg(not(test))]
+        #[cfg(not(all(test, not(rust_analyzer))))]
         const PARALLEL_THRESHOLD: usize = 4 * (2 * sum_tree::TREE_BASE);
 
         if new_chunks.len() >= PARALLEL_THRESHOLD {
