@@ -250,7 +250,7 @@ pub(crate) const JOBS: LazyCell<[Job; 2]> = LazyCell::new(|| {
 pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>, launch: bool) -> Result<()> {
     let hwnd = hwnd.map(|ptr| HWND(ptr as _));
 
-    let mut last_successfull_job = None;
+    let mut last_successful_job = None;
     'outer: for (i, job) in JOBS.iter().enumerate() {
         let start = Instant::now();
         loop {
@@ -260,7 +260,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>, launch: bool) 
             }
             match (job.apply)(app_dir) {
                 Ok(_) => {
-                    last_successfull_job = Some(i);
+                    last_successful_job = Some(i);
                     unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
                     break;
                 }
@@ -269,7 +269,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>, launch: bool) 
                     let io_err = err.downcast_ref::<std::io::Error>().unwrap();
                     if io_err.kind() == std::io::ErrorKind::NotFound {
                         log::warn!("File or folder not found.");
-                        last_successfull_job = Some(i);
+                        last_successful_job = Some(i);
                         unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
                         break;
                     }
@@ -281,15 +281,15 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>, launch: bool) 
         }
     }
 
-    if last_successfull_job
+    if last_successful_job
         .map(|job| job != JOBS.len() - 1)
         .unwrap_or(true)
     {
-        let Some(last_successfull_job) = last_successfull_job else {
+        let Some(last_successful_job) = last_successful_job else {
             anyhow::bail!("Autoupdate failed, nothing to rollback");
         };
 
-        for job in (0..=last_successfull_job).rev() {
+        for job in (0..=last_successful_job).rev() {
             let job = &JOBS[job];
             if let Err(e) = (job.rollback)(app_dir) {
                 anyhow::bail!(
