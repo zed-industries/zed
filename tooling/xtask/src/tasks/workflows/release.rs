@@ -64,7 +64,12 @@ fn auto_release_preview(deps: &[&NamedJob; 1]) -> NamedJob {
     named::job(
         dependant_job(deps)
             .runs_on(runners::LINUX_SMALL)
-            .cond(Expression::new("false")),
+            .cond(Expression::new("false")) // todo! enable
+            .add_step(
+                steps::script(r#"gh release edit "$GITHUB_REF_NAME" --draft=false"#)
+                    .add_env(("GITHUB_TOKEN", "${{ secrets.GITHUB_TOKEN }}")),
+            ),
+        // todo! sentry release
     )
 }
 

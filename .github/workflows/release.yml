@@ -329,6 +329,12 @@ jobs:
     - upload_release_assets
     if: 'false'
     runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: gh release edit "$GITHUB_REF_NAME" --draft=false
+      run: gh release edit "$GITHUB_REF_NAME" --draft=false
+      shell: bash -euxo pipefail {0}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: true
