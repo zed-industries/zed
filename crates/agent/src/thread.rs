@@ -1608,17 +1608,17 @@ impl Thread {
             log::error!("No summarization model available");
             return Task::ready(None).shared();
         };
-        let mut request = LanguageModelRequest {
+
+        // Build a full request first; may be split if token count exceeds model limit.
+        let mut full_request = LanguageModelRequest {
             intent: Some(CompletionIntent::ThreadContextSummarization),
             temperature: AgentSettings::temperature_for_model(&model, cx),
             ..Default::default()
         };
-
         for message in &self.messages {
-            request.messages.extend(message.to_request());
+            full_request.messages.extend(message.to_request());
         }
-
-        request.messages.push(LanguageModelRequestMessage {
+        full_request.messages.push(LanguageModelRequestMessage {
             role: Role::User,
             content: vec![SUMMARIZE_THREAD_DETAILED_PROMPT.into()],
             cache: false,
@@ -1626,41 +1626,144 @@ impl Thread {
 
         let task = cx
             .spawn(async move |this, cx| {
-                let mut summary = String::new();
-                let mut messages = model.stream_completion(request, cx).await.log_err()?;
-                while let Some(event) = messages.next().await {
-                    let event = event.log_err()?;
-                    let text = match event {
-                        LanguageModelCompletionEvent::Text(text) => text,
-                        LanguageModelCompletionEvent::StatusUpdate(
-                            CompletionRequestStatus::UsageUpdated { amount, limit },
-                        ) => {
-                            this.update(cx, |thread, cx| {
-                                thread.update_model_request_usage(amount, limit, cx);
-                            })
-                            .ok()?;
-                            continue;
+                // Helper: stream a summary for a request (single line accumulation).
+                async fn run_summary_request(
+                    this: &Entity<Thread>,
+                    model: &Arc<dyn LanguageModel>,
+                    request: LanguageModelRequest,
+                    cx: &mut gpui::AsyncApp,
+                ) -> Option<String> {
+                    let mut acc = String::new();
+                    let mut stream = model.stream_completion(request, cx).await.log_err()?;
+                    while let Some(event) = stream.next().await {
+                        let event = event.log_err()?;
+                        let text = match event {
+                            LanguageModelCompletionEvent::Text(t) => t,
+                            LanguageModelCompletionEvent::StatusUpdate(
+                                CompletionRequestStatus::UsageUpdated { amount, limit },
+                            ) => {
+                                this.update(cx, |thread, cx| {
+                                    thread.update_model_request_usage(amount, limit, cx);
+                                })
+                                .ok()?;
+                                continue;
+                            }
+                            _ => continue,
+                        };
+                        let mut lines = text.lines();
+                        acc.extend(lines.next());
+                        // Stop early if model emitted multi-line chunk.
+                        if lines.next().is_some() {
+                            break;
                         }
-                        _ => continue,
-                    };
-
-                    let mut lines = text.lines();
-                    summary.extend(lines.next());
+                    }
+                    Some(acc)
                 }
 
-                log::debug!("Setting summary: {}", summary);
-                let summary = SharedString::from(summary);
+                // Attempt token counting to decide split.
+                let need_split = {
+                    let max_tokens = model.max_token_count() as u64;
+                    if let Ok(fut) = cx.update(|app| model.count_tokens(full_request.clone(), app)) {
+                        match fut.await {
+                            Ok(token_count) => token_count > max_tokens,
+                            Err(_) => false,
+                        }
+                    } else {
+                        false
+                    }
+                };
+
+                let final_summary = if need_split {
+                    // Remove final prompt for splitting.
+                    let prompt_msg = full_request.messages.pop();
+                    let all = &full_request.messages;
+                    if all.is_empty() {
+                        let mut req = full_request.clone();
+                        if let Some(p) = prompt_msg.clone() {
+                            req.messages.push(p);
+                        }
+                        run_summary_request(this, &model, req, cx)
+                    } else {
+                        let n = all.len();
+                        let overlap = (n / 10).clamp(1, 4);
+                        let mid = n / 2;
+                        let left_end = mid.saturating_sub(1);
+                        let right_start = mid.saturating_sub(overlap.min(mid));
+                        let left_overlap_end =
+                            (left_end + overlap.min(n - left_end - 1)).min(n - 1);
+
+                        let part1_range_end = left_overlap_end.min(n - 1);
+                        let part2_range_start = right_start.min(n - 1);
+
+                        let build_part_request =
+                            |slice: &[LanguageModelRequestMessage]| -> LanguageModelRequest {
+                                let mut req = LanguageModelRequest {
+                                    intent: Some(CompletionIntent::ThreadContextSummarization),
+                                    temperature: full_request.temperature,
+                                    ..Default::default()
+                                };
+                                req.messages.extend_from_slice(slice);
+                                req.messages.push(LanguageModelRequestMessage {
+                                    role: Role::User,
+                                    content: vec![SUMMARIZE_THREAD_DETAILED_PROMPT.into()],
+                                    cache: false,
+                                });
+                                req
+                            };
+
+                        let part1_msgs = &all[..=part1_range_end];
+                        let part2_msgs = &all[part2_range_start..];
+
+                        let req1 = build_part_request(part1_msgs);
+                        let req2 = build_part_request(part2_msgs);
+
+                        let (s1, s2) = futures::join!(
+                            async { run_summary_request(this, &model, req1, cx) },
+                            async { run_summary_request(this, &model, req2, cx) }
+                        );
+                        let s1 = s1.unwrap_or_default();
+                        let s2 = s2.unwrap_or_default();
+
+                        // Merge pass.
+                        let merge_prompt = format!(
+                            "Partial summary A:\n{}\n\nPartial summary B:\n{}\n\nCombine these into one concise, comprehensive summary without duplication.",
+                            s1, s2
+                        );
+                        let mut merge_req = LanguageModelRequest {
+                            intent: Some(CompletionIntent::ThreadContextSummarization),
+                            temperature: full_request.temperature,
+                            ..Default::default()
+                        };
+                        merge_req.messages.push(LanguageModelRequestMessage {
+                            role: Role::User,
+                            content: vec![merge_prompt.into()],
+                            cache: false,
+                        });
+                        run_summary_request(this, &model, merge_req, cx)
+                    }
+                } else {
+                    run_summary_request(this, &model, full_request.clone(), cx)
+                };
+
+                let Some(summary_str) = final_summary else {
+                    log::error!("Summary generation failed");
+                    return None;
+                };
+
+                log::debug!("Setting summary: {}", summary_str);
+                let summary_shared = SharedString::from(summary_str);
 
                 this.update(cx, |this, cx| {
-                    this.summary = Some(summary.clone());
+                    this.summary = Some(summary_shared.clone());
                     this.pending_summary_generation = None;
                     cx.notify()
                 })
                 .ok()?;
 
-                Some(summary)
+                Some(summary_shared)
             })
             .shared();
+
         self.pending_summary_generation = Some(task.clone());
         task
     }
