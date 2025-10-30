@@ -80,8 +80,7 @@ fn upload_release_assets(deps: &[&NamedJob], bundle_jobs: &ReleaseBundleJobs) ->
             "download-artifact",
             "018cc2cf5baa6db3ef3c5f8a56943fffe632ef53", // v6.0.0
         )
-        .add_with(("path", "./"))
-        .add_with(("merge-multiple", true))
+        .add_with(("path", "./artifacts/"))
     }
 
     // todo! consider splitting this up per release
@@ -122,8 +121,9 @@ fn upload_release_assets(deps: &[&NamedJob], bundle_jobs: &ReleaseBundleJobs) ->
         for (job_name, artifact_kind, release_artifact_name) in assets {
             let artifact_path =
                 ["${{ needs.", job_name, ".outputs.", artifact_kind, " }}"].join("");
-            let mv_command =
-                format!("mv ./{artifact_path} release-artifacts/{release_artifact_name}");
+            let mv_command = format!(
+                "mv ./artifacts/{artifact_path}/* release-artifacts/{release_artifact_name}"
+            );
             script_lines.push(mv_command)
         }
 
@@ -144,7 +144,7 @@ fn upload_release_assets(deps: &[&NamedJob], bundle_jobs: &ReleaseBundleJobs) ->
         dependant_job(&deps)
             .runs_on(runners::LINUX_MEDIUM)
             .add_step(download_workflow_artifacts())
-            .add_step(steps::script("ls -la"))
+            .add_step(steps::script("ls -laR ./artifacts"))
             .add_step(prep_release_artifacts(bundle_jobs))
             .add_step(steps::script(
                 "gh release upload ${{ github.ref }} release-artifacts/*",

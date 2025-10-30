@@ -70,11 +70,13 @@ jobs:
       with:
         name: zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
         path: target/release/zed-*.tar.gz
+        if-no-files-found: error
     - name: '@actions/upload-artifact zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
         name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
         path: target/release/zed-remote-server-*.gz
+        if-no-files-found: error
     outputs:
       zed: zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
       remote-server: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
@@ -107,11 +109,13 @@ jobs:
       with:
         name: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
         path: target/release/zed-*.tar.gz
+        if-no-files-found: error
     - name: '@actions/upload-artifact zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
         name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
         path: target/release/zed-remote-server-*.gz
+        if-no-files-found: error
     outputs:
       zed: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
       remote-server: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
@@ -151,11 +155,13 @@ jobs:
       with:
         name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg
         path: target/aarch64-apple-darwin/release/Zed.dmg
+        if-no-files-found: error
     - name: '@actions/upload-artifact zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-macos-aarch64.gz'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
         name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-macos-aarch64.gz
         path: target/zed-remote-server-macos-aarch64.gz
+        if-no-files-found: error
     outputs:
       zed: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg
       remote-server: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-macos-aarch64.gz
@@ -195,11 +201,13 @@ jobs:
       with:
         name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
         path: target/x86_64-apple-darwin/release/Zed.dmg
+        if-no-files-found: error
     - name: '@actions/upload-artifact zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-macos-x86_64.gz'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
         name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-macos-x86_64.gz
         path: target/zed-remote-server-macos-x86_64.gz
+        if-no-files-found: error
     outputs:
       zed: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
       remote-server: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-macos-x86_64.gz
@@ -237,6 +245,7 @@ jobs:
       with:
         name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.exe
         path: ${{ env.SETUP_PATH }}
+        if-no-files-found: error
     outputs:
       zed: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.exe
     timeout-minutes: 60
@@ -273,6 +282,7 @@ jobs:
       with:
         name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.exe
         path: ${{ env.SETUP_PATH }}
+        if-no-files-found: error
     outputs:
       zed: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.exe
     timeout-minutes: 60
@@ -290,25 +300,24 @@ jobs:
     - name: release::upload_release_assets::download_workflow_artifacts
       uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
       with:
-        path: ./
-        merge-multiple: true
-    - name: ls -la
-      run: ls -la
+        path: ./artifacts/
+    - name: ls -laR ./artifacts
+      run: ls -laR ./artifacts
       shell: bash -euxo pipefail {0}
     - name: release::upload_release_assets::prep_release_artifacts
       run: |-
         mkdir -p release-artifacts/
 
-        mv ./${{ needs.bundle_mac_x86_64.outputs.zed }} release-artifacts/Zed-x86_64.dmg
-        mv ./${{ needs.bundle_mac_arm64.outputs.zed }} release-artifacts/Zed-aarch64.dmg
-        mv ./${{ needs.bundle_windows_x86_64.outputs.zed }} release-artifacts/Zed-x86_64.exe
-        mv ./${{ needs.bundle_windows_arm64.outputs.zed }} release-artifacts/Zed-aarch64.exe
-        mv ./${{ needs.bundle_linux_arm64.outputs.zed }} release-artifacts/zed-linux-aarch64.tar.gz
-        mv ./${{ needs.bundle_linux_x86_64.outputs.zed }} release-artifacts/zed-linux-x86_64.tar.gz
-        mv ./${{ needs.bundle_linux_x86_64.outputs.remote-server }} release-artifacts/zed-remote-server-linux-x86_64.gz
-        mv ./${{ needs.bundle_linux_arm64.outputs.remote-server }} release-artifacts/zed-remote-server-linux-aarch64.gz
-        mv ./${{ needs.bundle_mac_x86_64.outputs.remote-server }} release-artifacts/zed-remote-server-macos-x86_64.gz
-        mv ./${{ needs.bundle_mac_arm64.outputs.remote-server }} release-artifacts/zed-remote-server-macos-aarch64.gz
+        mv ./artifacts/${{ needs.bundle_mac_x86_64.outputs.zed }}/* release-artifacts/Zed-x86_64.dmg
+        mv ./artifacts/${{ needs.bundle_mac_arm64.outputs.zed }}/* release-artifacts/Zed-aarch64.dmg
+        mv ./artifacts/${{ needs.bundle_windows_x86_64.outputs.zed }}/* release-artifacts/Zed-x86_64.exe
+        mv ./artifacts/${{ needs.bundle_windows_arm64.outputs.zed }}/* release-artifacts/Zed-aarch64.exe
+        mv ./artifacts/${{ needs.bundle_linux_arm64.outputs.zed }}/* release-artifacts/zed-linux-aarch64.tar.gz
+        mv ./artifacts/${{ needs.bundle_linux_x86_64.outputs.zed }}/* release-artifacts/zed-linux-x86_64.tar.gz
+        mv ./artifacts/${{ needs.bundle_linux_x86_64.outputs.remote-server }}/* release-artifacts/zed-remote-server-linux-x86_64.gz
+        mv ./artifacts/${{ needs.bundle_linux_arm64.outputs.remote-server }}/* release-artifacts/zed-remote-server-linux-aarch64.gz
+        mv ./artifacts/${{ needs.bundle_mac_x86_64.outputs.remote-server }}/* release-artifacts/zed-remote-server-macos-x86_64.gz
+        mv ./artifacts/${{ needs.bundle_mac_arm64.outputs.remote-server }}/* release-artifacts/zed-remote-server-macos-aarch64.gz
       shell: bash -euxo pipefail {0}
     - name: gh release upload ${{ github.ref }} release-artifacts/*
       run: gh release upload ${{ github.ref }} release-artifacts/*

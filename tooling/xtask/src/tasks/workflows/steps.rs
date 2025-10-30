@@ -95,6 +95,7 @@ pub fn upload_artifact(name: &str, path: &str) -> Step<Use> {
         )
         .add_with(("name", name))
         .add_with(("path", path))
+        .add_with(("if-no-files-found", "error"))
 }
 
 pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
