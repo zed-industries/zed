@@ -319,11 +319,16 @@ jobs:
         mv ./artifacts/${{ needs.bundle_mac_x86_64.outputs.remote-server }}/* release-artifacts/zed-remote-server-macos-x86_64.gz
         mv ./artifacts/${{ needs.bundle_mac_arm64.outputs.remote-server }}/* release-artifacts/zed-remote-server-macos-aarch64.gz
       shell: bash -euxo pipefail {0}
-    - name: gh release upload ${{ github.ref }} release-artifacts/*
-      run: gh release upload ${{ github.ref }} release-artifacts/*
+    - name: gh release upload "$GITHUB_REF_NAME" release-artifacts/*
+      run: gh release upload "$GITHUB_REF_NAME" release-artifacts/*
       shell: bash -euxo pipefail {0}
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  auto_release_preview:
+    needs:
+    - upload_release_assets
+    if: 'false'
+    runs-on: namespace-profile-2x4-ubuntu-2404
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: true

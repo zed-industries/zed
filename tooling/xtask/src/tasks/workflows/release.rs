@@ -1,4 +1,4 @@
-use gh_workflow::{Concurrency, Event, Job, Push, Run, Step, Use, Workflow};
+use gh_workflow::{Concurrency, Event, Expression, Job, Push, Run, Step, Use, Workflow};
 
 use crate::tasks::workflows::{
     run_bundling, run_tests, runners,
@@ -34,6 +34,8 @@ pub(crate) fn release() -> Workflow {
 
     let upload_release_assets = upload_release_assets(&[&create_draft_release], &bundle);
 
+    let auto_release_preview = auto_release_preview(&[&upload_release_assets]);
+
     named::workflow()
         .on(Event::default().push(Push::default().tags(vec!["v00.00.00-test".to_string()])))
         .concurrency(
@@ -55,7 +57,15 @@ pub(crate) fn release() -> Workflow {
         .add_job(bundle.windows_arm64.name, bundle.windows_arm64.job)
         .add_job(bundle.windows_x86_64.name, bundle.windows_x86_64.job)
         .add_job(upload_release_assets.name, upload_release_assets.job)
-    // todo! auto-release preview
+        .add_job(auto_release_preview.name, auto_release_preview.job)
+}
+
+fn auto_release_preview(deps: &[&NamedJob; 1]) -> NamedJob {
+    named::job(
+        dependant_job(deps)
+            .runs_on(runners::LINUX_SMALL)
+            .cond(Expression::new("false")),
+    )
 }
 
 fn use_fake_job_instead(_: Job) -> Job {
@@ -149,7 +159,7 @@ fn upload_release_assets(deps: &[&NamedJob], bundle_jobs: &ReleaseBundleJobs) ->
             .add_step(steps::script("ls -lR ./artifacts"))
             .add_step(prep_release_artifacts(bundle_jobs))
             .add_step(
-                steps::script("gh release upload ${{ github.ref }} release-artifacts/*")
+                steps::script("gh release upload \"$GITHUB_REF_NAME\" release-artifacts/*")
                     .add_env(("GH_TOKEN", "${{ secrets.GITHUB_TOKEN }}")),
             ),
     )
