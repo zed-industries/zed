@@ -1,13 +1,13 @@
 use std::{
-    cmp::Reverse, collections::hash_map::Entry, fmt::Write, ops::Range, path::PathBuf, sync::Arc,
-    time::Instant,
+    cmp::Reverse, collections::hash_map::Entry, ops::Range, path::PathBuf, sync::Arc, time::Instant,
 };
 
 use crate::{
-    ZetaContextRetrievalDebugInfo, ZetaDebugInfo, ZetaSearchQueryDebugInfo,
-    merge_excerpts::write_merged_excerpts,
+    ZetaContextRetrievalDebugInfo, ZetaContextRetrievalStartedDebugInfo, ZetaDebugInfo,
+    ZetaSearchQueryDebugInfo, merge_excerpts::merge_excerpts,
 };
 use anyhow::{Result, anyhow};
+use cloud_zeta2_prompt::write_codeblock;
 use collections::HashMap;
 use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions, Line};
 use futures::{
@@ -22,8 +22,9 @@ use language::{
 };
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolUse, MessageContent, Role,
+    LanguageModelProviderId, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
+    LanguageModelToolUse, MessageContent, Role,
 };
 use project::{
     Project, WorktreeSettings,
@@ -63,7 +64,7 @@ const SEARCH_PROMPT: &str = indoc! {r#"
 
     ## Current cursor context
 
-    `````filename={current_file_path}
+    `````path={current_file_path}
     {cursor_excerpt}
     `````
 
@@ -130,11 +131,13 @@ pub struct LlmContextOptions {
     pub excerpt: EditPredictionExcerptOptions,
 }
 
-pub fn find_related_excerpts<'a>(
+pub const MODEL_PROVIDER_ID: LanguageModelProviderId = language_model::ANTHROPIC_PROVIDER_ID;
+
+pub fn find_related_excerpts(
     buffer: Entity<language::Buffer>,
     cursor_position: Anchor,
     project: &Entity<Project>,
-    events: impl Iterator<Item = &'a crate::Event>,
+    mut edit_history_unified_diff: String,
     options: &LlmContextOptions,
     debug_tx: Option<mpsc::UnboundedSender<ZetaDebugInfo>>,
     cx: &App,
@@ -144,23 +147,15 @@ pub fn find_related_excerpts<'a>(
         .read(cx)
         .available_models(cx)
         .find(|model| {
-            model.provider_id() == language_model::ANTHROPIC_PROVIDER_ID
+            model.provider_id() == MODEL_PROVIDER_ID
                 && model.id() == LanguageModelId("claude-haiku-4-5-latest".into())
         })
     else {
-        return Task::ready(Err(anyhow!("could not find claude model")));
+        return Task::ready(Err(anyhow!("could not find context model")));
     };
 
-    let mut edits_string = String::new();
-
-    for event in events {
-        if let Some(event) = event.to_request_event(cx) {
-            writeln!(&mut edits_string, "{event}").ok();
-        }
-    }
-
-    if edits_string.is_empty() {
-        edits_string.push_str("(No user edits yet)");
+    if edit_history_unified_diff.is_empty() {
+        edit_history_unified_diff.push_str("(No user edits yet)");
     }
 
     // TODO [zeta2] include breadcrumbs?
@@ -178,9 +173,21 @@ pub fn find_related_excerpts<'a>(
         .unwrap_or_else(|| "untitled".to_string());
 
     let prompt = SEARCH_PROMPT
-        .replace("{edits}", &edits_string)
+        .replace("{edits}", &edit_history_unified_diff)
         .replace("{current_file_path}", &current_file_path)
         .replace("{cursor_excerpt}", &cursor_excerpt.text(&snapshot).body);
+
+    if let Some(debug_tx) = &debug_tx {
+        debug_tx
+            .unbounded_send(ZetaDebugInfo::ContextRetrievalStarted(
+                ZetaContextRetrievalStartedDebugInfo {
+                    project: project.clone(),
+                    timestamp: Instant::now(),
+                    search_prompt: prompt.clone(),
+                },
+            ))
+            .ok();
+    }
 
     let path_style = project.read(cx).path_style(cx);
 
@@ -428,19 +435,14 @@ pub fn find_related_excerpts<'a>(
                         .line_ranges
                         .sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
 
-                    writeln!(
-                        &mut merged_result,
-                        "`````filename={}",
-                        matched.full_path.display()
-                    )
-                    .unwrap();
-                    write_merged_excerpts(
-                        &matched.snapshot,
-                        matched.line_ranges,
+                    write_codeblock(
+                        &matched.full_path,
+                        merge_excerpts(&matched.snapshot, matched.line_ranges).iter(),
                         &[],
+                        Line(matched.snapshot.max_point().row),
+                        true,
                         &mut merged_result,
                     );
-                    merged_result.push_str("`````\n\n");
 
                     result_buffers_by_path.insert(
                         matched.full_path,
