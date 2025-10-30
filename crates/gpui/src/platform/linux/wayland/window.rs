@@ -183,12 +183,12 @@ impl WaylandSurfaceState {
             toplevel.set_parent(xdg_parent.as_ref());
         }
 
-        if params.kind == WindowKind::Dialog
-            && let Some(dialog) = &globals.dialog
-        {
-            let xdg_dialog = dialog.get_xdg_dialog(&toplevel, &globals.qh, ());
+        if params.kind == WindowKind::Dialog {
+            if let Some(dialog) = &globals.dialog {
+                let xdg_dialog = dialog.get_xdg_dialog(&toplevel, &globals.qh, ());
 
-            xdg_dialog.set_modal();
+                xdg_dialog.set_modal();
+            }
 
             if let Some(parent) = parent.as_ref() {
                 parent.add_children(surface.id());
