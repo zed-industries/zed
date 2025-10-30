@@ -1020,7 +1020,8 @@
     "context": "CollabPanel",
     "bindings": {
       "alt-up": "collab_panel::MoveChannelUp",
-      "alt-down": "collab_panel::MoveChannelDown"
+      "alt-down": "collab_panel::MoveChannelDown",
+      "alt-enter": "collab_panel::OpenSelectedChannelNotes"
     }
   },
   {
@@ -1134,7 +1135,8 @@
       "ctrl-shift-space": "terminal::ToggleViMode",
       "ctrl-shift-r": "terminal::RerunTask",
       "ctrl-alt-r": "terminal::RerunTask",
-      "alt-t": "terminal::RerunTask"
+      "alt-t": "terminal::RerunTask",
+      "ctrl-shift-5": "pane::SplitRight"
     }
   },
   {

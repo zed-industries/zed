@@ -46,7 +46,7 @@ jobs:
             echo "${output_name}=false" >> "$GITHUB_OUTPUT"
         }
 
-        check_pattern "run_action_checks" '^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask' -qP
+        check_pattern "run_action_checks" '^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask|script/' -qP
         check_pattern "run_docs" '^docs/' -qP
         check_pattern "run_licenses" '^(Cargo.lock|script/.*licenses)' -qP
         check_pattern "run_nix" '^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)' -qP

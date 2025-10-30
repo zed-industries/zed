@@ -619,29 +619,24 @@ impl LocalBufferStore {
         worktree: Entity<Worktree>,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {
-        let load_buffer = worktree.update(cx, |worktree, cx| {
-            let load_file = worktree.load_file(path.as_ref(), cx);
-            let reservation = cx.reserve_entity();
-            let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
-            let path = path.clone();
-            cx.spawn(async move |_, cx| {
-                let loaded = load_file.await.with_context(|| {
-                    format!("Could not open path: {}", path.display(PathStyle::local()))
-                })?;
-                let text_buffer = cx
-                    .background_spawn(async move {
-                        text::Buffer::new(ReplicaId::LOCAL, buffer_id, loaded.text)
-                    })
-                    .await;
-                cx.insert_entity(reservation, |_| {
-                    Buffer::build(text_buffer, Some(loaded.file), Capability::ReadWrite)
-                })
-            })
-        });
-
+        let load_file = worktree.update(cx, |worktree, cx| worktree.load_file(path.as_ref(), cx));
         cx.spawn(async move |this, cx| {
-            let buffer = match load_buffer.await {
-                Ok(buffer) => Ok(buffer),
+            let path = path.clone();
+            let buffer = match load_file.await.with_context(|| {
+                format!("Could not open path: {}", path.display(PathStyle::local()))
+            }) {
+                Ok(loaded) => {
+                    let reservation = cx.reserve_entity::<Buffer>()?;
+                    let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
+                    let text_buffer = cx
+                        .background_spawn(async move {
+                            text::Buffer::new(ReplicaId::LOCAL, buffer_id, loaded.text)
+                        })
+                        .await;
+                    cx.insert_entity(reservation, |_| {
+                        Buffer::build(text_buffer, Some(loaded.file), Capability::ReadWrite)
+                    })?
+                }
                 Err(error) if is_not_found_error(&error) => cx.new(|cx| {
                     let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
                     let text_buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, "");
@@ -657,9 +652,9 @@ impl LocalBufferStore {
                         })),
                         Capability::ReadWrite,
                     )
-                }),
-                Err(e) => Err(e),
-            }?;
+                })?,
+                Err(e) => return Err(e),
+            };
             this.update(cx, |this, cx| {
                 this.add_buffer(buffer.clone(), cx)?;
                 let buffer_id = buffer.read(cx).remote_id();
@@ -840,6 +835,7 @@ impl BufferStore {
 
                 entry
                     .insert(
+                        // todo(lw): hot foreground spawn
                         cx.spawn(async move |this, cx| {
                             let load_result = load_buffer.await;
                             this.update(cx, |this, cx| {

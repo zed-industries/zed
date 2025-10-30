@@ -4326,10 +4326,10 @@ impl Window {
     }
 
     /// Returns a generic event listener that invokes the given listener with the view and context associated with the given view handle.
-    pub fn listener_for<V: Render, E>(
+    pub fn listener_for<T: 'static, E>(
         &self,
-        view: &Entity<V>,
-        f: impl Fn(&mut V, &E, &mut Window, &mut Context<V>) + 'static,
+        view: &Entity<T>,
+        f: impl Fn(&mut T, &E, &mut Window, &mut Context<T>) + 'static,
     ) -> impl Fn(&E, &mut Window, &mut App) + 'static {
         let view = view.downgrade();
         move |e: &E, window: &mut Window, cx: &mut App| {

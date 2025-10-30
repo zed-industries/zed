@@ -1318,7 +1318,8 @@ impl LocalWorktree {
         let entry = self.refresh_entry(path.clone(), None, cx);
         let is_private = self.is_path_private(path.as_ref());
 
-        cx.spawn(async move |this, _cx| {
+        let this = cx.weak_entity();
+        cx.background_spawn(async move {
             // WARN: Temporary workaround for #27283.
             //       We are not efficient with our memory usage per file, and use in excess of 64GB for a 10GB file
             //       Therefore, as a temporary workaround to prevent system freezes, we just bail before opening a file
@@ -1702,6 +1703,7 @@ impl LocalWorktree {
         };
         let t0 = Instant::now();
         let mut refresh = self.refresh_entries_for_paths(paths);
+        // todo(lw): Hot foreground spawn
         cx.spawn(async move |this, cx| {
             refresh.recv().await;
             log::trace!("refreshed entry {path:?} in {:?}", t0.elapsed());

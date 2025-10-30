@@ -25,7 +25,7 @@ pub(crate) fn run_tests() -> Workflow {
     let should_check_docs = PathCondition::new("run_docs", r"^docs/");
     let should_check_scripts = PathCondition::new(
         "run_action_checks",
-        r"^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask",
+        r"^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask|script/",
     );
     let should_check_licences =
         PathCondition::new("run_licenses", r"^(Cargo.lock|script/.*licenses)");
@@ -302,7 +302,9 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
     NamedJob {
         name: format!("run_tests_{platform}"),
         job: release_job(&[])
-            .cond(Expression::new("false"))
+            .cond(Expression::new(
+                "github.repository_owner == 'zed-industries'",
+            ))
             .runs_on(runner)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
