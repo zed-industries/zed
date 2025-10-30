@@ -222,7 +222,7 @@ pub struct X11ClientState {
 pub struct X11ClientStatePtr(pub Weak<RefCell<X11ClientState>>);
 
 impl X11ClientStatePtr {
-    fn get_client(&self) -> Option<X11Client> {
+    pub fn get_client(&self) -> Option<X11Client> {
         self.0.upgrade().map(X11Client)
     }
 
@@ -752,7 +752,7 @@ impl X11Client {
         }
     }
 
-    fn get_window(&self, win: xproto::Window) -> Option<X11WindowStatePtr> {
+    pub(crate) fn get_window(&self, win: xproto::Window) -> Option<X11WindowStatePtr> {
         let state = self.0.borrow();
         state
             .windows
@@ -1489,7 +1489,7 @@ impl LinuxClient for X11Client {
         let parent_window = state
             .keyboard_focused_window
             .and_then(|focused_window| state.windows.get(&focused_window))
-            .map(|window| window.window.x_window);
+            .map(|w| w.window.clone());
         let x_window = state
             .xcb_connection
             .generate_id()
