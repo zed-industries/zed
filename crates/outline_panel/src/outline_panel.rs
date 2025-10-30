@@ -6628,6 +6628,62 @@ outline: struct OutlineEntryExcerpt
                 )
             );
         });
+
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.collapse_all_entries(&CollapseAllEntries, window, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry(),
+                    cx,
+                ),
+                format!(
+                    r#"frontend-project/"#
+                )
+            );
+        });
+
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.expand_all_entries(&ExpandAllEntries, window, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry(),
+                    cx,
+                ),
+                format!(
+                    r#"frontend-project/
+  public/lottie/
+    syntax-tree.json
+      search: {{ "something": "static" }}
+  src/
+    app/(site)/
+      (about)/jobs/[slug]/
+        page.tsx
+          search: static
+      (blog)/post/[slug]/
+        page.tsx
+          search: static
+    components/
+      ErrorBoundary.tsx  <==== selected
+        search: static"#
+                )
+            );
+        });
     }
 
     async fn add_outline_panel(
