@@ -393,6 +393,11 @@ impl TestAppContext {
         }
     }
 
+    /// Returns the background executor for this context.
+    pub fn background_executor(&self) -> &BackgroundExecutor {
+        &self.background_executor
+    }
+
     /// Wait until there are no more pending tasks.
     pub fn run_until_parked(&mut self) {
         self.background_executor.run_until_parked()

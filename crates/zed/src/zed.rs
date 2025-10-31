@@ -28,10 +28,10 @@ use git_ui::commit_view::CommitViewToolbar;
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
-    Action, App, AppContext as _, Context, DismissEvent, Element, Entity, Focusable, KeyBinding,
-    ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Styled, Task,
-    TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, image_cache, point,
-    px, retain_all,
+    Action, App, AppContext as _, AsyncApp, Context, DismissEvent, Element, Entity, Focusable,
+    KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Styled,
+    Task, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, image_cache,
+    point, px, retain_all,
 };
 use image_viewer::ImageInfo;
 use language::Capability;
@@ -201,7 +201,12 @@ pub fn init(cx: &mut App) {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::keymap_file(),
-                || settings::initial_keymap_content().as_ref().into(),
+                |cx| {
+                    Rope::from_str(
+                        settings::initial_keymap_content().as_ref(),
+                        cx.background_executor(),
+                    )
+                },
                 window,
                 cx,
             );
@@ -211,7 +216,12 @@ pub fn init(cx: &mut App) {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::settings_file(),
-                || settings::initial_user_settings_content().as_ref().into(),
+                |cx| {
+                    Rope::from_str(
+                        settings::initial_user_settings_content().as_ref(),
+                        cx.background_executor(),
+                    )
+                },
                 window,
                 cx,
             );
@@ -226,7 +236,12 @@ pub fn init(cx: &mut App) {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::tasks_file(),
-                || settings::initial_tasks_content().as_ref().into(),
+                |cx| {
+                    Rope::from_str(
+                        settings::initial_tasks_content().as_ref(),
+                        cx.background_executor(),
+                    )
+                },
                 window,
                 cx,
             );
@@ -236,7 +251,12 @@ pub fn init(cx: &mut App) {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::debug_scenarios_file(),
-                || settings::initial_debug_tasks_content().as_ref().into(),
+                |cx| {
+                    Rope::from_str(
+                        settings::initial_debug_tasks_content().as_ref(),
+                        cx.background_executor(),
+                    )
+                },
                 window,
                 cx,
             );
@@ -1939,7 +1959,7 @@ fn open_bundled_file(
 
 fn open_settings_file(
     abs_path: &'static Path,
-    default_content: impl FnOnce() -> Rope + Send + 'static,
+    default_content: impl FnOnce(&mut AsyncApp) -> Rope + Send + 'static,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -4355,7 +4375,7 @@ mod tests {
             .fs
             .save(
                 "/settings.json".as_ref(),
-                &r#"{"base_keymap": "Atom"}"#.into(),
+                &Rope::from_str_small(r#"{"base_keymap": "Atom"}"#),
                 Default::default(),
             )
             .await
@@ -4365,7 +4385,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"[{"bindings": {"backspace": "test_only::ActionA"}}]"#.into(),
+                &Rope::from_str_small(r#"[{"bindings": {"backspace": "test_only::ActionA"}}]"#),
                 Default::default(),
             )
             .await
@@ -4413,7 +4433,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"[{"bindings": {"backspace": "test_only::ActionB"}}]"#.into(),
+                &Rope::from_str_small(r#"[{"bindings": {"backspace": "test_only::ActionB"}}]"#),
                 Default::default(),
             )
             .await
@@ -4433,7 +4453,7 @@ mod tests {
             .fs
             .save(
                 "/settings.json".as_ref(),
-                &r#"{"base_keymap": "JetBrains"}"#.into(),
+                &Rope::from_str_small(r#"{"base_keymap": "JetBrains"}"#),
                 Default::default(),
             )
             .await
@@ -4473,7 +4493,7 @@ mod tests {
             .fs
             .save(
                 "/settings.json".as_ref(),
-                &r#"{"base_keymap": "Atom"}"#.into(),
+                &Rope::from_str_small(r#"{"base_keymap": "Atom"}"#),
                 Default::default(),
             )
             .await
@@ -4482,7 +4502,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"[{"bindings": {"backspace": "test_only::ActionA"}}]"#.into(),
+                &Rope::from_str_small(r#"[{"bindings": {"backspace": "test_only::ActionA"}}]"#),
                 Default::default(),
             )
             .await
@@ -4525,7 +4545,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"[{"bindings": {"backspace": null}}]"#.into(),
+                &Rope::from_str_small(r#"[{"bindings": {"backspace": null}}]"#),
                 Default::default(),
             )
             .await
@@ -4545,7 +4565,7 @@ mod tests {
             .fs
             .save(
                 "/settings.json".as_ref(),
-                &r#"{"base_keymap": "JetBrains"}"#.into(),
+                &Rope::from_str_small(r#"{"base_keymap": "JetBrains"}"#),
                 Default::default(),
             )
             .await

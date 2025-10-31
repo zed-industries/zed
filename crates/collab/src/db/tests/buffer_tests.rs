@@ -74,11 +74,21 @@ async fn test_channel_buffers(db: &Arc<Database>) {
         ReplicaId::new(0),
         text::BufferId::new(1).unwrap(),
         "".to_string(),
+        &db.test_options.as_ref().unwrap().executor,
     );
     let operations = vec![
-        buffer_a.edit([(0..0, "hello world")]),
-        buffer_a.edit([(5..5, ", cruel")]),
-        buffer_a.edit([(0..5, "goodbye")]),
+        buffer_a.edit(
+            [(0..0, "hello world")],
+            &db.test_options.as_ref().unwrap().executor,
+        ),
+        buffer_a.edit(
+            [(5..5, ", cruel")],
+            &db.test_options.as_ref().unwrap().executor,
+        ),
+        buffer_a.edit(
+            [(0..5, "goodbye")],
+            &db.test_options.as_ref().unwrap().executor,
+        ),
         buffer_a.undo().unwrap().1,
     ];
     assert_eq!(buffer_a.text(), "hello, cruel world");
@@ -102,15 +112,19 @@ async fn test_channel_buffers(db: &Arc<Database>) {
         ReplicaId::new(0),
         text::BufferId::new(1).unwrap(),
         buffer_response_b.base_text,
+        &db.test_options.as_ref().unwrap().executor,
     );
-    buffer_b.apply_ops(buffer_response_b.operations.into_iter().map(|operation| {
-        let operation = proto::deserialize_operation(operation).unwrap();
-        if let language::Operation::Buffer(operation) = operation {
-            operation
-        } else {
-            unreachable!()
-        }
-    }));
+    buffer_b.apply_ops(
+        buffer_response_b.operations.into_iter().map(|operation| {
+            let operation = proto::deserialize_operation(operation).unwrap();
+            if let language::Operation::Buffer(operation) = operation {
+                operation
+            } else {
+                unreachable!()
+            }
+        }),
+        None,
+    );
 
     assert_eq!(buffer_b.text(), "hello, cruel world");
 
@@ -247,6 +261,7 @@ async fn test_channel_buffers_last_operations(db: &Database) {
             ReplicaId::new(res.replica_id as u16),
             text::BufferId::new(1).unwrap(),
             "".to_string(),
+            &db.test_options.as_ref().unwrap().executor,
         ));
     }
 
@@ -255,9 +270,9 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         user_id,
         db,
         vec![
-            text_buffers[0].edit([(0..0, "a")]),
-            text_buffers[0].edit([(0..0, "b")]),
-            text_buffers[0].edit([(0..0, "c")]),
+            text_buffers[0].edit([(0..0, "a")], &db.test_options.as_ref().unwrap().executor),
+            text_buffers[0].edit([(0..0, "b")], &db.test_options.as_ref().unwrap().executor),
+            text_buffers[0].edit([(0..0, "c")], &db.test_options.as_ref().unwrap().executor),
         ],
     )
     .await;
@@ -267,9 +282,9 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         user_id,
         db,
         vec![
-            text_buffers[1].edit([(0..0, "d")]),
-            text_buffers[1].edit([(1..1, "e")]),
-            text_buffers[1].edit([(2..2, "f")]),
+            text_buffers[1].edit([(0..0, "d")], &db.test_options.as_ref().unwrap().executor),
+            text_buffers[1].edit([(1..1, "e")], &db.test_options.as_ref().unwrap().executor),
+            text_buffers[1].edit([(2..2, "f")], &db.test_options.as_ref().unwrap().executor),
         ],
     )
     .await;
@@ -286,14 +301,15 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         replica_id,
         text::BufferId::new(1).unwrap(),
         "def".to_string(),
+        &db.test_options.as_ref().unwrap().executor,
     );
     update_buffer(
         buffers[1].channel_id,
         user_id,
         db,
         vec![
-            text_buffers[1].edit([(0..0, "g")]),
-            text_buffers[1].edit([(0..0, "h")]),
+            text_buffers[1].edit([(0..0, "g")], &db.test_options.as_ref().unwrap().executor),
+            text_buffers[1].edit([(0..0, "h")], &db.test_options.as_ref().unwrap().executor),
         ],
     )
     .await;
@@ -302,7 +318,7 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         buffers[2].channel_id,
         user_id,
         db,
-        vec![text_buffers[2].edit([(0..0, "i")])],
+        vec![text_buffers[2].edit([(0..0, "i")], &db.test_options.as_ref().unwrap().executor)],
     )
     .await;
 
