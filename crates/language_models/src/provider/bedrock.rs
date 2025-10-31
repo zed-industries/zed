@@ -8,6 +8,7 @@ use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_http_client::AwsHttpClient;
+use aws_smithy_runtime_api::client::auth::AuthSchemeId;
 use aws_smithy_runtime_api::client::identity::{Identity, IdentityFuture, ResolveIdentity};
 use aws_smithy_runtime_api::client::runtime_components::RuntimeComponents;
 use bedrock::bedrock_client::Client as BedrockClient;
@@ -53,6 +54,8 @@ use crate::AllLanguageModelSettings;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("amazon-bedrock");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Amazon Bedrock");
+
+const HTTP_BEARER_AUTH_SCHEME_ID: AuthSchemeId = AuthSchemeId::new("http-bearer-auth");
 
 #[derive(Clone)]
 struct BearerTokenProvider {
@@ -156,7 +159,7 @@ static ZED_BEDROCK_SESSION_TOKEN_VAR: LazyLock<EnvVar> = env_var!("ZED_SESSION_T
 static ZED_AWS_PROFILE_VAR: LazyLock<EnvVar> = env_var!("ZED_AWS_PROFILE");
 static ZED_BEDROCK_REGION_VAR: LazyLock<EnvVar> = env_var!("ZED_AWS_REGION");
 static ZED_AWS_ENDPOINT_VAR: LazyLock<EnvVar> = env_var!("ZED_AWS_ENDPOINT");
-static ZED_AWS_BEARER_TOKEN_BEDROCK: LazyLock<EnvVar> = env_var!("ZED_AWS_BEARER_TOKEN_BEDROCK");
+static ZED_BEDROCK_BEARER_TOKEN_VAR: LazyLock<EnvVar> = env_var!("ZED_BEDROCK_BEARER_TOKEN");
 
 pub struct State {
     credentials: Option<BedrockCredentials>,
@@ -222,7 +225,7 @@ impl State {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         cx.spawn(async move |this, cx| {
             let (credentials, from_env) =
-                if let Some(bearer_token) = &ZED_AWS_BEARER_TOKEN_BEDROCK.value {
+                if let Some(bearer_token) = &ZED_BEDROCK_BEARER_TOKEN_VAR.value {
                     if !bearer_token.is_empty() {
                         let region = ZED_BEDROCK_REGION_VAR.value.as_deref().unwrap_or("us-east-1");
                         let creds = BedrockCredentials {
@@ -506,8 +509,20 @@ impl BedrockModel {
                     }
                 }
 
-                let config = self.handle.block_on(config_builder.load());
-                anyhow::Ok(BedrockClient::new(&config))
+                let sdk_config = self.handle.block_on(config_builder.load());
+                
+                let bedrock_config = if bearer_token.is_some() && !bearer_token.unwrap().is_empty() {
+                    bedrock::bedrock_client::Config::builder()
+                        .from(&sdk_config)
+                        .auth_scheme_preference([HTTP_BEARER_AUTH_SCHEME_ID])
+                        .build()
+                } else {
+                    bedrock::bedrock_client::Config::builder()
+                        .from(&sdk_config)
+                        .build()
+                };
+                
+                anyhow::Ok(BedrockClient::from_conf(bedrock_config))
             })
             .context("initializing Bedrock client")?;
 
@@ -1252,7 +1267,7 @@ impl Render for ConfigurationView {
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
                         .child(Label::new(if env_var_set {
-                            format!("Credentials are set via environment variables ({}/{} and {}).", ZED_BEDROCK_ACCESS_KEY_ID_VAR.name, ZED_AWS_BEARER_TOKEN_BEDROCK.name, ZED_BEDROCK_REGION_VAR.name)
+                            format!("Credentials are set via environment variables ({}/{} and {}).", ZED_BEDROCK_ACCESS_KEY_ID_VAR.name, ZED_BEDROCK_BEARER_TOKEN_VAR.name, ZED_BEDROCK_REGION_VAR.name)
                         } else {
                             match bedrock_method {
                                 Some(BedrockAuthMethod::Automatic) => "You are using automatic credentials".into(),
@@ -1271,7 +1286,7 @@ impl Render for ConfigurationView {
                         .icon_position(IconPosition::Start)
                         .disabled(env_var_set || bedrock_method.is_some())
                         .when(env_var_set, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your credentials, unset the {}/{} and {} environment variables.", ZED_BEDROCK_ACCESS_KEY_ID_VAR.name, ZED_AWS_BEARER_TOKEN_BEDROCK.name, ZED_BEDROCK_REGION_VAR.name)))
+                            this.tooltip(Tooltip::text(format!("To reset your credentials, unset the {}/{} and {} environment variables.", ZED_BEDROCK_ACCESS_KEY_ID_VAR.name, ZED_BEDROCK_BEARER_TOKEN_VAR.name, ZED_BEDROCK_REGION_VAR.name)))
                         })
                         .when(bedrock_method.is_some(), |this| {
                             this.tooltip(Tooltip::text("You cannot reset credentials as they're being derived, check Zed settings to understand how"))
@@ -1306,7 +1321,7 @@ impl Render for ConfigurationView {
             .child(self.render_static_credentials_ui())
             .child(
                 Label::new(
-                    format!("You can also assign the {}, {} AND {} environment variables (or {} for bearer token authentication) and restart Zed.", ZED_BEDROCK_ACCESS_KEY_ID_VAR.name, ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name, ZED_BEDROCK_REGION_VAR.name, ZED_AWS_BEARER_TOKEN_BEDROCK.name),
+                    format!("You can also assign the {}, {} AND {} environment variables (or {} for bearer token authentication) and restart Zed.", ZED_BEDROCK_ACCESS_KEY_ID_VAR.name, ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name, ZED_BEDROCK_REGION_VAR.name, ZED_BEDROCK_BEARER_TOKEN_VAR.name),
                 )
                     .size(LabelSize::Small)
                     .color(Color::Muted)
