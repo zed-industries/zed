@@ -154,6 +154,10 @@ unsafe fn build_classes() {
                     handle_view_event as extern "C" fn(&Object, Sel, id),
                 );
                 decl.add_method(
+                    sel!(pressureChangeWithEvent:),
+                    handle_view_event as extern "C" fn(&Object, Sel, id),
+                );
+                decl.add_method(
                     sel!(mouseExited:),
                     handle_view_event as extern "C" fn(&Object, Sel, id),
                 );
