@@ -63,7 +63,7 @@ jobs:
     runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/rust-cache@nscloud-cache-action
+      uses: namespacelabs/nscloud-cache-action@v1
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
         cache: rust
@@ -154,7 +154,7 @@ jobs:
       run: ./script/install-mold
       shell: bash -euxo pipefail {0}
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/rust-cache@nscloud-cache-action
+      uses: namespacelabs/nscloud-cache-action@v1
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
         cache: rust
@@ -231,7 +231,7 @@ jobs:
       with:
         clean: false
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/rust-cache@nscloud-cache-action
+      uses: namespacelabs/nscloud-cache-action@v1
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
         cache: rust
@@ -282,7 +282,7 @@ jobs:
       run: ./script/install-mold
       shell: bash -euxo pipefail {0}
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/rust-cache@nscloud-cache-action
+      uses: namespacelabs/nscloud-cache-action@v1
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
         cache: rust
@@ -346,7 +346,7 @@ jobs:
       with:
         clean: false
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/rust-cache@nscloud-cache-action
+      uses: namespacelabs/nscloud-cache-action@v1
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
         cache: rust
@@ -387,7 +387,7 @@ jobs:
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
       shell: bash -euxo pipefail {0}
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/rust-cache@nscloud-cache-action
+      uses: namespacelabs/nscloud-cache-action@v1
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
         cache: rust
@@ -433,7 +433,7 @@ jobs:
       with:
         clean: false
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/rust-cache@nscloud-cache-action
+      uses: namespacelabs/nscloud-cache-action@v1
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
         cache: rust
