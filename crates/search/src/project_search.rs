@@ -55,7 +55,11 @@ actions!(
         /// Moves to the next input field.
         NextField,
         /// Toggles the search filters panel.
-        ToggleFilters
+        ToggleFilters,
+        /// Collapses all search result excerpts.
+        CollapseAllSearchResults,
+        /// Expands all search result excerpts.
+        ExpandAllSearchResults
     ]
 );
 
@@ -117,6 +121,35 @@ pub fn init(cx: &mut App) {
         register_workspace_action_for_present_search(workspace, |workspace, action, window, cx| {
             ProjectSearchView::search_in_new(workspace, action, window, cx)
         });
+
+        // Register collapse/expand actions for search results
+        register_workspace_action_for_present_search(
+            workspace,
+            |workspace, action: &CollapseAllSearchResults, window, cx| {
+                if let Some(search_view) = workspace
+                    .active_item(cx)
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+                {
+                    search_view.update(cx, |search_view, cx| {
+                        search_view.collapse_all_search_results(action, window, cx);
+                    });
+                }
+            },
+        );
+
+        register_workspace_action_for_present_search(
+            workspace,
+            |workspace, action: &ExpandAllSearchResults, window, cx| {
+                if let Some(search_view) = workspace
+                    .active_item(cx)
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+                {
+                    search_view.update(cx, |search_view, cx| {
+                        search_view.expand_all_search_results(action, window, cx);
+                    });
+                }
+            },
+        );
 
         register_workspace_action_for_present_search(
             workspace,
@@ -217,6 +250,7 @@ pub struct ProjectSearchView {
     replace_enabled: bool,
     included_opened_only: bool,
     regex_language: Option<Arc<Language>>,
+    results_collapsed: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -751,6 +785,47 @@ impl ProjectSearchView {
         });
     }
 
+    fn collapse_all_search_results(
+        &mut self,
+        _: &CollapseAllSearchResults,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.results_collapsed = true;
+        self.update_results_visibility(cx);
+    }
+
+    fn expand_all_search_results(
+        &mut self,
+        _: &ExpandAllSearchResults,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.results_collapsed = false;
+        self.update_results_visibility(cx);
+    }
+
+    fn update_results_visibility(&mut self, cx: &mut Context<Self>) {
+        self.results_editor.update(cx, |editor, cx| {
+            let multibuffer = editor.buffer().read(cx);
+            let buffer_ids = multibuffer.excerpt_buffer_ids();
+
+            if self.results_collapsed {
+                // Fold all buffers to collapse search results
+                for buffer_id in buffer_ids {
+                    editor.fold_buffer(buffer_id, cx);
+                }
+            } else {
+                // Unfold all buffers to expand search results
+                for buffer_id in buffer_ids {
+                    editor.unfold_buffer(buffer_id, cx);
+                }
+            }
+            // The editor will automatically update the display when needed
+        });
+        cx.notify();
+    }
+
     pub fn new(
         workspace: WeakEntity<Workspace>,
         entity: Entity<ProjectSearch>,
@@ -909,8 +984,10 @@ impl ProjectSearchView {
             replace_enabled: false,
             included_opened_only: false,
             regex_language: None,
+            results_collapsed: false,
             _subscriptions: subscriptions,
         };
+
         this.entity_changed(window, cx);
         this
     }
@@ -1404,6 +1481,7 @@ impl ProjectSearchView {
 
     fn entity_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let match_ranges = self.entity.read(cx).match_ranges.clone();
+
         if match_ranges.is_empty() {
             self.active_match_index = None;
             self.results_editor.update(cx, |editor, cx| {
@@ -2079,6 +2157,50 @@ impl Render for ProjectSearchBar {
                 &ToggleReplace,
                 focus_handle.clone(),
             ))
+            .child({
+                let is_collapsed = self
+                    .active_project_search
+                    .as_ref()
+                    .map(|search| search.read(cx).results_collapsed)
+                    .unwrap_or(false);
+
+                IconButton::new(
+                    "project-search-collapse-expand",
+                    if is_collapsed {
+                        IconName::Plus
+                    } else {
+                        IconName::Dash
+                    },
+                )
+                .shape(IconButtonShape::Square)
+                .tooltip(move |window, cx| {
+                    if is_collapsed {
+                        Tooltip::text("Expand All Search Results")(window, cx)
+                    } else {
+                        Tooltip::text("Collapse All Search Results")(window, cx)
+                    }
+                })
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if let Some(search) = this.active_project_search.as_ref() {
+                        let is_collapsed = search.read(cx).results_collapsed;
+                        search.update(cx, |search, cx| {
+                            if is_collapsed {
+                                search.expand_all_search_results(
+                                    &ExpandAllSearchResults,
+                                    window,
+                                    cx,
+                                );
+                            } else {
+                                search.collapse_all_search_results(
+                                    &CollapseAllSearchResults,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        });
+                    }
+                }))
+            })
             .child(matches_column);
 
         let search_line = h_flex()
