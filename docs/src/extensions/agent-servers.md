@@ -137,5 +137,14 @@ To test your Agent Server Extension:
 3. Select your Agent Server from the list
 4. Verify that it downloads, installs, and launches correctly
 5. Test its functionality by conversing with it and watching the [ACP logs](../ai/external-agents.md#debugging-agents)
+## Icon Guideline
 
+In case your agent server has a logo, we highly recommend adding it as an SVG icon.
+For optimal display, follow these guidelines:
+
+- Make sure you resize your SVG to fit a 16x16 bounding box, with a padding of around one or two pixels
+- Ensure you have a clean SVG code by processing it through [SVGOMG](https://jakearchibald.github.io/svgomg/)
+- Avoid including icons with gradients as they will often make the SVG more complicated and possibly not render perfectly
+
+Note that we won't include colors; any icon you include will be displayed in monochrome so as to preserve Zed's design consistency.
 This is all you need to distribute an agent server through Zed's extension system!
