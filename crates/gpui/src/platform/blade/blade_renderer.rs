@@ -903,6 +903,8 @@ impl BladeRenderer {
                         }
                     }
                 }
+                PrimitiveBatch::InstancedRects(_batches) => {}
+                PrimitiveBatch::InstancedLines(_batches) => {}
             }
         }
         drop(pass);
