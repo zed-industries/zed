@@ -5593,9 +5593,9 @@ fn default_markdown_style(
     };
 
     let font_size = if buffer_font {
-        TextSize::Small.rems(cx)
+        theme_settings.agent_buffer_font_size(cx)
     } else {
-        TextSize::Default.rems(cx)
+        theme_settings.agent_ui_font_size(cx)
     };
 
     let text_color = if muted_text {
