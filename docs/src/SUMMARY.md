@@ -80,6 +80,7 @@
 - [Theme Extensions](./extensions/themes.md)
 - [Icon Theme Extensions](./extensions/icon-themes.md)
 - [Slash Command Extensions](./extensions/slash-commands.md)
+- [Agent Server Extensions](./extensions/agent-servers.md)
 - [MCP Server Extensions](./extensions/mcp-extensions.md)
 
 # Language Support
