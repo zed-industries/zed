@@ -235,8 +235,16 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let uri = MentionUri::Thread {
+            id: thread.id.clone(),
+            name: thread.title.to_string(),
+        };
+        let content = format!("{}\n", uri.as_link());
+
+        let content_len = content.len() - 1;
+
         let start = self.editor.update(cx, |editor, cx| {
-            editor.set_text(format!("{}\n", thread.title), window, cx);
+            editor.set_text(content, window, cx);
             editor
                 .buffer()
                 .read(cx)
@@ -245,18 +253,8 @@ impl MessageEditor {
                 .text_anchor
         });
 
-        self.confirm_mention_completion(
-            thread.title.clone(),
-            start,
-            thread.title.len(),
-            MentionUri::Thread {
-                id: thread.id.clone(),
-                name: thread.title.to_string(),
-            },
-            window,
-            cx,
-        )
-        .detach();
+        self.confirm_mention_completion(thread.title, start, content_len, uri, window, cx)
+            .detach();
     }
 
     #[cfg(test)]
@@ -1601,6 +1599,7 @@ mod tests {
     use gpui::{
         AppContext, Entity, EventEmitter, FocusHandle, Focusable, TestAppContext, VisualTestContext,
     };
+    use language_model::LanguageModelRegistry;
     use lsp::{CompletionContext, CompletionTriggerKind};
     use project::{CompletionIntent, Project, ProjectPath};
     use serde_json::json;
@@ -2745,6 +2744,81 @@ mod tests {
             }
             _ => panic!("Expected Text mention for small file"),
         }
+    }
+    #[gpui::test]
+    async fn test_insert_thread_summary(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(LanguageModelRegistry::test);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({"file": ""})).await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+
+        // Create a thread metadata to insert as summary
+        let thread_metadata = agent::DbThreadMetadata {
+            id: acp::SessionId("thread-123".into()),
+            title: "Previous Conversation".into(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        let message_editor = cx.update(|window, cx| {
+            cx.new(|cx| {
+                let mut editor = MessageEditor::new(
+                    workspace.downgrade(),
+                    project.clone(),
+                    history_store.clone(),
+                    None,
+                    Default::default(),
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        min_lines: 1,
+                        max_lines: None,
+                    },
+                    window,
+                    cx,
+                );
+                editor.insert_thread_summary(thread_metadata.clone(), window, cx);
+                editor
+            })
+        });
+
+        // Construct expected values for verification
+        let expected_uri = MentionUri::Thread {
+            id: thread_metadata.id.clone(),
+            name: thread_metadata.title.to_string(),
+        };
+        let expected_link = format!("[@{}]({})", thread_metadata.title, expected_uri.to_uri());
+
+        message_editor.read_with(cx, |editor, cx| {
+            let text = editor.text(cx);
+
+            assert!(
+                text.contains(&expected_link),
+                "Expected editor text to contain thread mention link.\nExpected substring: {}\nActual text: {}",
+                expected_link,
+                text
+            );
+
+            let mentions = editor.mentions();
+            assert_eq!(
+                mentions.len(),
+                1,
+                "Expected exactly one mention after inserting thread summary"
+            );
+
+            assert!(
+                mentions.contains(&expected_uri),
+                "Expected mentions to contain the thread URI"
+            );
+        });
     }
 
     #[gpui::test]
