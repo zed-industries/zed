@@ -23,3 +23,11 @@ jobs:
     - name: compare_perf::run_perf::echo_inputs
       run: echo ${{ inputs.base }} ${{ inputs.head }}
       shell: bash -euxo pipefail {0}
+    - name: compare_perf::run_perf::create_results
+      run: echo 'Perf is *much* better now' > target/results.md
+      shell: bash -euxo pipefail {0}
+    - name: '@actions/upload-artifact results.md'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: results.md
+        path: target/results.md

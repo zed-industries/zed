@@ -2,7 +2,7 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{
     runners,
-    steps::{self, NamedJob, named},
+    steps::{self, NamedJob, named, upload_artifact},
     vars::Input,
 };
 
@@ -24,10 +24,17 @@ pub fn run_perf(base: &Input, head: &Input) -> NamedJob {
     fn echo_inputs(base: &Input, head: &Input) -> Step<Run> {
         named::bash(&format!("echo {} {}", base.var(), head.var()))
     }
+
+    fn create_results() -> Step<Run> {
+        named::bash("echo 'Perf is *much* better now' > target/results.md")
+    }
+
     named::job(
         Job::default()
             .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
-            .add_step(echo_inputs(base, head)),
+            .add_step(echo_inputs(base, head))
+            .add_step(create_results())
+            .add_step(upload_artifact("results.md", "target/results.md")),
     )
 }
