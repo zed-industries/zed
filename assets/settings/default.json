@@ -1473,7 +1473,7 @@
         // Preferred Conda manager to use when activating Conda environments.
         // Values: "auto", "conda", "mamba", "micromamba"
         // Default: "auto"
-        "conda_manager": "auto"
+        "conda_manager": "conda"
       }
     },
     "toolbar": {
