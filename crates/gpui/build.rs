@@ -133,6 +133,10 @@ mod macos {
             "ShadowInputIndex".into(),
             "Shadow".into(),
             "QuadInputIndex".into(),
+            "InstancedRectInputIndex".into(),
+            "InstancedRect".into(),
+            "InstancedLineInputIndex".into(),
+            "LineSegmentInstance".into(),
             "Underline".into(),
             "UnderlineInputIndex".into(),
             "Quad".into(),
@@ -195,11 +199,16 @@ mod macos {
     #[cfg(not(feature = "runtime_shaders"))]
     fn compile_metal_shaders(header_path: &Path) {
         use std::process::{self, Command};
+        use std::fs;
         let shader_path = "./src/platform/mac/shaders.metal";
         let air_output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.air");
         let metallib_output_path =
             PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.metallib");
         println!("cargo:rerun-if-changed={}", shader_path);
+
+        // Work around macOS sandboxed module cache writes by redirecting clang module cache
+        let clang_cache = PathBuf::from(env::var("OUT_DIR").unwrap()).join("clang_module_cache");
+        let _ = fs::create_dir_all(&clang_cache);
 
         let output = Command::new("xcrun")
             .args([
@@ -216,6 +225,7 @@ mod macos {
                 "-o",
             ])
             .arg(&air_output_path)
+            .env("CLANG_MODULE_CACHE_PATH", &clang_cache)
             .output()
             .unwrap();
 

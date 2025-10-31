@@ -326,3 +326,15 @@ path = "examples/window_shadow.rs"
 [[example]]
 name = "grid_layout"
 path = "examples/grid_layout.rs"
+
+[[example]]
+name = "instanced_primitives"
+path = "examples/instanced_primitives.rs"
+
+[[example]]
+name = "instanced_million_points"
+path = "examples/instanced_million_points.rs"
+
+[[example]]
+name = "instanced_million_lines"
+path = "examples/instanced_million_lines.rs"

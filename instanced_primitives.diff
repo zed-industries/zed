@@ -1,0 +1,1383 @@
+diff --git a/crates/gpui/Cargo.toml b/crates/gpui/Cargo.toml
+index 3bec72b2f2..72f8a36ad2 100644
+--- a/crates/gpui/Cargo.toml
++++ b/crates/gpui/Cargo.toml
+@@ -326,3 +326,7 @@ path = "examples/window_shadow.rs"
+ [[example]]
+ name = "grid_layout"
+ path = "examples/grid_layout.rs"
++
++[[example]]
++name = "instanced_primitives"
++path = "examples/instanced_primitives.rs"
+diff --git a/crates/gpui/build.rs b/crates/gpui/build.rs
+index 83aea8a179..cbc9f8b16f 100644
+--- a/crates/gpui/build.rs
++++ b/crates/gpui/build.rs
+@@ -133,6 +133,10 @@ mod macos {
+             "ShadowInputIndex".into(),
+             "Shadow".into(),
+             "QuadInputIndex".into(),
++            "InstancedRectInputIndex".into(),
++            "InstancedRect".into(),
++            "InstancedLineInputIndex".into(),
++            "LineSegmentInstance".into(),
+             "Underline".into(),
+             "UnderlineInputIndex".into(),
+             "Quad".into(),
+@@ -195,12 +199,17 @@ mod macos {
+     #[cfg(not(feature = "runtime_shaders"))]
+     fn compile_metal_shaders(header_path: &Path) {
+         use std::process::{self, Command};
++        use std::fs;
+         let shader_path = "./src/platform/mac/shaders.metal";
+         let air_output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.air");
+         let metallib_output_path =
+             PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.metallib");
+         println!("cargo:rerun-if-changed={}", shader_path);
+ 
++        // Work around macOS sandboxed module cache writes by redirecting clang module cache
++        let clang_cache = PathBuf::from(env::var("OUT_DIR").unwrap()).join("clang_module_cache");
++        let _ = fs::create_dir_all(&clang_cache);
++
+         let output = Command::new("xcrun")
+             .args([
+                 "-sdk",
+@@ -216,6 +225,7 @@ mod macos {
+                 "-o",
+             ])
+             .arg(&air_output_path)
++            .env("CLANG_MODULE_CACHE_PATH", &clang_cache)
+             .output()
+             .unwrap();
+ 
+diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
+index 20a135df51..4f6341b533 100644
+--- a/crates/gpui/src/platform.rs
++++ b/crates/gpui/src/platform.rs
+@@ -40,7 +40,7 @@ use crate::{
+     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
+     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
+     Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph,
+-    ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, TaskLabel, Window,
++    ShapedRun, SharedString, Size, SvgRenderer, SvgSize, SystemWindowTab, Task, TaskLabel, Window,
+     WindowControlArea, hash, point, px, size,
+ };
+ use anyhow::Result;
+@@ -82,9 +82,6 @@ pub(crate) use test::*;
+ #[cfg(target_os = "windows")]
+ pub(crate) use windows::*;
+ 
+-#[cfg(all(target_os = "linux", feature = "wayland"))]
+-pub use linux::layer_shell;
+-
+ #[cfg(any(test, feature = "test-support"))]
+ pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
+ 
+@@ -123,15 +120,6 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
+     }
+ }
+ 
+-#[cfg(target_os = "windows")]
+-pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
+-    Rc::new(
+-        WindowsPlatform::new()
+-            .inspect_err(|err| show_error("Failed to launch", err.to_string()))
+-            .unwrap(),
+-    )
+-}
+-
+ /// Return which compositor we're guessing we'll use.
+ /// Does not attempt to connect to the given compositor
+ #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+@@ -163,6 +151,15 @@ pub fn guess_compositor() -> &'static str {
+     }
+ }
+ 
++#[cfg(target_os = "windows")]
++pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
++    Rc::new(
++        WindowsPlatform::new()
++            .inspect_err(|err| show_error("Failed to launch", err.to_string()))
++            .unwrap(),
++    )
++}
++
+ pub(crate) trait Platform: 'static {
+     fn background_executor(&self) -> BackgroundExecutor;
+     fn foreground_executor(&self) -> ForegroundExecutor;
+@@ -348,6 +345,7 @@ impl From<DisplayId> for u32 {
+     }
+ }
+ 
++
+ impl Debug for DisplayId {
+     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+         write!(f, "DisplayId({})", self.0)
+@@ -553,6 +551,8 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+ 
+     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
+ 
++    
++
+     #[cfg(any(test, feature = "test-support"))]
+     fn as_test(&mut self) -> Option<&mut TestWindow> {
+         None
+@@ -714,41 +714,6 @@ impl PlatformTextSystem for NoopTextSystem {
+     }
+ }
+ 
+-// Adapted from https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.cpp
+-// Copyright (c) Microsoft Corporation.
+-// Licensed under the MIT license.
+-#[allow(dead_code)]
+-pub(crate) fn get_gamma_correction_ratios(gamma: f32) -> [f32; 4] {
+-    const GAMMA_INCORRECT_TARGET_RATIOS: [[f32; 4]; 13] = [
+-        [0.0000 / 4.0, 0.0000 / 4.0, 0.0000 / 4.0, 0.0000 / 4.0], // gamma = 1.0
+-        [0.0166 / 4.0, -0.0807 / 4.0, 0.2227 / 4.0, -0.0751 / 4.0], // gamma = 1.1
+-        [0.0350 / 4.0, -0.1760 / 4.0, 0.4325 / 4.0, -0.1370 / 4.0], // gamma = 1.2
+-        [0.0543 / 4.0, -0.2821 / 4.0, 0.6302 / 4.0, -0.1876 / 4.0], // gamma = 1.3
+-        [0.0739 / 4.0, -0.3963 / 4.0, 0.8167 / 4.0, -0.2287 / 4.0], // gamma = 1.4
+-        [0.0933 / 4.0, -0.5161 / 4.0, 0.9926 / 4.0, -0.2616 / 4.0], // gamma = 1.5
+-        [0.1121 / 4.0, -0.6395 / 4.0, 1.1588 / 4.0, -0.2877 / 4.0], // gamma = 1.6
+-        [0.1300 / 4.0, -0.7649 / 4.0, 1.3159 / 4.0, -0.3080 / 4.0], // gamma = 1.7
+-        [0.1469 / 4.0, -0.8911 / 4.0, 1.4644 / 4.0, -0.3234 / 4.0], // gamma = 1.8
+-        [0.1627 / 4.0, -1.0170 / 4.0, 1.6051 / 4.0, -0.3347 / 4.0], // gamma = 1.9
+-        [0.1773 / 4.0, -1.1420 / 4.0, 1.7385 / 4.0, -0.3426 / 4.0], // gamma = 2.0
+-        [0.1908 / 4.0, -1.2652 / 4.0, 1.8650 / 4.0, -0.3476 / 4.0], // gamma = 2.1
+-        [0.2031 / 4.0, -1.3864 / 4.0, 1.9851 / 4.0, -0.3501 / 4.0], // gamma = 2.2
+-    ];
+-
+-    const NORM13: f32 = ((0x10000 as f64) / (255.0 * 255.0) * 4.0) as f32;
+-    const NORM24: f32 = ((0x100 as f64) / (255.0) * 4.0) as f32;
+-
+-    let index = ((gamma * 10.0).round() as usize).clamp(10, 22) - 10;
+-    let ratios = GAMMA_INCORRECT_TARGET_RATIOS[index];
+-
+-    [
+-        ratios[0] * NORM13,
+-        ratios[1] * NORM24,
+-        ratios[2] * NORM13,
+-        ratios[3] * NORM24,
+-    ]
+-}
+-
+ #[derive(PartialEq, Eq, Hash, Clone)]
+ pub(crate) enum AtlasKey {
+     Glyph(RenderGlyphParams),
+@@ -1296,7 +1261,7 @@ pub struct TitlebarOptions {
+ }
+ 
+ /// The kind of window to create
+-#[derive(Clone, Debug, PartialEq, Eq)]
++#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+ pub enum WindowKind {
+     /// A normal application window
+     Normal,
+@@ -1307,11 +1272,6 @@ pub enum WindowKind {
+ 
+     /// A floating window that appears on top of its parent window
+     Floating,
+-
+-    /// A Wayland LayerShell window, used to draw overlays or backgrounds for applications such as
+-    /// docks, notifications or wallpapers.
+-    #[cfg(all(target_os = "linux", feature = "wayland"))]
+-    LayerShell(layer_shell::LayerShellOptions),
+ }
+ 
+ /// The appearance of the window, as defined by the operating system.
+@@ -1687,8 +1647,6 @@ pub enum ImageFormat {
+     Bmp,
+     /// .tif or .tiff
+     Tiff,
+-    /// .ico
+-    Ico,
+ }
+ 
+ impl ImageFormat {
+@@ -1702,7 +1660,6 @@ impl ImageFormat {
+             ImageFormat::Svg => "image/svg+xml",
+             ImageFormat::Bmp => "image/bmp",
+             ImageFormat::Tiff => "image/tiff",
+-            ImageFormat::Ico => "image/ico",
+         }
+     }
+ 
+@@ -1716,7 +1673,6 @@ impl ImageFormat {
+             "image/svg+xml" => Some(Self::Svg),
+             "image/bmp" => Some(Self::Bmp),
+             "image/tiff" | "image/tif" => Some(Self::Tiff),
+-            "image/ico" => Some(Self::Ico),
+             _ => None,
+         }
+     }
+@@ -1823,11 +1779,14 @@ impl Image {
+             ImageFormat::Webp => frames_for_image(&self.bytes, image::ImageFormat::WebP)?,
+             ImageFormat::Bmp => frames_for_image(&self.bytes, image::ImageFormat::Bmp)?,
+             ImageFormat::Tiff => frames_for_image(&self.bytes, image::ImageFormat::Tiff)?,
+-            ImageFormat::Ico => frames_for_image(&self.bytes, image::ImageFormat::Ico)?,
+             ImageFormat::Svg => {
+-                return svg_renderer
+-                    .render_single_frame(&self.bytes, 1.0, false)
+-                    .map_err(Into::into);
++                let pixmap = svg_renderer.render_pixmap(&self.bytes, SvgSize::ScaleFactor(1.0))?;
++
++                let buffer =
++                    image::ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take())
++                        .unwrap();
++
++                SmallVec::from_elem(Frame::new(buffer), 1)
+             }
+         };
+ 
+diff --git a/crates/gpui/src/platform/blade/blade_renderer.rs b/crates/gpui/src/platform/blade/blade_renderer.rs
+index dd0be7db43..d8710ddbe8 100644
+--- a/crates/gpui/src/platform/blade/blade_renderer.rs
++++ b/crates/gpui/src/platform/blade/blade_renderer.rs
+@@ -5,7 +5,6 @@ use super::{BladeAtlas, BladeContext};
+ use crate::{
+     Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point, PolychromeSprite,
+     PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
+-    get_gamma_correction_ratios,
+ };
+ use blade_graphics as gpu;
+ use blade_util::{BufferBelt, BufferBeltDescriptor};
+@@ -903,6 +902,8 @@ impl BladeRenderer {
+                         }
+                     }
+                 }
++                PrimitiveBatch::InstancedRects(_batches) => {}
++                PrimitiveBatch::InstancedLines(_batches) => {}
+             }
+         }
+         drop(pass);
+@@ -1024,7 +1025,7 @@ impl RenderingParameters {
+             .and_then(|v| v.parse().ok())
+             .unwrap_or(1.8_f32)
+             .clamp(1.0, 2.2);
+-        let gamma_ratios = get_gamma_correction_ratios(gamma);
++        let gamma_ratios = Self::get_gamma_ratios(gamma);
+         let grayscale_enhanced_contrast = env::var("ZED_FONTS_GRAYSCALE_ENHANCED_CONTRAST")
+             .ok()
+             .and_then(|v| v.parse().ok())
+@@ -1037,4 +1038,37 @@ impl RenderingParameters {
+             grayscale_enhanced_contrast,
+         }
+     }
++
++    // Gamma ratios for brightening/darkening edges for better contrast
++    // https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.cpp#L50
++    fn get_gamma_ratios(gamma: f32) -> [f32; 4] {
++        const GAMMA_INCORRECT_TARGET_RATIOS: [[f32; 4]; 13] = [
++            [0.0000 / 4.0, 0.0000 / 4.0, 0.0000 / 4.0, 0.0000 / 4.0], // gamma = 1.0
++            [0.0166 / 4.0, -0.0807 / 4.0, 0.2227 / 4.0, -0.0751 / 4.0], // gamma = 1.1
++            [0.0350 / 4.0, -0.1760 / 4.0, 0.4325 / 4.0, -0.1370 / 4.0], // gamma = 1.2
++            [0.0543 / 4.0, -0.2821 / 4.0, 0.6302 / 4.0, -0.1876 / 4.0], // gamma = 1.3
++            [0.0739 / 4.0, -0.3963 / 4.0, 0.8167 / 4.0, -0.2287 / 4.0], // gamma = 1.4
++            [0.0933 / 4.0, -0.5161 / 4.0, 0.9926 / 4.0, -0.2616 / 4.0], // gamma = 1.5
++            [0.1121 / 4.0, -0.6395 / 4.0, 1.1588 / 4.0, -0.2877 / 4.0], // gamma = 1.6
++            [0.1300 / 4.0, -0.7649 / 4.0, 1.3159 / 4.0, -0.3080 / 4.0], // gamma = 1.7
++            [0.1469 / 4.0, -0.8911 / 4.0, 1.4644 / 4.0, -0.3234 / 4.0], // gamma = 1.8
++            [0.1627 / 4.0, -1.0170 / 4.0, 1.6051 / 4.0, -0.3347 / 4.0], // gamma = 1.9
++            [0.1773 / 4.0, -1.1420 / 4.0, 1.7385 / 4.0, -0.3426 / 4.0], // gamma = 2.0
++            [0.1908 / 4.0, -1.2652 / 4.0, 1.8650 / 4.0, -0.3476 / 4.0], // gamma = 2.1
++            [0.2031 / 4.0, -1.3864 / 4.0, 1.9851 / 4.0, -0.3501 / 4.0], // gamma = 2.2
++        ];
++
++        const NORM13: f32 = ((0x10000 as f64) / (255.0 * 255.0) * 4.0) as f32;
++        const NORM24: f32 = ((0x100 as f64) / (255.0) * 4.0) as f32;
++
++        let index = ((gamma * 10.0).round() as usize).clamp(10, 22) - 10;
++        let ratios = GAMMA_INCORRECT_TARGET_RATIOS[index];
++
++        [
++            ratios[0] * NORM13,
++            ratios[1] * NORM24,
++            ratios[2] * NORM13,
++            ratios[3] * NORM24,
++        ]
++    }
+ }
+diff --git a/crates/gpui/src/platform/mac/metal_renderer.rs b/crates/gpui/src/platform/mac/metal_renderer.rs
+index 9e5d6ec5ff..b27b61b6ba 100644
+--- a/crates/gpui/src/platform/mac/metal_renderer.rs
++++ b/crates/gpui/src/platform/mac/metal_renderer.rs
+@@ -105,10 +105,13 @@ pub(crate) struct MetalRenderer {
+     path_sprites_pipeline_state: metal::RenderPipelineState,
+     shadows_pipeline_state: metal::RenderPipelineState,
+     quads_pipeline_state: metal::RenderPipelineState,
++    instanced_rects_pipeline_state: metal::RenderPipelineState,
+     underlines_pipeline_state: metal::RenderPipelineState,
+     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
+     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
+     surfaces_pipeline_state: metal::RenderPipelineState,
++    
++    instanced_lines_pipeline_state: metal::RenderPipelineState,
+     unit_vertices: metal::Buffer,
+     #[allow(clippy::arc_with_non_send_sync)]
+     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
+@@ -216,6 +219,14 @@ impl MetalRenderer {
+             "quad_fragment",
+             MTLPixelFormat::BGRA8Unorm,
+         );
++        let instanced_rects_pipeline_state = build_pipeline_state(
++            &device,
++            &library,
++            "instanced_rects",
++            "instanced_rect_vertex",
++            "instanced_rect_fragment",
++            MTLPixelFormat::BGRA8Unorm,
++        );
+         let underlines_pipeline_state = build_pipeline_state(
+             &device,
+             &library,
+@@ -248,6 +259,15 @@ impl MetalRenderer {
+             "surface_fragment",
+             MTLPixelFormat::BGRA8Unorm,
+         );
++        
++        let instanced_lines_pipeline_state = build_pipeline_state(
++            &device,
++            &library,
++            "instanced_lines",
++            "instanced_line_vertex",
++            "instanced_line_fragment",
++            MTLPixelFormat::BGRA8Unorm,
++        );
+ 
+         let command_queue = device.new_command_queue();
+         let sprite_atlas = Arc::new(MetalAtlas::new(device.clone()));
+@@ -263,10 +283,13 @@ impl MetalRenderer {
+             path_sprites_pipeline_state,
+             shadows_pipeline_state,
+             quads_pipeline_state,
++            instanced_rects_pipeline_state,
+             underlines_pipeline_state,
+             monochrome_sprites_pipeline_state,
+             polychrome_sprites_pipeline_state,
+             surfaces_pipeline_state,
++            
++            instanced_lines_pipeline_state,
+             unit_vertices,
+             instance_buffer_pool,
+             sprite_atlas,
+@@ -274,9 +297,12 @@ impl MetalRenderer {
+             path_intermediate_texture: None,
+             path_intermediate_msaa_texture: None,
+             path_sample_count: PATH_SAMPLE_COUNT,
++            
+         }
+     }
+ 
++    
++
+     pub fn layer(&self) -> &metal::MetalLayerRef {
+         &self.layer
+     }
+@@ -522,6 +548,25 @@ impl MetalRenderer {
+                     viewport_size,
+                     command_encoder,
+                 ),
++                PrimitiveBatch::InstancedRects(batches) => {
++                    self.draw_instanced_rects(
++                        batches,
++                        instance_buffer,
++                        &mut instance_offset,
++                        viewport_size,
++                        command_encoder,
++                    )
++                }
++                
++                PrimitiveBatch::InstancedLines(batches) => {
++                    self.draw_instanced_lines(
++                        batches,
++                        instance_buffer,
++                        &mut instance_offset,
++                        viewport_size,
++                        command_encoder,
++                    )
++                }
+             };
+             if !ok {
+                 command_encoder.end_encoding();
+@@ -755,6 +800,181 @@ impl MetalRenderer {
+         true
+     }
+ 
++    fn draw_instanced_rects(
++        &self,
++        batches: &[crate::InstancedRects],
++        instance_buffer: &mut InstanceBuffer,
++        instance_offset: &mut usize,
++        viewport_size: Size<DevicePixels>,
++        command_encoder: &metal::RenderCommandEncoderRef,
++    ) -> bool {
++        // Bind pipeline and static vertex buffers once; stream instance chunks per batch
++        command_encoder.set_render_pipeline_state(&self.instanced_rects_pipeline_state);
++        command_encoder.set_vertex_buffer(
++            InstancedRectInputIndex::Vertices as u64,
++            Some(&self.unit_vertices),
++            0,
++        );
++
++        let mut ok_all = true;
++        const CHUNK: usize = 16_384; // allow large chunks; adjust as needed for buffer size
++        for b in batches.iter() {
++            if b.rects.is_empty() {
++                continue;
++            }
++
++            // Set per-batch uniforms
++            command_encoder.set_vertex_bytes(
++                InstancedRectInputIndex::ViewportSize as u64,
++                std::mem::size_of_val(&viewport_size) as u64,
++                &viewport_size as *const Size<DevicePixels> as *const _,
++            );
++            command_encoder.set_vertex_bytes(
++                InstancedRectInputIndex::ContentMask as u64,
++                std::mem::size_of_val(&b.content_mask) as u64,
++                &b.content_mask as *const crate::ContentMask<crate::ScaledPixels> as *const _,
++            );
++            command_encoder.set_vertex_bytes(
++                InstancedRectInputIndex::Transform as u64,
++                std::mem::size_of_val(&b.transform) as u64,
++                &b.transform as *const crate::TransformationMatrix as *const _,
++            );
++
++            // Fragment stage needs the instance color and may also need the content mask for clipping
++            command_encoder.set_fragment_bytes(
++                InstancedRectInputIndex::ContentMask as u64,
++                std::mem::size_of_val(&b.content_mask) as u64,
++                &b.content_mask as *const crate::ContentMask<crate::ScaledPixels> as *const _,
++            );
++
++            let total = b.rects.len();
++            let mut i = 0;
++            while i < total {
++                let end = (i + CHUNK).min(total);
++                let slice = &b.rects[i..end];
++
++                // Upload instances
++                align_offset(instance_offset);
++                let bytes_len = std::mem::size_of_val(slice);
++                let next_offset = *instance_offset + bytes_len;
++                if next_offset > instance_buffer.size {
++                    ok_all = false;
++                    break;
++                }
++                unsafe {
++                    let dst = (instance_buffer.metal_buffer.contents() as *mut u8)
++                        .add(*instance_offset);
++                    std::ptr::copy_nonoverlapping(
++                        slice.as_ptr() as *const u8,
++                        dst,
++                        bytes_len,
++                    );
++                }
++
++                // Bind instance buffer for both vertex and fragment stages
++                command_encoder.set_vertex_buffer(
++                    InstancedRectInputIndex::Rects as u64,
++                    Some(&instance_buffer.metal_buffer),
++                    *instance_offset as u64,
++                );
++                command_encoder.set_fragment_buffer(
++                    InstancedRectInputIndex::Rects as u64,
++                    Some(&instance_buffer.metal_buffer),
++                    *instance_offset as u64,
++                );
++
++                command_encoder.draw_primitives_instanced(
++                    metal::MTLPrimitiveType::Triangle,
++                    0,
++                    6,
++                    slice.len() as u64,
++                );
++                *instance_offset = next_offset;
++                i = end;
++            }
++
++            if !ok_all {
++                break;
++            }
++        }
++
++        ok_all
++    }
++
++    fn draw_instanced_lines(
++        &self,
++        batches: &[crate::InstancedLines],
++        instance_buffer: &mut InstanceBuffer,
++        instance_offset: &mut usize,
++        viewport_size: Size<DevicePixels>,
++        command_encoder: &metal::RenderCommandEncoderRef,
++    ) -> bool {
++        if batches.is_empty() { return true; }
++        command_encoder.set_render_pipeline_state(&self.instanced_lines_pipeline_state);
++        command_encoder.set_vertex_buffer(
++            InstancedLineInputIndex::Vertices as u64,
++            Some(&self.unit_vertices),
++            0,
++        );
++        let mut ok_all = true;
++        const CHUNK: usize = 8192;
++        for b in batches {
++            // per-batch uniforms
++            command_encoder.set_vertex_bytes(
++                InstancedLineInputIndex::ViewportSize as u64,
++                std::mem::size_of_val(&viewport_size) as u64,
++                &viewport_size as *const Size<DevicePixels> as *const _,
++            );
++            command_encoder.set_vertex_bytes(
++                InstancedLineInputIndex::ContentMask as u64,
++                std::mem::size_of_val(&b.content_mask) as u64,
++                &b.content_mask as *const crate::ContentMask<crate::ScaledPixels> as *const _,
++            );
++            command_encoder.set_vertex_bytes(
++                InstancedLineInputIndex::Transform as u64,
++                std::mem::size_of_val(&b.transform) as u64,
++                &b.transform as *const crate::TransformationMatrix as *const _,
++            );
++
++            let total = b.segments.len();
++            let mut i = 0;
++            while i < total {
++                let end = (i + CHUNK).min(total);
++                let slice = &b.segments[i..end];
++                align_offset(instance_offset);
++                let bytes_len = std::mem::size_of_val(slice);
++                let next_offset = *instance_offset + bytes_len;
++                if next_offset > instance_buffer.size { ok_all = false; break; }
++                unsafe {
++                    let dst = (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset);
++                    std::ptr::copy_nonoverlapping(slice.as_ptr() as *const u8, dst, bytes_len);
++                }
++                command_encoder.set_vertex_buffer(
++                    InstancedLineInputIndex::Segments as u64,
++                    Some(&instance_buffer.metal_buffer),
++                    *instance_offset as u64,
++                );
++                command_encoder.set_fragment_buffer(
++                    InstancedLineInputIndex::Segments as u64,
++                    Some(&instance_buffer.metal_buffer),
++                    *instance_offset as u64,
++                );
++                command_encoder.draw_primitives_instanced(
++                    metal::MTLPrimitiveType::Triangle,
++                    0,
++                    6,
++                    slice.len() as u64,
++                );
++                *instance_offset = next_offset;
++                i = end;
++            }
++            if !ok_all { break; }
++        }
++        ok_all
++    }
++
++    
++
+     fn draw_paths_from_intermediate(
+         &self,
+         paths: &[Path<ScaledPixels>],
+@@ -1309,6 +1529,15 @@ enum QuadInputIndex {
+     ViewportSize = 2,
+ }
+ 
++#[repr(C)]
++enum InstancedRectInputIndex {
++    Vertices = 0,
++    Rects = 1,
++    ViewportSize = 2,
++    ContentMask = 3,
++    Transform = 4,
++}
++
+ #[repr(C)]
+ enum UnderlineInputIndex {
+     Vertices = 0,
+@@ -1341,6 +1570,17 @@ enum PathRasterizationInputIndex {
+     ViewportSize = 1,
+ }
+ 
++#[repr(C)]
++enum InstancedLineInputIndex {
++    Vertices = 0,
++    Segments = 1,
++    ViewportSize = 2,
++    ContentMask = 3,
++    Transform = 4,
++}
++
++ 
++
+ #[derive(Clone, Debug, Eq, PartialEq)]
+ #[repr(C)]
+ pub struct PathSprite {
+diff --git a/crates/gpui/src/platform/mac/shaders.metal b/crates/gpui/src/platform/mac/shaders.metal
+index 7c3886031a..d83eb93173 100644
+--- a/crates/gpui/src/platform/mac/shaders.metal
++++ b/crates/gpui/src/platform/mac/shaders.metal
+@@ -63,6 +63,20 @@ struct QuadFragmentInput {
+   float4 background_color1 [[flat]];
+ };
+ 
++// Instanced flat rectangles (solid color, no borders/gradients)
++struct InstRectVertexOutput {
++  uint rect_id [[flat]];
++  float4 position [[position]];
++  float4 color [[flat]];
++  float clip_distance [[clip_distance]][4];
++};
++
++struct InstRectFragmentInput {
++  uint rect_id [[flat]];
++  float4 position [[position]];
++  float4 color [[flat]];
++};
++
+ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
+                                     uint quad_id [[instance_id]],
+                                     constant float2 *unit_vertices
+@@ -396,6 +410,89 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
+   return color * float4(1.0, 1.0, 1.0, saturate(antialias_threshold - outer_sdf));
+ }
+ 
++vertex InstRectVertexOutput instanced_rect_vertex(
++    uint unit_vertex_id [[vertex_id]],
++    uint rect_id [[instance_id]],
++    constant float2 *unit_vertices [[buffer(InstancedRectInputIndex_Vertices)]],
++    constant InstancedRect *rects [[buffer(InstancedRectInputIndex_Rects)]],
++    constant Size_DevicePixels *viewport_size [[buffer(InstancedRectInputIndex_ViewportSize)]],
++    constant ContentMask_ScaledPixels *content_mask [[buffer(InstancedRectInputIndex_ContentMask)]],
++    constant TransformationMatrix *transform [[buffer(InstancedRectInputIndex_Transform)]]) {
++  float2 unit_vertex = unit_vertices[unit_vertex_id];
++  InstancedRect rect = rects[rect_id];
++  float4 device_position = to_device_position_transformed(unit_vertex, rect.bounds, *transform, viewport_size);
++  float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, rect.bounds, content_mask->bounds, *transform);
++  float4 color = hsla_to_rgba(rect.color);
++  return InstRectVertexOutput{
++    rect_id,
++    device_position,
++    color,
++    {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}
++  };
++}
++
++fragment float4 instanced_rect_fragment(InstRectFragmentInput input [[stage_in]]) {
++  return input.color;
++}
++
++
++
++// Instanced line segments (world-space p0,p1) extruded to quads
++struct InstLineVertexOutput {
++  uint seg_id [[flat]];
++  float4 position [[position]];
++  float4 color [[flat]];
++  float clip_distance [[clip_distance]][4];
++};
++
++struct InstLineFragmentInput {
++  uint seg_id [[flat]];
++  float4 position [[position]];
++  float4 color [[flat]];
++};
++
++vertex InstLineVertexOutput instanced_line_vertex(
++    uint unit_vertex_id [[vertex_id]],
++    uint seg_id [[instance_id]],
++    constant float2 *unit_vertices [[buffer(InstancedLineInputIndex_Vertices)]],
++    constant LineSegmentInstance *segments [[buffer(InstancedLineInputIndex_Segments)]],
++    constant Size_DevicePixels *viewport_size [[buffer(InstancedLineInputIndex_ViewportSize)]],
++    constant ContentMask_ScaledPixels *content_mask [[buffer(InstancedLineInputIndex_ContentMask)]],
++    constant TransformationMatrix *transform [[buffer(InstancedLineInputIndex_Transform)]]) {
++  float2 uv = unit_vertices[unit_vertex_id];
++  LineSegmentInstance seg = segments[seg_id];
++  // Segment in screen via transform
++  float2 p0 = float2(seg.p0.x, seg.p0.y);
++  float2 p1 = float2(seg.p1.x, seg.p1.y);
++  // Apply transform to both endpoints
++  float2 t0;
++  t0.x = p0.x * transform->rotation_scale[0][0] + p0.y * transform->rotation_scale[0][1] + transform->translation[0];
++  t0.y = p0.x * transform->rotation_scale[1][0] + p0.y * transform->rotation_scale[1][1] + transform->translation[1];
++  float2 t1;
++  t1.x = p1.x * transform->rotation_scale[0][0] + p1.y * transform->rotation_scale[0][1] + transform->translation[0];
++  t1.y = p1.x * transform->rotation_scale[1][0] + p1.y * transform->rotation_scale[1][1] + transform->translation[1];
++  float2 dir = t1 - t0;
++  float len = max(length(dir), 1e-6);
++  float2 n = float2(-dir.y, dir.x) / len;
++  float half_w = seg.width * 0.5;
++  // uv.x in {0,1} picks endpoint, uv.y in {0,1} picks side
++  float2 base = mix(t0, t1, uv.x);
++  float side = (uv.y * 2.0 - 1.0);
++  float2 pos = base + n * side * half_w;
++
++  float2 viewport = float2((float)viewport_size->width, (float)viewport_size->height);
++  float2 ndc_xy = pos / viewport * float2(2., -2.) + float2(-1., 1.);
++  float4 device_position = float4(ndc_xy, 0., 1.);
++  // Skip content-mask clip distances for lines (or compute per-vertex if needed)
++  float4 clip_distance = float4(1e6);
++  float4 color = hsla_to_rgba(seg.color);
++  return InstLineVertexOutput{ seg_id, device_position, color, {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w} };
++}
++
++fragment float4 instanced_line_fragment(InstLineFragmentInput input [[stage_in]]) {
++  return input.color;
++}
++
+ // Returns the dash velocity of a corner given the dash velocity of the two
+ // sides, by returning the slower velocity (larger dashes).
+ //
+diff --git a/crates/gpui/src/platform/mac/window.rs b/crates/gpui/src/platform/mac/window.rs
+index 95efffa3e7..142b0baa5c 100644
+--- a/crates/gpui/src/platform/mac/window.rs
++++ b/crates/gpui/src/platform/mac/window.rs
+@@ -1498,6 +1498,8 @@ impl PlatformWindow for MacWindow {
+             .detach()
+     }
+ 
++    
++
+     fn titlebar_double_click(&self) {
+         let this = self.0.lock();
+         let window = this.native_window;
+diff --git a/crates/gpui/src/platform/windows/directx_renderer.rs b/crates/gpui/src/platform/windows/directx_renderer.rs
+index 220876b4a9..5f9e5027fe 100644
+--- a/crates/gpui/src/platform/windows/directx_renderer.rs
++++ b/crates/gpui/src/platform/windows/directx_renderer.rs
+@@ -303,6 +303,8 @@ impl DirectXRenderer {
+                     sprites,
+                 } => self.draw_polychrome_sprites(texture_id, sprites),
+                 PrimitiveBatch::Surfaces(surfaces) => self.draw_surfaces(surfaces),
++                PrimitiveBatch::InstancedRects(_batches) => Ok(()),
++                PrimitiveBatch::InstancedLines(_batches) => Ok(()),
+             }.context(format!("scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
+                     scene.paths.len(),
+                     scene.shadows.len(),
+@@ -612,11 +614,44 @@ impl DirectXRenderer {
+             let render_params: IDWriteRenderingParams1 =
+                 factory.CreateRenderingParams().unwrap().cast().unwrap();
+             FontInfo {
+-                gamma_ratios: get_gamma_correction_ratios(render_params.GetGamma()),
++                gamma_ratios: Self::get_gamma_ratios(render_params.GetGamma()),
+                 grayscale_enhanced_contrast: render_params.GetGrayscaleEnhancedContrast(),
+             }
+         })
+     }
++
++    // Gamma ratios for brightening/darkening edges for better contrast
++    // https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.cpp#L50
++    fn get_gamma_ratios(gamma: f32) -> [f32; 4] {
++        const GAMMA_INCORRECT_TARGET_RATIOS: [[f32; 4]; 13] = [
++            [0.0000 / 4.0, 0.0000 / 4.0, 0.0000 / 4.0, 0.0000 / 4.0], // gamma = 1.0
++            [0.0166 / 4.0, -0.0807 / 4.0, 0.2227 / 4.0, -0.0751 / 4.0], // gamma = 1.1
++            [0.0350 / 4.0, -0.1760 / 4.0, 0.4325 / 4.0, -0.1370 / 4.0], // gamma = 1.2
++            [0.0543 / 4.0, -0.2821 / 4.0, 0.6302 / 4.0, -0.1876 / 4.0], // gamma = 1.3
++            [0.0739 / 4.0, -0.3963 / 4.0, 0.8167 / 4.0, -0.2287 / 4.0], // gamma = 1.4
++            [0.0933 / 4.0, -0.5161 / 4.0, 0.9926 / 4.0, -0.2616 / 4.0], // gamma = 1.5
++            [0.1121 / 4.0, -0.6395 / 4.0, 1.1588 / 4.0, -0.2877 / 4.0], // gamma = 1.6
++            [0.1300 / 4.0, -0.7649 / 4.0, 1.3159 / 4.0, -0.3080 / 4.0], // gamma = 1.7
++            [0.1469 / 4.0, -0.8911 / 4.0, 1.4644 / 4.0, -0.3234 / 4.0], // gamma = 1.8
++            [0.1627 / 4.0, -1.0170 / 4.0, 1.6051 / 4.0, -0.3347 / 4.0], // gamma = 1.9
++            [0.1773 / 4.0, -1.1420 / 4.0, 1.7385 / 4.0, -0.3426 / 4.0], // gamma = 2.0
++            [0.1908 / 4.0, -1.2652 / 4.0, 1.8650 / 4.0, -0.3476 / 4.0], // gamma = 2.1
++            [0.2031 / 4.0, -1.3864 / 4.0, 1.9851 / 4.0, -0.3501 / 4.0], // gamma = 2.2
++        ];
++
++        const NORM13: f32 = ((0x10000 as f64) / (255.0 * 255.0) * 4.0) as f32;
++        const NORM24: f32 = ((0x100 as f64) / (255.0) * 4.0) as f32;
++
++        let index = ((gamma * 10.0).round() as usize).clamp(10, 22) - 10;
++        let ratios = GAMMA_INCORRECT_TARGET_RATIOS[index];
++
++        [
++            ratios[0] * NORM13,
++            ratios[1] * NORM24,
++            ratios[2] * NORM13,
++            ratios[3] * NORM24,
++        ]
++    }
+ }
+ 
+ impl DirectXResources {
+diff --git a/crates/gpui/src/scene.rs b/crates/gpui/src/scene.rs
+index 758d06e597..db892c5329 100644
+--- a/crates/gpui/src/scene.rs
++++ b/crates/gpui/src/scene.rs
+@@ -32,6 +32,8 @@ pub(crate) struct Scene {
+     pub(crate) monochrome_sprites: Vec<MonochromeSprite>,
+     pub(crate) polychrome_sprites: Vec<PolychromeSprite>,
+     pub(crate) surfaces: Vec<PaintSurface>,
++    pub(crate) instanced_rects: Vec<InstancedRects>,
++    pub(crate) instanced_lines: Vec<InstancedLines>,
+ }
+ 
+ impl Scene {
+@@ -46,6 +48,8 @@ impl Scene {
+         self.monochrome_sprites.clear();
+         self.polychrome_sprites.clear();
+         self.surfaces.clear();
++        self.instanced_rects.clear();
++        self.instanced_lines.clear();
+     }
+ 
+     pub fn len(&self) -> usize {
+@@ -109,6 +113,14 @@ impl Scene {
+                 surface.order = order;
+                 self.surfaces.push(surface.clone());
+             }
++            Primitive::InstancedRects(batch) => {
++                batch.order = order;
++                self.instanced_rects.push(batch.clone());
++            }
++            Primitive::InstancedLines(batch) => {
++                batch.order = order;
++                self.instanced_lines.push(batch.clone());
++            }
+         }
+         self.paint_operations
+             .push(PaintOperation::Primitive(primitive));
+@@ -134,6 +146,8 @@ impl Scene {
+         self.polychrome_sprites
+             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
+         self.surfaces.sort_by_key(|surface| surface.order);
++        self.instanced_rects.sort_by_key(|b| b.order);
++        self.instanced_lines.sort_by_key(|b| b.order);
+     }
+ 
+     #[cfg_attr(
+@@ -166,6 +180,12 @@ impl Scene {
+             surfaces: &self.surfaces,
+             surfaces_start: 0,
+             surfaces_iter: self.surfaces.iter().peekable(),
++            instanced_rects: &self.instanced_rects,
++            instanced_rects_start: 0,
++            instanced_rects_iter: self.instanced_rects.iter().peekable(),
++            instanced_lines: &self.instanced_lines,
++            instanced_lines_start: 0,
++            instanced_lines_iter: self.instanced_lines.iter().peekable(),
+         }
+     }
+ }
+@@ -187,6 +207,8 @@ pub(crate) enum PrimitiveKind {
+     MonochromeSprite,
+     PolychromeSprite,
+     Surface,
++    InstancedRects,
++    InstancedLines,
+ }
+ 
+ pub(crate) enum PaintOperation {
+@@ -204,6 +226,8 @@ pub(crate) enum Primitive {
+     MonochromeSprite(MonochromeSprite),
+     PolychromeSprite(PolychromeSprite),
+     Surface(PaintSurface),
++    InstancedRects(InstancedRects),
++    InstancedLines(InstancedLines),
+ }
+ 
+ impl Primitive {
+@@ -216,6 +240,8 @@ impl Primitive {
+             Primitive::MonochromeSprite(sprite) => &sprite.bounds,
+             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
+             Primitive::Surface(surface) => &surface.bounds,
++            Primitive::InstancedRects(batch) => &batch.bounds,
++            Primitive::InstancedLines(batch) => &batch.bounds,
+         }
+     }
+ 
+@@ -228,6 +254,8 @@ impl Primitive {
+             Primitive::MonochromeSprite(sprite) => &sprite.content_mask,
+             Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
+             Primitive::Surface(surface) => &surface.content_mask,
++            Primitive::InstancedRects(batch) => &batch.content_mask,
++            Primitive::InstancedLines(batch) => &batch.content_mask,
+         }
+     }
+ }
+@@ -261,6 +289,12 @@ struct BatchIterator<'a> {
+     surfaces: &'a [PaintSurface],
+     surfaces_start: usize,
+     surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
++    instanced_rects: &'a [InstancedRects],
++    instanced_rects_start: usize,
++    instanced_rects_iter: Peekable<slice::Iter<'a, InstancedRects>>,
++    instanced_lines: &'a [InstancedLines],
++    instanced_lines_start: usize,
++    instanced_lines_iter: Peekable<slice::Iter<'a, InstancedLines>>,
+ }
+ 
+ impl<'a> Iterator for BatchIterator<'a> {
+@@ -290,6 +324,15 @@ impl<'a> Iterator for BatchIterator<'a> {
+                 self.surfaces_iter.peek().map(|s| s.order),
+                 PrimitiveKind::Surface,
+             ),
++            (
++                self.instanced_rects_iter.peek().map(|b| b.order),
++                PrimitiveKind::InstancedRects,
++            ),
++            
++            (
++                self.instanced_lines_iter.peek().map(|b| b.order),
++                PrimitiveKind::InstancedLines,
++            ),
+         ];
+         orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
+ 
+@@ -420,6 +463,38 @@ impl<'a> Iterator for BatchIterator<'a> {
+                     &self.surfaces[surfaces_start..surfaces_end],
+                 ))
+             }
++            PrimitiveKind::InstancedRects => {
++                let start = self.instanced_rects_start;
++                let mut end = start + 1;
++                self.instanced_rects_iter.next();
++                while self
++                    .instanced_rects_iter
++                    .next_if(|b| (b.order, batch_kind) < max_order_and_kind)
++                    .is_some()
++                {
++                    end += 1;
++                }
++                self.instanced_rects_start = end;
++                Some(PrimitiveBatch::InstancedRects(
++                    &self.instanced_rects[start..end],
++                ))
++            }
++            PrimitiveKind::InstancedLines => {
++                let start = self.instanced_lines_start;
++                let mut end = start + 1;
++                self.instanced_lines_iter.next();
++                while self
++                    .instanced_lines_iter
++                    .next_if(|b| (b.order, batch_kind) < max_order_and_kind)
++                    .is_some()
++                {
++                    end += 1;
++                }
++                self.instanced_lines_start = end;
++                Some(PrimitiveBatch::InstancedLines(
++                    &self.instanced_lines[start..end],
++                ))
++            }
+         }
+     }
+ }
+@@ -446,6 +521,8 @@ pub(crate) enum PrimitiveBatch<'a> {
+         sprites: &'a [PolychromeSprite],
+     },
+     Surfaces(&'a [PaintSurface]),
++    InstancedRects(&'a [InstancedRects]),
++    InstancedLines(&'a [InstancedLines]),
+ }
+ 
+ #[derive(Default, Debug, Clone)]
+@@ -467,6 +544,58 @@ impl From<Quad> for Primitive {
+     }
+ }
+ 
++#[derive(Debug, Clone)]
++#[repr(C)]
++pub(crate) struct InstancedRect {
++    pub bounds: Bounds<ScaledPixels>,
++    pub color: Hsla,
++}
++
++#[derive(Debug, Clone)]
++#[repr(C)]
++pub(crate) struct InstancedRects {
++    pub order: DrawOrder,
++    pub bounds: Bounds<ScaledPixels>,
++    pub content_mask: ContentMask<ScaledPixels>,
++    pub rects: Vec<InstancedRect>,
++    /// Per-batch 2D transform (local→device).
++    pub transform: TransformationMatrix,
++}
++
++impl From<InstancedRects> for Primitive {
++    fn from(batch: InstancedRects) -> Self {
++        Primitive::InstancedRects(batch)
++    }
++}
++
++ 
++
++#[derive(Debug, Clone)]
++#[repr(C)]
++pub(crate) struct LineSegmentInstance {
++    pub p0: Point<ScaledPixels>,
++    pub p1: Point<ScaledPixels>,
++    pub width: f32,
++    pub color: Hsla,
++}
++
++#[derive(Debug, Clone)]
++#[repr(C)]
++pub(crate) struct InstancedLines {
++    pub order: DrawOrder,
++    pub bounds: Bounds<ScaledPixels>,
++    pub content_mask: ContentMask<ScaledPixels>,
++    pub segments: Vec<LineSegmentInstance>,
++    /// Per-batch 2D transform (local→device).
++    pub transform: TransformationMatrix,
++}
++
++impl From<InstancedLines> for Primitive {
++    fn from(batch: InstancedLines) -> Self {
++        Primitive::InstancedLines(batch)
++    }
++}
++
+ #[derive(Debug, Clone)]
+ #[repr(C)]
+ pub(crate) struct Underline {
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index c44b0d642a..f3500e1246 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -16,7 +16,8 @@ use crate::{
+     SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
+     TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+     WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+-    point, prelude::*, px, rems, size, transparent_black,
++    point, prelude::*, px, rems, size, transparent_black, InstancedRects, InstancedRect,
++    LineSegmentInstance, InstancedLines, hsla,
+ };
+ use anyhow::{Context as _, Result, anyhow};
+ use collections::{FxHashMap, FxHashSet};
+@@ -60,13 +61,6 @@ pub use prompts::*;
+ 
+ pub(crate) const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1536.), px(864.));
+ 
+-/// A 6:5 aspect ratio minimum window size to be used for functional,
+-/// additional-to-main-Zed windows, like the settings and rules library windows.
+-pub const DEFAULT_ADDITIONAL_WINDOW_SIZE: Size<Pixels> = Size {
+-    width: Pixels(900.),
+-    height: Pixels(750.),
+-};
+-
+ /// Represents the two different phases when dispatching events.
+ #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
+ pub enum DispatchPhase {
+@@ -822,12 +816,6 @@ impl Frame {
+     }
+ }
+ 
+-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+-enum InputModality {
+-    Mouse,
+-    Keyboard,
+-}
+-
+ /// Holds the state for a specific window.
+ pub struct Window {
+     pub(crate) handle: AnyWindowHandle,
+@@ -876,7 +864,6 @@ pub struct Window {
+     hovered: Rc<Cell<bool>>,
+     pub(crate) needs_present: Rc<Cell<bool>>,
+     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
+-    last_input_modality: InputModality,
+     pub(crate) refreshing: bool,
+     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
+     pub(crate) focus: Option<FocusId>,
+@@ -1260,7 +1247,6 @@ impl Window {
+             hovered,
+             needs_present,
+             last_input_timestamp,
+-            last_input_modality: InputModality::Mouse,
+             refreshing: false,
+             activation_observers: SubscriberSet::new(),
+             focus: None,
+@@ -1322,7 +1308,9 @@ impl Window {
+         for view_id in self
+             .rendered_frame
+             .dispatch_tree
+-            .view_path_reversed(view_id)
++            .view_path(view_id)
++            .into_iter()
++            .rev()
+         {
+             if !self.dirty_views.insert(view_id) {
+                 break;
+@@ -1852,8 +1840,7 @@ impl Window {
+         f: impl FnOnce(&GlobalElementId, &mut Self) -> R,
+     ) -> R {
+         self.element_id_stack.push(element_id);
+-        let global_id = GlobalElementId(Arc::from(&*self.element_id_stack));
+-
++        let global_id = GlobalElementId(self.element_id_stack.clone());
+         let result = f(&global_id, self);
+         self.element_id_stack.pop();
+         result
+@@ -1913,12 +1900,6 @@ impl Window {
+         self.modifiers
+     }
+ 
+-    /// Returns true if the last input event was keyboard-based (key press, tab navigation, etc.)
+-    /// This is used for focus-visible styling to show focus indicators only for keyboard navigation.
+-    pub fn last_input_was_keyboard(&self) -> bool {
+-        self.last_input_modality == InputModality::Keyboard
+-    }
+-
+     /// The current state of the keyboard's capslock
+     pub fn capslock(&self) -> Capslock {
+         self.capslock
+@@ -2265,7 +2246,7 @@ impl Window {
+             self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+                 ..range.end.accessed_element_states_index]
+                 .iter()
+-                .map(|(id, type_id)| (id.clone(), *type_id)),
++                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+         );
+         self.text_system
+             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
+@@ -2333,7 +2314,7 @@ impl Window {
+             self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+                 ..range.end.accessed_element_states_index]
+                 .iter()
+-                .map(|(id, type_id)| (id.clone(), *type_id)),
++                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+         );
+         self.next_frame.tab_stops.replay(
+             &self.rendered_frame.tab_stops.insertion_history
+@@ -2655,8 +2636,10 @@ impl Window {
+     {
+         self.invalidator.debug_assert_paint_or_prepaint();
+ 
+-        let key = (global_id.clone(), TypeId::of::<S>());
+-        self.next_frame.accessed_element_states.push(key.clone());
++        let key = (GlobalElementId(global_id.0.clone()), TypeId::of::<S>());
++        self.next_frame
++            .accessed_element_states
++            .push((GlobalElementId(key.0.clone()), TypeId::of::<S>()));
+ 
+         if let Some(any) = self
+             .next_frame
+@@ -2872,6 +2855,143 @@ impl Window {
+         });
+     }
+ 
++    /// Paint many axis-aligned rectangles efficiently in a single call.
++    ///
++    /// Inserts a single batch primitive into the scene rather than one
++    /// primitive per rectangle. Backends may render this batch using a
++    /// true instanced draw call for maximum performance.
++    pub fn paint_rects_instanced(&mut self, rects: &[RectInstance]) {
++        self.invalidator.debug_assert_paint();
++
++        if rects.is_empty() {
++            return;
++        }
++
++        let scale = self.scale_factor();
++        let content_mask = self.content_mask();
++
++        // Convert to scaled instances and compute union bounds
++        let mut scaled_rects: Vec<InstancedRect> = Vec::with_capacity(rects.len());
++        let mut min_x = f32::INFINITY;
++        let mut min_y = f32::INFINITY;
++        let mut max_x = f32::NEG_INFINITY;
++        let mut max_y = f32::NEG_INFINITY;
++
++        for r in rects {
++            let b = r.bounds.scale(scale);
++            min_x = min_x.min(b.origin.x.0);
++            min_y = min_y.min(b.origin.y.0);
++            max_x = max_x.max(b.origin.x.0 + b.size.width.0);
++            max_y = max_y.max(b.origin.y.0 + b.size.height.0);
++            scaled_rects.push(InstancedRect { bounds: b, color: r.color });
++        }
++
++        let union_bounds = Bounds {
++            origin: point(ScaledPixels(min_x), ScaledPixels(min_y)),
++            size: size(
++                ScaledPixels((max_x - min_x).max(0.0)),
++                ScaledPixels((max_y - min_y).max(0.0)),
++            ),
++        };
++
++        let batch = InstancedRects {
++            order: 0,
++            bounds: union_bounds,
++            content_mask: content_mask.scale(scale),
++            rects: scaled_rects,
++            transform: crate::TransformationMatrix::unit(),
++        };
++
++        self.next_frame.scene.insert_primitive(batch);
++    }
++
++    /// Paint many axis-aligned rectangles with a custom transformation matrix.
++    /// Instances are specified in the same coordinate space as `transformation`.
++    /// This avoids rebuilding instances on pan/zoom; update the matrix instead.
++    pub fn paint_rects_instanced_with_transform(
++        &mut self,
++        rects: &[RectInstance],
++        transform: TransformationMatrix,
++    ) {
++        self.invalidator.debug_assert_paint();
++
++        if rects.is_empty() {
++            return;
++        }
++
++        let scale = self.scale_factor();
++        let content_mask = self.content_mask();
++
++        let mut scaled_rects: Vec<InstancedRect> = Vec::with_capacity(rects.len());
++        let mut min_x = f32::INFINITY;
++        let mut min_y = f32::INFINITY;
++        let mut max_x = f32::NEG_INFINITY;
++        let mut max_y = f32::NEG_INFINITY;
++
++        for r in rects {
++            let b = r.bounds.scale(scale);
++            min_x = min_x.min(b.origin.x.0);
++            min_y = min_y.min(b.origin.y.0);
++            max_x = max_x.max(b.origin.x.0 + b.size.width.0);
++            max_y = max_y.max(b.origin.y.0 + b.size.height.0);
++            scaled_rects.push(InstancedRect { bounds: b, color: r.color });
++        }
++
++        let union_bounds = Bounds {
++            origin: point(ScaledPixels(min_x), ScaledPixels(min_y)),
++            size: size(
++                ScaledPixels((max_x - min_x).max(0.0)),
++                ScaledPixels((max_y - min_y).max(0.0)),
++            ),
++        };
++
++        let batch = InstancedRects {
++            order: 0,
++            bounds: union_bounds,
++            content_mask: content_mask.scale(scale),
++            rects: scaled_rects,
++            transform,
++        };
++
++        self.next_frame.scene.insert_primitive(batch);
++    }
++
++    
++
++    /// Draw many line segments efficiently in one batch. Points are in window pixel space.
++    pub fn paint_lines_instanced(&mut self, segments: &[(Point<Pixels>, Point<Pixels>, f32, Hsla)]) {
++        self.invalidator.debug_assert_paint();
++        if segments.is_empty() { return; }
++        let scale = self.scale_factor();
++        let content_mask = self.content_mask();
++        let mut scaled: Vec<LineSegmentInstance> = Vec::with_capacity(segments.len());
++        let mut min_x = f32::INFINITY;
++        let mut min_y = f32::INFINITY;
++        let mut max_x = f32::NEG_INFINITY;
++        let mut max_y = f32::NEG_INFINITY;
++        for (p0, p1, w, c) in segments {
++            let sp0 = p0.scale(scale);
++            let sp1 = p1.scale(scale);
++            min_x = min_x.min(sp0.x.0.min(sp1.x.0));
++            min_y = min_y.min(sp0.y.0.min(sp1.y.0));
++            max_x = max_x.max(sp0.x.0.max(sp1.x.0));
++            max_y = max_y.max(sp0.y.0.max(sp1.y.0));
++            scaled.push(LineSegmentInstance { p0: sp0.map(|x| x), p1: sp1.map(|x| x), width: *w * scale, color: *c });
++        }
++        let union_bounds = Bounds {
++            origin: point(ScaledPixels(min_x), ScaledPixels(min_y)),
++            size: size(ScaledPixels((max_x - min_x).max(0.0)), ScaledPixels((max_y - min_y).max(0.0))),
++        };
++        let batch = InstancedLines {
++            order: 0,
++            bounds: union_bounds,
++            content_mask: content_mask.scale(scale),
++            segments: scaled,
++            transform: crate::TransformationMatrix::unit(),
++        };
++        self.next_frame.scene.insert_primitive(batch);
++    }
++
+     /// Paint the given `Path` into the scene for the next frame at the current z-index.
+     ///
+     /// This method should only be called as part of the paint phase of element drawing.
+@@ -3104,7 +3224,7 @@ impl Window {
+         let Some(tile) =
+             self.sprite_atlas
+                 .get_or_insert_with(&params.clone().into(), &mut || {
+-                    let Some((size, bytes)) = cx.svg_renderer.render_alpha_mask(&params)? else {
++                    let Some((size, bytes)) = cx.svg_renderer.render(&params)? else {
+                         return Ok(None);
+                     };
+                     Ok(Some((size, Cow::Owned(bytes))))
+@@ -3261,11 +3381,14 @@ impl Window {
+     /// returns a `Size`.
+     ///
+     /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
+-    pub fn request_measured_layout<F>(&mut self, style: Style, measure: F) -> LayoutId
+-    where
+-        F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
++    pub fn request_measured_layout<
++        F: FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
+             + 'static,
+-    {
++    >(
++        &mut self,
++        style: Style,
++        measure: F,
++    ) -> LayoutId {
+         self.invalidator.debug_assert_prepaint();
+ 
+         let rem_size = self.rem_size();
+@@ -3595,16 +3718,6 @@ impl Window {
+     #[profiling::function]
+     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
+         self.last_input_timestamp.set(Instant::now());
+-
+-        // Track whether this input was keyboard-based for focus-visible styling
+-        self.last_input_modality = match &event {
+-            PlatformInput::KeyDown(_) | PlatformInput::ModifiersChanged(_) => {
+-                InputModality::Keyboard
+-            }
+-            PlatformInput::MouseDown(e) if e.is_focusing() => InputModality::Mouse,
+-            _ => self.last_input_modality,
+-        };
+-
+         // Handlers may set this to false by calling `stop_propagation`.
+         cx.propagate_event = true;
+         // Handlers may set this to true by calling `prevent_default`.
+@@ -4904,7 +5017,7 @@ pub enum ElementId {
+     /// A code location.
+     CodeLocation(core::panic::Location<'static>),
+     /// A labeled child of an element.
+-    NamedChild(Arc<ElementId>, SharedString),
++    NamedChild(Box<ElementId>, SharedString),
+ }
+ 
+ impl ElementId {
+@@ -5018,7 +5131,7 @@ impl From<(&'static str, u32)> for ElementId {
+ 
+ impl<T: Into<SharedString>> From<(ElementId, T)> for ElementId {
+     fn from((id, name): (ElementId, T)) -> Self {
+-        ElementId::NamedChild(Arc::new(id), name.into())
++        ElementId::NamedChild(Box::new(id), name.into())
+     }
+ }
+ 
+@@ -5046,6 +5159,17 @@ pub struct PaintQuad {
+     pub border_style: BorderStyle,
+ }
+ 
++/// A rectangle instance for batch painting via [`Window::paint_rects_instanced`].
++///
++/// Each instance describes a solid, axis-aligned rectangle to render.
++#[derive(Clone, Copy, Debug)]
++pub struct RectInstance {
++    /// The bounds of the rectangle in window (pixel) coordinates.
++    pub bounds: Bounds<Pixels>,
++    /// The solid fill color of the rectangle.
++    pub color: Hsla,
++}
++
+ impl PaintQuad {
+     /// Sets the corner radii of the quad.
+     pub fn corner_radii(self, corner_radii: impl Into<Corners<Pixels>>) -> Self {
