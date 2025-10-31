@@ -94,6 +94,11 @@ impl RegexSearches {
 
         let line_start = term.line_search_left(hovered);
         let line_end = term.line_search_right(hovered);
+
+        // This used to be: `let line = term.bounds_to_string(line_start, line_end)`, however, that
+        // api compresses tab characters into a single space, whereas we require a cell accurate
+        // string representation of the line. The below algorithm does this, but seems a bit odd.
+        // Maybe there is a clean api for doing this, but I couldn't find it.
         let spacers: Flags = Flags::LEADING_WIDE_CHAR_SPACER | Flags::WIDE_CHAR_SPACER;
         let line = iter::once(term.grid()[line_start].c)
             .chain(
