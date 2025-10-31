@@ -220,6 +220,8 @@
       "[ {": ["vim::UnmatchedBackward", { "char": "{" }],
       "] )": ["vim::UnmatchedForward", { "char": ")" }],
       "[ (": ["vim::UnmatchedBackward", { "char": "(" }],
+      "[ r": "vim::GoToPreviousReference",
+      "] r": "vim::GoToNextReference",
       // tree-sitter related commands
       "[ x": "vim::SelectLargerSyntaxNode",
       "] x": "vim::SelectSmallerSyntaxNode"
@@ -417,6 +419,12 @@
       "i": "vim::HelixInsert",
       "a": "vim::HelixAppend",
       "ctrl-[": "editor::Cancel"
+    }
+  },
+  {
+    "context": "vim_mode == helix_select && !menu",
+    "bindings": {
+      "escape": "vim::SwitchToHelixNormalMode"
     }
   },
   {

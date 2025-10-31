@@ -701,12 +701,12 @@ impl Database {
             return Ok(());
         }
 
-        let mut text_buffer = text::Buffer::new(
+        let mut text_buffer = text::Buffer::new_slow(
             clock::ReplicaId::LOCAL,
             text::BufferId::new(1).unwrap(),
             base_text,
         );
-        text_buffer.apply_ops(operations.into_iter().filter_map(operation_from_wire));
+        text_buffer.apply_ops(operations.into_iter().filter_map(operation_from_wire), None);
 
         let base_text = text_buffer.text();
         let epoch = buffer.epoch + 1;

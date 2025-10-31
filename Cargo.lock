@@ -6957,7 +6957,7 @@ dependencies = [
 [[package]]
 name = "gh-workflow"
 version = "0.8.0"
-source = "git+https://github.com/zed-industries/gh-workflow?rev=a0b197dd77c0ed2390c150e601f9d4f9a0ca7105#a0b197dd77c0ed2390c150e601f9d4f9a0ca7105"
+source = "git+https://github.com/zed-industries/gh-workflow?rev=0090c6b6ef82fff02bc8616645953e778d1acc08#0090c6b6ef82fff02bc8616645953e778d1acc08"
 dependencies = [
  "async-trait",
  "derive_more 2.0.1",
@@ -6974,7 +6974,7 @@ dependencies = [
 [[package]]
 name = "gh-workflow-macros"
 version = "0.8.0"
-source = "git+https://github.com/zed-industries/gh-workflow?rev=a0b197dd77c0ed2390c150e601f9d4f9a0ca7105#a0b197dd77c0ed2390c150e601f9d4f9a0ca7105"
+source = "git+https://github.com/zed-industries/gh-workflow?rev=0090c6b6ef82fff02bc8616645953e778d1acc08#0090c6b6ef82fff02bc8616645953e778d1acc08"
 dependencies = [
  "heck 0.5.0",
  "quote",
@@ -7263,6 +7263,7 @@ dependencies = [
  "async-task",
  "backtrace",
  "bindgen 0.71.1",
+ "bitflags 2.9.4",
  "blade-graphics",
  "blade-macros",
  "blade-util",
@@ -7342,6 +7343,7 @@ dependencies = [
  "wayland-cursor",
  "wayland-protocols 0.31.2",
  "wayland-protocols-plasma",
+ "wayland-protocols-wlr",
  "windows 0.61.3",
  "windows-core 0.61.2",
  "windows-numerics",
@@ -12710,6 +12712,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5da3b0203fd7ee5720aa0b5e790b591aa5d3f41c3ed2c34a3a393382198af2f7"
 
 [[package]]
+name = "pollster"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f3a9f18d041e6d0e102a0a46750538147e5e8992d3b4873aaafee2520b00ce3"
+
+[[package]]
 name = "portable-atomic"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12757,7 +12765,7 @@ dependencies = [
  "log",
  "parking_lot",
  "pin-project",
- "pollster",
+ "pollster 0.2.5",
  "static_assertions",
  "thiserror 1.0.69",
 ]
@@ -13123,7 +13131,6 @@ dependencies = [
  "paths",
  "rope",
  "serde",
- "serde_json",
  "text",
  "util",
  "uuid",
@@ -14310,8 +14317,6 @@ dependencies = [
  "gpui",
  "log",
  "rand 0.9.2",
- "rayon",
- "regex",
  "sum_tree",
  "unicode-segmentation",
  "util",
@@ -16237,6 +16242,7 @@ checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 name = "streaming_diff"
 version = "0.1.0"
 dependencies = [
+ "gpui",
  "ordered-float 2.10.1",
  "rand 0.9.2",
  "rope",
@@ -16355,9 +16361,11 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "ctor",
+ "futures 0.3.31",
+ "itertools 0.14.0",
  "log",
+ "pollster 0.4.0",
  "rand 0.9.2",
- "rayon",
  "zlog",
 ]
 
@@ -16495,7 +16503,7 @@ dependencies = [
  "editor",
  "file_icons",
  "gpui",
- "multi_buffer",
+ "language",
  "ui",
  "workspace",
 ]
@@ -17147,6 +17155,7 @@ dependencies = [
  "parking_lot",
  "postage",
  "rand 0.9.2",
+ "regex",
  "rope",
  "smallvec",
  "sum_tree",
@@ -17439,6 +17448,7 @@ dependencies = [
  "anyhow",
  "auto_update",
  "call",
+ "channel",
  "chrono",
  "client",
  "cloud_llm_client",
@@ -19490,6 +19500,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "wayland-protocols-wlr"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "efd94963ed43cf9938a090ca4f7da58eb55325ec8200c3848963e98dc25b78ec"
+dependencies = [
+ "bitflags 2.9.4",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols 0.32.9",
+ "wayland-scanner",
+]
+
+[[package]]
 name = "wayland-scanner"
 version = "0.31.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -21113,7 +21136,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.211.0"
+version = "0.212.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",
@@ -21669,6 +21692,7 @@ dependencies = [
 name = "zeta2_tools"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "clap",
  "client",
@@ -21686,6 +21710,7 @@ dependencies = [
  "ordered-float 2.10.1",
  "pretty_assertions",
  "project",
+ "regex-syntax",
  "serde",
  "serde_json",
  "settings",

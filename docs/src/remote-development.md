@@ -29,7 +29,7 @@ The remote machine must be able to run Zed's server. The following platforms sho
 
 - macOS Catalina or later (Intel or Apple Silicon)
 - Linux (x86_64 or arm64, we do not yet support 32-bit platforms)
-- Windows is not yet supported.
+- Windows is not yet supported as a remote server, but Windows can be used as a local machine to connect to remote servers.
 
 ## Configuration
 
@@ -86,6 +86,28 @@ There are two additional Zed-specific options per connection, `upload_binary_ove
 If you use the command line to open a connection to a host by doing `zed ssh://192.168.1.10/~/.vimrc`, then extra options are read from your settings file by finding the first connection that matches the host/username/port of the URL on the command line.
 
 Additionally it's worth noting that while you can pass a password on the command line `zed ssh://user:password@host/~`, we do not support writing a password to your settings file. If you're connecting repeatedly to the same host, you should configure key-based authentication.
+
+## Remote Development on Windows (SSH)
+
+Zed on Windows supports SSH remoting and will prompt for credentials when needed.
+
+If you encounter authentication issues, confirm that your SSH key agent is running (e.g., ssh-agent or your Git client's agent) and that ssh.exe is on PATH.
+
+### Troubleshooting SSH on Windows
+
+When prompted for credentials, use the graphical askpass dialog. If it doesn't appear, check for credential manager conflicts and that GUI prompts aren't blocked by your terminal.
+
+## WSL Support
+
+Zed supports opening folders inside of WSL natively on Windows.
+
+### Opening a local folder in WSL
+
+To open a local folder inside a WSL container, use the `projects: open in wsl` action and select the folder you want to open. You will be presented with a list of available WSL distributions to open the folder in.
+
+### Opening a folder already in WSL
+
+To open a folder that's already located inside of a WSL container, use the `projects: open wsl` action and select the WSL distribution. The distribution will be added to the `Remote Projects` window where you will be able to open the folder.
 
 ## Port forwarding
 

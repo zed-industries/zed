@@ -1836,12 +1836,13 @@ mod tests {
         let fs = project::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
 
-        let buffer = cx.new(|_cx| {
+        let buffer = cx.new(|cx| {
             Buffer::remote(
                 language::BufferId::new(1).unwrap(),
                 ReplicaId::new(1),
                 language::Capability::ReadWrite,
                 "fn main() {\n    println!(\"Hello\");\n}",
+                cx.background_executor(),
             )
         });
 

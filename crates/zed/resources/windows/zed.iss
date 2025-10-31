@@ -49,6 +49,10 @@ Name: "simplifiedChinese"; MessagesFile: "{#ResourcesDir}\messages\Default.zh-cn
 ; Delete logs
 Type: filesandordirs; Name: "{app}\tools"
 Type: filesandordirs; Name: "{app}\updates"
+; Delete newer files which may not have been added by the initial installation
+Type: filesandordirs; Name: "{app}\x64"
+Type: filesandordirs; Name: "{app}\arm64"
+
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked

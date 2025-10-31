@@ -28,10 +28,10 @@ use git_ui::commit_view::CommitViewToolbar;
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
-    Action, App, AppContext as _, Context, DismissEvent, Element, Entity, Focusable, KeyBinding,
-    ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Styled, Task,
-    TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, image_cache, point,
-    px, retain_all,
+    Action, App, AppContext as _, AsyncApp, Context, DismissEvent, Element, Entity, Focusable,
+    KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Styled,
+    Task, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, image_cache,
+    point, px, retain_all,
 };
 use image_viewer::ImageInfo;
 use language::Capability;
@@ -201,7 +201,12 @@ pub fn init(cx: &mut App) {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::keymap_file(),
-                || settings::initial_keymap_content().as_ref().into(),
+                |cx| {
+                    Rope::from_str(
+                        settings::initial_keymap_content().as_ref(),
+                        cx.background_executor(),
+                    )
+                },
                 window,
                 cx,
             );
@@ -211,7 +216,12 @@ pub fn init(cx: &mut App) {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::settings_file(),
-                || settings::initial_user_settings_content().as_ref().into(),
+                |cx| {
+                    Rope::from_str(
+                        settings::initial_user_settings_content().as_ref(),
+                        cx.background_executor(),
+                    )
+                },
                 window,
                 cx,
             );
@@ -226,7 +236,12 @@ pub fn init(cx: &mut App) {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::tasks_file(),
-                || settings::initial_tasks_content().as_ref().into(),
+                |cx| {
+                    Rope::from_str(
+                        settings::initial_tasks_content().as_ref(),
+                        cx.background_executor(),
+                    )
+                },
                 window,
                 cx,
             );
@@ -236,7 +251,12 @@ pub fn init(cx: &mut App) {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::debug_scenarios_file(),
-                || settings::initial_debug_tasks_content().as_ref().into(),
+                |cx| {
+                    Rope::from_str(
+                        settings::initial_debug_tasks_content().as_ref(),
+                        cx.background_executor(),
+                    )
+                },
                 window,
                 cx,
             );
@@ -388,6 +408,7 @@ pub fn initialize_workspace(
                 app_state.fs.clone(),
                 app_state.user_store.clone(),
                 edit_prediction_menu_handle.clone(),
+                app_state.client.clone(),
                 cx,
             )
         });
@@ -1938,7 +1959,7 @@ fn open_bundled_file(
 
 fn open_settings_file(
     abs_path: &'static Path,
-    default_content: impl FnOnce() -> Rope + Send + 'static,
+    default_content: impl FnOnce(&mut AsyncApp) -> Rope + Send + 'static,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -2859,16 +2880,20 @@ mod tests {
         });
 
         // Split the pane with the first entry, then open the second entry again.
-        let (task1, task2) = window
+        window
             .update(cx, |w, window, cx| {
-                (
-                    w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, window, cx),
-                    w.open_path(file2.clone(), None, true, window, cx),
-                )
+                w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, window, cx)
             })
+            .unwrap()
+            .await
             .unwrap();
-        task1.await.unwrap();
-        task2.await.unwrap();
+        window
+            .update(cx, |w, window, cx| {
+                w.open_path(file2.clone(), None, true, window, cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
 
         window
             .read_with(cx, |w, cx| {
@@ -4350,7 +4375,7 @@ mod tests {
             .fs
             .save(
                 "/settings.json".as_ref(),
-                &r#"{"base_keymap": "Atom"}"#.into(),
+                &Rope::from_str_small(r#"{"base_keymap": "Atom"}"#),
                 Default::default(),
             )
             .await
@@ -4360,7 +4385,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"[{"bindings": {"backspace": "test_only::ActionA"}}]"#.into(),
+                &Rope::from_str_small(r#"[{"bindings": {"backspace": "test_only::ActionA"}}]"#),
                 Default::default(),
             )
             .await
@@ -4408,7 +4433,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"[{"bindings": {"backspace": "test_only::ActionB"}}]"#.into(),
+                &Rope::from_str_small(r#"[{"bindings": {"backspace": "test_only::ActionB"}}]"#),
                 Default::default(),
             )
             .await
@@ -4428,7 +4453,7 @@ mod tests {
             .fs
             .save(
                 "/settings.json".as_ref(),
-                &r#"{"base_keymap": "JetBrains"}"#.into(),
+                &Rope::from_str_small(r#"{"base_keymap": "JetBrains"}"#),
                 Default::default(),
             )
             .await
@@ -4468,7 +4493,7 @@ mod tests {
             .fs
             .save(
                 "/settings.json".as_ref(),
-                &r#"{"base_keymap": "Atom"}"#.into(),
+                &Rope::from_str_small(r#"{"base_keymap": "Atom"}"#),
                 Default::default(),
             )
             .await
@@ -4477,7 +4502,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"[{"bindings": {"backspace": "test_only::ActionA"}}]"#.into(),
+                &Rope::from_str_small(r#"[{"bindings": {"backspace": "test_only::ActionA"}}]"#),
                 Default::default(),
             )
             .await
@@ -4520,7 +4545,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"[{"bindings": {"backspace": null}}]"#.into(),
+                &Rope::from_str_small(r#"[{"bindings": {"backspace": null}}]"#),
                 Default::default(),
             )
             .await
@@ -4540,7 +4565,7 @@ mod tests {
             .fs
             .save(
                 "/settings.json".as_ref(),
-                &r#"{"base_keymap": "JetBrains"}"#.into(),
+                &Rope::from_str_small(r#"{"base_keymap": "JetBrains"}"#),
                 Default::default(),
             )
             .await
@@ -4559,74 +4584,6 @@ mod tests {
         cx.update(|cx| {
             // Make sure it doesn't panic.
             KeymapFile::generate_json_schema_for_registered_actions(cx);
-        });
-    }
-
-    /// Actions that don't build from empty input won't work from command palette invocation.
-    #[gpui::test]
-    async fn test_actions_build_with_empty_input(cx: &mut gpui::TestAppContext) {
-        init_keymap_test(cx);
-        cx.update(|cx| {
-            let all_actions = cx.all_action_names();
-            let mut failing_names = Vec::new();
-            let mut errors = Vec::new();
-            for action in all_actions {
-                match action.to_string().as_str() {
-                    "vim::FindCommand"
-                    | "vim::Literal"
-                    | "vim::ResizePane"
-                    | "vim::PushObject"
-                    | "vim::PushFindForward"
-                    | "vim::PushFindBackward"
-                    | "vim::PushSneak"
-                    | "vim::PushSneakBackward"
-                    | "vim::PushChangeSurrounds"
-                    | "vim::PushJump"
-                    | "vim::PushDigraph"
-                    | "vim::PushLiteral"
-                    | "vim::PushHelixNext"
-                    | "vim::PushHelixPrevious"
-                    | "vim::Number"
-                    | "vim::SelectRegister"
-                    | "git::StageAndNext"
-                    | "git::UnstageAndNext"
-                    | "terminal::SendText"
-                    | "terminal::SendKeystroke"
-                    | "app_menu::OpenApplicationMenu"
-                    | "picker::ConfirmInput"
-                    | "editor::HandleInput"
-                    | "editor::FoldAtLevel"
-                    | "pane::ActivateItem"
-                    | "workspace::ActivatePane"
-                    | "workspace::MoveItemToPane"
-                    | "workspace::MoveItemToPaneInDirection"
-                    | "workspace::NewFileSplit"
-                    | "workspace::OpenTerminal"
-                    | "workspace::SendKeystrokes"
-                    | "agent::NewNativeAgentThreadFromSummary"
-                    | "action::Sequence"
-                    | "zed::OpenBrowser"
-                    | "zed::OpenZedUrl"
-                    | "settings_editor::FocusFile" => {}
-                    _ => {
-                        let result = cx.build_action(action, None);
-                        match &result {
-                            Ok(_) => {}
-                            Err(err) => {
-                                failing_names.push(action);
-                                errors.push(format!("{action} failed to build: {err:?}"));
-                            }
-                        }
-                    }
-                }
-            }
-            if !errors.is_empty() {
-                panic!(
-                    "Failed to build actions using {{}} as input: {:?}. Errors:\n{}",
-                    failing_names,
-                    errors.join("\n")
-                );
-            }
         });
     }
 

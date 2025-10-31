@@ -23,10 +23,12 @@ log.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 rand = { workspace = true, optional = true }
+regex.workspace = true
 rope.workspace = true
 smallvec.workspace = true
 sum_tree.workspace = true
 util.workspace = true
+gpui.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
