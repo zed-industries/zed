@@ -390,9 +390,9 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                         return;
                     }
                     editor.buffer().update(cx, |multi, cx| {
-                        multi
-                            .as_singleton()?
-                            .update(cx, |buffer, _| Some(buffer.set_conflict()))
+                        if let Some(buffer) = multi.as_singleton() {
+                            buffer.update(cx, |buffer, _| buffer.set_conflict());
+                        }
                     });
                 };
 
