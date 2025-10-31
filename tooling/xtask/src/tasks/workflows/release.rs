@@ -177,6 +177,7 @@ fn create_draft_release() -> NamedJob {
                     .add_with(("clean", false))
                     .add_with(("ref", "${{ github.ref }}")),
             )
+            .add_step(steps::script("script/determine-release-channel")) // export RELEASE_CHANNEL and RELEASE_VERSION
             .add_step(steps::script("mkdir -p target/"))
             .add_step(steps::script(r#"script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md || true"#))
             .add_step(steps::script("script/create-draft-release target/release-notes.md")),

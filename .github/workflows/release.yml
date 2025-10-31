@@ -156,6 +156,9 @@ jobs:
         clean: false
         fetch-depth: 25
         ref: ${{ github.ref }}
+    - name: script/determine-release-channel
+      run: script/determine-release-channel
+      shell: bash -euxo pipefail {0}
     - name: mkdir -p target/
       run: mkdir -p target/
       shell: bash -euxo pipefail {0}
