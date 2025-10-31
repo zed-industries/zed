@@ -167,7 +167,7 @@ jobs:
         echo "RELEASE_VERSION=0.211.1" >> $GITHUB_ENV
       shell: bash -euxo pipefail {0}
     - name: release::create_draft_release::draft_release_notes
-      run: node --redirect-warnings=/dev/null ./script/draft-release-notes $RELEASE_CHANNEL $RELEASE_VERSION > target/release-notes.md
+      run: node --redirect-warnings=/dev/null ./script/draft-release-notes $RELEASE_VERSION $RELEASE_CHANNEL > target/release-notes.md
       shell: bash -euxo pipefail {0}
     - name: release::create_draft_release::create_draft_release
       run: script/create-draft-releae target/release-notes.md
