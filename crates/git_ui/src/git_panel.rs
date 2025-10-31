@@ -3494,6 +3494,11 @@ impl GitPanel {
         let commit_tooltip_focus_handle = self.commit_editor.focus_handle(cx);
         let amend = self.amend_pending();
         let signoff = self.signoff_enabled;
+        let color = if self.pending_commit.is_some() {
+            Color::Disabled
+        } else {
+            Color::Default
+        };
 
         div()
             .id("commit-wrapper")
@@ -3509,9 +3514,12 @@ impl GitPanel {
                 .layer(ui::ElevationIndex::ModalSurface)
                 .size(ui::ButtonSize::Compact)
                 .child(
-                    div()
-                        .child(Label::new(title).size(LabelSize::Small))
-                        .mr_0p5(),
+                    div().child(
+                        Label::new(title)
+                            .size(LabelSize::Small)
+                            .color(color)
+                            .mr_0p5(),
+                    ),
                 )
                 .on_click({
                     let git_panel = cx.weak_entity();
