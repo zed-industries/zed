@@ -267,7 +267,12 @@ trait ImageStoreImpl {
     fn as_local(&self) -> Option<Entity<LocalImageStore>>;
 }
 
-struct RemoteImageStore {}
+struct RemoteImageStore {
+    image_ids_by_path: HashMap<ProjectPath, ImageId>,
+    image_ids_by_entry_id: HashMap<ProjectEntryId, ImageId>,
+    image_store: WeakEntity<ImageStore>,
+    _subscription: Subscription,
+}
 
 struct LocalImageStore {
     local_image_ids_by_path: HashMap<ProjectPath, ImageId>,
@@ -320,8 +325,25 @@ impl ImageStore {
         _remote_id: u64,
         cx: &mut Context<Self>,
     ) -> Self {
+        let this = cx.weak_entity();
         Self {
-            state: Box::new(cx.new(|_| RemoteImageStore {})),
+            state: Box::new(cx.new(|_| {
+                // let subscription = cx.subscribe(
+                //     &worktree_store,
+                //     |this: &mut RemoteImageStore, _, event, cx| {
+                //         // if let WorktreeStoreEvent::WorktreeAdded(worktree) = event {
+                //         //     this.subscribe_to_worktree(worktree, cx);
+                //         // }
+                //     },
+                // );
+                let subscription = todo!();
+                RemoteImageStore {
+                    image_ids_by_path: Default::default(),
+                    image_ids_by_entry_id: Default::default(),
+                    image_store: this,
+                    _subscription: subscription,
+                }
+            })),
             opened_images: Default::default(),
             loading_images_by_path: Default::default(),
             worktree_store,
@@ -697,13 +719,50 @@ fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<gpui::Image>> {
 impl ImageStoreImpl for Entity<RemoteImageStore> {
     fn open_image(
         &self,
-        _path: Arc<RelPath>,
-        _worktree: Entity<Worktree>,
-        _cx: &mut Context<ImageStore>,
+        path: Arc<RelPath>,
+        worktree: Entity<Worktree>,
+        cx: &mut Context<ImageStore>,
     ) -> Task<Result<Entity<ImageItem>>> {
-        Task::ready(Err(anyhow::anyhow!(
-            "Opening images from remote is not supported"
-        )))
+        let this = self.clone();
+
+        let load_file = worktree.update(cx, |worktree, cx| {
+            worktree.load_binary_file(path.as_ref(), cx)
+        });
+        cx.spawn(async move |image_store, cx| {
+            let LoadedBinaryFile { file, content } = load_file.await?;
+            let image = create_gpui_image(content)?;
+
+            let entity = cx.new(|cx| ImageItem {
+                id: cx.entity_id().as_non_zero_u64().into(),
+                file: file.clone(),
+                image,
+                image_metadata: None,
+                reload_task: None,
+            })?;
+
+            let image_id = cx.read_entity(&entity, |model, _| model.id)?;
+
+            this.update(cx, |this, cx| {
+                image_store.update(cx, |image_store, cx| {
+                    image_store.add_image(entity.clone(), cx)
+                })??;
+                this.image_ids_by_path.insert(
+                    ProjectPath {
+                        worktree_id: file.worktree_id(cx),
+                        path: file.path.clone(),
+                    },
+                    image_id,
+                );
+
+                if let Some(entry_id) = file.entry_id {
+                    this.image_ids_by_entry_id.insert(entry_id, image_id);
+                }
+
+                anyhow::Ok(())
+            })??;
+
+            Ok(entity)
+        })
     }
 
     fn reload_images(
