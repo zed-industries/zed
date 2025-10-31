@@ -75,6 +75,7 @@ fn test_set_line_ending(cx: &mut TestAppContext) {
             Capability::ReadWrite,
             base.read(cx).to_proto(cx),
             None,
+            cx.background_executor(),
         )
         .unwrap()
     });
@@ -255,14 +256,18 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
             .is_none()
     );
     assert!(
-        cx.read(|cx| languages.language_for_file(&file("the/script"), Some(&"nothing".into()), cx))
-            .is_none()
+        cx.read(|cx| languages.language_for_file(
+            &file("the/script"),
+            Some(&Rope::from_str("nothing", cx.background_executor())),
+            cx
+        ))
+        .is_none()
     );
 
     assert_eq!(
         cx.read(|cx| languages.language_for_file(
             &file("the/script"),
-            Some(&"#!/bin/env node".into()),
+            Some(&Rope::from_str("#!/bin/env node", cx.background_executor())),
             cx
         ))
         .unwrap()
@@ -406,6 +411,7 @@ fn test_edit_events(cx: &mut gpui::App) {
             ReplicaId::new(1),
             Capability::ReadWrite,
             "abcdef",
+            cx.background_executor(),
         )
     });
     let buffer1_ops = Arc::new(Mutex::new(Vec::new()));
@@ -2781,8 +2787,14 @@ fn test_serialization(cx: &mut gpui::App) {
         .background_executor()
         .block(buffer1.read(cx).serialize_ops(None, cx));
     let buffer2 = cx.new(|cx| {
-        let mut buffer =
-            Buffer::from_proto(ReplicaId::new(1), Capability::ReadWrite, state, None).unwrap();
+        let mut buffer = Buffer::from_proto(
+            ReplicaId::new(1),
+            Capability::ReadWrite,
+            state,
+            None,
+            cx.background_executor(),
+        )
+        .unwrap();
         buffer.apply_ops(
             ops.into_iter()
                 .map(|op| proto::deserialize_operation(op).unwrap()),
@@ -2806,6 +2818,7 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
             Capability::ReadWrite,
             base.read(cx).to_proto(cx),
             None,
+            cx.background_executor(),
         )
         .unwrap()
     });
@@ -3120,9 +3133,14 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
             let ops = cx
                 .background_executor()
                 .block(base_buffer.read(cx).serialize_ops(None, cx));
-            let mut buffer =
-                Buffer::from_proto(ReplicaId::new(i as u16), Capability::ReadWrite, state, None)
-                    .unwrap();
+            let mut buffer = Buffer::from_proto(
+                ReplicaId::new(i as u16),
+                Capability::ReadWrite,
+                state,
+                None,
+                cx.background_executor(),
+            )
+            .unwrap();
             buffer.apply_ops(
                 ops.into_iter()
                     .map(|op| proto::deserialize_operation(op).unwrap()),
@@ -3251,6 +3269,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                         Capability::ReadWrite,
                         old_buffer_state,
                         None,
+                        cx.background_executor(),
                     )
                     .unwrap();
                     new_buffer.apply_ops(
@@ -3414,7 +3433,7 @@ fn test_contiguous_ranges() {
 }
 
 #[gpui::test(iterations = 500)]
-fn test_trailing_whitespace_ranges(mut rng: StdRng) {
+fn test_trailing_whitespace_ranges(mut rng: StdRng, cx: &mut TestAppContext) {
     // Generate a random multi-line string containing
     // some lines with trailing whitespace.
     let mut text = String::new();
@@ -3438,7 +3457,7 @@ fn test_trailing_whitespace_ranges(mut rng: StdRng) {
         _ => {}
     }
 
-    let rope = Rope::from(text.as_str());
+    let rope = Rope::from_str(text.as_str(), cx.background_executor());
     let actual_ranges = trailing_whitespace_ranges(&rope);
     let expected_ranges = TRAILING_WHITESPACE_REGEX
         .find_iter(&text)

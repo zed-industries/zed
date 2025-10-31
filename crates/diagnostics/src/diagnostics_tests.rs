@@ -877,7 +877,7 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
                             vec![Inlay::edit_prediction(
                                 post_inc(&mut next_inlay_id),
                                 snapshot.buffer_snapshot().anchor_before(position),
-                                Rope::from_iter(["Test inlay ", "next_inlay_id"]),
+                                Rope::from_iter_small(["Test inlay ", "next_inlay_id"]),
                             )],
                             cx,
                         );
@@ -2070,7 +2070,7 @@ fn random_lsp_diagnostic(
     const ERROR_MARGIN: usize = 10;
 
     let file_content = fs.read_file_sync(path).unwrap();
-    let file_text = Rope::from(String::from_utf8_lossy(&file_content).as_ref());
+    let file_text = Rope::from_str_small(String::from_utf8_lossy(&file_content).as_ref());
 
     let start = rng.random_range(0..file_text.len().saturating_add(ERROR_MARGIN));
     let end = rng.random_range(start..file_text.len().saturating_add(ERROR_MARGIN));

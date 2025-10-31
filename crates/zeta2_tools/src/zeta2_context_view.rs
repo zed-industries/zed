@@ -24,7 +24,10 @@ use ui::{
     v_flex,
 };
 use workspace::{Item, ItemHandle as _};
-use zeta2::{Zeta, ZetaContextRetrievalDebugInfo, ZetaDebugInfo, ZetaSearchQueryDebugInfo};
+use zeta2::{
+    Zeta, ZetaContextRetrievalDebugInfo, ZetaContextRetrievalStartedDebugInfo, ZetaDebugInfo,
+    ZetaSearchQueryDebugInfo,
+};
 
 pub struct Zeta2ContextView {
     empty_focus_handle: FocusHandle,
@@ -130,7 +133,7 @@ impl Zeta2ContextView {
 
     fn handle_context_retrieval_started(
         &mut self,
-        info: ZetaContextRetrievalDebugInfo,
+        info: ZetaContextRetrievalStartedDebugInfo,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

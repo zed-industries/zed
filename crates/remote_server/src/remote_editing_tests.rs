@@ -13,7 +13,7 @@ use fs::{FakeFs, Fs};
 use gpui::{AppContext as _, Entity, SemanticVersion, SharedString, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
-    Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
+    Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding, Rope,
     language_settings::{AllLanguageSettings, language_settings},
 };
 use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind, LanguageServerName};
@@ -120,7 +120,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
     // sees the new file.
     fs.save(
         path!("/code/project1/src/main.rs").as_ref(),
-        &"fn main() {}".into(),
+        &Rope::from_str_small("fn main() {}"),
         Default::default(),
     )
     .await
@@ -766,7 +766,7 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
 
     fs.save(
         &PathBuf::from(path!("/code/project1/src/lib.rs")),
-        &("bangles".to_string().into()),
+        &Rope::from_str_small("bangles"),
         LineEnding::Unix,
     )
     .await
@@ -781,7 +781,7 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
 
     fs.save(
         &PathBuf::from(path!("/code/project1/src/lib.rs")),
-        &("bloop".to_string().into()),
+        &Rope::from_str_small("bloop"),
         LineEnding::Unix,
     )
     .await
