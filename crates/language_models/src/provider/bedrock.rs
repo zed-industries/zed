@@ -46,6 +46,8 @@ use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
+use zed_env_vars::{EnvVar, env_var};
+use std::sync::LazyLock;
 
 use crate::AllLanguageModelSettings;
 
@@ -148,13 +150,13 @@ impl From<BedrockModelMode> for ModelMode {
 const AMAZON_AWS_URL: &str = "https://amazonaws.com";
 
 // These environment variables all use a `ZED_` prefix because we don't want to overwrite the user's AWS credentials.
-const ZED_BEDROCK_ACCESS_KEY_ID_VAR: &str = "ZED_ACCESS_KEY_ID";
-const ZED_BEDROCK_SECRET_ACCESS_KEY_VAR: &str = "ZED_SECRET_ACCESS_KEY";
-const ZED_BEDROCK_SESSION_TOKEN_VAR: &str = "ZED_SESSION_TOKEN";
-const ZED_AWS_PROFILE_VAR: &str = "ZED_AWS_PROFILE";
-const ZED_BEDROCK_REGION_VAR: &str = "ZED_AWS_REGION";
-const ZED_AWS_ENDPOINT_VAR: &str = "ZED_AWS_ENDPOINT";
-const ZED_AWS_BEARER_TOKEN_BEDROCK: &str = "ZED_AWS_BEARER_TOKEN_BEDROCK";
+static ZED_BEDROCK_ACCESS_KEY_ID_VAR: LazyLock<EnvVar> = env_var!("ZED_ACCESS_KEY_ID");
+static ZED_BEDROCK_SECRET_ACCESS_KEY_VAR: LazyLock<EnvVar> = env_var!("ZED_SECRET_ACCESS_KEY");
+static ZED_BEDROCK_SESSION_TOKEN_VAR: LazyLock<EnvVar> = env_var!("ZED_SESSION_TOKEN");
+static ZED_AWS_PROFILE_VAR: LazyLock<EnvVar> = env_var!("ZED_AWS_PROFILE");
+static ZED_BEDROCK_REGION_VAR: LazyLock<EnvVar> = env_var!("ZED_AWS_REGION");
+static ZED_AWS_ENDPOINT_VAR: LazyLock<EnvVar> = env_var!("ZED_AWS_ENDPOINT");
+static ZED_AWS_BEARER_TOKEN_BEDROCK: LazyLock<EnvVar> = env_var!("ZED_AWS_BEARER_TOKEN_BEDROCK");
 
 pub struct State {
     credentials: Option<BedrockCredentials>,
@@ -220,28 +222,36 @@ impl State {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         cx.spawn(async move |this, cx| {
             let (credentials, from_env) =
-                if let Ok(bearer_token) = std::env::var(ZED_AWS_BEARER_TOKEN_BEDROCK) {
-                    let region = std::env::var(ZED_BEDROCK_REGION_VAR).unwrap_or_else(|_| "us-east-1".to_string());
-                    let creds = BedrockCredentials {
-                        access_key_id: String::new(),
-                        secret_access_key: String::new(),
-                        session_token: None,
-                        region,
-                        bearer_token: Some(bearer_token),
-                    };
-                    (serde_json::to_string(&creds).context("failed to serialize bearer token credentials")?, true)
-                } else if let Ok(access_key_id) = std::env::var(ZED_BEDROCK_ACCESS_KEY_ID_VAR) {
-                    if let Ok(secret_access_key) = std::env::var(ZED_BEDROCK_SECRET_ACCESS_KEY_VAR) {
-                        let region = std::env::var(ZED_BEDROCK_REGION_VAR).unwrap_or_else(|_| "us-east-1".to_string());
-                        let session_token = std::env::var(ZED_BEDROCK_SESSION_TOKEN_VAR).ok();
+                if let Some(bearer_token) = &ZED_AWS_BEARER_TOKEN_BEDROCK.value {
+                    if !bearer_token.is_empty() {
+                        let region = ZED_BEDROCK_REGION_VAR.value.as_deref().unwrap_or("us-east-1");
                         let creds = BedrockCredentials {
-                            access_key_id,
-                            secret_access_key,
-                            session_token,
-                            region,
-                            bearer_token: None,
+                            access_key_id: String::new(),
+                            secret_access_key: String::new(),
+                            session_token: None,
+                            region: region.to_string(),
+                            bearer_token: Some(bearer_token.to_string()),
                         };
-                        (serde_json::to_string(&creds).context("failed to serialize access key credentials")?, true)
+                        (serde_json::to_string(&creds).context("failed to serialize bearer token credentials")?, true)
+                    } else {
+                        return Err(AuthenticateError::CredentialsNotFound.into());
+                    }
+                } else if let Some(access_key_id) = &ZED_BEDROCK_ACCESS_KEY_ID_VAR.value {
+                    if let Some(secret_access_key) = &ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.value {
+                        if !access_key_id.is_empty() && !secret_access_key.is_empty() {
+                            let region = ZED_BEDROCK_REGION_VAR.value.as_deref().unwrap_or("us-east-1");
+                            let session_token = ZED_BEDROCK_SESSION_TOKEN_VAR.value.as_deref().map(|s| s.to_string());
+                            let creds = BedrockCredentials {
+                                access_key_id: access_key_id.to_string(),
+                                secret_access_key: secret_access_key.to_string(),
+                                session_token,
+                                region: region.to_string(),
+                                bearer_token: None,
+                            };
+                            (serde_json::to_string(&creds).context("failed to serialize access key credentials")?, true)
+                        } else {
+                            return Err(AuthenticateError::CredentialsNotFound.into());
+                        }
                     } else {
                         return Err(AuthenticateError::CredentialsNotFound.into());
                     }
@@ -1242,7 +1252,7 @@ impl Render for ConfigurationView {
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
                         .child(Label::new(if env_var_set {
-                            format!("Credentials are set via environment variables ({ZED_BEDROCK_ACCESS_KEY_ID_VAR}/{ZED_AWS_BEARER_TOKEN_BEDROCK} and {ZED_BEDROCK_REGION_VAR}).")
+                            format!("Credentials are set via environment variables ({}/{} and {}).", ZED_BEDROCK_ACCESS_KEY_ID_VAR.name, ZED_AWS_BEARER_TOKEN_BEDROCK.name, ZED_BEDROCK_REGION_VAR.name)
                         } else {
                             match bedrock_method {
                                 Some(BedrockAuthMethod::Automatic) => "You are using automatic credentials".into(),
@@ -1261,7 +1271,7 @@ impl Render for ConfigurationView {
                         .icon_position(IconPosition::Start)
                         .disabled(env_var_set || bedrock_method.is_some())
                         .when(env_var_set, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your credentials, unset the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}/{ZED_AWS_BEARER_TOKEN_BEDROCK} and {ZED_BEDROCK_REGION_VAR} environment variables.")))
+                            this.tooltip(Tooltip::text(format!("To reset your credentials, unset the {}/{} and {} environment variables.", ZED_BEDROCK_ACCESS_KEY_ID_VAR.name, ZED_AWS_BEARER_TOKEN_BEDROCK.name, ZED_BEDROCK_REGION_VAR.name)))
                         })
                         .when(bedrock_method.is_some(), |this| {
                             this.tooltip(Tooltip::text("You cannot reset credentials as they're being derived, check Zed settings to understand how"))
@@ -1296,7 +1306,7 @@ impl Render for ConfigurationView {
             .child(self.render_static_credentials_ui())
             .child(
                 Label::new(
-                    format!("You can also assign the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR} AND {ZED_BEDROCK_REGION_VAR} environment variables (or {ZED_AWS_BEARER_TOKEN_BEDROCK} for bearer token authentication) and restart Zed."),
+                    format!("You can also assign the {}, {} AND {} environment variables (or {} for bearer token authentication) and restart Zed.", ZED_BEDROCK_ACCESS_KEY_ID_VAR.name, ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name, ZED_BEDROCK_REGION_VAR.name, ZED_AWS_BEARER_TOKEN_BEDROCK.name),
                 )
                     .size(LabelSize::Small)
                     .color(Color::Muted)
@@ -1304,7 +1314,7 @@ impl Render for ConfigurationView {
             )
             .child(
                 Label::new(
-                    format!("Optionally, if your environment uses AWS CLI profiles, you can set {ZED_AWS_PROFILE_VAR}; if it requires a custom endpoint, you can set {ZED_AWS_ENDPOINT_VAR}; and if it requires a Session Token, you can set {ZED_BEDROCK_SESSION_TOKEN_VAR}."),
+                    format!("Optionally, if your environment uses AWS CLI profiles, you can set {}; if it requires a custom endpoint, you can set {}; and if it requires a Session Token, you can set {}.", ZED_AWS_PROFILE_VAR.name, ZED_AWS_ENDPOINT_VAR.name, ZED_BEDROCK_SESSION_TOKEN_VAR.name),
                 )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
