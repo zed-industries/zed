@@ -29,10 +29,10 @@ jobs:
         node-version: '20'
         cache: pnpm
         cache-dependency-path: script/danger/pnpm-lock.yaml
-    - name: danger::install_deps
+    - name: danger::danger_job::install_deps
       run: pnpm install --dir script/danger
       shell: bash -euxo pipefail {0}
-    - name: danger::run
+    - name: danger::danger_job::run
       run: pnpm run --dir script/danger danger ci
       shell: bash -euxo pipefail {0}
       env:
