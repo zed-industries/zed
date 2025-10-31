@@ -26,7 +26,7 @@ pub fn run_perf(base: &Input, head: &Input) -> NamedJob {
     }
 
     fn create_results() -> Step<Run> {
-        named::bash("echo 'Perf is *much* better now' > target/results.md")
+        named::bash("mkdir -p target; echo 'Perf is *much* better now' > target/results.md")
     }
 
     named::job(
