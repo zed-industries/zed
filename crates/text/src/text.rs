@@ -2354,6 +2354,7 @@ impl BufferSnapshot {
             self.visible_text.len()
         } else {
             debug_assert!(anchor.buffer_id == Some(self.remote_id));
+            debug_assert!(self.version.observed(anchor.timestamp));
             let anchor_key = InsertionFragmentKey {
                 timestamp: anchor.timestamp,
                 split_offset: anchor.offset,
@@ -2377,10 +2378,7 @@ impl BufferSnapshot {
                 .item()
                 .filter(|insertion| insertion.timestamp == anchor.timestamp)
             else {
-                panic!(
-                    "invalid anchor {:?}. buffer id: {}, version: {:?}",
-                    anchor, self.remote_id, self.version
-                );
+                self.panic_bad_anchor(anchor);
             };
 
             let (start, _, item) = self
@@ -2399,13 +2397,29 @@ impl BufferSnapshot {
         }
     }
 
-    fn fragment_id_for_anchor(&self, anchor: &Anchor) -> &Locator {
-        self.try_fragment_id_for_anchor(anchor).unwrap_or_else(|| {
+    #[cold]
+    fn panic_bad_anchor(&self, anchor: &Anchor) -> ! {
+        if anchor.buffer_id.is_some_and(|id| id != self.remote_id) {
+            panic!(
+                "invalid anchor - buffer id does not match: anchor {anchor:?}; buffer id: {}, version: {:?}",
+                self.remote_id, self.version
+            );
+        } else if !self.version.observed(anchor.timestamp) {
+            panic!(
+                "invalid anchor - snapshot has not observed lamport: {:?}; version: {:?}",
+                anchor, self.version
+            );
+        } else {
             panic!(
                 "invalid anchor {:?}. buffer id: {}, version: {:?}",
-                anchor, self.remote_id, self.version,
-            )
-        })
+                anchor, self.remote_id, self.version
+            );
+        }
+    }
+
+    fn fragment_id_for_anchor(&self, anchor: &Anchor) -> &Locator {
+        self.try_fragment_id_for_anchor(anchor)
+            .unwrap_or_else(|| self.panic_bad_anchor(anchor))
     }
 
     fn try_fragment_id_for_anchor(&self, anchor: &Anchor) -> Option<&Locator> {
