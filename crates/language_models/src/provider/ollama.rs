@@ -915,9 +915,8 @@ impl Render for ConfigurationView {
                                             .into_any_element(),
                                     )
                                     .child(
-                                        Button::new("reload-models", "")
-                                            .icon(IconName::RotateCcw)
-                                            .icon_size(IconSize::XSmall)
+                                        IconButton::new("refresh-models", IconName::RotateCcw)
+                                            .tooltip(Tooltip::text("Refresh models"))
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.state.update(cx, |state, _| {
                                                     state.fetched_models.clear();
