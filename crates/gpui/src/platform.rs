@@ -1014,11 +1014,8 @@ impl PlatformInputHandler {
     }
 
     #[allow(dead_code)]
-    pub fn accepts_text_input(&mut self) -> bool {
-        self.cx
-            .update(|window, cx| self.handler.accepts_text_input(window, cx))
-            .ok()
-            .unwrap_or(true)
+    pub(crate) fn accepts_text_input(&mut self, window: &mut Window, cx: &mut App) -> bool {
+        self.handler.accepts_text_input(window, cx)
     }
 }
 

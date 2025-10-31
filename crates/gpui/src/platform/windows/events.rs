@@ -27,7 +27,6 @@ pub(crate) const WM_GPUI_FORCE_UPDATE_WINDOW: u32 = WM_USER + 5;
 pub(crate) const WM_GPUI_KEYBOARD_LAYOUT_CHANGED: u32 = WM_USER + 6;
 pub(crate) const WM_GPUI_GPU_DEVICE_LOST: u32 = WM_USER + 7;
 pub(crate) const WM_GPUI_KEYDOWN: u32 = WM_USER + 8;
-pub(crate) const WM_GPUI_ACCEPTS_TEXT_INPUT: u32 = WM_USER + 9;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 const AUTO_HIDE_TASKBAR_THICKNESS_PX: i32 = 1;
@@ -107,7 +106,6 @@ impl WindowsWindowInner {
             WM_GPUI_CURSOR_STYLE_CHANGED => self.handle_cursor_changed(lparam),
             WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
             WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
-            WM_GPUI_ACCEPTS_TEXT_INPUT => self.has_input_handler(),
             _ => None,
         };
         if let Some(n) = handled {
@@ -329,7 +327,7 @@ impl WindowsWindowInner {
 
     fn handle_syskeyup_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
-        let input = handle_key_event(wparam, lparam, &mut lock, |keystroke| {
+        let input = handle_key_event(wparam, lparam, &mut lock, |keystroke, _| {
             PlatformInput::KeyUp(KeyUpEvent { keystroke })
         })?;
         let mut func = lock.callbacks.input.take()?;
@@ -345,12 +343,18 @@ impl WindowsWindowInner {
     // https://superuser.com/questions/1455762/ctrl-shift-number-key-combination-has-stopped-working-for-a-few-numbers
     fn handle_keydown_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
-        let Some(input) = handle_key_event(wparam, lparam, &mut lock, |keystroke| {
-            PlatformInput::KeyDown(KeyDownEvent {
-                keystroke,
-                is_held: lparam.0 & (0x1 << 30) > 0,
-            })
-        }) else {
+        let Some(input) = handle_key_event(
+            wparam,
+            lparam,
+            &mut lock,
+            |keystroke, are_modifiers_excessive| {
+                PlatformInput::KeyDown(KeyDownEvent {
+                    keystroke,
+                    is_held: lparam.0 & (0x1 << 30) > 0,
+                    are_modifiers_excessive,
+                })
+            },
+        ) else {
             return Some(1);
         };
         drop(lock);
@@ -368,7 +372,7 @@ impl WindowsWindowInner {
 
     fn handle_keyup_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
-        let Some(input) = handle_key_event(wparam, lparam, &mut lock, |keystroke| {
+        let Some(input) = handle_key_event(wparam, lparam, &mut lock, |keystroke, _| {
             PlatformInput::KeyUp(KeyUpEvent { keystroke })
         }) else {
             return Some(1);
@@ -1133,15 +1137,6 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn has_input_handler(&self) -> Option<isize> {
-        let mut state = self.state.borrow_mut();
-        let has_enabled_handler = state
-            .input_handler
-            .as_mut()
-            .map_or(false, |handler| handler.accepts_text_input());
-        Some(if has_enabled_handler { 1 } else { 0 })
-    }
-
     #[inline]
     fn draw_window(&self, handle: HWND, force_render: bool) -> Option<isize> {
         let mut request_frame = self.state.borrow_mut().callbacks.request_frame.take()?;
@@ -1238,7 +1233,7 @@ fn handle_key_event<F>(
     f: F,
 ) -> Option<PlatformInput>
 where
-    F: FnOnce(Keystroke) -> PlatformInput,
+    F: FnOnce(Keystroke, bool) -> PlatformInput,
 {
     let virtual_key = VIRTUAL_KEY(wparam.loword());
     let modifiers = current_modifiers();
@@ -1274,7 +1269,7 @@ where
         }
         vkey => {
             let keystroke = parse_normal_key(vkey, lparam, modifiers)?;
-            Some(f(keystroke))
+            Some(f(keystroke.0, keystroke.1))
         }
     }
 }
@@ -1334,7 +1329,7 @@ fn parse_normal_key(
     vkey: VIRTUAL_KEY,
     lparam: LPARAM,
     mut modifiers: Modifiers,
-) -> Option<Keystroke> {
+) -> Option<(Keystroke, bool)> {
     let mut key_char = None;
     let key = parse_immutable(vkey).or_else(|| {
         let scan_code = lparam.hiword() & 0xFF;
@@ -1347,11 +1342,89 @@ fn parse_normal_key(
         );
         get_keystroke_key(vkey, scan_code as u32, &mut modifiers)
     })?;
-    Some(Keystroke {
-        modifiers,
-        key,
-        key_char,
-    })
+
+    let are_modifiers_excessive = compute_are_modifiers_excessive(vkey, lparam.hiword() & 0xFF);
+
+    Some((
+        Keystroke {
+            modifiers,
+            key,
+            key_char,
+        },
+        are_modifiers_excessive,
+    ))
+}
+
+fn compute_are_modifiers_excessive(vkey: VIRTUAL_KEY, scan_code: u16) -> bool {
+    let mut keyboard_state = [0u8; 256];
+    unsafe {
+        if GetKeyboardState(&mut keyboard_state).is_err() {
+            return true;
+        }
+    }
+
+    let mut buffer_c = [0u16; 8];
+    let result_c = unsafe {
+        ToUnicode(
+            vkey.0 as u32,
+            scan_code as u32,
+            Some(&keyboard_state),
+            &mut buffer_c,
+            0x4,
+        )
+    };
+
+    if result_c < 0 {
+        return true;
+    }
+
+    let c = String::from_utf16_lossy(&buffer_c[..result_c as usize]);
+
+    let ctrl_down = (keyboard_state[VK_CONTROL.0 as usize] & 0x80) != 0;
+    let alt_down = (keyboard_state[VK_MENU.0 as usize] & 0x80) != 0;
+    let win_down = (keyboard_state[VK_LWIN.0 as usize] & 0x80) != 0
+        || (keyboard_state[VK_RWIN.0 as usize] & 0x80) != 0;
+
+    let has_modifiers = ctrl_down || alt_down || win_down;
+
+    if !has_modifiers {
+        return true;
+    }
+
+    if c.chars().next().map_or(true, |ch| ch.is_control()) {
+        return true;
+    }
+
+    let mut state_no_modifiers = keyboard_state;
+    state_no_modifiers[VK_CONTROL.0 as usize] = 0;
+    state_no_modifiers[VK_LCONTROL.0 as usize] = 0;
+    state_no_modifiers[VK_RCONTROL.0 as usize] = 0;
+    state_no_modifiers[VK_MENU.0 as usize] = 0;
+    state_no_modifiers[VK_LMENU.0 as usize] = 0;
+    state_no_modifiers[VK_RMENU.0 as usize] = 0;
+    state_no_modifiers[VK_LWIN.0 as usize] = 0;
+    state_no_modifiers[VK_RWIN.0 as usize] = 0;
+
+    let mut buffer_c_no_modifiers = [0u16; 8];
+    let result_c_no_modifiers = unsafe {
+        ToUnicode(
+            vkey.0 as u32,
+            scan_code as u32,
+            Some(&state_no_modifiers),
+            &mut buffer_c_no_modifiers,
+            0x4,
+        )
+    };
+
+    if result_c_no_modifiers <= 0 {
+        return true;
+    }
+
+    let c_no_modifiers =
+        String::from_utf16_lossy(&buffer_c_no_modifiers[..result_c_no_modifiers as usize]);
+
+    // If characters differ, modifiers are NOT excessive (they're essential for the character)
+    c == c_no_modifiers
 }
 
 fn parse_ime_composition_string(ctx: HIMC, comp_type: IME_COMPOSITION_STRING) -> Option<String> {
