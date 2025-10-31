@@ -45,7 +45,28 @@ pub(crate) fn release() -> Workflow {
         .add_job(auto_release_preview.name, auto_release_preview.job)
 }
 
+struct ReleaseBundleJobs {
+    linux_arm64: NamedJob,
+    linux_x86_64: NamedJob,
+    mac_arm64: NamedJob,
+    mac_x86_64: NamedJob,
+    windows_arm64: NamedJob,
+    windows_x86_64: NamedJob,
+}
+
 fn auto_release_preview(deps: &[&NamedJob; 1]) -> NamedJob {
+    fn create_sentry_release() -> Step<Use> {
+        named::uses(
+            "getsentry",
+            "action-release",
+            "526942b68292201ac6bbb99b9a0747d4abee354c", // v3
+        )
+        .add_env(("SENTRY_ORG", "zed-dev"))
+        .add_env(("SENTRY_PROJECT", "zed"))
+        .add_env(("SENTRY_AUTH_TOKEN", "${{ secrets.SENTRY_AUTH_TOKEN }}"))
+        .add_with(("environment", "production"))
+    }
+
     named::job(
         dependant_job(deps)
             .runs_on(runners::LINUX_SMALL)
@@ -64,27 +85,6 @@ fn auto_release_preview(deps: &[&NamedJob; 1]) -> NamedJob {
             )
             .add_step(create_sentry_release()),
     )
-}
-
-fn create_sentry_release() -> Step<Use> {
-    named::uses(
-        "getsentry",
-        "action-release",
-        "526942b68292201ac6bbb99b9a0747d4abee354c", // v3
-    )
-    .add_env(("SENTRY_ORG", "zed-dev"))
-    .add_env(("SENTRY_PROJECT", "zed"))
-    .add_env(("SENTRY_AUTH_TOKEN", "${{ secrets.SENTRY_AUTH_TOKEN }}"))
-    .add_with(("environment", "production"))
-}
-
-struct ReleaseBundleJobs {
-    linux_arm64: NamedJob,
-    linux_x86_64: NamedJob,
-    mac_arm64: NamedJob,
-    mac_x86_64: NamedJob,
-    windows_arm64: NamedJob,
-    windows_x86_64: NamedJob,
 }
 
 fn upload_release_assets(deps: &[&NamedJob], bundle_jobs: &ReleaseBundleJobs) -> NamedJob {
