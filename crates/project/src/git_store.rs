@@ -3717,20 +3717,15 @@ impl Repository {
         Some(self.git_store.upgrade()?.read(cx).buffer_store.clone())
     }
 
-    pub fn stage_entries(
+    fn save_buffers<'a>(
         &self,
-        entries: Vec<RepoPath>,
+        entries: impl IntoIterator<Item = &'a RepoPath>,
         cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<()>> {
-        if entries.is_empty() {
-            return Task::ready(Ok(()));
-        }
-        let id = self.id;
-
+    ) -> Vec<Task<anyhow::Result<()>>> {
         let mut save_futures = Vec::new();
         if let Some(buffer_store) = self.buffer_store(cx) {
             buffer_store.update(cx, |buffer_store, cx| {
-                for path in &entries {
+                for path in entries {
                     let Some(project_path) = self.repo_path_to_project_path(path, cx) else {
                         continue;
                     };
@@ -3746,37 +3741,64 @@ impl Repository {
                 }
             })
         }
+        save_futures
+    }
+
+    pub fn stage_entries(
+        &self,
+        entries: Vec<RepoPath>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        if entries.is_empty() {
+            return Task::ready(Ok(()));
+        }
+        let id = self.id;
+        let save_tasks = self.save_buffers(&entries, cx);
+        let paths = entries
+            .iter()
+            .map(|p| p.as_unix_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let status = format!("git add {paths}");
+        let job_key = match entries.len() {
+            1 => Some(GitJobKey::WriteIndex(entries[0].clone())),
+            _ => None,
+        };
 
         cx.spawn(async move |this, cx| {
-            for save_future in save_futures {
-                save_future.await?;
+            for save_task in save_tasks {
+                save_task.await?;
             }
 
             this.update(cx, |this, _| {
-                this.send_job(None, move |git_repo, _cx| async move {
-                    match git_repo {
-                        RepositoryState::Local {
-                            backend,
-                            environment,
-                            ..
-                        } => backend.stage_paths(entries, environment.clone()).await,
-                        RepositoryState::Remote { project_id, client } => {
-                            client
-                                .request(proto::Stage {
-                                    project_id: project_id.0,
-                                    repository_id: id.to_proto(),
-                                    paths: entries
-                                        .into_iter()
-                                        .map(|repo_path| repo_path.to_proto())
-                                        .collect(),
-                                })
-                                .await
-                                .context("sending stage request")?;
+                this.send_keyed_job(
+                    job_key,
+                    Some(status.into()),
+                    move |git_repo, _cx| async move {
+                        match git_repo {
+                            RepositoryState::Local {
+                                backend,
+                                environment,
+                                ..
+                            } => backend.stage_paths(entries, environment.clone()).await,
+                            RepositoryState::Remote { project_id, client } => {
+                                client
+                                    .request(proto::Stage {
+                                        project_id: project_id.0,
+                                        repository_id: id.to_proto(),
+                                        paths: entries
+                                            .into_iter()
+                                            .map(|repo_path| repo_path.to_proto())
+                                            .collect(),
+                                    })
+                                    .await
+                                    .context("sending stage request")?;
 
-                            Ok(())
+                                Ok(())
+                            }
                         }
-                    }
-                })
+                    },
+                )
             })?
             .await??;
 
@@ -3793,57 +3815,52 @@ impl Repository {
             return Task::ready(Ok(()));
         }
         let id = self.id;
-
-        let mut save_futures = Vec::new();
-        if let Some(buffer_store) = self.buffer_store(cx) {
-            buffer_store.update(cx, |buffer_store, cx| {
-                for path in &entries {
-                    let Some(project_path) = self.repo_path_to_project_path(path, cx) else {
-                        continue;
-                    };
-                    if let Some(buffer) = buffer_store.get_by_path(&project_path)
-                        && buffer
-                            .read(cx)
-                            .file()
-                            .is_some_and(|file| file.disk_state().exists())
-                        && buffer.read(cx).has_unsaved_edits()
-                    {
-                        save_futures.push(buffer_store.save_buffer(buffer, cx));
-                    }
-                }
-            })
-        }
+        let save_tasks = self.save_buffers(&entries, cx);
+        let paths = entries
+            .iter()
+            .map(|p| p.as_unix_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let status = format!("git reset {paths}");
+        let job_key = match entries.len() {
+            1 => Some(GitJobKey::WriteIndex(entries[0].clone())),
+            _ => None,
+        };
 
         cx.spawn(async move |this, cx| {
-            for save_future in save_futures {
-                save_future.await?;
+            for save_task in save_tasks {
+                save_task.await?;
             }
 
             this.update(cx, |this, _| {
-                this.send_job(None, move |git_repo, _cx| async move {
-                    match git_repo {
-                        RepositoryState::Local {
-                            backend,
-                            environment,
-                            ..
-                        } => backend.unstage_paths(entries, environment).await,
-                        RepositoryState::Remote { project_id, client } => {
-                            client
-                                .request(proto::Unstage {
-                                    project_id: project_id.0,
-                                    repository_id: id.to_proto(),
-                                    paths: entries
-                                        .into_iter()
-                                        .map(|repo_path| repo_path.to_proto())
-                                        .collect(),
-                                })
-                                .await
-                                .context("sending unstage request")?;
+                this.send_keyed_job(
+                    job_key,
+                    Some(status.into()),
+                    move |git_repo, _cx| async move {
+                        match git_repo {
+                            RepositoryState::Local {
+                                backend,
+                                environment,
+                                ..
+                            } => backend.unstage_paths(entries, environment).await,
+                            RepositoryState::Remote { project_id, client } => {
+                                client
+                                    .request(proto::Unstage {
+                                        project_id: project_id.0,
+                                        repository_id: id.to_proto(),
+                                        paths: entries
+                                            .into_iter()
+                                            .map(|repo_path| repo_path.to_proto())
+                                            .collect(),
+                                    })
+                                    .await
+                                    .context("sending unstage request")?;
 
-                            Ok(())
+                                Ok(())
+                            }
                         }
-                    }
-                })
+                    },
+                )
             })?
             .await??;
 
