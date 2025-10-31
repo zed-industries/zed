@@ -278,30 +278,36 @@ function sign_binary() {
         /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${binary_path}" -v
     fi
 }
+
+function upload_debug_symbols() {
+    if [[ -n "${SENTRY_AUTH_TOKEN:-}" ]]; then
+        echo "Uploading zed debug symbols to sentry..."
+        exe_path="target/${target_triple}/release/Zed"
+        if ! dsymutil --flat "target/${target_triple}/${target_dir}/zed" 2> target/dsymutil.log; then
+            echo "dsymutil failed"
+            cat target/dsymutil.log
+            exit 1
+        fi
+        if ! dsymutil --flat "target/${target_triple}/${target_dir}/remote_server" 2> target/dsymutil.log; then
+            echo "dsymutil failed"
+            cat target/dsymutil.log
+            exit 1
+        fi
+        # note: this uploads the unstripped binary which is needed because it contains
+        # .eh_frame data for stack unwinding. see https://github.com/getsentry/symbolic/issues/783
+        sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
+            "target/${target_triple}/${target_dir}/zed.dwarf" \
+            "target/${target_triple}/${target_dir}/remote_server.dwarf" \
+    else
+        echo "missing SENTRY_AUTH_TOKEN. skipping sentry upload."
+    fi
+}
+
+upload_debug_symbols
+
 cp target/${target_triple}/${target_dir}/zed "${app_path}/Contents/MacOS/zed"
 cp target/${target_triple}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
 sign_app_binaries
 
 sign_binary "target/$target_triple/release/remote_server"
 gzip -f --stdout --best target/$target_triple/release/remote_server > target/zed-remote-server-macos-$remote_server_arch.gz
-
-function upload_debug_info() {
-    if [[ -n "${SENTRY_AUTH_TOKEN:-}" ]]; then
-        echo "Uploading zed debug symbols to sentry..."
-        # note: this uploads the unstripped binary which is needed because it contains
-        # .eh_frame data for stack unwinding. see https://github.com/getsentry/symbolic/issues/783
-        sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
-            "target/${target_triple}/${target_dir}/zed" \
-            "target/${target_triple}/${target_dir}/remote_server" \
-            "target/${target_triple}/${target_dir}/zed.dwarf"
-    else
-        echo "missing SENTRY_AUTH_TOKEN. skipping sentry upload."
-    fi
-}
-
-if command -v sentry-cli >/dev/null 2>&1; then
-    upload_debug_info
-else
-    echo "sentry-cli not found. skipping sentry upload."
-    echo "install with: 'curl -sL https://sentry.io/get-cli | bash'"
-fi
