@@ -43,7 +43,8 @@ actions!(
     zed,
     [
         /// Installs an extension from a local directory for development.
-        InstallDevExtension
+        InstallDevExtension,
+        InstallExtensionFromFile
     ]
 );
 
@@ -110,6 +111,70 @@ pub fn init(cx: &mut App) {
                     }
                 },
             )
+            .register_action(move |workspace, _: &InstallExtensionFromFile, window, cx| {
+                let store = ExtensionStore::global(cx);
+                let prompt = workspace.prompt_for_open_path(
+                    gpui::PathPromptOptions {
+                        files: false,
+                        directories: true,
+                        multiple: false,
+                        prompt: None,
+                    },
+                    DirectoryLister::Local(
+                        workspace.project().clone(),
+                        workspace.app_state().fs.clone(),
+                    ),
+                    window,
+                    cx,
+                );
+
+                let workspace_handle = cx.entity().downgrade();
+                window
+                    .spawn(cx, async move |cx| {
+                        let extension_path =
+                            match Flatten::flatten(prompt.await.map_err(|e| e.into())) {
+                                Ok(Some(mut paths)) => paths.pop()?,
+                                Ok(None) => return None,
+                                Err(err) => {
+                                    workspace_handle
+                                        .update(cx, |workspace, cx| {
+                                            workspace.show_portal_error(err.to_string(), cx);
+                                        })
+                                        .ok();
+                                    return None;
+                                }
+                            };
+
+                        let install_task = store
+                            .update(cx, |store, cx| {
+                                store.install_extension_from_file(extension_path, cx)
+                            })
+                            .ok()?;
+
+                        match install_task.await {
+                            Ok(_) => {}
+                            Err(err) => {
+                                log::error!("Failed to install extension from file: {:?}", err);
+                                workspace_handle
+                                    .update(cx, |workspace, cx| {
+                                        workspace.show_error(
+                                            // NOTE: using `anyhow::context` here ends up not printing
+                                            // the error
+                                            &format!(
+                                                "Failed to install extension from file: {}",
+                                                err
+                                            ),
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            }
+                        }
+
+                        Some(())
+                    })
+                    .detach();
+            })
             .register_action(move |workspace, _: &InstallDevExtension, window, cx| {
                 let store = ExtensionStore::global(cx);
                 let prompt = workspace.prompt_for_open_path(
@@ -1527,12 +1592,40 @@ impl Render for ExtensionsPage {
                             .justify_between()
                             .child(Headline::new("Extensions").size(HeadlineSize::XLarge))
                             .child(
-                                Button::new("install-dev-extension", "Install Dev Extension")
-                                    .style(ButtonStyle::Filled)
-                                    .size(ButtonSize::Large)
-                                    .on_click(|_event, window, cx| {
-                                        window.dispatch_action(Box::new(InstallDevExtension), cx)
-                                    }),
+                                h_flex()
+                                    .child(
+                                        Button::new(
+                                            "install-extension-from-file",
+                                            "Install Extension From File",
+                                        )
+                                        .style(ButtonStyle::Filled)
+                                        .size(ButtonSize::Large)
+                                        .on_click(
+                                            |_event, window, cx| {
+                                                window.dispatch_action(
+                                                    Box::new(InstallExtensionFromFile),
+                                                    cx,
+                                                );
+                                            },
+                                        ),
+                                    )
+                                    .gap_2()
+                                    .child(
+                                        Button::new(
+                                            "install-dev-extension",
+                                            "Install Dev Extension",
+                                        )
+                                        .style(ButtonStyle::Filled)
+                                        .size(ButtonSize::Large)
+                                        .on_click(
+                                            |_event, window, cx| {
+                                                window.dispatch_action(
+                                                    Box::new(InstallDevExtension),
+                                                    cx,
+                                                )
+                                            },
+                                        ),
+                                    ),
                             ),
                     )
                     .child(

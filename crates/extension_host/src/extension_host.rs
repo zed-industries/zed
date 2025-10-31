@@ -791,6 +791,99 @@ impl ExtensionStore {
         })
     }
 
+    pub fn install_extension_from_file(
+        &mut self,
+        extension_source_path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let extensions_dir = self.extensions_dir();
+        let fs = self.fs.clone();
+
+        cx.spawn(async move |this, cx| {
+            let gzip_path = extension_source_path.join("archive.tar.gz");
+            let gzip_buffer = fs.load_bytes(&gzip_path).await?;
+
+            let decompressed_bytes = GzipDecoder::new(BufReader::new(gzip_buffer.as_slice()));
+            let archive = Archive::new(decompressed_bytes);
+            let mut entries = archive.entries()?;
+            let mut buffer = String::new();
+            while let Some(result) = entries.next().await {
+                let mut entry = result.unwrap();
+                let path = entry.path().unwrap();
+                if path.to_str().unwrap() == "./extension.toml" {
+                    entry.read_to_string(&mut buffer).await?;
+                    break;
+                }
+            }
+
+            let manifest: ExtensionManifest = toml::from_str(&buffer)?;
+            let extension_id = manifest.id.clone();
+
+            if let Some(uninstall_task) = this
+                .update(cx, |this, cx| {
+                    this.extension_index
+                        .extensions
+                        .get(extension_id.as_ref())
+                        .is_some_and(|index_entry| !index_entry.dev)
+                        .then(|| this.uninstall_extension(extension_id.clone(), cx))
+                })
+                .ok()
+                .flatten()
+            {
+                uninstall_task.await.log_err();
+            }
+
+            if !this.update(cx, |this, cx| {
+                match this.outstanding_operations.entry(extension_id.clone()) {
+                    btree_map::Entry::Occupied(_) => return false,
+                    btree_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Install),
+                };
+                cx.notify();
+                true
+            })? {
+                return Ok(());
+            }
+
+            let _finish = cx.on_drop(&this, {
+                let extension_id = extension_id.clone();
+                move |this, cx| {
+                    this.outstanding_operations.remove(extension_id.as_ref());
+                    cx.notify();
+                }
+            });
+
+            let extension_dir = extensions_dir.join(extension_id.as_ref());
+
+            fs.remove_dir(
+                &extension_dir,
+                RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await?;
+
+            let decompressed_bytes = GzipDecoder::new(BufReader::new(gzip_buffer.as_slice()));
+            let archive = Archive::new(decompressed_bytes);
+            archive.unpack(extension_dir).await?;
+            this.update(cx, |this, cx| this.reload(Some(extension_id.clone()), cx))?
+                .await;
+
+            this.update(cx, |this, cx| {
+                cx.emit(Event::ExtensionInstalled(extension_id.clone()));
+                if let Some(events) = ExtensionEvents::try_global(cx)
+                    && let Some(manifest) = this.extension_manifest_for_id(&extension_id)
+                {
+                    events.update(cx, |this, cx| {
+                        this.emit(extension::Event::ExtensionInstalled(manifest.clone()), cx)
+                    });
+                }
+            })?;
+
+            anyhow::Ok(())
+        })
+    }
+
     pub fn install_latest_extension(&mut self, extension_id: Arc<str>, cx: &mut Context<Self>) {
         log::info!("installing extension {extension_id} latest version");
 
