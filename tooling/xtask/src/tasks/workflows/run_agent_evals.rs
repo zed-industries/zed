@@ -109,7 +109,6 @@ fn unit_evals() -> NamedJob {
             .map(steps::install_linux_dependencies)
             .add_step(steps::cargo_install_nextest(Platform::Linux))
             .add_step(steps::clear_target_dir_if_large(Platform::Linux))
-            .add_step(steps::script("exit 1")) // todo! remove
             .add_step(run_evals())
             .add_step(send_failure_to_slack())
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),

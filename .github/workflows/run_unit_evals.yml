@@ -42,9 +42,6 @@ jobs:
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 100
       shell: bash -euxo pipefail {0}
-    - name: exit 1
-      run: exit 1
-      shell: bash -euxo pipefail {0}
     - name: run_agent_evals::unit_evals::run_evals
       run: ./script/run-unit-evals
       shell: bash -euxo pipefail {0}
