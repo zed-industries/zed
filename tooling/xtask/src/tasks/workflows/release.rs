@@ -166,7 +166,7 @@ fn upload_release_assets(deps: &[&NamedJob], bundle_jobs: &ReleaseBundleJobs) ->
 fn create_draft_release() -> NamedJob {
     fn draft_release_notes() -> Step<Run> {
         named::bash(
-            "node --redirect-warnings=/dev/null ./script/draft-release-notes $RELEASE_VERSION $RELEASE_CHANNEL > target/release-notes.md",
+            r#"node --redirect-warnings=/dev/null ./script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md"#,
         )
     }
 
