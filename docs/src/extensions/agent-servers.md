@@ -108,11 +108,13 @@ GitHub Releases are a reliable way to distribute agent server binaries:
 It's good for security to include SHA-256 hashes of your archives in `extension.toml`. Here's how to generate it:
 
 ### macOS and Linux
+
 ```bash
 shasum -a 256 agent-darwin-arm64.tar.gz
 ```
 
 ### Windows
+
 ```bash
 certutil -hashfile agent-windows-x64.zip SHA256
 ```
