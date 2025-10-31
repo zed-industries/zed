@@ -110,6 +110,7 @@ Tree-sitter is a powerful tool that Zed uses to understand the structure of your
 | The current indent level, and one line before and after    | `a I`            |
 | The current indent level, and one line before              | `a i`            |
 | The current indent level                                   | `i i`            |
+| In a digit sequence                                        | `i d`            |
 
 Note that the definitions for the targets of the `[m` family of motions are the same as the
 boundaries defined by `af`. The targets of the `[[` are the same as those defined by `ac`, though

@@ -44,6 +44,7 @@ pub enum Object {
     Class,
     Comment,
     EntireFile,
+    Digit,
 }
 
 /// Selects a word text object.
@@ -325,7 +326,9 @@ actions!(
         /// Selects a comment block.
         Comment,
         /// Selects the entire file.
-        EntireFile
+        EntireFile,
+        /// Selects a digit sequence.
+        Digit
     ]
 );
 
@@ -417,6 +420,9 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             vim.object(Object::IndentObj { include_below }, window, cx)
         },
     );
+    Vim::action(editor, cx, |vim, _: &Digit, window, cx| {
+        vim.object(Object::Digit, window, cx)
+    });
 }
 
 impl Vim {
@@ -457,7 +463,8 @@ impl Object {
             | Object::AnyQuotes
             | Object::MiniQuotes
             | Object::VerticalBars
-            | Object::DoubleQuotes => false,
+            | Object::DoubleQuotes
+            | Object::Digit => false,
             Object::Sentence
             | Object::Paragraph
             | Object::AnyBrackets
@@ -483,7 +490,8 @@ impl Object {
             | Object::Sentence
             | Object::Paragraph
             | Object::Argument
-            | Object::IndentObj { .. } => false,
+            | Object::IndentObj { .. }
+            | Object::Digit => false,
             Object::Quotes
             | Object::BackQuotes
             | Object::AnyQuotes
@@ -513,7 +521,8 @@ impl Object {
             | Object::AnyQuotes
             | Object::MiniQuotes
             | Object::BackQuotes
-            | Object::DoubleQuotes => {
+            | Object::DoubleQuotes
+            | Object::Digit => {
                 if current_mode == Mode::VisualBlock {
                     Mode::VisualBlock
                 } else {
@@ -748,6 +757,7 @@ impl Object {
             Object::Argument => argument(map, relative_to, around),
             Object::IndentObj { include_below } => indent(map, relative_to, around, include_below),
             Object::EntireFile => entire_file(map),
+            Object::Digit => in_digit(map, relative_to),
         }
     }
 
@@ -791,6 +801,31 @@ fn in_word(
 
     let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
         classifier.kind(left) != classifier.kind(right)
+    });
+
+    Some(start..end)
+}
+
+fn in_digit(map: &DisplaySnapshot, relative_to: DisplayPoint) -> Option<Range<DisplayPoint>> {
+    let offset = relative_to.to_offset(map, Bias::Left);
+
+    // Check if we're on a digit
+    let current_char = map.buffer_chars_at(offset).next().map(|(c, _)| c)?;
+    if !current_char.is_ascii_digit() {
+        return None;
+    }
+
+    // Find the start of the digit sequence
+    let start = movement::find_preceding_boundary_display_point(
+        map,
+        right(map, relative_to, 1),
+        movement::FindRange::SingleLine,
+        |left, right| !left.is_ascii_digit() || !right.is_ascii_digit(),
+    );
+
+    // Find the end of the digit sequence
+    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
+        !left.is_ascii_digit() || !right.is_ascii_digit()
     });
 
     Some(start..end)
@@ -3308,5 +3343,75 @@ mod test {
             .await
             .assert_eq("    ˇf = (x: unknown) => {");
         cx.shared_clipboard().await.assert_eq("const ");
+    }
+
+    #[gpui::test]
+    async fn test_digit_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Test delete digit (d i d)
+        cx.set_state("let x = ˇ123 + 456;", Mode::Normal);
+        cx.simulate_keystrokes("d i d");
+        cx.assert_state("let x = ˇ + 456;", Mode::Normal);
+
+        // Test delete digit in middle of number
+        cx.set_state("let x = 1ˇ23 + 456;", Mode::Normal);
+        cx.simulate_keystrokes("d i d");
+        cx.assert_state("let x = ˇ + 456;", Mode::Normal);
+
+        // Test delete digit at end of number
+        cx.set_state("let x = 12ˇ3 + 456;", Mode::Normal);
+        cx.simulate_keystrokes("d i d");
+        cx.assert_state("let x = ˇ + 456;", Mode::Normal);
+
+        // Test change digit (c i d)
+        cx.set_state("let x = ˇ42;", Mode::Normal);
+        cx.simulate_keystrokes("c i d");
+        cx.assert_state("let x = ˇ;", Mode::Insert);
+
+        // Test yank digit (y i d)
+        cx.set_state("let x = ˇ999;", Mode::Normal);
+        cx.simulate_keystrokes("y i d");
+        cx.assert_state("let x = ˇ999;", Mode::Normal);
+
+        // Test visual select digit (v i d)
+        cx.set_state("value = ˇ12345;", Mode::Normal);
+        cx.simulate_keystrokes("v i d");
+        cx.assert_state("value = «12345ˇ»;", Mode::Visual);
+
+        // Test digit not selected when cursor is not on digit
+        cx.set_state("let x = ˇ + 123;", Mode::Normal);
+        cx.simulate_keystrokes("d i d");
+        cx.assert_state("let x = ˇ + 123;", Mode::Normal);
+
+        // Test with multidigit numbers
+        cx.set_state("value = ˇ9876543210;", Mode::Normal);
+        cx.simulate_keystrokes("d i d");
+        cx.assert_state("value = ˇ;", Mode::Normal);
+
+        // Test digit selection works on consecutive digits even within words
+        cx.set_state("abc1ˇ23def", Mode::Normal);
+        cx.simulate_keystrokes("d i d");
+        cx.assert_state("abcˇdef", Mode::Normal);
+
+        // Test with number at start of line
+        cx.set_state("ˇ456 + 789", Mode::Normal);
+        cx.simulate_keystrokes("d i d");
+        cx.assert_state("ˇ + 789", Mode::Normal);
+
+        // Test with number at end of line
+        cx.set_state("result = ˇ888", Mode::Normal);
+        cx.simulate_keystrokes("d i d");
+        cx.assert_state("result =ˇ ", Mode::Normal);
+
+        // Test with zero
+        cx.set_state("count = ˇ0", Mode::Normal);
+        cx.simulate_keystrokes("d i d");
+        cx.assert_state("count =ˇ ", Mode::Normal);
+
+        // Test with single digit
+        cx.set_state("x = ˇ7", Mode::Normal);
+        cx.simulate_keystrokes("d i d");
+        cx.assert_state("x =ˇ ", Mode::Normal);
     }
 }
