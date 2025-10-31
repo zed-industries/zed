@@ -225,8 +225,8 @@ fn check_style() -> NamedJob {
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_MEDIUM)
-            .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::checkout_repo())
+            .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::setup_pnpm())
             .add_step(steps::script("./script/prettier"))
             .add_step(steps::script("./script/check-todos"))
