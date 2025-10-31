@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+      - "!v00.00.00-test" # todo! remove
 
 concurrency:
   # Allow only one workflow per any non-`main` branch.
