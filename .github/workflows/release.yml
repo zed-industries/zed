@@ -162,12 +162,6 @@ jobs:
     - name: mkdir -p target/
       run: mkdir -p target/
       shell: bash -euxo pipefail {0}
-    - name: script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md || true
-      run: script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md || true
-      shell: bash -euxo pipefail {0}
-    - name: script/create-draft-release target/release-notes.md
-      run: script/create-draft-release target/release-notes.md
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   bundle_linux_arm64:
     needs:
