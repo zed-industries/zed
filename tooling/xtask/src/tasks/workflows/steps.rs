@@ -49,7 +49,10 @@ pub fn cargo_fmt() -> Step<Run> {
 }
 
 pub fn cargo_install_nextest(platform: Platform) -> Step<Run> {
-    named::run(platform, "cargo install cargo-nextest --locked")
+    named::run(
+        platform,
+        "cargo nextest || cargo install cargo-nextest --locked",
+    )
 }
 
 pub fn cargo_nextest(platform: Platform) -> Step<Run> {
