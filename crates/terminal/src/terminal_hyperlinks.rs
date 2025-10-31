@@ -314,7 +314,8 @@ fn regex_match_at<T>(term: &Term<T>, point: AlacPoint, regex: &mut RegexSearch) 
 mod tests {
     use super::*;
     use crate::{
-        DEFAULT_LINE_COLUMN_REGEX, DEFAULT_LINE_REGEX, DEFAULT_REGEX, PYTHON_FILE_LINE_REGEX,
+        DEFAULT_LINE_COLUMN_REGEX, DEFAULT_LINE_REGEX, DEFAULT_PYTHON_FILE_LINE_REGEX,
+        DEFAULT_REGEX,
     };
     use alacritty_terminal::{
         event::VoidListener,
@@ -1446,7 +1447,7 @@ mod tests {
             static TEST_REGEX_SEARCHES: RefCell<RegexSearches> =
                 RefCell::new({
                     RegexSearches::new(&[
-                        PYTHON_FILE_LINE_REGEX,
+                        DEFAULT_PYTHON_FILE_LINE_REGEX,
                         RUST_DIAGNOSTIC_REGEX,
                         CARGO_DIR_REGEX,
                         ISSUE_12338_REGEX,
