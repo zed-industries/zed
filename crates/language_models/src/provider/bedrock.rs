@@ -232,7 +232,7 @@ impl State {
                         region,
                         bearer_token: Some(bearer_token),
                     };
-                    (serde_json::to_string(&creds).unwrap(), true)
+                    (serde_json::to_string(&creds).context("failed to serialize bearer token credentials")?, true)
                 } else {
                     let (_, credentials) = credentials_provider
                         .read_credentials(AMAZON_AWS_URL, cx)
@@ -334,7 +334,6 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
 
         for model in bedrock::Model::iter() {
             if !matches!(model, bedrock::Model::Custom { .. }) {
-                // TODO: Sonnet 3.7 vs. 3.7 Thinking bug is here.
                 models.insert(model.id().to_string(), model);
             }
         }
