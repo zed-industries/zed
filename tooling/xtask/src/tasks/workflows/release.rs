@@ -1,8 +1,9 @@
-use gh_workflow::{Concurrency, Event, Expression, Push, Run, Step, Use, Workflow};
+use gh_workflow::{Event, Expression, Push, Run, Step, Use, Workflow};
 
 use crate::tasks::workflows::{
     run_bundling, run_tests, runners,
     steps::{self, NamedJob, dependant_job, named, release_job},
+    vars,
 };
 
 pub(crate) fn release() -> Workflow {
@@ -27,13 +28,9 @@ pub(crate) fn release() -> Workflow {
     let auto_release_preview = auto_release_preview(&[&upload_release_assets]);
 
     named::workflow()
-        // todo! make this on push to any release tag
+        // todo(ci-release) make this on push to any release tag
         .on(Event::default().push(Push::default().tags(vec!["v00.00.00-test".to_string()])))
-        .concurrency(
-            Concurrency::default()
-                .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}")
-                .cancel_in_progress(true),
-        )
+        .concurrency(vars::one_workflow_per_non_main_branch())
         .add_job(macos_tests.name, macos_tests.job)
         .add_job(linux_tests.name, linux_tests.job)
         .add_job(windows_tests.name, windows_tests.job)
@@ -58,7 +55,7 @@ fn auto_release_preview(deps: &[&NamedJob; 1]) -> NamedJob {
                 false
                 && startsWith(github.ref, 'refs/tags/v')
                 && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
-            "# // todo! enable
+            "# // todo(ci-release) enable
             )))
             .add_step(
                 steps::script(
