@@ -1047,6 +1047,7 @@ impl X11Client {
                 window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
                     keystroke,
                     is_held: false,
+                    are_modifiers_excessive: true,
                 }));
             }
             Event::KeyRelease(event) => {
