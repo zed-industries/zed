@@ -1,13 +1,16 @@
 use std::{
+    borrow::Cow,
+    env,
     fmt::{self, Display},
+    fs,
     io::Write,
     mem,
-    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
 };
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use clap::ValueEnum;
+use gpui::http_client::Url;
 use pulldown_cmark::CowStr;
 use serde::{Deserialize, Serialize};
 
@@ -18,23 +21,24 @@ const EXPECTED_EXCERPTS_HEADING: &str = "Expected Excerpts";
 const REPOSITORY_URL_FIELD: &str = "repository_url";
 const REVISION_FIELD: &str = "revision";
 
+#[derive(Debug)]
 pub struct NamedExample {
-    name: String,
-    example: Example,
+    pub name: String,
+    pub example: Example,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Example {
-    repository_url: String,
-    commit: String,
-    cursor_path: PathBuf,
-    cursor_position: String,
-    edit_history: Vec<String>,
-    expected_patch: String,
-    expected_excerpts: Vec<ExpectedExcerpt>,
+    pub repository_url: String,
+    pub revision: String,
+    pub cursor_path: PathBuf,
+    pub cursor_position: String,
+    pub edit_history: Vec<String>,
+    pub expected_patch: String,
+    pub expected_excerpts: Vec<ExpectedExcerpt>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ExpectedExcerpt {
     path: PathBuf,
     text: String,
@@ -53,16 +57,16 @@ impl NamedExample {
         let content = std::fs::read_to_string(path)?;
         let ext = path.extension();
 
-        match ext.map(|s| s.as_bytes()) {
-            Some(b"json") => Ok(Self {
+        match ext.and_then(|s| s.to_str()) {
+            Some("json") => Ok(Self {
                 name: path.file_name().unwrap_or_default().display().to_string(),
                 example: serde_json::from_str(&content)?,
             }),
-            Some(b"toml") => Ok(Self {
+            Some("toml") => Ok(Self {
                 name: path.file_name().unwrap_or_default().display().to_string(),
                 example: toml::from_str(&content)?,
             }),
-            Some(b"md") => Self::parse_md(&content),
+            Some("md") => Self::parse_md(&content),
             Some(_) => {
                 anyhow::bail!("Unrecognized example extension: {}", ext.unwrap().display());
             }
@@ -83,7 +87,7 @@ impl NamedExample {
             name: String::new(),
             example: Example {
                 repository_url: String::new(),
-                commit: String::new(),
+                revision: String::new(),
                 cursor_path: PathBuf::new(),
                 cursor_position: String::new(),
                 edit_history: Vec::new(),
@@ -106,12 +110,12 @@ impl NamedExample {
                         // in h1 section
                         && let Some((field, value)) = line.split_once('=')
                     {
-                        match field {
+                        match field.trim() {
                             REPOSITORY_URL_FIELD => {
-                                named.example.repository_url = value.to_string();
+                                named.example.repository_url = value.trim().to_string();
                             }
                             REVISION_FIELD => {
-                                named.example.commit = value.to_string();
+                                named.example.revision = value.trim().to_string();
                             }
                             _ => {
                                 eprintln!("Warning: Unrecognized field `{field}`");
@@ -188,6 +192,111 @@ impl NamedExample {
             ExampleFormat::Md => Ok(write!(out, "{}", self)?),
         }
     }
+
+    pub async fn setup_worktree(&self) -> Result<PathBuf> {
+        let worktrees_dir = env::current_dir()?.join("target").join("zeta-worktrees");
+        let repos_dir = env::current_dir()?.join("target").join("zeta-repos");
+        fs::create_dir_all(&repos_dir)?;
+        fs::create_dir_all(&worktrees_dir)?;
+
+        let (repo_owner, repo_name) = self.repo_name()?;
+
+        let repo_dir = repos_dir.join(repo_owner.as_ref()).join(repo_name.as_ref());
+        dbg!(&repo_dir);
+        if !repo_dir.is_dir() {
+            fs::create_dir_all(&repo_dir)?;
+            run_git(&repo_dir, &["init"]).await?;
+            run_git(
+                &repo_dir,
+                &["remote", "add", "origin", &self.example.repository_url],
+            )
+            .await?;
+        }
+
+        run_git(
+            &repo_dir,
+            &["fetch", "--depth", "1", "origin", &self.example.revision],
+        )
+        .await?;
+
+        let worktree_path = worktrees_dir.join(&self.name);
+
+        dbg!(&worktree_path);
+
+        if worktree_path.is_dir() {
+            run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
+            run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
+            run_git(&worktree_path, &["checkout", &self.example.revision]).await?;
+        } else {
+            let worktree_path_string = worktree_path.to_string_lossy();
+            run_git(
+                &repo_dir,
+                &[
+                    "worktree",
+                    "add",
+                    "-f",
+                    &worktree_path_string,
+                    &self.example.revision,
+                ],
+            )
+            .await?;
+        }
+
+        Ok(worktree_path)
+    }
+
+    fn repo_name(&self) -> Result<(Cow<str>, Cow<str>)> {
+        // git@github.com:owner/repo.git
+        if self.example.repository_url.contains('@') {
+            let (owner, repo) = self
+                .example
+                .repository_url
+                .split_once(':')
+                .context("expected : in git url")?
+                .1
+                .split_once('/')
+                .context("expected / in git url")?;
+            Ok((
+                Cow::Borrowed(owner),
+                Cow::Borrowed(repo.trim_end_matches(".git")),
+            ))
+        // http://github.com/owner/repo.git
+        } else {
+            let url = Url::parse(&self.example.repository_url)?;
+            let mut segments = url.path_segments().context("empty http url")?;
+            let owner = segments
+                .next()
+                .context("expected owner path segment")?
+                .to_string();
+            let repo = segments
+                .next()
+                .context("expected repo path segment")?
+                .trim_end_matches(".git")
+                .to_string();
+            assert!(segments.next().is_none());
+
+            Ok((owner.into(), repo.into()))
+        }
+    }
+}
+
+async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
+    let output = smol::process::Command::new("git")
+        .current_dir(repo_path)
+        .args(args)
+        .output()
+        .await?;
+
+    anyhow::ensure!(
+        output.status.success(),
+        "`git {}` within `{}` failed with status: {}\nstderr:\n{}\nstdout:\n{}",
+        args.join(" "),
+        repo_path.display(),
+        output.status,
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout),
+    );
+    Ok(String::from_utf8(output.stdout)?.trim().to_string())
 }
 
 impl Display for NamedExample {
@@ -198,7 +307,7 @@ impl Display for NamedExample {
             "{REPOSITORY_URL_FIELD} = {}\n",
             self.example.repository_url
         )?;
-        write!(f, "{REVISION_FIELD} = {}\n\n", self.example.commit)?;
+        write!(f, "{REVISION_FIELD} = {}\n\n", self.example.revision)?;
 
         write!(
             f,
