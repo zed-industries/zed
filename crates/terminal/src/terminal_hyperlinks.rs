@@ -918,11 +918,12 @@ mod tests {
                 }
 
                 // See https://en.wikipedia.org/wiki/File_URI_scheme
+                // https://github.com/zed-industries/zed/issues/39189
                 #[test]
                 #[should_panic(
                     expected = r#"Path = «C:\\test\\cool\\index.rs», at grid cells (0, 0)..=(9, 1)"#
                 )]
-                fn issue_absolute_file_iri() {
+                fn issue_39189() {
                     test_file_iri!("file:///C:/test/cool/index.rs");
                     test_file_iri!("file:///C:/test/cool/");
                 }
