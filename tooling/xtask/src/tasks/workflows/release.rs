@@ -171,7 +171,7 @@ fn create_draft_release() -> NamedJob {
     }
 
     fn create_draft_release() -> Step<Run> {
-        named::bash("script/create-draft-releae target/release-notes.md")
+        named::bash("script/create-draft-release target/release-notes.md")
             .add_env(("GITHUB_TOKEN", "${{ secrets.GITHUB_TOKEN }}"))
     }
 
