@@ -162,12 +162,14 @@ jobs:
     - name: mkdir -p target/
       run: mkdir -p target/
       shell: bash -euxo pipefail {0}
-    - name: script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md || true
-      run: script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md || true
+    - name: release::create_draft_release::generate_release_notes
+      run: node --redirect-warnings=/dev/null ./script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md
       shell: bash -euxo pipefail {0}
-    - name: script/create-draft-release target/release-notes.md
+    - name: release::create_draft_release::create_release
       run: script/create-draft-release target/release-notes.md
       shell: bash -euxo pipefail {0}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     timeout-minutes: 60
   bundle_linux_arm64:
     needs:
