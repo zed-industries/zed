@@ -164,6 +164,17 @@ fn upload_release_assets(deps: &[&NamedJob], bundle_jobs: &ReleaseBundleJobs) ->
 }
 
 fn create_draft_release() -> NamedJob {
+    fn draft_release_notes() -> Step<Run> {
+        named::bash(
+            "node --redirect-warnings=/dev/null ./script/draft-release-notes $RELEASE_CHANNEL $RELEASE_VERSION > target/release-notes.md",
+        )
+    }
+
+    fn create_draft_release() -> Step<Run> {
+        named::bash("script/create-draft-releae target/release-notes.md")
+            .add_env(("GITHUB_TOKEN", "${{ secrets.GITHUB_TOKEN }}"))
+    }
+
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_SMALL)
@@ -178,12 +189,14 @@ fn create_draft_release() -> NamedJob {
                     .add_with(("ref", "${{ github.ref }}")),
             )
             // todo!()
-            // .add_step(steps::script("script/determine-release-channel")) // export RELEASE_CHANNEL and RELEASE_VERSION
-        .add_step(steps::script("mkdir -p target/"))
-        .add_step(steps::script(r#"script/draft-release-notes "0.211.1" "preview" > target/release-notes.md || true"#))
-        .add_step(steps::script("script/create-draft-release target/release-notes.md")
-            .add_env(("GITHUB_TOKEN", "${{ secrets.GITHUB_TOKEN }}"))
-        )
+            // .add_step(steps::script("script/determine-release-channel"))
+            .add_step(steps::script("mkdir -p target/"))
+            .add_step(steps::script(indoc::indoc! {r#"
+                echo "RELEASE_CHANNEL=preview" >> $GITHUB_ENV
+                echo "RELEASE_VERSION=0.211.1 >> $GITHUB_ENV
+            "#}))
+            .add_step(draft_release_notes())
+            .add_step(create_draft_release()),
     )
 }
 

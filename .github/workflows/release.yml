@@ -159,11 +159,18 @@ jobs:
     - name: mkdir -p target/
       run: mkdir -p target/
       shell: bash -euxo pipefail {0}
-    - name: script/draft-release-notes "0.211.1" "preview" > target/release-notes.md || true
-      run: script/draft-release-notes "0.211.1" "preview" > target/release-notes.md || true
+    - name: |
+        echo "RELEASE_CHANNEL=preview" >> $GITHUB_ENV
+        echo "RELEASE_VERSION=0.211.1 >> $GITHUB_ENV
+      run: |
+        echo "RELEASE_CHANNEL=preview" >> $GITHUB_ENV
+        echo "RELEASE_VERSION=0.211.1 >> $GITHUB_ENV
       shell: bash -euxo pipefail {0}
-    - name: script/create-draft-release target/release-notes.md
-      run: script/create-draft-release target/release-notes.md
+    - name: release::create_draft_release::draft_release_notes
+      run: node --redirect-warnings=/dev/null ./script/draft-release-notes $RELEASE_CHANNEL $RELEASE_VERSION > target/release-notes.md
+      shell: bash -euxo pipefail {0}
+    - name: release::create_draft_release::create_draft_release
+      run: script/create-draft-releae target/release-notes.md
       shell: bash -euxo pipefail {0}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
