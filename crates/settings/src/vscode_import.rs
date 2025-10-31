@@ -774,6 +774,7 @@ impl VsCodeSettings {
             buffer_font_features: None,
             agent_ui_font_size: None,
             agent_buffer_font_size: None,
+            agent_buffer_code_font_size: None,
             theme: None,
             icon_theme: None,
             ui_density: None,
