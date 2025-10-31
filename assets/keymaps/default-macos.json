@@ -1085,7 +1085,8 @@
     "use_key_equivalents": true,
     "bindings": {
       "alt-up": "collab_panel::MoveChannelUp",
-      "alt-down": "collab_panel::MoveChannelDown"
+      "alt-down": "collab_panel::MoveChannelDown",
+      "alt-enter": "collab_panel::OpenSelectedChannelNotes"
     }
   },
   {
@@ -1217,6 +1218,7 @@
       "ctrl-alt-down": "pane::SplitDown",
       "ctrl-alt-left": "pane::SplitLeft",
       "ctrl-alt-right": "pane::SplitRight",
+      "cmd-d": "pane::SplitRight",
       "cmd-alt-r": "terminal::RerunTask"
     }
   },

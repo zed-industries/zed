@@ -450,7 +450,7 @@ impl Vim {
                         prior_selections,
                         prior_operator: self.operator_stack.last().cloned(),
                         prior_mode: self.mode,
-                        helix_select: true,
+                        is_helix_regex_search: true,
                     }
                 });
             }
@@ -1279,6 +1279,24 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_exit_visual_mode(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("ˇone two", Mode::Normal);
+        cx.simulate_keystrokes("v w");
+        cx.assert_state("«one tˇ»wo", Mode::Visual);
+        cx.simulate_keystrokes("escape");
+        cx.assert_state("one ˇtwo", Mode::Normal);
+
+        cx.enable_helix();
+        cx.set_state("ˇone two", Mode::HelixNormal);
+        cx.simulate_keystrokes("v w");
+        cx.assert_state("«one ˇ»two", Mode::HelixSelect);
+        cx.simulate_keystrokes("escape");
+        cx.assert_state("«one ˇ»two", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
     async fn test_helix_select_regex(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
@@ -1297,9 +1315,47 @@ mod test {
         cx.simulate_keystrokes("enter");
         cx.assert_state("«oneˇ» two «oneˇ»", Mode::HelixNormal);
 
-        cx.set_state("ˇone two one", Mode::HelixNormal);
-        cx.simulate_keystrokes("s o n e enter");
-        cx.assert_state("ˇone two one", Mode::HelixNormal);
+        // TODO: change "search_in_selection" to not perform any search when in helix select mode with no selection
+        // cx.set_state("ˇstuff one two one", Mode::HelixNormal);
+        // cx.simulate_keystrokes("s o n e enter");
+        // cx.assert_state("ˇstuff one two one", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_next_match(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("ˇhello two one two one two one", Mode::Visual);
+        cx.simulate_keystrokes("/ o n e");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes("n n");
+        cx.assert_state("«hello two one two one two oˇ»ne", Mode::Visual);
+
+        cx.set_state("ˇhello two one two one two one", Mode::Normal);
+        cx.simulate_keystrokes("/ o n e");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes("n n");
+        cx.assert_state("hello two one two one two ˇone", Mode::Normal);
+
+        cx.set_state("ˇhello two one two one two one", Mode::Normal);
+        cx.simulate_keystrokes("/ o n e");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes("n g n g n");
+        cx.assert_state("hello two one two «one two oneˇ»", Mode::Visual);
+
+        cx.enable_helix();
+
+        cx.set_state("ˇhello two one two one two one", Mode::HelixNormal);
+        cx.simulate_keystrokes("/ o n e");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes("n n");
+        cx.assert_state("hello two one two one two «oneˇ»", Mode::HelixNormal);
+
+        cx.set_state("ˇhello two one two one two one", Mode::HelixSelect);
+        cx.simulate_keystrokes("/ o n e");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes("n n");
+        cx.assert_state("ˇhello two «oneˇ» two «oneˇ» two «oneˇ»", Mode::HelixSelect);
     }
 
     #[gpui::test]

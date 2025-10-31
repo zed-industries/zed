@@ -1,0 +1,13 @@
+# Generated from xtask::workflows::compare_perf
+# Rebuild with `cargo xtask workflows`.
+name: compare_perf
+on:
+  workflow_dispatch: {}
+jobs:
+  run_perf:
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false

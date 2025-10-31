@@ -602,6 +602,7 @@ impl GitBlame {
     }
 
     fn regenerate_on_edit(&mut self, cx: &mut Context<Self>) {
+        // todo(lw): hot foreground spawn
         self.regenerate_on_edit_task = cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL)
@@ -1114,18 +1115,19 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let buffer_initial_text_len = rng.random_range(5..15);
-        let mut buffer_initial_text = Rope::from(
+        let mut buffer_initial_text = Rope::from_str(
             RandomCharIter::new(&mut rng)
                 .take(buffer_initial_text_len)
                 .collect::<String>()
                 .as_str(),
+            cx.background_executor(),
         );
 
         let mut newline_ixs = (0..buffer_initial_text_len).choose_multiple(&mut rng, 5);
         newline_ixs.sort_unstable();
         for newline_ix in newline_ixs.into_iter().rev() {
             let newline_ix = buffer_initial_text.clip_offset(newline_ix, Bias::Right);
-            buffer_initial_text.replace(newline_ix..newline_ix, "\n");
+            buffer_initial_text.replace(newline_ix..newline_ix, "\n", cx.background_executor());
         }
         log::info!("initial buffer text: {:?}", buffer_initial_text);
 

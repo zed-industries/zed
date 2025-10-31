@@ -1581,6 +1581,7 @@ impl EditAgentTest {
             let template = crate::SystemPromptTemplate {
                 project: &project_context,
                 available_tools: tool_names,
+                model_name: None,
             };
             let templates = Templates::new();
             template.render(&templates).unwrap()

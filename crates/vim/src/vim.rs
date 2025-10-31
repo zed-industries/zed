@@ -23,6 +23,7 @@ use collections::HashMap;
 use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, SelectionEffects,
     ToPoint,
+    actions::Paste,
     movement::{self, FindRange},
 };
 use gpui::{
@@ -711,7 +712,7 @@ impl Vim {
                 editor,
                 cx,
                 |vim, _: &SwitchToHelixNormalMode, window, cx| {
-                    vim.switch_mode(Mode::HelixNormal, false, window, cx)
+                    vim.switch_mode(Mode::HelixNormal, true, window, cx)
                 },
             );
             Vim::action(editor, cx, |_, _: &PushForcedMotion, _, cx| {
@@ -962,6 +963,17 @@ impl Vim {
                 );
             });
 
+            Vim::action(
+                editor,
+                cx,
+                |vim, _: &editor::actions::Paste, window, cx| match vim.mode {
+                    Mode::Replace => vim.paste_replace(window, cx),
+                    _ => {
+                        vim.update_editor(cx, |_, editor, cx| editor.paste(&Paste, window, cx));
+                    }
+                },
+            );
+
             normal::register(editor, cx);
             insert::register(editor, cx);
             helix::register(editor, cx);
@@ -975,9 +987,11 @@ impl Vim {
             change_list::register(editor, cx);
             digraph::register(editor, cx);
 
-            cx.defer_in(window, |vim, window, cx| {
-                vim.focused(false, window, cx);
-            })
+            if editor.is_focused(window) {
+                cx.defer_in(window, |vim, window, cx| {
+                    vim.focused(false, window, cx);
+                })
+            }
         })
     }
 
@@ -1980,9 +1994,8 @@ impl Vim {
     fn sync_vim_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.update_editor(cx, |vim, editor, cx| {
             editor.set_cursor_shape(vim.cursor_shape(cx), cx);
-            editor.set_clip_at_line_ends(vim.clip_at_line_ends(cx), cx);
-            editor.set_collapse_matches(true);
-            editor.set_input_enabled(vim.editor_input_enabled(cx));
+            editor.set_clip_at_line_ends(vim.clip_at_line_ends(), cx);
+            editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
             editor
                 .selections
