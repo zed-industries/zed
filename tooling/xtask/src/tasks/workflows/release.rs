@@ -28,8 +28,7 @@ pub(crate) fn release() -> Workflow {
     let auto_release_preview = auto_release_preview(&[&upload_release_assets]);
 
     named::workflow()
-        // todo(ci-release) make this on push to any release tag
-        .on(Event::default().push(Push::default().tags(vec!["v00.00.00-test".to_string()])))
+        .on(Event::default().push(Push::default().tags(vec!["v*".to_string()])))
         .concurrency(vars::one_workflow_per_non_main_branch())
         .add_job(macos_tests.name, macos_tests.job)
         .add_job(linux_tests.name, linux_tests.job)
