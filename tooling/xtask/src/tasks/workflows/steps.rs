@@ -119,7 +119,6 @@ pub(crate) fn cache_rust_dependencies_namespace() -> Step<Use> {
     ]
     .join("\n");
     named::uses("namespacelabs", "nscloud-cache-action", "v1")
-        .add_with(("save-if", "${{ github.ref == 'refs/heads/main' }}"))
         .add_with(("cache", "rust"))
         .add_with(("path", allowlisted_binaries))
 }
