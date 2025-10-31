@@ -4,6 +4,7 @@ use gpui::{
 };
 use std::sync::Arc;
 use ui::{Color, CommonAnimationExt, Icon, IconName, Label, h_flex, prelude::*, v_flex};
+use util::ResultExt;
 use workspace::{self, AppState, ModalView};
 
 struct CloneProgressModal {
@@ -42,7 +43,7 @@ impl Render for CloneProgressModal {
                                 .with_rotate_animation(2),
                         )
                         .child(
-                            Label::new(format!("Cloning {}", self.repo_name))
+                            Label::new(format!("Cloning \"{}\"", self.repo_name))
                                 .size(ui::LabelSize::Large),
                         ),
                 )
@@ -58,7 +59,17 @@ impl Render for CloneProgressModal {
 impl EventEmitter<DismissEvent> for CloneProgressModal {}
 impl ModalView for CloneProgressModal {}
 
-pub fn clone_and_open(repo_url: String, app_state: Arc<AppState>, cx: &mut App) {
+pub fn clone_and_open(
+    repo_url: String,
+    app_state: Arc<AppState>,
+    cx: &mut App,
+    on_success: Arc<
+        dyn Fn(&mut workspace::Workspace, &mut Window, &mut Context<workspace::Workspace>)
+            + Send
+            + Sync
+            + 'static,
+    >,
+) {
     workspace::with_active_or_new_workspace(cx, |_workspace, window, cx| {
         let path_prompt = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: false,
@@ -109,7 +120,7 @@ pub fn clone_and_open(repo_url: String, app_state: Arc<AppState>, cx: &mut App) 
                     .update(|window, cx| {
                         window.prompt(
                             gpui::PromptLevel::Info,
-                            &format!("Git Clone: {}", repo_name),
+                            &format!("Git Clone: \"{}\"", repo_name),
                             None,
                             &["Add to current project", "Open in new window"],
                             cx,
@@ -121,32 +132,54 @@ pub fn clone_and_open(repo_url: String, app_state: Arc<AppState>, cx: &mut App) 
 
                 match prompt_answer {
                     0 => {
+                        let on_success_clone = on_success.clone();
                         workspace
-                            .update(cx, |workspace, cx| {
-                                workspace
-                                    .project()
-                                    .update(cx, |project, cx| {
+                            .update_in(cx, |workspace, window, cx| {
+                                let worktree_task =
+                                    workspace.project().update(cx, |project, cx| {
                                         project.create_worktree(cloned_path.as_path(), true, cx)
-                                    })
-                                    .detach();
+                                    });
+                                let workspace_weak = cx.weak_entity();
+                                let on_success_clone = on_success_clone.clone();
+                                cx.spawn_in(window, async move |_window, cx| {
+                                    if worktree_task.await.log_err().is_some() {
+                                        workspace_weak
+                                            .update_in(cx, |workspace, window, cx| {
+                                                (on_success_clone)(workspace, window, cx);
+                                            })
+                                            .ok();
+                                    }
+                                })
+                                .detach();
                             })
                             .ok()?;
                     }
                     1 => {
+                        let on_success_clone = on_success.clone();
                         workspace
                             .update(cx, move |_workspace, cx| {
                                 workspace::open_new(
                                     Default::default(),
                                     app_state,
                                     cx,
-                                    move |workspace, _, cx| {
+                                    move |workspace, window, cx| {
                                         cx.activate(true);
-                                        workspace
-                                            .project()
-                                            .update(cx, |project, cx| {
+                                        let worktree_task =
+                                            workspace.project().update(cx, |project, cx| {
                                                 project.create_worktree(&cloned_path, true, cx)
-                                            })
-                                            .detach();
+                                            });
+                                        let workspace_weak = cx.weak_entity();
+                                        let on_success_clone = on_success_clone.clone();
+                                        cx.spawn_in(window, async move |_window, cx| {
+                                            if worktree_task.await.log_err().is_some() {
+                                                workspace_weak
+                                                    .update_in(cx, |workspace, window, cx| {
+                                                        (on_success_clone)(workspace, window, cx);
+                                                    })
+                                                    .ok();
+                                            }
+                                        })
+                                        .detach();
                                     },
                                 )
                                 .detach();
