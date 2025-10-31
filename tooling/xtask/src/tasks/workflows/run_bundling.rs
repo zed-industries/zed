@@ -144,7 +144,7 @@ pub(crate) fn bundle_windows_job(arch: runners::Arch, deps: &[&NamedJob]) -> Job
         )
 }
 
-fn bundle_windows(arch: runners::Arch) -> Step<Run> {
+pub fn bundle_windows(arch: runners::Arch) -> Step<Run> {
     let step = match arch {
         runners::Arch::X86_64 => named::pwsh("script/bundle-windows.ps1 -Architecture x86_64"),
         runners::Arch::ARM64 => named::pwsh("script/bundle-windows.ps1 -Architecture aarch64"),
