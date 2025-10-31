@@ -62,6 +62,12 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/rust-cache@nscloud-cache-action
+      with:
+        path:
+        - /home/runner/.cargo/bin/cargo-nextest
+        - /home/runner/.cargo/bin/cargo-about
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
@@ -145,6 +151,12 @@ jobs:
     - name: steps::install_mold
       run: ./script/install-mold
       shell: bash -euxo pipefail {0}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/rust-cache@nscloud-cache-action
+      with:
+        path:
+        - /home/runner/.cargo/bin/cargo-nextest
+        - /home/runner/.cargo/bin/cargo-about
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -214,10 +226,12 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: steps::cache_rust_dependencies
-      uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/rust-cache@nscloud-cache-action
       with:
-        save-if: ${{ github.ref == 'refs/heads/main' }}
+        path:
+        - /home/runner/.cargo/bin/cargo-nextest
+        - /home/runner/.cargo/bin/cargo-about
     - name: steps::setup_linux
       run: ./script/linux
       shell: bash -euxo pipefail {0}
@@ -261,6 +275,12 @@ jobs:
     - name: steps::install_mold
       run: ./script/install-mold
       shell: bash -euxo pipefail {0}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/rust-cache@nscloud-cache-action
+      with:
+        path:
+        - /home/runner/.cargo/bin/cargo-nextest
+        - /home/runner/.cargo/bin/cargo-about
     - name: cargo build -p collab
       run: cargo build -p collab
       shell: bash -euxo pipefail {0}
@@ -317,6 +337,12 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/rust-cache@nscloud-cache-action
+      with:
+        path:
+        - /home/runner/.cargo/bin/cargo-nextest
+        - /home/runner/.cargo/bin/cargo-about
     - name: run_tests::check_dependencies::install_cargo_machete
       uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386
       with:
@@ -350,10 +376,12 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
       shell: bash -euxo pipefail {0}
-    - name: steps::cache_rust_dependencies
-      uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/rust-cache@nscloud-cache-action
       with:
-        save-if: ${{ github.ref == 'refs/heads/main' }}
+        path:
+        - /home/runner/.cargo/bin/cargo-nextest
+        - /home/runner/.cargo/bin/cargo-about
     - name: run_tests::check_docs::lychee_link_check
       uses: lycheeverse/lychee-action@82202e5e9c2f4ef1a55a3d02563e1cb6041e5332
       with:
@@ -392,6 +420,12 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/rust-cache@nscloud-cache-action
+      with:
+        path:
+        - /home/runner/.cargo/bin/cargo-nextest
+        - /home/runner/.cargo/bin/cargo-about
     - name: ./script/check-licenses
       run: ./script/check-licenses
       shell: bash -euxo pipefail {0}

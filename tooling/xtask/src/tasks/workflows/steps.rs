@@ -112,13 +112,21 @@ pub(crate) fn clippy(platform: Platform) -> Step<Run> {
     }
 }
 
-pub(crate) fn cache_rust_dependencies() -> Step<Use> {
+pub(crate) fn cache_rust_dependencies_namespace() -> Step<Use> {
     named::uses(
-        "swatinem",
+        "namespacelabs",
         "rust-cache",
-        "9d47c6ad4b02e050fd481d890b2ea34778fd09d6", // v2
+        "nscloud-cache-action", // v2
     )
     .with(("save-if", "${{ github.ref == 'refs/heads/main' }}"))
+    .with(("cache", "rust"))
+    .with((
+        "path",
+        [
+            "/home/runner/.cargo/bin/cargo-nextest",
+            "/home/runner/.cargo/bin/cargo-about",
+        ],
+    ))
 }
 
 fn setup_linux() -> Step<Run> {
