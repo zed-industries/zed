@@ -80,15 +80,27 @@ impl PlatformDispatcher for WindowsDispatcher {
     }
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
+        let was_empty = self.main_sender.is_empty();
         match self.main_sender.send(runnable) {
             Ok(_) => unsafe {
-                PostMessageW(
-                    Some(self.platform_window_handle.as_raw()),
-                    WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
-                    WPARAM(self.validation_number),
-                    LPARAM(0),
-                )
-                .log_err();
+                // Only send a `WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD` to the
+                // queue if we have no runnables queued up yet, otherwise we
+                // risk filling the message queue with gpui messages causing us
+                // to starve the message loop of system messages, resulting in a
+                // process hang.
+                //
+                // When the message loop receives a
+                // `WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD` message we drain the
+                // runnable queue entirely.
+                if was_empty {
+                    PostMessageW(
+                        Some(self.platform_window_handle.as_raw()),
+                        WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
+                        WPARAM(self.validation_number),
+                        LPARAM(0),
+                    )
+                    .log_err();
+                }
             },
             Err(runnable) => {
                 // NOTE: Runnable may wrap a Future that is !Send.

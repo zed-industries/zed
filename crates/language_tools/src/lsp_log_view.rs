@@ -3,7 +3,7 @@ use copilot::Copilot;
 use editor::{Editor, EditorEvent, actions::MoveToEnd, scroll::Autoscroll};
 use gpui::{
     AnyView, App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ParentElement, Render, Styled, Subscription, WeakEntity, Window, actions, div,
+    ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window, actions, div,
 };
 use itertools::Itertools;
 use language::{LanguageServerId, language_settings::SoftWrap};
@@ -758,16 +758,20 @@ impl Item for LspLogView {
         }
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| {
+        Task::ready(Some(cx.new(|cx| {
             let mut new_view = Self::new(self.project.clone(), self.log_store.clone(), window, cx);
             if let Some(server_id) = self.current_server_id {
                 match self.active_entry_kind {
@@ -778,7 +782,7 @@ impl Item for LspLogView {
                 }
             }
             new_view
-        }))
+        })))
     }
 }
 
@@ -808,11 +812,13 @@ impl SearchableItem for LspLogView {
         &mut self,
         index: usize,
         matches: &[Self::Match],
+        collapse: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor
-            .update(cx, |e, cx| e.activate_match(index, matches, window, cx))
+        self.editor.update(cx, |e, cx| {
+            e.activate_match(index, matches, collapse, window, cx)
+        })
     }
 
     fn select_matches(

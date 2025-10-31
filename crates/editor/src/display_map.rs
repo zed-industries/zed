@@ -751,6 +751,7 @@ pub struct DisplaySnapshot {
     diagnostics_max_severity: DiagnosticSeverity,
     pub(crate) fold_placeholder: FoldPlaceholder,
 }
+
 impl DisplaySnapshot {
     pub fn wrap_snapshot(&self) -> &WrapSnapshot {
         &self.block_snapshot.wrap_snapshot
@@ -1408,6 +1409,15 @@ impl DisplaySnapshot {
     }
 }
 
+impl std::ops::Deref for DisplaySnapshot {
+    type Target = BlockSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.block_snapshot
+    }
+}
+
+/// A zero-indexed point in a text buffer consisting of a row and column adjusted for inserted blocks.
 #[derive(Copy, Clone, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct DisplayPoint(BlockPoint);
 
@@ -1559,6 +1569,7 @@ pub mod tests {
     use lsp::LanguageServerId;
     use project::Project;
     use rand::{Rng, prelude::*};
+    use rope::Rope;
     use settings::{SettingsContent, SettingsStore};
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
@@ -2064,7 +2075,7 @@ pub mod tests {
                 vec![Inlay::edit_prediction(
                     0,
                     buffer_snapshot.anchor_after(0),
-                    "\n",
+                    Rope::from_str_small("\n"),
                 )],
                 cx,
             );

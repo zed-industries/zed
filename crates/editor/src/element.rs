@@ -232,6 +232,8 @@ impl EditorElement {
         register_action(editor, window, Editor::blame_hover);
         register_action(editor, window, Editor::delete);
         register_action(editor, window, Editor::tab);
+        register_action(editor, window, Editor::next_snippet_tabstop);
+        register_action(editor, window, Editor::previous_snippet_tabstop);
         register_action(editor, window, Editor::backtab);
         register_action(editor, window, Editor::indent);
         register_action(editor, window, Editor::outdent);
@@ -495,6 +497,8 @@ impl EditorElement {
         register_action(editor, window, Editor::collapse_all_diff_hunks);
         register_action(editor, window, Editor::go_to_previous_change);
         register_action(editor, window, Editor::go_to_next_change);
+        register_action(editor, window, Editor::go_to_prev_reference);
+        register_action(editor, window, Editor::go_to_next_reference);
 
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.format(action, window, cx) {
@@ -3173,7 +3177,7 @@ impl EditorElement {
             i += 1;
         }
         delta = 1;
-        i = head_idx.min(buffer_rows.len() as u32 - 1);
+        i = head_idx.min(buffer_rows.len().saturating_sub(1) as u32);
         while i > 0 && buffer_rows[i as usize].buffer_row.is_none() {
             i -= 1;
         }
@@ -5105,23 +5109,26 @@ impl EditorElement {
                 snapshot,
                 visible_display_row_range.clone(),
                 max_size,
+                &editor.text_layout_details(window),
                 window,
                 cx,
             )
         });
-        let Some((position, hover_popovers)) = hover_popovers else {
+        let Some((popover_position, hover_popovers)) = hover_popovers else {
             return;
         };
 
         // This is safe because we check on layout whether the required row is available
-        let hovered_row_layout =
-            &line_layouts[position.row().minus(visible_display_row_range.start) as usize];
+        let hovered_row_layout = &line_layouts[popover_position
+            .row()
+            .minus(visible_display_row_range.start)
+            as usize];
 
         // Compute Hovered Point
-        let x = hovered_row_layout.x_for_index(position.column() as usize)
+        let x = hovered_row_layout.x_for_index(popover_position.column() as usize)
             - Pixels::from(scroll_pixel_position.x);
         let y = Pixels::from(
-            position.row().as_f64() * ScrollPixelOffset::from(line_height)
+            popover_position.row().as_f64() * ScrollPixelOffset::from(line_height)
                 - scroll_pixel_position.y,
         );
         let hovered_point = content_origin + point(x, y);

@@ -3694,7 +3694,7 @@ async fn test_buffer_reloading(
         assert_eq!(buf.line_ending(), LineEnding::Unix);
     });
 
-    let new_contents = Rope::from("d\ne\nf");
+    let new_contents = Rope::from_str_small("d\ne\nf");
     client_a
         .fs()
         .save(
@@ -4479,7 +4479,7 @@ async fn test_reloading_buffer_manually(
         .fs()
         .save(
             path!("/a/a.rs").as_ref(),
-            &Rope::from("let seven = 7;"),
+            &Rope::from_str_small("let seven = 7;"),
             LineEnding::Unix,
         )
         .await
@@ -6748,7 +6748,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     pane.update(cx, |pane, cx| {
         pane.split(workspace::SplitDirection::Right, cx);
     });
-
+    cx.run_until_parked();
     let right_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
     pane.update(cx, |pane, cx| {

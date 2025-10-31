@@ -193,7 +193,7 @@ impl Editor {
 
                         if let Some(language) = language {
                             for signature in &mut signature_help.signatures {
-                                let text = Rope::from(signature.label.as_ref());
+                                let text = Rope::from_str_small(signature.label.as_ref());
                                 let highlights = language
                                     .highlight_text(&text, 0..signature.label.len())
                                     .into_iter()

@@ -54,6 +54,10 @@ actions!(
         CollapseSelectedChannel,
         /// Expands the selected channel in the tree view.
         ExpandSelectedChannel,
+        /// Opens the meeting notes for the selected channel in the panel.
+        ///
+        /// Use `collab::OpenChannelNotes` to open the channel notes for the current call.
+        OpenSelectedChannelNotes,
         /// Starts moving a channel to a new location.
         StartMoveChannel,
         /// Moves the selected item to the current location.
@@ -1265,6 +1269,13 @@ impl CollabPanel {
                     window.handler_for(&this, move |this, _, cx| {
                         this.copy_channel_link(channel_id, cx)
                     }),
+                )
+                .entry(
+                    "Copy Channel Notes Link",
+                    None,
+                    window.handler_for(&this, move |this, _, cx| {
+                        this.copy_channel_notes_link(channel_id, cx)
+                    }),
                 );
 
             let mut has_destructive_actions = false;
@@ -1849,6 +1860,17 @@ impl CollabPanel {
         }
     }
 
+    fn open_selected_channel_notes(
+        &mut self,
+        _: &OpenSelectedChannelNotes,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(channel) = self.selected_channel() {
+            self.open_channel_notes(channel.id, window, cx);
+        }
+    }
+
     fn set_channel_visibility(
         &mut self,
         channel_id: ChannelId,
@@ -2217,6 +2239,15 @@ impl CollabPanel {
             return;
         };
         let item = ClipboardItem::new_string(channel.link(cx));
+        cx.write_to_clipboard(item)
+    }
+
+    fn copy_channel_notes_link(&mut self, channel_id: ChannelId, cx: &mut Context<Self>) {
+        let channel_store = self.channel_store.read(cx);
+        let Some(channel) = channel_store.channel_for_id(channel_id) else {
+            return;
+        };
+        let item = ClipboardItem::new_string(channel.notes_link(None, cx));
         cx.write_to_clipboard(item)
     }
 
@@ -2960,6 +2991,7 @@ impl Render for CollabPanel {
             .on_action(cx.listener(CollabPanel::remove_selected_channel))
             .on_action(cx.listener(CollabPanel::show_inline_context_menu))
             .on_action(cx.listener(CollabPanel::rename_selected_channel))
+            .on_action(cx.listener(CollabPanel::open_selected_channel_notes))
             .on_action(cx.listener(CollabPanel::collapse_selected_channel))
             .on_action(cx.listener(CollabPanel::expand_selected_channel))
             .on_action(cx.listener(CollabPanel::start_move_selected_channel))

@@ -569,6 +569,7 @@ mod tests {
     use prompt_store::ProjectContext;
     use serde_json::json;
     use settings::SettingsStore;
+    use text::Rope;
     use util::{path, rel_path::rel_path};
 
     #[gpui::test]
@@ -741,7 +742,7 @@ mod tests {
         // Create the file
         fs.save(
             path!("/root/src/main.rs").as_ref(),
-            &"initial content".into(),
+            &Rope::from_str_small("initial content"),
             language::LineEnding::Unix,
         )
         .await
@@ -908,7 +909,7 @@ mod tests {
         // Create a simple file with trailing whitespace
         fs.save(
             path!("/root/src/main.rs").as_ref(),
-            &"initial content".into(),
+            &Rope::from_str_small("initial content"),
             language::LineEnding::Unix,
         )
         .await

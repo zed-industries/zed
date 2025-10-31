@@ -9,10 +9,10 @@ use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
-    SelectionEffects,
+    SelectionEffects, VimFlavor,
     actions::{Backtab, SelectAll, Tab},
     items::active_match_index,
-    multibuffer_context_lines,
+    multibuffer_context_lines, vim_flavor,
 };
 use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
@@ -322,18 +322,25 @@ impl ProjectSearch {
 
             let mut limit_reached = false;
             while let Some(results) = matches.next().await {
-                let mut buffers_with_ranges = Vec::with_capacity(results.len());
-                for result in results {
-                    match result {
-                        project::search::SearchResult::Buffer { buffer, ranges } => {
-                            buffers_with_ranges.push((buffer, ranges));
+                let (buffers_with_ranges, has_reached_limit) = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let mut limit_reached = false;
+                        let mut buffers_with_ranges = Vec::with_capacity(results.len());
+                        for result in results {
+                            match result {
+                                project::search::SearchResult::Buffer { buffer, ranges } => {
+                                    buffers_with_ranges.push((buffer, ranges));
+                                }
+                                project::search::SearchResult::LimitReached => {
+                                    limit_reached = true;
+                                }
+                            }
                         }
-                        project::search::SearchResult::LimitReached => {
-                            limit_reached = true;
-                        }
-                    }
-                }
-
+                        (buffers_with_ranges, limit_reached)
+                    })
+                    .await;
+                limit_reached |= has_reached_limit;
                 let mut new_ranges = project_search
                     .update(cx, |project_search, cx| {
                         project_search.excerpts.update(cx, |excerpts, cx| {
@@ -352,7 +359,6 @@ impl ProjectSearch {
                         })
                     })
                     .ok()?;
-
                 while let Some(new_ranges) = new_ranges.next().await {
                     project_search
                         .update(cx, |project_search, cx| {
@@ -567,17 +573,23 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.reload(project, window, cx))
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
         let model = self.entity.update(cx, |model, cx| model.clone(cx));
-        Some(cx.new(|cx| Self::new(self.workspace.clone(), model, window, cx, None)))
+        Task::ready(Some(cx.new(|cx| {
+            Self::new(self.workspace.clone(), model, window, cx, None)
+        })))
     }
 
     fn added_to_workspace(
@@ -1332,7 +1344,8 @@ impl ProjectSearchView {
 
             let range_to_select = match_ranges[new_index].clone();
             self.results_editor.update(cx, |editor, cx| {
-                let range_to_select = editor.range_for_match(&range_to_select);
+                let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
+                let range_to_select = editor.range_for_match(&range_to_select, collapse);
                 editor.unfold_ranges(std::slice::from_ref(&range_to_select), false, true, cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.select_ranges([range_to_select])
@@ -1403,9 +1416,10 @@ impl ProjectSearchView {
             let is_new_search = self.search_id != prev_search_id;
             self.results_editor.update(cx, |editor, cx| {
                 if is_new_search {
+                    let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
                     let range_to_select = match_ranges
                         .first()
-                        .map(|range| editor.range_for_match(range));
+                        .map(|range| editor.range_for_match(range, collapse));
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_ranges(range_to_select)
                     });
@@ -3677,6 +3691,7 @@ pub mod tests {
                 )
             })
             .unwrap()
+            .await
             .unwrap();
         assert_eq!(cx.update(|cx| second_pane.read(cx).items_len()), 1);
 
@@ -3872,6 +3887,7 @@ pub mod tests {
                 )
             })
             .unwrap()
+            .await
             .unwrap();
         assert_eq!(cx.update(|cx| second_pane.read(cx).items_len()), 1);
         assert!(

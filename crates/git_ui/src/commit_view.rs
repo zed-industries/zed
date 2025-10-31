@@ -4,8 +4,8 @@ use editor::{Editor, EditorEvent, MultiBuffer, SelectionEffects, multibuffer_con
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncApp, AsyncWindowContext, Context,
-    Entity, EventEmitter, FocusHandle, Focusable, IntoElement, PromptLevel, Render, WeakEntity,
-    Window, actions,
+    Entity, EventEmitter, FocusHandle, Focusable, IntoElement, PromptLevel, Render, Task,
+    WeakEntity, Window, actions,
 };
 use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -170,7 +170,10 @@ impl CommitView {
                     ReplicaId::LOCAL,
                     cx.entity_id().as_non_zero_u64().into(),
                     LineEnding::default(),
-                    format_commit(&commit, stash.is_some()).into(),
+                    Rope::from_str(
+                        &format_commit(&commit, stash.is_some()),
+                        cx.background_executor(),
+                    ),
                 );
                 metadata_buffer_id = Some(buffer.remote_id());
                 Buffer::build(buffer, Some(file.clone()), Capability::ReadWrite)
@@ -336,7 +339,7 @@ async fn build_buffer(
 ) -> Result<Entity<Buffer>> {
     let line_ending = LineEnding::detect(&text);
     LineEnding::normalize(&mut text);
-    let text = Rope::from(text);
+    let text = Rope::from_str(&text, cx.background_executor());
     let language = cx.update(|cx| language_registry.language_for_file(&blob, Some(&text), cx))?;
     let language = if let Some(language) = language {
         language_registry
@@ -376,7 +379,7 @@ async fn build_buffer_diff(
     let base_buffer = cx
         .update(|cx| {
             Buffer::build_snapshot(
-                old_text.as_deref().unwrap_or("").into(),
+                Rope::from_str(old_text.as_deref().unwrap_or(""), cx.background_executor()),
                 buffer.language().cloned(),
                 Some(language_registry.clone()),
                 cx,
@@ -556,16 +559,20 @@ impl Item for CommitView {
         });
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| {
+        Task::ready(Some(cx.new(|cx| {
             let editor = cx.new(|cx| {
                 self.editor
                     .update(cx, |editor, cx| editor.clone(window, cx))
@@ -577,7 +584,7 @@ impl Item for CommitView {
                 commit: self.commit.clone(),
                 stash: self.stash,
             }
-        }))
+        })))
     }
 }
 

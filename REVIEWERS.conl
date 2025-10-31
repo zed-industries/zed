@@ -19,6 +19,7 @@
   = @dinocosta
   = @smitbarmase
   = @cole-miller
+  = @HactarCE
 
 vim
   = @ConradIrwin
@@ -38,6 +39,7 @@ linux
   = @smitbarmase
   = @p1n3appl3
   = @cole-miller
+  = @probably-neb
 
 windows
   = @reflectronic
@@ -76,8 +78,10 @@ crashes
   = @Veykril
 
 ai
+  = @rtfeldman
   = @danilo-leal
-  = @benbrandt 
+  = @benbrandt
+  = @bennetbo
 
 design
   = @danilo-leal
@@ -97,6 +101,7 @@ languages
   = @Veykril
   = @smitbarmase
   = @SomeoneToIgnore
+  = @probably-neb
 
 project_panel
   = @smitbarmase
@@ -104,3 +109,6 @@ project_panel
 tasks
   = @SomeoneToIgnore
   = @Veykril
+
+docs
+  = @probably-neb

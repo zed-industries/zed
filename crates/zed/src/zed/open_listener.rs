@@ -43,11 +43,20 @@ pub struct OpenRequest {
 #[derive(Debug)]
 pub enum OpenRequestKind {
     CliConnection((mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)),
-    Extension { extension_id: String },
+    Extension {
+        extension_id: String,
+    },
     AgentPanel,
-    DockMenuAction { index: usize },
-    BuiltinJsonSchema { schema_path: String },
-    Setting { setting_path: String },
+    DockMenuAction {
+        index: usize,
+    },
+    BuiltinJsonSchema {
+        schema_path: String,
+    },
+    Setting {
+        // None just opens settings without navigating to a specific path
+        setting_path: Option<String>,
+    },
 }
 
 impl OpenRequest {
@@ -94,9 +103,11 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::BuiltinJsonSchema {
                     schema_path: schema_path.to_string(),
                 });
+            } else if url == "zed://settings" || url == "zed://settings/" {
+                this.kind = Some(OpenRequestKind::Setting { setting_path: None });
             } else if let Some(setting_path) = url.strip_prefix("zed://settings/") {
                 this.kind = Some(OpenRequestKind::Setting {
-                    setting_path: setting_path.to_string(),
+                    setting_path: Some(setting_path.to_string()),
                 });
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
@@ -531,6 +542,7 @@ async fn open_local_workspace(
         workspace::OpenOptions {
             open_new_workspace: effective_open_new_workspace,
             replace_window,
+            prefer_focused_window: wait,
             env: env.cloned(),
             ..Default::default()
         },
@@ -849,7 +861,7 @@ mod tests {
             .fs
             .save(
                 Path::new(file1_path),
-                &Rope::from("content1"),
+                &Rope::from_str("content1", cx.background_executor()),
                 LineEnding::Unix,
             )
             .await
@@ -863,7 +875,7 @@ mod tests {
             .fs
             .save(
                 Path::new(file2_path),
-                &Rope::from("content2"),
+                &Rope::from_str("content2", cx.background_executor()),
                 LineEnding::Unix,
             )
             .await

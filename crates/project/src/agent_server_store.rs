@@ -773,9 +773,7 @@ fn get_or_npm_install_builtin_agent(
 ) -> Task<std::result::Result<AgentServerCommand, anyhow::Error>> {
     cx.spawn(async move |cx| {
         let node_path = node_runtime.binary_path().await?;
-        let dir = paths::data_dir()
-            .join("external_agents")
-            .join(binary_name.as_str());
+        let dir = paths::external_agents_dir().join(binary_name.as_str());
         fs.create_dir(&dir).await?;
 
         let mut stream = fs.read_dir(&dir).await?;
@@ -1246,7 +1244,7 @@ impl ExternalAgentServer for LocalCodex {
                 custom_command.env = Some(env);
                 custom_command
             } else {
-                let dir = paths::data_dir().join("external_agents").join(CODEX_NAME);
+                let dir = paths::external_agents_dir().join(CODEX_NAME);
                 fs.create_dir(&dir).await?;
 
                 // Find or install the latest Codex release (no update checks for now).
@@ -1418,7 +1416,7 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
             env.extend(extra_env);
 
             let cache_key = format!("{}/{}", extension_id, agent_id);
-            let dir = paths::data_dir().join("external_agents").join(&cache_key);
+            let dir = paths::external_agents_dir().join(&cache_key);
             fs.create_dir(&dir).await?;
 
             // Determine platform key
@@ -1640,7 +1638,9 @@ impl BuiltinAgentServerSettings {
 impl From<settings::BuiltinAgentServerSettings> for BuiltinAgentServerSettings {
     fn from(value: settings::BuiltinAgentServerSettings) -> Self {
         BuiltinAgentServerSettings {
-            path: value.path,
+            path: value
+                .path
+                .map(|p| PathBuf::from(shellexpand::tilde(&p.to_string_lossy()).as_ref())),
             args: value.args,
             env: value.env,
             ignore_system_version: value.ignore_system_version,
@@ -1675,7 +1675,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
     fn from(value: settings::CustomAgentServerSettings) -> Self {
         CustomAgentServerSettings {
             command: AgentServerCommand {
-                path: value.path,
+                path: PathBuf::from(shellexpand::tilde(&value.path.to_string_lossy()).as_ref()),
                 args: value.args,
                 env: value.env,
             },
@@ -1894,5 +1894,41 @@ mod extension_agent_tests {
         assert!(manifest_entry.targets.contains_key("linux-x86_64"));
         let target = manifest_entry.targets.get("linux-x86_64").unwrap();
         assert_eq!(target.cmd, "./release-agent");
+    }
+
+    #[test]
+    fn test_tilde_expansion_in_settings() {
+        let settings = settings::BuiltinAgentServerSettings {
+            path: Some(PathBuf::from("~/bin/agent")),
+            args: Some(vec!["--flag".into()]),
+            env: None,
+            ignore_system_version: None,
+            default_mode: None,
+        };
+
+        let BuiltinAgentServerSettings { path, .. } = settings.into();
+
+        let path = path.unwrap();
+        assert!(
+            !path.to_string_lossy().starts_with("~"),
+            "Tilde should be expanded for builtin agent path"
+        );
+
+        let settings = settings::CustomAgentServerSettings {
+            path: PathBuf::from("~/custom/agent"),
+            args: vec!["serve".into()],
+            env: None,
+            default_mode: None,
+        };
+
+        let CustomAgentServerSettings {
+            command: AgentServerCommand { path, .. },
+            ..
+        } = settings.into();
+
+        assert!(
+            !path.to_string_lossy().starts_with("~"),
+            "Tilde should be expanded for custom agent path"
+        );
     }
 }

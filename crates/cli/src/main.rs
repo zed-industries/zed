@@ -356,6 +356,13 @@ fn main() -> Result<()> {
         "Dev servers were removed in v0.157.x please upgrade to SSH remoting: https://zed.dev/docs/remote-development"
     );
 
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .stack_size(10 * 1024 * 1024)
+        .thread_name(|ix| format!("RayonWorker{}", ix))
+        .build_global()
+        .unwrap();
+
     let sender: JoinHandle<anyhow::Result<()>> = thread::Builder::new()
         .name("CliReceiver".to_string())
         .spawn({

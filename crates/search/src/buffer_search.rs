@@ -10,8 +10,9 @@ use any_vec::AnyVec;
 use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
-    DisplayPoint, Editor, EditorSettings,
+    DisplayPoint, Editor, EditorSettings, VimFlavor,
     actions::{Backtab, Tab},
+    vim_flavor,
 };
 use futures::channel::oneshot;
 use gpui::{
@@ -468,6 +469,12 @@ impl Focusable for BufferSearchBar {
 }
 
 impl ToolbarItemView for BufferSearchBar {
+    fn contribute_context(&self, context: &mut KeyContext, _cx: &App) {
+        if !self.dismissed {
+            context.add("buffer_search_deployed");
+        }
+    }
+
     fn set_active_pane_item(
         &mut self,
         item: Option<&dyn ItemHandle>,
@@ -819,7 +826,8 @@ impl BufferSearchBar {
                 .searchable_items_with_matches
                 .get(&active_searchable_item.downgrade())
         {
-            active_searchable_item.activate_match(match_ix, matches, window, cx)
+            let collapse = editor::vim_flavor(cx) == Some(VimFlavor::Vim);
+            active_searchable_item.activate_match(match_ix, matches, collapse, window, cx)
         }
     }
 
@@ -964,7 +972,8 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.select_match(Direction::Next, 1, window, cx);
+        let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
+        self.select_match(Direction::Next, 1, collapse, window, cx);
     }
 
     fn select_prev_match(
@@ -973,7 +982,8 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.select_match(Direction::Prev, 1, window, cx);
+        let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
+        self.select_match(Direction::Prev, 1, collapse, window, cx);
     }
 
     pub fn select_all_matches(
@@ -998,6 +1008,7 @@ impl BufferSearchBar {
         &mut self,
         direction: Direction,
         count: usize,
+        collapse: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1020,7 +1031,7 @@ impl BufferSearchBar {
                 .match_index_for_direction(matches, index, direction, count, window, cx);
 
             searchable_item.update_matches(matches, window, cx);
-            searchable_item.activate_match(new_match_index, matches, window, cx);
+            searchable_item.activate_match(new_match_index, matches, collapse, window, cx);
         }
     }
 
@@ -1034,7 +1045,8 @@ impl BufferSearchBar {
                 return;
             }
             searchable_item.update_matches(matches, window, cx);
-            searchable_item.activate_match(0, matches, window, cx);
+            let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
+            searchable_item.activate_match(0, matches, collapse, window, cx);
         }
     }
 
@@ -1049,7 +1061,8 @@ impl BufferSearchBar {
             }
             let new_match_index = matches.len() - 1;
             searchable_item.update_matches(matches, window, cx);
-            searchable_item.activate_match(new_match_index, matches, window, cx);
+            let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
+            searchable_item.activate_match(new_match_index, matches, collapse, window, cx);
         }
     }
 

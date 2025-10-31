@@ -38,7 +38,7 @@ pub struct BackgroundExecutor {
 /// This is intentionally `!Send` via the `not_send` marker field. This is because
 /// `ForegroundExecutor::spawn` does not require `Send` but checks at runtime that the future is
 /// only polled from the same thread it was spawned from. These checks would fail when spawning
-/// foreground tasks from from background threads.
+/// foreground tasks from background threads.
 #[derive(Clone)]
 pub struct ForegroundExecutor {
     #[doc(hidden)]
@@ -281,6 +281,9 @@ impl BackgroundExecutor {
         });
         let mut cx = std::task::Context::from_waker(&waker);
 
+        let duration = Duration::from_secs(500);
+        let mut test_should_end_by = Instant::now() + duration;
+
         loop {
             match future.as_mut().poll(&mut cx) {
                 Poll::Ready(result) => return Ok(result),
@@ -313,7 +316,12 @@ impl BackgroundExecutor {
                             )
                         }
                         dispatcher.set_unparker(unparker.clone());
-                        parker.park();
+                        parker.park_timeout(
+                            test_should_end_by.saturating_duration_since(Instant::now()),
+                        );
+                        if Instant::now() > test_should_end_by {
+                            panic!("test timed out after {duration:?} with allow_parking")
+                        }
                     }
                 }
             }
@@ -334,7 +342,7 @@ impl BackgroundExecutor {
     /// for all of them to complete before returning.
     pub async fn scoped<'scope, F>(&self, scheduler: F)
     where
-        F: FnOnce(&mut Scope<'scope>),
+        F: for<'a> FnOnce(&'a mut Scope<'scope>),
     {
         let mut scope = Scope::new(self.clone());
         (scheduler)(&mut scope);
@@ -471,7 +479,6 @@ impl ForegroundExecutor {
     }
 
     /// Enqueues the given Task to run on the main thread at some point in the future.
-    #[track_caller]
     pub fn spawn<R>(&self, future: impl Future<Output = R> + 'static) -> Task<R>
     where
         R: 'static,

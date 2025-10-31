@@ -1,18 +1,9 @@
 use anyhow::Result;
-use gpui::SharedString;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::{ops::Range, sync::LazyLock};
 use tree_sitter::{Query, StreamingIterator as _};
 use util::RangeExt;
-
-/// Parameters that are used when generating some JSON schemas at runtime.
-pub struct SettingsJsonSchemaParams<'a> {
-    pub language_names: &'a [String],
-    pub font_names: &'a [String],
-    pub theme_names: &'a [SharedString],
-    pub icon_theme_names: &'a [SharedString],
-}
 
 pub fn update_value_in_json_text<'a>(
     text: &mut String,
@@ -727,15 +718,11 @@ pub fn to_pretty_json(
     indent_size: usize,
     indent_prefix_len: usize,
 ) -> String {
-    const SPACES: [u8; 32] = [b' '; 32];
-
-    debug_assert!(indent_size <= SPACES.len());
-    debug_assert!(indent_prefix_len <= SPACES.len());
-
     let mut output = Vec::new();
+    let indent = " ".repeat(indent_size);
     let mut ser = serde_json::Serializer::with_formatter(
         &mut output,
-        serde_json::ser::PrettyFormatter::with_indent(&SPACES[0..indent_size.min(SPACES.len())]),
+        serde_json::ser::PrettyFormatter::with_indent(indent.as_bytes()),
     );
 
     value.serialize(&mut ser).unwrap();
@@ -744,7 +731,7 @@ pub fn to_pretty_json(
     let mut adjusted_text = String::new();
     for (i, line) in text.split('\n').enumerate() {
         if i > 0 {
-            adjusted_text.push_str(str::from_utf8(&SPACES[0..indent_prefix_len]).unwrap());
+            adjusted_text.extend(std::iter::repeat(' ').take(indent_prefix_len));
         }
         adjusted_text.push_str(line);
         adjusted_text.push('\n');

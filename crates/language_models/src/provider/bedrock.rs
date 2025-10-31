@@ -1221,7 +1221,6 @@ impl Render for ConfigurationView {
                     )
             )
             .child(self.render_static_credentials_ui())
-            .child(self.region_editor.clone())
             .child(
                 Label::new(
                     format!("You can also assign the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR} AND {ZED_BEDROCK_REGION_VAR} environment variables and restart Zed."),

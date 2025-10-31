@@ -19,6 +19,7 @@ use pet_core::python_environment::{PythonEnvironment, PythonEnvironmentKind};
 use pet_virtualenv::is_virtualenv_dir;
 use project::Fs;
 use project::lsp_store::language_server_settings;
+use rope::Rope;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use smol::lock::OnceCell;
@@ -466,7 +467,7 @@ impl LspAdapter for PyrightLspAdapter {
         Some(language::CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
+            language.highlight_text(&Rope::from_str_small(text.as_str()), display_range),
         ))
     }
 
@@ -1511,7 +1512,7 @@ impl LspAdapter for PyLspAdapter {
         Some(language::CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
+            language.highlight_text(&Rope::from_str_small(text.as_str()), display_range),
         ))
     }
 
@@ -1800,7 +1801,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
         Some(language::CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
+            language.highlight_text(&Rope::from_str_small(text.as_str()), display_range),
         ))
     }
 
@@ -1866,12 +1867,8 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 }
                 // Basedpyright by default uses `strict` type checking, we tone it down as to not surpris users
                 maybe!({
-                    let basedpyright = object
-                        .entry("basedpyright")
-                        .or_insert(Value::Object(serde_json::Map::default()));
-                    let analysis = basedpyright
-                        .as_object_mut()?
-                        .entry("analysis")
+                    let analysis = object
+                        .entry("basedpyright.analysis")
                         .or_insert(Value::Object(serde_json::Map::default()));
                     if let serde_json::map::Entry::Vacant(v) =
                         analysis.as_object_mut()?.entry("typeCheckingMode")

@@ -24,8 +24,8 @@ use collections::HashMap;
 use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, SharedString, StyledText,
-    Task, TaskLabel, TextStyle,
+    App, AppContext as _, BackgroundExecutor, Context, Entity, EventEmitter, HighlightStyle,
+    SharedString, StyledText, Task, TaskLabel, TextStyle,
 };
 
 use lsp::{LanguageServerId, NumberOrString};
@@ -832,6 +832,7 @@ impl Buffer {
                 ReplicaId::LOCAL,
                 cx.entity_id().as_non_zero_u64().into(),
                 base_text.into(),
+                &cx.background_executor(),
             ),
             None,
             Capability::ReadWrite,
@@ -862,9 +863,10 @@ impl Buffer {
         replica_id: ReplicaId,
         capability: Capability,
         base_text: impl Into<String>,
+        cx: &BackgroundExecutor,
     ) -> Self {
         Self::build(
-            TextBuffer::new(replica_id, remote_id, base_text.into()),
+            TextBuffer::new(replica_id, remote_id, base_text.into(), cx),
             None,
             capability,
         )
@@ -877,9 +879,10 @@ impl Buffer {
         capability: Capability,
         message: proto::BufferState,
         file: Option<Arc<dyn File>>,
+        cx: &BackgroundExecutor,
     ) -> Result<Self> {
         let buffer_id = BufferId::new(message.id).context("Could not deserialize buffer_id")?;
-        let buffer = TextBuffer::new(replica_id, buffer_id, message.base_text);
+        let buffer = TextBuffer::new(replica_id, buffer_id, message.base_text, cx);
         let mut this = Self::build(buffer, file, capability);
         this.text.set_line_ending(proto::deserialize_line_ending(
             rpc::proto::LineEnding::from_i32(message.line_ending).context("missing line_ending")?,
@@ -1138,13 +1141,14 @@ impl Buffer {
         let old_snapshot = self.text.snapshot();
         let mut branch_buffer = self.text.branch();
         let mut syntax_snapshot = self.syntax_map.lock().snapshot();
+        let executor = cx.background_executor().clone();
         cx.background_spawn(async move {
             if !edits.is_empty() {
                 if let Some(language) = language.clone() {
                     syntax_snapshot.reparse(&old_snapshot, registry.clone(), language);
                 }
 
-                branch_buffer.edit(edits.iter().cloned());
+                branch_buffer.edit(edits.iter().cloned(), &executor);
                 let snapshot = branch_buffer.snapshot();
                 syntax_snapshot.interpolate(&snapshot);
 
@@ -1573,21 +1577,24 @@ impl Buffer {
                 self.reparse = None;
             }
             Err(parse_task) => {
+                // todo(lw): hot foreground spawn
                 self.reparse = Some(cx.spawn(async move |this, cx| {
-                    let new_syntax_map = parse_task.await;
+                    let new_syntax_map = cx.background_spawn(parse_task).await;
                     this.update(cx, move |this, cx| {
-                        let grammar_changed =
+                        let grammar_changed = || {
                             this.language.as_ref().is_none_or(|current_language| {
                                 !Arc::ptr_eq(&language, current_language)
-                            });
-                        let language_registry_changed = new_syntax_map
-                            .contains_unknown_injections()
-                            && language_registry.is_some_and(|registry| {
-                                registry.version() != new_syntax_map.language_registry_version()
-                            });
-                        let parse_again = language_registry_changed
-                            || grammar_changed
-                            || this.version.changed_since(&parsed_version);
+                            })
+                        };
+                        let language_registry_changed = || {
+                            new_syntax_map.contains_unknown_injections()
+                                && language_registry.is_some_and(|registry| {
+                                    registry.version() != new_syntax_map.language_registry_version()
+                                })
+                        };
+                        let parse_again = this.version.changed_since(&parsed_version)
+                            || language_registry_changed()
+                            || grammar_changed();
                         this.did_finish_parsing(new_syntax_map, cx);
                         this.reparse = None;
                         if parse_again {
@@ -2358,7 +2365,9 @@ impl Buffer {
         let autoindent_request = autoindent_mode
             .and_then(|mode| self.language.as_ref().map(|_| (self.snapshot(), mode)));
 
-        let edit_operation = self.text.edit(edits.iter().cloned());
+        let edit_operation = self
+            .text
+            .edit(edits.iter().cloned(), cx.background_executor());
         let edit_id = edit_operation.timestamp();
 
         if let Some((before_edit, mode)) = autoindent_request {
@@ -2589,7 +2598,8 @@ impl Buffer {
         for operation in buffer_ops.iter() {
             self.send_operation(Operation::Buffer(operation.clone()), false, cx);
         }
-        self.text.apply_ops(buffer_ops);
+        self.text
+            .apply_ops(buffer_ops, Some(cx.background_executor()));
         self.deferred_ops.insert(deferred_ops);
         self.flush_deferred_ops(cx);
         self.did_edit(&old_version, was_dirty, cx);
@@ -3833,6 +3843,32 @@ impl BufferSnapshot {
         include_extra_context: bool,
         theme: Option<&SyntaxTheme>,
     ) -> Vec<OutlineItem<Anchor>> {
+        self.outline_items_containing_internal(
+            range,
+            include_extra_context,
+            theme,
+            |this, range| this.anchor_after(range.start)..this.anchor_before(range.end),
+        )
+    }
+
+    pub fn outline_items_as_points_containing<T: ToOffset>(
+        &self,
+        range: Range<T>,
+        include_extra_context: bool,
+        theme: Option<&SyntaxTheme>,
+    ) -> Vec<OutlineItem<Point>> {
+        self.outline_items_containing_internal(range, include_extra_context, theme, |_, range| {
+            range
+        })
+    }
+
+    fn outline_items_containing_internal<T: ToOffset, U>(
+        &self,
+        range: Range<T>,
+        include_extra_context: bool,
+        theme: Option<&SyntaxTheme>,
+        range_callback: fn(&Self, Range<Point>) -> Range<U>,
+    ) -> Vec<OutlineItem<U>> {
         let range = range.to_offset(self);
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
             grammar.outline_config.as_ref().map(|c| &c.query)
@@ -3905,19 +3941,16 @@ impl BufferSnapshot {
 
             anchor_items.push(OutlineItem {
                 depth: item_ends_stack.len(),
-                range: self.anchor_after(item.range.start)..self.anchor_before(item.range.end),
+                range: range_callback(self, item.range.clone()),
+                source_range_for_text: range_callback(self, item.source_range_for_text.clone()),
                 text: item.text,
                 highlight_ranges: item.highlight_ranges,
                 name_ranges: item.name_ranges,
-                body_range: item
-                    .body_range
-                    .map(|r| self.anchor_after(r.start)..self.anchor_before(r.end)),
+                body_range: item.body_range.map(|r| range_callback(self, r)),
                 annotation_range: annotation_row_range.map(|annotation_range| {
-                    self.anchor_after(Point::new(annotation_range.start, 0))
-                        ..self.anchor_before(Point::new(
-                            annotation_range.end,
-                            self.line_len(annotation_range.end),
-                        ))
+                    let point_range = Point::new(annotation_range.start, 0)
+                        ..Point::new(annotation_range.end, self.line_len(annotation_range.end));
+                    range_callback(self, point_range)
                 }),
             });
             item_ends_stack.push(item.range.end);
@@ -3984,14 +4017,13 @@ impl BufferSnapshot {
         if buffer_ranges.is_empty() {
             return None;
         }
+        let source_range_for_text =
+            buffer_ranges.first().unwrap().0.start..buffer_ranges.last().unwrap().0.end;
 
         let mut text = String::new();
         let mut highlight_ranges = Vec::new();
         let mut name_ranges = Vec::new();
-        let mut chunks = self.chunks(
-            buffer_ranges.first().unwrap().0.start..buffer_ranges.last().unwrap().0.end,
-            true,
-        );
+        let mut chunks = self.chunks(source_range_for_text.clone(), true);
         let mut last_buffer_range_end = 0;
         for (buffer_range, is_name) in buffer_ranges {
             let space_added = !text.is_empty() && buffer_range.start > last_buffer_range_end;
@@ -4037,6 +4069,7 @@ impl BufferSnapshot {
         Some(OutlineItem {
             depth: 0, // We'll calculate the depth later
             range: item_point_range,
+            source_range_for_text: source_range_for_text.to_point(self),
             text,
             highlight_ranges,
             name_ranges,

@@ -1635,56 +1635,79 @@ impl OutlinePanel {
         let Some(active_editor) = self.active_editor() else {
             return;
         };
-        let mut buffers_to_unfold = HashSet::default();
-        let expanded_entries =
-            self.fs_entries
-                .iter()
-                .fold(HashSet::default(), |mut entries, fs_entry| {
-                    match fs_entry {
-                        FsEntry::ExternalFile(external_file) => {
-                            buffers_to_unfold.insert(external_file.buffer_id);
-                            entries.insert(CollapsedEntry::ExternalFile(external_file.buffer_id));
-                            entries.extend(
-                                self.excerpts
-                                    .get(&external_file.buffer_id)
-                                    .into_iter()
-                                    .flat_map(|excerpts| {
-                                        excerpts.keys().map(|excerpt_id| {
-                                            CollapsedEntry::Excerpt(
-                                                external_file.buffer_id,
-                                                *excerpt_id,
-                                            )
-                                        })
-                                    }),
-                            );
-                        }
-                        FsEntry::Directory(directory) => {
-                            entries.insert(CollapsedEntry::Dir(
-                                directory.worktree_id,
-                                directory.entry.id,
+
+        let mut to_uncollapse: HashSet<CollapsedEntry> = HashSet::default();
+        let mut buffers_to_unfold: HashSet<BufferId> = HashSet::default();
+
+        for fs_entry in &self.fs_entries {
+            match fs_entry {
+                FsEntry::File(FsEntryFile {
+                    worktree_id,
+                    buffer_id,
+                    ..
+                }) => {
+                    to_uncollapse.insert(CollapsedEntry::File(*worktree_id, *buffer_id));
+                    buffers_to_unfold.insert(*buffer_id);
+                }
+                FsEntry::ExternalFile(FsEntryExternalFile { buffer_id, .. }) => {
+                    to_uncollapse.insert(CollapsedEntry::ExternalFile(*buffer_id));
+                    buffers_to_unfold.insert(*buffer_id);
+                }
+                FsEntry::Directory(FsEntryDirectory {
+                    worktree_id, entry, ..
+                }) => {
+                    to_uncollapse.insert(CollapsedEntry::Dir(*worktree_id, entry.id));
+                }
+            }
+        }
+
+        for (&buffer_id, excerpts) in &self.excerpts {
+            for (&excerpt_id, excerpt) in excerpts {
+                match &excerpt.outlines {
+                    ExcerptOutlines::Outlines(outlines) => {
+                        for outline in outlines {
+                            to_uncollapse.insert(CollapsedEntry::Outline(
+                                buffer_id,
+                                excerpt_id,
+                                outline.range.clone(),
                             ));
                         }
-                        FsEntry::File(file) => {
-                            buffers_to_unfold.insert(file.buffer_id);
-                            entries.insert(CollapsedEntry::File(file.worktree_id, file.buffer_id));
-                            entries.extend(
-                                self.excerpts.get(&file.buffer_id).into_iter().flat_map(
-                                    |excerpts| {
-                                        excerpts.keys().map(|excerpt_id| {
-                                            CollapsedEntry::Excerpt(file.buffer_id, *excerpt_id)
-                                        })
-                                    },
-                                ),
-                            );
+                    }
+                    ExcerptOutlines::Invalidated(outlines) => {
+                        for outline in outlines {
+                            to_uncollapse.insert(CollapsedEntry::Outline(
+                                buffer_id,
+                                excerpt_id,
+                                outline.range.clone(),
+                            ));
                         }
-                    };
-                    entries
-                });
+                    }
+                    ExcerptOutlines::NotFetched => {}
+                }
+                to_uncollapse.insert(CollapsedEntry::Excerpt(buffer_id, excerpt_id));
+            }
+        }
+
+        for cached in &self.cached_entries {
+            if let PanelEntry::FoldedDirs(FoldedDirsEntry {
+                worktree_id,
+                entries,
+                ..
+            }) = &cached.entry
+            {
+                if let Some(last) = entries.last() {
+                    to_uncollapse.insert(CollapsedEntry::Dir(*worktree_id, last.id));
+                }
+            }
+        }
+
         self.collapsed_entries
-            .retain(|entry| !expanded_entries.contains(entry));
+            .retain(|entry| !to_uncollapse.contains(entry));
+
         active_editor.update(cx, |editor, cx| {
             buffers_to_unfold.retain(|buffer_id| editor.is_buffer_folded(*buffer_id, cx));
         });
+
         if buffers_to_unfold.is_empty() {
             self.update_cached_entries(None, window, cx);
         } else {
@@ -1703,37 +1726,44 @@ impl OutlinePanel {
             return;
         };
         let mut buffers_to_fold = HashSet::default();
-        let new_entries = self
-            .cached_entries
-            .iter()
-            .flat_map(|cached_entry| match &cached_entry.entry {
-                PanelEntry::Fs(FsEntry::Directory(FsEntryDirectory {
-                    worktree_id, entry, ..
-                })) => Some(CollapsedEntry::Dir(*worktree_id, entry.id)),
-                PanelEntry::Fs(FsEntry::File(FsEntryFile {
-                    worktree_id,
-                    buffer_id,
-                    ..
-                })) => {
-                    buffers_to_fold.insert(*buffer_id);
-                    Some(CollapsedEntry::File(*worktree_id, *buffer_id))
-                }
-                PanelEntry::Fs(FsEntry::ExternalFile(external_file)) => {
-                    buffers_to_fold.insert(external_file.buffer_id);
-                    Some(CollapsedEntry::ExternalFile(external_file.buffer_id))
-                }
-                PanelEntry::FoldedDirs(FoldedDirsEntry {
-                    worktree_id,
-                    entries,
-                    ..
-                }) => Some(CollapsedEntry::Dir(*worktree_id, entries.last()?.id)),
-                PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => {
-                    Some(CollapsedEntry::Excerpt(excerpt.buffer_id, excerpt.id))
-                }
-                PanelEntry::Search(_) | PanelEntry::Outline(..) => None,
-            })
-            .collect::<Vec<_>>();
-        self.collapsed_entries.extend(new_entries);
+        self.collapsed_entries
+            .extend(self.cached_entries.iter().filter_map(
+                |cached_entry| match &cached_entry.entry {
+                    PanelEntry::Fs(FsEntry::Directory(FsEntryDirectory {
+                        worktree_id,
+                        entry,
+                        ..
+                    })) => Some(CollapsedEntry::Dir(*worktree_id, entry.id)),
+                    PanelEntry::Fs(FsEntry::File(FsEntryFile {
+                        worktree_id,
+                        buffer_id,
+                        ..
+                    })) => {
+                        buffers_to_fold.insert(*buffer_id);
+                        Some(CollapsedEntry::File(*worktree_id, *buffer_id))
+                    }
+                    PanelEntry::Fs(FsEntry::ExternalFile(external_file)) => {
+                        buffers_to_fold.insert(external_file.buffer_id);
+                        Some(CollapsedEntry::ExternalFile(external_file.buffer_id))
+                    }
+                    PanelEntry::FoldedDirs(FoldedDirsEntry {
+                        worktree_id,
+                        entries,
+                        ..
+                    }) => Some(CollapsedEntry::Dir(*worktree_id, entries.last()?.id)),
+                    PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => {
+                        Some(CollapsedEntry::Excerpt(excerpt.buffer_id, excerpt.id))
+                    }
+                    PanelEntry::Outline(OutlineEntry::Outline(outline)) => {
+                        Some(CollapsedEntry::Outline(
+                            outline.buffer_id,
+                            outline.excerpt_id,
+                            outline.outline.range.clone(),
+                        ))
+                    }
+                    PanelEntry::Search(_) => None,
+                },
+            ));
 
         active_editor.update(cx, |editor, cx| {
             buffers_to_fold.retain(|buffer_id| !editor.is_buffer_folded(*buffer_id, cx));
@@ -2484,6 +2514,7 @@ impl OutlinePanel {
                 annotation_range: None,
                 range: search_data.context_range.clone(),
                 text: search_data.context_text.clone(),
+                source_range_for_text: search_data.context_range.clone(),
                 highlight_ranges: search_data
                     .highlights_data
                     .get()
@@ -6597,6 +6628,60 @@ outline: struct OutlineEntryExcerpt
                 )
             );
         });
+
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.collapse_all_entries(&CollapseAllEntries, window, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry(),
+                    cx,
+                ),
+                format!(r#"frontend-project/"#)
+            );
+        });
+
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.expand_all_entries(&ExpandAllEntries, window, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry(),
+                    cx,
+                ),
+                format!(
+                    r#"frontend-project/
+  public/lottie/
+    syntax-tree.json
+      search: {{ "something": "static" }}
+  src/
+    app/(site)/
+      (about)/jobs/[slug]/
+        page.tsx
+          search: static
+      (blog)/post/[slug]/
+        page.tsx
+          search: static
+    components/
+      ErrorBoundary.tsx  <==== selected
+        search: static"#
+                )
+            );
+        });
     }
 
     async fn add_outline_panel(
@@ -7507,6 +7592,239 @@ outline: fn process_config(config: Config)
 outline: fn main()"
                 )
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_outline_expand_collapse_all(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/test",
+            json!({
+                "src": {
+                    "lib.rs": indoc!("
+                            mod outer {
+                                pub struct OuterStruct {
+                                    field: String,
+                                }
+                                impl OuterStruct {
+                                    pub fn new() -> Self {
+                                        Self { field: String::new() }
+                                    }
+                                    pub fn method(&self) {
+                                        println!(\"{}\", self.field);
+                                    }
+                                }
+                                mod inner {
+                                    pub fn inner_function() {
+                                        let x = 42;
+                                        println!(\"{}\", x);
+                                    }
+                                    pub struct InnerStruct {
+                                        value: i32,
+                                    }
+                                }
+                            }
+                            fn main() {
+                                let s = outer::OuterStruct::new();
+                                s.method();
+                            }
+                        "),
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+        project.read_with(cx, |project, _| {
+            project.languages().add(Arc::new(
+                rust_lang()
+                    .with_outline_query(
+                        r#"
+                            (struct_item
+                                (visibility_modifier)? @context
+                                "struct" @context
+                                name: (_) @name) @item
+                            (impl_item
+                                "impl" @context
+                                trait: (_)? @context
+                                "for"? @context
+                                type: (_) @context
+                                body: (_)) @item
+                            (function_item
+                                (visibility_modifier)? @context
+                                "fn" @context
+                                name: (_) @name
+                                parameters: (_) @context) @item
+                            (mod_item
+                                (visibility_modifier)? @context
+                                "mod" @context
+                                name: (_) @name) @item
+                            (enum_item
+                                (visibility_modifier)? @context
+                                "enum" @context
+                                name: (_) @name) @item
+                            (field_declaration
+                                (visibility_modifier)? @context
+                                name: (_) @name
+                                ":" @context
+                                type: (_) @context) @item
+                            "#,
+                    )
+                    .unwrap(),
+            ))
+        });
+        let workspace = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let outline_panel = outline_panel(&workspace, cx);
+
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+
+        workspace
+            .update(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    PathBuf::from("/test/src/lib.rs"),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap();
+
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
+        cx.run_until_parked();
+
+        // Force another update cycle to ensure outlines are fetched
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.update_non_fs_items(window, cx);
+            panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
+        cx.run_until_parked();
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry(),
+                    cx,
+                ),
+                indoc!(
+                    "
+outline: mod outer  <==== selected
+  outline: pub struct OuterStruct
+    outline: field: String
+  outline: impl OuterStruct
+    outline: pub fn new()
+    outline: pub fn method(&self)
+  outline: mod inner
+    outline: pub fn inner_function()
+    outline: pub struct InnerStruct
+      outline: value: i32
+outline: fn main()"
+                )
+            );
+        });
+
+        let _parent_outline = outline_panel
+            .read_with(cx, |panel, _cx| {
+                panel
+                    .cached_entries
+                    .iter()
+                    .find_map(|entry| match &entry.entry {
+                        PanelEntry::Outline(OutlineEntry::Outline(outline))
+                            if panel
+                                .outline_children_cache
+                                .get(&outline.buffer_id)
+                                .and_then(|children_map| {
+                                    let key =
+                                        (outline.outline.range.clone(), outline.outline.depth);
+                                    children_map.get(&key)
+                                })
+                                .copied()
+                                .unwrap_or(false) =>
+                        {
+                            Some(entry.entry.clone())
+                        }
+                        _ => None,
+                    })
+            })
+            .expect("Should find an outline with children");
+
+        // Collapse all entries
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.collapse_all_entries(&CollapseAllEntries, window, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        let expected_collapsed_output = indoc!(
+            "
+        outline: mod outer  <==== selected
+        outline: fn main()"
+        );
+
+        outline_panel.update(cx, |panel, cx| {
+            assert_eq! {
+                display_entries(
+                    &project,
+                    &snapshot(panel, cx),
+                    &panel.cached_entries,
+                    panel.selected_entry(),
+                    cx,
+                ),
+                expected_collapsed_output
+            };
+        });
+
+        // Expand all entries
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.expand_all_entries(&ExpandAllEntries, window, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        let expected_expanded_output = indoc!(
+            "
+        outline: mod outer  <==== selected
+          outline: pub struct OuterStruct
+            outline: field: String
+          outline: impl OuterStruct
+            outline: pub fn new()
+            outline: pub fn method(&self)
+          outline: mod inner
+            outline: pub fn inner_function()
+            outline: pub struct InnerStruct
+              outline: value: i32
+        outline: fn main()"
+        );
+
+        outline_panel.update(cx, |panel, cx| {
+            assert_eq! {
+                display_entries(
+                    &project,
+                    &snapshot(panel, cx),
+                    &panel.cached_entries,
+                    panel.selected_entry(),
+                    cx,
+                ),
+                expected_expanded_output
+            };
         });
     }
 }
