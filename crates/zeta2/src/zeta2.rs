@@ -624,7 +624,7 @@ impl Zeta {
         })
     }
 
-    fn request_prediction(
+    pub fn request_prediction(
         &mut self,
         project: &Entity<Project>,
         buffer: &Entity<Buffer>,
