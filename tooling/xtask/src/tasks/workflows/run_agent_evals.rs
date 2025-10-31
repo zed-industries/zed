@@ -1,34 +1,37 @@
 use gh_workflow::{
-    Concurrency, Event, Expression, Job, PullRequest, PullRequestType, Run, Schedule, Step, Use,
-    Workflow, WorkflowDispatch,
+    Event, Expression, Job, PullRequest, PullRequestType, Run, Schedule, Step, Use, Workflow,
+    WorkflowDispatch,
 };
 
 use crate::tasks::workflows::{
     runners::{self, Platform},
     steps::{self, FluentBuilder as _, NamedJob, named, setup_cargo_config},
+    vars,
 };
 
 pub(crate) fn run_agent_evals() -> Workflow {
     let agent_evals = agent_evals();
 
-    named::workflow().on(Event::default()
-        .schedule([Schedule::default().cron("0 0 * * *")])
-        .pull_request(PullRequest::default().add_branch("**").types([
-            PullRequestType::Synchronize,
-            PullRequestType::Reopened,
-            PullRequestType::Labeled,
-        ]))
-        .workflow_dispatch(WorkflowDispatch::default()))
-    .concurrency(Concurrency::default().group(
-        "${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}"
-    ).cancel_in_progress(true))
-    .add_env(("CARGO_TERM_COLOR", "always"))
-    .add_env(("CARGO_INCREMENTAL", 0))
-    .add_env(("RUST_BACKTRACE", 1))
-    .add_env(("ANTHROPIC_API_KEY", "${{ secrets.ANTHROPIC_API_KEY }}"))
-    .add_env(("ZED_CLIENT_CHECKSUM_SEED", "${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}"))
-    .add_env(("ZED_EVAL_TELEMETRY", 1))
-    .add_job(agent_evals.name, agent_evals.job)
+    named::workflow()
+        .on(Event::default()
+            .schedule([Schedule::default().cron("0 0 * * *")])
+            .pull_request(PullRequest::default().add_branch("**").types([
+                PullRequestType::Synchronize,
+                PullRequestType::Reopened,
+                PullRequestType::Labeled,
+            ]))
+            .workflow_dispatch(WorkflowDispatch::default()))
+        .concurrency(vars::one_workflow_per_non_main_branch())
+        .add_env(("CARGO_TERM_COLOR", "always"))
+        .add_env(("CARGO_INCREMENTAL", 0))
+        .add_env(("RUST_BACKTRACE", 1))
+        .add_env(("ANTHROPIC_API_KEY", "${{ secrets.ANTHROPIC_API_KEY }}"))
+        .add_env((
+            "ZED_CLIENT_CHECKSUM_SEED",
+            "${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}",
+        ))
+        .add_env(("ZED_EVAL_TELEMETRY", 1))
+        .add_job(agent_evals.name, agent_evals.job)
 }
 
 fn agent_evals() -> NamedJob {
@@ -56,20 +59,22 @@ fn agent_evals() -> NamedJob {
 pub(crate) fn run_unit_evals() -> Workflow {
     let unit_evals = unit_evals();
 
-    named::workflow().on(Event::default()
-        .schedule([
-            // GitHub might drop jobs at busy times, so we choose a random time in the middle of the night.
-            Schedule::default().cron("47 1 * * 2"),
-        ])
-        .workflow_dispatch(WorkflowDispatch::default()))
-    .concurrency(Concurrency::default().group(
-        "${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}"
-    ).cancel_in_progress(true))
-    .add_env(("CARGO_TERM_COLOR", "always"))
-    .add_env(("CARGO_INCREMENTAL", 0))
-    .add_env(("RUST_BACKTRACE", 1))
-    .add_env(("ZED_CLIENT_CHECKSUM_SEED", "${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}"))
-    .add_job(unit_evals.name, unit_evals.job)
+    named::workflow()
+        .on(Event::default()
+            .schedule([
+                // GitHub might drop jobs at busy times, so we choose a random time in the middle of the night.
+                Schedule::default().cron("47 1 * * 2"),
+            ])
+            .workflow_dispatch(WorkflowDispatch::default()))
+        .concurrency(vars::one_workflow_per_non_main_branch())
+        .add_env(("CARGO_TERM_COLOR", "always"))
+        .add_env(("CARGO_INCREMENTAL", 0))
+        .add_env(("RUST_BACKTRACE", 1))
+        .add_env((
+            "ZED_CLIENT_CHECKSUM_SEED",
+            "${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}",
+        ))
+        .add_job(unit_evals.name, unit_evals.job)
 }
 
 fn unit_evals() -> NamedJob {
