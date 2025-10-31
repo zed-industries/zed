@@ -590,6 +590,7 @@ impl InlayMap {
                     .is_none_or(|edit| edit.old.start >= cursor.end().0)
                 {
                     let transform_start = new_transforms.summary().input.len;
+                    // FIXME: attempted to subtract with overflow
                     let transform_end =
                         buffer_edit.new.end + (cursor.end().0 - buffer_edit.old.end);
                     push_isomorphic(

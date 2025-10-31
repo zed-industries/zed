@@ -2367,18 +2367,18 @@ impl ReferenceMultibuffer {
                 }
 
                 // Add the inserted text for the hunk.
-                if hunk_range.end > offset {
-                    let len = text.len();
-                    text.extend(buffer.text_for_range(offset..hunk_range.end));
-                    regions.push(ReferenceRegion {
-                        buffer_id: Some(buffer.remote_id()),
-                        range: len..text.len(),
-                        buffer_start: Some(buffer.offset_to_point(offset)),
-                        status: Some(DiffHunkStatus::added(hunk.secondary_status)),
-                        excerpt_id: Some(excerpt.id),
-                    });
-                    offset = hunk_range.end;
-                }
+                // if hunk_range.end > offset {
+                //     let len = text.len();
+                //     text.extend(buffer.text_for_range(offset..hunk_range.end));
+                //     regions.push(ReferenceRegion {
+                //         buffer_id: Some(buffer.remote_id()),
+                //         range: len..text.len(),
+                //         buffer_start: Some(buffer.offset_to_point(offset)),
+                //         status: Some(DiffHunkStatus::added(hunk.secondary_status)),
+                //         excerpt_id: Some(excerpt.id),
+                //     });
+                //     offset = hunk_range.end;
+                // }
             }
 
             // Add the buffer text for the rest of the excerpt.

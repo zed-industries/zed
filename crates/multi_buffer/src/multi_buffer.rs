@@ -2622,7 +2622,7 @@ impl MultiBuffer {
             )
         }
 
-        #[cfg(any(test, feature = "test-support"))]
+        // #[cfg(any(test, feature = "test-support"))]
         snapshot.check_invariants();
         output_edits
     }
@@ -5821,15 +5821,16 @@ impl MultiBufferSnapshot {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+// #[cfg(any(test, feature = "test-support"))]
 impl MultiBufferSnapshot {
+    #[cfg(any(test, feature = "test-support"))]
     pub fn random_byte_range(&self, start_offset: usize, rng: &mut impl rand::Rng) -> Range<usize> {
         let end = self.clip_offset(rng.random_range(start_offset..=self.len()), Bias::Right);
         let start = self.clip_offset(rng.random_range(start_offset..=end), Bias::Right);
         start..end
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    // #[cfg(any(test, feature = "test-support"))]
     fn check_invariants(&self) {
         let excerpts = self.excerpts.items(());
         let excerpt_ids = self.excerpt_ids.items(());
@@ -6968,7 +6969,7 @@ impl<'a> Iterator for ReversedMultiBufferChunks<'a> {
         }
     }
 }
-
+// multi_buffer.chunks().map(|chunk| chunk.text()).collect::<String>() = "what the user sees"
 impl<'a> Iterator for MultiBufferChunks<'a> {
     type Item = Chunk<'a>;
 
@@ -6977,95 +6978,100 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
             return None;
         }
         if self.range.start == self.diff_transforms.end().0 {
-            self.diff_transforms.next();
+            next_non_skipped_diff_transform(&mut self.diff_transforms);
         }
 
+        debug_assert!(self.range.start == self.diff_transforms.end().0);
+        // self.diff_t..         |--------------|
+        // self.range            |-----------------------------|
+        //             |------|  |-skipped hunk-|  |-----------|
+        //                       ^                 ^
+
+        // figure out which transform we're going to operate on (it should be a non-skipped transform)
+        dbg!(self.diff_transforms.item());
         let diff_transform_start = self.diff_transforms.start().0;
         let diff_transform_end = self.diff_transforms.end().0;
         debug_assert!(self.range.start < diff_transform_end);
 
-        loop {
-            let diff_transform = self.diff_transforms.item()?;
-            match diff_transform {
-                DiffTransform::BufferContent { .. } => {
-                    let chunk = if let Some(chunk) = &mut self.buffer_chunk {
-                        chunk
-                    } else {
-                        let chunk = self.next_excerpt_chunk().unwrap();
-                        self.buffer_chunk.insert(chunk)
-                    };
+        let diff_transform = self.diff_transforms.item()?;
+        match diff_transform {
+            DiffTransform::BufferContent { .. } => {
+                let chunk = if let Some(chunk) = &mut self.buffer_chunk {
+                    chunk
+                } else {
+                    let chunk = self.next_excerpt_chunk().unwrap();
+                    self.buffer_chunk.insert(chunk)
+                };
 
-                    let chunk_end = self.range.start + chunk.text.len();
-                    let diff_transform_end = diff_transform_end.min(self.range.end);
+                let chunk_end = self.range.start + chunk.text.len();
+                let diff_transform_end = diff_transform_end.min(self.range.end);
 
-                    if diff_transform_end < chunk_end {
-                        let split_idx = diff_transform_end - self.range.start;
-                        let (before, after) = chunk.text.split_at(split_idx);
-                        self.range.start = diff_transform_end;
-                        let mask = 1u128.unbounded_shl(split_idx as u32).wrapping_sub(1);
-                        let chars = chunk.chars & mask;
-                        let tabs = chunk.tabs & mask;
+                if diff_transform_end < chunk_end {
+                    let split_idx = diff_transform_end - self.range.start;
+                    let (before, after) = chunk.text.split_at(split_idx);
+                    self.range.start = diff_transform_end;
+                    let mask = 1u128.unbounded_shl(split_idx as u32).wrapping_sub(1);
+                    let chars = chunk.chars & mask;
+                    let tabs = chunk.tabs & mask;
 
-                        chunk.text = after;
-                        chunk.chars = chunk.chars >> split_idx;
-                        chunk.tabs = chunk.tabs >> split_idx;
-
-                        break Some(Chunk {
-                            text: before,
-                            chars,
-                            tabs,
-                            ..chunk.clone()
-                        });
-                    } else {
-                        self.range.start = chunk_end;
-                        break self.buffer_chunk.take();
-                    }
+                    chunk.text = after;
+                    chunk.chars = chunk.chars >> split_idx;
+                    chunk.tabs = chunk.tabs >> split_idx;
+                    
+                    Some(Chunk {
+                        text: before,
+                        chars,
+                        tabs,
+                        ..chunk.clone()
+                    })
+                } else {
+                    self.range.start = chunk_end;
+                    self.buffer_chunk.take()
                 }
-                DiffTransform::DeletedHunk {
-                    buffer_id,
-                    base_text_byte_range,
-                    has_trailing_newline,
-                    ..
-                } => {
-                    let base_text_start =
-                        base_text_byte_range.start + self.range.start - diff_transform_start;
-                    let base_text_end =
-                        base_text_byte_range.start + self.range.end - diff_transform_start;
-                    let base_text_end = base_text_end.min(base_text_byte_range.end);
-
-                    let mut chunks = if let Some((_, mut chunks)) = self
-                        .diff_base_chunks
-                        .take()
-                        .filter(|(id, _)| id == buffer_id)
-                    {
-                        if chunks.range().start != base_text_start
-                            || chunks.range().end < base_text_end
-                        {
-                            chunks.seek(base_text_start..base_text_end);
-                        }
-                        chunks
-                    } else {
-                        let base_buffer = &self.diffs.get(buffer_id)?.base_text();
-                        base_buffer.chunks(base_text_start..base_text_end, self.language_aware)
-                    };
-
-                    let chunk = if let Some(chunk) = chunks.next() {
-                        self.range.start += chunk.text.len();
-                        self.diff_base_chunks = Some((*buffer_id, chunks));
-                        chunk
-                    } else {
-                        debug_assert!(has_trailing_newline);
-                        self.range.start += "\n".len();
-                        Chunk {
-                            text: "\n",
-                            chars: 1u128,
-                            ..Default::default()
-                        }
-                    };
-                    break Some(chunk);
-                }
-                DiffTransform::SkippedHunk(_) => self.diff_transforms.next(),
             }
+            DiffTransform::DeletedHunk {
+                buffer_id,
+                base_text_byte_range,
+                has_trailing_newline,
+                ..
+            } => {
+                let base_text_start =
+                    base_text_byte_range.start + self.range.start - diff_transform_start;
+                let base_text_end =
+                    base_text_byte_range.start + self.range.end - diff_transform_start;
+                let base_text_end = base_text_end.min(base_text_byte_range.end);
+
+                let mut chunks = if let Some((_, mut chunks)) = self
+                    .diff_base_chunks
+                    .take()
+                    .filter(|(id, _)| id == buffer_id)
+                {
+                    if chunks.range().start != base_text_start || chunks.range().end < base_text_end
+                    {
+                        chunks.seek(base_text_start..base_text_end);
+                    }
+                    chunks
+                } else {
+                    let base_buffer = &self.diffs.get(buffer_id)?.base_text();
+                    base_buffer.chunks(base_text_start..base_text_end, self.language_aware)
+                };
+
+                let chunk = if let Some(chunk) = chunks.next() {
+                    self.range.start += chunk.text.len();
+                    self.diff_base_chunks = Some((*buffer_id, chunks));
+                    chunk
+                } else {
+                    debug_assert!(has_trailing_newline);
+                    self.range.start += "\n".len();
+                    Chunk {
+                        text: "\n",
+                        chars: 1u128,
+                        ..Default::default()
+                    }
+                };
+                Some(chunk)
+            }
+            DiffTransform::SkippedHunk(_) => unreachable!("two skipped hunks in a row"),
         }
     }
 }
