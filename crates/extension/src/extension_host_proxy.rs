@@ -27,6 +27,7 @@ pub struct ExtensionHostProxy {
     language_server_proxy: RwLock<Option<Arc<dyn ExtensionLanguageServerProxy>>>,
     snippet_proxy: RwLock<Option<Arc<dyn ExtensionSnippetProxy>>>,
     slash_command_proxy: RwLock<Option<Arc<dyn ExtensionSlashCommandProxy>>>,
+    custom_action_proxy: RwLock<Option<Arc<dyn ExtensionCustomActionProxy>>>,
     context_server_proxy: RwLock<Option<Arc<dyn ExtensionContextServerProxy>>>,
     debug_adapter_provider_proxy: RwLock<Option<Arc<dyn ExtensionDebugAdapterProviderProxy>>>,
 }
@@ -52,6 +53,7 @@ impl ExtensionHostProxy {
             language_server_proxy: RwLock::default(),
             snippet_proxy: RwLock::default(),
             slash_command_proxy: RwLock::default(),
+            custom_action_proxy: RwLock::default(),
             context_server_proxy: RwLock::default(),
             debug_adapter_provider_proxy: RwLock::default(),
         }
@@ -79,6 +81,10 @@ impl ExtensionHostProxy {
 
     pub fn register_slash_command_proxy(&self, proxy: impl ExtensionSlashCommandProxy) {
         self.slash_command_proxy.write().replace(Arc::new(proxy));
+    }
+
+    pub fn register_custom_action_proxy(&self, proxy: impl ExtensionCustomActionProxy) {
+        self.custom_action_proxy.write().replace(Arc::new(proxy));
     }
 
     pub fn register_context_server_proxy(&self, proxy: impl ExtensionContextServerProxy) {
@@ -361,6 +367,36 @@ impl ExtensionSlashCommandProxy for ExtensionHostProxy {
         };
 
         proxy.unregister_slash_command(command_name)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct CustomAction {
+    pub name: String,
+    pub description: String,
+}
+
+pub trait ExtensionCustomActionProxy: Send + Sync + 'static {
+    fn register_custom_action(&self, extension: Arc<dyn Extension>, action: CustomAction);
+
+    fn unregister_custom_action(&self, action_name: Arc<str>);
+}
+
+impl ExtensionCustomActionProxy for ExtensionHostProxy {
+    fn register_custom_action(&self, extension: Arc<dyn Extension>, action: CustomAction) {
+        let Some(proxy) = self.custom_action_proxy.read().clone() else {
+            return;
+        };
+
+        proxy.register_custom_action(extension, action)
+    }
+
+    fn unregister_custom_action(&self, action_name: Arc<str>) {
+        let Some(proxy) = self.custom_action_proxy.read().clone() else {
+            return;
+        };
+
+        proxy.unregister_custom_action(action_name)
     }
 }
 

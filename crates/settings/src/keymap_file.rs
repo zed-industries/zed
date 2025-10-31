@@ -407,6 +407,44 @@ impl KeymapFile {
                     None => (Err(ActionSequence::expected_array_error()), None),
                 }
             }
+            Some((name, action_input)) if name.starts_with("extension::") => {
+                // Parse extension actions in the format: extension::{extension_id}::{action}
+                let parts: Vec<&str> = name.splitn(3, "::").collect();
+                if parts.len() == 3 && parts[0] == "extension" {
+                    let extension_id = parts[1];
+                    let action_name = parts[2];
+
+                    // Extract args from action_input if provided
+                    let args = match action_input {
+                        Some(Value::Array(arr)) => arr.clone(),
+                        Some(Value::String(s)) => vec![Value::String(s.clone())],
+                        _ => vec![],
+                    };
+
+                    // Build the ExtensionAction through the action registry
+                    let extension_action_json = json!({
+                        "extension_id": extension_id,
+                        "action": action_name,
+                        "args": args,
+                    });
+
+                    let action_input_string = extension_action_json.to_string();
+                    (
+                        cx.build_action("zed::ExtensionAction", Some(extension_action_json)),
+                        Some(action_input_string),
+                    )
+                } else {
+                    (
+                        Err(ActionBuildError::BuildError {
+                            name: name.clone(),
+                            error: anyhow::anyhow!(
+                                "Invalid extension action format. Expected: extension::{{extension_id}}::{{action}}"
+                            ),
+                        }),
+                        None,
+                    )
+                }
+            }
             Some((name, Some(action_input))) => {
                 let action_input_string = action_input.to_string();
                 (

@@ -3527,6 +3527,7 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "ctor",
+ "custom_action_provider",
  "db",
  "editor",
  "env_logger 0.11.8",
@@ -4406,6 +4407,27 @@ name = "cursor-icon"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
+
+[[package]]
+name = "custom_action_provider"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "extension",
+ "gpui",
+ "parking_lot",
+ "schemars 1.0.4",
+ "serde",
+ "util",
+]
+
+[[package]]
+name = "custom_actions_example"
+version = "0.1.0"
+dependencies = [
+ "zed_extension_api 0.7.0",
+]
 
 [[package]]
 name = "cxx"
@@ -20712,6 +20734,7 @@ dependencies = [
  "clock",
  "collections",
  "component",
+ "custom_action_provider",
  "dap",
  "db",
  "fs",
@@ -21156,6 +21179,7 @@ dependencies = [
  "component",
  "copilot",
  "crashes",
+ "custom_action_provider",
  "dap",
  "dap_adapters",
  "db",

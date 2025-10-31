@@ -29,6 +29,7 @@ use client::{
     proto::{self, ErrorCode, PanelId, PeerId},
 };
 use collections::{HashMap, HashSet, hash_map};
+use custom_action_provider;
 use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
 use futures::{
     Future, FutureExt, StreamExt,
@@ -576,6 +577,9 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
 
     cx.on_action(|_: &CloseWindow, cx| Workspace::close_global(cx));
     cx.on_action(|_: &Reload, cx| reload(cx));
+    cx.on_action(|action: &custom_action_provider::ExtensionAction, cx| {
+        handle_extension_action(action.clone(), cx);
+    });
 
     cx.on_action({
         let app_state = Arc::downgrade(&app_state);
@@ -7938,6 +7942,107 @@ pub fn reload(cx: &mut App) {
         cx.update(|cx| cx.restart())
     })
     .detach_and_log_err(cx);
+}
+
+fn handle_extension_action(action: custom_action_provider::ExtensionAction, cx: &mut App) {
+    // First check if registry is available
+    let Some(registry) = custom_action_provider::CustomActionRegistry::try_global(cx) else {
+        log::error!("CustomActionRegistry not available");
+        show_extension_action_error("Custom actions are not available".to_string(), cx);
+        return;
+    };
+
+    // Then check if the action exists
+    let Some(custom_action) = registry.get(&action.extension_id, &action.action) else {
+        let error_msg = format!(
+            "Custom action not found: {}: {}",
+            action.extension_id, action.action
+        );
+        log::error!("{}", error_msg);
+        show_extension_action_error(error_msg, cx);
+        return;
+    };
+
+    let extension = custom_action.extension.clone();
+    let action_name = action.action.clone();
+    let args = action.args.clone();
+
+    cx.spawn(async move |cx| {
+        let result = extension.run_action(action_name.clone().into(), args).await;
+
+        cx.update(|cx| match result {
+            Ok(output) => {
+                log::info!("Custom action '{}' completed: {}", action_name, output);
+
+                if let Some(window) = cx.active_window() {
+                    if let Some(workspace) = window.downcast::<Workspace>() {
+                        workspace
+                            .update(cx, |workspace, _, cx| {
+                                workspace.show_toast(
+                                    Toast::new(
+                                        notifications::NotificationId::unique::<
+                                            custom_action_provider::ExtensionAction,
+                                        >(),
+                                        format!("Action completed: {}", output),
+                                    ),
+                                    cx,
+                                );
+                            })
+                            .ok();
+                    }
+                }
+            }
+            Err(err) => {
+                log::error!("Custom action '{}' failed: {}", action_name, err);
+
+                if let Some(window) = cx.active_window() {
+                    if let Some(workspace) = window.downcast::<Workspace>() {
+                        workspace
+                            .update(cx, |workspace, _, cx| {
+                                workspace.show_toast(
+                                    Toast::new(
+                                        notifications::NotificationId::unique::<
+                                            custom_action_provider::ExtensionAction,
+                                        >(),
+                                        format!("Action failed: {}", err),
+                                    ),
+                                    cx,
+                                );
+                            })
+                            .ok();
+                    }
+                }
+            }
+        })
+        .ok();
+    })
+    .detach();
+}
+
+fn show_extension_action_error(error_msg: String, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        cx.update(|cx| {
+            if let Some(window) = cx.active_window() {
+                if let Some(workspace) = window.downcast::<Workspace>() {
+                    workspace
+                        .update(cx, |workspace, _, cx| {
+                            workspace.show_toast(
+                                Toast::new(
+                                    notifications::NotificationId::unique::<
+                                        custom_action_provider::ExtensionAction,
+                                    >(),
+                                    error_msg,
+                                ),
+                                cx,
+                            );
+                        })
+                        .ok();
+                }
+            }
+        })
+        .ok();
+    })
+    .detach();
 }
 
 fn parse_pixel_position_env_var(value: &str) -> Option<Point<Pixels>> {

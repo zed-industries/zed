@@ -1,16 +1,16 @@
 mod persistence;
 
+use client::parse_zed_link;
+use command_palette_hooks::{
+    CommandInterceptItem, CommandInterceptResult, CommandPaletteFilter,
+    GlobalCommandPaletteInterceptor,
+};
+use custom_action_provider::{CustomActionRegistry, ExtensionAction};
 use std::{
     cmp::{self, Reverse},
     collections::HashMap,
     sync::Arc,
     time::Duration,
-};
-
-use client::parse_zed_link;
-use command_palette_hooks::{
-    CommandInterceptItem, CommandInterceptResult, CommandPaletteFilter,
-    GlobalCommandPaletteInterceptor,
 };
 
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -98,7 +98,7 @@ impl CommandPalette {
     ) -> Self {
         let filter = CommandPaletteFilter::try_global(cx);
 
-        let commands = window
+        let mut commands: Vec<Command> = window
             .available_actions(cx)
             .into_iter()
             .filter_map(|action| {
@@ -109,9 +109,33 @@ impl CommandPalette {
                 Some(Command {
                     name: humanize_action_name(action.name()),
                     action,
+                    source: CommandSource::BuiltIn,
                 })
             })
             .collect();
+
+        if let Some(registry) = CustomActionRegistry::try_global(cx) {
+            let custom_actions = registry.all_actions();
+            for custom_action in custom_actions {
+                let extension_id = custom_action.extension.manifest().id.to_string();
+                let action_name = &custom_action.name;
+
+                // Replace underscores and hyphens with spaces for display
+                let display_extension_id = extension_id.replace('_', " ").replace('-', " ");
+                let display_action_name = action_name.replace('_', " ").replace('-', " ");
+                let display_name = format!("{}: {}", display_extension_id, display_action_name);
+
+                commands.push(Command {
+                    name: display_name,
+                    action: Box::new(ExtensionAction {
+                        extension_id,
+                        action: custom_action.name.clone(),
+                        args: vec![],
+                    }),
+                    source: CommandSource::Extension,
+                });
+            }
+        }
 
         let delegate = CommandPaletteDelegate::new(
             cx.entity().downgrade(),
@@ -169,6 +193,13 @@ pub struct CommandPaletteDelegate {
 struct Command {
     name: String,
     action: Box<dyn Action>,
+    source: CommandSource,
+}
+
+#[derive(Clone, Copy)]
+enum CommandSource {
+    BuiltIn,
+    Extension,
 }
 
 impl Clone for Command {
@@ -176,6 +207,7 @@ impl Clone for Command {
         Self {
             name: self.name.clone(),
             action: self.action.boxed_clone(),
+            source: self.source,
         }
     }
 }
@@ -228,6 +260,7 @@ impl CommandPaletteDelegate {
             commands.push(Command {
                 name: string.clone(),
                 action,
+                source: CommandSource::BuiltIn,
             });
             new_matches.push(StringMatch {
                 candidate_id: commands.len() - 1,
@@ -483,10 +516,21 @@ impl PickerDelegate for CommandPaletteDelegate {
                         .w_full()
                         .py_px()
                         .justify_between()
-                        .child(HighlightedLabel::new(
-                            command.name.clone(),
-                            matching_command.positions.clone(),
-                        ))
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(HighlightedLabel::new(
+                                    command.name.clone(),
+                                    matching_command.positions.clone(),
+                                ))
+                                .when(matches!(command.source, CommandSource::Extension), |this| {
+                                    this.child(
+                                        Label::new("(extension)")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                }),
+                        )
                         .child(KeyBinding::for_action_in(
                             &*command.action,
                             &self.previous_focus_handle,

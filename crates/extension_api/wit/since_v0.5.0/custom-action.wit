@@ -1,0 +1,9 @@
+interface custom-action {
+    /// A custom action provided by an extension.
+    record custom-action {
+        /// The name of the custom action.
+        name: string,
+        /// The description of the custom action.
+        description: string,
+    }
+}
