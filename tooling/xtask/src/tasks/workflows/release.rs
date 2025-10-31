@@ -164,13 +164,13 @@ fn upload_release_assets(deps: &[&NamedJob], bundle_jobs: &ReleaseBundleJobs) ->
 }
 
 fn create_draft_release() -> NamedJob {
-    fn draft_release_notes() -> Step<Run> {
+    fn generate_release_notes() -> Step<Run> {
         named::bash(
             r#"node --redirect-warnings=/dev/null ./script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md"#,
         )
     }
 
-    fn create_draft_release() -> Step<Run> {
+    fn create_release() -> Step<Run> {
         named::bash("script/create-draft-release target/release-notes.md")
             .add_env(("GITHUB_TOKEN", "${{ secrets.GITHUB_TOKEN }}"))
     }
@@ -190,8 +190,8 @@ fn create_draft_release() -> NamedJob {
             )
             .add_step(steps::script("script/determine-release-channel"))
             .add_step(steps::script("mkdir -p target/"))
-            .add_step(draft_release_notes())
-            .add_step(create_draft_release()),
+            .add_step(generate_release_notes())
+            .add_step(create_release()),
     )
 }
 
