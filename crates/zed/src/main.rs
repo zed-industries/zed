@@ -15,6 +15,7 @@ use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
+use git_ui::clone::clone_and_open;
 use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, QuitMode, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
@@ -875,104 +876,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
             }
             OpenRequestKind::GitClone { repo_url } => {
                 let app_state = app_state.clone();
-                workspace::with_active_or_new_workspace(cx, |_workspace, window, cx| {
-                    let path_prompt = cx.prompt_for_paths(gpui::PathPromptOptions {
-                        files: false,
-                        directories: true,
-                        multiple: false,
-                        prompt: Some("Select directory for cloned repository".into()),
-                    });
-
-                    cx.spawn_in(window, async move |workspace, cx| {
-                        let result = async {
-                            let mut paths = path_prompt.await.ok()?.ok()??;
-                            let path = paths.pop()?;
-
-                            let repo_name = repo_url
-                                .split('/')
-                                .next_back()
-                                .and_then(|name| name.strip_suffix(".git"))
-                                .unwrap_or("repository")
-                                .to_owned();
-
-                            let fs = workspace
-                                .read_with(cx, |workspace, _| workspace.app_state().fs.clone())
-                                .ok()?;
-
-                            fs.git_clone(&repo_url, path.as_path()).await.ok()?;
-
-                            let mut cloned_path = path;
-                            cloned_path.push(&repo_name);
-
-                            let prompt_answer = cx
-                                .update(|window, cx| {
-                                    window.prompt(
-                                        gpui::PromptLevel::Info,
-                                        &format!("Git Clone: {}", repo_name),
-                                        None,
-                                        &["Add to current project", "Open in new project"],
-                                        cx,
-                                    )
-                                })
-                                .ok()?
-                                .await
-                                .ok()?;
-
-                            match prompt_answer {
-                                0 => {
-                                    workspace
-                                        .update(cx, |workspace, cx| {
-                                            workspace
-                                                .project()
-                                                .update(cx, |project, cx| {
-                                                    project.create_worktree(
-                                                        cloned_path.as_path(),
-                                                        true,
-                                                        cx,
-                                                    )
-                                                })
-                                                .detach();
-                                        })
-                                        .ok()?;
-                                }
-                                1 => {
-                                    workspace
-                                        .update(cx, move |_workspace, cx| {
-                                            workspace::open_new(
-                                                Default::default(),
-                                                app_state,
-                                                cx,
-                                                move |workspace, _, cx| {
-                                                    cx.activate(true);
-                                                    workspace
-                                                        .project()
-                                                        .update(cx, |project, cx| {
-                                                            project.create_worktree(
-                                                                &cloned_path,
-                                                                true,
-                                                                cx,
-                                                            )
-                                                        })
-                                                        .detach();
-                                                },
-                                            )
-                                            .detach();
-                                        })
-                                        .ok();
-                                }
-                                _ => {}
-                            }
-
-                            Some(())
-                        }
-                        .await;
-
-                        if result.is_none() {
-                            log::error!("Failed to clone git repository");
-                        }
-                    })
-                    .detach();
-                });
+                clone_and_open(repo_url, app_state, cx);
             }
         }
 
