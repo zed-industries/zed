@@ -49,10 +49,7 @@ pub fn cargo_fmt() -> Step<Run> {
 }
 
 pub fn cargo_install_nextest(platform: Platform) -> Step<Run> {
-    named::run(
-        platform,
-        "cargo nextest || cargo install cargo-nextest --locked",
-    )
+    named::run(platform, "cargo install cargo-nextest --locked")
 }
 
 pub fn cargo_nextest(platform: Platform) -> Step<Run> {
@@ -116,14 +113,7 @@ pub(crate) fn clippy(platform: Platform) -> Step<Run> {
 }
 
 pub(crate) fn cache_rust_dependencies_namespace() -> Step<Use> {
-    let allowlisted_binaries: &str = &[
-        "/home/runner/.cargo/bin/cargo-nextest",
-        "/home/runner/.cargo/bin/cargo-about",
-    ]
-    .join("\n");
-    named::uses("namespacelabs", "nscloud-cache-action", "v1")
-        .add_with(("cache", "rust"))
-        .add_with(("path", allowlisted_binaries))
+    named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("cache", "rust"))
 }
 
 fn setup_linux() -> Step<Run> {

@@ -70,9 +70,6 @@ jobs:
       uses: namespacelabs/nscloud-cache-action@v1
       with:
         cache: rust
-        path: |-
-          /home/runner/.cargo/bin/cargo-nextest
-          /home/runner/.cargo/bin/cargo-about
     - name: steps::setup_pnpm
       uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
       with:
@@ -117,7 +114,7 @@ jobs:
       run: ./script/clippy.ps1
       shell: pwsh
     - name: steps::cargo_install_nextest
-      run: cargo nextest || cargo install cargo-nextest --locked
+      run: cargo install cargo-nextest --locked
       shell: pwsh
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 250
@@ -156,9 +153,6 @@ jobs:
       uses: namespacelabs/nscloud-cache-action@v1
       with:
         cache: rust
-        path: |-
-          /home/runner/.cargo/bin/cargo-nextest
-          /home/runner/.cargo/bin/cargo-about
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -167,7 +161,7 @@ jobs:
       run: ./script/clippy
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
-      run: cargo nextest || cargo install cargo-nextest --locked
+      run: cargo install cargo-nextest --locked
       shell: bash -euxo pipefail {0}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 100
@@ -204,7 +198,7 @@ jobs:
       run: ./script/clippy
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
-      run: cargo nextest || cargo install cargo-nextest --locked
+      run: cargo install cargo-nextest --locked
       shell: bash -euxo pipefail {0}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
@@ -232,9 +226,6 @@ jobs:
       uses: namespacelabs/nscloud-cache-action@v1
       with:
         cache: rust
-        path: |-
-          /home/runner/.cargo/bin/cargo-nextest
-          /home/runner/.cargo/bin/cargo-about
     - name: steps::setup_linux
       run: ./script/linux
       shell: bash -euxo pipefail {0}
@@ -282,9 +273,6 @@ jobs:
       uses: namespacelabs/nscloud-cache-action@v1
       with:
         cache: rust
-        path: |-
-          /home/runner/.cargo/bin/cargo-nextest
-          /home/runner/.cargo/bin/cargo-about
     - name: cargo build -p collab
       run: cargo build -p collab
       shell: bash -euxo pipefail {0}
@@ -345,9 +333,6 @@ jobs:
       uses: namespacelabs/nscloud-cache-action@v1
       with:
         cache: rust
-        path: |-
-          /home/runner/.cargo/bin/cargo-nextest
-          /home/runner/.cargo/bin/cargo-about
     - name: run_tests::check_dependencies::install_cargo_machete
       uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386
       with:
@@ -385,9 +370,6 @@ jobs:
       uses: namespacelabs/nscloud-cache-action@v1
       with:
         cache: rust
-        path: |-
-          /home/runner/.cargo/bin/cargo-nextest
-          /home/runner/.cargo/bin/cargo-about
     - name: run_tests::check_docs::lychee_link_check
       uses: lycheeverse/lychee-action@82202e5e9c2f4ef1a55a3d02563e1cb6041e5332
       with:
@@ -430,9 +412,6 @@ jobs:
       uses: namespacelabs/nscloud-cache-action@v1
       with:
         cache: rust
-        path: |-
-          /home/runner/.cargo/bin/cargo-nextest
-          /home/runner/.cargo/bin/cargo-about
     - name: ./script/check-licenses
       run: ./script/check-licenses
       shell: bash -euxo pipefail {0}

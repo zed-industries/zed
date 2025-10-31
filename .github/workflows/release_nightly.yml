@@ -53,7 +53,7 @@ jobs:
       run: ./script/clippy
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
-      run: cargo nextest || cargo install cargo-nextest --locked
+      run: cargo install cargo-nextest --locked
       shell: bash -euxo pipefail {0}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
@@ -88,7 +88,7 @@ jobs:
       run: ./script/clippy.ps1
       shell: pwsh
     - name: steps::cargo_install_nextest
-      run: cargo nextest || cargo install cargo-nextest --locked
+      run: cargo install cargo-nextest --locked
       shell: pwsh
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 250
