@@ -883,7 +883,148 @@ mod tests {
     use util::path;
 
     use super::*;
-    use std::{net::Ipv4Addr, path::PathBuf};
+    use task::TcpArgumentsTemplate;
+
+    #[gpui::test]
+    async fn test_tcp_connection_conflict_with_connect_args() {
+        let adapter = PythonDebugAdapter {
+            base_venv_path: OnceCell::new(),
+            debugpy_whl_base_path: OnceCell::new(),
+        };
+
+        let config_with_port_conflict = json!({
+            "request": "attach",
+            "connect": {
+                "port": 5679
+            }
+        });
+
+        let tcp_connection = TcpArgumentsTemplate {
+            host: None,
+            port: Some(5678),
+            timeout: None,
+        };
+
+        let task_def = DebugTaskDefinition {
+            label: "test".into(),
+            adapter: PythonDebugAdapter::ADAPTER_NAME.into(),
+            config: config_with_port_conflict,
+            tcp_connection: Some(tcp_connection.clone()),
+        };
+
+        let result = adapter
+            .get_installed_binary(
+                &MockDelegate::new(),
+                &task_def,
+                None,
+                None,
+                None,
+                Some("python3".to_string()),
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Cannot have two different ports")
+        );
+
+        let host = Ipv4Addr::new(127, 0, 0, 1);
+        let config_with_host_conflict = json!({
+            "request": "attach",
+            "connect": {
+                "host": "192.168.1.1",
+                "port": 5678
+            }
+        });
+
+        let tcp_connection_with_host = TcpArgumentsTemplate {
+            host: Some(host),
+            port: None,
+            timeout: None,
+        };
+
+        let task_def_host = DebugTaskDefinition {
+            label: "test".into(),
+            adapter: PythonDebugAdapter::ADAPTER_NAME.into(),
+            config: config_with_host_conflict,
+            tcp_connection: Some(tcp_connection_with_host),
+        };
+
+        let result_host = adapter
+            .get_installed_binary(
+                &MockDelegate::new(),
+                &task_def_host,
+                None,
+                None,
+                None,
+                Some("python3".to_string()),
+            )
+            .await;
+
+        assert!(result_host.is_err());
+        assert!(
+            result_host
+                .unwrap_err()
+                .to_string()
+                .contains("Cannot have two different hosts")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_attach_with_connect_mode_generates_correct_arguments() {
+        let host = Ipv4Addr::new(127, 0, 0, 1);
+        let port = 5678;
+
+        let args_without_host = PythonDebugAdapter::generate_debugpy_arguments(
+            &host,
+            port,
+            DebugpyLaunchMode::AttachWithConnect { host: None },
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let expected_suffix = path!("debug_adapters/Debugpy/debugpy/adapter");
+        assert!(args_without_host[0].ends_with(expected_suffix));
+        assert_eq!(args_without_host[1], "connect");
+        assert_eq!(args_without_host[2], "5678");
+
+        let args_with_host = PythonDebugAdapter::generate_debugpy_arguments(
+            &host,
+            port,
+            DebugpyLaunchMode::AttachWithConnect {
+                host: Some("192.168.1.100"),
+            },
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(args_with_host[0].ends_with(expected_suffix));
+        assert_eq!(args_with_host[1], "connect");
+        assert_eq!(args_with_host[2], "192.168.1.100:");
+        assert_eq!(args_with_host[3], "5678");
+
+        let args_normal = PythonDebugAdapter::generate_debugpy_arguments(
+            &host,
+            port,
+            DebugpyLaunchMode::Normal,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(args_normal[0].ends_with(expected_suffix));
+        assert_eq!(args_normal[1], "--host=127.0.0.1");
+        assert_eq!(args_normal[2], "--port=5678");
+        assert!(!args_normal.contains(&"connect".to_string()));
+    }
 
     #[gpui::test]
     async fn test_debugpy_install_path_cases() {
@@ -902,7 +1043,6 @@ mod tests {
         .await
         .unwrap();
 
-        // Case 2: Venv-installed debugpy (uses -m debugpy.adapter)
         let venv_args = PythonDebugAdapter::generate_debugpy_arguments(
             &host,
             port,
