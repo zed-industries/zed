@@ -4,7 +4,7 @@ name: release
 on:
   push:
     tags:
-    - v00.00.00-test
+    - v*
 jobs:
   run_tests_mac:
     if: github.repository_owner == 'zed-industries'
@@ -150,11 +150,21 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
-    - name: release::create_draft_release
-      uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        draft: true
-        prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
+        clean: false
+        fetch-depth: 25
+        ref: ${{ github.ref }}
+    - name: mkdir -p target/
+      run: mkdir -p target/
+      shell: bash -euxo pipefail {0}
+    - name: script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md || true
+      run: script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md || true
+      shell: bash -euxo pipefail {0}
+    - name: script/create-draft-release target/release-notes.md
+      run: script/create-draft-release target/release-notes.md
+      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   bundle_linux_arm64:
     needs:

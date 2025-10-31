@@ -165,15 +165,21 @@ fn upload_release_assets(deps: &[&NamedJob], bundle_jobs: &ReleaseBundleJobs) ->
 
 fn create_draft_release() -> NamedJob {
     named::job(
-        release_job(&[]).runs_on(runners::LINUX_SMALL).add_step(
-            named::uses(
-                "softprops",
-                "action-gh-release",
-                "de2c0eb89ae2a093876385947365aca7b0e5f844", // v1
+        release_job(&[])
+            .runs_on(runners::LINUX_SMALL)
+            // We need to fetch more than one commit so that `script/draft-release-notes`
+            // is able to diff between the current and previous tag.
+            //
+            // 25 was chosen arbitrarily.
+            .add_step(
+                steps::checkout_repo()
+                    .add_with(("fetch-depth", 25))
+                    .add_with(("clean", false))
+                    .add_with(("ref", "${{ github.ref }}")),
             )
-            .add_with(("draft", true))
-            .add_with(("prerelease", "${{ env.RELEASE_CHANNEL == 'preview' }}")),
-        ),
+            .add_step(steps::script("mkdir -p target/"))
+            .add_step(steps::script(r#"script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md || true"#))
+            .add_step(steps::script("script/create-draft-release target/release-notes.md")),
     )
 }
 
