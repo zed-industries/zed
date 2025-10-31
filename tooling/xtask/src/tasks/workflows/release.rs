@@ -188,13 +188,8 @@ fn create_draft_release() -> NamedJob {
                     .add_with(("clean", false))
                     .add_with(("ref", "${{ github.ref }}")),
             )
-            // todo!()
-            // .add_step(steps::script("script/determine-release-channel"))
+            .add_step(steps::script("script/determine-release-channel"))
             .add_step(steps::script("mkdir -p target/"))
-            .add_step(steps::script(indoc::indoc! {r#"
-                echo "RELEASE_CHANNEL=preview" >> "$GITHUB_ENV"
-                echo "RELEASE_VERSION=0.211.1" >> "$GITHUB_ENV"
-            "#}))
             .add_step(draft_release_notes())
             .add_step(create_draft_release()),
     )
