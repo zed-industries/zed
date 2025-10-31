@@ -719,9 +719,7 @@ impl Worktree {
     ) -> Task<Result<LoadedBinaryFile>> {
         match self {
             Worktree::Local(this) => this.load_binary_file(path, cx),
-            Worktree::Remote(_) => {
-                Task::ready(Err(anyhow!("remote worktrees can't yet load binary files")))
-            }
+            Worktree::Remote(this) => this.load_binary_file(path, cx),
         }
     }
 
@@ -1970,7 +1968,7 @@ impl RemoteWorktree {
         paths_to_copy: Vec<Arc<Path>>,
         local_fs: Arc<dyn Fs>,
         cx: &Context<Worktree>,
-    ) -> Task<anyhow::Result<Vec<ProjectEntryId>>> {
+    ) -> Task<Result<Vec<ProjectEntryId>>> {
         let client = self.client.clone();
         let worktree_id = self.id().to_proto();
         let project_id = self.project_id;
@@ -2026,6 +2024,33 @@ impl RemoteWorktree {
             }
 
             Ok(copied_entry_ids)
+        })
+    }
+
+    fn load_binary_file(
+        &self,
+        path: &RelPath,
+        cx: &Context<Worktree>,
+    ) -> Task<Result<LoadedBinaryFile>> {
+        let path = Arc::from(path);
+        let abs_path = self.absolutize(&path);
+        // let fs = self.fs.clone();
+        // let entry = self.refresh_entry(path.clone(), None, cx);
+        // let is_private = self.is_path_private(&path);
+        let response = self.client.request(proto::LoadBinaryFile{
+            path: path.to_proto(),
+            project_id: self.project_id(),
+            worktree_id: self.id().to_proto(),
+        });
+        let worktree = cx.weak_entity();
+        cx.background_spawn(async move {
+            let proto::BinaryFileResponse { entry, content } = response.await?;
+            let worktree = worktree.upgrade().context("worktree was dropped")?;
+            // TODO: check is_private
+            Ok(LoadedBinaryFile {
+                file: File::for_entry(entry.unwrap().into(), worktree),
+                content,
+            })
         })
     }
 }
@@ -5551,7 +5576,7 @@ impl CreatedEntry {
     }
 }
 
-fn parse_gitfile(content: &str) -> anyhow::Result<&Path> {
+fn parse_gitfile(content: &str) -> Result<&Path> {
     let path = content
         .strip_prefix("gitdir:")
         .with_context(|| format!("parsing gitfile content {content:?}"))?;

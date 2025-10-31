@@ -259,6 +259,7 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_open_server_settings);
         session.add_entity_request_handler(Self::handle_get_directory_environment);
         session.add_entity_message_handler(Self::handle_toggle_lsp_logs);
+        session.add_entity_request_handler(Self::handle_load_binary_file);
 
         session.add_entity_request_handler(BufferStore::handle_update_buffer);
         session.add_entity_message_handler(BufferStore::handle_close_buffer);
@@ -627,6 +628,34 @@ impl HeadlessProject {
         Ok(proto::OpenBufferResponse {
             buffer_id: buffer_id.to_proto(),
         })
+    }
+
+    pub async fn handle_load_binary_file(
+        this: Entity<Self>,
+        message: TypedEnvelope<proto::OpenBufferByPath>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::BinaryFileResposne> {
+        // let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
+        // let path = RelPath::from_proto(&message.payload.path)?;
+        // let (buffer_store, buffer) = this.update(&mut cx, |this, cx| {
+        //     let buffer_store = this.buffer_store.clone();
+        //     let buffer = this.buffer_store.update(cx, |buffer_store, cx| {
+        //         buffer_store.open_buffer(ProjectPath { worktree_id, path }, cx)
+        //     });
+        //     anyhow::Ok((buffer_store, buffer))
+        // })??;
+
+        // let buffer = buffer.await?;
+        // let buffer_id = buffer.read_with(&cx, |b, _| b.remote_id())?;
+        // buffer_store.update(&mut cx, |buffer_store, cx| {
+        //     buffer_store
+        //         .create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
+        //         .detach_and_log_err(cx);
+        // })?;
+
+        // Ok(proto::OpenBufferResponse {
+        //     buffer_id: buffer_id.to_proto(),
+        // })
     }
 
     async fn handle_find_search_candidates(

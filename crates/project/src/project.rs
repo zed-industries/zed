@@ -1035,6 +1035,7 @@ impl Project {
         client.add_entity_request_handler(Self::handle_open_new_buffer);
         client.add_entity_message_handler(Self::handle_create_buffer_for_peer);
         client.add_entity_message_handler(Self::handle_toggle_lsp_logs);
+        client.add_entity_request_handler(Self::handle_load_binary_file);
 
         WorktreeStore::init(&client);
         BufferStore::init(&client);
@@ -5167,6 +5168,22 @@ impl Project {
                 None
             }
         })
+    }
+
+    async fn handle_load_binary_file(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::LoadBinaryFile>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::BinaryFileResponse> {
+        // let peer_id = envelope.original_sender_id()?;
+        // let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        // let path = RelPath::from_proto(&envelope.payload.path)?;
+        // let open_buffer = this
+        //     .update(&mut cx, |this, cx| {
+        //         this.open_buffer(ProjectPath { worktree_id, path }, cx)
+        //     })?
+        //     .await?;
+        // Project::respond_to_open_buffer_request(this, open_buffer, peer_id, &mut cx)
     }
 
     fn set_worktrees_from_proto(
