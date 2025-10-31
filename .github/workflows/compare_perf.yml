@@ -2,7 +2,16 @@
 # Rebuild with `cargo xtask workflows`.
 name: compare_perf
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      head:
+        description: head
+        required: true
+        type: string
+      base:
+        description: base
+        required: true
+        type: string
 jobs:
   run_perf:
     runs-on: namespace-profile-2x4-ubuntu-2404
@@ -11,3 +20,14 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: compare_perf::run_perf::echo_inputs
+      run: echo ${{ inputs.base }} ${{ inputs.head }}
+      shell: bash -euxo pipefail {0}
+    - name: compare_perf::run_perf::create_results
+      run: mkdir -p target; echo 'Perf is *much* better now' > target/results.md
+      shell: bash -euxo pipefail {0}
+    - name: '@actions/upload-artifact results.md'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: results.md
+        path: target/results.md
