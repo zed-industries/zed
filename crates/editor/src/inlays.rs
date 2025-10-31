@@ -59,10 +59,10 @@ impl Inlay {
     pub fn hint(id: InlayId, position: Anchor, hint: &InlayHint) -> Self {
         let mut text = hint.text();
         if hint.padding_right && text.reversed_chars_at(text.len()).next() != Some(' ') {
-            text.push(" ");
+            text.push_small(" ");
         }
         if hint.padding_left && text.chars_at(0).next() != Some(' ') {
-            text.push_front(" ");
+            text.push_front_small(" ");
         }
         Self {
             id,
@@ -72,11 +72,11 @@ impl Inlay {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn mock_hint(id: usize, position: Anchor, text: impl Into<Rope>) -> Self {
+    pub fn mock_hint(id: usize, position: Anchor, text: Rope) -> Self {
         Self {
             id: InlayId::Hint(id),
             position,
-            content: InlayContent::Text(text.into()),
+            content: InlayContent::Text(text),
         }
     }
 
@@ -88,19 +88,19 @@ impl Inlay {
         }
     }
 
-    pub fn edit_prediction<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
+    pub fn edit_prediction(id: usize, position: Anchor, text: Rope) -> Self {
         Self {
             id: InlayId::EditPrediction(id),
             position,
-            content: InlayContent::Text(text.into()),
+            content: InlayContent::Text(text),
         }
     }
 
-    pub fn debugger<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
+    pub fn debugger(id: usize, position: Anchor, text: Rope) -> Self {
         Self {
             id: InlayId::DebuggerValue(id),
             position,
-            content: InlayContent::Text(text.into()),
+            content: InlayContent::Text(text),
         }
     }
 
@@ -108,7 +108,7 @@ impl Inlay {
         static COLOR_TEXT: OnceLock<Rope> = OnceLock::new();
         match &self.content {
             InlayContent::Text(text) => text,
-            InlayContent::Color(_) => COLOR_TEXT.get_or_init(|| Rope::from("◼")),
+            InlayContent::Color(_) => COLOR_TEXT.get_or_init(|| Rope::from_str_small("◼")),
         }
     }
 

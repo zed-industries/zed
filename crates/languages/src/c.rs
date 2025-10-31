@@ -178,7 +178,7 @@ impl super::LspAdapter for CLspAdapter {
             Some(lsp::CompletionItemKind::FIELD) if completion.detail.is_some() => {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
-                let source = Rope::from(format!("struct S {{ {} }}", text).as_str());
+                let source = Rope::from_str_small(format!("struct S {{ {} }}", text).as_str());
                 let runs = language.highlight_text(&source, 11..11 + text.len());
                 let filter_range = completion
                     .filter_text
@@ -195,7 +195,8 @@ impl super::LspAdapter for CLspAdapter {
             {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
-                let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
+                let runs =
+                    language.highlight_text(&Rope::from_str_small(text.as_str()), 0..text.len());
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -211,7 +212,8 @@ impl super::LspAdapter for CLspAdapter {
             {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
-                let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
+                let runs =
+                    language.highlight_text(&Rope::from_str_small(text.as_str()), 0..text.len());
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -315,7 +317,7 @@ impl super::LspAdapter for CLspAdapter {
         Some(CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
+            language.highlight_text(&Rope::from_str_small(text.as_str()), display_range),
         ))
     }
 

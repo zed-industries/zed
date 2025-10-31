@@ -11,7 +11,7 @@ use futures::{Future, FutureExt, future::join_all};
 use gpui::{App, AppContext, AsyncApp, Task};
 use language::{
     BinaryStatus, CodeLabel, DynLspInstaller, HighlightId, Language, LanguageName, LspAdapter,
-    LspAdapterDelegate, Toolchain,
+    LspAdapterDelegate, Rope, Toolchain,
 };
 use lsp::{
     CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName,
@@ -403,7 +403,10 @@ fn labels_from_extension(
             let runs = if label.code.is_empty() {
                 Vec::new()
             } else {
-                language.highlight_text(&label.code.as_str().into(), 0..label.code.len())
+                language.highlight_text(
+                    &Rope::from_str_small(label.code.as_str()),
+                    0..label.code.len(),
+                )
             };
             build_code_label(&label, &runs, language)
         })

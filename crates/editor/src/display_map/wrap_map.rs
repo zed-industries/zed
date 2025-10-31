@@ -866,7 +866,7 @@ impl WrapSnapshot {
                 }
             }
 
-            let text = language::Rope::from(self.text().as_str());
+            let text = language::Rope::from_str_small(self.text().as_str());
             let mut input_buffer_rows = self.tab_snapshot.rows(0);
             let mut expected_buffer_rows = Vec::new();
             let mut prev_tab_row = 0;
@@ -1416,9 +1416,10 @@ mod tests {
             }
         }
 
-        let mut initial_text = Rope::from(initial_snapshot.text().as_str());
+        let mut initial_text =
+            Rope::from_str(initial_snapshot.text().as_str(), cx.background_executor());
         for (snapshot, patch) in edits {
-            let snapshot_text = Rope::from(snapshot.text().as_str());
+            let snapshot_text = Rope::from_str(snapshot.text().as_str(), cx.background_executor());
             for edit in &patch {
                 let old_start = initial_text.point_to_offset(Point::new(edit.new.start, 0));
                 let old_end = initial_text.point_to_offset(cmp::min(
@@ -1434,7 +1435,7 @@ mod tests {
                     .chunks_in_range(new_start..new_end)
                     .collect::<String>();
 
-                initial_text.replace(old_start..old_end, &new_text);
+                initial_text.replace(old_start..old_end, &new_text, cx.background_executor());
             }
             assert_eq!(initial_text.to_string(), snapshot_text.to_string());
         }
