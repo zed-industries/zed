@@ -36,10 +36,6 @@ jobs:
     - name: steps::cargo_install_nextest
       run: cargo install cargo-nextest --locked
       shell: bash -euxo pipefail {0}
-    - name: steps::setup_node
-      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-      with:
-        node-version: '18'
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 100
       shell: bash -euxo pipefail {0}

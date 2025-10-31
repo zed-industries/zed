@@ -54,7 +54,6 @@ fn unit_evals() -> NamedJob {
             .add_step(steps::cache_rust_dependencies())
             .map(steps::install_linux_dependencies)
             .add_step(steps::cargo_install_nextest(Platform::Linux))
-            .add_step(steps::setup_node().add_with(("node-version", "18")))
             .add_step(steps::clear_target_dir_if_large(Platform::Linux))
             .add_step(run_evals())
             .add_step(send_failure_to_slack())
