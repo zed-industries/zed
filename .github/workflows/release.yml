@@ -161,10 +161,10 @@ jobs:
       shell: bash -euxo pipefail {0}
     - name: |
         echo "RELEASE_CHANNEL=preview" >> $GITHUB_ENV
-        echo "RELEASE_VERSION=0.211.1 >> $GITHUB_ENV
+        echo "RELEASE_VERSION=0.211.1" >> $GITHUB_ENV
       run: |
         echo "RELEASE_CHANNEL=preview" >> $GITHUB_ENV
-        echo "RELEASE_VERSION=0.211.1 >> $GITHUB_ENV
+        echo "RELEASE_VERSION=0.211.1" >> $GITHUB_ENV
       shell: bash -euxo pipefail {0}
     - name: release::create_draft_release::draft_release_notes
       run: node --redirect-warnings=/dev/null ./script/draft-release-notes $RELEASE_CHANNEL $RELEASE_VERSION > target/release-notes.md
