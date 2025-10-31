@@ -113,20 +113,19 @@ pub(crate) fn clippy(platform: Platform) -> Step<Run> {
 }
 
 pub(crate) fn cache_rust_dependencies_namespace() -> Step<Use> {
+    let allowlisted_binaries: &str = &[
+        "/home/runner/.cargo/bin/cargo-nextest",
+        "/home/runner/.cargo/bin/cargo-about",
+    ]
+    .join("\n");
     named::uses(
         "namespacelabs",
         "rust-cache",
         "nscloud-cache-action", // v2
     )
-    .with(("save-if", "${{ github.ref == 'refs/heads/main' }}"))
-    .with(("cache", "rust"))
-    .with((
-        "path",
-        [
-            "/home/runner/.cargo/bin/cargo-nextest",
-            "/home/runner/.cargo/bin/cargo-about",
-        ],
-    ))
+    .add_with(("save-if", "${{ github.ref == 'refs/heads/main' }}"))
+    .add_with(("cache", "rust"))
+    .add_with(("path", allowlisted_binaries))
 }
 
 fn setup_linux() -> Step<Run> {
