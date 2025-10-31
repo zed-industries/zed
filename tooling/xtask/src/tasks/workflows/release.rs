@@ -1,19 +1,9 @@
-use gh_workflow::{Concurrency, Event, Expression, Job, Push, Run, Step, Use, Workflow};
+use gh_workflow::{Concurrency, Event, Expression, Push, Run, Step, Use, Workflow};
 
 use crate::tasks::workflows::{
     run_bundling, run_tests, runners,
     steps::{self, NamedJob, dependant_job, named, release_job},
 };
-
-// ideal release flow:
-//  phase 1:
-//   - tests on linux/windows/mac
-//   - (maybe) check fmt and spelling / licenses? [or maybe not, we already test them everywhere else...]
-//   - create draft release with the draft release notes
-//  phase 2:
-//   - build linux/windows/mac
-//  phase 3:
-//   - auto-release preview (for patch releases on the preview branch)
 
 pub(crate) fn release() -> Workflow {
     let macos_tests = run_tests::run_platform_tests(runners::Platform::Mac);
@@ -37,18 +27,17 @@ pub(crate) fn release() -> Workflow {
     let auto_release_preview = auto_release_preview(&[&upload_release_assets]);
 
     named::workflow()
+        // todo! make this on push to any release tag
         .on(Event::default().push(Push::default().tags(vec!["v00.00.00-test".to_string()])))
         .concurrency(
-            // todo! what should actual concurrency be? We don't want two workflows trying to create the same release
             Concurrency::default()
-                .group("${{ github.workflow }}")
+                .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}")
                 .cancel_in_progress(true),
         )
-        // todo! re-enable tests
-        .add_job(macos_tests.name, use_fake_job_instead(macos_tests.job))
-        .add_job(linux_tests.name, use_fake_job_instead(linux_tests.job))
-        .add_job(windows_tests.name, use_fake_job_instead(windows_tests.job))
-        .add_job(check_scripts.name, use_fake_job_instead(check_scripts.job))
+        .add_job(macos_tests.name, macos_tests.job)
+        .add_job(linux_tests.name, linux_tests.job)
+        .add_job(windows_tests.name, windows_tests.job)
+        .add_job(check_scripts.name, check_scripts.job)
         .add_job(create_draft_release.name, create_draft_release.job)
         .add_job(bundle.linux_arm64.name, bundle.linux_arm64.job)
         .add_job(bundle.linux_x86_64.name, bundle.linux_x86_64.job)
@@ -93,12 +82,6 @@ fn create_sentry_release() -> Step<Use> {
     .add_with(("environment", "production"))
 }
 
-fn use_fake_job_instead(_: Job) -> Job {
-    Job::default()
-        .add_step(steps::checkout_repo())
-        .runs_on(runners::LINUX_SMALL)
-}
-
 struct ReleaseBundleJobs {
     linux_arm64: NamedJob,
     linux_x86_64: NamedJob,
@@ -118,13 +101,7 @@ fn upload_release_assets(deps: &[&NamedJob], bundle_jobs: &ReleaseBundleJobs) ->
         .add_with(("path", "./artifacts/"))
     }
 
-    // todo! consider splitting this up per release
-    // upload_release_artifacts_job(platform, arm64_job, x86_64_job) -> NamedJob;
-    // pro - when doing releases, once assets appear, you know it's all of them
-    // con - no testing Windows assets while waiting for Linux to finish
     fn prep_release_artifacts(bundle: &ReleaseBundleJobs) -> Step<Run> {
-        // todo! is it worth it to try and make the
-        // "zed" and "remote-server" output names here type safe/codified?
         let assets = [
             (&bundle.mac_x86_64.name, "zed", "Zed-x86_64.dmg"),
             (&bundle.mac_arm64.name, "zed", "Zed-aarch64.dmg"),
