@@ -23,6 +23,11 @@ use std::{
 use util::command::new_smol_command;
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 
+enum DebugpyLaunchMode<'a> {
+    Normal,
+    AttachWithConnect { host: Option<&'a str> },
+}
+
 #[derive(Default)]
 pub(crate) struct PythonDebugAdapter {
     base_venv_path: OnceCell<Result<Arc<Path>, String>>,
@@ -36,10 +41,11 @@ impl PythonDebugAdapter {
 
     const LANGUAGE_NAME: &'static str = "Python";
 
-    async fn generate_debugpy_arguments(
-        host: &Ipv4Addr,
+    async fn generate_debugpy_arguments<'a>(
+        host: &'a Ipv4Addr,
         port: u16,
-        user_installed_path: Option<&Path>,
+        launch_mode: DebugpyLaunchMode<'a>,
+        user_installed_path: Option<&'a Path>,
         user_args: Option<Vec<String>>,
     ) -> Result<Vec<String>> {
         let mut args = if let Some(user_installed_path) = user_installed_path {
@@ -62,7 +68,20 @@ impl PythonDebugAdapter {
         args.extend(if let Some(args) = user_args {
             args
         } else {
-            vec![format!("--host={}", host), format!("--port={}", port)]
+            match launch_mode {
+                DebugpyLaunchMode::Normal => {
+                    vec![format!("--host={}", host), format!("--port={}", port)]
+                }
+                DebugpyLaunchMode::AttachWithConnect { host } => {
+                    let mut args = vec!["connect".to_string()];
+
+                    if let Some(host) = host {
+                        args.push(format!("{host}:"));
+                    }
+                    args.push(format!("{port}"));
+                    args
+                }
+            }
         });
         Ok(args)
     }
@@ -315,7 +334,46 @@ impl PythonDebugAdapter {
         user_env: Option<HashMap<String, String>>,
         python_from_toolchain: Option<String>,
     ) -> Result<DebugAdapterBinary> {
-        let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
+        let mut tcp_connection = config.tcp_connection.clone().unwrap_or_default();
+
+        let (config_port, config_host) = config
+            .config
+            .get("connect")
+            .map(|value| {
+                (
+                    value
+                        .get("port")
+                        .and_then(|val| val.as_u64().map(|p| p as u16)),
+                    value.get("host").and_then(|val| val.as_str()),
+                )
+            })
+            .unwrap_or_else(|| {
+                (
+                    config
+                        .config
+                        .get("port")
+                        .and_then(|port| port.as_u64().map(|p| p as u16)),
+                    config.config.get("host").and_then(|host| host.as_str()),
+                )
+            });
+
+        let is_attach_with_connect = if config
+            .config
+            .get("request")
+            .is_some_and(|val| val.as_str().is_some_and(|request| request == "attach"))
+        {
+            if tcp_connection.host.is_some() && config_host.is_some() {
+                bail!("Cannot have two different hosts in debug configuration")
+            } else if tcp_connection.port.is_some() && config_port.is_some() {
+                bail!("Cannot have two different ports in debug configuration")
+            }
+
+            tcp_connection.port = config_port;
+            DebugpyLaunchMode::AttachWithConnect { host: config_host }
+        } else {
+            DebugpyLaunchMode::Normal
+        };
+
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
         let python_path = if let Some(toolchain) = python_from_toolchain {
@@ -330,6 +388,7 @@ impl PythonDebugAdapter {
         let arguments = Self::generate_debugpy_arguments(
             &host,
             port,
+            is_attach_with_connect,
             user_installed_path.as_deref(),
             user_args,
         )
@@ -833,15 +892,26 @@ mod tests {
 
         // Case 1: User-defined debugpy path (highest precedence)
         let user_path = PathBuf::from("/custom/path/to/debugpy/src/debugpy/adapter");
-        let user_args =
-            PythonDebugAdapter::generate_debugpy_arguments(&host, port, Some(&user_path), None)
-                .await
-                .unwrap();
+        let user_args = PythonDebugAdapter::generate_debugpy_arguments(
+            &host,
+            port,
+            DebugpyLaunchMode::Normal,
+            Some(&user_path),
+            None,
+        )
+        .await
+        .unwrap();
 
         // Case 2: Venv-installed debugpy (uses -m debugpy.adapter)
-        let venv_args = PythonDebugAdapter::generate_debugpy_arguments(&host, port, None, None)
-            .await
-            .unwrap();
+        let venv_args = PythonDebugAdapter::generate_debugpy_arguments(
+            &host,
+            port,
+            DebugpyLaunchMode::Normal,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(user_args[0], "/custom/path/to/debugpy/src/debugpy/adapter");
         assert_eq!(user_args[1], "--host=127.0.0.1");
@@ -856,6 +926,7 @@ mod tests {
         let user_args = PythonDebugAdapter::generate_debugpy_arguments(
             &host,
             port,
+            DebugpyLaunchMode::Normal,
             Some(&user_path),
             Some(vec!["foo".into()]),
         )
@@ -864,6 +935,7 @@ mod tests {
         let venv_args = PythonDebugAdapter::generate_debugpy_arguments(
             &host,
             port,
+            DebugpyLaunchMode::Normal,
             None,
             Some(vec!["foo".into()]),
         )
