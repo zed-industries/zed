@@ -314,7 +314,7 @@ impl<D: PickerDelegate> Picker<D> {
             confirm_on_update: None,
             width: None,
             widest_item: None,
-            max_height: Some(rems(18.).into()),
+            max_height: Some(rems(24.).into()),
             show_scrollbar: false,
             is_modal: true,
         };
