@@ -834,6 +834,25 @@ impl WrapSnapshot {
         None
     }
 
+    // Editor calls DisplayMap::sync()
+    //   - that calls all ther other WhateverMap::sync()s
+    //
+    // BlockMap::sync()
+    //  - WrapSnapshot
+    //  - GroupBoundary (for the other Editor's DisplayMap)
+    //    - the other Editor's BlockMap::sync() must have been called
+    //       - which requires this Editor's BlockMap::sync() to have been called
+    //
+    // MultiBuffer::sync() <- InlayMap::sync() <- ... <- WrapMap::sync() (us)
+    // MultiBuffer::sync() <- InlayMap::sync() <- ... <- WrapMap::sync() (them)
+    //
+    // BlockMap::sync(our wrap map, their wrap map) (us)
+    // BlockMap::sync(their wrap map, our wrap map) (them)
+
+    // pub fn next_group_boundary(&self, point: WrapPoint) -> Option<(u32, Option<(added_lines: u32, deleted_lines: u32)>)> {
+    //     // ...
+    // }
+
     #[cfg(test)]
     pub fn text(&self) -> String {
         self.text_chunks(0).collect()

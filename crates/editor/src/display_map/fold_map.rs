@@ -107,6 +107,8 @@ impl FoldPoint {
     }
 
     pub fn to_offset(self, snapshot: &FoldSnapshot) -> FoldOffset {
+        dbg!(&self);
+        dbg!(snapshot.max_point());
         let (start, _, item) = snapshot
             .transforms
             .find::<Dimensions<FoldPoint, TransformSummary>, _>((), &self, Bias::Right);

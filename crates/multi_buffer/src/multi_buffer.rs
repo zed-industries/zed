@@ -209,6 +209,27 @@ struct BufferState {
     _subscriptions: [gpui::Subscription; 2],
 }
 
+// struct DiffModeQuery<T, const Mode: DiffMode>(T);
+
+// struct InlaySnapshot {
+//     multibuffer: EditorMultibufferSnapshot,
+// }
+
+// struct EditorMultibuffer {
+//     mode: DiffMode,
+//     multibuffer: Entity<MultiBuffer>,
+// }
+
+// trait ToPointGitAware {
+//     fn to_point(&self, snapshot: ..., mode: DiffMode) -> Point;
+// }
+
+// impl<T: ToPointGitAware> ToPoint for (T, DiffMode)  {
+//     fn to_point(&self, snapshot: ..., mode: DiffMode) -> (Point, DiffMode) {
+//         self.0.to_point(snapshot, self.1)
+//     }
+// }
+
 struct DiffState {
     diff: Entity<BufferDiff>,
     _subscription: gpui::Subscription,
@@ -265,6 +286,7 @@ enum DiffTransform {
         base_text_byte_range: Range<usize>,
         has_trailing_newline: bool,
     },
+    SkippedHunk(TextSummary),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -486,6 +508,7 @@ impl<'a, D: TextDimension> Dimension<'a, DiffTransformSummary> for DiffTransform
 #[derive(Clone)]
 struct MultiBufferCursor<'a, D: TextDimension> {
     excerpts: Cursor<'a, 'static, Excerpt, ExcerptDimension<D>>,
+    // DONE
     diff_transforms: Cursor<'a, 'static, DiffTransform, DiffTransforms<D>>,
     diffs: &'a TreeMap<BufferId, BufferDiffSnapshot>,
     cached_region: Option<MultiBufferRegion<'a, D>>,
@@ -2461,6 +2484,7 @@ impl MultiBuffer {
         }
 
         let mut excerpts = snapshot.excerpts.cursor::<ExcerptOffset>(());
+        dbg!(snapshot.diff_transforms.iter().collect::<Vec<_>>());
         let mut old_diff_transforms = snapshot
             .diff_transforms
             .cursor::<Dimensions<ExcerptOffset, usize>>(());
@@ -2471,6 +2495,7 @@ impl MultiBuffer {
         let mut at_transform_boundary = true;
         let mut end_of_current_insert = None;
 
+        dbg!("------------------", excerpt_edits.len());
         let mut excerpt_edits = excerpt_edits.into_iter().peekable();
         while let Some(edit) = excerpt_edits.next() {
             excerpts.seek_forward(&edit.new.start, Bias::Right);
@@ -2510,10 +2535,17 @@ impl MultiBuffer {
 
             // Compute the end of the edit in output coordinates.
             let edit_old_end_overshoot = edit.old.end - old_diff_transforms.start().0;
-            let edit_new_end_overshoot = edit.new.end - new_diff_transforms.summary().excerpt_len();
+            dbg!(new_diff_transforms.iter().collect::<Vec<_>>());
+            // text between new_diff_transforms.summary().excerpt_len() and edit.new.end is
+            // bone fide inserted, but it might be part of an added region.
+            let edit_new_end_overshoot =
+                dbg!(edit.new.end) - dbg!(new_diff_transforms.summary().excerpt_len());
             let edit_old_end = old_diff_transforms.start().1 + edit_old_end_overshoot.value;
-            let edit_new_end =
-                new_diff_transforms.summary().output.len + edit_new_end_overshoot.value;
+            let mut edit_new_end = dbg!(new_diff_transforms.summary().output.len);
+            if true && end_of_current_insert.is_none() {
+                // FIXME
+                edit_new_end += dbg!(edit_new_end_overshoot.value);
+            }
             let output_edit = Edit {
                 old: edit_old_start..edit_old_end,
                 new: edit_new_start..edit_new_end,
@@ -2532,6 +2564,7 @@ impl MultiBuffer {
                 .peek()
                 .is_none_or(|next_edit| next_edit.old.start >= old_diff_transforms.end().0)
             {
+                dbg!("SHOULD BE HERE");
                 let keep_next_old_transform = (old_diff_transforms.start().0 >= edit.old.end)
                     && match old_diff_transforms.item() {
                         Some(DiffTransform::BufferContent {
@@ -2578,6 +2611,16 @@ impl MultiBuffer {
         drop(excerpts);
         snapshot.diff_transforms = new_diff_transforms;
         snapshot.edit_count += 1;
+
+        // FIXME
+        for edit in &output_edits {
+            dbg!(edit.new.end, snapshot.len());
+            assert!(
+                edit.new.end <= snapshot.len(),
+                "transforms: {:?}",
+                snapshot.diff_transforms.iter().collect::<Vec<_>>()
+            )
+        }
 
         #[cfg(any(test, feature = "test-support"))]
         snapshot.check_invariants();
@@ -2672,7 +2715,7 @@ impl MultiBuffer {
                     Self::push_buffer_content_transform(
                         snapshot,
                         new_diff_transforms,
-                        hunk_excerpt_start,
+                        dbg!(hunk_excerpt_start),
                         *end_of_current_insert,
                     );
 
@@ -2732,8 +2775,11 @@ impl MultiBuffer {
                         }
 
                         if !hunk_buffer_range.is_empty() {
+                            dbg!("yep");
                             *end_of_current_insert =
                                 Some((hunk_excerpt_end.min(excerpt_end), hunk_info));
+                        } else {
+                            dbg!("nope");
                         }
                     }
                 }
@@ -2801,8 +2847,10 @@ impl MultiBuffer {
 
         for (end_offset, inserted_hunk_info) in inserted_region.into_iter().chain(unchanged_region)
         {
+            dbg!(&inserted_hunk_info);
             let start_offset = new_transforms.summary().excerpt_len();
             if end_offset <= start_offset {
+                dbg!();
                 continue;
             }
             let summary_to_add = old_snapshot
@@ -2813,13 +2861,15 @@ impl MultiBuffer {
                 inserted_hunk_info,
                 summary_to_add,
             ) {
-                new_transforms.push(
-                    DiffTransform::BufferContent {
+                let transform = if inserted_hunk_info.is_some() {
+                    dbg!(DiffTransform::SkippedHunk(summary_to_add))
+                } else {
+                    dbg!(DiffTransform::BufferContent {
                         summary: summary_to_add,
                         inserted_hunk_info,
-                    },
-                    (),
-                )
+                    })
+                };
+                new_transforms.push(transform, ())
             }
         }
     }
@@ -4091,6 +4141,7 @@ impl MultiBufferSnapshot {
 
                 summary
             }
+            DiffTransform::SkippedHunk(_) => Default::default(),
         };
         if range.end < diff_transform_end {
             return result;
@@ -4129,6 +4180,7 @@ impl MultiBufferSnapshot {
                 }
                 suffix
             }
+            DiffTransform::SkippedHunk(_) => Default::default(),
         };
 
         result.add_assign(&suffix);
@@ -5838,10 +5890,46 @@ impl MultiBufferSnapshot {
     }
 }
 
+fn next_non_skipped_diff_transform<'a, D: sum_tree::Dimension<'a, DiffTransformSummary>>(
+    cursor: &mut Cursor<'a, 'static, DiffTransform, D>,
+) {
+    cursor.next();
+    if let Some(item) = cursor.item()
+        && item.is_skipped_hunk()
+    {
+        cursor.next();
+    }
+    // Can't have consecutive skipped hunks
+}
+
+fn prev_non_skipped_diff_transform<'a, D: sum_tree::Dimension<'a, DiffTransformSummary>>(
+    cursor: &mut Cursor<'a, 'static, DiffTransform, D>,
+) {
+    cursor.prev();
+    if let Some(item) = cursor.item()
+        && item.is_skipped_hunk()
+    {
+        cursor.prev();
+    }
+    // Can't have consecutive skipped hunks
+}
+
 impl<'a, D> MultiBufferCursor<'a, D>
 where
     D: TextDimension + Ord + Sub<D, Output = D>,
 {
+    // fn seek_forward_past_skipped_hunks(&mut self) {
+    //     while let Some(DiffTransform::SkippedHunk(_)) = self.diff_transforms.item() {
+    //         self.diff_transforms.next();
+    //     }
+    // }
+
+    // fn seek_backward_past_skipped_hunks(&mut self) {
+    //     while let Some(DiffTransform::SkippedHunk(_)) = self.diff_transforms.item() {
+    //         self.diff_transforms.prev();
+    //     }
+    // }
+
     fn seek(&mut self, position: &D) {
         self.cached_region.take();
         self.diff_transforms
@@ -5849,7 +5937,7 @@ where
         if self.diff_transforms.item().is_none()
             && *position == self.diff_transforms.start().output_dimension.0
         {
-            self.diff_transforms.prev();
+            prev_non_skipped_diff_transform(&mut self.diff_transforms);
         }
 
         let mut excerpt_position = self.diff_transforms.start().excerpt_dimension.0;
@@ -5872,7 +5960,7 @@ where
         if self.diff_transforms.item().is_none()
             && *position == self.diff_transforms.start().output_dimension.0
         {
-            self.diff_transforms.prev();
+            prev_non_skipped_diff_transform(&mut self.diff_transforms);
         }
 
         let overshoot = *position - self.diff_transforms.start().output_dimension.0;
@@ -5905,7 +5993,8 @@ where
             && self.diff_transforms.start().excerpt_dimension < *self.excerpts.start()
             && self.diff_transforms.next_item().is_some()
         {
-            self.diff_transforms.next();
+            // FIXME by the excerpt dimension comparison, there must be a non-skipped diff transform to find
+            next_non_skipped_diff_transform(&mut self.diff_transforms);
         }
     }
 
@@ -5917,10 +6006,12 @@ where
             .excerpt_dimension
             .cmp(&self.excerpts.end())
         {
-            cmp::Ordering::Less => self.diff_transforms.next(),
+            cmp::Ordering::Less => {
+                next_non_skipped_diff_transform(&mut self.diff_transforms);
+            }
             cmp::Ordering::Greater => self.excerpts.next(),
             cmp::Ordering::Equal => {
-                self.diff_transforms.next();
+                next_non_skipped_diff_transform(&mut self.diff_transforms);
                 if self.diff_transforms.end().excerpt_dimension > self.excerpts.end()
                     || self.diff_transforms.item().is_none()
                 {
@@ -5947,9 +6038,11 @@ where
             .cmp(self.excerpts.start())
         {
             cmp::Ordering::Less => self.excerpts.prev(),
-            cmp::Ordering::Greater => self.diff_transforms.prev(),
+            cmp::Ordering::Greater => {
+                next_non_skipped_diff_transform(&mut self.diff_transforms);
+            }
             cmp::Ordering::Equal => {
-                self.diff_transforms.prev();
+                prev_non_skipped_diff_transform(&mut self.diff_transforms);
                 if self.diff_transforms.start().excerpt_dimension < *self.excerpts.start()
                     || self.diff_transforms.item().is_none()
                 {
@@ -5978,7 +6071,10 @@ where
         self.diff_transforms.next();
 
         prev_transform.is_none_or(|next_transform| {
-            matches!(next_transform, DiffTransform::BufferContent { .. })
+            matches!(
+                next_transform,
+                DiffTransform::BufferContent { .. } | DiffTransform::SkippedHunk(_)
+            )
         })
     }
 
@@ -5993,7 +6089,7 @@ where
 
         let next_transform = self.diff_transforms.next_item();
         next_transform.is_none_or(|next_transform| match next_transform {
-            DiffTransform::BufferContent { .. } => true,
+            DiffTransform::BufferContent { .. } | DiffTransform::SkippedHunk(_) => true,
             DiffTransform::DeletedHunk { hunk_info, .. } => self
                 .excerpts
                 .item()
@@ -6089,6 +6185,10 @@ where
                     buffer_range: buffer_start..buffer_end,
                     range: start..end,
                 })
+            }
+            _ => {
+                log::error!("cursor parked on skipped hunk");
+                None
             }
         }
     }
@@ -6397,6 +6497,14 @@ impl DiffTransform {
             DiffTransform::BufferContent {
                 inserted_hunk_info, ..
             } => *inserted_hunk_info,
+            DiffTransform::SkippedHunk(_) => None,
+        }
+    }
+
+    fn is_skipped_hunk(&self) -> bool {
+        match self {
+            DiffTransform::SkippedHunk(_) => true,
+            _ => false,
         }
     }
 }
@@ -6405,6 +6513,10 @@ impl sum_tree::Item for DiffTransform {
     type Summary = DiffTransformSummary;
 
     fn summary(&self, _: <Self::Summary as sum_tree::Summary>::Context<'_>) -> Self::Summary {
+        // in "no deletions" mode,
+        // DiffTransform::DeletedHunk doesn't add to output either
+        // in "no additions" mode,
+        // DiffTransform::BufferContent doesn't add to output if it's an insertion
         match self {
             DiffTransform::BufferContent { summary, .. } => DiffTransformSummary {
                 input: *summary,
@@ -6413,6 +6525,10 @@ impl sum_tree::Item for DiffTransform {
             DiffTransform::DeletedHunk { summary, .. } => DiffTransformSummary {
                 input: TextSummary::default(),
                 output: *summary,
+            },
+            DiffTransform::SkippedHunk(summary) => DiffTransformSummary {
+                input: *summary,
+                output: TextSummary::default(),
             },
         }
     }
@@ -6868,83 +6984,87 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
         let diff_transform_end = self.diff_transforms.end().0;
         debug_assert!(self.range.start < diff_transform_end);
 
-        let diff_transform = self.diff_transforms.item()?;
-        match diff_transform {
-            DiffTransform::BufferContent { .. } => {
-                let chunk = if let Some(chunk) = &mut self.buffer_chunk {
-                    chunk
-                } else {
-                    let chunk = self.next_excerpt_chunk().unwrap();
-                    self.buffer_chunk.insert(chunk)
-                };
+        loop {
+            let diff_transform = self.diff_transforms.item()?;
+            match diff_transform {
+                DiffTransform::BufferContent { .. } => {
+                    let chunk = if let Some(chunk) = &mut self.buffer_chunk {
+                        chunk
+                    } else {
+                        let chunk = self.next_excerpt_chunk().unwrap();
+                        self.buffer_chunk.insert(chunk)
+                    };
 
-                let chunk_end = self.range.start + chunk.text.len();
-                let diff_transform_end = diff_transform_end.min(self.range.end);
+                    let chunk_end = self.range.start + chunk.text.len();
+                    let diff_transform_end = diff_transform_end.min(self.range.end);
 
-                if diff_transform_end < chunk_end {
-                    let split_idx = diff_transform_end - self.range.start;
-                    let (before, after) = chunk.text.split_at(split_idx);
-                    self.range.start = diff_transform_end;
-                    let mask = 1u128.unbounded_shl(split_idx as u32).wrapping_sub(1);
-                    let chars = chunk.chars & mask;
-                    let tabs = chunk.tabs & mask;
+                    if diff_transform_end < chunk_end {
+                        let split_idx = diff_transform_end - self.range.start;
+                        let (before, after) = chunk.text.split_at(split_idx);
+                        self.range.start = diff_transform_end;
+                        let mask = 1u128.unbounded_shl(split_idx as u32).wrapping_sub(1);
+                        let chars = chunk.chars & mask;
+                        let tabs = chunk.tabs & mask;
 
-                    chunk.text = after;
-                    chunk.chars = chunk.chars >> split_idx;
-                    chunk.tabs = chunk.tabs >> split_idx;
+                        chunk.text = after;
+                        chunk.chars = chunk.chars >> split_idx;
+                        chunk.tabs = chunk.tabs >> split_idx;
 
-                    Some(Chunk {
-                        text: before,
-                        chars,
-                        tabs,
-                        ..chunk.clone()
-                    })
-                } else {
-                    self.range.start = chunk_end;
-                    self.buffer_chunk.take()
+                        break Some(Chunk {
+                            text: before,
+                            chars,
+                            tabs,
+                            ..chunk.clone()
+                        });
+                    } else {
+                        self.range.start = chunk_end;
+                        break self.buffer_chunk.take();
+                    }
                 }
-            }
-            DiffTransform::DeletedHunk {
-                buffer_id,
-                base_text_byte_range,
-                has_trailing_newline,
-                ..
-            } => {
-                let base_text_start =
-                    base_text_byte_range.start + self.range.start - diff_transform_start;
-                let base_text_end =
-                    base_text_byte_range.start + self.range.end - diff_transform_start;
-                let base_text_end = base_text_end.min(base_text_byte_range.end);
+                DiffTransform::DeletedHunk {
+                    buffer_id,
+                    base_text_byte_range,
+                    has_trailing_newline,
+                    ..
+                } => {
+                    let base_text_start =
+                        base_text_byte_range.start + self.range.start - diff_transform_start;
+                    let base_text_end =
+                        base_text_byte_range.start + self.range.end - diff_transform_start;
+                    let base_text_end = base_text_end.min(base_text_byte_range.end);
 
-                let mut chunks = if let Some((_, mut chunks)) = self
-                    .diff_base_chunks
-                    .take()
-                    .filter(|(id, _)| id == buffer_id)
-                {
-                    if chunks.range().start != base_text_start || chunks.range().end < base_text_end
+                    let mut chunks = if let Some((_, mut chunks)) = self
+                        .diff_base_chunks
+                        .take()
+                        .filter(|(id, _)| id == buffer_id)
                     {
-                        chunks.seek(base_text_start..base_text_end);
-                    }
-                    chunks
-                } else {
-                    let base_buffer = &self.diffs.get(buffer_id)?.base_text();
-                    base_buffer.chunks(base_text_start..base_text_end, self.language_aware)
-                };
+                        if chunks.range().start != base_text_start
+                            || chunks.range().end < base_text_end
+                        {
+                            chunks.seek(base_text_start..base_text_end);
+                        }
+                        chunks
+                    } else {
+                        let base_buffer = &self.diffs.get(buffer_id)?.base_text();
+                        base_buffer.chunks(base_text_start..base_text_end, self.language_aware)
+                    };
 
-                let chunk = if let Some(chunk) = chunks.next() {
-                    self.range.start += chunk.text.len();
-                    self.diff_base_chunks = Some((*buffer_id, chunks));
-                    chunk
-                } else {
-                    debug_assert!(has_trailing_newline);
-                    self.range.start += "\n".len();
-                    Chunk {
-                        text: "\n",
-                        chars: 1u128,
-                        ..Default::default()
-                    }
-                };
-                Some(chunk)
+                    let chunk = if let Some(chunk) = chunks.next() {
+                        self.range.start += chunk.text.len();
+                        self.diff_base_chunks = Some((*buffer_id, chunks));
+                        chunk
+                    } else {
+                        debug_assert!(has_trailing_newline);
+                        self.range.start += "\n".len();
+                        Chunk {
+                            text: "\n",
+                            chars: 1u128,
+                            ..Default::default()
+                        }
+                    };
+                    break Some(chunk);
+                }
+                DiffTransform::SkippedHunk(_) => self.diff_transforms.next(),
             }
         }
     }

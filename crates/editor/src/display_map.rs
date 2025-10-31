@@ -565,6 +565,15 @@ impl DisplayMap {
         self.inlay_map.current_inlays()
     }
 
+    // pub(crate) fn sync_unsplittable_groups(&mut self) {
+    //     let group_boundaries = /* read diff hunk info from self */;
+    //     self.splice_unsplittable_groups(group_boundaries);
+    // }
+
+    // fn splice_unsplittable_groups(&mut self, group_boundaries: Vec<usize>) {
+
+    // }
+
     pub(crate) fn splice_inlays(
         &mut self,
         to_remove: &[InlayId],

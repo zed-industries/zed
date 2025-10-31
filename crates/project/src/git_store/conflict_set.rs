@@ -169,6 +169,16 @@ impl ConflictSet {
         cx.emit(update);
     }
 
+    // Vec<(Range<usize>)>
+    // Vec<(Range<usize>, &str)>
+    //
+    // [(1..2, ""), (6..7, "")]
+    // {"hello": "world"}
+    // {hello: "world"}
+    //
+    // foo(bar);
+    // }
+
     pub fn parse(buffer: &text::BufferSnapshot) -> ConflictSetSnapshot {
         let mut conflicts = Vec::new();
 

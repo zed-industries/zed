@@ -507,6 +507,55 @@ impl BlockMap {
         BlockMapWriter(self)
     }
 
+    // current problem: how do we know how many spacer lines?
+
+    // q: which buffer row if any does this wrap row end?      log(n)
+    // iterate over buffer rows; for each one, translate into a wrap row and seek to that wrap row
+    // q: for a given buffer row, what is the wrap row count?  log(n)
+    // q: which diff hunk if any does this wrap row end?
+    // q: for a given diff hunk, what is the wrap row count of the _other side_?
+
+    // struct DiffLineMapping {
+    //     group_boundaries: Vec<usize>,  // group_boundaries[x] would be the start phys row for the `x`th group
+    //                                    // group_boundaries[x + 1] would be the end phsy ...
+    //     row_boundaries: Vec<usize>,    // row_boundaries[x] would be the start wrapped row for the `x`th phys line
+    //                                    // row_boundaries[x + 1] would be the end wrapped_row ...
+    // }
+
+    // group is either:
+    //  - a physical line that is not in a diff
+    //  - an entire diff
+    //
+    // we never split up a group with a spacer
+
+    // impl DiffLineMapping {
+    //     // modulo off-by-one errors
+    //     fn which_buffer_row_end(&self, wrap_row: usize) -> Option<usize> {
+    //         self.row_boundaries.binary_search(wrap_row).ok()
+    //     }
+
+    //     fn number_of_spacers_needed(&self, physical_line: usize, other: &DiffLineMapping) -> isize {
+    //         (self.row_boundaries[physical_line + 1] - self.row_boundaries[physical_line]) - (other.row_boundaries[physical_line + 1] - other.row_boundaries[physical_line])
+    //     }
+
+    //    // left[x].end - left[x.start] - (right[x].end - right[x].start)
+    // }
+
+    // - we get some wrap row edits
+    // - compute the affected range in the same way
+    //
+    // old:
+    // loop {
+    //   find the next block in the affected region for the edit
+    //   insert an isomorphic transform leading up to that block
+    //   insert block
+    // }
+    //
+    // new:
+    // for each wrap row in the affected region {
+    //
+    // }
+
     fn sync(&self, wrap_snapshot: &WrapSnapshot, mut edits: Patch<u32>) {
         let buffer = wrap_snapshot.buffer_snapshot();
 

@@ -1378,6 +1378,45 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_insertion(cx: &mut TestAppContext) {
+    let text = indoc!(
+        "
+        a
+        b
+        c
+        "
+    );
+    let base_text = "";
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+    cx.run_until_parked();
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::singleton(buffer.clone(), cx);
+        multibuffer.add_diff(diff.clone(), cx);
+        multibuffer
+    });
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+    });
+    cx.run_until_parked();
+    let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
+        (multibuffer.snapshot(cx), multibuffer.subscribe())
+    });
+    assert_eq!(
+        snapshot.text(),
+        indoc!(
+            "
+            a
+            b
+            c
+            "
+        ),
+    );
+}
+
+#[gpui::test]
 fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
     let text = indoc!(
         "
@@ -3961,4 +4000,29 @@ fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
             }
         }
     }
+}
+
+#[gpui::test]
+async fn test_seeking_with_skipped_hunks() {
+    let first_part = "one\n";
+    let transforms = SumTree::from_iter(
+        [
+            DiffTransform::BufferContent {
+                summary: TextSummary::from(first_part),
+                inserted_hunk_info: None,
+            },
+            DiffTransform::SkippedHunk(TextSummary::from("2\n")),
+            DiffTransform::SkippedHunk(TextSummary::from("22\n")),
+            DiffTransform::BufferContent {
+                summary: TextSummary::from("3!!!\n"),
+                inserted_hunk_info: None,
+            },
+        ],
+        (),
+    );
+    let mut cursor = transforms.cursor::<usize>(());
+    cursor.seek(&first_part.len(), Bias::Left);
+    dbg!(cursor.item());
+    cursor.seek(&first_part.len(), Bias::Right);
+    dbg!(cursor.item());
 }
