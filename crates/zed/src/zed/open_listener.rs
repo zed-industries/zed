@@ -122,9 +122,6 @@ impl OpenRequest {
                 this.parse_ssh_file_path(&url, cx)?
             } else if let Some(request_path) = parse_zed_link(&url, cx) {
                 this.parse_request_path(request_path).log_err();
-            } else if let Some(git_clone) = url.strip_prefix("zed://git/clone/") {
-                // For now, just log an error since git clone handling is not implemented here
-                log::error!("git clone requests are not handled here: {}", git_clone);
             } else {
                 log::error!("unhandled url: {}", url);
             }
