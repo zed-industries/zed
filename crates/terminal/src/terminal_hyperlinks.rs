@@ -625,6 +625,39 @@ mod tests {
             test_path!("[\"‹«/test/co👉ol.rs»:«4»›\"]");
             test_path!("'‹«(/test/co👉ol.rs:4)»›'");
 
+            test_path!("\"‹«/test/co👉ol.rs»:«4»:«2»›\"");
+            test_path!("'‹«/test/co👉ol.rs»:«4»:«2»›'");
+            test_path!("`‹«/test/co👉ol.rs»:«4»:«2»›`");
+
+            test_path!("[‹«/test/co👉ol.rs»:«4»:«2»›]");
+            test_path!("(‹«/test/co👉ol.rs»:«4»:«2»›)");
+            test_path!("{‹«/test/co👉ol.rs»:«4»:«2»›}");
+            test_path!("<‹«/test/co👉ol.rs»:«4»:«2»›>");
+
+            test_path!("[\"‹«/test/co👉ol.rs»:«4»:«2»›\"]");
+
+            test_path!("\"‹«/test/co👉ol.rs»(«4»)›\"");
+            test_path!("'‹«/test/co👉ol.rs»(«4»)›'");
+            test_path!("`‹«/test/co👉ol.rs»(«4»)›`");
+
+            test_path!("[‹«/test/co👉ol.rs»(«4»)›]");
+            test_path!("(‹«/test/co👉ol.rs»(«4»)›)");
+            test_path!("{‹«/test/co👉ol.rs»(«4»)›}");
+            test_path!("<‹«/test/co👉ol.rs»(«4»)›>");
+
+            test_path!("[\"‹«/test/co👉ol.rs»(«4»)›\"]");
+
+            test_path!("\"‹«/test/co👉ol.rs»(«4»,«2»)›\"");
+            test_path!("'‹«/test/co👉ol.rs»(«4»,«2»)›'");
+            test_path!("`‹«/test/co👉ol.rs»(«4»,«2»)›`");
+
+            test_path!("[‹«/test/co👉ol.rs»(«4»,«2»)›]");
+            test_path!("(‹«/test/co👉ol.rs»(«4»,«2»)›)");
+            test_path!("{‹«/test/co👉ol.rs»(«4»,«2»)›}");
+            test_path!("<‹«/test/co👉ol.rs»(«4»,«2»)›>");
+
+            test_path!("[\"‹«/test/co👉ol.rs»(«4»,«2»)›\"]");
+
             // Imbalanced
             test_path!("([‹«/test/co👉ol.rs»:«4»›] was here...)");
             test_path!("[Here's <‹«/test/co👉ol.rs»:«4»›>]");
@@ -634,6 +667,8 @@ mod tests {
 
         #[test]
         fn trailing_punctuation() {
+            test_path!("‹«/test/co👉ol.rs»›:,..");
+            test_path!("/test/cool.rs:,👉..");
             test_path!("‹«/test/co👉ol.rs»:«4»›:,");
             test_path!("/test/cool.rs:4:👉,");
             test_path!("[\"‹«/test/co👉ol.rs»:«4»›\"]:,");
@@ -786,6 +821,10 @@ mod tests {
             fn path_with_position_parse_str() {
                 test_path!("`‹«/test/co👉ol.rs:4:NotDesc»›`");
                 test_path!("<‹«/test/co👉ol.rs:4:NotDesc»›>");
+
+                test_path!("'‹«(/test/co👉ol.rs:4:2)»›'");
+                test_path!("'‹«(/test/co👉ol.rs(4))»›'");
+                test_path!("'‹«(/test/co👉ol.rs(4,2))»›'");
             }
         }
 
@@ -832,6 +871,17 @@ mod tests {
                 test_path!("‹«/te:st/👉co:ol.r:s:4:2::::::»›");
                 test_path!("/test/cool.rs:::👉:");
             }
+        }
+
+        #[test]
+        fn default_prompts() {
+            // Windows command prompt
+            test_path!(r#"‹«C:\Users\someone\👉test»›>"#);
+            test_path!(r#"C:\Users\someone\test👉>"#);
+
+            // Windows PowerShell
+            test_path!(r#"PS ‹«C:\Users\someone\👉test\cool.rs»›>"#);
+            test_path!(r#"PS C:\Users\someone\test\cool.rs👉>"#);
         }
 
         #[cfg(target_os = "windows")]

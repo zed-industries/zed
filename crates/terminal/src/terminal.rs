@@ -2857,7 +2857,7 @@ const DEFAULT_LINE_COLUMN_REGEX: &str = r#"(?x)
             (?<line_column>:+[0-9]+:[0-9]+|:?\([0-9]+[,:][0-9]+\))
             (?<suffix>
                 (?(<quote>)\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\]]?)(?(<angle>)[>]?)
-                (?(<line_column>)((:[^ 0-9]?[^ ]*|[:)}\]>]+)?([ ]+|$))|([.,]*([ ]+|$)))
+                (:[^ 0-9][^ ]*|[.,:)}\]>]*)?([ ]+|$)
             )
         )
         \k<line_column>
@@ -2873,7 +2873,7 @@ const DEFAULT_LINE_REGEX: &str = r#"(?x)
             (?<line>:+[0-9]+|:?\([0-9]+\))
             (?<suffix>
                 (?(<quote>)\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\]]?)(?(<angle>)[>]?)
-                (?(<line>)((:[^ 0-9]?[^ ]*|[:)}\]>]+)?([ ]+|$))|([.,]*([ ]+|$)))
+                (:[^ 0-9][^ ]*|[.,:)}\]>]*)?([ ]+|$)
             )
         )
         \k<line>
@@ -2884,11 +2884,11 @@ const DEFAULT_LINE_REGEX: &str = r#"(?x)
 const DEFAULT_REGEX: &str = r#"(?x)
     ((?<=[ ])|^)
     (?<paren>[(])?(?<brace>[{])?(?<bracket>[\[])?(?<angle>[<])?(?<quote>["'`])?
-    (?<path>[^ ]+
+    (?<path>[^ ]+?
         (?=
             (?<suffix>
                 (?(<quote>)\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\]]?)(?(<angle>)[>]?)
-                [.,:)}\]>]*([ ]+|$)
+                (?<![.,:)}\]>])[.,:)}\]>]*(?=([ ]+|$))([ ]+|$)
             )
         )
     )

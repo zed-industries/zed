@@ -149,20 +149,20 @@ pub struct TerminalSettingsContent {
     ///     "((?<=[ ])|^)",
     ///     // optionally starts with prefix symbols or quotes not part of path
     ///     "(?<paren>[(])?(?<brace>[{])?(?<bracket>[\\[])?(?<angle>[<])?(?<quote>[\"'`])?",
-    ///     // `path` is the longest sequence of any non-space character
+    ///     // `path` is the longest sequence of any non-space character, which
     ///     "(?<path>[^ ]+",
-    ///     // which is followed by a line, column, and suffix
+    ///     // is followed by a line, column, and suffix
     ///     "    (?=",
     ///     "        (?<line_column>:+[0-9]+:[0-9]+|:?\\([0-9]+[,:][0-9]+\\))",
     ///     "        (?<suffix>",
     ///     "            (?(<quote>)\\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\\]]?)(?(<angle>)[>]?)",
-    ///     "            (?(<line_column>)((:[^ 0-9]?[^ ]*|[:)}\\]>]+)?([ ]+|$))|([.,]*([ ]+|$)))",
+    ///     "            (:[^ 0-9][^ ]*|[.,:)}\\]>]*)?([ ]+|$)",
     ///     "        )",
     ///     "    )",
     ///     // appended with the line and column
     ///     "    \\k<line_column>",
     ///     ")",
-    ///     // followed by the suffix
+    ///     // followed by the suffix not part of the path
     ///     "\\k<suffix>"
     ///   ],
     ///   [
@@ -174,7 +174,7 @@ pub struct TerminalSettingsContent {
     ///     "        (?<line>:+[0-9]+|:?\\([0-9]+\\))",
     ///     "        (?<suffix>",
     ///     "            (?(<quote>)\\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\\]]?)(?(<angle>)[>]?)",
-    ///     "            (?(<line>)((:[^ 0-9]?[^ ]*|[:)}\\]>]+)?([ ]+|$))|([.,]*([ ]+|$)))",
+    ///     "            (:[^ 0-9][^ ]*|[.,:)}\\]>]*)?([ ]+|$)",
     ///     "        )",
     ///     "    )",
     ///     "    \\k<line>",
@@ -185,11 +185,11 @@ pub struct TerminalSettingsContent {
     ///     "(?x)",
     ///     "((?<=[ ])|^)",
     ///     "(?<paren>[(])?(?<brace>[{])?(?<bracket>[\\[])?(?<angle>[<])?(?<quote>[\"'`])?",
-    ///     "(?<path>[^ ]+",
+    ///     "(?<path>[^ ]+?",
     ///     "    (?=",
     ///     "        (?<suffix>",
     ///     "            (?(<quote>)\\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\\]]?)(?(<angle>)[>]?)",
-    ///     "            [.,:)}\\]>]*([ ]+|$)",
+    ///     "            (?<![.,:)}\\]>])[.,:)}\\]>]*(?=([ ]+|$))([ ]+|$)",
     ///     "        )",
     ///     "    )",
     ///     ")",
