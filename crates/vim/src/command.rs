@@ -330,11 +330,12 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 let Some(range) = range.buffer_range(vim, editor, window, cx).ok() else {
                     return;
                 };
-                let Some((line_ending, text)) = editor.buffer().update(cx, |multi, cx| {
+                let Some((line_ending, text, whole_buffer)) = editor.buffer().update(cx, |multi, cx| {
                     Some(multi.as_singleton()?.update(cx, |buffer, _| {
                         (
                             buffer.line_ending(),
                             buffer.as_rope().slice_rows(range.start.0..range.end.0 + 1),
+                            range.start.0 == 0 && range.end.0 + 1 >= buffer.row_count(),
                         )
                     }))
                 }) else {
@@ -343,44 +344,67 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
                 let filename = action.filename.clone();
                 let filename = if filename.is_empty() {
-                    let Some(file ) = editor.buffer().read(cx).
-                            as_singleton().and_then(|buffer|
-                            buffer.read(cx).file()
-                        ) else {
-                            let _ = window.prompt(
-                                gpui::PromptLevel::Warning,
-                                "No file name",
-                                Some(
-                                    "Partial buffer write requires file name.",
-                                ),
-                                &["Cancel"],
-                                cx
-                            );
-                            return;
-                        };
+                    let Some(file) = editor
+                        .buffer()
+                        .read(cx)
+                        .as_singleton()
+                        .and_then(|buffer| buffer.read(cx).file())
+                    else {
+                        let _ = window.prompt(
+                            gpui::PromptLevel::Warning,
+                            "No file name",
+                            Some("Partial buffer write requires file name."),
+                            &["Cancel"],
+                            cx,
+                        );
+                        return;
+                    };
                     file.path().display(file.path_style(cx)).to_string()
+                } else {
+                    filename
+                };
 
-                } else {filename};
+                if action.filename.is_empty() {
+                    if whole_buffer {
+                        if let Some(workspace) = vim.workspace(window) {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace
+                                    .save_active_item(
+                                        action.save_intent.unwrap_or(SaveIntent::Save),
+                                        window,
+                                        cx,
+                                    )
+                                    .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
+                            });
+                        }
+                        return;
+                    }
+                    if Some(SaveIntent::Overwrite) != action.save_intent {
+                        let _ = window.prompt(
+                            gpui::PromptLevel::Warning,
+                            "Use ! to write partial buffer",
+                            Some("Overwriting the current file with selected buffer content requires '!'."),
+                            &["Cancel"],
+                            cx,
+                        );
+                        return;
+                    }
+                    editor.buffer().update(cx, |multi, cx| {
+                        multi
+                            .as_singleton()?
+                            .update(cx, |buffer, _| Some(buffer.set_conflict()))
+                    });
+                };
 
                 editor.project().unwrap().update(cx, |project, cx| {
                     let worktree = project.visible_worktrees(cx).next().unwrap();
 
                     worktree.update(cx, |worktree, cx| {
                         let path_style = worktree.path_style();
-                        let Some(path) = RelPath::new(Path::new(&filename), path_style).ok() else { return };
-
-                        if action.filename.is_empty() && Some(SaveIntent::Overwrite) != action.save_intent {
-                            let _ = window.prompt(
-                                gpui::PromptLevel::Warning,
-                                "Use ! to write partial buffer",
-                                Some(
-                                    "Overwriting the current file with selected buffer content requires '!'.",
-                                ),
-                                &["Cancel"],
-                                cx
-                            );
+                        let Some(path) = RelPath::new(Path::new(&filename), path_style).ok() else {
                             return;
-                        }
+                        };
+
                         let rx = (worktree.entry_for_path(&path).is_some() && Some(SaveIntent::Overwrite) != action.save_intent).then(|| {
                             window.prompt(
                                 gpui::PromptLevel::Warning,
@@ -394,7 +418,9 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                         });
                         let filename = filename.clone();
                         cx.spawn_in(window, async move |this, cx| {
-                            if let Some(rx) = rx && Ok(0) != rx.await {
+                            if let Some(rx) = rx
+                                && Ok(0) != rx.await
+                            {
                                 return;
                             }
 
