@@ -156,20 +156,17 @@ jobs:
         clean: false
         fetch-depth: 25
         ref: ${{ github.ref }}
-    - name: script/determine-release-channel
-      run: script/determine-release-channel
-      shell: bash -euxo pipefail {0}
     - name: mkdir -p target/
       run: mkdir -p target/
       shell: bash -euxo pipefail {0}
-    - name: script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md || true
-      run: script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md || true
+    - name: script/draft-release-notes "0.211.1" "preview" > target/release-notes.md || true
+      run: script/draft-release-notes "0.211.1" "preview" > target/release-notes.md || true
       shell: bash -euxo pipefail {0}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - name: script/create-draft-release target/release-notes.md
       run: script/create-draft-release target/release-notes.md
       shell: bash -euxo pipefail {0}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     timeout-minutes: 60
   bundle_linux_arm64:
     needs:
