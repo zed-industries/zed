@@ -111,6 +111,20 @@ impl Database {
         .await
     }
 
+    /// Returns multiple users by GitHub logins in a single query. 
+    pub async fn get_users_by_github_logins(&self, github_logins: Vec<String>) -> Result<Vec<User>> {
+        if github_logins.len() >= 10000_usize {
+            return Err(anyhow!("too many github logins"))?;
+        }
+        self.transaction(|tx| async move {
+            Ok(user::Entity::find()
+                .filter(user::Column::GithubLogin.is_in(github_logins))
+                .all(&*tx)
+                .await?)
+        })
+        .await
+    }
+
     pub async fn update_or_create_user_by_github_account(
         &self,
         github_login: &str,

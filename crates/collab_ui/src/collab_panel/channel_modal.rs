@@ -60,6 +60,7 @@ impl ChannelModal {
                     members: Vec::new(),
                     has_all_members: false,
                     mode,
+                    pending_team_invite: None,
                 },
                 window,
                 cx,
@@ -251,13 +252,30 @@ pub struct ChannelModalDelegate {
     members: Vec<ChannelMembership>,
     has_all_members: bool,
     context_menu: Option<(Entity<ContextMenu>, Subscription)>,
+    pending_team_invite: Option<PendingTeamInvite>,
+}
+
+struct PendingTeamInvite {
+    org: String,
+    team: String,
+    members: Vec<TeamMemberInvite>,
+}
+
+struct TeamMemberInvite {
+    user: Arc<User>,
+    role: ChannelRole,
 }
 
 impl PickerDelegate for ChannelModalDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search collaborator by username...".into()
+        match self.mode {
+            Mode::ManageMembers => "Search collaborator by username...".into(),
+            Mode::InviteMembers => {
+                "Search by username or invite a GitHub team (org/team)...".into()
+            }
+        }
     }
 
     fn match_count(&self) -> usize {
@@ -340,6 +358,46 @@ impl PickerDelegate for ChannelModalDelegate {
                 }
             }
             Mode::InviteMembers => {
+                // Detect if query is a GitHub team pattern (org/team)
+                if query.contains('/') && !query.starts_with('/') {
+                    let parts: Vec<&str> = query.splitn(2, '/').collect();
+                    if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+                        let org = parts[0].to_string();
+                        let team = parts[1].to_string();
+
+                        let search_team = self.user_store.update(cx, |store, cx| {
+                            store.list_github_team_members(org.clone(), team.clone(), cx)
+                        });
+
+                        return cx.spawn_in(window, async move |picker, cx| {
+                            async {
+                                let users = search_team.await?;
+                                picker.update(cx, |picker, cx| {
+                                    picker.delegate.pending_team_invite = Some(PendingTeamInvite {
+                                        org,
+                                        team,
+                                        members: users
+                                            .iter()
+                                            .map(|user| TeamMemberInvite {
+                                                user: user.clone(),
+                                                role: ChannelRole::Member,
+                                            })
+                                            .collect(),
+                                    });
+                                    picker.delegate.matching_users = users;
+                                    cx.notify();
+                                })?;
+                                anyhow::Ok(())
+                            }
+                            .log_err()
+                            .await;
+                        });
+                    }
+                }
+
+                // Clear pending team invite if not a team pattern
+                self.pending_team_invite = None;
+
                 let search_users = self
                     .user_store
                     .update(cx, |store, cx| store.fuzzy_search_users(query, cx));
@@ -360,6 +418,14 @@ impl PickerDelegate for ChannelModalDelegate {
     }
 
     fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        // Handle team invite confirmation
+        if let Some(team_invite) = self.pending_team_invite.take() {
+            if self.mode == Mode::InviteMembers {
+                self.invite_team_members(team_invite, window, cx);
+                return;
+            }
+        }
+
         if let Some(selected_user) = self.user_at_index(self.selected_index) {
             if Some(selected_user.id) == self.user_store.read(cx).current_user().map(|user| user.id)
             {
@@ -385,6 +451,50 @@ impl PickerDelegate for ChannelModalDelegate {
                     cx.emit(DismissEvent);
                 })
                 .ok();
+        }
+    }
+
+    fn render_header(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<gpui::AnyElement> {
+        if let Some(ref team_invite) = self.pending_team_invite {
+            let total = team_invite.members.len();
+            let already_members = team_invite
+                .members
+                .iter()
+                .filter(|m| self.member_status(m.user.id, _cx).is_some())
+                .count();
+            let to_invite = total - already_members;
+
+            let message = if to_invite == 0 {
+                format!(
+                    "All {} members of {}/{} are already in this channel",
+                    total, team_invite.org, team_invite.team
+                )
+            } else if already_members > 0 {
+                format!(
+                    "Press Enter to invite {} members from {}/{} ({} already members)",
+                    to_invite, team_invite.org, team_invite.team, already_members
+                )
+            } else {
+                format!(
+                    "Press Enter to invite {} members from {}/{}",
+                    total, team_invite.org, team_invite.team
+                )
+            };
+
+            Some(
+                div()
+                    .px_2()
+                    .py_1()
+                    .bg(gpui::blue())
+                    .child(Label::new(message).color(Color::Default))
+                    .into_any_element(),
+            )
+        } else {
+            None
         }
     }
 
@@ -574,6 +684,120 @@ impl ChannelModalDelegate {
             })
         })
         .detach_and_prompt_err("Failed to invite member", window, cx, |_, _, _| None);
+    }
+
+    fn invite_team_members(
+        &mut self,
+        team_invite: PendingTeamInvite,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let channel_id = self.channel_id;
+        let channel_store = self.channel_store.clone();
+        let org = team_invite.org;
+        let team = team_invite.team;
+        let total_members = team_invite.members.len();
+
+        // Filter out users who are already members or invited
+        let members_to_invite: Vec<_> = team_invite
+            .members
+            .into_iter()
+            .filter(|member| self.member_status(member.user.id, cx).is_none())
+            .collect();
+
+        let to_invite_count = members_to_invite.len();
+        let already_present = total_members - to_invite_count;
+
+        if members_to_invite.is_empty() {
+            let _ = window.prompt(
+                gpui::PromptLevel::Info,
+                &format!(
+                    "All {} members of {}/{} are already in this channel.",
+                    total_members, org, team
+                ),
+                None,
+                &["OK"],
+                cx,
+            );
+            return;
+        }
+
+        cx.spawn_in(window, async move |picker, cx| {
+            let mut successful = 0;
+            let mut failed = 0;
+
+            for member in members_to_invite {
+                let invite = channel_store.update(cx, |store, cx| {
+                    store.invite_member(channel_id, member.user.id, member.role, cx)
+                });
+
+                match invite.await {
+                    Ok(_) => {
+                        successful += 1;
+                        picker.update(cx, |picker, cx| {
+                            let new_member = ChannelMembership {
+                                user: member.user.clone(),
+                                kind: proto::channel_member::Kind::Invitee,
+                                role: member.role,
+                            };
+                            let members = &mut picker.delegate.members;
+                            match members
+                                .binary_search_by_key(&new_member.sort_key(), |k| k.sort_key())
+                            {
+                                Ok(ix) | Err(ix) => members.insert(ix, new_member),
+                            }
+                            cx.notify();
+                        })?;
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to invite member {}: {}",
+                            member.user.github_login,
+                            e
+                        );
+                        failed += 1;
+                    }
+                }
+            }
+
+            picker.update_in(cx, |picker, window, cx| {
+                let message = if failed == 0 {
+                    if already_present > 0 {
+                        format!(
+                            "Successfully invited {} members from {}/{}. {} were already members.",
+                            successful, org, team, already_present
+                        )
+                    } else {
+                        format!(
+                            "Successfully invited all {} members from {}/{}.",
+                            successful, org, team
+                        )
+                    }
+                } else {
+                    format!(
+                        "Invited {} members from {}/{}. {} failed.",
+                        successful, org, team, failed
+                    )
+                };
+
+                let _ = window.prompt(
+                    if failed == 0 {
+                        gpui::PromptLevel::Info
+                    } else {
+                        gpui::PromptLevel::Warning
+                    },
+                    &message,
+                    None,
+                    &["OK"],
+                    cx,
+                );
+
+                // Clear the search to show updated member list
+                picker.set_query("", window, cx);
+                cx.notify();
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     fn show_context_menu(

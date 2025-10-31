@@ -407,6 +407,7 @@ impl Server {
             )
             .add_request_handler(get_users)
             .add_request_handler(fuzzy_search_users)
+            .add_request_handler(list_github_team_members)
             .add_request_handler(request_contact)
             .add_request_handler(remove_contact)
             .add_request_handler(respond_to_contact_request)
@@ -2649,6 +2650,75 @@ async fn fuzzy_search_users(
             name: user.name,
         })
         .collect();
+    response.send(proto::UsersResponse { users })?;
+    Ok(())
+}
+
+/// List members of a GitHub team who have Zed accounts.
+async fn list_github_team_members(
+    request: proto::ListGithubTeamMembers,
+    response: Response<proto::ListGithubTeamMembers>,
+    session: MessageContext,
+) -> Result<()> {
+    let github_token = session
+        .app_state
+        .config
+        .github_token
+        .as_ref()
+        .ok_or_else(|| anyhow!("GitHub token not configured"))?;
+
+    let org = request.org;
+    let team = request.team;
+
+    // Call GitHub API to list team members
+    let client = reqwest::Client::new();
+    let url = format!("https://api.github.com/orgs/{}/teams/{}/members", org, team);
+
+    let gh_response = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", github_token))
+        .header("User-Agent", "Zed")
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .await?;
+
+    if !gh_response.status().is_success() {
+        let status = gh_response.status();
+        let error_text = gh_response.text().await.unwrap_or_default();
+        return Err(anyhow!("GitHub API error ({}): {}", status, error_text).into());
+    }
+
+    #[derive(serde::Deserialize)]
+    struct GitHubUser {
+        login: String,
+    }
+
+    let github_members: Vec<GitHubUser> = gh_response.json().await?;
+
+    // Limit to 100 members
+    let github_logins: Vec<String> = github_members
+        .into_iter()
+        .take(100)
+        .map(|u| u.login)
+        .collect();
+
+    // Look up which GitHub logins have Zed accounts (batch query)
+    let db = session.db().await;
+    let current_user_id = session.user_id();
+    let users = db
+        .get_users_by_github_logins(github_logins)
+        .await?
+        .into_iter()
+        .filter(|user| user.id != current_user_id)
+        .map(|user| proto::User {
+            id: user.id.to_proto(),
+            avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
+            github_login: user.github_login,
+            name: user.name,
+        })
+        .collect();
+
     response.send(proto::UsersResponse { users })?;
     Ok(())
 }
