@@ -1,11 +1,57 @@
 use gh_workflow::{
-    Concurrency, Event, Expression, Job, Run, Schedule, Step, Use, Workflow, WorkflowDispatch,
+    Concurrency, Event, Expression, Job, PullRequest, PullRequestType, Run, Schedule, Step, Use,
+    Workflow, WorkflowDispatch,
 };
 
 use crate::tasks::workflows::{
     runners::{self, Platform},
-    steps::{self, FluentBuilder as _, NamedJob, named},
+    steps::{self, FluentBuilder as _, NamedJob, named, setup_cargo_config},
 };
+
+pub(crate) fn run_agent_evals() -> Workflow {
+    let agent_evals = agent_evals();
+
+    named::workflow().on(Event::default()
+        .schedule([Schedule::default().cron("0 0 * * *")])
+        .pull_request(PullRequest::default().add_branch("**").types([
+            PullRequestType::Synchronize,
+            PullRequestType::Reopened,
+            PullRequestType::Labeled,
+        ]))
+        .workflow_dispatch(WorkflowDispatch::default()))
+    .concurrency(Concurrency::default().group(
+        "${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}"
+    ).cancel_in_progress(true))
+    .add_env(("CARGO_TERM_COLOR", "always"))
+    .add_env(("CARGO_INCREMENTAL", 0))
+    .add_env(("RUST_BACKTRACE", 1))
+    .add_env(("ANTHROPIC_API_KEY", "${{ secrets.ANTHROPIC_API_KEY }}"))
+    .add_env(("ZED_CLIENT_CHECKSUM_SEED", "${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}"))
+    .add_env(("ZED_EVAL_TELEMETRY", 1))
+    .add_job(agent_evals.name, agent_evals.job)
+}
+
+fn agent_evals() -> NamedJob {
+    fn run_eval() -> Step<Run> {
+        named::bash("cargo run --package=eval -- --repetitions=8 --concurrency=1")
+    }
+
+    named::job(
+        Job::default()
+            .cond(Expression::new(indoc::indoc!{r#"
+                github.repository_owner == 'zed-industries' &&
+                (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'run-eval'))
+            "#}))
+            .runs_on(runners::LINUX_DEFAULT)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::cache_rust_dependencies())
+            .map(steps::install_linux_dependencies)
+            .add_step(setup_cargo_config(Platform::Linux))
+            .add_step(steps::script("cargo build --package=eval"))
+            .add_step(run_eval())
+            .add_step(steps::cleanup_cargo_config(Platform::Linux))
+    )
+}
 
 pub(crate) fn run_unit_evals() -> Workflow {
     let unit_evals = unit_evals();
