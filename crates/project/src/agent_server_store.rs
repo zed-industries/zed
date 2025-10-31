@@ -1037,7 +1037,7 @@ impl ExternalAgentServer for LocalGemini {
         cx.spawn(async move |cx| {
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_local_directory_environment(
+                    project_environment.local_directory_environment(
                         &Shell::System,
                         root_dir.clone(),
                         cx,
@@ -1133,7 +1133,7 @@ impl ExternalAgentServer for LocalClaudeCode {
         cx.spawn(async move |cx| {
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_local_directory_environment(
+                    project_environment.local_directory_environment(
                         &Shell::System,
                         root_dir.clone(),
                         cx,
@@ -1227,7 +1227,7 @@ impl ExternalAgentServer for LocalCodex {
         cx.spawn(async move |cx| {
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_local_directory_environment(
+                    project_environment.local_directory_environment(
                         &Shell::System,
                         root_dir.clone(),
                         cx,
@@ -1402,7 +1402,7 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
             // Get project environment
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_local_directory_environment(
+                    project_environment.local_directory_environment(
                         &Shell::System,
                         root_dir.clone(),
                         cx,
@@ -1585,7 +1585,7 @@ impl ExternalAgentServer for LocalCustomAgent {
         cx.spawn(async move |cx| {
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_local_directory_environment(
+                    project_environment.local_directory_environment(
                         &Shell::System,
                         root_dir.clone(),
                         cx,
@@ -1702,6 +1702,8 @@ impl settings::Settings for AllAgentServersSettings {
 
 #[cfg(test)]
 mod extension_agent_tests {
+    use crate::worktree_store::WorktreeStore;
+
     use super::*;
     use gpui::TestAppContext;
     use std::sync::Arc;
@@ -1826,7 +1828,9 @@ mod extension_agent_tests {
     async fn archive_agent_uses_extension_and_agent_id_for_cache_key(cx: &mut TestAppContext) {
         let fs = fs::FakeFs::new(cx.background_executor.clone());
         let http_client = http_client::FakeHttpClient::with_404_response();
-        let project_environment = cx.new(|cx| crate::ProjectEnvironment::new(None, cx));
+        let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
+        let project_environment =
+            cx.new(|cx| crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, cx));
 
         let agent = LocalExtensionArchiveAgent {
             fs,

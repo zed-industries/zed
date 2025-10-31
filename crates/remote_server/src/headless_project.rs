@@ -94,7 +94,8 @@ impl HeadlessProject {
             store
         });
 
-        let environment = cx.new(|cx| ProjectEnvironment::new(None, cx));
+        let environment =
+            cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, cx));
         let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
         let toolchain_store = cx.new(|cx| {
             ToolchainStore::local(
@@ -786,7 +787,7 @@ impl HeadlessProject {
         let environment = this
             .update(&mut cx, |this, cx| {
                 this.environment.update(cx, |environment, cx| {
-                    environment.get_local_directory_environment(&shell, directory.into(), cx)
+                    environment.local_directory_environment(&shell, directory.into(), cx)
                 })
             })?
             .await
