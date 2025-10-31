@@ -1056,6 +1056,7 @@ impl LocalWorktree {
             let abs_path = snapshot.abs_path.as_path().to_path_buf();
             let background = cx.background_executor().clone();
             async move {
+                // Watch is being run from here with the absolute path being passed in
                 let (events, watcher) = fs.watch(&abs_path, FS_WATCH_LATENCY).await;
                 let fs_case_sensitive = fs.is_case_sensitive().await.unwrap_or_else(|e| {
                     log::error!("Failed to determine whether filesystem is case sensitive: {e:#}");
@@ -1085,6 +1086,7 @@ impl LocalWorktree {
                     watcher,
                 };
 
+                // Running the scanner, passing in all events
                 scanner
                     .run(Box::pin(events.map(|events| events.into_iter().collect())))
                     .await;
@@ -3739,6 +3741,7 @@ impl BackgroundScanner {
                     while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
                         paths.extend(more_paths);
                     }
+                    // Processing events - this is where we check if e.kind.is_some(). If None, the event is not processed
                     self.process_events(paths.into_iter().filter(|e| e.kind.is_some()).map(Into::into).collect()).await;
                 }
 
