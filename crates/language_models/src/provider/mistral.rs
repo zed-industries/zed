@@ -753,9 +753,9 @@ struct ConfigurationView {
 impl ConfigurationView {
     fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let api_key_editor =
-            cx.new(|cx| InputField::new(window, cx, "0aBCDEFGhIjKLmNOpqrSTUVwxyzabCDE1f2"));
+            cx.new(|cx| InputField::new(window, cx, "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"));
         let codestral_api_key_editor =
-            cx.new(|cx| InputField::new(window, cx, "0aBCDEFGhIjKLmNOpqrSTUVwxyzabCDE1f2"));
+            cx.new(|cx| InputField::new(window, cx, "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"));
 
         cx.observe(&state, |_, _, cx| {
             cx.notify();

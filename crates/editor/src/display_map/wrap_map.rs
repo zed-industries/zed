@@ -568,18 +568,15 @@ impl WrapSnapshot {
             let mut old_start = old_cursor.start().output.lines;
             old_start += tab_edit.old.start.0 - old_cursor.start().input.lines;
 
-            // todo(lw): Should these be seek_forward?
-            old_cursor.seek(&tab_edit.old.end, Bias::Right);
+            old_cursor.seek_forward(&tab_edit.old.end, Bias::Right);
             let mut old_end = old_cursor.start().output.lines;
             old_end += tab_edit.old.end.0 - old_cursor.start().input.lines;
 
-            // todo(lw): Should these be seek_forward?
             new_cursor.seek(&tab_edit.new.start, Bias::Right);
             let mut new_start = new_cursor.start().output.lines;
             new_start += tab_edit.new.start.0 - new_cursor.start().input.lines;
 
-            // todo(lw): Should these be seek_forward?
-            new_cursor.seek(&tab_edit.new.end, Bias::Right);
+            new_cursor.seek_forward(&tab_edit.new.end, Bias::Right);
             let mut new_end = new_cursor.start().output.lines;
             new_end += tab_edit.new.end.0 - new_cursor.start().input.lines;
 
@@ -866,7 +863,7 @@ impl WrapSnapshot {
                 }
             }
 
-            let text = language::Rope::from(self.text().as_str());
+            let text = language::Rope::from_str_small(self.text().as_str());
             let mut input_buffer_rows = self.tab_snapshot.rows(0);
             let mut expected_buffer_rows = Vec::new();
             let mut prev_tab_row = 0;
@@ -1416,9 +1413,10 @@ mod tests {
             }
         }
 
-        let mut initial_text = Rope::from(initial_snapshot.text().as_str());
+        let mut initial_text =
+            Rope::from_str(initial_snapshot.text().as_str(), cx.background_executor());
         for (snapshot, patch) in edits {
-            let snapshot_text = Rope::from(snapshot.text().as_str());
+            let snapshot_text = Rope::from_str(snapshot.text().as_str(), cx.background_executor());
             for edit in &patch {
                 let old_start = initial_text.point_to_offset(Point::new(edit.new.start, 0));
                 let old_end = initial_text.point_to_offset(cmp::min(
@@ -1434,7 +1432,7 @@ mod tests {
                     .chunks_in_range(new_start..new_end)
                     .collect::<String>();
 
-                initial_text.replace(old_start..old_end, &new_text);
+                initial_text.replace(old_start..old_end, &new_text, cx.background_executor());
             }
             assert_eq!(initial_text.to_string(), snapshot_text.to_string());
         }

@@ -7089,6 +7089,9 @@ actions!(
     [
         /// Opens the channel notes for the current call.
         ///
+        /// Use `collab_panel::OpenSelectedChannelNotes` to open the channel notes for the selected
+        /// channel in the collab panel.
+        ///
         /// If you want to open a specific channel, use `zed::OpenZedUrl` with a channel notes URL -
         /// can be copied via "Copy link to section" in the context menu of the channel notes
         /// buffer. These URLs look like `https://zed.dev/channel/channel-name-CHANNEL_ID/notes`.
@@ -7577,13 +7580,13 @@ pub fn create_and_open_local_file(
     path: &'static Path,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-    default_content: impl 'static + Send + FnOnce() -> Rope,
+    default_content: impl 'static + Send + FnOnce(&mut AsyncApp) -> Rope,
 ) -> Task<Result<Box<dyn ItemHandle>>> {
     cx.spawn_in(window, async move |workspace, cx| {
         let fs = workspace.read_with(cx, |workspace, _| workspace.app_state().fs.clone())?;
         if !fs.is_file(path).await {
             fs.create_file(path, Default::default()).await?;
-            fs.save(path, &default_content(), Default::default())
+            fs.save(path, &default_content(cx), Default::default())
                 .await?;
         }
 

@@ -1,4 +1,4 @@
-use cloud_llm_client::predict_edits_v3::{self, Excerpt};
+use cloud_llm_client::predict_edits_v3::Excerpt;
 use edit_prediction_context::Line;
 use language::{BufferSnapshot, Point};
 use std::ops::Range;
@@ -58,26 +58,12 @@ pub fn merge_excerpts(
     output
 }
 
-pub fn write_merged_excerpts(
-    buffer: &BufferSnapshot,
-    sorted_line_ranges: impl IntoIterator<Item = Range<Line>>,
-    sorted_insertions: &[(predict_edits_v3::Point, &str)],
-    output: &mut String,
-) {
-    cloud_zeta2_prompt::write_excerpts(
-        merge_excerpts(buffer, sorted_line_ranges).iter(),
-        sorted_insertions,
-        Line(buffer.max_point().row),
-        true,
-        output,
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use cloud_llm_client::predict_edits_v3;
     use gpui::{TestAppContext, prelude::*};
     use indoc::indoc;
     use language::{Buffer, Language, LanguageConfig, LanguageMatcher, OffsetRangeExt};
@@ -168,7 +154,13 @@ mod tests {
                     .collect();
 
                 let mut output = String::new();
-                write_merged_excerpts(&buffer.snapshot(), ranges, &insertions, &mut output);
+                cloud_zeta2_prompt::write_excerpts(
+                    merge_excerpts(&buffer.snapshot(), ranges).iter(),
+                    &insertions,
+                    Line(buffer.max_point().row),
+                    true,
+                    &mut output,
+                );
                 assert_eq!(output, expected_output);
             });
         }

@@ -1587,11 +1587,12 @@ impl SearchableItem for Editor {
         &mut self,
         index: usize,
         matches: &[Range<Anchor>],
+        collapse: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.unfold_ranges(&[matches[index].clone()], false, true, cx);
-        let range = self.range_for_match(&matches[index]);
+        let range = self.range_for_match(&matches[index], collapse);
         self.change_selections(Default::default(), window, cx, |s| {
             s.select_ranges([range]);
         })

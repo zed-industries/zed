@@ -170,7 +170,10 @@ impl CommitView {
                     ReplicaId::LOCAL,
                     cx.entity_id().as_non_zero_u64().into(),
                     LineEnding::default(),
-                    format_commit(&commit, stash.is_some()).into(),
+                    Rope::from_str(
+                        &format_commit(&commit, stash.is_some()),
+                        cx.background_executor(),
+                    ),
                 );
                 metadata_buffer_id = Some(buffer.remote_id());
                 Buffer::build(buffer, Some(file.clone()), Capability::ReadWrite)
@@ -336,7 +339,7 @@ async fn build_buffer(
 ) -> Result<Entity<Buffer>> {
     let line_ending = LineEnding::detect(&text);
     LineEnding::normalize(&mut text);
-    let text = Rope::from(text);
+    let text = Rope::from_str(&text, cx.background_executor());
     let language = cx.update(|cx| language_registry.language_for_file(&blob, Some(&text), cx))?;
     let language = if let Some(language) = language {
         language_registry
@@ -376,7 +379,7 @@ async fn build_buffer_diff(
     let base_buffer = cx
         .update(|cx| {
             Buffer::build_snapshot(
-                old_text.as_deref().unwrap_or("").into(),
+                Rope::from_str(old_text.as_deref().unwrap_or(""), cx.background_executor()),
                 buffer.language().cloned(),
                 Some(language_registry.clone()),
                 cx,
