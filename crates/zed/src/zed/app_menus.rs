@@ -83,6 +83,11 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                             "Select Theme...",
                             zed_actions::theme_selector::Toggle::default(),
                         ),
+                        // TODO(connor): Figure out a better description.
+                        MenuItem::action(
+                            "Switch Theme Mode",
+                            zed_actions::theme_selector::SwitchMode,
+                        ),
                         MenuItem::action(
                             "Select Icon Theme...",
                             zed_actions::icon_theme_selector::Toggle::default(),
