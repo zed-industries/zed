@@ -1543,9 +1543,9 @@
     //
     // could be used. Processing stops at the first regex with a match, even if no link is
     // produced which is the case when the cursor is not over the path capture group. For best
-    // performance it is recommended to order regexes from most common to least common. To
-    // facilitate improve readability and documentation, each regex here is an array of strings
-    // which will be collected into one regex string for use in terminal path hyperlink detection.
+    // performance it is recommended to order regexes from most common to least common. For
+    // readability and documentation, each regex here is an array of strings which are collected
+    // into one regex string for use in terminal path hyperlink detection.
     "path_hyperlink_regexes": [
       // Python-style diagnostics
       ["File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)"],
