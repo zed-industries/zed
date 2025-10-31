@@ -2,7 +2,7 @@
 
 Agent Servers are programs that provide AI agent implementations through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com). Agent Server Extensions let you package up an Agent Server so that users can install the extension and have your agent easily available to use in Zed.
 
-You can see the current Agent Server Extensions by opening the Extensions tab in Zed (execute the `zed: extensions` command) that have already been exposed as extensions on [https://zed.dev/extensions](https://zed.dev/extensions?filter=agent-servers).
+You can see the current Agent Server Extensions by opening the Extensions tab in Zed (execute the `zed: extensions` command) and changing the filter from `All` to `Agent Servers` that have already been exposed as extensions on [https://zed.dev/extensions](https://zed.dev/extensions?filter=agent-servers).
 
 ## Defining Agent Server Extensions
 
