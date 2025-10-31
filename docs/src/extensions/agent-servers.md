@@ -137,6 +137,7 @@ To test your Agent Server Extension:
 3. Select your Agent Server from the list
 4. Verify that it downloads, installs, and launches correctly
 5. Test its functionality by conversing with it and watching the [ACP logs](../ai/external-agents.md#debugging-agents)
+
 ## Icon Guideline
 
 In case your agent server has a logo, we highly recommend adding it as an SVG icon.
