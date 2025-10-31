@@ -153,7 +153,6 @@ const ZED_BEDROCK_SECRET_ACCESS_KEY_VAR: &str = "ZED_SECRET_ACCESS_KEY";
 const ZED_BEDROCK_SESSION_TOKEN_VAR: &str = "ZED_SESSION_TOKEN";
 const ZED_AWS_PROFILE_VAR: &str = "ZED_AWS_PROFILE";
 const ZED_BEDROCK_REGION_VAR: &str = "ZED_AWS_REGION";
-const ZED_AWS_CREDENTIALS_VAR: &str = "ZED_AWS_CREDENTIALS";
 const ZED_AWS_ENDPOINT_VAR: &str = "ZED_AWS_ENDPOINT";
 const ZED_AWS_BEARER_TOKEN_BEDROCK: &str = "ZED_AWS_BEARER_TOKEN_BEDROCK";
 
@@ -221,9 +220,7 @@ impl State {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         cx.spawn(async move |this, cx| {
             let (credentials, from_env) =
-                if let Ok(credentials) = std::env::var(ZED_AWS_CREDENTIALS_VAR) {
-                    (credentials, true)
-                } else if let Ok(bearer_token) = std::env::var(ZED_AWS_BEARER_TOKEN_BEDROCK) {
+                if let Ok(bearer_token) = std::env::var(ZED_AWS_BEARER_TOKEN_BEDROCK) {
                     let region = std::env::var(ZED_BEDROCK_REGION_VAR).unwrap_or_else(|_| "us-east-1".to_string());
                     let creds = BedrockCredentials {
                         access_key_id: String::new(),
