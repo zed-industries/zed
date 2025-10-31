@@ -11,6 +11,7 @@ mod run_bundling;
 
 mod release;
 mod run_tests;
+mod run_unit_evals;
 mod runners;
 mod steps;
 mod vars;
@@ -28,6 +29,7 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         ("run_tests.yml", run_tests::run_tests()),
         ("release.yml", release::release()),
         ("compare_perf.yml", compare_perf::compare_perf()),
+        ("run_unit_evals.yml", run_unit_evals::run_unit_evals()),
     ];
     fs::create_dir_all(dir)
         .with_context(|| format!("Failed to create directory: {}", dir.display()))?;
