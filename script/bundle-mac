@@ -297,7 +297,7 @@ function upload_debug_symbols() {
         # .eh_frame data for stack unwinding. see https://github.com/getsentry/symbolic/issues/783
         sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
             "target/${target_triple}/${target_dir}/zed.dwarf" \
-            "target/${target_triple}/${target_dir}/remote_server.dwarf" \
+            "target/${target_triple}/${target_dir}/remote_server.dwarf"
     else
         echo "missing SENTRY_AUTH_TOKEN. skipping sentry upload."
     fi
