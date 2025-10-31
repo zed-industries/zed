@@ -1,5 +1,5 @@
 use gh_workflow::{
-    Event, Expression, Job, PullRequest, PullRequestType, Run, Schedule, Step, Use, Workflow,
+    Event, Expression, Job, PullRequest, PullRequestType, Push, Run, Schedule, Step, Use, Workflow,
     WorkflowDispatch,
 };
 
@@ -60,12 +60,15 @@ pub(crate) fn run_unit_evals() -> Workflow {
     let unit_evals = unit_evals();
 
     named::workflow()
-        .on(Event::default()
-            .schedule([
-                // GitHub might drop jobs at busy times, so we choose a random time in the middle of the night.
-                Schedule::default().cron("47 1 * * 2"),
-            ])
-            .workflow_dispatch(WorkflowDispatch::default()))
+        .on(
+            Event::default()
+                .schedule([
+                    // GitHub might drop jobs at busy times, so we choose a random time in the middle of the night.
+                    Schedule::default().cron("47 1 * * 2"),
+                ])
+                .workflow_dispatch(WorkflowDispatch::default())
+                .push(Push::default().add_branch("gh-workflow-unit-evals")), // todo! remove
+        )
         .concurrency(vars::one_workflow_per_non_main_branch())
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("CARGO_INCREMENTAL", 0))
@@ -106,6 +109,7 @@ fn unit_evals() -> NamedJob {
             .map(steps::install_linux_dependencies)
             .add_step(steps::cargo_install_nextest(Platform::Linux))
             .add_step(steps::clear_target_dir_if_large(Platform::Linux))
+            .add_step(steps::script("exit 1")) // todo! remove
             .add_step(run_evals())
             .add_step(send_failure_to_slack())
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
