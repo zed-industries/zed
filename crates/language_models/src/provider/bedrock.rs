@@ -233,6 +233,21 @@ impl State {
                         bearer_token: Some(bearer_token),
                     };
                     (serde_json::to_string(&creds).context("failed to serialize bearer token credentials")?, true)
+                } else if let Ok(access_key_id) = std::env::var(ZED_BEDROCK_ACCESS_KEY_ID_VAR) {
+                    if let Ok(secret_access_key) = std::env::var(ZED_BEDROCK_SECRET_ACCESS_KEY_VAR) {
+                        let region = std::env::var(ZED_BEDROCK_REGION_VAR).unwrap_or_else(|_| "us-east-1".to_string());
+                        let session_token = std::env::var(ZED_BEDROCK_SESSION_TOKEN_VAR).ok();
+                        let creds = BedrockCredentials {
+                            access_key_id,
+                            secret_access_key,
+                            session_token,
+                            region,
+                            bearer_token: None,
+                        };
+                        (serde_json::to_string(&creds).context("failed to serialize access key credentials")?, true)
+                    } else {
+                        return Err(AuthenticateError::CredentialsNotFound.into());
+                    }
                 } else {
                     let (_, credentials) = credentials_provider
                         .read_credentials(AMAZON_AWS_URL, cx)
