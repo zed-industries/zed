@@ -147,5 +147,7 @@ For optimal display, follow these guidelines:
 - Ensure you have a clean SVG code by processing it through [SVGOMG](https://jakearchibald.github.io/svgomg/)
 - Avoid including icons with gradients as they will often make the SVG more complicated and possibly not render perfectly
 
-Note that we won't include colors; any icon you include will be displayed in monochrome so as to preserve Zed's design consistency.
+
+Note that we'll only accept monochrome icons, to preserve Zed's design consistency. (You can still use opacity in different paths of your SVG to add visual layering.)
+
 This is all you need to distribute an agent server through Zed's extension system!
