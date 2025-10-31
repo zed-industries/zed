@@ -3,7 +3,9 @@ use buffer_diff::BufferDiff;
 use clock;
 use collections::BTreeMap;
 use futures::{FutureExt, StreamExt, channel::mpsc};
-use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
+use gpui::{
+    App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, Subscription, Task, WeakEntity,
+};
 use language::{Anchor, Buffer, BufferEvent, DiskState, Point, ToPoint};
 use project::{Project, ProjectItem, lsp_store::OpenLspBufferHandle};
 use std::{cmp, ops::Range, sync::Arc};
@@ -321,6 +323,7 @@ impl ActionLog {
                 let unreviewed_edits = tracked_buffer.unreviewed_edits.clone();
                 let edits = diff_snapshots(&old_snapshot, &new_snapshot);
                 let mut has_user_changes = false;
+                let executor = cx.background_executor().clone();
                 async move {
                     if let ChangeAuthor::User = author {
                         has_user_changes = apply_non_conflicting_edits(
@@ -328,6 +331,7 @@ impl ActionLog {
                             edits,
                             &mut base_text,
                             new_snapshot.as_rope(),
+                            &executor,
                         );
                     }
 
@@ -382,6 +386,7 @@ impl ActionLog {
                 let agent_diff_base = tracked_buffer.diff_base.clone();
                 let git_diff_base = git_diff.read(cx).base_text().as_rope().clone();
                 let buffer_text = tracked_buffer.snapshot.as_rope().clone();
+                let executor = cx.background_executor().clone();
                 anyhow::Ok(cx.background_spawn(async move {
                     let mut old_unreviewed_edits = old_unreviewed_edits.into_iter().peekable();
                     let committed_edits = language::line_diff(
@@ -416,8 +421,11 @@ impl ActionLog {
                                             ),
                                             new_agent_diff_base.max_point(),
                                         ));
-                                    new_agent_diff_base
-                                        .replace(old_byte_start..old_byte_end, &unreviewed_new);
+                                    new_agent_diff_base.replace(
+                                        old_byte_start..old_byte_end,
+                                        &unreviewed_new,
+                                        &executor,
+                                    );
                                     row_delta +=
                                         unreviewed.new_len() as i32 - unreviewed.old_len() as i32;
                                 }
@@ -611,6 +619,7 @@ impl ActionLog {
                                 .snapshot
                                 .text_for_range(new_range)
                                 .collect::<String>(),
+                            cx.background_executor(),
                         );
                         delta += edit.new_len() as i32 - edit.old_len() as i32;
                         false
@@ -824,6 +833,7 @@ fn apply_non_conflicting_edits(
     edits: Vec<Edit<u32>>,
     old_text: &mut Rope,
     new_text: &Rope,
+    executor: &BackgroundExecutor,
 ) -> bool {
     let mut old_edits = patch.edits().iter().cloned().peekable();
     let mut new_edits = edits.into_iter().peekable();
@@ -877,6 +887,7 @@ fn apply_non_conflicting_edits(
             old_text.replace(
                 old_bytes,
                 &new_text.chunks_in_range(new_bytes).collect::<String>(),
+                executor,
             );
             applied_delta += new_edit.new_len() as i32 - new_edit.old_len() as i32;
             has_made_changes = true;
@@ -2282,6 +2293,7 @@ mod tests {
                     old_text.replace(
                         old_start..old_end,
                         &new_text.slice_rows(edit.new.clone()).to_string(),
+                        cx.background_executor(),
                     );
                 }
                 pretty_assertions::assert_eq!(old_text.to_string(), new_text.to_string());

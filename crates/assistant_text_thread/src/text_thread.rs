@@ -744,12 +744,13 @@ impl TextThread {
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let buffer = cx.new(|_cx| {
+        let buffer = cx.new(|cx| {
             let buffer = Buffer::remote(
                 language::BufferId::new(1).unwrap(),
                 replica_id,
                 capability,
                 "",
+                cx.background_executor(),
             );
             buffer.set_language_registry(language_registry.clone());
             buffer

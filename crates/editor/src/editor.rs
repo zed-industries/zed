@@ -7852,7 +7852,7 @@ impl Editor {
                         let inlay = Inlay::edit_prediction(
                             post_inc(&mut self.next_inlay_id),
                             range.start,
-                            new_text.as_str(),
+                            Rope::from_str_small(new_text.as_str()),
                         );
                         inlay_ids.push(inlay.id);
                         inlays.push(inlay);

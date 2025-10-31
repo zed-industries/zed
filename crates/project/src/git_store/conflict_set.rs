@@ -276,8 +276,8 @@ mod tests {
     use util::{path, rel_path::rel_path};
     use worktree::WorktreeSettings;
 
-    #[test]
-    fn test_parse_conflicts_in_buffer() {
+    #[gpui::test]
+    fn test_parse_conflicts_in_buffer(cx: &mut TestAppContext) {
         // Create a buffer with conflict markers
         let test_content = r#"
             This is some text before the conflict.
@@ -299,7 +299,12 @@ mod tests {
         .unindent();
 
         let buffer_id = BufferId::new(1).unwrap();
-        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            buffer_id,
+            test_content,
+            cx.background_executor(),
+        );
         let snapshot = buffer.snapshot();
 
         let conflict_snapshot = ConflictSet::parse(&snapshot);
@@ -355,8 +360,8 @@ mod tests {
         assert_eq!(conflicts_in_range.len(), 0);
     }
 
-    #[test]
-    fn test_nested_conflict_markers() {
+    #[gpui::test]
+    fn test_nested_conflict_markers(cx: &mut TestAppContext) {
         // Create a buffer with nested conflict markers
         let test_content = r#"
             This is some text before the conflict.
@@ -374,7 +379,12 @@ mod tests {
         .unindent();
 
         let buffer_id = BufferId::new(1).unwrap();
-        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            buffer_id,
+            test_content,
+            cx.background_executor(),
+        );
         let snapshot = buffer.snapshot();
 
         let conflict_snapshot = ConflictSet::parse(&snapshot);
@@ -396,8 +406,8 @@ mod tests {
         assert_eq!(their_text, "This is their version in a nested conflict\n");
     }
 
-    #[test]
-    fn test_conflict_markers_at_eof() {
+    #[gpui::test]
+    fn test_conflict_markers_at_eof(cx: &mut TestAppContext) {
         let test_content = r#"
             <<<<<<< ours
             =======
@@ -405,15 +415,20 @@ mod tests {
             >>>>>>> "#
             .unindent();
         let buffer_id = BufferId::new(1).unwrap();
-        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            buffer_id,
+            test_content,
+            cx.background_executor(),
+        );
         let snapshot = buffer.snapshot();
 
         let conflict_snapshot = ConflictSet::parse(&snapshot);
         assert_eq!(conflict_snapshot.conflicts.len(), 1);
     }
 
-    #[test]
-    fn test_conflicts_in_range() {
+    #[gpui::test]
+    fn test_conflicts_in_range(cx: &mut TestAppContext) {
         // Create a buffer with conflict markers
         let test_content = r#"
             one
@@ -447,7 +462,12 @@ mod tests {
         .unindent();
 
         let buffer_id = BufferId::new(1).unwrap();
-        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content.clone());
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            buffer_id,
+            test_content.clone(),
+            cx.background_executor(),
+        );
         let snapshot = buffer.snapshot();
 
         let conflict_snapshot = ConflictSet::parse(&snapshot);
