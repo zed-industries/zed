@@ -214,7 +214,7 @@ fn find_mini_delimiters(
     let visible_line_range = get_visible_line_range(&line_range);
 
     let snapshot = &map.buffer_snapshot();
-    let excerpt = snapshot.excerpt_containing(offset..offset)?;
+    let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
     let buffer = excerpt.buffer();
 
     let bracket_filter = |open: Range<usize>, close: Range<usize>| {
@@ -222,7 +222,17 @@ fn find_mini_delimiters(
     };
 
     // Try to find delimiters in visible range first
-    let ranges = map.buffer_snapshot().bracket_ranges(visible_line_range);
+    let ranges = map
+        .buffer_snapshot()
+        .bracket_ranges(visible_line_range)
+        .map(|ranges| {
+            ranges.map(|(open, close)| {
+                (
+                    excerpt.map_range_to_buffer(open),
+                    excerpt.map_range_to_buffer(close),
+                )
+            })
+        });
     if let Some(candidate) = cover_or_next(ranges, display_point, map, Some(&bracket_filter)) {
         return Some(
             DelimiterRange {
