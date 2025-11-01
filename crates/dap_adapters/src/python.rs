@@ -943,7 +943,7 @@ mod tests {
 
         let result = adapter
             .get_installed_binary(
-                &MockDelegate::new(),
+                &test_mocks::MockDelegate::new(),
                 &task_def,
                 None,
                 None,
@@ -984,7 +984,7 @@ mod tests {
 
         let result_host = adapter
             .get_installed_binary(
-                &MockDelegate::new(),
+                &test_mocks::MockDelegate::new(),
                 &task_def_host,
                 None,
                 None,
