@@ -3445,7 +3445,7 @@ impl Window {
         )));
     }
 
-    /// Register a capturing key event listener on this node for the next frame. The type of event
+    /// Register a key event listener on this node for the next frame. The type of event
     /// is determined by the first parameter of the given listener. When the next frame is rendered
     /// the listener will be cleared.
     ///
@@ -4358,7 +4358,7 @@ impl Window {
         }))
     }
 
-    /// Register a capturing action listener on this node for the next frame. The type of action
+    /// Register an action listener on this node for the next frame. The type of action
     /// is determined by the first parameter of the given listener. When the next frame is rendered
     /// the listener will be cleared.
     ///
