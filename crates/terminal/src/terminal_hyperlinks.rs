@@ -16,6 +16,9 @@ use std::{
 };
 
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
+const WIDE_CHAR_SPACERS: Flags =
+    Flags::from_bits(Flags::LEADING_WIDE_CHAR_SPACER.bits() | Flags::WIDE_CHAR_SPACER.bits())
+        .unwrap();
 
 pub(super) struct RegexSearches {
     url_regex: RegexSearch,
@@ -85,31 +88,23 @@ impl RegexSearches {
         // api compresses tab characters into a single space, whereas we require a cell accurate
         // string representation of the line. The below algorithm does this, but seems a bit odd.
         // Maybe there is a clean api for doing this, but I couldn't find it.
-        const SPACERS: Flags = Flags::from_bits(
-            Flags::LEADING_WIDE_CHAR_SPACER.bits() | Flags::WIDE_CHAR_SPACER.bits(),
-        )
-        .unwrap();
         let mut line = String::with_capacity(
             (line_end.line.0 - line_start.line.0 + 1) as usize * term.grid().columns(),
         );
         line.push(term.grid()[line_start].c);
-        let mut last_non_space = 0;
         for cell in term.grid().iter_from(line_start) {
             if cell.point > line_end {
                 break;
             }
 
-            if !cell.flags.intersects(SPACERS) {
-                match cell.c {
-                    ' ' | '\t' => line.push(' '),
-                    c @ _ => {
-                        line.push(c);
-                        last_non_space = line.len();
-                    }
-                };
+            if !cell.flags.intersects(WIDE_CHAR_SPACERS) {
+                line.push(match cell.c {
+                    '\t' => ' ',
+                    c @ _ => c,
+                });
             }
         }
-        let line = &line[..last_non_space];
+        let line = line.trim_ascii_end();
 
         let advance_point_by_str = |mut point: AlacPoint, s: &str| {
             for _ in s.chars() {
@@ -1471,12 +1466,11 @@ mod tests {
             result += &format!("      [{}]\n", second_header_row);
             result += &format!("       {}", marker_header_row);
 
-            let spacers: Flags = Flags::LEADING_WIDE_CHAR_SPACER | Flags::WIDE_CHAR_SPACER;
             for cell in self
                 .term
                 .renderable_content()
                 .display_iter
-                .filter(|cell| !cell.flags.intersects(spacers))
+                .filter(|cell| !cell.flags.intersects(WIDE_CHAR_SPACERS))
             {
                 if cell.point.column.0 == 0 {
                     let prefix =
