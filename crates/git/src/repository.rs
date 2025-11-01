@@ -1634,15 +1634,41 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let working_directory = working_directory?;
                 if let Some(branch_name) = branch_name {
-                    let output = new_smol_command(&git_binary_path)
+                    let branch_push_remote = new_smol_command(&git_binary_path)
+                        .current_dir(&working_directory)
+                        .args(["config", "--get"])
+                        .arg(format!("branch.{}.pushRemote", branch_name))
+                        .output()
+                        .await?;
+                    if branch_push_remote.status.success() {
+                        let remote_name = String::from_utf8_lossy(&branch_push_remote.stdout);
+
+                        return Ok(vec![Remote {
+                            name: remote_name.trim().to_string().into(),
+                        }]);
+                    }
+
+                    let remote_push_default = new_smol_command(&git_binary_path)
+                        .current_dir(&working_directory)
+                        .args(["config", "--get", "remote.pushDefault"])
+                        .output()
+                        .await?;
+                    if remote_push_default.status.success() {
+                        let remote_name = String::from_utf8_lossy(&remote_push_default.stdout);
+
+                        return Ok(vec![Remote {
+                            name: remote_name.trim().to_string().into(),
+                        }]);
+                    }
+
+                    let branch_remote = new_smol_command(&git_binary_path)
                         .current_dir(&working_directory)
                         .args(["config", "--get"])
                         .arg(format!("branch.{}.remote", branch_name))
                         .output()
                         .await?;
-
-                    if output.status.success() {
-                        let remote_name = String::from_utf8_lossy(&output.stdout);
+                    if branch_remote.status.success() {
+                        let remote_name = String::from_utf8_lossy(&branch_remote.stdout);
 
                         return Ok(vec![Remote {
                             name: remote_name.trim().to_string().into(),
