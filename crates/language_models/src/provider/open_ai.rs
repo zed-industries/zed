@@ -356,11 +356,13 @@ pub fn into_open_ai(
         for content in message.content {
             match content {
                 MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
-                    add_message_content_part(
-                        open_ai::MessagePart::Text { text },
-                        message.role,
-                        &mut messages,
-                    )
+                    if !text.trim().is_empty() {
+                        add_message_content_part(
+                            open_ai::MessagePart::Text { text },
+                            message.role,
+                            &mut messages,
+                        );
+                    }
                 }
                 MessageContent::RedactedThinking(_) => {}
                 MessageContent::Image(image) => {
