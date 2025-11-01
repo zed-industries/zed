@@ -53,6 +53,7 @@ pub enum IconName {
     Check,
     CheckDouble,
     ChevronDown,
+    ChevronDownUp,
     ChevronLeft,
     ChevronRight,
     ChevronUp,
