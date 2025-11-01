@@ -70,14 +70,6 @@ impl AgentDiffThread {
         }
     }
 
-    fn is_generating(&self, cx: &App) -> bool {
-        match self {
-            AgentDiffThread::AcpThread(thread) => {
-                thread.read(cx).status() == acp_thread::ThreadStatus::Generating
-            }
-        }
-    }
-
     fn has_pending_edit_tool_uses(&self, cx: &App) -> bool {
         match self {
             AgentDiffThread::AcpThread(thread) => thread.read(cx).has_pending_edit_tool_calls(),
@@ -970,9 +962,7 @@ impl AgentDiffToolbar {
             None => ToolbarItemLocation::Hidden,
             Some(AgentDiffToolbarItem::Pane(_)) => ToolbarItemLocation::PrimaryRight,
             Some(AgentDiffToolbarItem::Editor { state, .. }) => match state {
-                EditorState::Generating | EditorState::Reviewing => {
-                    ToolbarItemLocation::PrimaryRight
-                }
+                EditorState::Reviewing => ToolbarItemLocation::PrimaryRight,
                 EditorState::Idle => ToolbarItemLocation::Hidden,
             },
         }
@@ -1050,7 +1040,6 @@ impl Render for AgentDiffToolbar {
 
                 let content = match state {
                     EditorState::Idle => return Empty.into_any(),
-                    EditorState::Generating => vec![spinner_icon],
                     EditorState::Reviewing => vec![
                         h_flex()
                             .child(
@@ -1222,7 +1211,6 @@ pub struct AgentDiff {
 pub enum EditorState {
     Idle,
     Reviewing,
-    Generating,
 }
 
 struct WorkspaceThread {
@@ -1545,15 +1533,11 @@ impl AgentDiff {
                     multibuffer.add_diff(diff_handle.clone(), cx);
                 });
 
-                let new_state = if thread.is_generating(cx) {
-                    EditorState::Generating
-                } else {
-                    EditorState::Reviewing
-                };
+                let reviewing_state = EditorState::Reviewing;
 
                 let previous_state = self
                     .reviewing_editors
-                    .insert(weak_editor.clone(), new_state.clone());
+                    .insert(weak_editor.clone(), reviewing_state.clone());
 
                 if previous_state.is_none() {
                     editor.update(cx, |editor, cx| {
@@ -1566,7 +1550,9 @@ impl AgentDiff {
                     unaffected.remove(weak_editor);
                 }
 
-                if new_state == EditorState::Reviewing && previous_state != Some(new_state) {
+                if reviewing_state == EditorState::Reviewing
+                    && previous_state != Some(reviewing_state)
+                {
                     // Jump to first hunk when we enter review mode
                     editor.update(cx, |editor, cx| {
                         let snapshot = multibuffer.read(cx).snapshot(cx);
