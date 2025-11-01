@@ -5581,7 +5581,7 @@ fn default_markdown_style(
     let theme_settings = ThemeSettings::get_global(cx);
     let colors = cx.theme().colors();
 
-    let buffer_font_size = theme_settings.agent_buffer_code_font_size(cx);
+    let buffer_font_size = theme_settings.agent_buffer_font_size(cx);
 
     let mut text_style = window.text_style();
     let line_height = buffer_font_size * 1.75;
