@@ -108,6 +108,7 @@ pub struct ParsedMarkdownTable {
     pub source_range: Range<usize>,
     pub header: Vec<ParsedMarkdownTableRow>,
     pub body: Vec<ParsedMarkdownTableRow>,
+    pub caption: Option<MarkdownParagraph>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
