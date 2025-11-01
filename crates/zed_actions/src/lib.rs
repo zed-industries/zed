@@ -68,6 +68,16 @@ actions!(
     ]
 );
 
+actions!(
+    ai,
+    [
+        /// Opens the custom git commit prompt for editing, creating it if needed.
+        EditGitCommitPrompt,
+        /// Disables the custom git commit prompt and falls back to the default template.
+        DisableGitCustomPrompt,
+    ]
+);
+
 #[derive(PartialEq, Clone, Copy, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExtensionCategoryFilter {

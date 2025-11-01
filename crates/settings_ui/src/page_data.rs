@@ -1,13 +1,16 @@
-use gpui::App;
+use gpui::{App, IntoElement};
 use settings::{LanguageSettingsContent, SettingsContent};
 use std::sync::Arc;
 use strum::IntoDiscriminant as _;
-use ui::{IntoElement, SharedString};
+use ui::SharedString;
 
 use crate::{
     DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata, SettingsPage,
     SettingsPageItem, SubPageLink, USER, all_language_names, sub_page_stack,
 };
+
+use super::EditCommitPromptControl;
+const EDIT_COMMIT_PROMPT_CONTROL: EditCommitPromptControl = EditCommitPromptControl;
 
 const DEFAULT_STRING: String = String::new();
 /// A default empty string reference. Useful in `pick` functions for cases either in dynamic item fields, or when dealing with `settings::Maybe`
@@ -5530,6 +5533,17 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         files: USER,
                     }),
                     SettingsPageItem::SectionHeader("Agent Configuration"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Custom Commit Prompt",
+                        description: "Edit the custom AI prompt for commit messages.",
+                        field: Box::new(SettingField {
+                            json_path: None,
+                            pick: |_| Some(&EDIT_COMMIT_PROMPT_CONTROL),
+                            write: |_, _| {},
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Always Allow Tool Actions",
                         description: "When enabled, the agent can run potentially destructive actions without asking for your confirmation. This setting has no effect on external agents.",
