@@ -31,8 +31,8 @@ use git::{
     },
     stash::{GitStash, StashEntry},
     status::{
-        DiffTreeType, FileStatus, GitSummary, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
-        UnmergedStatus, UnmergedStatusCode,
+        DiffTreeType, FileStatus, GitSummary, StageStatus, StatusCode, TrackedStatus, TreeDiff,
+        TreeDiffStatus, UnmergedStatus, UnmergedStatusCode,
     },
 };
 use gpui::{
@@ -244,10 +244,90 @@ pub struct MergeDetails {
     pub heads: Vec<Option<SharedString>>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PendingOperationStatus {
+    Staged,
+    Unstaged,
+    Reverted,
+    Unchanged,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingOperations {
+    repo_path: RepoPath,
+    // TODO: move this into StatusEntry
+    staging: StageStatus,
+    ops: Vec<PendingOperation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingOperation {
+    id: usize,
+    finished: bool,
+    status: PendingOperationStatus,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PendingOperationsSummary {
+    finished: bool,
+    status: PendingOperationStatus,
+    count: usize,
+}
+
+impl Default for PendingOperationsSummary {
+    fn default() -> Self {
+        Self {
+            finished: false,
+            status: PendingOperationStatus::Unstaged,
+            count: 0,
+        }
+    }
+}
+
+impl sum_tree::ContextLessSummary for PendingOperationsSummary {
+    fn zero() -> Self {
+        Default::default()
+    }
+
+    fn add_summary(&mut self, rhs: &Self) {
+        self.finished = self.finished || rhs.finished;
+        self.count += rhs.count;
+        self.status = rhs.status;
+    }
+}
+
+impl sum_tree::Item for PendingOperations {
+    type Summary = PathSummary<PendingOperationsSummary>;
+
+    fn summary(&self, _: <Self::Summary as sum_tree::Summary>::Context<'_>) -> Self::Summary {
+        let mut item_summary = PendingOperationsSummary {
+            count: self.ops.len(),
+            ..Default::default()
+        };
+        if let Some(op) = self.ops.last() {
+            item_summary.finished = op.finished;
+            item_summary.status = op.status;
+        }
+        PathSummary {
+            max_path: self.repo_path.0.clone(),
+            item_summary,
+        }
+    }
+}
+
+impl sum_tree::KeyedItem for PendingOperations {
+    type Key = PathKey;
+
+    fn key(&self) -> Self::Key {
+        PathKey(self.repo_path.0.clone())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepositorySnapshot {
     pub id: RepositoryId,
     pub statuses_by_path: SumTree<StatusEntry>,
+    pub pending_ops_by_path: SumTree<PendingOperations>,
     pub work_directory_abs_path: Arc<Path>,
     pub path_style: PathStyle,
     pub branch: Option<Branch>,
@@ -2954,6 +3034,7 @@ impl RepositorySnapshot {
         Self {
             id,
             statuses_by_path: Default::default(),
+            pending_ops_by_path: Default::default(),
             work_directory_abs_path,
             branch: None,
             head_commit: None,
@@ -3079,6 +3160,21 @@ impl RepositorySnapshot {
         self.statuses_by_path
             .get(&PathKey(path.0.clone()), ())
             .cloned()
+    }
+
+    pub fn pending_ops(&self) -> impl Iterator<Item = PendingOperations> + '_ {
+        self.pending_ops_by_path.iter().cloned()
+    }
+
+    pub fn pending_ops_summary(&self) -> PendingOperationsSummary {
+        self.pending_ops_by_path.summary().item_summary
+    }
+
+    pub fn pending_ops_for_path(&self, path: &RepoPath) -> Vec<PendingOperation> {
+        self.pending_ops_by_path
+            .get(&PathKey(path.0.clone()), ())
+            .map(|ops| ops.ops.clone())
+            .unwrap_or(Vec::new())
     }
 
     pub fn abs_path_to_repo_path(&self, abs_path: &Path) -> Option<RepoPath> {
@@ -5464,6 +5560,8 @@ async fn compute_snapshot(
         MergeDetails::load(&backend, &statuses_by_path, &prev_snapshot).await?;
     log::debug!("new merge details (changed={merge_heads_changed:?}): {merge_details:?}");
 
+    let pending_ops_by_path = prev_snapshot.pending_ops_by_path.clone();
+
     if merge_heads_changed {
         events.push(RepositoryEvent::MergeHeadsChanged);
     }
@@ -5489,6 +5587,7 @@ async fn compute_snapshot(
     let snapshot = RepositorySnapshot {
         id,
         statuses_by_path,
+        pending_ops_by_path,
         work_directory_abs_path,
         path_style: prev_snapshot.path_style,
         scan_id: prev_snapshot.scan_id + 1,
