@@ -26,8 +26,8 @@ use language::{
 use lsp::{
     AdapterServerCapabilities, CodeActionKind, CodeActionOptions, CodeDescription,
     CompletionContext, CompletionListItemDefaultsEditRange, CompletionTriggerKind,
-    DocumentHighlightKind, LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities,
-    OneOf, RenameOptions, ServerCapabilities,
+    DiagnosticServerCapabilities, DocumentHighlightKind, LanguageServer, LanguageServerId,
+    LinkedEditingRangeServerCapabilities, OneOf, RenameOptions, ServerCapabilities,
 };
 use serde_json::Value;
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
@@ -262,6 +262,9 @@ pub(crate) struct LinkedEditingRange {
 
 #[derive(Clone, Debug)]
 pub(crate) struct GetDocumentDiagnostics {
+    /// We cannot blindly rely on server's capabilities.diagnostic_provider, as they're a singular field, whereas
+    /// a server can register multiple diagnostic providers post-mortem.
+    pub dynamic_caps: DiagnosticServerCapabilities,
     pub previous_result_id: Option<String>,
 }
 
@@ -2240,7 +2243,7 @@ impl LspCommand for GetCompletions {
                 let lsp_edit = lsp_completion.text_edit.clone().or_else(|| {
                     let default_text_edit = lsp_defaults.as_deref()?.edit_range.as_ref()?;
                     let new_text = lsp_completion
-                        .insert_text
+                        .text_edit_text
                         .as_ref()
                         .unwrap_or(&lsp_completion.label)
                         .clone();
@@ -4031,26 +4034,22 @@ impl LspCommand for GetDocumentDiagnostics {
         "Get diagnostics"
     }
 
-    fn check_capabilities(&self, server_capabilities: AdapterServerCapabilities) -> bool {
-        server_capabilities
-            .server_capabilities
-            .diagnostic_provider
-            .is_some()
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
+        true
     }
 
     fn to_lsp(
         &self,
         path: &Path,
         _: &Buffer,
-        language_server: &Arc<LanguageServer>,
+        _: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<lsp::DocumentDiagnosticParams> {
-        let identifier = match language_server.capabilities().diagnostic_provider {
-            Some(lsp::DiagnosticServerCapabilities::Options(options)) => options.identifier,
-            Some(lsp::DiagnosticServerCapabilities::RegistrationOptions(options)) => {
-                options.diagnostic_options.identifier
+        let identifier = match &self.dynamic_caps {
+            lsp::DiagnosticServerCapabilities::Options(options) => options.identifier.clone(),
+            lsp::DiagnosticServerCapabilities::RegistrationOptions(options) => {
+                options.diagnostic_options.identifier.clone()
             }
-            None => None,
         };
 
         Ok(lsp::DocumentDiagnosticParams {

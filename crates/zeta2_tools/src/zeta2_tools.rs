@@ -1,3 +1,5 @@
+mod zeta2_context_view;
+
 use std::{cmp::Reverse, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 
 use chrono::TimeDelta;
@@ -20,14 +22,20 @@ use ui::{ButtonLike, ContextMenu, ContextMenuEntry, DropdownMenu, KeyBinding, pr
 use ui_input::InputField;
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use workspace::{Item, SplitDirection, Workspace};
-use zeta2::{PredictionDebugInfo, Zeta, Zeta2FeatureFlag, ZetaOptions};
+use zeta2::{
+    ContextMode, DEFAULT_SYNTAX_CONTEXT_OPTIONS, LlmContextOptions, Zeta, Zeta2FeatureFlag,
+    ZetaDebugInfo, ZetaEditPredictionDebugInfo, ZetaOptions,
+};
 
 use edit_prediction_context::{EditPredictionContextOptions, EditPredictionExcerptOptions};
+use zeta2_context_view::Zeta2ContextView;
 
 actions!(
     dev,
     [
-        /// Opens the language server protocol logs viewer.
+        /// Opens the edit prediction context view.
+        OpenZeta2ContextView,
+        /// Opens the edit prediction inspector.
         OpenZeta2Inspector,
         /// Rate prediction as positive.
         Zeta2RatePredictionPositive,
@@ -57,6 +65,27 @@ pub fn init(cx: &mut App) {
         });
     })
     .detach();
+
+    cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
+        workspace.register_action(move |workspace, _: &OpenZeta2ContextView, window, cx| {
+            let project = workspace.project();
+            workspace.split_item(
+                SplitDirection::Right,
+                Box::new(cx.new(|cx| {
+                    Zeta2ContextView::new(
+                        project.clone(),
+                        workspace.client(),
+                        workspace.user_store(),
+                        window,
+                        cx,
+                    )
+                })),
+                window,
+                cx,
+            );
+        });
+    })
+    .detach();
 }
 
 // TODO show included diagnostics, and events
@@ -69,12 +98,19 @@ pub struct Zeta2Inspector {
     min_excerpt_bytes_input: Entity<InputField>,
     cursor_context_ratio_input: Entity<InputField>,
     max_prompt_bytes_input: Entity<InputField>,
-    max_retrieved_declarations: Entity<InputField>,
+    context_mode: ContextModeState,
     active_view: ActiveView,
     zeta: Entity<Zeta>,
     _active_editor_subscription: Option<Subscription>,
     _update_state_task: Task<()>,
     _receive_task: Task<()>,
+}
+
+pub enum ContextModeState {
+    Llm,
+    Syntax {
+        max_retrieved_declarations: Entity<InputField>,
+    },
 }
 
 #[derive(PartialEq)]
@@ -143,36 +179,34 @@ impl Zeta2Inspector {
             min_excerpt_bytes_input: Self::number_input("Min Excerpt Bytes", window, cx),
             cursor_context_ratio_input: Self::number_input("Cursor Context Ratio", window, cx),
             max_prompt_bytes_input: Self::number_input("Max Prompt Bytes", window, cx),
-            max_retrieved_declarations: Self::number_input("Max Retrieved Definitions", window, cx),
+            context_mode: ContextModeState::Llm,
             zeta: zeta.clone(),
             _active_editor_subscription: None,
             _update_state_task: Task::ready(()),
             _receive_task: receive_task,
         };
-        this.set_input_options(&zeta.read(cx).options().clone(), window, cx);
+        this.set_options_state(&zeta.read(cx).options().clone(), window, cx);
         this
     }
 
-    fn set_input_options(
+    fn set_options_state(
         &mut self,
         options: &ZetaOptions,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let excerpt_options = options.context.excerpt();
         self.max_excerpt_bytes_input.update(cx, |input, cx| {
-            input.set_text(options.context.excerpt.max_bytes.to_string(), window, cx);
+            input.set_text(excerpt_options.max_bytes.to_string(), window, cx);
         });
         self.min_excerpt_bytes_input.update(cx, |input, cx| {
-            input.set_text(options.context.excerpt.min_bytes.to_string(), window, cx);
+            input.set_text(excerpt_options.min_bytes.to_string(), window, cx);
         });
         self.cursor_context_ratio_input.update(cx, |input, cx| {
             input.set_text(
                 format!(
                     "{:.2}",
-                    options
-                        .context
-                        .excerpt
-                        .target_before_cursor_over_total_bytes
+                    excerpt_options.target_before_cursor_over_total_bytes
                 ),
                 window,
                 cx,
@@ -181,20 +215,28 @@ impl Zeta2Inspector {
         self.max_prompt_bytes_input.update(cx, |input, cx| {
             input.set_text(options.max_prompt_bytes.to_string(), window, cx);
         });
-        self.max_retrieved_declarations.update(cx, |input, cx| {
-            input.set_text(
-                options.context.max_retrieved_declarations.to_string(),
-                window,
-                cx,
-            );
-        });
+
+        match &options.context {
+            ContextMode::Llm(_) => {
+                self.context_mode = ContextModeState::Llm;
+            }
+            ContextMode::Syntax(_) => {
+                self.context_mode = ContextModeState::Syntax {
+                    max_retrieved_declarations: Self::number_input(
+                        "Max Retrieved Definitions",
+                        window,
+                        cx,
+                    ),
+                };
+            }
+        }
         cx.notify();
     }
 
-    fn set_options(&mut self, options: ZetaOptions, cx: &mut Context<Self>) {
+    fn set_zeta_options(&mut self, options: ZetaOptions, cx: &mut Context<Self>) {
         self.zeta.update(cx, |this, _cx| this.set_options(options));
 
-        const THROTTLE_TIME: Duration = Duration::from_millis(100);
+        const DEBOUNCE_TIME: Duration = Duration::from_millis(100);
 
         if let Some(prediction) = self.last_prediction.as_mut() {
             if let Some(buffer) = prediction.buffer.upgrade() {
@@ -202,7 +244,7 @@ impl Zeta2Inspector {
                 let zeta = self.zeta.clone();
                 let project = self.project.clone();
                 prediction._task = Some(cx.spawn(async move |_this, cx| {
-                    cx.background_executor().timer(THROTTLE_TIME).await;
+                    cx.background_executor().timer(DEBOUNCE_TIME).await;
                     if let Some(task) = zeta
                         .update(cx, |zeta, cx| {
                             zeta.refresh_prediction(&project, &buffer, position, cx)
@@ -255,25 +297,40 @@ impl Zeta2Inspector {
 
                 let zeta_options = this.zeta.read(cx).options().clone();
 
-                let context_options = EditPredictionContextOptions {
-                    excerpt: EditPredictionExcerptOptions {
-                        max_bytes: number_input_value(&this.max_excerpt_bytes_input, cx),
-                        min_bytes: number_input_value(&this.min_excerpt_bytes_input, cx),
-                        target_before_cursor_over_total_bytes: number_input_value(
-                            &this.cursor_context_ratio_input,
-                            cx,
-                        ),
-                    },
-                    max_retrieved_declarations: number_input_value(
-                        &this.max_retrieved_declarations,
+                let excerpt_options = EditPredictionExcerptOptions {
+                    max_bytes: number_input_value(&this.max_excerpt_bytes_input, cx),
+                    min_bytes: number_input_value(&this.min_excerpt_bytes_input, cx),
+                    target_before_cursor_over_total_bytes: number_input_value(
+                        &this.cursor_context_ratio_input,
                         cx,
                     ),
-                    ..zeta_options.context
                 };
 
-                this.set_options(
+                let context = match zeta_options.context {
+                    ContextMode::Llm(_context_options) => ContextMode::Llm(LlmContextOptions {
+                        excerpt: excerpt_options,
+                    }),
+                    ContextMode::Syntax(context_options) => {
+                        let max_retrieved_declarations = match &this.context_mode {
+                            ContextModeState::Llm => {
+                                zeta2::DEFAULT_SYNTAX_CONTEXT_OPTIONS.max_retrieved_declarations
+                            }
+                            ContextModeState::Syntax {
+                                max_retrieved_declarations,
+                            } => number_input_value(max_retrieved_declarations, cx),
+                        };
+
+                        ContextMode::Syntax(EditPredictionContextOptions {
+                            excerpt: excerpt_options,
+                            max_retrieved_declarations,
+                            ..context_options
+                        })
+                    }
+                };
+
+                this.set_zeta_options(
                     ZetaOptions {
-                        context: context_options,
+                        context,
                         max_prompt_bytes: number_input_value(&this.max_prompt_bytes_input, cx),
                         max_diagnostic_bytes: zeta_options.max_diagnostic_bytes,
                         prompt_format: zeta_options.prompt_format,
@@ -289,7 +346,7 @@ impl Zeta2Inspector {
 
     fn update_last_prediction(
         &mut self,
-        prediction: zeta2::PredictionDebugInfo,
+        prediction: zeta2::ZetaDebugInfo,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -309,6 +366,9 @@ impl Zeta2Inspector {
             let language_registry = self.project.read(cx).languages().clone();
             async move |this, cx| {
                 let mut languages = HashMap::default();
+                let ZetaDebugInfo::EditPredicted(prediction) = prediction else {
+                    return;
+                };
                 for ext in prediction
                     .request
                     .referenced_declarations
@@ -419,7 +479,7 @@ impl Zeta2Inspector {
                         editor
                     });
 
-                    let PredictionDebugInfo {
+                    let ZetaEditPredictionDebugInfo {
                         response_rx,
                         position,
                         buffer,
@@ -709,7 +769,7 @@ impl Zeta2Inspector {
                             .style(ButtonStyle::Outlined)
                             .size(ButtonSize::Large)
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.set_input_options(&zeta2::DEFAULT_OPTIONS, window, cx);
+                                this.set_options_state(&zeta2::DEFAULT_OPTIONS, window, cx);
                             })),
                     ),
             )
@@ -722,16 +782,110 @@ impl Zeta2Inspector {
                             .items_end()
                             .child(self.max_excerpt_bytes_input.clone())
                             .child(self.min_excerpt_bytes_input.clone())
-                            .child(self.cursor_context_ratio_input.clone()),
+                            .child(self.cursor_context_ratio_input.clone())
+                            .child(self.render_context_mode_dropdown(window, cx)),
                     )
                     .child(
                         h_flex()
                             .gap_2()
                             .items_end()
-                            .child(self.max_retrieved_declarations.clone())
+                            .children(match &self.context_mode {
+                                ContextModeState::Llm => None,
+                                ContextModeState::Syntax {
+                                    max_retrieved_declarations,
+                                } => Some(max_retrieved_declarations.clone()),
+                            })
                             .child(self.max_prompt_bytes_input.clone())
                             .child(self.render_prompt_format_dropdown(window, cx)),
                     ),
+            )
+    }
+
+    fn render_context_mode_dropdown(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let this = cx.weak_entity();
+
+        v_flex()
+            .gap_1p5()
+            .child(
+                Label::new("Context Mode")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .child(
+                DropdownMenu::new(
+                    "ep-ctx-mode",
+                    match &self.context_mode {
+                        ContextModeState::Llm => "LLM-based",
+                        ContextModeState::Syntax { .. } => "Syntax",
+                    },
+                    ContextMenu::build(window, cx, move |menu, _window, _cx| {
+                        menu.item(
+                            ContextMenuEntry::new("LLM-based")
+                                .toggleable(
+                                    IconPosition::End,
+                                    matches!(self.context_mode, ContextModeState::Llm),
+                                )
+                                .handler({
+                                    let this = this.clone();
+                                    move |window, cx| {
+                                        this.update(cx, |this, cx| {
+                                            let current_options =
+                                                this.zeta.read(cx).options().clone();
+                                            match current_options.context.clone() {
+                                                ContextMode::Llm(_) => {}
+                                                ContextMode::Syntax(context_options) => {
+                                                    let options = ZetaOptions {
+                                                        context: ContextMode::Llm(
+                                                            LlmContextOptions {
+                                                                excerpt: context_options.excerpt,
+                                                            },
+                                                        ),
+                                                        ..current_options
+                                                    };
+                                                    this.set_options_state(&options, window, cx);
+                                                    this.set_zeta_options(options, cx);
+                                                }
+                                            }
+                                        })
+                                        .ok();
+                                    }
+                                }),
+                        )
+                        .item(
+                            ContextMenuEntry::new("Syntax")
+                                .toggleable(
+                                    IconPosition::End,
+                                    matches!(self.context_mode, ContextModeState::Syntax { .. }),
+                                )
+                                .handler({
+                                    move |window, cx| {
+                                        this.update(cx, |this, cx| {
+                                            let current_options =
+                                                this.zeta.read(cx).options().clone();
+                                            match current_options.context.clone() {
+                                                ContextMode::Llm(context_options) => {
+                                                    let options = ZetaOptions {
+                                                        context: ContextMode::Syntax(
+                                                            EditPredictionContextOptions {
+                                                                excerpt: context_options.excerpt,
+                                                                ..DEFAULT_SYNTAX_CONTEXT_OPTIONS
+                                                            },
+                                                        ),
+                                                        ..current_options
+                                                    };
+                                                    this.set_options_state(&options, window, cx);
+                                                    this.set_zeta_options(options, cx);
+                                                }
+                                                ContextMode::Syntax(_) => {}
+                                            }
+                                        })
+                                        .ok();
+                                    }
+                                }),
+                        )
+                    }),
+                )
+                .style(ui::DropdownStyle::Outlined),
             )
     }
 
@@ -765,7 +919,7 @@ impl Zeta2Inspector {
                                                     prompt_format,
                                                     ..current_options
                                                 };
-                                                this.set_options(options, cx);
+                                                this.set_zeta_options(options, cx);
                                             })
                                             .ok();
                                         }

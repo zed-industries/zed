@@ -17,12 +17,14 @@ use editor::{
 use fs::Fs;
 use futures::{SinkExt, StreamExt, channel::mpsc, lock::Mutex};
 use git::repository::repo_path;
-use gpui::{App, Rgba, TestAppContext, UpdateGlobal, VisualContext, VisualTestContext};
+use gpui::{
+    App, Rgba, SharedString, TestAppContext, UpdateGlobal, VisualContext, VisualTestContext,
+};
 use indoc::indoc;
 use language::FakeLspAdapter;
 use lsp::LSP_REQUEST_TIMEOUT;
 use project::{
-    ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,
+    ProgressToken, ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,
     lsp_store::lsp_ext_command::{ExpandedMacro, LspExtExpandMacro},
 };
 use recent_projects::disconnected_overlay::DisconnectedOverlay;
@@ -1283,12 +1285,14 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
     });
     executor.run_until_parked();
 
+    let token = ProgressToken::String(SharedString::from("the-token"));
+
     project_a.read_with(cx_a, |project, cx| {
         let status = project.language_server_statuses(cx).next().unwrap().1;
         assert_eq!(status.name.0, "the-language-server");
         assert_eq!(status.pending_work.len(), 1);
         assert_eq!(
-            status.pending_work["the-token"].message.as_ref().unwrap(),
+            status.pending_work[&token].message.as_ref().unwrap(),
             "the-message"
         );
     });
@@ -1322,7 +1326,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
         assert_eq!(status.name.0, "the-language-server");
         assert_eq!(status.pending_work.len(), 1);
         assert_eq!(
-            status.pending_work["the-token"].message.as_ref().unwrap(),
+            status.pending_work[&token].message.as_ref().unwrap(),
             "the-message-2"
         );
     });
@@ -1332,7 +1336,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
         assert_eq!(status.name.0, "the-language-server");
         assert_eq!(status.pending_work.len(), 1);
         assert_eq!(
-            status.pending_work["the-token"].message.as_ref().unwrap(),
+            status.pending_work[&token].message.as_ref().unwrap(),
             "the-message-2"
         );
     });
@@ -2585,7 +2589,7 @@ async fn test_lsp_pull_diagnostics(
             capabilities: capabilities.clone(),
             initializer: Some(Box::new(move |fake_language_server| {
                 let expected_workspace_diagnostic_token = lsp::ProgressToken::String(format!(
-                    "workspace/diagnostic-{}-1",
+                    "workspace/diagnostic/{}/1",
                     fake_language_server.server.server_id()
                 ));
                 let closure_workspace_diagnostics_pulls_result_ids = closure_workspace_diagnostics_pulls_result_ids.clone();

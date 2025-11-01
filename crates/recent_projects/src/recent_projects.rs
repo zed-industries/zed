@@ -28,7 +28,8 @@ use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*, tooltip_con
 use util::{ResultExt, paths::PathExt};
 use workspace::{
     CloseIntent, HistoryManager, ModalView, OpenOptions, PathList, SerializedWorkspaceLocation,
-    WORKSPACE_DB, Workspace, WorkspaceId, with_active_or_new_workspace,
+    WORKSPACE_DB, Workspace, WorkspaceId, notifications::DetachAndPromptErr,
+    with_active_or_new_workspace,
 };
 use zed_actions::{OpenRecent, OpenRemote};
 
@@ -102,6 +103,33 @@ pub fn init(cx: &mut App) {
         });
     });
 
+    #[cfg(target_os = "windows")]
+    cx.on_action(|open_wsl: &remote::OpenWslPath, cx| {
+        let open_wsl = open_wsl.clone();
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            let fs = workspace.project().read(cx).fs().clone();
+            add_wsl_distro(fs, &open_wsl.distro, cx);
+            let open_options = OpenOptions {
+                replace_window: window.window_handle().downcast::<Workspace>(),
+                ..Default::default()
+            };
+
+            let app_state = workspace.app_state().clone();
+
+            cx.spawn_in(window, async move |_, cx| {
+                open_remote_project(
+                    RemoteConnectionOptions::Wsl(open_wsl.distro.clone()),
+                    open_wsl.paths,
+                    app_state,
+                    open_options,
+                    cx,
+                )
+                .await
+            })
+            .detach();
+        });
+    });
+
     cx.on_action(|open_recent: &OpenRecent, cx| {
         let create_new_window = open_recent.create_new_window;
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
@@ -134,6 +162,38 @@ pub fn init(cx: &mut App) {
     });
 
     cx.observe_new(DisconnectedOverlay::register).detach();
+}
+
+#[cfg(target_os = "windows")]
+pub fn add_wsl_distro(
+    fs: Arc<dyn project::Fs>,
+    connection_options: &remote::WslConnectionOptions,
+    cx: &App,
+) {
+    use gpui::ReadGlobal;
+    use settings::SettingsStore;
+
+    let distro_name = SharedString::from(&connection_options.distro_name);
+    let user = connection_options.user.clone();
+    SettingsStore::global(cx).update_settings_file(fs, move |setting, _| {
+        let connections = setting
+            .remote
+            .wsl_connections
+            .get_or_insert(Default::default());
+
+        if !connections
+            .iter()
+            .any(|conn| conn.distro_name == distro_name && conn.user == user)
+        {
+            use std::collections::BTreeSet;
+
+            connections.push(settings::WslConnection {
+                distro_name,
+                user,
+                projects: BTreeSet::new(),
+            })
+        }
+    });
 }
 
 pub struct RecentProjects {
@@ -361,77 +421,79 @@ impl PickerDelegate for RecentProjectsDelegate {
             } else {
                 !secondary
             };
-            workspace
-                .update(cx, |workspace, cx| {
-                    if workspace.database_id() == Some(*candidate_workspace_id) {
-                        Task::ready(Ok(()))
-                    } else {
-                        match candidate_workspace_location.clone() {
-                            SerializedWorkspaceLocation::Local => {
-                                let paths = candidate_workspace_paths.paths().to_vec();
-                                if replace_current_window {
-                                    cx.spawn_in(window, async move |workspace, cx| {
-                                        let continue_replacing = workspace
-                                            .update_in(cx, |workspace, window, cx| {
-                                                workspace.prepare_to_close(
-                                                    CloseIntent::ReplaceWindow,
-                                                    window,
-                                                    cx,
-                                                )
-                                            })?
-                                            .await?;
-                                        if continue_replacing {
+            workspace.update(cx, |workspace, cx| {
+                if workspace.database_id() == Some(*candidate_workspace_id) {
+                    return;
+                }
+                match candidate_workspace_location.clone() {
+                    SerializedWorkspaceLocation::Local => {
+                        let paths = candidate_workspace_paths.paths().to_vec();
+                        if replace_current_window {
+                            cx.spawn_in(window, async move |workspace, cx| {
+                                let continue_replacing = workspace
+                                    .update_in(cx, |workspace, window, cx| {
+                                        workspace.prepare_to_close(
+                                            CloseIntent::ReplaceWindow,
+                                            window,
+                                            cx,
+                                        )
+                                    })?
+                                    .await?;
+                                if continue_replacing {
+                                    workspace
+                                        .update_in(cx, |workspace, window, cx| {
                                             workspace
-                                                .update_in(cx, |workspace, window, cx| {
-                                                    workspace.open_workspace_for_paths(
-                                                        true, paths, window, cx,
-                                                    )
-                                                })?
-                                                .await
-                                        } else {
-                                            Ok(())
-                                        }
-                                    })
+                                                .open_workspace_for_paths(true, paths, window, cx)
+                                        })?
+                                        .await
                                 } else {
-                                    workspace.open_workspace_for_paths(false, paths, window, cx)
+                                    Ok(())
                                 }
-                            }
-                            SerializedWorkspaceLocation::Remote(mut connection) => {
-                                let app_state = workspace.app_state().clone();
-
-                                let replace_window = if replace_current_window {
-                                    window.window_handle().downcast::<Workspace>()
-                                } else {
-                                    None
-                                };
-
-                                let open_options = OpenOptions {
-                                    replace_window,
-                                    ..Default::default()
-                                };
-
-                                if let RemoteConnectionOptions::Ssh(connection) = &mut connection {
-                                    SshSettings::get_global(cx)
-                                        .fill_connection_options_from_settings(connection);
-                                };
-
-                                let paths = candidate_workspace_paths.paths().to_vec();
-
-                                cx.spawn_in(window, async move |_, cx| {
-                                    open_remote_project(
-                                        connection.clone(),
-                                        paths,
-                                        app_state,
-                                        open_options,
-                                        cx,
-                                    )
-                                    .await
-                                })
-                            }
+                            })
+                        } else {
+                            workspace.open_workspace_for_paths(false, paths, window, cx)
                         }
                     }
-                })
-                .detach_and_log_err(cx);
+                    SerializedWorkspaceLocation::Remote(mut connection) => {
+                        let app_state = workspace.app_state().clone();
+
+                        let replace_window = if replace_current_window {
+                            window.window_handle().downcast::<Workspace>()
+                        } else {
+                            None
+                        };
+
+                        let open_options = OpenOptions {
+                            replace_window,
+                            ..Default::default()
+                        };
+
+                        if let RemoteConnectionOptions::Ssh(connection) = &mut connection {
+                            SshSettings::get_global(cx)
+                                .fill_connection_options_from_settings(connection);
+                        };
+
+                        let paths = candidate_workspace_paths.paths().to_vec();
+
+                        cx.spawn_in(window, async move |_, cx| {
+                            open_remote_project(
+                                connection.clone(),
+                                paths,
+                                app_state,
+                                open_options,
+                                cx,
+                            )
+                            .await
+                        })
+                    }
+                }
+                .detach_and_prompt_err(
+                    "Failed to open project",
+                    window,
+                    cx,
+                    |_, _, _| None,
+                );
+            });
             cx.emit(DismissEvent);
         }
     }

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, fmt, path::Path, sync::LazyLock};
 
 /// Shell configuration to open the terminal with.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum Shell {
     /// Use the system's default terminal configuration in /etc/passwd
@@ -241,7 +241,7 @@ impl ShellKind {
             "tcsh" => ShellKind::Tcsh,
             "rc" => ShellKind::Rc,
             "xonsh" => ShellKind::Xonsh,
-            "sh" | "bash" => ShellKind::Posix,
+            "sh" | "bash" | "zsh" => ShellKind::Posix,
             _ if is_windows => ShellKind::PowerShell,
             // Some other shell detected, the user might install and use a
             // unix-like shell.
@@ -423,10 +423,9 @@ impl ShellKind {
     }
 
     pub fn try_quote<'a>(&self, arg: &'a str) -> Option<Cow<'a, str>> {
-        // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
-        // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
-        // errors are introduced in the future :(
         shlex::try_quote(arg).ok().map(|arg| match self {
+            // If we are running in PowerShell, we want to take extra care when escaping strings.
+            // In particular, we want to escape strings with a backtick (`) rather than a backslash (\).
             ShellKind::PowerShell => Cow::Owned(arg.replace("\\\"", "`\"").replace("\\\\", "\\")),
             ShellKind::Cmd => Cow::Owned(arg.replace("\\\\", "\\")),
             ShellKind::Posix

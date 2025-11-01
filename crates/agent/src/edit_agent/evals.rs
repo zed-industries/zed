@@ -31,7 +31,7 @@ use std::{
 use util::path;
 
 #[test]
-#[cfg_attr(not(feature = "edit-agent-eval"), ignore)]
+#[cfg_attr(not(feature = "unit-eval"), ignore)]
 fn eval_extract_handle_command_output() {
     // Test how well agent generates multiple edit hunks.
     //
@@ -108,7 +108,7 @@ fn eval_extract_handle_command_output() {
 }
 
 #[test]
-#[cfg_attr(not(feature = "edit-agent-eval"), ignore)]
+#[cfg_attr(not(feature = "unit-eval"), ignore)]
 fn eval_delete_run_git_blame() {
     // Model                       | Pass rate
     // ----------------------------|----------
@@ -171,7 +171,7 @@ fn eval_delete_run_git_blame() {
 }
 
 #[test]
-#[cfg_attr(not(feature = "edit-agent-eval"), ignore)]
+#[cfg_attr(not(feature = "unit-eval"), ignore)]
 fn eval_translate_doc_comments() {
     //  Model                          | Pass rate
     // ============================================
@@ -234,7 +234,7 @@ fn eval_translate_doc_comments() {
 }
 
 #[test]
-#[cfg_attr(not(feature = "edit-agent-eval"), ignore)]
+#[cfg_attr(not(feature = "unit-eval"), ignore)]
 fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
     //  Model                          | Pass rate
     // ============================================
@@ -360,7 +360,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
 }
 
 #[test]
-#[cfg_attr(not(feature = "edit-agent-eval"), ignore)]
+#[cfg_attr(not(feature = "unit-eval"), ignore)]
 fn eval_disable_cursor_blinking() {
     //  Model                          | Pass rate
     // ============================================
@@ -446,7 +446,7 @@ fn eval_disable_cursor_blinking() {
 }
 
 #[test]
-#[cfg_attr(not(feature = "edit-agent-eval"), ignore)]
+#[cfg_attr(not(feature = "unit-eval"), ignore)]
 fn eval_from_pixels_constructor() {
     // Results for 2025-06-13
     //
@@ -656,7 +656,7 @@ fn eval_from_pixels_constructor() {
 }
 
 #[test]
-#[cfg_attr(not(feature = "edit-agent-eval"), ignore)]
+#[cfg_attr(not(feature = "unit-eval"), ignore)]
 fn eval_zode() {
     //  Model                          | Pass rate
     // ============================================
@@ -763,7 +763,7 @@ fn eval_zode() {
 }
 
 #[test]
-#[cfg_attr(not(feature = "edit-agent-eval"), ignore)]
+#[cfg_attr(not(feature = "unit-eval"), ignore)]
 fn eval_add_overwrite_test() {
     //  Model                          | Pass rate
     // ============================================
@@ -995,7 +995,7 @@ fn eval_add_overwrite_test() {
 }
 
 #[test]
-#[cfg_attr(not(feature = "edit-agent-eval"), ignore)]
+#[cfg_attr(not(feature = "unit-eval"), ignore)]
 fn eval_create_empty_file() {
     // Check that Edit Agent can create a file without writing its
     // thoughts into it. This issue is not specific to empty files, but
@@ -1483,11 +1483,11 @@ impl EditAgentTest {
         fs.insert_tree("/root", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let agent_model = SelectedModel::from_str(
-            &std::env::var("ZED_AGENT_MODEL").unwrap_or("anthropic/claude-4-sonnet-latest".into()),
+            &std::env::var("ZED_AGENT_MODEL").unwrap_or("anthropic/claude-sonnet-4-latest".into()),
         )
         .unwrap();
         let judge_model = SelectedModel::from_str(
-            &std::env::var("ZED_JUDGE_MODEL").unwrap_or("anthropic/claude-4-sonnet-latest".into()),
+            &std::env::var("ZED_JUDGE_MODEL").unwrap_or("anthropic/claude-sonnet-4-latest".into()),
         )
         .unwrap();
 
@@ -1547,7 +1547,7 @@ impl EditAgentTest {
                     model.provider_id() == selected_model.provider
                         && model.id() == selected_model.model
                 })
-                .expect("Model not found");
+                .unwrap_or_else(|| panic!("Model {} not found", selected_model.model.0));
             model
         })
     }
@@ -1581,6 +1581,7 @@ impl EditAgentTest {
             let template = crate::SystemPromptTemplate {
                 project: &project_context,
                 available_tools: tool_names,
+                model_name: None,
             };
             let templates = Templates::new();
             template.render(&templates).unwrap()

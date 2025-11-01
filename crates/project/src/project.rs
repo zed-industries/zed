@@ -40,7 +40,7 @@ use crate::{
     git_store::GitStore,
     lsp_store::{SymbolLocation, log_store::LogKind},
 };
-pub use agent_server_store::{AgentServerStore, AgentServersUpdated};
+pub use agent_server_store::{AgentServerStore, AgentServersUpdated, ExternalAgentServerName};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
@@ -146,7 +146,7 @@ pub use buffer_store::ProjectTransaction;
 pub use lsp_store::{
     DiagnosticSummary, InvalidationStrategy, LanguageServerLogType, LanguageServerProgress,
     LanguageServerPromptRequest, LanguageServerStatus, LanguageServerToQuery, LspStore,
-    LspStoreEvent, SERVER_PROGRESS_THROTTLE_TIMEOUT,
+    LspStoreEvent, ProgressToken, SERVER_PROGRESS_THROTTLE_TIMEOUT,
 };
 pub use toolchain_store::{ToolchainStore, Toolchains};
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
@@ -712,8 +712,10 @@ pub enum ResolveState {
 impl InlayHint {
     pub fn text(&self) -> Rope {
         match &self.label {
-            InlayHintLabel::String(s) => Rope::from(s),
-            InlayHintLabel::LabelParts(parts) => parts.iter().map(|part| &*part.value).collect(),
+            InlayHintLabel::String(s) => Rope::from_str_small(s),
+            InlayHintLabel::LabelParts(parts) => {
+                Rope::from_iter_small(parts.iter().map(|part| &*part.value))
+            }
         }
     }
 }
@@ -3451,7 +3453,7 @@ impl Project {
     pub fn cancel_language_server_work(
         &mut self,
         server_id: LanguageServerId,
-        token_to_cancel: Option<String>,
+        token_to_cancel: Option<ProgressToken>,
         cx: &mut Context<Self>,
     ) {
         self.lsp_store.update(cx, |lsp_store, cx| {
@@ -5402,7 +5404,12 @@ impl Project {
             worktree
                 .update(cx, |worktree, cx| {
                     let line_ending = text::LineEnding::detect(&new_text);
-                    worktree.write_file(rel_path.clone(), new_text.into(), line_ending, cx)
+                    worktree.write_file(
+                        rel_path.clone(),
+                        Rope::from_str(&new_text, cx.background_executor()),
+                        line_ending,
+                        cx,
+                    )
                 })?
                 .await
                 .context("Failed to write settings file")?;

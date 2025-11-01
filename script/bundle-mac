@@ -6,10 +6,7 @@ source script/lib/blob-store.sh
 build_flag="--release"
 target_dir="release"
 open_result=false
-local_arch=false
-local_only=false
 local_install=false
-bundle_name=""
 can_code_sign=false
 
 # This must match the team in the provisioning profile.
@@ -19,12 +16,11 @@ APPLE_NOTARIZATION_TEAM="MQ55VZLNZQ"
 # Function for displaying help info
 help_info() {
   echo "
-Usage: ${0##*/} [options] [bundle_name]
+Usage: ${0##*/} [options] [architecture=host]
 Build the application bundle for macOS.
 
 Options:
   -d    Compile in debug mode
-  -l    Compile for local architecture only.
   -o    Open dir with the resulting DMG or launch the app itself in local mode.
   -i    Install the resulting DMG into /Applications in local mode. Noop without -l.
   -h    Display this help and exit.
@@ -41,12 +37,6 @@ do
             build_flag="";
             target_dir="debug"
             ;;
-        l)
-            export CARGO_INCREMENTAL=true
-            export CARGO_BUNDLE_SKIP_BUILD=true
-            local_arch=true
-            local_only=true
-            ;;
         i) local_install=true;;
         h)
            help_info
@@ -57,11 +47,6 @@ done
 
 shift $((OPTIND-1))
 
-if [[ $# -gt 0 ]]; then
-    if [ "$1" ]; then
-        bundle_name=$1
-    fi
-fi
 
 # Get release channel
 pushd crates/zed
@@ -81,24 +66,31 @@ export CXXFLAGS="-stdlib=libc++"
 
 version_info=$(rustc --version --verbose)
 host_line=$(echo "$version_info" | grep host)
-local_target_triple=${host_line#*: }
+target_triple=${host_line#*: }
+if [[ $# -gt 0 && -n "$1" ]]; then
+    target_triple="$1"
+fi
+remote_server_arch=""
+
+if [[ "$target_triple" = "x86_64-apple-darwin" ]]; then
+    remote_server_arch="x86_64"
+elif [[ "$target_triple" = "aarch64-apple-darwin" ]]; then
+    remote_server_arch="aarch64"
+else
+    echo "Unsupported architecture $target_triple"
+    exit 1
+fi
 
 # Generate the licenses first, so they can be baked into the binaries
 script/generate-licenses
 
-if [ "$local_arch" = true ]; then
-    echo "Building for local target only."
-    cargo build ${build_flag} --package zed --package cli --package remote_server
-else
-    rustup target add aarch64-apple-darwin
-    rustup target add x86_64-apple-darwin
+rustup target add $target_triple
 
-    echo "Compiling zed binaries"
-    cargo build ${build_flag} --package zed --package cli --target aarch64-apple-darwin --target x86_64-apple-darwin
-    # Build remote_server in separate invocation to prevent feature unification from other crates
-    # from influencing dynamic libraries required by it.
-    cargo build ${build_flag} --package remote_server     --target aarch64-apple-darwin --target x86_64-apple-darwin
-fi
+echo "Compiling zed binaries"
+cargo build ${build_flag} --package zed --package cli --target $target_triple
+# Build remote_server in separate invocation to prevent feature unification from other crates
+# from influencing dynamic libraries required by it.
+cargo build ${build_flag} --package remote_server --target $target_triple
 
 echo "Creating application bundle"
 pushd crates/zed
@@ -108,13 +100,7 @@ sed \
     "s/package.metadata.bundle-${channel}/package.metadata.bundle/" \
     Cargo.toml
 
-if [ "$local_arch" = true ]; then
-    app_path=$(cargo bundle ${build_flag} --select-workspace-root | xargs)
-else
-    app_path_x64=$(cargo bundle ${build_flag} --target x86_64-apple-darwin --select-workspace-root | xargs)
-    app_path_aarch64=$(cargo bundle ${build_flag} --target aarch64-apple-darwin --select-workspace-root | xargs)
-    app_path=$app_path_x64
-fi
+app_path=$(cargo bundle ${build_flag} --target $target_triple --select-workspace-root | xargs)
 
 mv Cargo.toml.backup Cargo.toml
 popd
@@ -189,51 +175,12 @@ function download_git() {
     rm -rf "$tmp_dir"
 }
 
-function prepare_binaries() {
-    local architecture=$1
-    local app_path=$2
-
-    echo "Unpacking dSYMs for $architecture"
-    exe_path="target/${architecture}/${target_dir}/Zed"
-    if ! dsymutil --flat "${exe_path}" 2> target/dsymutil.log; then
-        echo "dsymutil failed"
-        cat target/dsymutil.log
-        exit 1
-    fi
-    uuid=$(dwarfdump --uuid "${exe_path}" | cut -d ' ' -f 2 | tr 'A-F' 'a-f')
-    version="$(cargo metadata --no-deps --manifest-path crates/zed/Cargo.toml --offline --format-version=1 | jq -r '.packages | map(select(.name == "zed"))[0].version')"
-    if [ "$channel" == "nightly" ]; then
-        version="$version-$(git rev-parse --short HEAD)"
-    fi
-
-    echo "Removing existing gzipped dSYMs for $architecture"
-    rm -f target/${architecture}/${target_dir}/Zed.dwarf.gz
-
-    echo "Gzipping dSYMs for $architecture"
-    gzip -kf target/${architecture}/${target_dir}/Zed.dwarf
-
-    echo "Uploading dSYMs${architecture} for $architecture to by-uuid/${uuid}.dwarf.gz"
-    upload_to_blob_store_public \
-        "zed-debug-symbols" \
-        target/${architecture}/${target_dir}/Zed.dwarf.gz \
-        "by-uuid/${uuid}.dwarf.gz"
-
-    cp target/${architecture}/${target_dir}/zed "${app_path}/Contents/MacOS/zed"
-    cp target/${architecture}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
-}
-
 function sign_app_binaries() {
-    local app_path=$1
-    local architecture=$2
-    local architecture_dir=$3
     rm -rf "${app_path}/Contents/Frameworks"
     mkdir -p "${app_path}/Contents/Frameworks"
-    if [ "$local_arch" = true ]; then
-        cp -R target/${target_dir}/cli "${app_path}/Contents/MacOS/"
-    fi
 
     echo "Downloading git binary"
-    download_git "${architecture}" "${app_path}/Contents/MacOS/git"
+    download_git "${target_triple}" "${app_path}/Contents/MacOS/git"
 
     # Note: The app identifier for our development builds is the same as the app identifier for nightly.
     cp crates/zed/contents/$channel/embedded.provisionprofile "${app_path}/Contents/"
@@ -247,10 +194,6 @@ function sign_app_binaries() {
         /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${app_path}" -v
     else
         echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_KEY, APPLE_NOTARIZATION_KEY_ID, APPLE_NOTARIZATION_ISSUER_ID"
-        if [[ "$local_only" = false ]]; then
-            echo "To create a self-signed local build use ./scripts/build.sh -ldf"
-            exit 1
-        fi
 
         echo "====== WARNING ======"
         echo "This bundle is being signed without all entitlements, some features (e.g. universal links) will not work"
@@ -266,7 +209,7 @@ function sign_app_binaries() {
         codesign --force --deep --entitlements "${app_path}/Contents/Resources/zed.entitlements" --sign ${MACOS_SIGNING_KEY:- -} "${app_path}" -v
     fi
 
-    if [[ "$target_dir" = "debug" && "$local_only" = false ]]; then
+    if [[ "$target_dir" = "debug" ]]; then
         if [ "$open_result" = true ]; then
             open "$app_path"
         else
@@ -276,33 +219,18 @@ function sign_app_binaries() {
         exit 0
     fi
 
-    # If bundle_name is not set or empty, use the basename of $app_path
-    if [ -z "$bundle_name" ]; then
-        bundle_name=$(basename "$app_path")
-    else
-        # If bundle_name doesn't end in .app, append it
-        if [[ "$bundle_name" != *.app ]]; then
-            bundle_name="$bundle_name.app"
-        fi
-    fi
+    bundle_name=$(basename "$app_path")
 
-    if [ "$local_only" = true ]; then
-        if [ "$local_install" = true ]; then
-            rm -rf "/Applications/$bundle_name"
-            mv "$app_path" "/Applications/$bundle_name"
-            echo "Installed application bundle: /Applications/$bundle_name"
-            if [ "$open_result" = true ]; then
-                echo "Opening /Applications/$bundle_name"
-                open "/Applications/$bundle_name"
-            fi
-        else
-            if [ "$open_result" = true ]; then
-                echo "Opening $app_path"
-                open "$app_path"
-            fi
+    if [ "$local_install" = true ]; then
+        rm -rf "/Applications/$bundle_name"
+        mv "$app_path" "/Applications/$bundle_name"
+        echo "Installed application bundle: /Applications/$bundle_name"
+        if [ "$open_result" = true ]; then
+            echo "Opening /Applications/$bundle_name"
+            open "/Applications/$bundle_name"
         fi
     else
-        dmg_target_directory="target/${architecture_dir}/${target_dir}"
+        dmg_target_directory="target/${target_triple}/${target_dir}"
         dmg_source_directory="${dmg_target_directory}/dmg"
         dmg_file_path="${dmg_target_directory}/Zed.dmg"
         xcode_bin_dir_path="$(xcode-select -p)/usr/bin"
@@ -351,44 +279,35 @@ function sign_binary() {
     fi
 }
 
-if [ "$local_arch" = true ]; then
-    sign_app_binaries "$app_path" "$local_target_triple" "$local_target_triple"
-
-    sign_binary "target/release/remote_server"
-else
-    # Create universal binary
-    prepare_binaries "aarch64-apple-darwin" "$app_path_aarch64"
-    prepare_binaries "x86_64-apple-darwin" "$app_path_x64"
-
-
-    sign_app_binaries "$app_path_x64" "x86_64-apple-darwin" "x86_64-apple-darwin"
-    sign_app_binaries "$app_path_aarch64" "aarch64-apple-darwin" "aarch64-apple-darwin"
-
-    sign_binary "target/x86_64-apple-darwin/release/remote_server"
-    sign_binary "target/aarch64-apple-darwin/release/remote_server"
-    gzip -f --stdout --best target/x86_64-apple-darwin/release/remote_server > target/zed-remote-server-macos-x86_64.gz
-    gzip -f --stdout --best target/aarch64-apple-darwin/release/remote_server > target/zed-remote-server-macos-aarch64.gz
-fi
-
-function upload_debug_info() {
-    architecture=$1
+function upload_debug_symbols() {
     if [[ -n "${SENTRY_AUTH_TOKEN:-}" ]]; then
         echo "Uploading zed debug symbols to sentry..."
+        exe_path="target/${target_triple}/release/Zed"
+        if ! dsymutil --flat "target/${target_triple}/${target_dir}/zed" 2> target/dsymutil.log; then
+            echo "dsymutil failed"
+            cat target/dsymutil.log
+            exit 1
+        fi
+        if ! dsymutil --flat "target/${target_triple}/${target_dir}/remote_server" 2> target/dsymutil.log; then
+            echo "dsymutil failed"
+            cat target/dsymutil.log
+            exit 1
+        fi
         # note: this uploads the unstripped binary which is needed because it contains
         # .eh_frame data for stack unwinding. see https://github.com/getsentry/symbolic/issues/783
         sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
-            "target/${architecture}/${target_dir}/zed" \
-            "target/${architecture}/${target_dir}/remote_server" \
-            "target/${architecture}/${target_dir}/zed.dwarf"
+            "target/${target_triple}/${target_dir}/zed.dwarf" \
+            "target/${target_triple}/${target_dir}/remote_server.dwarf"
     else
         echo "missing SENTRY_AUTH_TOKEN. skipping sentry upload."
     fi
 }
 
-if command -v sentry-cli >/dev/null 2>&1; then
-    upload_debug_info "aarch64-apple-darwin"
-    upload_debug_info "x86_64-apple-darwin"
-else
-    echo "sentry-cli not found. skipping sentry upload."
-    echo "install with: 'curl -sL https://sentry.io/get-cli | bash'"
-fi
+upload_debug_symbols
+
+cp target/${target_triple}/${target_dir}/zed "${app_path}/Contents/MacOS/zed"
+cp target/${target_triple}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
+sign_app_binaries
+
+sign_binary "target/$target_triple/release/remote_server"
+gzip -f --stdout --best target/$target_triple/release/remote_server > target/zed-remote-server-macos-$remote_server_arch.gz

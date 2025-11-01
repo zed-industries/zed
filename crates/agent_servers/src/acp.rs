@@ -105,6 +105,14 @@ impl AcpConnection {
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
 
+        let (release_channel, version) = cx.update(|cx| {
+            (
+                release_channel::ReleaseChannel::try_global(cx)
+                    .map(|release_channel| release_channel.display_name()),
+                release_channel::AppVersion::global(cx).to_string(),
+            )
+        })?;
+
         let client = ClientDelegate {
             sessions: sessions.clone(),
             cx: cx.clone(),
@@ -172,6 +180,11 @@ impl AcpConnection {
                         "terminal_output": true,
                     })),
                 },
+                client_info: Some(acp::Implementation {
+                    name: "zed".to_owned(),
+                    title: release_channel.map(|c| c.to_owned()),
+                    version,
+                }),
                 meta: None,
             })
             .await?;
@@ -700,7 +713,11 @@ impl acp::Client for ClientDelegate {
             .get(&notification.session_id)
             .context("Failed to get session")?;
 
-        if let acp::SessionUpdate::CurrentModeUpdate { current_mode_id } = &notification.update {
+        if let acp::SessionUpdate::CurrentModeUpdate(acp::CurrentModeUpdate {
+            current_mode_id,
+            ..
+        }) = &notification.update
+        {
             if let Some(session_modes) = &session.session_modes {
                 session_modes.borrow_mut().current_mode_id = current_mode_id.clone();
             } else {

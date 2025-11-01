@@ -22,7 +22,7 @@ use persistence::COMMAND_PALETTE_HISTORY;
 use picker::{Picker, PickerDelegate};
 use postage::{sink::Sink, stream::Stream};
 use settings::Settings;
-use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, h_flex, prelude::*, v_flex};
+use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, WorkspaceSettings};
 use zed_actions::{OpenZedUrl, command_palette::Toggle};
@@ -143,7 +143,7 @@ impl Focusable for CommandPalette {
 }
 
 impl Render for CommandPalette {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("CommandPalette")
             .w(rems(34.))
@@ -260,6 +260,17 @@ impl CommandPaletteDelegate {
         } else {
             HashMap::new()
         }
+    }
+
+    fn selected_command(&self) -> Option<&Command> {
+        let action_ix = self
+            .matches
+            .get(self.selected_ix)
+            .map(|m| m.candidate_id)
+            .unwrap_or(self.selected_ix);
+        // this gets called in headless tests where there are no commands loaded
+        // so we need to return an Option here
+        self.commands.get(action_ix)
     }
 }
 
@@ -411,7 +422,20 @@ impl PickerDelegate for CommandPaletteDelegate {
             .log_err();
     }
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        if secondary {
+            let Some(selected_command) = self.selected_command() else {
+                return;
+            };
+            let action_name = selected_command.action.name();
+            let open_keymap = Box::new(zed_actions::ChangeKeybinding {
+                action: action_name.to_string(),
+            });
+            window.dispatch_action(open_keymap, cx);
+            self.dismissed(window, cx);
+            return;
+        }
+
         if self.matches.is_empty() {
             self.dismissed(window, cx);
             return;
@@ -448,6 +472,7 @@ impl PickerDelegate for CommandPaletteDelegate {
     ) -> Option<Self::ListItem> {
         let matching_command = self.matches.get(ix)?;
         let command = self.commands.get(matching_command.candidate_id)?;
+
         Some(
             ListItem::new(ix)
                 .inset(true)
@@ -468,6 +493,59 @@ impl PickerDelegate for CommandPaletteDelegate {
                             cx,
                         )),
                 ),
+        )
+    }
+
+    fn render_footer(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        let selected_command = self.selected_command()?;
+        let keybind =
+            KeyBinding::for_action_in(&*selected_command.action, &self.previous_focus_handle, cx);
+
+        let focus_handle = &self.previous_focus_handle;
+        let keybinding_buttons = if keybind.has_binding(window) {
+            Button::new("change", "Change Keybinding…")
+                .key_binding(
+                    KeyBinding::for_action_in(&menu::SecondaryConfirm, focus_handle, cx)
+                        .map(|kb| kb.size(rems_from_px(12.))),
+                )
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
+                })
+        } else {
+            Button::new("add", "Add Keybinding…")
+                .key_binding(
+                    KeyBinding::for_action_in(&menu::SecondaryConfirm, focus_handle, cx)
+                        .map(|kb| kb.size(rems_from_px(12.))),
+                )
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
+                })
+        };
+
+        Some(
+            h_flex()
+                .w_full()
+                .p_1p5()
+                .gap_1()
+                .justify_end()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(keybinding_buttons)
+                .child(
+                    Button::new("run-action", "Run")
+                        .key_binding(
+                            KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
+                        )
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                        }),
+                )
+                .into_any(),
         )
     }
 }

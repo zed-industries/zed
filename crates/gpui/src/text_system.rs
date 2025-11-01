@@ -418,22 +418,21 @@ impl WindowTextSystem {
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
 
         let mut lines = SmallVec::new();
-        let mut line_start = 0;
-        let mut max_wrap_lines = line_clamp.unwrap_or(usize::MAX);
+        let mut max_wrap_lines = line_clamp;
         let mut wrapped_lines = 0;
 
-        let mut process_line = |line_text: SharedString| {
+        let mut process_line = |line_text: SharedString, line_start, line_end| {
             font_runs.clear();
-            let line_end = line_start + line_text.len();
 
             let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
             let mut run_start = line_start;
             while run_start < line_end {
                 let Some(run) = runs.peek_mut() else {
+                    log::warn!("`TextRun`s do not cover the entire to be shaped text");
                     break;
                 };
 
-                let run_len_within_line = cmp::min(line_end, run_start + run.len) - run_start;
+                let run_len_within_line = cmp::min(line_end - run_start, run.len);
 
                 let decoration_changed = if let Some(last_run) = decoration_runs.last_mut()
                     && last_run.color == run.color
@@ -467,11 +466,10 @@ impl WindowTextSystem {
                     });
                 }
 
-                if run_len_within_line == run.len {
+                // Preserve the remainder of the run for the next line
+                run.len -= run_len_within_line;
+                if run.len == 0 {
                     runs.next();
-                } else {
-                    // Preserve the remainder of the run for the next line
-                    run.len -= run_len_within_line;
                 }
                 run_start += run_len_within_line;
             }
@@ -481,7 +479,7 @@ impl WindowTextSystem {
                 font_size,
                 &font_runs,
                 wrap_width,
-                Some(max_wrap_lines - wrapped_lines),
+                max_wrap_lines.map(|max| max.saturating_sub(wrapped_lines)),
             );
             wrapped_lines += layout.wrap_boundaries.len();
 
@@ -492,7 +490,6 @@ impl WindowTextSystem {
             });
 
             // Skip `\n` character.
-            line_start = line_end + 1;
             if let Some(run) = runs.peek_mut() {
                 run.len -= 1;
                 if run.len == 0 {
@@ -502,21 +499,34 @@ impl WindowTextSystem {
         };
 
         let mut split_lines = text.split('\n');
-        let mut processed = false;
 
+        // Special case single lines to prevent allocating a sharedstring
         if let Some(first_line) = split_lines.next()
             && let Some(second_line) = split_lines.next()
         {
-            processed = true;
-            process_line(first_line.to_string().into());
-            process_line(second_line.to_string().into());
+            let mut line_start = 0;
+            process_line(
+                SharedString::new(first_line),
+                line_start,
+                line_start + first_line.len(),
+            );
+            line_start += first_line.len() + '\n'.len_utf8();
+            process_line(
+                SharedString::new(second_line),
+                line_start,
+                line_start + second_line.len(),
+            );
             for line_text in split_lines {
-                process_line(line_text.to_string().into());
+                line_start += line_text.len() + '\n'.len_utf8();
+                process_line(
+                    SharedString::new(line_text),
+                    line_start,
+                    line_start + line_text.len(),
+                );
             }
-        }
-
-        if !processed {
-            process_line(text);
+        } else {
+            let end = text.len();
+            process_line(text, 0, end);
         }
 
         self.font_runs_pool.lock().push(font_runs);

@@ -421,7 +421,6 @@ impl Project {
         if terminal.read(cx).task().is_some() {
             return self.create_terminal_shell(cwd, cx);
         }
-
         let local_path = if self.is_via_remote_server() {
             None
         } else {

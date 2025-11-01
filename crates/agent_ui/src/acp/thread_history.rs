@@ -324,8 +324,8 @@ impl AcpThreadHistory {
             HistoryEntry::AcpThread(thread) => self
                 .history_store
                 .update(cx, |this, cx| this.delete_thread(thread.id.clone(), cx)),
-            HistoryEntry::TextThread(context) => self.history_store.update(cx, |this, cx| {
-                this.delete_text_thread(context.path.clone(), cx)
+            HistoryEntry::TextThread(text_thread) => self.history_store.update(cx, |this, cx| {
+                this.delete_text_thread(text_thread.path.clone(), cx)
             }),
         };
         task.detach_and_log_err(cx);
@@ -450,6 +450,7 @@ impl Render for AcpThreadHistory {
         v_flex()
             .key_context("ThreadHistory")
             .size_full()
+            .bg(cx.theme().colors().panel_background)
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_first))
@@ -635,12 +636,12 @@ impl RenderOnce for AcpHistoryEntryElement {
                                     });
                                 }
                             }
-                            HistoryEntry::TextThread(context) => {
+                            HistoryEntry::TextThread(text_thread) => {
                                 if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
                                     panel.update(cx, |panel, cx| {
                                         panel
                                             .open_saved_text_thread(
-                                                context.path.clone(),
+                                                text_thread.path.clone(),
                                                 window,
                                                 cx,
                                             )

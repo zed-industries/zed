@@ -9,6 +9,7 @@ license = "GPL-3.0-or-later"
 bincode.workspace = true
 cfg-if.workspace = true
 crash-handler.workspace = true
+extension_host.workspace = true
 log.workspace = true
 minidumper.workspace = true
 paths.workspace = true

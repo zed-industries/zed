@@ -24,7 +24,7 @@ use util::{
     shell::ShellKind,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Deserialize, schemars::JsonSchema)]
 pub struct WslConnectionOptions {
     pub distro_name: String,
     pub user: Option<String>,
@@ -441,7 +441,7 @@ impl RemoteConnection for WslRemoteConnection {
             bail!("WSL shares the network interface with the host system");
         }
 
-        let shell = ShellKind::new(&self.shell, false);
+        let shell_kind = ShellKind::new(&self.shell, false);
         let working_dir = working_dir
             .map(|working_dir| RemotePathBuf::new(working_dir, PathStyle::Posix).to_string())
             .unwrap_or("~".to_string());
@@ -453,7 +453,7 @@ impl RemoteConnection for WslRemoteConnection {
                 exec,
                 "{}={} ",
                 k,
-                shell.try_quote(&v).context("shell quoting")?
+                shell_kind.try_quote(v).context("shell quoting")?
             )?;
         }
 
@@ -461,10 +461,10 @@ impl RemoteConnection for WslRemoteConnection {
             write!(
                 exec,
                 "{}",
-                shell.try_quote(&program).context("shell quoting")?
+                shell_kind.try_quote(&program).context("shell quoting")?
             )?;
             for arg in args {
-                let arg = shell.try_quote(&arg).context("shell quoting")?;
+                let arg = shell_kind.try_quote(&arg).context("shell quoting")?;
                 write!(exec, " {}", &arg)?;
             }
         } else {

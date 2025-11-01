@@ -250,7 +250,7 @@ pub fn init(
 ) {
     AgentSettings::register(cx);
 
-    assistant_context::init(client.clone(), cx);
+    assistant_text_thread::init(client.clone(), cx);
     rules_library::init(cx);
     if !is_eval {
         // Initializing the language model from the user settings messes with the eval, so we only initialize them when

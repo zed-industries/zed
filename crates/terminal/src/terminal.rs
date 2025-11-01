@@ -402,6 +402,7 @@ impl TerminalBuilder {
                 window_id,
             },
             child_exited: None,
+            event_loop_task: Task::ready(Ok(())),
         };
 
         Ok(TerminalBuilder {
@@ -536,6 +537,20 @@ impl TerminalBuilder {
                 ..Config::default()
             };
 
+            //Setup the pty...
+            let pty = match tty::new(&pty_options, TerminalBounds::default().into(), window_id) {
+                Ok(pty) => pty,
+                Err(error) => {
+                    bail!(TerminalError {
+                        directory: working_directory,
+                        program: shell_params.as_ref().map(|params| params.program.clone()),
+                        args: shell_params.as_ref().and_then(|params| params.args.clone()),
+                        title_override: terminal_title_override,
+                        source: error,
+                    });
+                }
+            };
+
             //Spawn a task so the Alacritty EventLoop can communicate with us
             //TODO: Remove with a bounded sender which can be dispatched on &self
             let (events_tx, events_rx) = unbounded();
@@ -553,20 +568,6 @@ impl TerminalBuilder {
 
             let term = Arc::new(FairMutex::new(term));
 
-            //Setup the pty...
-            let pty = match tty::new(&pty_options, TerminalBounds::default().into(), window_id) {
-                Ok(pty) => pty,
-                Err(error) => {
-                    bail!(TerminalError {
-                        directory: working_directory,
-                        program: shell_params.as_ref().map(|params| params.program.clone()),
-                        args: shell_params.as_ref().and_then(|params| params.args.clone()),
-                        title_override: terminal_title_override,
-                        source: error,
-                    });
-                }
-            };
-
             let pty_info = PtyProcessInfo::new(&pty);
 
             //And connect them together
@@ -579,12 +580,10 @@ impl TerminalBuilder {
             )
             .context("failed to create event loop")?;
 
-            //Kick things off
             let pty_tx = event_loop.channel();
             let _io_thread = event_loop.spawn(); // DANGER
 
             let no_task = task.is_none();
-
             let terminal = Terminal {
                 task,
                 terminal_type: TerminalType::Pty {
@@ -621,6 +620,7 @@ impl TerminalBuilder {
                     window_id,
                 },
                 child_exited: None,
+                event_loop_task: Task::ready(Ok(())),
             };
 
             if !activation_script.is_empty() && no_task {
@@ -653,7 +653,7 @@ impl TerminalBuilder {
 
     pub fn subscribe(mut self, cx: &Context<Terminal>) -> Terminal {
         //Event loop
-        cx.spawn(async move |terminal, cx| {
+        self.terminal.event_loop_task = cx.spawn(async move |terminal, cx| {
             while let Some(event) = self.events_rx.next().await {
                 terminal.update(cx, |terminal, cx| {
                     //Process the first event immediately for lowered latency
@@ -710,11 +710,8 @@ impl TerminalBuilder {
                     smol::future::yield_now().await;
                 }
             }
-
             anyhow::Ok(())
-        })
-        .detach();
-
+        });
         self.terminal
     }
 
@@ -837,6 +834,7 @@ pub struct Terminal {
     template: CopyTemplate,
     activation_script: Vec<String>,
     child_exited: Option<ExitStatus>,
+    event_loop_task: Task<Result<(), anyhow::Error>>,
 }
 
 struct CopyTemplate {
@@ -1267,15 +1265,11 @@ impl Terminal {
     }
 
     pub fn total_lines(&self) -> usize {
-        let term = self.term.clone();
-        let terminal = term.lock_unfair();
-        terminal.total_lines()
+        self.term.lock_unfair().total_lines()
     }
 
     pub fn viewport_lines(&self) -> usize {
-        let term = self.term.clone();
-        let terminal = term.lock_unfair();
-        terminal.screen_lines()
+        self.term.lock_unfair().screen_lines()
     }
 
     //To test:
@@ -2242,7 +2236,8 @@ unsafe fn append_text_to_term(term: &mut Term<ZedListener>, text_lines: &[&str])
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        if let TerminalType::Pty { pty_tx, .. } = &self.terminal_type {
+        if let TerminalType::Pty { pty_tx, info } = &mut self.terminal_type {
+            info.kill_child_process();
             pty_tx.0.send(Msg::Shutdown).ok();
         }
     }

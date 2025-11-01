@@ -568,6 +568,10 @@ impl Item for SyntaxTreeView {
         None
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _: Option<workspace::WorkspaceId>,

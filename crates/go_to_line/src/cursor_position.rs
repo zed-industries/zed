@@ -1,4 +1,4 @@
-use editor::{Editor, MultiBufferSnapshot};
+use editor::{Editor, EditorEvent, MultiBufferSnapshot};
 use gpui::{App, Entity, FocusHandle, Focusable, Styled, Subscription, Task, WeakEntity};
 use settings::Settings;
 use std::{fmt::Write, num::NonZeroU32, time::Duration};
@@ -81,7 +81,7 @@ impl CursorPosition {
 
     fn update_position(
         &mut self,
-        editor: Entity<Editor>,
+        editor: &Entity<Editor>,
         debounce: Option<Duration>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -111,15 +111,14 @@ impl CursorPosition {
                             }
                             editor::EditorMode::Full { .. } => {
                                 let mut last_selection = None::<Selection<Point>>;
-                                let snapshot = editor.buffer().read(cx).snapshot(cx);
-                                if snapshot.excerpts().count() > 0 {
-                                    for selection in
-                                        editor.selections.all_adjusted_with_snapshot(&snapshot)
-                                    {
+                                let snapshot = editor.display_snapshot(cx);
+                                if snapshot.buffer_snapshot().excerpts().count() > 0 {
+                                    for selection in editor.selections.all_adjusted(&snapshot) {
                                         let selection_summary = snapshot
+                                            .buffer_snapshot()
                                             .text_summary_for_range::<text::TextSummary, _>(
-                                                selection.start..selection.end,
-                                            );
+                                            selection.start..selection.end,
+                                        );
                                         cursor_position.selected_count.characters +=
                                             selection_summary.chars;
                                         if selection.end != selection.start {
@@ -136,8 +135,12 @@ impl CursorPosition {
                                         }
                                     }
                                 }
-                                cursor_position.position = last_selection
-                                    .map(|s| UserCaretPosition::at_selection_end(&s, &snapshot));
+                                cursor_position.position = last_selection.map(|s| {
+                                    UserCaretPosition::at_selection_end(
+                                        &s,
+                                        snapshot.buffer_snapshot(),
+                                    )
+                                });
                                 cursor_position.context = Some(editor.focus_handle(cx));
                             }
                         }
@@ -266,19 +269,21 @@ impl StatusItemView for CursorPosition {
         cx: &mut Context<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
-            self._observe_active_editor =
-                Some(
-                    cx.observe_in(&editor, window, |cursor_position, editor, window, cx| {
-                        Self::update_position(
-                            cursor_position,
-                            editor,
-                            Some(UPDATE_DEBOUNCE),
-                            window,
-                            cx,
-                        )
-                    }),
-                );
-            self.update_position(editor, None, window, cx);
+            self._observe_active_editor = Some(cx.subscribe_in(
+                &editor,
+                window,
+                |cursor_position, editor, event, window, cx| match event {
+                    EditorEvent::SelectionsChanged { .. } => Self::update_position(
+                        cursor_position,
+                        editor,
+                        Some(UPDATE_DEBOUNCE),
+                        window,
+                        cx,
+                    ),
+                    _ => {}
+                },
+            ));
+            self.update_position(&editor, None, window, cx);
         } else {
             self.position = None;
             self._observe_active_editor = None;

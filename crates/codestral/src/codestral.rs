@@ -66,6 +66,14 @@ impl CodestralCompletionProvider {
         Self::api_key(cx).is_some()
     }
 
+    /// This is so we can immediately show Codestral as a provider users can
+    /// switch to in the edit prediction menu, if the API has been added
+    pub fn ensure_api_key_loaded(http_client: Arc<dyn HttpClient>, cx: &mut App) {
+        MistralLanguageModelProvider::global(http_client, cx)
+            .load_codestral_api_key(cx)
+            .detach();
+    }
+
     fn api_key(cx: &App) -> Option<Arc<str>> {
         MistralLanguageModelProvider::try_global(cx)
             .and_then(|provider| provider.codestral_api_key(CODESTRAL_API_URL, cx))
@@ -79,6 +87,7 @@ impl CodestralCompletionProvider {
         suffix: String,
         model: String,
         max_tokens: Option<u32>,
+        api_url: String,
     ) -> Result<String> {
         let start_time = Instant::now();
 
@@ -111,7 +120,7 @@ impl CodestralCompletionProvider {
 
         let http_request = http_client::Request::builder()
             .method(http_client::Method::POST)
-            .uri(format!("{}/v1/fim/completions", CODESTRAL_API_URL))
+            .uri(format!("{}/v1/fim/completions", api_url))
             .header("Content-Type", "application/json")
             .header("Authorization", format!("Bearer {}", api_key))
             .body(http_client::AsyncBody::from(request_body))?;
@@ -211,6 +220,12 @@ impl EditPredictionProvider for CodestralCompletionProvider {
             .clone()
             .unwrap_or_else(|| "codestral-latest".to_string());
         let max_tokens = settings.edit_predictions.codestral.max_tokens;
+        let api_url = settings
+            .edit_predictions
+            .codestral
+            .api_url
+            .clone()
+            .unwrap_or_else(|| CODESTRAL_API_URL.to_string());
 
         self.pending_request = Some(cx.spawn(async move |this, cx| {
             if debounce {
@@ -242,6 +257,7 @@ impl EditPredictionProvider for CodestralCompletionProvider {
                 suffix,
                 model,
                 max_tokens,
+                api_url,
             )
             .await
             {

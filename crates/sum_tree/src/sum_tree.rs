@@ -3,7 +3,8 @@ mod tree_map;
 
 use arrayvec::ArrayVec;
 pub use cursor::{Cursor, FilterCursor, Iter};
-use rayon::prelude::*;
+use futures::{StreamExt, stream};
+use itertools::Itertools as _;
 use std::marker::PhantomData;
 use std::mem;
 use std::{cmp::Ordering, fmt, iter::FromIterator, sync::Arc};
@@ -13,6 +14,18 @@ pub use tree_map::{MapSeekTarget, TreeMap, TreeSet};
 pub const TREE_BASE: usize = 2;
 #[cfg(not(test))]
 pub const TREE_BASE: usize = 6;
+
+pub trait BackgroundSpawn {
+    type Task<R>: Future<Output = R> + Send + Sync
+    where
+        R: Send + Sync;
+    fn background_spawn<R>(
+        &self,
+        future: impl Future<Output = R> + Send + Sync + 'static,
+    ) -> Self::Task<R>
+    where
+        R: Send + Sync + 'static;
+}
 
 /// An item that can be stored in a [`SumTree`]
 ///
@@ -298,62 +311,71 @@ impl<T: Item> SumTree<T> {
         }
     }
 
-    pub fn from_par_iter<I, Iter>(iter: I, cx: <T::Summary as Summary>::Context<'_>) -> Self
+    pub async fn from_iter_async<I, S>(iter: I, spawn: S) -> Self
     where
-        I: IntoParallelIterator<Iter = Iter>,
-        Iter: IndexedParallelIterator<Item = T>,
-        T: Send + Sync,
-        T::Summary: Send + Sync,
-        for<'a> <T::Summary as Summary>::Context<'a>: Sync,
+        T: 'static + Send + Sync,
+        for<'a> T::Summary: Summary<Context<'a> = ()> + Send + Sync,
+        S: BackgroundSpawn,
+        I: IntoIterator<Item = T>,
     {
-        let mut nodes = iter
-            .into_par_iter()
-            .chunks(2 * TREE_BASE)
-            .map(|items| {
-                let items: ArrayVec<T, { 2 * TREE_BASE }> = items.into_iter().collect();
+        let mut futures = vec![];
+        let chunks = iter.into_iter().chunks(2 * TREE_BASE);
+        for chunk in chunks.into_iter() {
+            let items: ArrayVec<T, { 2 * TREE_BASE }> = chunk.into_iter().collect();
+            futures.push(async move {
                 let item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }> =
-                    items.iter().map(|item| item.summary(cx)).collect();
+                    items.iter().map(|item| item.summary(())).collect();
                 let mut summary = item_summaries[0].clone();
                 for item_summary in &item_summaries[1..] {
-                    <T::Summary as Summary>::add_summary(&mut summary, item_summary, cx);
+                    <T::Summary as Summary>::add_summary(&mut summary, item_summary, ());
                 }
                 SumTree(Arc::new(Node::Leaf {
                     summary,
                     items,
                     item_summaries,
                 }))
-            })
-            .collect::<Vec<_>>();
+            });
+        }
+
+        let mut nodes = futures::stream::iter(futures)
+            .map(|future| spawn.background_spawn(future))
+            .buffered(4)
+            .collect::<Vec<_>>()
+            .await;
 
         let mut height = 0;
         while nodes.len() > 1 {
             height += 1;
-            nodes = nodes
-                .into_par_iter()
+            let current_nodes = mem::take(&mut nodes);
+            nodes = stream::iter(current_nodes)
                 .chunks(2 * TREE_BASE)
-                .map(|child_nodes| {
-                    let child_trees: ArrayVec<SumTree<T>, { 2 * TREE_BASE }> =
-                        child_nodes.into_iter().collect();
-                    let child_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }> = child_trees
-                        .iter()
-                        .map(|child_tree| child_tree.summary().clone())
-                        .collect();
-                    let mut summary = child_summaries[0].clone();
-                    for child_summary in &child_summaries[1..] {
-                        <T::Summary as Summary>::add_summary(&mut summary, child_summary, cx);
-                    }
-                    SumTree(Arc::new(Node::Internal {
-                        height,
-                        summary,
-                        child_summaries,
-                        child_trees,
-                    }))
+                .map(|chunk| {
+                    spawn.background_spawn(async move {
+                        let child_trees: ArrayVec<SumTree<T>, { 2 * TREE_BASE }> =
+                            chunk.into_iter().collect();
+                        let child_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }> = child_trees
+                            .iter()
+                            .map(|child_tree| child_tree.summary().clone())
+                            .collect();
+                        let mut summary = child_summaries[0].clone();
+                        for child_summary in &child_summaries[1..] {
+                            <T::Summary as Summary>::add_summary(&mut summary, child_summary, ());
+                        }
+                        SumTree(Arc::new(Node::Internal {
+                            height,
+                            summary,
+                            child_summaries,
+                            child_trees,
+                        }))
+                    })
                 })
-                .collect::<Vec<_>>();
+                .buffered(4)
+                .collect::<Vec<_>>()
+                .await;
         }
 
         if nodes.is_empty() {
-            Self::new(cx)
+            Self::new(())
         } else {
             debug_assert_eq!(nodes.len(), 1);
             nodes.pop().unwrap()
@@ -597,15 +619,15 @@ impl<T: Item> SumTree<T> {
         self.append(Self::from_iter(iter, cx), cx);
     }
 
-    pub fn par_extend<I, Iter>(&mut self, iter: I, cx: <T::Summary as Summary>::Context<'_>)
+    pub async fn async_extend<S, I>(&mut self, iter: I, spawn: S)
     where
-        I: IntoParallelIterator<Iter = Iter>,
-        Iter: IndexedParallelIterator<Item = T>,
-        T: Send + Sync,
-        T::Summary: Send + Sync,
-        for<'a> <T::Summary as Summary>::Context<'a>: Sync,
+        S: BackgroundSpawn,
+        I: IntoIterator<Item = T> + 'static,
+        T: 'static + Send + Sync,
+        for<'b> T::Summary: Summary<Context<'b> = ()> + Send + Sync,
     {
-        self.append(Self::from_par_iter(iter, cx), cx);
+        let other = Self::from_iter_async(iter, spawn);
+        self.append(other.await, ());
     }
 
     pub fn push(&mut self, item: T, cx: <T::Summary as Summary>::Context<'_>) {
@@ -1070,6 +1092,23 @@ mod tests {
 
     #[test]
     fn test_random() {
+        struct NoSpawn;
+        impl BackgroundSpawn for NoSpawn {
+            type Task<R>
+                = std::pin::Pin<Box<dyn Future<Output = R> + Sync + Send>>
+            where
+                R: Send + Sync;
+            fn background_spawn<R>(
+                &self,
+                future: impl Future<Output = R> + Send + Sync + 'static,
+            ) -> Self::Task<R>
+            where
+                R: Send + Sync + 'static,
+            {
+                Box::pin(future)
+            }
+        }
+
         let mut starting_seed = 0;
         if let Ok(value) = std::env::var("SEED") {
             starting_seed = value.parse().expect("invalid SEED variable");
@@ -1095,7 +1134,7 @@ mod tests {
                     .sample_iter(StandardUniform)
                     .take(count)
                     .collect::<Vec<_>>();
-                tree.par_extend(items, ());
+                pollster::block_on(tree.async_extend(items, NoSpawn));
             }
 
             for _ in 0..num_operations {
@@ -1117,7 +1156,7 @@ mod tests {
                     if rng.random() {
                         new_tree.extend(new_items, ());
                     } else {
-                        new_tree.par_extend(new_items, ());
+                        pollster::block_on(new_tree.async_extend(new_items, NoSpawn));
                     }
                     cursor.seek(&Count(splice_end), Bias::Right);
                     new_tree.append(cursor.slice(&tree_end, Bias::Right), ());

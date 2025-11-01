@@ -1,6 +1,9 @@
 use futures::channel::oneshot;
 use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, TaskLabel};
+use gpui::{
+    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Task,
+    TaskLabel,
+};
 use language::{Language, LanguageRegistry};
 use rope::Rope;
 use std::{
@@ -191,7 +194,7 @@ impl BufferDiffSnapshot {
         let base_text_exists;
         let base_text_snapshot;
         if let Some(text) = &base_text {
-            let base_text_rope = Rope::from(text.as_str());
+            let base_text_rope = Rope::from_str(text.as_str(), cx.background_executor());
             base_text_pair = Some((text.clone(), base_text_rope.clone()));
             let snapshot =
                 language::Buffer::build_snapshot(base_text_rope, language, language_registry, cx);
@@ -311,6 +314,7 @@ impl BufferDiffInner {
         hunks: &[DiffHunk],
         buffer: &text::BufferSnapshot,
         file_exists: bool,
+        cx: &BackgroundExecutor,
     ) -> Option<Rope> {
         let head_text = self
             .base_text_exists
@@ -505,7 +509,7 @@ impl BufferDiffInner {
         for (old_range, replacement_text) in edits {
             new_index_text.append(index_cursor.slice(old_range.start));
             index_cursor.seek_forward(old_range.end);
-            new_index_text.push(&replacement_text);
+            new_index_text.push(&replacement_text, cx);
         }
         new_index_text.append(index_cursor.suffix());
         Some(new_index_text)
@@ -962,6 +966,7 @@ impl BufferDiff {
             hunks,
             buffer,
             file_exists,
+            cx.background_executor(),
         );
 
         cx.emit(BufferDiffEvent::HunksStagedOrUnstaged(
@@ -1162,34 +1167,22 @@ impl BufferDiff {
         self.hunks_intersecting_range(start..end, buffer, cx)
     }
 
-    pub fn set_base_text_buffer(
-        &mut self,
-        base_buffer: Entity<language::Buffer>,
-        buffer: text::BufferSnapshot,
-        cx: &mut Context<Self>,
-    ) -> oneshot::Receiver<()> {
-        let base_buffer = base_buffer.read(cx);
-        let language_registry = base_buffer.language_registry();
-        let base_buffer = base_buffer.snapshot();
-        self.set_base_text(base_buffer, language_registry, buffer, cx)
-    }
-
     /// Used in cases where the change set isn't derived from git.
     pub fn set_base_text(
         &mut self,
-        base_buffer: language::BufferSnapshot,
+        base_text: Option<Arc<String>>,
+        language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
         buffer: text::BufferSnapshot,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
         let (tx, rx) = oneshot::channel();
         let this = cx.weak_entity();
-        let base_text = Arc::new(base_buffer.text());
 
         let snapshot = BufferDiffSnapshot::new_with_base_text(
             buffer.clone(),
-            Some(base_text),
-            base_buffer.language().cloned(),
+            base_text,
+            language,
             language_registry,
             cx,
         );
@@ -1397,7 +1390,12 @@ mod tests {
         "
         .unindent();
 
-        let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+        let mut buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            buffer_text,
+            cx.background_executor(),
+        );
         let mut diff = BufferDiffSnapshot::new_sync(buffer.clone(), diff_base.clone(), cx);
         assert_hunks(
             diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer),
@@ -1406,7 +1404,7 @@ mod tests {
             &[(1..2, "two\n", "HELLO\n", DiffHunkStatus::modified_none())],
         );
 
-        buffer.edit([(0..0, "point five\n")]);
+        buffer.edit([(0..0, "point five\n")], cx.background_executor());
         diff = BufferDiffSnapshot::new_sync(buffer.clone(), diff_base.clone(), cx);
         assert_hunks(
             diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer),
@@ -1471,7 +1469,12 @@ mod tests {
         "
         .unindent();
 
-        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            buffer_text,
+            cx.background_executor(),
+        );
         let unstaged_diff = BufferDiffSnapshot::new_sync(buffer.clone(), index_text, cx);
         let mut uncommitted_diff =
             BufferDiffSnapshot::new_sync(buffer.clone(), head_text.clone(), cx);
@@ -1540,7 +1543,12 @@ mod tests {
         "
         .unindent();
 
-        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            buffer_text,
+            cx.background_executor(),
+        );
         let diff = cx
             .update(|cx| {
                 BufferDiffSnapshot::new_with_base_text(
@@ -1803,7 +1811,12 @@ mod tests {
 
         for example in table {
             let (buffer_text, ranges) = marked_text_ranges(&example.buffer_marked_text, false);
-            let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+            let buffer = Buffer::new(
+                ReplicaId::LOCAL,
+                BufferId::new(1).unwrap(),
+                buffer_text,
+                cx.background_executor(),
+            );
             let hunk_range =
                 buffer.anchor_before(ranges[0].start)..buffer.anchor_before(ranges[0].end);
 
@@ -1880,6 +1893,7 @@ mod tests {
             ReplicaId::LOCAL,
             BufferId::new(1).unwrap(),
             buffer_text.clone(),
+            cx.background_executor(),
         );
         let unstaged = BufferDiffSnapshot::new_sync(buffer.clone(), index_text, cx);
         let uncommitted = BufferDiffSnapshot::new_sync(buffer.clone(), head_text.clone(), cx);
@@ -1953,7 +1967,12 @@ mod tests {
         "
         .unindent();
 
-        let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text_1);
+        let mut buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            buffer_text_1,
+            cx.background_executor(),
+        );
 
         let empty_diff = cx.update(|cx| BufferDiffSnapshot::empty(&buffer, cx));
         let diff_1 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
@@ -1973,6 +1992,7 @@ mod tests {
                 NINE
             "
             .unindent(),
+            cx.background_executor(),
         );
         let diff_2 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
         assert_eq!(None, diff_2.inner.compare(&diff_1.inner, &buffer));
@@ -1990,6 +2010,7 @@ mod tests {
                 NINE
             "
             .unindent(),
+            cx.background_executor(),
         );
         let diff_3 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
         let range = diff_3.inner.compare(&diff_2.inner, &buffer).unwrap();
@@ -2007,6 +2028,7 @@ mod tests {
                 NINE
             "
             .unindent(),
+            cx.background_executor(),
         );
         let diff_4 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
         let range = diff_4.inner.compare(&diff_3.inner, &buffer).unwrap();
@@ -2025,6 +2047,7 @@ mod tests {
                 NINE
             "
             .unindent(),
+            cx.background_executor(),
         );
         let diff_5 = BufferDiffSnapshot::new_sync(buffer.snapshot(), base_text.clone(), cx);
         let range = diff_5.inner.compare(&diff_4.inner, &buffer).unwrap();
@@ -2043,6 +2066,7 @@ mod tests {
                 «nine»
             "
             .unindent(),
+            cx.background_executor(),
         );
         let diff_6 = BufferDiffSnapshot::new_sync(buffer.snapshot(), base_text, cx);
         let range = diff_6.inner.compare(&diff_5.inner, &buffer).unwrap();
@@ -2152,14 +2176,14 @@ mod tests {
         let working_copy = gen_working_copy(rng, &head_text);
         let working_copy = cx.new(|cx| {
             language::Buffer::local_normalized(
-                Rope::from(working_copy.as_str()),
+                Rope::from_str(working_copy.as_str(), cx.background_executor()),
                 text::LineEnding::default(),
                 cx,
             )
         });
         let working_copy = working_copy.read_with(cx, |working_copy, _| working_copy.snapshot());
         let mut index_text = if rng.random() {
-            Rope::from(head_text.as_str())
+            Rope::from_str(head_text.as_str(), cx.background_executor())
         } else {
             working_copy.as_rope().clone()
         };

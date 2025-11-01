@@ -15,6 +15,7 @@ use anyhow::{Context as _, Result};
 use clock::Lamport;
 pub use clock::ReplicaId;
 use collections::{HashMap, HashSet};
+use gpui::BackgroundExecutor;
 use locator::Locator;
 use operation_queue::OperationQueue;
 pub use patch::Patch;
@@ -709,11 +710,41 @@ impl FromIterator<char> for LineIndent {
 }
 
 impl Buffer {
-    pub fn new(replica_id: ReplicaId, remote_id: BufferId, base_text: impl Into<String>) -> Buffer {
+    /// Create a new buffer from a string.
+    pub fn new(
+        replica_id: ReplicaId,
+        remote_id: BufferId,
+        base_text: impl Into<String>,
+        executor: &BackgroundExecutor,
+    ) -> Buffer {
         let mut base_text = base_text.into();
         let line_ending = LineEnding::detect(&base_text);
         LineEnding::normalize(&mut base_text);
-        Self::new_normalized(replica_id, remote_id, line_ending, Rope::from(&*base_text))
+        Self::new_normalized(
+            replica_id,
+            remote_id,
+            line_ending,
+            Rope::from_str(&base_text, executor),
+        )
+    }
+
+    /// Create a new buffer from a string.
+    ///
+    /// Unlike [`Buffer::new`], this does not construct the backing rope in parallel if it is large enough.
+    pub fn new_slow(
+        replica_id: ReplicaId,
+        remote_id: BufferId,
+        base_text: impl Into<String>,
+    ) -> Buffer {
+        let mut base_text = base_text.into();
+        let line_ending = LineEnding::detect(&base_text);
+        LineEnding::normalize(&mut base_text);
+        Self::new_normalized(
+            replica_id,
+            remote_id,
+            line_ending,
+            Rope::from_str_small(&base_text),
+        )
     }
 
     pub fn new_normalized(
@@ -808,7 +839,7 @@ impl Buffer {
         self.history.group_interval
     }
 
-    pub fn edit<R, I, S, T>(&mut self, edits: R) -> Operation
+    pub fn edit<R, I, S, T>(&mut self, edits: R, cx: &BackgroundExecutor) -> Operation
     where
         R: IntoIterator<IntoIter = I>,
         I: ExactSizeIterator<Item = (Range<S>, T)>,
@@ -821,7 +852,7 @@ impl Buffer {
 
         self.start_transaction();
         let timestamp = self.lamport_clock.tick();
-        let operation = Operation::Edit(self.apply_local_edit(edits, timestamp));
+        let operation = Operation::Edit(self.apply_local_edit(edits, timestamp, cx));
 
         self.history.push(operation.clone());
         self.history.push_undo(operation.timestamp());
@@ -834,6 +865,7 @@ impl Buffer {
         &mut self,
         edits: impl ExactSizeIterator<Item = (Range<S>, T)>,
         timestamp: clock::Lamport,
+        executor: &BackgroundExecutor,
     ) -> EditOperation {
         let mut edits_patch = Patch::default();
         let mut edit_op = EditOperation {
@@ -922,7 +954,7 @@ impl Buffer {
                 });
                 insertion_slices.push(InsertionSlice::from_fragment(timestamp, &fragment));
                 new_insertions.push(InsertionFragment::insert_new(&fragment));
-                new_ropes.push_str(new_text.as_ref());
+                new_ropes.push_str(new_text.as_ref(), executor);
                 new_fragments.push(fragment, &None);
                 insertion_offset += new_text.len();
             }
@@ -1001,22 +1033,26 @@ impl Buffer {
         self.snapshot.line_ending = line_ending;
     }
 
-    pub fn apply_ops<I: IntoIterator<Item = Operation>>(&mut self, ops: I) {
+    pub fn apply_ops<I: IntoIterator<Item = Operation>>(
+        &mut self,
+        ops: I,
+        executor: Option<&BackgroundExecutor>,
+    ) {
         let mut deferred_ops = Vec::new();
         for op in ops {
             self.history.push(op.clone());
             if self.can_apply_op(&op) {
-                self.apply_op(op);
+                self.apply_op(op, executor);
             } else {
                 self.deferred_replicas.insert(op.replica_id());
                 deferred_ops.push(op);
             }
         }
         self.deferred_ops.insert(deferred_ops);
-        self.flush_deferred_ops();
+        self.flush_deferred_ops(executor);
     }
 
-    fn apply_op(&mut self, op: Operation) {
+    fn apply_op(&mut self, op: Operation, executor: Option<&BackgroundExecutor>) {
         match op {
             Operation::Edit(edit) => {
                 if !self.version.observed(edit.timestamp) {
@@ -1025,6 +1061,7 @@ impl Buffer {
                         &edit.ranges,
                         &edit.new_text,
                         edit.timestamp,
+                        executor,
                     );
                     self.snapshot.version.observe(edit.timestamp);
                     self.lamport_clock.observe(edit.timestamp);
@@ -1055,6 +1092,7 @@ impl Buffer {
         ranges: &[Range<FullOffset>],
         new_text: &[Arc<str>],
         timestamp: clock::Lamport,
+        executor: Option<&BackgroundExecutor>,
     ) {
         if ranges.is_empty() {
             return;
@@ -1170,7 +1208,10 @@ impl Buffer {
                 });
                 insertion_slices.push(InsertionSlice::from_fragment(timestamp, &fragment));
                 new_insertions.push(InsertionFragment::insert_new(&fragment));
-                new_ropes.push_str(new_text);
+                match executor {
+                    Some(executor) => new_ropes.push_str(new_text, executor),
+                    None => new_ropes.push_str_small(new_text),
+                }
                 new_fragments.push(fragment, &None);
                 insertion_offset += new_text.len();
             }
@@ -1348,12 +1389,12 @@ impl Buffer {
         self.subscriptions.publish_mut(&edits);
     }
 
-    fn flush_deferred_ops(&mut self) {
+    fn flush_deferred_ops(&mut self, executor: Option<&BackgroundExecutor>) {
         self.deferred_replicas.clear();
         let mut deferred_ops = Vec::new();
         for op in self.deferred_ops.drain().iter().cloned() {
             if self.can_apply_op(&op) {
-                self.apply_op(op);
+                self.apply_op(op, executor);
             } else {
                 self.deferred_replicas.insert(op.replica_id());
                 deferred_ops.push(op);
@@ -1711,9 +1752,9 @@ impl Buffer {
 #[cfg(any(test, feature = "test-support"))]
 impl Buffer {
     #[track_caller]
-    pub fn edit_via_marked_text(&mut self, marked_string: &str) {
+    pub fn edit_via_marked_text(&mut self, marked_string: &str, cx: &BackgroundExecutor) {
         let edits = self.edits_for_marked_text(marked_string);
-        self.edit(edits);
+        self.edit(edits, cx);
     }
 
     #[track_caller]
@@ -1850,6 +1891,7 @@ impl Buffer {
         &mut self,
         rng: &mut T,
         edit_count: usize,
+        executor: &BackgroundExecutor,
     ) -> (Vec<(Range<usize>, Arc<str>)>, Operation)
     where
         T: rand::Rng,
@@ -1857,7 +1899,7 @@ impl Buffer {
         let mut edits = self.get_random_edits(rng, edit_count);
         log::info!("mutating buffer {:?} with {:?}", self.replica_id, edits);
 
-        let op = self.edit(edits.iter().cloned());
+        let op = self.edit(edits.iter().cloned(), executor);
         if let Operation::Edit(edit) = &op {
             assert_eq!(edits.len(), edit.new_text.len());
             for (edit, new_text) in edits.iter_mut().zip(&edit.new_text) {
@@ -2051,6 +2093,14 @@ impl BufferSnapshot {
         self.visible_text.point_to_offset(point)
     }
 
+    pub fn point_to_offset_utf16(&self, point: Point) -> OffsetUtf16 {
+        self.visible_text.point_to_offset_utf16(point)
+    }
+
+    pub fn point_utf16_to_offset_utf16(&self, point: PointUtf16) -> OffsetUtf16 {
+        self.visible_text.point_utf16_to_offset_utf16(point)
+    }
+
     pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
         self.visible_text.point_utf16_to_offset(point)
     }
@@ -2081,6 +2131,10 @@ impl BufferSnapshot {
 
     pub fn point_to_point_utf16(&self, point: Point) -> PointUtf16 {
         self.visible_text.point_to_point_utf16(point)
+    }
+
+    pub fn point_utf16_to_point(&self, point: PointUtf16) -> Point {
+        self.visible_text.point_utf16_to_point(point)
     }
 
     pub fn version(&self) -> &clock::Global {
@@ -2266,7 +2320,13 @@ impl BufferSnapshot {
                 insertion_cursor.prev();
             }
             let insertion = insertion_cursor.item().expect("invalid insertion");
-            assert_eq!(insertion.timestamp, anchor.timestamp, "invalid insertion");
+            assert_eq!(
+                insertion.timestamp,
+                anchor.timestamp,
+                "invalid insertion for buffer {} with anchor {:?}",
+                self.remote_id(),
+                anchor
+            );
 
             fragment_cursor.seek_forward(&Some(&insertion.fragment_id), Bias::Left);
             let fragment = fragment_cursor.item().unwrap();
@@ -2294,6 +2354,7 @@ impl BufferSnapshot {
             self.visible_text.len()
         } else {
             debug_assert!(anchor.buffer_id == Some(self.remote_id));
+            debug_assert!(self.version.observed(anchor.timestamp));
             let anchor_key = InsertionFragmentKey {
                 timestamp: anchor.timestamp,
                 split_offset: anchor.offset,
@@ -2317,10 +2378,7 @@ impl BufferSnapshot {
                 .item()
                 .filter(|insertion| insertion.timestamp == anchor.timestamp)
             else {
-                panic!(
-                    "invalid anchor {:?}. buffer id: {}, version: {:?}",
-                    anchor, self.remote_id, self.version
-                );
+                self.panic_bad_anchor(anchor);
             };
 
             let (start, _, item) = self
@@ -2339,13 +2397,29 @@ impl BufferSnapshot {
         }
     }
 
-    fn fragment_id_for_anchor(&self, anchor: &Anchor) -> &Locator {
-        self.try_fragment_id_for_anchor(anchor).unwrap_or_else(|| {
+    #[cold]
+    fn panic_bad_anchor(&self, anchor: &Anchor) -> ! {
+        if anchor.buffer_id.is_some_and(|id| id != self.remote_id) {
+            panic!(
+                "invalid anchor - buffer id does not match: anchor {anchor:?}; buffer id: {}, version: {:?}",
+                self.remote_id, self.version
+            );
+        } else if !self.version.observed(anchor.timestamp) {
+            panic!(
+                "invalid anchor - snapshot has not observed lamport: {:?}; version: {:?}",
+                anchor, self.version
+            );
+        } else {
             panic!(
                 "invalid anchor {:?}. buffer id: {}, version: {:?}",
-                anchor, self.remote_id, self.version,
-            )
-        })
+                anchor, self.remote_id, self.version
+            );
+        }
+    }
+
+    fn fragment_id_for_anchor(&self, anchor: &Anchor) -> &Locator {
+        self.try_fragment_id_for_anchor(anchor)
+            .unwrap_or_else(|| self.panic_bad_anchor(anchor))
     }
 
     fn try_fragment_id_for_anchor(&self, anchor: &Anchor) -> Option<&Locator> {
@@ -2674,8 +2748,12 @@ impl<'a> RopeBuilder<'a> {
         }
     }
 
-    fn push_str(&mut self, text: &str) {
-        self.new_visible.push(text);
+    fn push_str(&mut self, text: &str, cx: &BackgroundExecutor) {
+        self.new_visible.push(text, cx);
+    }
+
+    fn push_str_small(&mut self, text: &str) {
+        self.new_visible.push_small(text);
     }
 
     fn finish(mut self) -> (Rope, Rope) {

@@ -145,6 +145,7 @@ pub enum IconName {
     Keyboard,
     Library,
     LineHeight,
+    Link,
     ListCollapse,
     ListFilter,
     ListTodo,

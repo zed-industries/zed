@@ -199,7 +199,7 @@ impl PasswordProxy {
         let current_exec =
             std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
-        // TODO: Inferred from the use of powershell.exe in askpass_helper_script
+        // TODO: inferred from the use of powershell.exe in askpass_helper_script
         let shell_kind = if cfg!(windows) {
             ShellKind::PowerShell
         } else {
@@ -349,7 +349,7 @@ fn generate_askpass_script(askpass_program: &str, askpass_socket: &std::path::Pa
     format!(
         r#"
         $ErrorActionPreference = 'Stop';
-        ($args -join [char]0) | & "{askpass_program}" --askpass={askpass_socket} 2> $null
+        ($args -join [char]0) | & {askpass_program} --askpass={askpass_socket} 2> $null
         "#,
         askpass_socket = askpass_socket.display(),
     )

@@ -37,11 +37,11 @@ use crate::{
     util::FluentBuilder,
 };
 use derive_more::{Deref, DerefMut};
-pub(crate) use smallvec::SmallVec;
 use std::{
     any::{Any, type_name},
     fmt::{self, Debug, Display},
     mem, panic,
+    sync::Arc,
 };
 
 /// Implemented by types that participate in laying out and painting the contents of a window.
@@ -272,8 +272,8 @@ impl<C: RenderOnce> IntoElement for Component<C> {
 }
 
 /// A globally unique identifier for an element, used to track state across frames.
-#[derive(Deref, DerefMut, Default, Debug, Eq, PartialEq, Hash)]
-pub struct GlobalElementId(pub(crate) SmallVec<[ElementId; 32]>);
+#[derive(Deref, DerefMut, Clone, Default, Debug, Eq, PartialEq, Hash)]
+pub struct GlobalElementId(pub(crate) Arc<[ElementId]>);
 
 impl Display for GlobalElementId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -353,7 +353,7 @@ impl<E: Element> Drawable<E> {
             ElementDrawPhase::Start => {
                 let global_id = self.element.id().map(|element_id| {
                     window.element_id_stack.push(element_id);
-                    GlobalElementId(window.element_id_stack.clone())
+                    GlobalElementId(Arc::from(&*window.element_id_stack))
                 });
 
                 let inspector_id;
@@ -361,7 +361,7 @@ impl<E: Element> Drawable<E> {
                 {
                     inspector_id = self.element.source_location().map(|source| {
                         let path = crate::InspectorElementPath {
-                            global_id: GlobalElementId(window.element_id_stack.clone()),
+                            global_id: GlobalElementId(Arc::from(&*window.element_id_stack)),
                             source_location: source,
                         };
                         window.build_inspector_element_id(path)
@@ -412,7 +412,7 @@ impl<E: Element> Drawable<E> {
             } => {
                 if let Some(element_id) = self.element.id() {
                     window.element_id_stack.push(element_id);
-                    debug_assert_eq!(global_id.as_ref().unwrap().0, window.element_id_stack);
+                    debug_assert_eq!(&*global_id.as_ref().unwrap().0, &*window.element_id_stack);
                 }
 
                 let bounds = window.layout_bounds(layout_id);
@@ -461,7 +461,7 @@ impl<E: Element> Drawable<E> {
             } => {
                 if let Some(element_id) = self.element.id() {
                     window.element_id_stack.push(element_id);
-                    debug_assert_eq!(global_id.as_ref().unwrap().0, window.element_id_stack);
+                    debug_assert_eq!(&*global_id.as_ref().unwrap().0, &*window.element_id_stack);
                 }
 
                 window.next_frame.dispatch_tree.set_active_node(node_id);

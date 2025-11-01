@@ -3,6 +3,7 @@ use crate::{
     EditorSnapshot, GlobalDiagnosticRenderer, Hover,
     display_map::{InlayOffset, ToDisplayPoint, invisibles::is_invisible},
     hover_links::{InlayHighlight, RangeInEditor},
+    movement::TextLayoutDetails,
     scroll::ScrollAmount,
 };
 use anyhow::Context as _;
@@ -27,7 +28,6 @@ use ui::{Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
 use url::Url;
 use util::TryFutureExt;
 use workspace::{OpenOptions, OpenVisible, Workspace};
-pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
 pub const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
@@ -290,15 +290,18 @@ fn show_hover(
             let delay = if ignore_timeout {
                 None
             } else {
+                let lsp_request_early = hover_popover_delay / 2;
+                cx.background_executor()
+                    .timer(Duration::from_millis(
+                        hover_popover_delay - lsp_request_early,
+                    ))
+                    .await;
+
                 // Construct delay task to wait for later
                 let total_delay = Some(
                     cx.background_executor()
-                        .timer(Duration::from_millis(hover_popover_delay)),
+                        .timer(Duration::from_millis(lsp_request_early)),
                 );
-
-                cx.background_executor()
-                    .timer(Duration::from_millis(HOVER_REQUEST_DELAY_MILLIS))
-                    .await;
                 total_delay
             };
 
@@ -307,7 +310,6 @@ fn show_hover(
             if let Some(delay) = delay {
                 delay.await;
             }
-
             let offset = anchor.to_offset(&snapshot.buffer_snapshot());
             let local_diagnostic = if all_diagnostics_active {
                 None
@@ -765,9 +767,13 @@ impl HoverState {
         snapshot: &EditorSnapshot,
         visible_rows: Range<DisplayRow>,
         max_size: Size<Pixels>,
+        text_layout_details: &TextLayoutDetails,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<(DisplayPoint, Vec<AnyElement>)> {
+        if !self.visible() {
+            return None;
+        }
         // If there is a diagnostic, position the popovers based on that.
         // Otherwise use the start of the hover range
         let anchor = self
@@ -790,10 +796,32 @@ impl HoverState {
                     }
                 })
             })?;
-        let point = anchor.to_display_point(&snapshot.display_snapshot);
+        let mut point = anchor.to_display_point(&snapshot.display_snapshot);
+        // Clamp the point within the visible rows in case the popup source spans multiple lines
+        if visible_rows.end <= point.row() {
+            point = crate::movement::up_by_rows(
+                &snapshot.display_snapshot,
+                point,
+                1 + (point.row() - visible_rows.end).0,
+                text::SelectionGoal::None,
+                true,
+                text_layout_details,
+            )
+            .0;
+        } else if point.row() < visible_rows.start {
+            point = crate::movement::down_by_rows(
+                &snapshot.display_snapshot,
+                point,
+                (visible_rows.start - point.row()).0,
+                text::SelectionGoal::None,
+                true,
+                text_layout_details,
+            )
+            .0;
+        }
 
-        // Don't render if the relevant point isn't on screen
-        if !self.visible() || !visible_rows.contains(&point.row()) {
+        if !visible_rows.contains(&point.row()) {
+            log::error!("Hover popover point out of bounds after moving");
             return None;
         }
 
