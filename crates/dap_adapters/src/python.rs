@@ -838,6 +838,28 @@ impl DebugAdapter for PythonDebugAdapter {
                     .ok()
                 })
             })
+            .chain(
+                // While Debugpy's wiki saids absolute paths are required, but it actually supports relative paths when cwd is passed in.
+                // (Which should always be the case because Zed defaults to the cwd worktree root)
+                // So we want to check that these relative paths find toolchains as well. Otherwise, they won't be checked
+                // because the strip prefix in the iteration above will return an error
+                config
+                    .config
+                    .get("cwd")
+                    .map(|_| {
+                        ["program", "module"]
+                            .into_iter()
+                            .filter_map(|key| {
+                                config.config.get(key).and_then(|value| {
+                                    let path = Path::new(value.as_str()?);
+                                    RelPath::new(path, PathStyle::local()).ok()
+                                })
+                            })
+                            .into_iter()
+                    })
+                    .into_iter()
+                    .flatten(),
+            )
             .chain([RelPath::empty().into()]);
 
         let mut toolchain = None;
