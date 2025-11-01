@@ -302,6 +302,31 @@ float quad_sdf(float2 pt, Bounds bounds, Corners corner_radii) {
     return quad_sdf_impl(corner_center_to_point, corner_radius);
 }
 
+// Squircle SDF: smoothness 0.0 = circle, 0.5 = squircle, 1.0 = square
+float squircle_sdf(float2 pt, Bounds bounds, Corners corner_radii, float smoothness) {
+    float2 half_size = bounds.size / 2.;
+    float2 center = bounds.origin + half_size;
+    float2 center_to_point = pt - center;
+    float corner_radius = pick_corner_radius(center_to_point, corner_radii);
+
+    if (corner_radius == 0.0) {
+        // No corner radius, use sharp corners
+        float2 corner_to_point = abs(center_to_point) - half_size;
+        return max(corner_to_point.x, corner_to_point.y);
+    }
+
+    // Power factor: 2 = circle, 4 = squircle, 8+ = square
+    float p = pow(2.0, 1.0 + smoothness * 2.0);
+
+    float2 corner_to_point = abs(center_to_point) - half_size + corner_radius;
+    float2 corner_max = max(corner_to_point, float2(0.0, 0.0));
+
+    // Superellipse SDF approximation
+    float dist = pow(pow(abs(corner_max.x), p) + pow(abs(corner_max.y), p), 1.0 / p);
+
+    return dist + min(0.0, max(corner_to_point.x, corner_to_point.y)) - corner_radius;
+}
+
 GradientColor prepare_gradient_color(uint tag, uint color_space, Hsla solid, LinearColorStop colors[2]) {
     GradientColor output;
     if (tag == 0 || tag == 2) {
@@ -468,6 +493,8 @@ struct Quad {
     Hsla border_color;
     Corners corner_radii;
     Edges border_widths;
+    float smoothness;
+    uint pad;
 };
 
 struct QuadVertexOutput {
@@ -595,7 +622,12 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
     }
 
     // Signed distance of the point to the outside edge of the quad's border
-    float outer_sdf = quad_sdf_impl(corner_center_to_point, corner_radius);
+    float outer_sdf;
+    if (quad.smoothness > 0.0) {
+        outer_sdf = squircle_sdf(input.position.xy, quad.bounds, quad.corner_radii, quad.smoothness);
+    } else {
+        outer_sdf = quad_sdf_impl(corner_center_to_point, corner_radius);
+    }
 
     // Approximate signed distance of the point to the inside edge of the quad's
     // border. It is negative outside this edge (within the border), and
@@ -1134,6 +1166,10 @@ struct PolychromeSprite {
     Bounds content_mask;
     Corners corner_radii;
     AtlasTile tile;
+    float smoothness;
+    uint pad2;
+    uint pad3;
+    uint pad4;
 };
 
 struct PolychromeSpriteVertexOutput {
@@ -1170,7 +1206,13 @@ PolychromeSpriteVertexOutput polychrome_sprite_vertex(uint vertex_id: SV_VertexI
 float4 polychrome_sprite_fragment(PolychromeSpriteFragmentInput input): SV_Target {
     PolychromeSprite sprite = poly_sprites[input.sprite_id];
     float4 sample = t_sprite.Sample(s_sprite, input.tile_position);
-    float distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
+
+    float distance;
+    if (sprite.smoothness > 0.0) {
+        distance = squircle_sdf(input.position.xy, sprite.bounds, sprite.corner_radii, sprite.smoothness);
+    } else {
+        distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
+    }
 
     float4 color = sample;
     if ((sprite.grayscale & 0xFFu) != 0u) {

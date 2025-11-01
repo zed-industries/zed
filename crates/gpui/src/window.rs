@@ -2869,6 +2869,8 @@ impl Window {
             corner_radii: quad.corner_radii.scale(scale_factor),
             border_widths: quad.border_widths.scale(scale_factor),
             border_style: quad.border_style,
+            smoothness: quad.smoothness.clamp(0.0, 1.0),
+            pad: 0,
         });
     }
 
@@ -3072,6 +3074,10 @@ impl Window {
                 content_mask,
                 tile,
                 opacity,
+                smoothness: 0.0, // Emojis use circular corners
+                pad2: 0,
+                pad3: 0,
+                pad4: 0,
             });
         }
         Ok(())
@@ -3152,6 +3158,20 @@ impl Window {
         frame_index: usize,
         grayscale: bool,
     ) -> Result<()> {
+        self.paint_image_with_smoothness(bounds, corner_radii, data, frame_index, grayscale, 0.0)
+    }
+
+    /// Paint an image with squircle corners (smoothness > 0.0)
+    /// smoothness: 0.0 = circular corners, 0.5 = squircle, 1.0 = square corners
+    pub fn paint_image_with_smoothness(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
+        data: Arc<RenderImage>,
+        frame_index: usize,
+        grayscale: bool,
+        smoothness: f32,
+    ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
@@ -3188,6 +3208,10 @@ impl Window {
             corner_radii,
             tile,
             opacity,
+            smoothness: smoothness.clamp(0.0, 1.0),
+            pad2: 0,
+            pad3: 0,
+            pad4: 0,
         });
         Ok(())
     }
@@ -5044,6 +5068,8 @@ pub struct PaintQuad {
     pub border_color: Hsla,
     /// The style of the quad's borders.
     pub border_style: BorderStyle,
+    /// The smoothness of the corners (0.0 = circle, 0.5 = squircle, 1.0 = square).
+    pub smoothness: f32,
 }
 
 impl PaintQuad {
@@ -5078,6 +5104,14 @@ impl PaintQuad {
             ..self
         }
     }
+
+    /// Sets the corner smoothness (0.0 = circle, 0.5 = squircle, 1.0 = square).
+    pub fn smoothness(self, smoothness: f32) -> Self {
+        PaintQuad {
+            smoothness: smoothness.clamp(0.0, 1.0),
+            ..self
+        }
+    }
 }
 
 /// Creates a quad with the given parameters.
@@ -5096,6 +5130,7 @@ pub fn quad(
         border_widths: border_widths.into(),
         border_color: border_color.into(),
         border_style,
+        smoothness: 0.0,
     }
 }
 
@@ -5108,6 +5143,7 @@ pub fn fill(bounds: impl Into<Bounds<Pixels>>, background: impl Into<Background>
         border_widths: (0.).into(),
         border_color: transparent_black(),
         border_style: BorderStyle::default(),
+        smoothness: 0.0,
     }
 }
 
@@ -5124,5 +5160,6 @@ pub fn outline(
         border_widths: (1.).into(),
         border_color: border_color.into(),
         border_style,
+        smoothness: 0.0,
     }
 }
