@@ -573,7 +573,11 @@ impl LocalLspStore {
                 env.extend(settings.env.unwrap_or_default());
 
                 Ok(LanguageServerBinary {
-                    path: PathBuf::from(&settings.path.unwrap()),
+                    path: settings
+                        .path
+                        .as_ref()
+                        .map(|path| PathBuf::from(shellexpand::tilde(&path).as_ref()))
+                        .unwrap(),
                     env: Some(env),
                     arguments: settings
                         .arguments
