@@ -136,6 +136,38 @@ pub struct TerminalSettingsContent {
     /// Default: 45
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub minimum_contrast: Option<f32>,
+    /// Regexes used to identify paths for hyperlink navigation.
+    ///
+    /// Default: [
+    ///   // Python-style diagnostics
+    ///   ["File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)"],
+    ///   // Common path syntax with optional line, column, description, trailing punctuation, or
+    ///   // surrounding symbols or quotes
+    ///   [
+    ///     "(?x)",
+    ///     "# optionally starts with prefix symbols or quotes not part of `path`",
+    ///     "(?<paren>[(])?(?<brace>[{])?(?<bracket>[\\[])?(?<angle>[<])?(?<quote>[\"'`])?",
+    ///     "(?<path>[^ ]+? # `path` is the shortest sequence of any non-space character",
+    ///     "    # which may end with a line and optionally a column,",
+    ///     "    (?<line_column>:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))?",
+    ///     ")",
+    ///     "# which must be followed by,",
+    ///     "# matching closing symbols if any corresponding open symbols were found, then",
+    ///     "(?(<quote>)\\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\\]]?)(?(<angle>)[>]?)",
+    ///     "(?(<line_column>)",
+    ///     "    # if line/column matched, may include a description followed by trailing punctuation",
+    ///     "    (:[^ 0-9][^ ]*|[.,:)}\\]>]*)?|",
+    ///     "    # otherwise, may include trailing punctuation",
+    ///     "    (?<![.,:)}\\]>])[.,:)}\\]>]*",
+    ///     ")",
+    ///     "([ ]+|$) # and always includes trailing whitespace or end of line"
+    ///   ]
+    /// ]
+    pub path_hyperlink_regexes: Option<Vec<Vec<String>>>,
+    /// Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
+    ///
+    /// Default: 10
+    pub path_hyperlink_timeout_ms: Option<u64>,
 }
 
 /// Shell configuration to open the terminal with.
