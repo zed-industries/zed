@@ -1719,6 +1719,9 @@
         "allowed": true
       }
     },
+    "HTML+ERB": {
+      "language_servers": ["herb", "..."]
+    },
     "Java": {
       "prettier": {
         "allowed": true,
