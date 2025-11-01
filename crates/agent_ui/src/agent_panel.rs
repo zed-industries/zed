@@ -693,11 +693,11 @@ impl AgentPanel {
     }
 
     pub fn is_hidden(workspace: &Entity<Workspace>, cx: &App) -> bool {
-        workspace
-            .read(cx)
+        let workspace_read = workspace.read(cx);
+
+        workspace_read
             .panel::<AgentPanel>(cx)
             .map(|panel| {
-                let workspace_read = workspace.read(cx);
                 let panel_id = Entity::entity_id(&panel);
 
                 let is_visible = workspace_read.all_docks().iter().any(|dock| {
