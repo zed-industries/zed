@@ -704,7 +704,9 @@ impl LocalBufferStore {
                 anyhow::Ok(())
             })??;
 
-            buffer.update(cx, |buffer, _| buffer.encoding.set(encoding.get()))?;
+            buffer.update(cx, |buffer, _| {
+                buffer.update_encoding(encoding.get().into())
+            })?;
 
             Ok(buffer)
         })

@@ -463,16 +463,10 @@ pub mod encoding {
                     .unwrap();
 
                 let reload = buffer.update(cx, |buffer, cx| buffer.reload(cx));
-                // Since the encoding will be accessed in `reload`,
-                // the lock must be released before calling `reload`.
-                // By limiting the scope, we ensure that it is released
 
-                {
-                    let buffer = buffer.read(cx);
-
-                    let buffer_encoding = buffer.encoding.clone();
-                    buffer_encoding.set(encoding_from_name(&current_selection.clone()));
-                }
+                buffer.update(cx, |buffer, _| {
+                    buffer.update_encoding(encoding_from_name(&current_selection).into())
+                });
 
                 self.dismissed(window, cx);
 
@@ -560,9 +554,7 @@ pub mod encoding {
                             })
                         {
                             buffer
-                                .read_with(cx, |buffer, _| {
-                                    buffer.encoding.set(encoding);
-                                })
+                                .update(cx, |buffer, _| buffer.update_encoding(encoding.into()))
                                 .log_err();
                         }
                     })

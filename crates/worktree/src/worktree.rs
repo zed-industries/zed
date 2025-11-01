@@ -3085,7 +3085,7 @@ impl PartialEq for File {
             && self.entry_id == other.entry_id
             && self.is_local == other.is_local
             && self.is_private == other.is_private
-            && if let Some(encoding) = &self.encoding
+            && (if let Some(encoding) = &self.encoding
                 && let Some(other_encoding) = &other.encoding
             {
                 if encoding.get() != other_encoding.get() {
@@ -3095,7 +3095,7 @@ impl PartialEq for File {
                 }
             } else {
                 true
-            }
+            })
         {
             true
         } else {

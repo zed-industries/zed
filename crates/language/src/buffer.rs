@@ -128,7 +128,6 @@ pub struct Buffer {
     change_bits: Vec<rc::Weak<Cell<bool>>>,
     _subscriptions: Vec<gpui::Subscription>,
     pub encoding: Arc<Encoding>,
-    pub observe_file_encoding: Option<gpui::Subscription>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -1031,7 +1030,6 @@ impl Buffer {
             change_bits: Default::default(),
             _subscriptions: Vec::new(),
             encoding: Arc::new(Encoding::new(encodings::UTF_8)),
-            observe_file_encoding: None,
         }
     }
 
@@ -2937,15 +2935,9 @@ impl Buffer {
         !self.has_edits_since(&self.preview_version)
     }
 
-    /// Update the `encoding` field, whenever the `encoding` field of the file changes
-    pub fn update_encoding(&mut self) {
-        if let Some(file) = self.file() {
-            if let Some(encoding) = file.encoding() {
-                self.encoding.set(encoding.get());
-            } else {
-                self.encoding.set(encodings::UTF_8);
-            };
-        }
+    /// Update the buffer
+    pub fn update_encoding(&mut self, encoding: Encoding) {
+        self.encoding.set(encoding.get());
     }
 }
 

@@ -5,8 +5,8 @@ publish.workspace = true
 edition.workspace = true
 
 [dependencies]
-encoding_rs.workspace = true
 anyhow.workspace = true
+encoding_rs.workspace = true
 
 [lints]
 workspace = true
