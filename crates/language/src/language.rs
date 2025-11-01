@@ -1178,6 +1178,7 @@ pub struct Grammar {
     pub(crate) runnable_config: Option<RunnableConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
     pub outline_config: Option<OutlineConfig>,
+    pub(crate) folds_config: Option<FoldsConfig>,
     pub text_object_config: Option<TextObjectConfig>,
     pub embedding_config: Option<EmbeddingConfig>,
     pub(crate) injection_config: Option<InjectionConfig>,
@@ -1210,6 +1211,11 @@ pub struct OutlineConfig {
     pub open_capture_ix: Option<u32>,
     pub close_capture_ix: Option<u32>,
     pub annotation_capture_ix: Option<u32>,
+}
+
+#[derive(Debug)]
+pub struct FoldsConfig {
+    pub query: Option<Query>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1370,6 +1376,7 @@ impl Language {
                     highlights_config: None,
                     brackets_config: None,
                     outline_config: None,
+                    folds_config: None,
                     text_object_config: None,
                     embedding_config: None,
                     indents_config: None,
@@ -1425,6 +1432,11 @@ impl Language {
             self = self
                 .with_outline_query(query.as_ref())
                 .context("Error loading outline query")?;
+        }
+        if let Some(query) = queries.folds {
+            self = self
+                .with_folds_query(query.as_ref())
+                .context("Error loading folds query")?;
         }
         if let Some(query) = queries.embedding {
             self = self
@@ -1553,6 +1565,12 @@ impl Language {
                 annotation_capture_ix,
             });
         }
+        Ok(self)
+    }
+
+    pub fn with_folds_query(mut self, source: &str) -> Result<Self> {
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
+        self.grammar_mut()?.folds_config = Some(FoldsConfig { query: Some(query) });
         Ok(self)
     }
 
