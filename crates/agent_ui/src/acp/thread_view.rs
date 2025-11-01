@@ -4589,9 +4589,12 @@ impl AcpThreadView {
 
         let settings = AgentSettings::get_global(cx);
 
-        // Show notification if: window is NOT active (user switched apps) OR panel is hidden (can't see response)
         let window_is_inactive = !window.is_window_active();
-        let panel_is_hidden = self.is_agent_panel_hidden(cx);
+        let panel_is_hidden = self
+            .workspace
+            .upgrade()
+            .map(|workspace| AgentPanel::is_hidden(&workspace, cx))
+            .unwrap_or(true);
 
         let should_notify = window_is_inactive || panel_is_hidden;
 
@@ -4618,35 +4621,6 @@ impl AcpThreadView {
                 // Don't show anything
             }
         }
-    }
-
-    fn is_agent_panel_hidden(&self, cx: &App) -> bool {
-        use crate::AgentPanel;
-
-        self.workspace
-            .upgrade()
-            .and_then(|workspace| {
-                let workspace_read = workspace.read(cx);
-                let panel = workspace_read.panel::<AgentPanel>(cx)?;
-
-                // Check left dock
-                if let Some(left_panel) = workspace_read.left_dock().read(cx).visible_panel() {
-                    if left_panel.panel_id() == Entity::entity_id(&panel) {
-                        return Some(false);
-                    }
-                }
-
-                // Check right dock
-                if let Some(right_panel) = workspace_read.right_dock().read(cx).visible_panel() {
-                    if right_panel.panel_id() == Entity::entity_id(&panel) {
-                        return Some(false);
-                    }
-                }
-
-                // Panel is not visible in any dock
-                Some(true)
-            })
-            .unwrap_or(true)
     }
 
     fn pop_up(
