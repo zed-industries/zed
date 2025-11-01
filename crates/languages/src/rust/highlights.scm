@@ -41,6 +41,9 @@
       name: (identifier) @function.special)
   ])
 
+(macro_invocation
+  "!" @function.special)
+
 (macro_definition
   name: (identifier) @function.special.definition)
 
