@@ -214,7 +214,9 @@ pub mod git {
             #[action(deprecated_aliases = ["branches::OpenRecent"])]
             Branch,
             /// Opens the git stash selector.
-            ViewStash
+            ViewStash,
+            /// Opens the git worktree selector.
+            Worktree
         ]
     );
 }
