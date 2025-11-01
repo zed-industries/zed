@@ -1557,10 +1557,9 @@
         "((?<=[ ])|^)",
         // optionally starts with prefix symbols or quotes not part of path
         "(?<paren>[(])?(?<brace>[{])?(?<bracket>[\\[])?(?<angle>[<])?(?<quote>[\"'`])?",
-        // `path` is the shortest sequence of any non-space character, which is optionally
-        // preceded by Windows absolute path drive letter prefix, and followed by by a line, and
-        // optionally column, and/or suffix (description or trailing punctuation).
-        "(?<path>((\\\\\\\\\\?\\\\)?[a-zA-Z]:)?[^ ]+?",
+        // `path` is the shortest sequence of any non-space character, which followed by by a line
+        // and optionally a column and/or suffix (description or trailing punctuation).
+        "(?<path>[^ ]+?",
         "    (?=",
         "        (?<line_column>:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))",
         "        (?<suffix>",
@@ -1578,7 +1577,7 @@
         "(?x)",
         "((?<=[ ])|^)",
         "(?<paren>[(])?(?<brace>[{])?(?<bracket>[\\[])?(?<angle>[<])?(?<quote>[\"'`])?",
-        "(?<path>((\\\\\\\\\\?\\\\)?[a-zA-Z]:)?[^ ]+?",
+        "(?<path>[^ ]+?",
         "    (?=",
         "        (?<suffix>",
         "            (?(<quote>)\\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\\]]?)(?(<angle>)[>]?)",

@@ -2852,7 +2852,7 @@ const DEFAULT_PYTHON_FILE_LINE_REGEX: &str = r#"File "(?<path>[^"]+)", line (?P<
 const DEFAULT_LINE_COLUMN_REGEX: &str = r#"(?x)
     ((?<=[ ])|^)
     (?<paren>[(])?(?<brace>[{])?(?<bracket>[\[])?(?<angle>[<])?(?<quote>["'`])?
-    (?<path>((\\\\\?\\)?[a-zA-Z]:)?[^ ]+?
+    (?<path>[^ ]+?
         (?=
             (?<line_column>:+[0-9]+(:[0-9]+)?|:?\([0-9]+([,:][0-9]+)?\))
             (?<suffix>
@@ -2868,7 +2868,7 @@ const DEFAULT_LINE_COLUMN_REGEX: &str = r#"(?x)
 const DEFAULT_REGEX: &str = r#"(?x)
     ((?<=[ ])|^)
     (?<paren>[(])?(?<brace>[{])?(?<bracket>[\[])?(?<angle>[<])?(?<quote>["'`])?
-    (?<path>((\\\\\?\\)?[a-zA-Z]:)?[^ ]+?
+    (?<path>[^ ]+?
         (?=
             (?<suffix>
                 (?(<quote>)\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\]]?)(?(<angle>)[>]?)
