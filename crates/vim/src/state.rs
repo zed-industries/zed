@@ -713,12 +713,14 @@ impl VimGlobals {
 
         cx.observe_global::<SettingsStore>(move |cx| {
             let is_enabled = Vim::enabled(cx);
+
+            KeyBinding::set_vim_mode(cx, is_enabled);
+
             if was_enabled == Some(is_enabled) {
                 return;
             }
             was_enabled = Some(is_enabled);
             if is_enabled {
-                KeyBinding::set_vim_mode(cx, true);
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.show_namespace(Vim::NAMESPACE);
                 });
@@ -735,7 +737,6 @@ impl VimGlobals {
                     }
                 }
             } else {
-                KeyBinding::set_vim_mode(cx, false);
                 *Vim::globals(cx) = VimGlobals::default();
                 GlobalCommandPaletteInterceptor::clear(cx);
                 CommandPaletteFilter::update_global(cx, |filter, _| {

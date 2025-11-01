@@ -45,6 +45,30 @@ If you missed this, you can toggle vim mode on or off anytime by opening the com
 > }
 > ```
 
+## Using Vim Actions without Modal Editing
+
+Even when vim mode is **disabled**, all Vim actions (operators, text objects, and motions) are available for custom keybindings. This allows you to use Vim's powerful editing commands without entering modal editing mode.
+
+### Example: Binding Vim actions to custom keys
+
+```json [keymap.json]
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      // Delete inside quotes with Cmd+'
+      "cmd-'": [
+        "vim::PushDelete",
+        ["vim::PushObject", { "around": false }],
+        "vim::AnyQuotes"
+      ],
+      // Go to last modification with Cmd+.
+      "cmd-.": "vim::HelixGotoLastModification"
+    }
+  }
+]
+```
+
 ## Zed-specific features
 
 Zed is built on a modern foundation that (among other things) uses Tree-sitter and language servers to understand the content of the file you're editing and supports multiple cursors out of the box.
@@ -205,7 +229,6 @@ These text objects implement the behavior of the [mini.ai](https://github.com/ec
 #### Choosing Between Approaches
 
 - Use **AnyQuotes/AnyBrackets** if you:
-
   - Prefer traditional Vim behavior
   - Want consistent character-based selection prioritizing innermost delimiters
   - Need behavior that closely matches vanilla Vim's text objects
@@ -412,6 +435,7 @@ Vim mode adds several contexts to the `"Editor"` context:
 | vim_mode == waiting  | Waiting for an arbitrary key (e.g., after typing `f` or `t`)                                                                                                                       |
 | vim_mode == operator | Waiting for another binding to trigger (e.g., after typing `c` or `d`)                                                                                                             |
 | vim_operator         | Set to `none` unless `vim_mode == operator`, in which case it is set to the current operator's default keybinding (e.g., after typing `d`, `vim_operator == d`)                    |
+| vim_mode_off         | Indicates that Vim mode is disabled, but is still available for keybinds                                                                                                           |
 
 > **Note**: Contexts are matched only on one level at a time. So it is possible to use the expression `"Editor && vim_mode == normal"`, but `"Workspace && vim_mode == normal"` will never match because we set the vim context at the `"Editor"` level.
 

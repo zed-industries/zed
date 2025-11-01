@@ -55,7 +55,7 @@ impl Vim {
         let text = lookup_digraph(first_char, second_char, cx);
 
         self.pop_operator(window, cx);
-        if self.editor_input_enabled() {
+        if self.editor_input_enabled(cx) {
             self.update_editor(cx, |_, editor, cx| editor.insert(&text, window, cx));
         } else {
             self.input_ignored(text, window, cx);
@@ -210,7 +210,7 @@ impl Vim {
         }
         text.push_str(suffix);
 
-        if self.editor_input_enabled() {
+        if self.editor_input_enabled(cx) {
             self.update_editor(cx, |_, editor, cx| editor.insert(&text, window, cx));
         } else {
             self.input_ignored(text.into(), window, cx);
