@@ -59,7 +59,7 @@ pub(crate) struct ReleaseBundleJobs {
 }
 
 impl ReleaseBundleJobs {
-    pub fn jobs<'a>(&'a self) -> Vec<&'a NamedJob> {
+    pub fn jobs(&self) -> Vec<&NamedJob> {
         vec![
             &self.linux_aarch64,
             &self.linux_x86_64,
@@ -70,7 +70,7 @@ impl ReleaseBundleJobs {
         ]
     }
 
-    pub fn into_jobs<'a>(self) -> Vec<NamedJob> {
+    pub fn into_jobs(self) -> Vec<NamedJob> {
         vec![
             self.linux_aarch64,
             self.linux_x86_64,
