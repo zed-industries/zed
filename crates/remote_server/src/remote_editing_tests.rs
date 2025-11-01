@@ -35,6 +35,8 @@ use std::{
 use unindent::Unindent as _;
 use util::{path, rel_path::rel_path};
 
+use gpui::SharedString;
+
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());

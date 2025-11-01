@@ -399,7 +399,7 @@ impl LocalBufferStore {
         }
 
         let save = worktree.update(cx, |worktree, cx| {
-            worktree.write_file(path.clone(), text, line_ending, cx, (*encoding).clone())
+            worktree.write_file(path.clone(), text, line_ending, (*encoding).clone(), cx)
         });
 
         cx.spawn(async move |this, cx| {
@@ -643,10 +643,16 @@ impl LocalBufferStore {
 
             cx.spawn(async move |_, cx| {
                 let loaded_file = load_file_task.await?;
+                let background_executor = cx.background_executor().clone();
 
                 let buffer = cx.insert_entity(reservation, |_| {
                     Buffer::build(
-                        text::Buffer::new(ReplicaId::LOCAL, buffer_id, loaded_file.text),
+                        text::Buffer::new(
+                            ReplicaId::LOCAL,
+                            buffer_id,
+                            loaded_file.text,
+                            &background_executor,
+                        ),
                         Some(loaded_file.file),
                         Capability::ReadWrite,
                     )
@@ -658,7 +664,7 @@ impl LocalBufferStore {
 
         cx.spawn(async move |this, cx| {
             let buffer = match load_buffer.await {
-                Ok(buffer) => Ok(buffer),
+                Ok(buffer) => buffer,
                 Err(error) if is_not_found_error(&error) => cx.new(|cx| {
                     let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
                     let text_buffer = text::Buffer::new(

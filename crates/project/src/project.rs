@@ -5418,12 +5418,8 @@ impl Project {
                         rel_path.clone(),
                         Rope::from_str(&new_text, cx.background_executor()),
                         line_ending,
-                        cx,
                         Encoding::default(),
-                        new_text.into(),
-                        line_ending,
                         cx,
-                        Encoding::default(),
                     )
                 })?
                 .await

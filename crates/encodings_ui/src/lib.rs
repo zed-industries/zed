@@ -322,11 +322,10 @@ pub fn init(cx: &mut App) {
                     .detach();
             });
 
-            {
-                let force = workspace.encoding_options.force.get_mut();
-
-                *force = true;
-            }
+            workspace
+                .encoding_options
+                .force
+                .store(true, std::sync::atomic::Ordering::Release);
 
             let open_task = workspace.open_abs_path(path, OpenOptions::default(), window, cx);
             let weak_workspace = workspace.weak_handle();

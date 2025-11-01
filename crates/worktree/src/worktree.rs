@@ -737,8 +737,8 @@ impl Worktree {
         path: Arc<RelPath>,
         text: Rope,
         line_ending: LineEnding,
-        cx: &Context<Worktree>,
         encoding: Encoding,
+        cx: &Context<Worktree>,
     ) -> Task<Result<Arc<File>>> {
         match self {
             Worktree::Local(this) => this.write_file(path, text, line_ending, cx, encoding),
