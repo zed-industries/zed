@@ -2,7 +2,7 @@ use std::cell::RefCell;
 
 use gh_workflow::{Concurrency, Env, Expression};
 
-use crate::tasks::workflows::steps::NamedJob;
+use crate::tasks::workflows::{runners::Platform, steps::NamedJob};
 
 macro_rules! secret {
     ($secret_name:ident) => {
@@ -40,26 +40,31 @@ var!(AZURE_SIGNING_ENDPOINT);
 
 pub const GITHUB_SHA: &str = "${{ github.event.pull_request.head.sha || github.sha }}";
 
-pub fn mac_bundle_envs() -> Env {
-    Env::default()
-        .add("MACOS_CERTIFICATE", MACOS_CERTIFICATE)
-        .add("MACOS_CERTIFICATE_PASSWORD", MACOS_CERTIFICATE_PASSWORD)
-        .add("APPLE_NOTARIZATION_KEY", APPLE_NOTARIZATION_KEY)
-        .add("APPLE_NOTARIZATION_KEY_ID", APPLE_NOTARIZATION_KEY_ID)
-        .add("APPLE_NOTARIZATION_ISSUER_ID", APPLE_NOTARIZATION_ISSUER_ID)
-}
+pub fn bundle_envs(platform: Platform) -> Env {
+    let env = Env::default()
+        .add("CARGO_INCREMENTAL", 0)
+        .add("ZED_CLIENT_CHECKSUM_SEED", ZED_CLIENT_CHECKSUM_SEED)
+        .add("ZED_MINIDUMP_ENDPOINT", ZED_SENTRY_MINIDUMP_ENDPOINT);
 
-pub fn windows_bundle_envs() -> Env {
-    Env::default()
-        .add("AZURE_TENANT_ID", AZURE_SIGNING_TENANT_ID)
-        .add("AZURE_CLIENT_ID", AZURE_SIGNING_CLIENT_ID)
-        .add("AZURE_CLIENT_SECRET", AZURE_SIGNING_CLIENT_SECRET)
-        .add("ACCOUNT_NAME", AZURE_SIGNING_ACCOUNT_NAME)
-        .add("CERT_PROFILE_NAME", AZURE_SIGNING_CERT_PROFILE_NAME)
-        .add("ENDPOINT", AZURE_SIGNING_ENDPOINT)
-        .add("FILE_DIGEST", "SHA256")
-        .add("TIMESTAMP_DIGEST", "SHA256")
-        .add("TIMESTAMP_SERVER", "http://timestamp.acs.microsoft.com")
+    match platform {
+        Platform::Linux => env,
+        Platform::Mac => env
+            .add("MACOS_CERTIFICATE", MACOS_CERTIFICATE)
+            .add("MACOS_CERTIFICATE_PASSWORD", MACOS_CERTIFICATE_PASSWORD)
+            .add("APPLE_NOTARIZATION_KEY", APPLE_NOTARIZATION_KEY)
+            .add("APPLE_NOTARIZATION_KEY_ID", APPLE_NOTARIZATION_KEY_ID)
+            .add("APPLE_NOTARIZATION_ISSUER_ID", APPLE_NOTARIZATION_ISSUER_ID),
+        Platform::Windows => env
+            .add("AZURE_TENANT_ID", AZURE_SIGNING_TENANT_ID)
+            .add("AZURE_CLIENT_ID", AZURE_SIGNING_CLIENT_ID)
+            .add("AZURE_CLIENT_SECRET", AZURE_SIGNING_CLIENT_SECRET)
+            .add("ACCOUNT_NAME", AZURE_SIGNING_ACCOUNT_NAME)
+            .add("CERT_PROFILE_NAME", AZURE_SIGNING_CERT_PROFILE_NAME)
+            .add("ENDPOINT", AZURE_SIGNING_ENDPOINT)
+            .add("FILE_DIGEST", "SHA256")
+            .add("TIMESTAMP_DIGEST", "SHA256")
+            .add("TIMESTAMP_SERVER", "http://timestamp.acs.microsoft.com"),
+    }
 }
 
 pub(crate) fn one_workflow_per_non_main_branch() -> Concurrency {
