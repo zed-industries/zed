@@ -12,7 +12,7 @@ use fs::MTime;
 use itertools::Itertools as _;
 use std::path::PathBuf;
 
-use workspace::{ItemId, WorkspaceDb, WorkspaceId};
+use workspace::{ItemId, WORKSPACE_DB, WorkspaceDb, WorkspaceId};
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub(crate) struct SerializedEditor {
@@ -216,7 +216,11 @@ impl EditorDb {
     }
 
     query! {
-        pub async fn save_serialized_editor(item_id: ItemId, workspace_id: WorkspaceId, serialized_editor: SerializedEditor) -> Result<()> {
+        async fn save_serialized_editor_internal(
+            item_id: ItemId,
+            workspace_id: WorkspaceId,
+            serialized_editor: SerializedEditor
+        ) -> Result<()> {
             INSERT INTO editors
                 (item_id, workspace_id, path, buffer_path, contents, language, mtime_seconds, mtime_nanos)
             VALUES
@@ -231,6 +235,17 @@ impl EditorDb {
                 mtime_seconds = ?7,
                 mtime_nanos = ?8
         }
+    }
+
+    pub async fn save_serialized_editor(
+        &self,
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
+        serialized_editor: SerializedEditor,
+    ) -> Result<()> {
+        WORKSPACE_DB.ensure_workspace_row(workspace_id).await?;
+        self.save_serialized_editor_internal(item_id, workspace_id, serialized_editor)
+            .await
     }
 
     // Returns the scroll top row, and offset

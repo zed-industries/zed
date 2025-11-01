@@ -1179,6 +1179,13 @@ impl WorkspaceDb {
         }
     }
 
+    query! {
+        pub async fn ensure_workspace_row(workspace_id: WorkspaceId) -> Result<()> {
+            INSERT OR IGNORE INTO workspaces (workspace_id)
+            VALUES (?)
+        }
+    }
+
     fn recent_workspaces(
         &self,
     ) -> Result<Vec<(WorkspaceId, PathList, Option<RemoteConnectionId>)>> {
