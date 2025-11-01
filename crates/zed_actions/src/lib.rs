@@ -69,7 +69,7 @@ actions!(
 );
 
 actions!(
-    ai,
+    git,
     [
         /// Opens the custom git commit prompt for editing, creating it if needed.
         EditGitCommitPrompt,

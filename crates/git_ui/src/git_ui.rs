@@ -2,13 +2,13 @@ use std::any::Any;
 use std::fs as std_fs;
 use std::path::PathBuf;
 
-use fs as zed_fs;
 use ::settings::Settings;
 use ::settings::SettingsStore;
 use agent_settings::AgentSettings;
 use command_palette_hooks::CommandPaletteFilter;
 use commit_modal::CommitModal;
 use editor::{Editor, actions::DiffClipboardWithSelectionData};
+use fs as zed_fs;
 use ui::{
     Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, ParentElement, Render, Styled,
     StyledExt, div, h_flex, rems, v_flex,
@@ -32,7 +32,9 @@ use onboarding::GitOnboardingModal;
 use project::git_store::Repository;
 use project_diff::ProjectDiff;
 use ui::prelude::*;
-use workspace::{ModalView, OpenOptions, Workspace, notifications::DetachAndPromptErr};
+use workspace::{
+    ModalView, OpenOptions, WORKSPACE_DB, Workspace, notifications::DetachAndPromptErr,
+};
 use zed_actions;
 
 use crate::{git_panel::GitPanel, text_diff_view::TextDiffView};
@@ -864,6 +866,18 @@ fn edit_git_commit_prompt(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    if let Some(workspace_id) = workspace.database_id() {
+        cx.background_executor()
+            .spawn(async move {
+                if let Err(err) = WORKSPACE_DB.ensure_workspace_row(workspace_id).await {
+                    log::warn!(
+                        "failed to ensure workspace row before opening custom git prompt: {err:?}"
+                    );
+                }
+            })
+            .detach();
+    }
+
     let prompt_path: PathBuf = config_dir().join("commit_prompt.txt");
 
     if !prompt_path.exists() {
