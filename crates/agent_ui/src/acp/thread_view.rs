@@ -5936,10 +5936,10 @@ pub(crate) mod tests {
 
         let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
 
-        // Add thread view to workspace so we can control panel visibility
         add_to_workspace(thread_view.clone(), cx);
 
         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Hello", window, cx);
         });
