@@ -5596,7 +5596,7 @@ fn default_markdown_style(
     let theme_settings = ThemeSettings::get_global(cx);
     let colors = cx.theme().colors();
 
-    let buffer_font_size = TextSize::Small.rems(cx);
+    let buffer_font_size = theme_settings.agent_buffer_font_size(cx);
 
     let mut text_style = window.text_style();
     let line_height = buffer_font_size * 1.75;
@@ -5608,9 +5608,9 @@ fn default_markdown_style(
     };
 
     let font_size = if buffer_font {
-        TextSize::Small.rems(cx)
+        theme_settings.agent_buffer_font_size(cx)
     } else {
-        TextSize::Default.rems(cx)
+        theme_settings.agent_ui_font_size(cx)
     };
 
     let text_color = if muted_text {
