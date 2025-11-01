@@ -330,7 +330,6 @@ async fn zeta2_predict(
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    dbg!(&example);
     let worktree_path = example.setup_worktree().await?;
 
     cx.update(|cx| {
@@ -455,7 +454,7 @@ async fn zeta2_predict(
     println!("## Prediction\n");
     let response = response
         .unwrap()
-        .map(|r| r.debug_info.unwrap().model_response.clone())
+        .map(|r| r.debug_info.unwrap().model_response)
         .unwrap_or_else(|s| s);
     println!("{response}");
 
