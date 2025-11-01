@@ -1719,6 +1719,13 @@
         "allowed": true
       }
     },
+    "HTML+ERB": {
+      "formatter": {
+        "language_server": {
+          "name": "herb"
+        }
+      }
+    },
     "Java": {
       "prettier": {
         "allowed": true,
