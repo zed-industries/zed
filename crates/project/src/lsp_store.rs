@@ -10097,6 +10097,7 @@ impl LspStore {
                     source: completion.source,
                     documentation: None,
                     label: CodeLabel::default(),
+                    match_start: None,
                     insert_text_mode: None,
                     icon_path: None,
                     confirm: None,
@@ -12758,6 +12759,7 @@ async fn populate_labels_for_completions(
                     source: completion.source,
                     icon_path: None,
                     confirm: None,
+                    match_start: None,
                 });
             }
             None => {
@@ -12772,6 +12774,7 @@ async fn populate_labels_for_completions(
                     insert_text_mode: None,
                     icon_path: None,
                     confirm: None,
+                    match_start: None,
                 });
             }
         }

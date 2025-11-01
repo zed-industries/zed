@@ -2967,6 +2967,7 @@ impl CompletionProvider for KeyContextCompletionProvider {
         buffer: &Entity<language::Buffer>,
         buffer_position: language::Anchor,
         _trigger: editor::CompletionContext,
+        _text: Option<&str>,
         _window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> gpui::Task<anyhow::Result<Vec<project::CompletionResponse>>> {
@@ -2993,6 +2994,7 @@ impl CompletionProvider for KeyContextCompletionProvider {
                     documentation: None,
                     source: project::CompletionSource::Custom,
                     icon_path: None,
+                    match_start: None,
                     insert_text_mode: None,
                     confirm: None,
                 })
