@@ -1225,6 +1225,7 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) {
         let mut removed_ids = Vec::new();
+        let mut first_new_repo = true;
         for update in updated_git_repositories.iter() {
             if let Some((id, existing)) = self.repositories.iter().find(|(_, repo)| {
                 let existing_work_directory_abs_path =
@@ -1255,7 +1256,7 @@ impl GitStore {
                 let id = RepositoryId(next_repository_id.fetch_add(1, atomic::Ordering::Release));
                 let git_store = cx.weak_entity();
                 let repo = cx.new(|cx| {
-                    Repository::local(
+                    let mut repo = Repository::local(
                         id,
                         work_directory_abs_path.clone(),
                         dot_git_abs_path.clone(),
@@ -1265,20 +1266,22 @@ impl GitStore {
                         fs.clone(),
                         git_store,
                         cx,
-                    )
+                    );
+                    // trigger an empty `UpdateRepository` to ensure remote active_repo_id is set correctly
+                    if first_new_repo && let Some(updates_tx) = updates_tx.as_ref() {
+                        updates_tx
+                            .unbounded_send(DownstreamUpdate::UpdateRepository(repo.snapshot()))
+                            .ok();
+                        first_new_repo = false;
+                    }
+                    repo.schedule_scan(updates_tx.clone(), cx);
+                    repo
                 });
                 self._subscriptions
                     .push(cx.subscribe(&repo, Self::on_repository_event));
                 self._subscriptions
                     .push(cx.subscribe(&repo, Self::on_jobs_updated));
                 self.repositories.insert(id, repo.clone());
-                if let Some(updates_tx) = updates_tx.as_ref() {
-                    updates_tx
-                        .unbounded_send(DownstreamUpdate::UpdateRepository(
-                            repo.read(cx).snapshot().clone(),
-                        ))
-                        .ok();
-                }
                 cx.emit(GitStoreEvent::RepositoryAdded);
                 self.active_repo_id.get_or_insert_with(|| {
                     cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
