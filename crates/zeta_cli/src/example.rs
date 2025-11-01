@@ -193,6 +193,7 @@ impl NamedExample {
         }
     }
 
+    #[allow(unused)]
     pub async fn setup_worktree(&self) -> Result<PathBuf> {
         let worktrees_dir = env::current_dir()?.join("target").join("zeta-worktrees");
         let repos_dir = env::current_dir()?.join("target").join("zeta-repos");
@@ -202,7 +203,6 @@ impl NamedExample {
         let (repo_owner, repo_name) = self.repo_name()?;
 
         let repo_dir = repos_dir.join(repo_owner.as_ref()).join(repo_name.as_ref());
-        dbg!(&repo_dir);
         if !repo_dir.is_dir() {
             fs::create_dir_all(&repo_dir)?;
             run_git(&repo_dir, &["init"]).await?;
@@ -220,8 +220,6 @@ impl NamedExample {
         .await?;
 
         let worktree_path = worktrees_dir.join(&self.name);
-
-        dbg!(&worktree_path);
 
         if worktree_path.is_dir() {
             run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
@@ -245,7 +243,8 @@ impl NamedExample {
         Ok(worktree_path)
     }
 
-    fn repo_name(&self) -> Result<(Cow<str>, Cow<str>)> {
+    #[allow(unused)]
+    fn repo_name(&self) -> Result<(Cow<'_, str>, Cow<'_, str>)> {
         // git@github.com:owner/repo.git
         if self.example.repository_url.contains('@') {
             let (owner, repo) = self
