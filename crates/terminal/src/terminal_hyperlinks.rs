@@ -1,6 +1,7 @@
 use alacritty_terminal::{
     Term,
     event::EventListener,
+    grid::Dimensions,
     index::{Boundary, Column, Direction as AlacDirection, Point as AlacPoint},
     term::{
         cell::Flags,
@@ -10,7 +11,6 @@ use alacritty_terminal::{
 use fancy_regex::{Captures, Regex};
 use log::{info, warn};
 use std::{
-    iter,
     ops::{Index, Range},
     time::{Duration, Instant},
 };
@@ -63,6 +63,8 @@ impl RegexSearches {
     fn regex_path_match<T>(
         &mut self,
         term: &Term<T>,
+        line_start: AlacPoint,
+        line_end: AlacPoint,
         hovered: AlacPoint,
     ) -> Option<(String, Match)> {
         if self.path_hyperlink_regexes.is_empty() {
@@ -79,9 +81,45 @@ impl RegexSearches {
             ))
         };
 
-        // There does not appear to be an alacritty api that is "move to start of current wide
-        // char", so we have to do it ourselves.
-        let start_of_char = |point: AlacPoint| {
+        // This used to be: `let line = term.bounds_to_string(line_start, line_end)`, however, that
+        // api compresses tab characters into a single space, whereas we require a cell accurate
+        // string representation of the line. The below algorithm does this, but seems a bit odd.
+        // Maybe there is a clean api for doing this, but I couldn't find it.
+        const SPACERS: Flags = Flags::from_bits(
+            Flags::LEADING_WIDE_CHAR_SPACER.bits() | Flags::WIDE_CHAR_SPACER.bits(),
+        )
+        .unwrap();
+        let mut line = String::with_capacity(
+            (line_end.line.0 - line_start.line.0 + 1) as usize * term.grid().columns(),
+        );
+        line.push(term.grid()[line_start].c);
+        let mut last_non_space = 0;
+        for cell in term.grid().iter_from(line_start) {
+            if cell.point > line_end {
+                break;
+            }
+
+            if !cell.flags.intersects(SPACERS) {
+                match cell.c {
+                    ' ' | '\t' => line.push(' '),
+                    c @ _ => {
+                        line.push(c);
+                        last_non_space = line.len();
+                    }
+                };
+            }
+        }
+        let line = &line[..last_non_space];
+
+        let advance_point_by_str = |mut point: AlacPoint, s: &str| {
+            for _ in s.chars() {
+                point = term
+                    .expand_wide(point, AlacDirection::Right)
+                    .add(term, Boundary::Grid, 1);
+            }
+
+            // There does not appear to be an alacritty api that is
+            // "move to start of current wide char", so we have to do it ourselves.
             let flags = term.grid().index(point).flags;
             if flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
                 AlacPoint::new(point.line + 1, Column(0))
@@ -90,38 +128,6 @@ impl RegexSearches {
             } else {
                 point
             }
-        };
-
-        let line_start = term.line_search_left(hovered);
-        let line_end = term.line_search_right(hovered);
-
-        // This used to be: `let line = term.bounds_to_string(line_start, line_end)`, however, that
-        // api compresses tab characters into a single space, whereas we require a cell accurate
-        // string representation of the line. The below algorithm does this, but seems a bit odd.
-        // Maybe there is a clean api for doing this, but I couldn't find it.
-        let spacers: Flags = Flags::LEADING_WIDE_CHAR_SPACER | Flags::WIDE_CHAR_SPACER;
-        let line = iter::once(term.grid()[line_start].c)
-            .chain(
-                term.grid()
-                    .iter_from(line_start)
-                    .take_while(|cell| cell.point <= line_end)
-                    .filter(|cell| !cell.flags.intersects(spacers))
-                    .map(|cell| match cell.c {
-                        '\t' => ' ',
-                        c @ _ => c,
-                    }),
-            )
-            .collect::<String>()
-            .trim_ascii_end()
-            .to_string();
-
-        let advance_point_by_str = |mut point: AlacPoint, s: &str| {
-            for _ in s.chars() {
-                point = term
-                    .expand_wide(point, AlacDirection::Right)
-                    .add(term, Boundary::Grid, 1);
-            }
-            start_of_char(point)
         };
 
         let found_from_range = |path_range: Range<usize>, row: Option<u32>, column: Option<u32>| {
@@ -144,25 +150,25 @@ impl RegexSearches {
         };
 
         let found_from_captures = |captures: Captures| {
-            let Some(path_capture) = captures.name("path") else {
+            let Some(path) = captures.name("path") else {
                 return found_from_range(captures.get(0).unwrap().range(), None, None);
             };
 
-            let Some(line) = captures
-                .name("line")
-                .and_then(|line_capture| line_capture.as_str().parse().ok())
-            else {
-                return found_from_range(path_capture.range(), None, None);
+            let parse = |name: &str| {
+                captures
+                    .name(name)
+                    .and_then(|capture| capture.as_str().parse().ok())
             };
 
-            let Some(column) = captures
-                .name("column")
-                .and_then(|column_capture| column_capture.as_str().parse().ok())
-            else {
-                return found_from_range(path_capture.range(), Some(line), None);
+            let Some(line) = parse("line") else {
+                return found_from_range(path.range(), None, None);
             };
 
-            return found_from_range(path_capture.range(), Some(line), Some(column));
+            let Some(column) = parse("column") else {
+                return found_from_range(path.range(), Some(line), None);
+            };
+
+            return found_from_range(path.range(), Some(line), Some(column));
         };
 
         for regex in &mut self.path_hyperlink_regexes {
@@ -224,14 +230,26 @@ pub(super) fn find_from_grid_point<T: EventListener>(
         let url_match = min_index..=max_index;
 
         Some((url, true, url_match))
-    } else if let Some(url_match) = regex_match_at(term, point, &mut regex_searches.url_regex) {
-        let url = term.bounds_to_string(*url_match.start(), *url_match.end());
-        let (sanitized_url, sanitized_match) = sanitize_url_punctuation(url, url_match, term);
-        Some((sanitized_url, true, sanitized_match))
     } else {
-        regex_searches
-            .regex_path_match(&term, point)
-            .map(|(path, path_match)| (path, false, path_match))
+        let (line_start, line_end) = (term.line_search_left(point), term.line_search_right(point));
+
+        if let Some(url_match) = RegexIter::new(
+            line_start,
+            line_end,
+            AlacDirection::Right,
+            term,
+            &mut regex_searches.url_regex,
+        )
+        .find(|rm| rm.contains(&point))
+        {
+            let url = term.bounds_to_string(*url_match.start(), *url_match.end());
+            let (sanitized_url, sanitized_match) = sanitize_url_punctuation(url, url_match, term);
+            Some((sanitized_url, true, sanitized_match))
+        } else {
+            regex_searches
+                .regex_path_match(&term, line_start, line_end, point)
+                .map(|(path, path_match)| (path, false, path_match))
+        }
     };
 
     found_word.map(|(maybe_url_or_path, is_url, word_match)| {
@@ -305,11 +323,6 @@ fn sanitize_url_punctuation<T: EventListener>(
     } else {
         (sanitized_url, url_match)
     }
-}
-
-fn regex_match_at<T>(term: &Term<T>, point: AlacPoint, regex: &mut RegexSearch) -> Option<Match> {
-    let (start, end) = (term.line_search_left(point), term.line_search_right(point));
-    RegexIter::new(start, end, AlacDirection::Right, term, regex).find(|rm| rm.contains(&point))
 }
 
 #[cfg(any(test, feature = "bench-support"))]
