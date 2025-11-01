@@ -326,3 +326,11 @@ path = "examples/window_shadow.rs"
 [[example]]
 name = "grid_layout"
 path = "examples/grid_layout.rs"
+
+[[example]]
+name = "batched_primitives"
+path = "examples/batched_primitives.rs"
+
+[[example]]
+name = "regular_primitives"
+path = "examples/regular_primitives.rs"

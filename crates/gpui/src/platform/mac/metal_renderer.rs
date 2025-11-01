@@ -105,10 +105,12 @@ pub(crate) struct MetalRenderer {
     path_sprites_pipeline_state: metal::RenderPipelineState,
     shadows_pipeline_state: metal::RenderPipelineState,
     quads_pipeline_state: metal::RenderPipelineState,
+    instanced_rects_pipeline_state: metal::RenderPipelineState,
     underlines_pipeline_state: metal::RenderPipelineState,
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
     surfaces_pipeline_state: metal::RenderPipelineState,
+    instanced_lines_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     #[allow(clippy::arc_with_non_send_sync)]
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
@@ -216,6 +218,14 @@ impl MetalRenderer {
             "quad_fragment",
             MTLPixelFormat::BGRA8Unorm,
         );
+        let instanced_rects_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "instanced_rects",
+            "instanced_rect_vertex",
+            "instanced_rect_fragment",
+            MTLPixelFormat::BGRA8Unorm,
+        );
         let underlines_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -248,6 +258,15 @@ impl MetalRenderer {
             "surface_fragment",
             MTLPixelFormat::BGRA8Unorm,
         );
+        
+        let instanced_lines_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "instanced_lines",
+            "instanced_line_vertex",
+            "instanced_line_fragment",
+            MTLPixelFormat::BGRA8Unorm,
+        );
 
         let command_queue = device.new_command_queue();
         let sprite_atlas = Arc::new(MetalAtlas::new(device.clone()));
@@ -263,10 +282,12 @@ impl MetalRenderer {
             path_sprites_pipeline_state,
             shadows_pipeline_state,
             quads_pipeline_state,
+            instanced_rects_pipeline_state,
             underlines_pipeline_state,
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
             surfaces_pipeline_state,
+            instanced_lines_pipeline_state,
             unit_vertices,
             instance_buffer_pool,
             sprite_atlas,
@@ -522,6 +543,25 @@ impl MetalRenderer {
                     viewport_size,
                     command_encoder,
                 ),
+                PrimitiveBatch::InstancedRects(batches) => {
+                    self.draw_instanced_rects(
+                        batches,
+                        instance_buffer,
+                        &mut instance_offset,
+                        viewport_size,
+                        command_encoder,
+                    )
+                }
+                
+                PrimitiveBatch::InstancedLines(batches) => {
+                    self.draw_instanced_lines(
+                        batches,
+                        instance_buffer,
+                        &mut instance_offset,
+                        viewport_size,
+                        command_encoder,
+                    )
+                }
             };
             if !ok {
                 command_encoder.end_encoding();
@@ -754,6 +794,164 @@ impl MetalRenderer {
         *instance_offset = next_offset;
         true
     }
+
+    fn draw_instanced_rects(
+        &self,
+        batches: &[crate::InstancedRects],
+        instance_buffer: &mut InstanceBuffer,
+        instance_offset: &mut usize,
+        viewport_size: Size<DevicePixels>,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) -> bool {
+        // Bind pipeline and static vertex buffers once; stream instance chunks per batch
+        command_encoder.set_render_pipeline_state(&self.instanced_rects_pipeline_state);
+        command_encoder.set_vertex_buffer(
+            InstancedRectInputIndex::Vertices as u64,
+            Some(&self.unit_vertices),
+            0,
+        );
+
+        let mut ok_all = true;
+        for b in batches.iter() {
+            if b.rects.is_empty() {
+                continue;
+            }
+
+            // Set per-batch uniforms
+            command_encoder.set_vertex_bytes(
+                InstancedRectInputIndex::ViewportSize as u64,
+                std::mem::size_of_val(&viewport_size) as u64,
+                &viewport_size as *const Size<DevicePixels> as *const _,
+            );
+            command_encoder.set_vertex_bytes(
+                InstancedRectInputIndex::ContentMask as u64,
+                std::mem::size_of_val(&b.content_mask) as u64,
+                &b.content_mask as *const crate::ContentMask<crate::ScaledPixels> as *const _,
+            );
+            command_encoder.set_vertex_bytes(
+                InstancedRectInputIndex::Transform as u64,
+                std::mem::size_of_val(&b.transform) as u64,
+                &b.transform as *const crate::TransformationMatrix as *const _,
+            );
+
+            let total = b.rects.len();
+            let mut i = 0;
+            let stride = std::mem::size_of::<crate::InstancedRect>();
+            while i < total {
+                align_offset(instance_offset);
+                let bytes_avail = instance_buffer.size.saturating_sub(*instance_offset);
+                let max_fit = bytes_avail / stride;
+                if max_fit == 0 {
+                    ok_all = false;
+                    break;
+                }
+                // Place an upper bound to avoid excessively large copies.
+                let upper_cap = 32_768usize;
+                let to_copy = max_fit.min(upper_cap).min(total - i);
+                let slice = &b.rects[i..(i + to_copy)];
+
+                let bytes_len = std::mem::size_of_val(slice);
+                unsafe {
+                    let dst = (instance_buffer.metal_buffer.contents() as *mut u8)
+                        .add(*instance_offset);
+                    std::ptr::copy_nonoverlapping(slice.as_ptr() as *const u8, dst, bytes_len);
+                }
+
+                command_encoder.set_vertex_buffer(
+                    InstancedRectInputIndex::Rects as u64,
+                    Some(&instance_buffer.metal_buffer),
+                    *instance_offset as u64,
+                );
+
+                command_encoder.draw_primitives_instanced(
+                    metal::MTLPrimitiveType::Triangle,
+                    0,
+                    6,
+                    slice.len() as u64,
+                );
+                *instance_offset += bytes_len;
+                i += to_copy;
+            }
+
+            if !ok_all {
+                break;
+            }
+        }
+
+        ok_all
+    }
+
+    fn draw_instanced_lines(
+        &self,
+        batches: &[crate::InstancedLines],
+        instance_buffer: &mut InstanceBuffer,
+        instance_offset: &mut usize,
+        viewport_size: Size<DevicePixels>,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) -> bool {
+        if batches.is_empty() { return true; }
+        command_encoder.set_render_pipeline_state(&self.instanced_lines_pipeline_state);
+        command_encoder.set_vertex_buffer(
+            InstancedLineInputIndex::Vertices as u64,
+            Some(&self.unit_vertices),
+            0,
+        );
+        let mut ok_all = true;
+        for b in batches {
+            // per-batch uniforms
+            command_encoder.set_vertex_bytes(
+                InstancedLineInputIndex::ViewportSize as u64,
+                std::mem::size_of_val(&viewport_size) as u64,
+                &viewport_size as *const Size<DevicePixels> as *const _,
+            );
+            command_encoder.set_vertex_bytes(
+                InstancedLineInputIndex::ContentMask as u64,
+                std::mem::size_of_val(&b.content_mask) as u64,
+                &b.content_mask as *const crate::ContentMask<crate::ScaledPixels> as *const _,
+            );
+            command_encoder.set_vertex_bytes(
+                InstancedLineInputIndex::Transform as u64,
+                std::mem::size_of_val(&b.transform) as u64,
+                &b.transform as *const crate::TransformationMatrix as *const _,
+            );
+
+            let total = b.segments.len();
+            let mut i = 0;
+            let stride = std::mem::size_of::<crate::LineSegmentInstance>();
+            while i < total {
+                align_offset(instance_offset);
+                let bytes_avail = instance_buffer.size.saturating_sub(*instance_offset);
+                let max_fit = bytes_avail / stride;
+                if max_fit == 0 { ok_all = false; break; }
+                let upper_cap = 32_768usize;
+                let to_copy = max_fit.min(upper_cap).min(total - i);
+                let slice = &b.segments[i..(i + to_copy)];
+
+                let bytes_len = std::mem::size_of_val(slice);
+                unsafe {
+                    let dst = (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset);
+                    std::ptr::copy_nonoverlapping(slice.as_ptr() as *const u8, dst, bytes_len);
+                }
+                command_encoder.set_vertex_buffer(
+                    InstancedLineInputIndex::Segments as u64,
+                    Some(&instance_buffer.metal_buffer),
+                    *instance_offset as u64,
+                );
+                command_encoder.draw_primitives_instanced(
+                    metal::MTLPrimitiveType::Triangle,
+                    0,
+                    6,
+                    slice.len() as u64,
+                );
+                *instance_offset += bytes_len;
+                i += to_copy;
+            }
+            if !ok_all { break; }
+        }
+        ok_all
+    }
+
+    
 
     fn draw_paths_from_intermediate(
         &self,
@@ -1310,6 +1508,15 @@ enum QuadInputIndex {
 }
 
 #[repr(C)]
+enum InstancedRectInputIndex {
+    Vertices = 0,
+    Rects = 1,
+    ViewportSize = 2,
+    ContentMask = 3,
+    Transform = 4,
+}
+
+#[repr(C)]
 enum UnderlineInputIndex {
     Vertices = 0,
     Underlines = 1,
@@ -1340,6 +1547,17 @@ enum PathRasterizationInputIndex {
     Vertices = 0,
     ViewportSize = 1,
 }
+
+#[repr(C)]
+enum InstancedLineInputIndex {
+    Vertices = 0,
+    Segments = 1,
+    ViewportSize = 2,
+    ContentMask = 3,
+    Transform = 4,
+}
+
+ 
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)]

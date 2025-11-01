@@ -16,7 +16,8 @@ use crate::{
     SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
     TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, rems, size, transparent_black,
+    point, prelude::*, px, rems, size, transparent_black, InstancedRects, InstancedRect,
+    LineSegmentInstance, InstancedLines,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -1282,6 +1283,29 @@ impl Window {
     ) -> (Subscription, impl FnOnce() + use<>) {
         self.focus_listeners.insert((), value)
     }
+}
+
+/// A rectangle instance for batch painting via [`Window::paint_batched_rects`].
+/// Each instance describes a solid, axis-aligned rectangle to render.
+#[derive(Clone, Copy, Debug)]
+pub struct RectInstance {
+    /// The bounds of the rectangle in window (pixel) coordinates.
+    pub bounds: Bounds<Pixels>,
+    /// The solid fill color of the rectangle.
+    pub color: Hsla,
+}
+
+/// A line segment instance for batch painting via [`Window::paint_batched_lines`].
+#[derive(Clone, Copy, Debug)]
+pub struct LineInstance {
+    /// Line start point in window (pixel) coordinates.
+    pub p0: Point<Pixels>,
+    /// Line end point in window (pixel) coordinates.
+    pub p1: Point<Pixels>,
+    /// Line width in pixels.
+    pub width: f32,
+    /// The solid color of the line.
+    pub color: Hsla,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -2888,6 +2912,96 @@ impl Window {
             .scene
             .insert_primitive(path.scale(scale_factor));
     }
+
+    /// Paint many rectangles as a single batched primitive into the scene for the next frame.
+    /// This renders all rectangles in one GPU call instead of individual calls per rectangle.
+    /// See [`RectInstance`] to construct rectangle data.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn paint_batched_rects(&mut self, rects: &[RectInstance]) {
+        self.invalidator.debug_assert_paint();
+        if rects.is_empty() {
+            return;
+        }
+        let scale = self.scale_factor();
+        let content_mask = self.content_mask();
+
+        let mut scaled_rects: Vec<InstancedRect> = Vec::with_capacity(rects.len());
+        let mut min_x = f32::INFINITY;
+        let mut min_y = f32::INFINITY;
+        let mut max_x = f32::NEG_INFINITY;
+        let mut max_y = f32::NEG_INFINITY;
+        for r in rects {
+            let b = r.bounds.scale(scale);
+            min_x = min_x.min(b.origin.x.0);
+            min_y = min_y.min(b.origin.y.0);
+            max_x = max_x.max(b.origin.x.0 + b.size.width.0);
+            max_y = max_y.max(b.origin.y.0 + b.size.height.0);
+            scaled_rects.push(InstancedRect { bounds: b, color: r.color });
+        }
+        let union_bounds = Bounds {
+            origin: point(ScaledPixels(min_x), ScaledPixels(min_y)),
+            size: size(
+                ScaledPixels((max_x - min_x).max(0.0)),
+                ScaledPixels((max_y - min_y).max(0.0)),
+            ),
+        };
+
+        let batch = InstancedRects {
+            order: 0,
+            bounds: union_bounds,
+            content_mask: content_mask.scale(scale),
+            rects: scaled_rects,
+            transform: TransformationMatrix::unit(),
+        };
+        self.next_frame.scene.insert_primitive(batch);
+    }
+
+
+    /// Paint many line segments as a single batched primitive into the scene for the next frame.
+    /// Line segments are rendered as extruded rectangles (quads) with the given width and color.
+    /// Each segment is defined by start point, end point, width, and color.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn paint_batched_lines(&mut self, segments: &[LineInstance]) {
+        self.invalidator.debug_assert_paint();
+        if segments.is_empty() {
+            return;
+        }
+        let scale = self.scale_factor();
+        let content_mask = self.content_mask();
+        let mut scaled: Vec<LineSegmentInstance> = Vec::with_capacity(segments.len());
+        let mut min_x = f32::INFINITY;
+        let mut min_y = f32::INFINITY;
+        let mut max_x = f32::NEG_INFINITY;
+        let mut max_y = f32::NEG_INFINITY;
+        for seg in segments {
+            let sp0 = seg.p0.scale(scale);
+            let sp1 = seg.p1.scale(scale);
+            let half = seg.width * scale * 0.5;
+            min_x = min_x.min(sp0.x.0.min(sp1.x.0) - half);
+            min_y = min_y.min(sp0.y.0.min(sp1.y.0) - half);
+            max_x = max_x.max(sp0.x.0.max(sp1.x.0) + half);
+            max_y = max_y.max(sp0.y.0.max(sp1.y.0) + half);
+            scaled.push(LineSegmentInstance { p0: sp0.map(|x| x), p1: sp1.map(|x| x), width: seg.width * scale, color: seg.color });
+        }
+        let union_bounds = Bounds {
+            origin: point(ScaledPixels(min_x), ScaledPixels(min_y)),
+            size: size(
+                ScaledPixels((max_x - min_x).max(0.0)),
+                ScaledPixels((max_y - min_y).max(0.0)),
+            ),
+        };
+        let batch = InstancedLines {
+            order: 0,
+            bounds: union_bounds,
+            content_mask: content_mask.scale(scale),
+            segments: scaled,
+            transform: TransformationMatrix::unit(),
+        };
+        self.next_frame.scene.insert_primitive(batch);
+    }
+
 
     /// Paint an underline into the scene for the next frame at the current z-index.
     ///
