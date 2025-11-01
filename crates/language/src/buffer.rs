@@ -2046,6 +2046,11 @@ impl Buffer {
         }
     }
 
+    /// Marks the buffer as having a conflict regardless of current buffer state.
+    pub fn set_conflict(&mut self) {
+        self.has_conflict = true;
+    }
+
     /// Checks if the buffer and its file have both changed since the buffer
     /// was last saved or reloaded.
     pub fn has_conflict(&self) -> bool {
