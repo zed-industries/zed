@@ -1,6 +1,7 @@
 pub mod branch_diff;
 mod conflict_set;
 pub mod git_traversal;
+pub mod pending_op;
 
 use crate::{
     ProjectEnvironment, ProjectItem, ProjectPath,
@@ -31,8 +32,8 @@ use git::{
     },
     stash::{GitStash, StashEntry},
     status::{
-        DiffTreeType, FileStatus, GitSummary, StageStatus, StatusCode, TrackedStatus, TreeDiff,
-        TreeDiffStatus, UnmergedStatus, UnmergedStatusCode,
+        DiffTreeType, FileStatus, GitSummary, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
+        UnmergedStatus, UnmergedStatusCode,
     },
 };
 use gpui::{
@@ -44,6 +45,7 @@ use language::{
     proto::{deserialize_version, serialize_version},
 };
 use parking_lot::Mutex;
+use pending_op::{PendingOp, PendingOps, Status as PendingOpStatus};
 use postage::stream::Stream as _;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -244,90 +246,11 @@ pub struct MergeDetails {
     pub heads: Vec<Option<SharedString>>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PendingOperationStatus {
-    Staged,
-    Unstaged,
-    Reverted,
-    Unchanged,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PendingOperations {
-    repo_path: RepoPath,
-    // TODO: move this into StatusEntry
-    staging: StageStatus,
-    ops: Vec<PendingOperation>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PendingOperation {
-    id: usize,
-    finished: bool,
-    status: PendingOperationStatus,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PendingOperationsSummary {
-    finished: bool,
-    status: PendingOperationStatus,
-    count: usize,
-}
-
-impl Default for PendingOperationsSummary {
-    fn default() -> Self {
-        Self {
-            finished: false,
-            status: PendingOperationStatus::Unstaged,
-            count: 0,
-        }
-    }
-}
-
-impl sum_tree::ContextLessSummary for PendingOperationsSummary {
-    fn zero() -> Self {
-        Default::default()
-    }
-
-    fn add_summary(&mut self, rhs: &Self) {
-        self.finished = self.finished || rhs.finished;
-        self.count += rhs.count;
-        self.status = rhs.status;
-    }
-}
-
-impl sum_tree::Item for PendingOperations {
-    type Summary = PathSummary<PendingOperationsSummary>;
-
-    fn summary(&self, _: <Self::Summary as sum_tree::Summary>::Context<'_>) -> Self::Summary {
-        let mut item_summary = PendingOperationsSummary {
-            count: self.ops.len(),
-            ..Default::default()
-        };
-        if let Some(op) = self.ops.last() {
-            item_summary.finished = op.finished;
-            item_summary.status = op.status;
-        }
-        PathSummary {
-            max_path: self.repo_path.0.clone(),
-            item_summary,
-        }
-    }
-}
-
-impl sum_tree::KeyedItem for PendingOperations {
-    type Key = PathKey;
-
-    fn key(&self) -> Self::Key {
-        PathKey(self.repo_path.0.clone())
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepositorySnapshot {
     pub id: RepositoryId,
     pub statuses_by_path: SumTree<StatusEntry>,
-    pub pending_ops_by_path: SumTree<PendingOperations>,
+    pub pending_ops_by_path: SumTree<PendingOps>,
     pub work_directory_abs_path: Arc<Path>,
     pub path_style: PathStyle,
     pub branch: Option<Branch>,
@@ -3162,19 +3085,11 @@ impl RepositorySnapshot {
             .cloned()
     }
 
-    pub fn pending_ops(&self) -> impl Iterator<Item = PendingOperations> + '_ {
-        self.pending_ops_by_path.iter().cloned()
-    }
-
-    pub fn pending_ops_summary(&self) -> PendingOperationsSummary {
-        self.pending_ops_by_path.summary().item_summary
-    }
-
-    pub fn pending_ops_for_path(&self, path: &RepoPath) -> Vec<PendingOperation> {
+    pub fn pending_ops_for_path(&self, path: &RepoPath) -> Option<SumTree<PendingOp>> {
         self.pending_ops_by_path
             .get(&PathKey(path.0.clone()), ())
-            .map(|ops| ops.ops.clone())
-            .unwrap_or(Vec::new())
+            .map(|ops| &ops.ops)
+            .cloned()
     }
 
     pub fn abs_path_to_repo_path(&self, abs_path: &Path) -> Option<RepoPath> {
@@ -3892,7 +3807,7 @@ impl Repository {
     }
 
     pub fn stage_entries(
-        &self,
+        &mut self,
         entries: Vec<RepoPath>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
@@ -3911,6 +3826,12 @@ impl Repository {
             1 => Some(GitJobKey::WriteIndex(entries[0].clone())),
             _ => None,
         };
+
+        let entries_cloned = entries.clone();
+
+        for entry in &entries_cloned {
+            self.push_pending_op_for_path(entry, PendingOpStatus::Staged);
+        }
 
         cx.spawn(async move |this, cx| {
             for save_task in save_tasks {
@@ -3949,12 +3870,32 @@ impl Repository {
             })?
             .await??;
 
+            // this.update(cx, |this, _| {
+            //     for entry in &entries_cloned {
+            //         let key = PathKey(entry.0.clone());
+            //         let Some(pending) = this.snapshot.pending_ops_by_path.get(&key) else { continue; };
+            //         let Some(mut pending) = this.snapshot.pending_ops_by_path.remove(&key, ())
+            //         else {
+            //             continue;
+            //         };
+            //         for p in &mut pending.ops {
+            //             if p.id == *op_id {
+            //                 p.finished = true;
+            //                 break;
+            //             }
+            //         }
+            //         this.snapshot
+            //             .pending_ops_by_path
+            //             .insert_or_replace(pending, ());
+            //     }
+            // })?;
+
             Ok(())
         })
     }
 
     pub fn unstage_entries(
-        &self,
+        &mut self,
         entries: Vec<RepoPath>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
@@ -3973,6 +3914,10 @@ impl Repository {
             1 => Some(GitJobKey::WriteIndex(entries[0].clone())),
             _ => None,
         };
+
+        for entry in &entries {
+            self.push_pending_op_for_path(entry, PendingOpStatus::Unstaged);
+        }
 
         cx.spawn(async move |this, cx| {
             for save_task in save_tasks {
@@ -4015,7 +3960,7 @@ impl Repository {
         })
     }
 
-    pub fn stage_all(&self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
+    pub fn stage_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
         let to_stage = self
             .cached_status()
             .filter(|entry| !entry.status.staging().is_fully_staged())
@@ -4024,7 +3969,7 @@ impl Repository {
         self.stage_entries(to_stage, cx)
     }
 
-    pub fn unstage_all(&self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
+    pub fn unstage_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
         let to_unstage = self
             .cached_status()
             .filter(|entry| entry.status.staging().has_staged())
@@ -5294,6 +5239,29 @@ impl Repository {
 
     pub fn barrier(&mut self) -> oneshot::Receiver<()> {
         self.send_job(None, |_, _| async {})
+    }
+
+    fn push_pending_op_for_path(&mut self, path: &RepoPath, status: PendingOpStatus) {
+        let mut ops = Vec::new();
+        let existing_ops = self.snapshot.pending_ops_for_path(path);
+        let id = existing_ops
+            .as_ref()
+            .map(|ops| ops.summary().max_id)
+            .unwrap_or(0)
+            + 1;
+        if let Some(existing_ops) = existing_ops {
+            ops.append(&mut existing_ops.items(()));
+        }
+        ops.push(PendingOp {
+            id,
+            status,
+            finished: false,
+        });
+        let edit = sum_tree::Edit::Insert(PendingOps {
+            repo_path: path.clone(),
+            ops: SumTree::from_iter(ops, ()),
+        });
+        self.snapshot.pending_ops_by_path.edit(vec![edit], ());
     }
 }
 
