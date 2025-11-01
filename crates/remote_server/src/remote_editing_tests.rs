@@ -6,16 +6,17 @@ use agent::{AgentTool, ReadFileTool, ReadFileToolInput, ToolCallEventStream};
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};
-use language_model::LanguageModelToolResultContent;
 
+use encodings::Encoding;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
-use gpui::{AppContext as _, Entity, SemanticVersion, SharedString, TestAppContext};
+use gpui::{AppContext as _, Entity, SemanticVersion, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding, Rope,
     language_settings::{AllLanguageSettings, language_settings},
 };
+use language_model::LanguageModelToolResultContent;
 use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::{
@@ -33,6 +34,8 @@ use std::{
 };
 use unindent::Unindent as _;
 use util::{path, rel_path::rel_path};
+
+use gpui::SharedString;
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
@@ -122,6 +125,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         path!("/code/project1/src/main.rs").as_ref(),
         &Rope::from_str_small("fn main() {}"),
         Default::default(),
+        Encoding::default(),
     )
     .await
     .unwrap();
@@ -768,6 +772,7 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
         &PathBuf::from(path!("/code/project1/src/lib.rs")),
         &Rope::from_str_small("bangles"),
         LineEnding::Unix,
+        Encoding::default(),
     )
     .await
     .unwrap();
@@ -783,6 +788,7 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
         &PathBuf::from(path!("/code/project1/src/lib.rs")),
         &Rope::from_str_small("bloop"),
         LineEnding::Unix,
+        Encoding::default(),
     )
     .await
     .unwrap();

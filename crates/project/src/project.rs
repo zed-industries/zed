@@ -26,9 +26,12 @@ mod project_tests;
 mod environment;
 use buffer_diff::BufferDiff;
 use context_server_store::ContextServerStore;
+
+use encodings::{Encoding, EncodingOptions};
 pub use environment::ProjectEnvironmentEvent;
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
+
 pub mod search_history;
 mod yarn;
 
@@ -215,6 +218,7 @@ pub struct Project {
     settings_observer: Entity<SettingsObserver>,
     toolchain_store: Option<Entity<ToolchainStore>>,
     agent_location: Option<AgentLocation>,
+    pub encoding_options: EncodingOptions,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1225,6 +1229,7 @@ impl Project {
                 toolchain_store: Some(toolchain_store),
 
                 agent_location: None,
+                encoding_options: EncodingOptions::default(),
             }
         })
     }
@@ -1410,6 +1415,7 @@ impl Project {
 
                 toolchain_store: Some(toolchain_store),
                 agent_location: None,
+                encoding_options: EncodingOptions::default(),
             };
 
             // remote server -> local machine handlers
@@ -1663,7 +1669,9 @@ impl Project {
                 remotely_created_models: Arc::new(Mutex::new(RemotelyCreatedModels::default())),
                 toolchain_store: None,
                 agent_location: None,
+                encoding_options: EncodingOptions::default(),
             };
+
             project.set_role(role, cx);
             for worktree in worktrees {
                 project.add_worktree(&worktree, cx);
@@ -2712,7 +2720,7 @@ impl Project {
         }
 
         self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.open_buffer(path.into(), cx)
+            buffer_store.open_buffer(path.into(), &self.encoding_options, cx)
         })
     }
 
@@ -5394,7 +5402,9 @@ impl Project {
         };
         cx.spawn(async move |cx| {
             let file = worktree
-                .update(cx, |worktree, cx| worktree.load_file(&rel_path, cx))?
+                .update(cx, |worktree, cx| {
+                    worktree.load_file(&rel_path, &Default::default(), None, cx)
+                })?
                 .await
                 .context("Failed to load settings file")?;
 
@@ -5408,6 +5418,7 @@ impl Project {
                         rel_path.clone(),
                         Rope::from_str(&new_text, cx.background_executor()),
                         line_ending,
+                        Encoding::default(),
                         cx,
                     )
                 })?

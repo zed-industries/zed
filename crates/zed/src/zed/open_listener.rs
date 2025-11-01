@@ -653,6 +653,7 @@ mod tests {
         ipc::{self},
     };
     use editor::Editor;
+    use encodings::Encoding;
     use gpui::TestAppContext;
     use language::LineEnding;
     use remote::SshConnectionOptions;
@@ -863,6 +864,7 @@ mod tests {
                 Path::new(file1_path),
                 &Rope::from_str("content1", cx.background_executor()),
                 LineEnding::Unix,
+                Encoding::default(),
             )
             .await
             .unwrap();
@@ -877,6 +879,7 @@ mod tests {
                 Path::new(file2_path),
                 &Rope::from_str("content2", cx.background_executor()),
                 LineEnding::Unix,
+                Encoding::default(),
             )
             .await
             .unwrap();
