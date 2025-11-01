@@ -1302,7 +1302,9 @@ impl GitPanel {
             entries: entries.clone(),
             finished: false,
         });
+
         let repository = active_repository.read(cx);
+        dbg!(&repository.snapshot().pending_ops_by_path);
         self.update_counts(repository);
         cx.notify();
 
