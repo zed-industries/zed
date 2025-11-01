@@ -2849,38 +2849,27 @@ mod tests {
 const DEFAULT_PYTHON_FILE_LINE_REGEX: &str = r#"File "(?<path>[^"]+)", line (?P<line>[0-9]+)"#;
 
 #[cfg(any(test, feature = "bench-support"))]
-const DEFAULT_LINE_COLUMN_REGEX: &str = r#"(?x)
-    ((?<=[ ])|^)
+const DEFAULT_PATH_REGEX: &str = r#"(?x)
+    # optionally starts with prefix symbols or quotes not part of `path`
     (?<paren>[(])?(?<brace>[{])?(?<bracket>[\[])?(?<angle>[<])?(?<quote>["'`])?
-    (?<path>[^ ]+?
-        (?=
-            (?<line_column>:+[0-9]+(:[0-9]+)?|:?\([0-9]+([,:][0-9]+)?\))
-            (?<suffix>
-                (?(<quote>)\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\]]?)(?(<angle>)[>]?)
-                (:[^ 0-9][^ ]*|[.,:)}\]>]*)?([ ]+|$)
-            )
-        )
-        \k<line_column>
+    (?<path>[^ ]+? # `path` is the shortest sequence of any non-space character
+        # which may end with a line and optionally a column,
+        (?<line_column>:+[0-9]+(:[0-9]+)?|:?\([0-9]+([,:][0-9]+)?\))?
     )
-    \k<suffix>"#;
-
-#[cfg(any(test, feature = "bench-support"))]
-const DEFAULT_REGEX: &str = r#"(?x)
-    ((?<=[ ])|^)
-    (?<paren>[(])?(?<brace>[{])?(?<bracket>[\[])?(?<angle>[<])?(?<quote>["'`])?
-    (?<path>[^ ]+?
-        (?=
-            (?<suffix>
-                (?(<quote>)\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\]]?)(?(<angle>)[>]?)
-                (?<![.,:)}\]>])[.,:)}\]>]*([ ]+|$)
-            )
-        )
+    # which must be followed by,
+    # matching closing symbols if any corresponding open symbols were found, then
+    (?(<quote>)\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\]]?)(?(<angle>)[>]?)
+    (?(<line_column>)
+        # if line/column matched, may include a description followed by trailing punctuation
+        (:[^ 0-9][^ ]*|[.,:)}\]>]*)?|
+        # otherwise, may include trailing punctuation
+        (?<![.,:)}\]>])[.,:)}\]>]*
     )
-    \k<suffix>"#;
+    ([ ]+|$) # and always includes trailing whitespace or end of line"#;
 
 #[cfg(feature = "bench-support")]
 pub mod bench {
-    use super::{DEFAULT_LINE_COLUMN_REGEX, DEFAULT_PYTHON_FILE_LINE_REGEX, DEFAULT_REGEX};
+    use super::{DEFAULT_PATH_REGEX, DEFAULT_PYTHON_FILE_LINE_REGEX};
     use crate::terminal_hyperlinks::{RegexSearches, find_from_grid_point};
     use alacritty_terminal::{
         event::VoidListener,
@@ -2893,11 +2882,8 @@ pub mod bench {
         term: &Term<VoidListener>,
         point: AlacPoint,
     ) -> Option<(String, bool, Match)> {
-        const PATH_HYPERLINK_REGEXES: [&str; 3] = [
-            DEFAULT_PYTHON_FILE_LINE_REGEX,
-            DEFAULT_LINE_COLUMN_REGEX,
-            DEFAULT_REGEX,
-        ];
+        const PATH_HYPERLINK_REGEXES: [&str; 2] =
+            [DEFAULT_PYTHON_FILE_LINE_REGEX, DEFAULT_PATH_REGEX];
         const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
 
         thread_local! {

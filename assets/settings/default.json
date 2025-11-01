@@ -1545,47 +1545,30 @@
     // produced which is the case when the cursor is not over the path capture group. For best
     // performance it is recommended to order regexes from most common to least common. For
     // readability and documentation, each regex here is an array of strings which are collected
-    // into one regex string for use in terminal path hyperlink detection.
+    // into one multi-line regex string for use in terminal path hyperlink detection.
     "path_hyperlink_regexes": [
       // Python-style diagnostics
       ["File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)"],
-      // Common path syntax with optional line, column, description,
-      // trailing punctuation, or surrounding symbols or quotes
+      // Common path syntax with optional line, column, description, trailing punctuation, or
+      // surrounding symbols or quotes
       [
         "(?x)",
-        // must follow space or start of the line
-        "((?<=[ ])|^)",
-        // optionally starts with prefix symbols or quotes not part of path
+        "# optionally starts with prefix symbols or quotes not part of `path`",
         "(?<paren>[(])?(?<brace>[{])?(?<bracket>[\\[])?(?<angle>[<])?(?<quote>[\"'`])?",
-        // `path` is the shortest sequence of any non-space character, which followed by by a line
-        // and optionally a column and/or suffix (description or trailing punctuation).
-        "(?<path>[^ ]+?",
-        "    (?=",
-        "        (?<line_column>:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))",
-        "        (?<suffix>",
-        "            (?(<quote>)\\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\\]]?)(?(<angle>)[>]?)",
-        "            (:[^ 0-9][^ ]*|[.,:)}\\]>]*)?([ ]+|$)",
-        "        )",
-        "    )",
-        // appended with the line and column
-        "    \\k<line_column>",
+        "(?<path>[^ ]+? # `path` is the shortest sequence of any non-space character",
+        "    # which may end with a line and optionally a column,",
+        "    (?<line_column>:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))?",
         ")",
-        // followed by the suffix not part of the path
-        "\\k<suffix>"
-      ],
-      [
-        "(?x)",
-        "((?<=[ ])|^)",
-        "(?<paren>[(])?(?<brace>[{])?(?<bracket>[\\[])?(?<angle>[<])?(?<quote>[\"'`])?",
-        "(?<path>[^ ]+?",
-        "    (?=",
-        "        (?<suffix>",
-        "            (?(<quote>)\\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\\]]?)(?(<angle>)[>]?)",
-        "            (?<![.,:)}\\]>])[.,:)}\\]>]*([ ]+|$)",
-        "        )",
-        "    )",
+        "# which must be followed by,",
+        "# matching closing symbols if any corresponding open symbols were found, then",
+        "(?(<quote>)\\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\\]]?)(?(<angle>)[>]?)",
+        "(?(<line_column>)",
+        "    # if line/column matched, may include a description followed by trailing punctuation",
+        "    (:[^ 0-9][^ ]*|[.,:)}\\]>]*)?|",
+        "    # otherwise, may include trailing punctuation",
+        "    (?<![.,:)}\\]>])[.,:)}\\]>]*",
         ")",
-        "\\k<suffix>"
+        "([ ]+|$) # and always includes trailing whitespace or end of line"
       ]
     ],
     // Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.

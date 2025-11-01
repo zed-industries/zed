@@ -318,7 +318,7 @@ fn regex_match_at<T>(term: &Term<T>, point: AlacPoint, regex: &mut RegexSearch) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DEFAULT_LINE_COLUMN_REGEX, DEFAULT_PYTHON_FILE_LINE_REGEX, DEFAULT_REGEX};
+    use crate::{DEFAULT_PATH_REGEX, DEFAULT_PYTHON_FILE_LINE_REGEX};
     use alacritty_terminal::{
         event::VoidListener,
         grid::Dimensions,
@@ -1489,8 +1489,7 @@ mod tests {
                         CARGO_DIR_REGEX,
                         ISSUE_12338_REGEX,
                         MULTIPLE_SAME_LINE_REGEX,
-                        DEFAULT_LINE_COLUMN_REGEX,
-                        DEFAULT_REGEX,
+                        DEFAULT_PATH_REGEX,
                     ],
                     PATH_HYPERLINK_TIMEOUT_MS)
                 });

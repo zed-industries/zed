@@ -119,7 +119,7 @@ impl settings::Settings for TerminalSettings {
                 .path_hyperlink_regexes
                 .unwrap()
                 .into_iter()
-                .map(|regex| regex.into_iter().collect())
+                .map(|regex| regex.join("\n"))
                 .collect(),
             path_hyperlink_timeout_ms: user_content.path_hyperlink_timeout_ms.unwrap(),
         }
