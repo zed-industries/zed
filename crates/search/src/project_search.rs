@@ -2009,6 +2009,52 @@ impl Render for ProjectSearchBar {
             })
             .unwrap_or_else(|| "0/0".to_string());
 
+        let query_focus = search.query_editor.focus_handle(cx);
+
+        let toggle_all_excerpts_button = h_flex()
+            .h_full()
+            .ml_neg_1()
+            .mr_2()
+            .pr_1()
+            .border_r_1()
+            .border_color(theme_colors.border_variant)
+            .child({
+                let is_collapsed = self
+                    .active_project_search
+                    .as_ref()
+                    .map(|search| search.read(cx).results_collapsed)
+                    .unwrap_or(false);
+                let (icon, tooltip_label) = if is_collapsed {
+                    (IconName::ChevronUpDown, "Expand All Search Results")
+                } else {
+                    (IconName::ChevronDownUp, "Collapse All Search Results")
+                };
+                let query_focus = query_focus.clone();
+
+                IconButton::new("project-search-collapse-expand", icon)
+                    .shape(IconButtonShape::Square)
+                    .icon_size(IconSize::Small)
+                    .tooltip(move |_, cx| {
+                        Tooltip::for_action_in(
+                            tooltip_label,
+                            &ToggleAllSearchResults,
+                            &query_focus,
+                            cx,
+                        )
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        if let Some(search) = this.active_project_search.as_ref() {
+                            search.update(cx, |search, cx| {
+                                search.toggle_all_search_results(
+                                    &ToggleAllSearchResults,
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }
+                    }))
+            });
+
         let query_column = input_base_styles(InputPanel::Query)
             .on_action(cx.listener(|this, action, window, cx| this.confirm(action, window, cx)))
             .on_action(cx.listener(|this, action, window, cx| {
@@ -2017,6 +2063,7 @@ impl Render for ProjectSearchBar {
             .on_action(
                 cx.listener(|this, action, window, cx| this.next_history_query(action, window, cx)),
             )
+            .child(toggle_all_excerpts_button)
             .child(render_text_input(&search.query_editor, color_override, cx))
             .child(
                 h_flex()
@@ -2038,57 +2085,11 @@ impl Render for ProjectSearchBar {
                     )),
             );
 
-        let query_focus = search.query_editor.focus_handle(cx);
-
         let matches_column = h_flex()
             .ml_1()
             .pl_1p5()
             .border_l_1()
             .border_color(theme_colors.border_variant)
-            .child(
-                div()
-                    .pr_1p5()
-                    .mr_1p5()
-                    .border_r_1()
-                    .border_color(theme_colors.border_variant)
-                    .child({
-                        let is_collapsed = self
-                            .active_project_search
-                            .as_ref()
-                            .map(|search| search.read(cx).results_collapsed)
-                            .unwrap_or(false);
-
-                        let (icon, tooltip_label) = if is_collapsed {
-                            (IconName::ChevronUpDown, "Expand All Search Results")
-                        } else {
-                            (IconName::ChevronDownUp, "Collapse All Search Results")
-                        };
-
-                        let query_focus = query_focus.clone();
-
-                        IconButton::new("project-search-collapse-expand", icon)
-                            .shape(IconButtonShape::Square)
-                            .tooltip(move |_, cx| {
-                                Tooltip::for_action_in(
-                                    tooltip_label,
-                                    &ToggleAllSearchResults,
-                                    &query_focus,
-                                    cx,
-                                )
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                if let Some(search) = this.active_project_search.as_ref() {
-                                    search.update(cx, |search, cx| {
-                                        search.toggle_all_search_results(
-                                            &ToggleAllSearchResults,
-                                            window,
-                                            cx,
-                                        );
-                                    });
-                                }
-                            }))
-                    }),
-            )
             .child(render_action_button(
                 "project-search-nav-button",
                 IconName::ChevronLeft,
