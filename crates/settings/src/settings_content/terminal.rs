@@ -149,11 +149,12 @@ pub struct TerminalSettingsContent {
     ///     "((?<=[ ])|^)",
     ///     // optionally starts with prefix symbols or quotes not part of path
     ///     "(?<paren>[(])?(?<brace>[{])?(?<bracket>[\\[])?(?<angle>[<])?(?<quote>[\"'`])?",
-    ///     // `path` is the longest sequence of any non-space character, which
-    ///     "(?<path>[^ ]+",
-    ///     // is followed by a line, column, and suffix
+    ///     // `path` is the shortest sequence of any non-space character, which is optionally
+    ///     // preceded by Windows absolute path drive letter prefix, and followed by by a line, and
+    ///     // optionally column, and/or suffix (description or trailing punctuation).
+    ///     "(?<path>((\\\\\\\\\\?\\\\)?[a-zA-Z]:)?[^ ]+?",
     ///     "    (?=",
-    ///     "        (?<line_column>:+[0-9]+:[0-9]+|:?\\([0-9]+[,:][0-9]+\\))",
+    ///     "        (?<line_column>:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))",
     ///     "        (?<suffix>",
     ///     "            (?(<quote>)\\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\\]]?)(?(<angle>)[>]?)",
     ///     "            (:[^ 0-9][^ ]*|[.,:)}\\]>]*)?([ ]+|$)",
@@ -169,23 +170,7 @@ pub struct TerminalSettingsContent {
     ///     "(?x)",
     ///     "((?<=[ ])|^)",
     ///     "(?<paren>[(])?(?<brace>[{])?(?<bracket>[\\[])?(?<angle>[<])?(?<quote>[\"'`])?",
-    ///     "(?<path>[^ ]+",
-    ///     "    (?=",
-    ///     "        (?<line>:+[0-9]+|:?\\([0-9]+\\))",
-    ///     "        (?<suffix>",
-    ///     "            (?(<quote>)\\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\\]]?)(?(<angle>)[>]?)",
-    ///     "            (:[^ 0-9][^ ]*|[.,:)}\\]>]*)?([ ]+|$)",
-    ///     "        )",
-    ///     "    )",
-    ///     "    \\k<line>",
-    ///     ")",
-    ///     "\\k<suffix>"
-    ///   ],
-    ///   [
-    ///     "(?x)",
-    ///     "((?<=[ ])|^)",
-    ///     "(?<paren>[(])?(?<brace>[{])?(?<bracket>[\\[])?(?<angle>[<])?(?<quote>[\"'`])?",
-    ///     "(?<path>[^ ]+?",
+    ///     "(?<path>((\\\\\\\\\\?\\\\)?[a-zA-Z]:)?[^ ]+?",
     ///     "    (?=",
     ///     "        (?<suffix>",
     ///     "            (?(<quote>)\\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\\]]?)(?(<angle>)[>]?)",

@@ -318,10 +318,7 @@ fn regex_match_at<T>(term: &Term<T>, point: AlacPoint, regex: &mut RegexSearch) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        DEFAULT_LINE_COLUMN_REGEX, DEFAULT_LINE_REGEX, DEFAULT_PYTHON_FILE_LINE_REGEX,
-        DEFAULT_REGEX,
-    };
+    use crate::{DEFAULT_LINE_COLUMN_REGEX, DEFAULT_PYTHON_FILE_LINE_REGEX, DEFAULT_REGEX};
     use alacritty_terminal::{
         event::VoidListener,
         grid::Dimensions,
@@ -873,23 +870,22 @@ mod tests {
             }
         }
 
-        #[test]
-        fn default_prompts() {
-            // Windows command prompt
-            test_path!(r#"‹«C:\Users\someone\👉test»›>"#);
-            test_path!(r#"C:\Users\someone\test👉>"#);
-
-            // Windows PowerShell
-            test_path!(r#"PS ‹«C:\Users\someone\👉test\cool.rs»›>"#);
-            test_path!(r#"PS C:\Users\someone\test\cool.rs👉>"#);
-        }
-
-        #[cfg(target_os = "windows")]
         mod windows {
             // Lots of fun to be had with long file paths (verbatim) and UNC paths on Windows.
             // See <https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation>
             // See <https://users.rust-lang.org/t/understanding-windows-paths/58583>
             // See <https://github.com/rust-lang/cargo/issues/13919>
+
+            #[test]
+            fn default_prompts() {
+                // Windows command prompt
+                test_path!(r#"‹«C:\Users\someone\👉test»›>"#);
+                test_path!(r#"C:\Users\someone\test👉>"#);
+
+                // Windows PowerShell
+                test_path!(r#"PS ‹«C:\Users\someone\👉test\cool.rs»›>"#);
+                test_path!(r#"PS C:\Users\someone\test\cool.rs👉>"#);
+            }
 
             #[test]
             fn unc() {
@@ -899,18 +895,12 @@ mod tests {
 
             mod issues {
                 #[test]
-                #[should_panic(
-                    expected = r#"Path = «C:\\test\\cool.rs», at grid cells (0, 0)..=(6, 0)"#
-                )]
                 fn issue_verbatim() {
                     test_path!(r#"‹«\\?\C:\👉test\cool.rs»›"#);
                     test_path!(r#"‹«\\?\C:\test\cool👉.rs»›"#);
                 }
 
                 #[test]
-                #[should_panic(
-                    expected = r#"Path = «\\\\server\\share\\test\\cool.rs», at grid cells (0, 0)..=(10, 2)"#
-                )]
                 fn issue_verbatim_unc() {
                     test_path!(r#"‹«\\?\UNC\server\share\👉test\cool.rs»›"#);
                     test_path!(r#"‹«\\?\UNC\server\share\test\cool👉.rs»›"#);
@@ -1285,15 +1275,6 @@ mod tests {
             iri_or_path = path.to_string_lossy().into_owned();
         }
 
-        if cfg!(windows) {
-            // Handle verbatim and UNC paths for Windows
-            if let Some(stripped) = iri_or_path.strip_prefix(r#"\\?\UNC\"#) {
-                iri_or_path = format!(r#"\\{stripped}"#);
-            } else if let Some(stripped) = iri_or_path.strip_prefix(r#"\\?\"#) {
-                iri_or_path = stripped.to_string();
-            }
-        }
-
         let hovered_grid_point = hovered_grid_point.expect("Missing hovered point (👉 or 👈)");
         let hovered_char = term.grid().index(hovered_grid_point).c;
         (
@@ -1509,7 +1490,6 @@ mod tests {
                         ISSUE_12338_REGEX,
                         MULTIPLE_SAME_LINE_REGEX,
                         DEFAULT_LINE_COLUMN_REGEX,
-                        DEFAULT_LINE_REGEX,
                         DEFAULT_REGEX,
                     ],
                     PATH_HYPERLINK_TIMEOUT_MS)

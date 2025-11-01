@@ -2852,9 +2852,9 @@ const DEFAULT_PYTHON_FILE_LINE_REGEX: &str = r#"File "(?<path>[^"]+)", line (?P<
 const DEFAULT_LINE_COLUMN_REGEX: &str = r#"(?x)
     ((?<=[ ])|^)
     (?<paren>[(])?(?<brace>[{])?(?<bracket>[\[])?(?<angle>[<])?(?<quote>["'`])?
-    (?<path>[^ ]+
+    (?<path>((\\\\\?\\)?[a-zA-Z]:)?[^ ]+?
         (?=
-            (?<line_column>:+[0-9]+:[0-9]+|:?\([0-9]+[,:][0-9]+\))
+            (?<line_column>:+[0-9]+(:[0-9]+)?|:?\([0-9]+([,:][0-9]+)?\))
             (?<suffix>
                 (?(<quote>)\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\]]?)(?(<angle>)[>]?)
                 (:[^ 0-9][^ ]*|[.,:)}\]>]*)?([ ]+|$)
@@ -2865,26 +2865,10 @@ const DEFAULT_LINE_COLUMN_REGEX: &str = r#"(?x)
     \k<suffix>"#;
 
 #[cfg(any(test, feature = "bench-support"))]
-const DEFAULT_LINE_REGEX: &str = r#"(?x)
-    ((?<=[ ])|^)
-    (?<paren>[(])?(?<brace>[{])?(?<bracket>[\[])?(?<angle>[<])?(?<quote>["'`])?
-    (?<path>[^ ]+
-        (?=
-            (?<line>:+[0-9]+|:?\([0-9]+\))
-            (?<suffix>
-                (?(<quote>)\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\]]?)(?(<angle>)[>]?)
-                (:[^ 0-9][^ ]*|[.,:)}\]>]*)?([ ]+|$)
-            )
-        )
-        \k<line>
-    )
-    \k<suffix>"#;
-
-#[cfg(any(test, feature = "bench-support"))]
 const DEFAULT_REGEX: &str = r#"(?x)
     ((?<=[ ])|^)
     (?<paren>[(])?(?<brace>[{])?(?<bracket>[\[])?(?<angle>[<])?(?<quote>["'`])?
-    (?<path>[^ ]+?
+    (?<path>((\\\\\?\\)?[a-zA-Z]:)?[^ ]+?
         (?=
             (?<suffix>
                 (?(<quote>)\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\]]?)(?(<angle>)[>]?)
@@ -2896,10 +2880,7 @@ const DEFAULT_REGEX: &str = r#"(?x)
 
 #[cfg(feature = "bench-support")]
 pub mod bench {
-    use super::{
-        DEFAULT_LINE_COLUMN_REGEX, DEFAULT_LINE_REGEX, DEFAULT_PYTHON_FILE_LINE_REGEX,
-        DEFAULT_REGEX,
-    };
+    use super::{DEFAULT_LINE_COLUMN_REGEX, DEFAULT_PYTHON_FILE_LINE_REGEX, DEFAULT_REGEX};
     use crate::terminal_hyperlinks::{RegexSearches, find_from_grid_point};
     use alacritty_terminal::{
         event::VoidListener,
@@ -2912,10 +2893,9 @@ pub mod bench {
         term: &Term<VoidListener>,
         point: AlacPoint,
     ) -> Option<(String, bool, Match)> {
-        const PATH_HYPERLINK_REGEXES: [&str; 4] = [
+        const PATH_HYPERLINK_REGEXES: [&str; 3] = [
             DEFAULT_PYTHON_FILE_LINE_REGEX,
             DEFAULT_LINE_COLUMN_REGEX,
-            DEFAULT_LINE_REGEX,
             DEFAULT_REGEX,
         ];
         const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
