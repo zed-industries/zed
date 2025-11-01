@@ -5114,19 +5114,21 @@ impl EditorElement {
                 cx,
             )
         });
-        let Some((position, hover_popovers)) = hover_popovers else {
+        let Some((popover_position, hover_popovers)) = hover_popovers else {
             return;
         };
 
         // This is safe because we check on layout whether the required row is available
-        let hovered_row_layout =
-            &line_layouts[position.row().minus(visible_display_row_range.start) as usize];
+        let hovered_row_layout = &line_layouts[popover_position
+            .row()
+            .minus(visible_display_row_range.start)
+            as usize];
 
         // Compute Hovered Point
-        let x = hovered_row_layout.x_for_index(position.column() as usize)
+        let x = hovered_row_layout.x_for_index(popover_position.column() as usize)
             - Pixels::from(scroll_pixel_position.x);
         let y = Pixels::from(
-            position.row().as_f64() * ScrollPixelOffset::from(line_height)
+            popover_position.row().as_f64() * ScrollPixelOffset::from(line_height)
                 - scroll_pixel_position.y,
         );
         let hovered_point = content_origin + point(x, y);

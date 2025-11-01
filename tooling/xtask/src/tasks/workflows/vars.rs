@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use gh_workflow::{Env, Expression};
+use gh_workflow::{Concurrency, Env, Expression};
 
 use crate::tasks::workflows::steps::NamedJob;
 
@@ -60,6 +60,12 @@ pub fn windows_bundle_envs() -> Env {
         .add("FILE_DIGEST", "SHA256")
         .add("TIMESTAMP_DIGEST", "SHA256")
         .add("TIMESTAMP_SERVER", "http://timestamp.acs.microsoft.com")
+}
+
+pub(crate) fn one_workflow_per_non_main_branch() -> Concurrency {
+    Concurrency::default()
+        .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}")
+        .cancel_in_progress(true)
 }
 
 // Represents a pattern to check for changed files and corresponding output variable

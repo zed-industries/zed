@@ -1141,7 +1141,8 @@ impl Item for TerminalView {
         let pid = terminal.pid_getter()?.fallback_pid();
 
         Some(TabTooltipContent::Custom(Box::new(move |_window, cx| {
-            cx.new(|_| TerminalTooltip::new(title.clone(), pid)).into()
+            cx.new(|_| TerminalTooltip::new(title.clone(), pid.as_u32()))
+                .into()
         })))
     }
 

@@ -95,6 +95,7 @@ pub fn upload_artifact(name: &str, path: &str) -> Step<Use> {
         )
         .add_with(("name", name))
         .add_with(("path", path))
+        .add_with(("if-no-files-found", "error"))
 }
 
 pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
@@ -156,11 +157,15 @@ pub(crate) struct NamedJob {
 // }
 
 pub(crate) fn release_job(deps: &[&NamedJob]) -> Job {
-    let job = Job::default()
+    dependant_job(deps)
         .cond(Expression::new(
             "github.repository_owner == 'zed-industries'",
         ))
-        .timeout_minutes(60u32);
+        .timeout_minutes(60u32)
+}
+
+pub(crate) fn dependant_job(deps: &[&NamedJob]) -> Job {
+    let job = Job::default();
     if deps.len() > 0 {
         job.needs(deps.iter().map(|j| j.name.clone()).collect::<Vec<_>>())
     } else {
