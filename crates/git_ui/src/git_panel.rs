@@ -3852,19 +3852,46 @@ impl GitPanel {
         &self,
         ix: usize,
         header: &GitHeaderEntry,
-        _: bool,
-        _: &Window,
-        _: &Context<Self>,
+        has_write_access: bool,
+        _window: &Window,
+        cx: &Context<Self>,
     ) -> AnyElement {
         let id: ElementId = ElementId::Name(format!("header_{}", ix).into());
+        let checkbox_id: ElementId = ElementId::Name(format!("header_{}_checkbox", ix).into());
+        let toggle_state = self.header_state(header.header);
+        let section = header.header;
+        let weak = cx.weak_entity();
 
         h_flex()
             .id(id)
             .h(self.list_item_height())
             .w_full()
-            .items_end()
-            .px(rems(0.75)) // ~12px
+            .items_center()
+            .px(rems(0.2)) // ~ 3px
             .pb(rems(0.3125)) // ~ 5px
+            .child(
+                div().flex_none().occlude().cursor_pointer().child(
+                    Checkbox::new(checkbox_id, toggle_state)
+                        .disabled(!has_write_access)
+                        .fill()
+                        .elevation(ElevationIndex::Surface)
+                        .on_click_ext(move |_, _, window, cx| {
+                            if !has_write_access {
+                                return;
+                            }
+
+                            weak.update(cx, |this, cx| {
+                                this.toggle_staged_for_entry(
+                                    &GitListEntry::Header(GitHeaderEntry { header: section }),
+                                    window,
+                                    cx,
+                                );
+                                cx.stop_propagation();
+                            })
+                            .ok();
+                        }),
+                ),
+            )
             .child(
                 Label::new(header.title())
                     .color(Color::Muted)
