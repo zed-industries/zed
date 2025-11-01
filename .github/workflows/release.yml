@@ -3,10 +3,7 @@
 name: release
 env:
   CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: '0'
   RUST_BACKTRACE: '1'
-  ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-  ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
 on:
   push:
     tags:
@@ -177,11 +174,15 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     timeout-minutes: 60
-  bundle_linux_arm64:
+  bundle_linux_aarch64:
     needs:
     - run_tests_linux
     - check_scripts
     runs-on: namespace-profile-8x32-ubuntu-2004-arm-m4
+    env:
+      CARGO_INCREMENTAL: 0
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -221,6 +222,10 @@ jobs:
     - run_tests_linux
     - check_scripts
     runs-on: namespace-profile-32x64-ubuntu-2004
+    env:
+      CARGO_INCREMENTAL: 0
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -255,12 +260,15 @@ jobs:
       zed: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
       remote-server: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
     timeout-minutes: 60
-  bundle_mac_arm64:
+  bundle_mac_aarch64:
     needs:
     - run_tests_mac
     - check_scripts
     runs-on: self-mini-macos
     env:
+      CARGO_INCREMENTAL: 0
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
       APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
@@ -282,7 +290,7 @@ jobs:
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
       shell: bash -euxo pipefail {0}
-    - name: run_bundling::bundle_mac
+    - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac aarch64-apple-darwin
       shell: bash -euxo pipefail {0}
     - name: '@actions/upload-artifact Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg'
@@ -307,6 +315,9 @@ jobs:
     - check_scripts
     runs-on: self-mini-macos
     env:
+      CARGO_INCREMENTAL: 0
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
       APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
@@ -328,7 +339,7 @@ jobs:
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
       shell: bash -euxo pipefail {0}
-    - name: run_bundling::bundle_mac
+    - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac x86_64-apple-darwin
       shell: bash -euxo pipefail {0}
     - name: '@actions/upload-artifact Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg'
@@ -347,12 +358,15 @@ jobs:
       zed: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
       remote-server: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-macos-x86_64.gz
     timeout-minutes: 60
-  bundle_windows_arm64:
+  bundle_windows_aarch64:
     needs:
     - run_tests_windows
     - check_scripts
     runs-on: self-32vcpu-windows-2022
     env:
+      CARGO_INCREMENTAL: 0
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
       AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
       AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
@@ -371,7 +385,7 @@ jobs:
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
-    - name: run_bundling::bundle_windows
+    - name: run_bundling::bundle_windows::bundle_windows
       run: script/bundle-windows.ps1 -Architecture aarch64
       shell: pwsh
       working-directory: ${{ env.ZED_WORKSPACE }}
@@ -390,6 +404,9 @@ jobs:
     - check_scripts
     runs-on: self-32vcpu-windows-2022
     env:
+      CARGO_INCREMENTAL: 0
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
       AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
       AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
@@ -408,7 +425,7 @@ jobs:
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
-    - name: run_bundling::bundle_windows
+    - name: run_bundling::bundle_windows::bundle_windows
       run: script/bundle-windows.ps1 -Architecture x86_64
       shell: pwsh
       working-directory: ${{ env.ZED_WORKSPACE }}
@@ -424,35 +441,35 @@ jobs:
   upload_release_assets:
     needs:
     - create_draft_release
-    - bundle_linux_arm64
+    - bundle_linux_aarch64
     - bundle_linux_x86_64
-    - bundle_mac_arm64
+    - bundle_mac_aarch64
     - bundle_mac_x86_64
-    - bundle_windows_arm64
+    - bundle_windows_aarch64
     - bundle_windows_x86_64
     runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
-    - name: release::upload_release_assets::download_workflow_artifacts
+    - name: release::download_workflow_artifacts
       uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
       with:
         path: ./artifacts/
     - name: ls -lR ./artifacts
       run: ls -lR ./artifacts
       shell: bash -euxo pipefail {0}
-    - name: release::upload_release_assets::prep_release_artifacts
+    - name: release::prep_release_artifacts
       run: |-
         mkdir -p release-artifacts/
 
         mv ./artifacts/${{ needs.bundle_mac_x86_64.outputs.zed }}/* release-artifacts/Zed-x86_64.dmg
-        mv ./artifacts/${{ needs.bundle_mac_arm64.outputs.zed }}/* release-artifacts/Zed-aarch64.dmg
+        mv ./artifacts/${{ needs.bundle_mac_aarch64.outputs.zed }}/* release-artifacts/Zed-aarch64.dmg
         mv ./artifacts/${{ needs.bundle_windows_x86_64.outputs.zed }}/* release-artifacts/Zed-x86_64.exe
-        mv ./artifacts/${{ needs.bundle_windows_arm64.outputs.zed }}/* release-artifacts/Zed-aarch64.exe
-        mv ./artifacts/${{ needs.bundle_linux_arm64.outputs.zed }}/* release-artifacts/zed-linux-aarch64.tar.gz
+        mv ./artifacts/${{ needs.bundle_windows_aarch64.outputs.zed }}/* release-artifacts/Zed-aarch64.exe
+        mv ./artifacts/${{ needs.bundle_linux_aarch64.outputs.zed }}/* release-artifacts/zed-linux-aarch64.tar.gz
         mv ./artifacts/${{ needs.bundle_linux_x86_64.outputs.zed }}/* release-artifacts/zed-linux-x86_64.tar.gz
         mv ./artifacts/${{ needs.bundle_linux_x86_64.outputs.remote-server }}/* release-artifacts/zed-remote-server-linux-x86_64.gz
-        mv ./artifacts/${{ needs.bundle_linux_arm64.outputs.remote-server }}/* release-artifacts/zed-remote-server-linux-aarch64.gz
+        mv ./artifacts/${{ needs.bundle_linux_aarch64.outputs.remote-server }}/* release-artifacts/zed-remote-server-linux-aarch64.gz
         mv ./artifacts/${{ needs.bundle_mac_x86_64.outputs.remote-server }}/* release-artifacts/zed-remote-server-macos-x86_64.gz
-        mv ./artifacts/${{ needs.bundle_mac_arm64.outputs.remote-server }}/* release-artifacts/zed-remote-server-macos-aarch64.gz
+        mv ./artifacts/${{ needs.bundle_mac_aarch64.outputs.remote-server }}/* release-artifacts/zed-remote-server-macos-aarch64.gz
       shell: bash -euxo pipefail {0}
     - name: gh release upload "$GITHUB_REF_NAME" --repo=zed-industries/zed release-artifacts/*
       run: gh release upload "$GITHUB_REF_NAME" --repo=zed-industries/zed release-artifacts/*

@@ -4,7 +4,6 @@ name: run_tests
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: '1'
-  CARGO_INCREMENTAL: '0'
 on:
   pull_request:
     branches:

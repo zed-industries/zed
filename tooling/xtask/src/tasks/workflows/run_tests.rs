@@ -65,7 +65,7 @@ pub(crate) fn run_tests() -> Workflow {
         )),
         should_build_nix.guard(build_nix(
             Platform::Mac,
-            Arch::ARM64,
+            Arch::AARCH64,
             "debug",
             // *don't* cache the built output
             Some("-zed-editor-[0-9.]*-nightly"),
@@ -74,7 +74,7 @@ pub(crate) fn run_tests() -> Workflow {
     ];
     let tests_pass = tests_pass(&jobs);
 
-    let mut workflow = named::workflow()
+    named::workflow()
         .add_event(Event::default()
             .push(
                 Push::default()
@@ -89,11 +89,13 @@ pub(crate) fn run_tests() -> Workflow {
         )
         .add_env(( "CARGO_TERM_COLOR", "always" ))
         .add_env(( "RUST_BACKTRACE", 1 ))
-        .add_env(( "CARGO_INCREMENTAL", 0 ));
-    for job in jobs {
-        workflow = workflow.add_job(job.name, job.job)
-    }
-    workflow.add_job(tests_pass.name, tests_pass.job)
+        .map(|mut workflow| {
+            for job in jobs {
+                workflow = workflow.add_job(job.name, job.job)
+            }
+            workflow
+        })
+        .add_job(tests_pass.name, tests_pass.job)
 }
 
 // Generates a bash script that checks changed files against regex patterns
