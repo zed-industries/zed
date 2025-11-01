@@ -7,7 +7,7 @@ use alacritty_terminal::{
 };
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
-use terminal::bench::find_from_grid_point_bench;
+use terminal::terminal_hyperlinks::bench::find_from_grid_point_bench;
 
 fn build_test_term(line: &str) -> (Term<VoidListener>, AlacPoint) {
     let content = line.repeat(500);

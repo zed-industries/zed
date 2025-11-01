@@ -4,7 +4,7 @@ pub use alacritty_terminal;
 
 mod pty_info;
 #[cfg(feature = "bench-support")]
-pub(crate) mod terminal_hyperlinks;
+pub mod terminal_hyperlinks;
 #[cfg(not(feature = "bench-support"))]
 mod terminal_hyperlinks;
 pub mod terminal_settings;
@@ -2842,57 +2842,5 @@ mod tests {
             "Bare CR should allow overwriting: got '{}'",
             text
         );
-    }
-}
-
-#[cfg(any(test, feature = "bench-support"))]
-const DEFAULT_PYTHON_FILE_LINE_REGEX: &str = r#"File "(?<path>[^"]+)", line (?P<line>[0-9]+)"#;
-
-#[cfg(any(test, feature = "bench-support"))]
-const DEFAULT_PATH_REGEX: &str = r#"(?x)
-    # optionally starts with prefix symbols or quotes not part of `path`
-    (?<paren>[(])?(?<brace>[{])?(?<bracket>[\[])?(?<angle>[<])?(?<quote>["'`])?
-    (?<path>[^ ]+? # `path` is the shortest sequence of any non-space character
-        # which may end with a line and optionally a column,
-        (?<line_column>:+[0-9]+(:[0-9]+)?|:?\([0-9]+([,:][0-9]+)?\))?
-    )
-    # which must be followed by,
-    # matching closing symbols if any corresponding open symbols were found, then
-    (?(<quote>)\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\]]?)(?(<angle>)[>]?)
-    (?(<line_column>)
-        # if line/column matched, may include a description followed by trailing punctuation
-        (:[^ 0-9][^ ]*|[.,:)}\]>]*)?|
-        # otherwise, may include trailing punctuation
-        (?<![.,:)}\]>])[.,:)}\]>]*
-    )
-    ([ ]+|$) # and always includes trailing whitespace or end of line"#;
-
-#[cfg(feature = "bench-support")]
-pub mod bench {
-    use super::{DEFAULT_PATH_REGEX, DEFAULT_PYTHON_FILE_LINE_REGEX};
-    use crate::terminal_hyperlinks::{RegexSearches, find_from_grid_point};
-    use alacritty_terminal::{
-        event::VoidListener,
-        index::Point as AlacPoint,
-        term::{Term, search::Match},
-    };
-    use std::cell::RefCell;
-
-    pub fn find_from_grid_point_bench(
-        term: &Term<VoidListener>,
-        point: AlacPoint,
-    ) -> Option<(String, bool, Match)> {
-        const PATH_HYPERLINK_REGEXES: [&str; 2] =
-            [DEFAULT_PYTHON_FILE_LINE_REGEX, DEFAULT_PATH_REGEX];
-        const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
-
-        thread_local! {
-            static TEST_REGEX_SEARCHES: RefCell<RegexSearches> =
-                RefCell::new(RegexSearches::new(&PATH_HYPERLINK_REGEXES, PATH_HYPERLINK_TIMEOUT_MS));
-        }
-
-        TEST_REGEX_SEARCHES.with(|regex_searches| {
-            find_from_grid_point(&term, point, &mut regex_searches.borrow_mut())
-        })
     }
 }
