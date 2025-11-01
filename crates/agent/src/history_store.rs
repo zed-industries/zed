@@ -400,4 +400,24 @@ impl HistoryStore {
     pub fn entries(&self) -> impl Iterator<Item = HistoryEntry> {
         self.entries.iter().cloned()
     }
+
+    pub fn search_threads(&self, query: String, cx: &mut App) -> Task<Result<Vec<HistoryEntry>>> {
+        let db_task = ThreadsDatabase::connect(cx);
+
+        cx.spawn(async move |_cx| {
+            // Handle Arc<anyhow::Error> from Shared task
+            let db = db_task.await.map_err(|arc_err| anyhow::anyhow!("{}", arc_err))?;
+
+            // Search using FTS
+            let results = db.search_threads(query).await?;
+
+            // Convert DbThreadMetadata to HistoryEntry::AcpThread
+            let entries = results
+                .into_iter()
+                .map(|metadata| HistoryEntry::AcpThread(metadata))
+                .collect();
+
+            Ok(entries)
+        })
+    }
 }
