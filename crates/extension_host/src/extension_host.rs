@@ -791,7 +791,7 @@ impl ExtensionStore {
         })
     }
 
-    pub fn install_extension_from_file(
+    pub fn install_local_extension(
         &mut self,
         extension_source_path: PathBuf,
         cx: &mut Context<Self>,
@@ -800,22 +800,26 @@ impl ExtensionStore {
         let fs = self.fs.clone();
 
         cx.spawn(async move |this, cx| {
-            let gzip_path = extension_source_path.join("archive.tar.gz");
-            let gzip_buffer = fs.load_bytes(&gzip_path).await?;
+            let gzip_buffer = fs.load_bytes(&extension_source_path).await?;
 
             let decompressed_bytes = GzipDecoder::new(BufReader::new(gzip_buffer.as_slice()));
             let archive = Archive::new(decompressed_bytes);
             let mut entries = archive.entries()?;
             let mut buffer = String::new();
             while let Some(result) = entries.next().await {
-                let mut entry = result.unwrap();
-                let path = entry.path().unwrap();
-                if path.to_str().unwrap() == "./extension.toml" {
+                let mut entry = result?;
+                let path = entry.path()?;
+                if let Some(path) = path.to_str()
+                    && path == "./extension.toml"
+                {
                     entry.read_to_string(&mut buffer).await?;
                     break;
                 }
             }
 
+            if buffer.is_empty() {
+                bail!("extension manifest not found");
+            }
             let manifest: ExtensionManifest = toml::from_str(&buffer)?;
             let extension_id = manifest.id.clone();
 
