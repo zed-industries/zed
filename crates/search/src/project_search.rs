@@ -2032,6 +2032,7 @@ impl Render for ProjectSearchBar {
                 let query_focus = query_focus.clone();
 
                 IconButton::new("project-search-collapse-expand", icon)
+                    .disabled(search.active_match_index.is_none())
                     .shape(IconButtonShape::Square)
                     .icon_size(IconSize::Small)
                     .tooltip(move |_, cx| {
