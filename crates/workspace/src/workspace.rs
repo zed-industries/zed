@@ -269,6 +269,10 @@ actions!(
         RestoreBanner,
         /// Toggles expansion of the selected item.
         ToggleExpandItem,
+        /// Cycles to the next panel in the focused dock.
+        ActivateNextDockPanel,
+        /// Cycles to the previous panel in the focused dock.
+        ActivatePreviousDockPanel,
     ]
 );
 
@@ -3041,6 +3045,42 @@ impl Workspace {
 
         cx.notify();
         self.serialize_workspace(window, cx);
+    }
+
+    pub fn activate_next_dock_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(dock) = self.active_dock(window, cx) {
+            dock.update(cx, |dock, cx| {
+                if let Some(next_panel_index) = dock.next_enabled_panel(cx) {
+                    dock.activate_panel(next_panel_index, window, cx);
+                    dock.set_open(true, window, cx);
+
+                    if let Some(active_panel) = dock.active_panel() {
+                        let focus_handle = active_panel.panel_focus_handle(cx);
+                        window.focus(&focus_handle);
+                    }
+                }
+            });
+
+            cx.notify();
+        }
+    }
+
+    pub fn activate_previous_dock_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(dock) = self.active_dock(window, cx) {
+            dock.update(cx, |dock, cx| {
+                if let Some(prev_panel_index) = dock.previous_enabled_panel(cx) {
+                    dock.activate_panel(prev_panel_index, window, cx);
+                    dock.set_open(true, window, cx);
+
+                    if let Some(active_panel) = dock.active_panel() {
+                        let focus_handle = active_panel.panel_focus_handle(cx);
+                        window.focus(&focus_handle);
+                    }
+                }
+            });
+
+            cx.notify();
+        }
     }
 
     fn active_dock(&self, window: &Window, cx: &Context<Self>) -> Option<&Entity<Dock>> {
@@ -5918,6 +5958,16 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ActivateNextDockPanel, window, cx| {
+                    workspace.activate_next_dock_panel(window, cx);
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ActivatePreviousDockPanel, window, cx| {
+                    workspace.activate_previous_dock_panel(window, cx);
+                },
+            ))
             .on_action(cx.listener(Workspace::cancel))
     }
 
