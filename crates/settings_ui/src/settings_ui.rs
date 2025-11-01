@@ -2087,6 +2087,7 @@ impl SettingsWindow {
                     .style(ButtonStyle::OutlinedGhost)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.open_current_settings_file(window, cx);
+                        window.remove_window();
                     })),
             )
     }
