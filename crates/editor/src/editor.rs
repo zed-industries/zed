@@ -11050,6 +11050,129 @@ impl Editor {
         self.manipulate_immutable_lines(window, cx, |lines| lines.shuffle(&mut rand::rng()))
     }
 
+    pub fn rotate_forward(
+        &mut self,
+        _: &RotateForward,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.rotate(window, cx, false)
+    }
+
+    pub fn rotate_backward(
+        &mut self,
+        _: &RotateBackward,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.rotate(window, cx, true)
+    }
+
+    fn rotate(&mut self, window: &mut Window, cx: &mut Context<Self>, reverse: bool) {
+        self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+        let display_snapshot = self.display_snapshot(cx);
+        let selections = self.selections.all::<usize>(&display_snapshot);
+
+        if selections.len() < 2 {
+            return;
+        }
+
+        let (edits, new_selections) = {
+            let buffer = self.buffer.read(cx).read(cx);
+            let has_selections = selections.iter().any(|s| !s.is_empty());
+            if has_selections {
+                let mut selected_texts: Vec<String> = selections
+                    .iter()
+                    .map(|selection| {
+                        buffer
+                            .text_for_range(selection.start..selection.end)
+                            .collect()
+                    })
+                    .collect();
+
+                if reverse {
+                    selected_texts.rotate_left(1);
+                } else {
+                    selected_texts.rotate_right(1);
+                }
+
+                let mut offset_delta = 0i64;
+                let mut new_sels = Vec::new();
+                let edits: Vec<_> = selections
+                    .iter()
+                    .zip(selected_texts.iter())
+                    .map(|(selection, new_text)| {
+                        let old_len = (selection.end - selection.start) as i64;
+                        let new_len = new_text.len() as i64;
+                        let adjusted_start = (selection.start as i64 + offset_delta) as usize;
+                        let adjusted_end = (adjusted_start as i64 + new_len) as usize;
+
+                        new_sels.push(Selection {
+                            id: selection.id,
+                            start: adjusted_start,
+                            end: adjusted_end,
+                            reversed: selection.reversed,
+                            goal: selection.goal,
+                        });
+
+                        offset_delta += new_len - old_len;
+                        (selection.start..selection.end, new_text.clone())
+                    })
+                    .collect();
+                (edits, Some(new_sels))
+            } else {
+                let mut all_rows: Vec<u32> = selections
+                    .iter()
+                    .map(|selection| buffer.offset_to_point(selection.start).row)
+                    .collect();
+                all_rows.sort_unstable();
+                all_rows.dedup();
+
+                if all_rows.len() < 2 {
+                    return;
+                }
+
+                let line_ranges: Vec<Range<usize>> = all_rows
+                    .iter()
+                    .map(|&row| {
+                        let start = Point::new(row, 0);
+                        let end = Point::new(row, buffer.line_len(MultiBufferRow(row)));
+                        buffer.point_to_offset(start)..buffer.point_to_offset(end)
+                    })
+                    .collect();
+
+                let mut line_texts: Vec<String> = line_ranges
+                    .iter()
+                    .map(|range| buffer.text_for_range(range.clone()).collect())
+                    .collect();
+
+                if reverse {
+                    line_texts.rotate_left(1);
+                } else {
+                    line_texts.rotate_right(1);
+                }
+
+                let edits = line_ranges
+                    .iter()
+                    .zip(line_texts.iter())
+                    .map(|(range, new_text)| (range.clone(), new_text.clone()))
+                    .collect();
+                (edits, None)
+            }
+        };
+
+        self.transact(window, cx, |this, window, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
+            if let Some(new_sels) = new_selections {
+                this.change_selections(Default::default(), window, cx, |s| {
+                    s.select(new_sels);
+                });
+            }
+        });
+    }
+
     fn manipulate_lines<M>(
         &mut self,
         window: &mut Window,
