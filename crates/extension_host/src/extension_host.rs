@@ -15,8 +15,8 @@ use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
-    ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
-    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
+    ExtensionContextServerProxy, ExtensionCustomActionProxy, ExtensionDebugAdapterProviderProxy,
+    ExtensionEvents, ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
     ExtensionLanguageServerProxy, ExtensionSlashCommandProxy, ExtensionSnippetProxy,
     ExtensionThemeProxy,
 };
@@ -1220,6 +1220,9 @@ impl ExtensionStore {
             for command_name in extension.manifest.slash_commands.keys() {
                 self.proxy.unregister_slash_command(command_name.clone());
             }
+            for action_name in extension.manifest.custom_actions.keys() {
+                self.proxy.unregister_custom_action(action_name.clone());
+            }
         }
 
         self.wasm_extensions
@@ -1415,6 +1418,16 @@ impl ExtensionStore {
                                 // defined in extensions, as they are not able to be added to the menu.
                                 tooltip_text: String::new(),
                                 requires_argument: slash_command.requires_argument,
+                            },
+                        );
+                    }
+
+                    for (action_name, action) in &manifest.custom_actions {
+                        this.proxy.register_custom_action(
+                            extension.clone(),
+                            extension::CustomAction {
+                                name: action_name.to_string(),
+                                description: action.description.to_string(),
                             },
                         );
                     }

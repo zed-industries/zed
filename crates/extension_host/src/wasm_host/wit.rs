@@ -32,6 +32,7 @@ pub use latest::CodeLabelSpanLiteral;
 pub use latest::{
     CodeLabel, CodeLabelSpan, Command, DebugAdapterBinary, ExtensionProject, Range, SlashCommand,
     zed::extension::context_server::ContextServerConfiguration,
+    zed::extension::custom_action::CustomAction,
     zed::extension::lsp::{
         Completion, CompletionKind, CompletionLabelDetails, InsertTextFormat, Symbol, SymbolKind,
     },
@@ -779,6 +780,32 @@ impl Extension {
             }
             Extension::V0_0_1(_) | Extension::V0_0_4(_) | Extension::V0_0_6(_) => {
                 anyhow::bail!("`run_slash_command` not available prior to v0.1.0");
+            }
+        }
+    }
+
+    pub async fn call_run_action(
+        &self,
+        store: &mut Store<WasmState>,
+        action: &str,
+        arguments: &[String],
+    ) -> Result<Result<String, String>> {
+        match self {
+            Extension::V0_6_0(ext) => {
+                let custom_action = CustomAction {
+                    name: action.to_string(),
+                };
+                ext.call_run_action(store, &custom_action, arguments).await
+            }
+            Extension::V0_5_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_0_1(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_6(_) => {
+                anyhow::bail!("`run_action` not available prior to v0.6.0");
             }
         }
     }

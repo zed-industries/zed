@@ -44,6 +44,7 @@ command_palette.workspace = true
 component.workspace = true
 copilot.workspace = true
 crashes.workspace = true
+custom_action_provider.workspace = true
 dap_adapters.workspace = true
 db.workspace = true
 debug_adapter_extension.workspace = true

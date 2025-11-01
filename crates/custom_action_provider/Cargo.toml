@@ -1,0 +1,19 @@
+[package]
+name = "custom_action_provider"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+collections.workspace = true
+extension.workspace = true
+gpui.workspace = true
+parking_lot.workspace = true
+schemars.workspace = true
+serde.workspace = true
+util.workspace = true
