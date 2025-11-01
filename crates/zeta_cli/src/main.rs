@@ -1,8 +1,10 @@
+mod example;
 mod headless;
 mod source_location;
 mod syntax_retrieval_stats;
 mod util;
 
+use crate::example::{ExampleFormat, NamedExample};
 use crate::syntax_retrieval_stats::retrieval_stats;
 use ::serde::Serialize;
 use ::util::paths::PathStyle;
@@ -22,6 +24,7 @@ use language_model::LanguageModelRegistry;
 use project::{Project, Worktree};
 use reqwest_client::ReqwestClient;
 use serde_json::json;
+use std::io;
 use std::{collections::HashSet, path::PathBuf, process::exit, str::FromStr, sync::Arc};
 use zeta2::{ContextMode, LlmContextOptions, SearchToolQuery};
 
@@ -47,6 +50,11 @@ enum Command {
         args: Zeta2Args,
         #[command(subcommand)]
         command: Zeta2Command,
+    },
+    ConvertExample {
+        path: PathBuf,
+        #[arg(long, value_enum, default_value_t = ExampleFormat::Md)]
+        output_format: ExampleFormat,
     },
 }
 
@@ -641,6 +649,15 @@ fn main() {
                         }
                     },
                 },
+                Command::ConvertExample {
+                    path,
+                    output_format,
+                } => {
+                    let example = NamedExample::load(path).unwrap();
+                    example.write(output_format, io::stdout()).unwrap();
+                    let _ = cx.update(|cx| cx.quit());
+                    return;
+                }
             };
 
             match result {

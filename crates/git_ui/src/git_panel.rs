@@ -58,8 +58,8 @@ use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
-    Checkbox, CommonAnimationExt, ContextMenu, ElevationIndex, IconPosition, Label, LabelSize,
-    PopoverMenu, ScrollAxes, Scrollbars, SplitButton, Tooltip, WithScrollbar, prelude::*,
+    ButtonLike, Checkbox, CommonAnimationExt, ContextMenu, ElevationIndex, PopoverMenu, ScrollAxes,
+    Scrollbars, SplitButton, Tooltip, WithScrollbar, prelude::*,
 };
 use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, maybe};
@@ -3505,6 +3505,12 @@ impl GitPanel {
         let amend = self.amend_pending();
         let signoff = self.signoff_enabled;
 
+        let label_color = if self.pending_commit.is_some() {
+            Color::Disabled
+        } else {
+            Color::Default
+        };
+
         div()
             .id("commit-wrapper")
             .on_hover(cx.listener(move |this, hovered, _, cx| {
@@ -3513,14 +3519,15 @@ impl GitPanel {
                 cx.notify()
             }))
             .child(SplitButton::new(
-                ui::ButtonLike::new_rounded_left(ElementId::Name(
+                ButtonLike::new_rounded_left(ElementId::Name(
                     format!("split-button-left-{}", title).into(),
                 ))
-                .layer(ui::ElevationIndex::ModalSurface)
-                .size(ui::ButtonSize::Compact)
+                .layer(ElevationIndex::ModalSurface)
+                .size(ButtonSize::Compact)
                 .child(
-                    div()
-                        .child(Label::new(title).size(LabelSize::Small))
+                    Label::new(title)
+                        .size(LabelSize::Small)
+                        .color(label_color)
                         .mr_0p5(),
                 )
                 .on_click({
