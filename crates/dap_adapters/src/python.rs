@@ -824,9 +824,9 @@ impl DebugAdapter for PythonDebugAdapter {
                 .await;
         }
 
-        let base_path = ["cwd", "program", "module"]
+        let base_paths = ["cwd", "program", "module"]
             .into_iter()
-            .find_map(|key| {
+            .filter_map(|key| {
                 config.config.get(key).and_then(|cwd| {
                     RelPath::new(
                         cwd.as_str()
@@ -838,17 +838,25 @@ impl DebugAdapter for PythonDebugAdapter {
                     .ok()
                 })
             })
-            .unwrap_or_else(|| RelPath::empty().into());
+            .chain([RelPath::empty().into()]);
 
-        let toolchain = delegate
-            .toolchain_store()
-            .active_toolchain(
-                delegate.worktree_id(),
-                base_path.into_arc(),
-                language::LanguageName::new(Self::LANGUAGE_NAME),
-                cx,
-            )
-            .await;
+        let mut toolchain = None;
+
+        for base_path in base_paths {
+            if let Some(found_toolchain) = delegate
+                .toolchain_store()
+                .active_toolchain(
+                    delegate.worktree_id(),
+                    base_path.into_arc(),
+                    language::LanguageName::new(Self::LANGUAGE_NAME),
+                    cx,
+                )
+                .await
+            {
+                toolchain = Some(found_toolchain);
+                break;
+            }
+        }
 
         self.fetch_debugpy_whl(toolchain.clone(), delegate)
             .await
