@@ -1550,7 +1550,9 @@ impl AgentDiff {
                     unaffected.remove(weak_editor);
                 }
 
-                if reviewing_state == EditorState::Reviewing && previous_state != Some(reviewing_state) {
+                if reviewing_state == EditorState::Reviewing
+                    && previous_state != Some(reviewing_state)
+                {
                     // Jump to first hunk when we enter review mode
                     editor.update(cx, |editor, cx| {
                         let snapshot = multibuffer.read(cx).snapshot(cx);
