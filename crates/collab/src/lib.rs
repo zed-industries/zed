@@ -61,6 +61,12 @@ impl From<serde_json::Error> for Error {
     }
 }
 
+impl From<reqwest::Error> for Error {
+    fn from(error: reqwest::Error) -> Self {
+        Self::Internal(error.into())
+    }
+}
+
 impl Error {
     fn http(code: StatusCode, message: String) -> Self {
         Self::Http(code, message, HeaderMap::default())
@@ -155,6 +161,7 @@ pub struct Config {
     pub zed_client_checksum_seed: Option<String>,
     pub auto_join_channel_id: Option<ChannelId>,
     pub supermaven_admin_api_key: Option<Arc<str>>,
+    pub github_token: Option<Arc<str>>,
 }
 
 impl Config {
@@ -211,6 +218,7 @@ impl Config {
             kinesis_access_key: None,
             kinesis_secret_key: None,
             kinesis_stream: None,
+            github_token: None,
         }
     }
 }

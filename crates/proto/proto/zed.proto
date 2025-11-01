@@ -126,6 +126,7 @@ message Envelope {
 
         GetUsers get_users = 92;
         FuzzySearchUsers fuzzy_search_users = 93;
+        ListGithubTeamMembers list_github_team_members = 382;
         UsersResponse users_response = 94;
         RequestContact request_contact = 95;
         RespondToContactRequest respond_to_contact_request = 96;

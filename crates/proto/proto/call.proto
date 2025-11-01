@@ -258,6 +258,11 @@ message FuzzySearchUsers {
     string query = 1;
 }
 
+message ListGithubTeamMembers {
+    string org = 1;
+    string team = 2;
+}
+
 message UsersResponse {
     repeated User users = 1;
 }

@@ -653,6 +653,15 @@ impl UserStore {
         self.load_users(proto::FuzzySearchUsers { query }, cx)
     }
 
+    pub fn list_github_team_members(
+        &self,
+        org: String,
+        team: String,
+        cx: &Context<Self>,
+    ) -> Task<Result<Vec<Arc<User>>>> {
+        self.load_users(proto::ListGithubTeamMembers { org, team }, cx)
+    }
+
     pub fn get_cached_user(&self, user_id: u64) -> Option<Arc<User>> {
         self.users.get(&user_id).cloned()
     }
