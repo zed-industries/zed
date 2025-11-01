@@ -1225,6 +1225,7 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) {
         let mut removed_ids = Vec::new();
+        let mut first_new_repo = true;
         for update in updated_git_repositories.iter() {
             if let Some((id, existing)) = self.repositories.iter().find(|(_, repo)| {
                 let existing_work_directory_abs_path =
@@ -1266,6 +1267,13 @@ impl GitStore {
                         git_store,
                         cx,
                     );
+                    // trigger an empty `UpdateRepository` to ensure remote active_repo_id is set correctly
+                    if first_new_repo && let Some(updates_tx) = updates_tx.as_ref() {
+                        updates_tx
+                            .unbounded_send(DownstreamUpdate::UpdateRepository(repo.snapshot()))
+                            .ok();
+                        first_new_repo = false;
+                    }
                     repo.schedule_scan(updates_tx.clone(), cx);
                     repo
                 });
