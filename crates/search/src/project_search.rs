@@ -36,7 +36,9 @@ use std::{
     pin::pin,
     sync::Arc,
 };
-use ui::{IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*, utils::SearchInputWidth};
+use ui::{
+    Divider, IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*, utils::SearchInputWidth,
+};
 use util::{ResultExt as _, paths::PathMatcher, rel_path::RelPath};
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
@@ -56,10 +58,8 @@ actions!(
         NextField,
         /// Toggles the search filters panel.
         ToggleFilters,
-        /// Collapses all search result excerpts.
-        CollapseAllSearchResults,
-        /// Expands all search result excerpts.
-        ExpandAllSearchResults
+        /// Toggles collapse/expand state of all search result excerpts.
+        ToggleAllSearchResults
     ]
 );
 
@@ -122,30 +122,15 @@ pub fn init(cx: &mut App) {
             ProjectSearchView::search_in_new(workspace, action, window, cx)
         });
 
-        // Register collapse/expand actions for search results
         register_workspace_action_for_present_search(
             workspace,
-            |workspace, action: &CollapseAllSearchResults, window, cx| {
+            |workspace, action: &ToggleAllSearchResults, window, cx| {
                 if let Some(search_view) = workspace
                     .active_item(cx)
                     .and_then(|item| item.downcast::<ProjectSearchView>())
                 {
                     search_view.update(cx, |search_view, cx| {
-                        search_view.collapse_all_search_results(action, window, cx);
-                    });
-                }
-            },
-        );
-
-        register_workspace_action_for_present_search(
-            workspace,
-            |workspace, action: &ExpandAllSearchResults, window, cx| {
-                if let Some(search_view) = workspace
-                    .active_item(cx)
-                    .and_then(|item| item.downcast::<ProjectSearchView>())
-                {
-                    search_view.update(cx, |search_view, cx| {
-                        search_view.expand_all_search_results(action, window, cx);
+                        search_view.toggle_all_search_results(action, window, cx);
                     });
                 }
             },
@@ -785,23 +770,13 @@ impl ProjectSearchView {
         });
     }
 
-    fn collapse_all_search_results(
+    fn toggle_all_search_results(
         &mut self,
-        _: &CollapseAllSearchResults,
+        _: &ToggleAllSearchResults,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.results_collapsed = true;
-        self.update_results_visibility(cx);
-    }
-
-    fn expand_all_search_results(
-        &mut self,
-        _: &ExpandAllSearchResults,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.results_collapsed = false;
+        self.results_collapsed = !self.results_collapsed;
         self.update_results_visibility(cx);
     }
 
@@ -811,17 +786,14 @@ impl ProjectSearchView {
             let buffer_ids = multibuffer.excerpt_buffer_ids();
 
             if self.results_collapsed {
-                // Fold all buffers to collapse search results
                 for buffer_id in buffer_ids {
                     editor.fold_buffer(buffer_id, cx);
                 }
             } else {
-                // Unfold all buffers to expand search results
                 for buffer_id in buffer_ids {
                     editor.unfold_buffer(buffer_id, cx);
                 }
             }
-            // The editor will automatically update the display when needed
         });
         cx.notify();
     }
@@ -2071,10 +2043,54 @@ impl Render for ProjectSearchBar {
         let query_focus = search.query_editor.focus_handle(cx);
 
         let matches_column = h_flex()
-            .pl_2()
-            .ml_2()
+            .ml_1()
+            .pl_1p5()
             .border_l_1()
             .border_color(theme_colors.border_variant)
+            .child(
+                div()
+                    .pr_1p5()
+                    .mr_1p5()
+                    .border_r_1()
+                    .border_color(theme_colors.border_variant)
+                    .child({
+                        let is_collapsed = self
+                            .active_project_search
+                            .as_ref()
+                            .map(|search| search.read(cx).results_collapsed)
+                            .unwrap_or(false);
+
+                        let (icon, tooltip_label) = if is_collapsed {
+                            (IconName::ChevronUpDown, "Expand All Search Results")
+                        } else {
+                            (IconName::ChevronDownUp, "Collapse All Search Results")
+                        };
+
+                        let query_focus = query_focus.clone();
+
+                        IconButton::new("project-search-collapse-expand", icon)
+                            .shape(IconButtonShape::Square)
+                            .tooltip(move |_, cx| {
+                                Tooltip::for_action_in(
+                                    tooltip_label,
+                                    &ToggleAllSearchResults,
+                                    &query_focus,
+                                    cx,
+                                )
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                if let Some(search) = this.active_project_search.as_ref() {
+                                    search.update(cx, |search, cx| {
+                                        search.toggle_all_search_results(
+                                            &ToggleAllSearchResults,
+                                            window,
+                                            cx,
+                                        );
+                                    });
+                                }
+                            }))
+                    }),
+            )
             .child(render_action_button(
                 "project-search-nav-button",
                 IconName::ChevronLeft,
@@ -2157,50 +2173,6 @@ impl Render for ProjectSearchBar {
                 &ToggleReplace,
                 focus_handle.clone(),
             ))
-            .child({
-                let is_collapsed = self
-                    .active_project_search
-                    .as_ref()
-                    .map(|search| search.read(cx).results_collapsed)
-                    .unwrap_or(false);
-
-                IconButton::new(
-                    "project-search-collapse-expand",
-                    if is_collapsed {
-                        IconName::Plus
-                    } else {
-                        IconName::Dash
-                    },
-                )
-                .shape(IconButtonShape::Square)
-                .tooltip(move |window, cx| {
-                    if is_collapsed {
-                        Tooltip::text("Expand All Search Results")(window, cx)
-                    } else {
-                        Tooltip::text("Collapse All Search Results")(window, cx)
-                    }
-                })
-                .on_click(cx.listener(|this, _, window, cx| {
-                    if let Some(search) = this.active_project_search.as_ref() {
-                        let is_collapsed = search.read(cx).results_collapsed;
-                        search.update(cx, |search, cx| {
-                            if is_collapsed {
-                                search.expand_all_search_results(
-                                    &ExpandAllSearchResults,
-                                    window,
-                                    cx,
-                                );
-                            } else {
-                                search.collapse_all_search_results(
-                                    &CollapseAllSearchResults,
-                                    window,
-                                    cx,
-                                );
-                            }
-                        });
-                    }
-                }))
-            })
             .child(matches_column);
 
         let search_line = h_flex()
