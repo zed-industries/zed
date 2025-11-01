@@ -58,8 +58,8 @@ use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
-    Checkbox, CommonAnimationExt, ContextMenu, ElevationIndex, IconPosition, Label, LabelSize,
-    PopoverMenu, ScrollAxes, Scrollbars, SplitButton, Tooltip, WithScrollbar, prelude::*,
+    ButtonLike, Checkbox, CommonAnimationExt, ContextMenu, ElevationIndex, PopoverMenu, ScrollAxes,
+    Scrollbars, SplitButton, Tooltip, WithScrollbar, prelude::*,
 };
 use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, maybe};
@@ -3494,7 +3494,8 @@ impl GitPanel {
         let commit_tooltip_focus_handle = self.commit_editor.focus_handle(cx);
         let amend = self.amend_pending();
         let signoff = self.signoff_enabled;
-        let color = if self.pending_commit.is_some() {
+
+        let label_color = if self.pending_commit.is_some() {
             Color::Disabled
         } else {
             Color::Default
@@ -3508,18 +3509,16 @@ impl GitPanel {
                 cx.notify()
             }))
             .child(SplitButton::new(
-                ui::ButtonLike::new_rounded_left(ElementId::Name(
+                ButtonLike::new_rounded_left(ElementId::Name(
                     format!("split-button-left-{}", title).into(),
                 ))
-                .layer(ui::ElevationIndex::ModalSurface)
-                .size(ui::ButtonSize::Compact)
+                .layer(ElevationIndex::ModalSurface)
+                .size(ButtonSize::Compact)
                 .child(
-                    div().child(
-                        Label::new(title)
-                            .size(LabelSize::Small)
-                            .color(color)
-                            .mr_0p5(),
-                    ),
+                    Label::new(title)
+                        .size(LabelSize::Small)
+                        .color(label_color)
+                        .mr_0p5(),
                 )
                 .on_click({
                     let git_panel = cx.weak_entity();
