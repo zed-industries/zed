@@ -25,6 +25,7 @@ use serde_json::{Value, json};
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
 use std::env::consts;
+use terminal::terminal_settings::TerminalSettings;
 use util::command::new_smol_command;
 use util::fs::{make_file_executable, remove_matching};
 use util::rel_path::RelPath;
@@ -1183,10 +1184,13 @@ impl ToolchainLister for PythonToolchainProvider {
 
         match toolchain.environment.kind {
             Some(PythonEnvironmentKind::Conda) => {
+                let manager = TerminalSettings::get("conda_manager")
+                    .filter(|m| matches!(m.as_str(), "conda" | "mamba" | "micromamba"))
+                    .unwrap_or_else(|| "conda".to_string());
                 if let Some(name) = &toolchain.environment.name {
-                    activation_script.push(format!("conda activate {name}"));
+                    activation_script.push(format!("{manager} activate {name}"));
                 } else {
-                    activation_script.push("conda activate".to_string());
+                    activation_script.push("{manager} activate base".to_string());
                 }
             }
             Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {
