@@ -847,15 +847,12 @@ impl DebugAdapter for PythonDebugAdapter {
                     .config
                     .get("cwd")
                     .map(|_| {
-                        ["program", "module"]
-                            .into_iter()
-                            .filter_map(|key| {
-                                config.config.get(key).and_then(|value| {
-                                    let path = Path::new(value.as_str()?);
-                                    RelPath::new(path, PathStyle::local()).ok()
-                                })
+                        ["program", "module"].into_iter().filter_map(|key| {
+                            config.config.get(key).and_then(|value| {
+                                let path = Path::new(value.as_str()?);
+                                RelPath::new(path, PathStyle::local()).ok()
                             })
-                            .into_iter()
+                        })
                     })
                     .into_iter()
                     .flatten(),
