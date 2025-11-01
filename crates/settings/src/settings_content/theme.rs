@@ -66,10 +66,6 @@ pub struct ThemeSettingsContent {
     #[serde(default)]
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub agent_buffer_font_size: Option<f32>,
-    /// The font size for code blocks in agent responses. Falls back to the agent UI font size if unset.
-    #[serde(default)]
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub agent_buffer_code_font_size: Option<f32>,
     /// The name of the Zed theme to use.
     #[serde(default)]
     pub theme: Option<ThemeSelection>,

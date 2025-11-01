@@ -115,8 +115,6 @@ pub struct ThemeSettings {
     agent_ui_font_size: Option<Pixels>,
     /// The agent buffer font size. Determines the size of user messages in the agent panel.
     agent_buffer_font_size: Option<Pixels>,
-    /// The font size for code blocks in agent responses. Falls back to the agent UI font size if unset.
-    agent_buffer_code_font_size: Option<Pixels>,
     /// The line height for buffers, and the terminal.
     ///
     /// Changing this may affect the spacing of some UI elements.
@@ -485,15 +483,6 @@ impl ThemeSettings {
             .unwrap_or_else(|| self.buffer_font_size(cx))
     }
 
-    /// Returns the font size for code blocks in agent responses. Falls back to the agent UI font size if unset.
-    pub fn agent_buffer_code_font_size(&self, cx: &App) -> Pixels {
-        cx.try_global::<AgentFontSize>()
-            .map(|size| size.0)
-            .or(self.agent_buffer_code_font_size)
-            .map(clamp_font_size)
-            .unwrap_or_else(|| self.agent_ui_font_size(cx))
-    }
-
     /// Returns the buffer font size, read from the settings.
     ///
     /// The real buffer font size is stored in-memory, to support temporary font size changes.
@@ -730,7 +719,6 @@ impl settings::Settings for ThemeSettings {
             buffer_line_height: content.buffer_line_height.unwrap().into(),
             agent_ui_font_size: content.agent_ui_font_size.map(Into::into),
             agent_buffer_font_size: content.agent_buffer_font_size.map(Into::into),
-            agent_buffer_code_font_size: content.agent_buffer_code_font_size.map(Into::into),
             theme: theme_selection,
             experimental_theme_overrides: content.experimental_theme_overrides.clone(),
             theme_overrides: content.theme_overrides.clone(),
