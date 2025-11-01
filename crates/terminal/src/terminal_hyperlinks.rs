@@ -71,7 +71,7 @@ impl RegexSearches {
 
         let search_start_time = Instant::now();
 
-        let timed_out = || -> Option<(_, _)> {
+        let timed_out = || {
             let elapsed_time = Instant::now().saturating_duration_since(search_start_time);
             (elapsed_time > self.path_hyperlink_timeout).then_some((
                 elapsed_time.as_millis(),
@@ -81,7 +81,7 @@ impl RegexSearches {
 
         // There does not appear to be an alacritty api that is "move to start of current wide
         // char", so we have to do it ourselves.
-        let start_of_char = |point: AlacPoint| -> AlacPoint {
+        let start_of_char = |point: AlacPoint| {
             let flags = term.grid().index(point).flags;
             if flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
                 AlacPoint::new(point.line + 1, Column(0))
@@ -115,7 +115,7 @@ impl RegexSearches {
             .trim_ascii_end()
             .to_string();
 
-        let advance_point_by_str = |mut point: AlacPoint, s: &str| -> AlacPoint {
+        let advance_point_by_str = |mut point: AlacPoint, s: &str| {
             for _ in s.chars() {
                 point = term
                     .expand_wide(point, AlacDirection::Right)
@@ -124,10 +124,7 @@ impl RegexSearches {
             start_of_char(point)
         };
 
-        let found_from_range = |path_range: Range<usize>,
-                                row: Option<u32>,
-                                column: Option<u32>|
-         -> Option<(String, Match)> {
+        let found_from_range = |path_range: Range<usize>, row: Option<u32>, column: Option<u32>| {
             let path_start = advance_point_by_str(line_start, &line[..path_range.start]);
             let path_end = advance_point_by_str(path_start, &line[path_range.clone()]);
             let path_match = path_start
@@ -146,7 +143,7 @@ impl RegexSearches {
             ))
         };
 
-        let found_from_captures = |captures: Captures| -> Option<(String, Match)> {
+        let found_from_captures = |captures: Captures| {
             let Some(path_capture) = captures.name("path") else {
                 return found_from_range(captures.get(0).unwrap().range(), None, None);
             };
