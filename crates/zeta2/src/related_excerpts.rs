@@ -64,7 +64,7 @@ const SEARCH_PROMPT: &str = indoc! {r#"
 
     ## Current cursor context
 
-    `````path={current_file_path}
+    `````{current_file_path}
     {cursor_excerpt}
     `````
 
