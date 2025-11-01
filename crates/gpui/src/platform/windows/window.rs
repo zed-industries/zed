@@ -45,7 +45,6 @@ pub struct WindowsWindowState {
     pub pending_surrogate: Option<u16>,
     pub last_reported_modifiers: Option<Modifiers>,
     pub last_reported_capslock: Option<Capslock>,
-    pub system_key_handled: bool,
     pub hovered: bool,
 
     pub renderer: DirectXRenderer,
@@ -112,7 +111,6 @@ impl WindowsWindowState {
         let pending_surrogate = None;
         let last_reported_modifiers = None;
         let last_reported_capslock = None;
-        let system_key_handled = false;
         let hovered = false;
         let click_state = ClickState::new();
         let nc_button_pressed = None;
@@ -133,7 +131,6 @@ impl WindowsWindowState {
             pending_surrogate,
             last_reported_modifiers,
             last_reported_capslock,
-            system_key_handled,
             hovered,
             renderer,
             click_state,
