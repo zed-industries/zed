@@ -9,4 +9,5 @@ Zed lets you add new functionality using user-defined extensions.
   - [Developing Themes](./extensions/themes.md)
   - [Developing Icon Themes](./extensions/icon-themes.md)
   - [Developing Slash Commands](./extensions/slash-commands.md)
+  - [Developing Agent Servers](./extensions/agent-servers.md)
   - [Developing MCP Servers](./extensions/mcp-extensions.md)
