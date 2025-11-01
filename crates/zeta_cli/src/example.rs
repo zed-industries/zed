@@ -14,8 +14,9 @@ use gpui::http_client::Url;
 use pulldown_cmark::CowStr;
 use serde::{Deserialize, Serialize};
 
-const CURSOR_POSITION_HEADING: &str = "Cursor Position";
+const UNCOMMITTED_DIFF_HEADING: &str = "Uncommitted Diff";
 const EDIT_HISTORY_HEADING: &str = "Edit History";
+const CURSOR_POSITION_HEADING: &str = "Cursor Position";
 const EXPECTED_PATCH_HEADING: &str = "Expected Patch";
 const EXPECTED_EXCERPTS_HEADING: &str = "Expected Excerpts";
 const REPOSITORY_URL_FIELD: &str = "repository_url";
@@ -31,6 +32,7 @@ pub struct NamedExample {
 pub struct Example {
     pub repository_url: String,
     pub revision: String,
+    pub uncommitted_diff: String,
     pub cursor_path: PathBuf,
     pub cursor_position: String,
     pub edit_history: Vec<String>,
@@ -59,11 +61,11 @@ impl NamedExample {
 
         match ext.and_then(|s| s.to_str()) {
             Some("json") => Ok(Self {
-                name: path.file_name().unwrap_or_default().display().to_string(),
+                name: path.file_stem().unwrap_or_default().display().to_string(),
                 example: serde_json::from_str(&content)?,
             }),
             Some("toml") => Ok(Self {
-                name: path.file_name().unwrap_or_default().display().to_string(),
+                name: path.file_stem().unwrap_or_default().display().to_string(),
                 example: toml::from_str(&content)?,
             }),
             Some("md") => Self::parse_md(&content),
@@ -88,6 +90,7 @@ impl NamedExample {
             example: Example {
                 repository_url: String::new(),
                 revision: String::new(),
+                uncommitted_diff: String::new(),
                 cursor_path: PathBuf::new(),
                 cursor_position: String::new(),
                 edit_history: Vec::new(),
@@ -152,18 +155,19 @@ impl NamedExample {
                     block_info = "".into();
                 }
                 Event::End(TagEnd::CodeBlock) => {
-                    if current_section.eq_ignore_ascii_case(EDIT_HISTORY_HEADING) {
+                    let block_info = block_info.trim();
+                    if current_section.eq_ignore_ascii_case(UNCOMMITTED_DIFF_HEADING) {
+                        named.example.uncommitted_diff = mem::take(&mut text);
+                    } else if current_section.eq_ignore_ascii_case(EDIT_HISTORY_HEADING) {
                         named.example.edit_history.push(mem::take(&mut text));
                     } else if current_section.eq_ignore_ascii_case(CURSOR_POSITION_HEADING) {
-                        let path = PathBuf::from(block_info.trim());
-                        named.example.cursor_path = path;
+                        named.example.cursor_path = block_info.into();
                         named.example.cursor_position = mem::take(&mut text);
                     } else if current_section.eq_ignore_ascii_case(EXPECTED_PATCH_HEADING) {
                         named.example.expected_patch = mem::take(&mut text);
                     } else if current_section.eq_ignore_ascii_case(EXPECTED_EXCERPTS_HEADING) {
-                        let path = PathBuf::from(block_info.trim());
                         named.example.expected_excerpts.push(ExpectedExcerpt {
-                            path,
+                            path: block_info.into(),
                             text: mem::take(&mut text),
                         });
                     } else {
@@ -308,13 +312,10 @@ impl Display for NamedExample {
         )?;
         write!(f, "{REVISION_FIELD} = {}\n\n", self.example.revision)?;
 
-        write!(
-            f,
-            "## {CURSOR_POSITION_HEADING}\n\n`````{}\n{}`````\n",
-            self.example.cursor_path.display(),
-            self.example.cursor_position
-        )?;
-        write!(f, "## {EDIT_HISTORY_HEADING}\n\n")?;
+        write!(f, "## {UNCOMMITTED_DIFF_HEADING}\n\n")?;
+        write!(f, "`````diff\n")?;
+        write!(f, "{}", self.example.uncommitted_diff)?;
+        write!(f, "`````\n")?;
 
         if !self.example.edit_history.is_empty() {
             write!(f, "`````diff\n")?;
@@ -323,6 +324,14 @@ impl Display for NamedExample {
             }
             write!(f, "`````\n")?;
         }
+
+        write!(
+            f,
+            "## {CURSOR_POSITION_HEADING}\n\n`````{}\n{}`````\n",
+            self.example.cursor_path.display(),
+            self.example.cursor_position
+        )?;
+        write!(f, "## {EDIT_HISTORY_HEADING}\n\n")?;
 
         if !self.example.expected_patch.is_empty() {
             write!(
