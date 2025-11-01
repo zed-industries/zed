@@ -1033,7 +1033,7 @@ impl CompletionsMenu {
                 fuzzy::match_strings(
                     &match_candidates,
                     &query,
-                    query.chars().any(|c| c.is_uppercase()),
+                    true,
                     false,
                     1000,
                     &cancel_filter,
