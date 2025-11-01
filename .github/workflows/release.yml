@@ -1,6 +1,12 @@
 # Generated from xtask::workflows::release
 # Rebuild with `cargo xtask workflows`.
 name: release
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+  RUST_BACKTRACE: '1'
+  ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+  ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
 on:
   push:
     tags:
