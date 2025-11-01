@@ -67,6 +67,32 @@ impl<'a> Matcher<'a> {
         T: Borrow<C>,
         F: Fn(&C, f64, &Vec<usize>) -> R,
     {
+        self.match_candidates_with_words(
+            prefix,
+            lowercase_prefix,
+            candidates,
+            results,
+            cancel_flag,
+            build_match,
+            &[],
+        )
+    }
+
+    /// Filter and score fuzzy match candidates with optional word-based matching
+    pub(crate) fn match_candidates_with_words<C, R, F, T>(
+        &mut self,
+        prefix: &[char],
+        lowercase_prefix: &[char],
+        candidates: impl Iterator<Item = T>,
+        results: &mut Vec<R>,
+        cancel_flag: &AtomicBool,
+        build_match: F,
+        query_words: &[&str],
+    ) where
+        C: MatchCandidate,
+        T: Borrow<C>,
+        F: Fn(&C, f64, &Vec<usize>) -> R,
+    {
         let mut candidate_chars = Vec::new();
         let mut lowercase_candidate_chars = Vec::new();
         let mut extra_lowercase_chars = BTreeMap::new();
@@ -92,23 +118,44 @@ impl<'a> Matcher<'a> {
                 lowercase_candidate_chars.append(&mut char_lowercased);
             }
 
-            if !self.find_last_positions(lowercase_prefix, &lowercase_candidate_chars) {
-                continue;
+            // If we have word-based query, check if all words exist in the path
+            let use_word_matching = !query_words.is_empty();
+            if use_word_matching {
+                if !Self::check_words_match(query_words, lowercase_prefix, &lowercase_candidate_chars) {
+                    continue;
+                }
+            } else {
+                // Use the original sequential matching for non-word queries
+                if !self.find_last_positions(lowercase_prefix, &lowercase_candidate_chars) {
+                    continue;
+                }
             }
 
-            let matrix_len = self.query.len() * (prefix.len() + candidate_chars.len());
-            self.score_matrix.clear();
-            self.score_matrix.resize(matrix_len, None);
-            self.best_position_matrix.clear();
-            self.best_position_matrix.resize(matrix_len, 0);
+            let score = if use_word_matching {
+                // Score word-based matches
+                self.score_word_match(
+                    query_words,
+                    &candidate_chars,
+                    &lowercase_candidate_chars,
+                    prefix,
+                    lowercase_prefix,
+                )
+            } else {
+                // Use original scoring for sequential matches
+                let matrix_len = self.query.len() * (prefix.len() + candidate_chars.len());
+                self.score_matrix.clear();
+                self.score_matrix.resize(matrix_len, None);
+                self.best_position_matrix.clear();
+                self.best_position_matrix.resize(matrix_len, 0);
 
-            let score = self.score_match(
-                &candidate_chars,
-                &lowercase_candidate_chars,
-                prefix,
-                lowercase_prefix,
-                &extra_lowercase_chars,
-            );
+                self.score_match(
+                    &candidate_chars,
+                    &lowercase_candidate_chars,
+                    prefix,
+                    lowercase_prefix,
+                    &extra_lowercase_chars,
+                )
+            };
 
             if score > 0.0 {
                 results.push(build_match(
@@ -137,6 +184,113 @@ impl<'a> Matcher<'a> {
             }
         }
         true
+    }
+
+    /// Check if all words in the query can be found in the candidate path
+    /// This is used for word-based matching when the query contains spaces
+    fn check_words_match(
+        query_words: &[&str],
+        lowercase_prefix: &[char],
+        lowercase_candidate: &[char],
+    ) -> bool {
+        // Combine prefix and candidate into a single string for matching
+        let mut full_path = String::new();
+        for c in lowercase_prefix.iter() {
+            full_path.push(*c);
+        }
+        for c in lowercase_candidate.iter() {
+            full_path.push(*c);
+        }
+        let full_path_lower = full_path.to_lowercase();
+
+        // Check if all words can be found in the path
+        for word in query_words {
+            let word_lower = word.to_lowercase();
+            if !full_path_lower.contains(&word_lower) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Score a match based on word matching
+    fn score_word_match(
+        &mut self,
+        query_words: &[&str],
+        path: &[char],
+        path_lowercased: &[char],
+        prefix: &[char],
+        lowercase_prefix: &[char],
+    ) -> f64 {
+        // Combine prefix and path for word matching
+        let mut full_path = String::new();
+        for c in prefix.iter() {
+            full_path.push(*c);
+        }
+        for c in path.iter() {
+            full_path.push(*c);
+        }
+
+        let mut full_path_lower = String::new();
+        for c in lowercase_prefix.iter() {
+            full_path_lower.push(*c);
+        }
+        for c in path_lowercased.iter() {
+            full_path_lower.push(*c);
+        }
+
+        // Calculate score based on how well words match
+        let mut total_score = 0.0;
+        let mut all_positions = Vec::new();
+
+        for word in query_words {
+            let word_lower = word.to_lowercase();
+            if let Some(pos) = full_path_lower.find(&word_lower) {
+                // Base score for finding the word
+                let mut word_score = 1.0;
+
+                // Bonus if word matches at path boundaries
+                if pos == 0 || full_path.chars().nth(pos.saturating_sub(1)) == Some('/') {
+                    word_score *= 1.5;
+                }
+
+                // Bonus if word matches exactly (case-sensitive)
+                let word_at_pos = &full_path[pos..pos + word.len()];
+                if word_at_pos == *word {
+                    word_score *= 1.2;
+                }
+
+                // Track positions for all matched words
+                for i in 0..word.len() {
+                    all_positions.push(pos + i);
+                }
+
+                total_score += word_score;
+            }
+        }
+
+        // Normalize score based on number of words and path length
+        if !query_words.is_empty() {
+            total_score = total_score / query_words.len() as f64;
+
+            // Penalize longer paths slightly
+            let length_penalty = 1.0 / (1.0 + (full_path.len() as f64 * 0.01));
+            total_score *= length_penalty;
+        }
+
+        // Update match positions for highlighting
+        all_positions.sort();
+        all_positions.dedup();
+        self.match_positions.clear();
+        for &pos in all_positions.iter().take(self.query.len()) {
+            self.match_positions.push(pos);
+        }
+        // Fill remaining positions if needed
+        while self.match_positions.len() < self.query.len() {
+            self.match_positions.push(0);
+        }
+
+        total_score
     }
 
     fn score_match(
@@ -368,6 +522,43 @@ mod tests {
     }
 
     #[test]
+    fn test_word_based_matching() {
+        // Test that word-based matching works regardless of word order
+        let paths = vec![
+            "manager/page.tsx",
+            "page/manager.tsx",
+            "apps/web/manager/page.tsx",
+            "apps/web/page/manager.tsx",
+            "controller/user.rs",
+            "user/controller.rs",
+        ];
+
+        // Test "page manager" should find paths with both words
+        let results = match_single_path_query("page manager", false, &paths);
+        assert!(results.iter().any(|(path, _)| *path == "manager/page.tsx"));
+        assert!(results.iter().any(|(path, _)| *path == "page/manager.tsx"));
+        assert!(results.iter().any(|(path, _)| *path == "apps/web/manager/page.tsx"));
+        assert!(results.iter().any(|(path, _)| *path == "apps/web/page/manager.tsx"));
+
+        // Test "manager page" should also find the same paths
+        let results = match_single_path_query("manager page", false, &paths);
+        assert!(results.iter().any(|(path, _)| *path == "manager/page.tsx"));
+        assert!(results.iter().any(|(path, _)| *path == "page/manager.tsx"));
+        assert!(results.iter().any(|(path, _)| *path == "apps/web/manager/page.tsx"));
+        assert!(results.iter().any(|(path, _)| *path == "apps/web/page/manager.tsx"));
+
+        // Test "user controller" should find user/controller paths
+        let results = match_single_path_query("user controller", false, &paths);
+        assert!(results.iter().any(|(path, _)| *path == "controller/user.rs"));
+        assert!(results.iter().any(|(path, _)| *path == "user/controller.rs"));
+
+        // Test "controller user" should also find the same paths
+        let results = match_single_path_query("controller user", false, &paths);
+        assert!(results.iter().any(|(path, _)| *path == "controller/user.rs"));
+        assert!(results.iter().any(|(path, _)| *path == "user/controller.rs"));
+    }
+
+    #[test]
     fn test_match_path_entries() {
         let paths = vec![
             "",
@@ -540,8 +731,22 @@ mod tests {
         smart_case: bool,
         paths: &[&'a str],
     ) -> Vec<(&'a str, Vec<usize>)> {
-        let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
-        let query = query.chars().collect::<Vec<_>>();
+        // Check if query contains spaces (word-based search)
+        let has_spaces = query.contains(' ');
+        let query_words: Vec<&str> = if has_spaces {
+            query.split_whitespace().collect()
+        } else {
+            vec![]
+        };
+
+        let query_for_processing = if has_spaces {
+            query.chars().filter(|c| !c.is_whitespace()).collect::<String>()
+        } else {
+            query.to_string()
+        };
+
+        let lowercase_query = query_for_processing.to_lowercase().chars().collect::<Vec<_>>();
+        let query = query_for_processing.chars().collect::<Vec<_>>();
         let query_chars = CharBag::from(&lowercase_query[..]);
 
         let path_arcs: Vec<Arc<RelPath>> = paths
@@ -564,7 +769,7 @@ mod tests {
         let cancel_flag = AtomicBool::new(false);
         let mut results = Vec::new();
 
-        matcher.match_candidates(
+        matcher.match_candidates_with_words(
             &[],
             &[],
             path_entries.into_iter(),
@@ -579,6 +784,7 @@ mod tests {
                 distance_to_relative_ancestor: usize::MAX,
                 is_dir: false,
             },
+            &query_words,
         );
         results.sort_by(|a, b| b.cmp(a));
 

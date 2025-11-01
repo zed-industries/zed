@@ -1358,7 +1358,7 @@ impl PickerDelegate for FileFinderDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let raw_query = raw_query.replace(' ', "");
+        // Keep spaces for word-based matching
         let raw_query = raw_query.trim();
 
         let raw_query = match &raw_query.get(0..2) {
