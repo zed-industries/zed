@@ -555,6 +555,7 @@ pub fn main() {
             cx.background_executor().clone(),
         );
         command_palette::init(cx);
+        magic_palette::init(cx);
         let copilot_language_server_id = app_state.languages.next_language_server_id();
         copilot::init(
             copilot_language_server_id,
