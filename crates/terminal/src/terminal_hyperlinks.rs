@@ -62,135 +62,6 @@ impl RegexSearches {
             path_hyperlink_timeout: Duration::from_millis(path_hyperlink_timeout_ms),
         }
     }
-
-    fn regex_path_match<T>(
-        &mut self,
-        term: &Term<T>,
-        line_start: AlacPoint,
-        line_end: AlacPoint,
-        hovered: AlacPoint,
-    ) -> Option<(String, Match)> {
-        if self.path_hyperlink_regexes.is_empty() {
-            return None;
-        }
-
-        let search_start_time = Instant::now();
-
-        let timed_out = || {
-            let elapsed_time = Instant::now().saturating_duration_since(search_start_time);
-            (elapsed_time > self.path_hyperlink_timeout).then_some((
-                elapsed_time.as_millis(),
-                self.path_hyperlink_timeout.as_millis(),
-            ))
-        };
-
-        // This used to be: `let line = term.bounds_to_string(line_start, line_end)`, however, that
-        // api compresses tab characters into a single space, whereas we require a cell accurate
-        // string representation of the line. The below algorithm does this, but seems a bit odd.
-        // Maybe there is a clean api for doing this, but I couldn't find it.
-        let mut line = String::with_capacity(
-            (line_end.line.0 - line_start.line.0 + 1) as usize * term.grid().columns(),
-        );
-        line.push(term.grid()[line_start].c);
-        for cell in term.grid().iter_from(line_start) {
-            if cell.point > line_end {
-                break;
-            }
-
-            if !cell.flags.intersects(WIDE_CHAR_SPACERS) {
-                line.push(match cell.c {
-                    '\t' => ' ',
-                    c @ _ => c,
-                });
-            }
-        }
-        let line = line.trim_ascii_end();
-
-        let advance_point_by_str = |mut point: AlacPoint, s: &str| {
-            for _ in s.chars() {
-                point = term
-                    .expand_wide(point, AlacDirection::Right)
-                    .add(term, Boundary::Grid, 1);
-            }
-
-            // There does not appear to be an alacritty api that is
-            // "move to start of current wide char", so we have to do it ourselves.
-            let flags = term.grid().index(point).flags;
-            if flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
-                AlacPoint::new(point.line + 1, Column(0))
-            } else if flags.contains(Flags::WIDE_CHAR_SPACER) {
-                AlacPoint::new(point.line, point.column - 1)
-            } else {
-                point
-            }
-        };
-
-        let found_from_range = |path_range: Range<usize>, row: Option<u32>, column: Option<u32>| {
-            let path_start = advance_point_by_str(line_start, &line[..path_range.start]);
-            let path_end = advance_point_by_str(path_start, &line[path_range.clone()]);
-            let path_match = path_start
-                ..=term
-                    .expand_wide(path_end, AlacDirection::Left)
-                    .sub(term, Boundary::Grid, 1);
-
-            Some((
-                {
-                    let mut path = line[path_range].to_string();
-                    row.inspect(|line| path += &format!(":{line}"));
-                    column.inspect(|column| path += &format!(":{column}"));
-                    path
-                },
-                path_match,
-            ))
-        };
-
-        let found_from_captures = |captures: Captures| {
-            let Some(path) = captures.name("path") else {
-                return found_from_range(captures.get(0).unwrap().range(), None, None);
-            };
-
-            let parse = |name: &str| {
-                captures
-                    .name(name)
-                    .and_then(|capture| capture.as_str().parse().ok())
-            };
-
-            let Some(line) = parse("line") else {
-                return found_from_range(path.range(), None, None);
-            };
-
-            let Some(column) = parse("column") else {
-                return found_from_range(path.range(), Some(line), None);
-            };
-
-            return found_from_range(path.range(), Some(line), Some(column));
-        };
-
-        for regex in &mut self.path_hyperlink_regexes {
-            let mut path_found = false;
-
-            for captures in regex.captures_iter(&line).flatten() {
-                if let Some(found) = found_from_captures(captures) {
-                    path_found = true;
-                    if found.1.contains(&hovered) {
-                        return Some(found);
-                    }
-                }
-            }
-
-            if path_found {
-                return None;
-            }
-
-            if let Some((timed_out_ms, timeout_ms)) = timed_out() {
-                warn!("Timed out processing path hyperlink regexes after {timed_out_ms}ms");
-                info!("{timeout_ms}ms time out specified in `terminal.path_hyperlink_timeout_ms`");
-                return None;
-            }
-        }
-
-        None
-    }
 }
 
 pub(super) fn find_from_grid_point<T: EventListener>(
@@ -227,8 +98,7 @@ pub(super) fn find_from_grid_point<T: EventListener>(
         Some((url, true, url_match))
     } else {
         let (line_start, line_end) = (term.line_search_left(point), term.line_search_right(point));
-
-        if let Some(url_match) = RegexIter::new(
+        if let Some((url, url_match)) = RegexIter::new(
             line_start,
             line_end,
             AlacDirection::Right,
@@ -236,14 +106,21 @@ pub(super) fn find_from_grid_point<T: EventListener>(
             &mut regex_searches.url_regex,
         )
         .find(|rm| rm.contains(&point))
-        {
+        .map(|url_match| {
             let url = term.bounds_to_string(*url_match.start(), *url_match.end());
-            let (sanitized_url, sanitized_match) = sanitize_url_punctuation(url, url_match, term);
-            Some((sanitized_url, true, sanitized_match))
+            sanitize_url_punctuation(url, url_match, term)
+        }) {
+            Some((url, true, url_match))
         } else {
-            regex_searches
-                .regex_path_match(&term, line_start, line_end, point)
-                .map(|(path, path_match)| (path, false, path_match))
+            path_match(
+                &term,
+                line_start,
+                line_end,
+                point,
+                &mut regex_searches.path_hyperlink_regexes,
+                regex_searches.path_hyperlink_timeout,
+            )
+            .map(|(path, path_match)| (path, false, path_match))
         }
     };
 
@@ -318,6 +195,134 @@ fn sanitize_url_punctuation<T: EventListener>(
     } else {
         (sanitized_url, url_match)
     }
+}
+
+fn path_match<T>(
+    term: &Term<T>,
+    line_start: AlacPoint,
+    line_end: AlacPoint,
+    hovered: AlacPoint,
+    path_hyperlink_regexes: &mut Vec<Regex>,
+    path_hyperlink_timeout: Duration,
+) -> Option<(String, Match)> {
+    if path_hyperlink_regexes.is_empty() {
+        return None;
+    }
+
+    let search_start_time = Instant::now();
+
+    let timed_out = || {
+        let elapsed_time = Instant::now().saturating_duration_since(search_start_time);
+        (elapsed_time > path_hyperlink_timeout)
+            .then_some((elapsed_time.as_millis(), path_hyperlink_timeout.as_millis()))
+    };
+
+    // This used to be: `let line = term.bounds_to_string(line_start, line_end)`, however, that
+    // api compresses tab characters into a single space, whereas we require a cell accurate
+    // string representation of the line. The below algorithm does this, but seems a bit odd.
+    // Maybe there is a clean api for doing this, but I couldn't find it.
+    let mut line = String::with_capacity(
+        (line_end.line.0 - line_start.line.0 + 1) as usize * term.grid().columns(),
+    );
+    line.push(term.grid()[line_start].c);
+    for cell in term.grid().iter_from(line_start) {
+        if cell.point > line_end {
+            break;
+        }
+
+        if !cell.flags.intersects(WIDE_CHAR_SPACERS) {
+            line.push(match cell.c {
+                '\t' => ' ',
+                c @ _ => c,
+            });
+        }
+    }
+    let line = line.trim_ascii_end();
+
+    let advance_point_by_str = |mut point: AlacPoint, s: &str| {
+        for _ in s.chars() {
+            point = term
+                .expand_wide(point, AlacDirection::Right)
+                .add(term, Boundary::Grid, 1);
+        }
+
+        // There does not appear to be an alacritty api that is
+        // "move to start of current wide char", so we have to do it ourselves.
+        let flags = term.grid().index(point).flags;
+        if flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
+            AlacPoint::new(point.line + 1, Column(0))
+        } else if flags.contains(Flags::WIDE_CHAR_SPACER) {
+            AlacPoint::new(point.line, point.column - 1)
+        } else {
+            point
+        }
+    };
+
+    let found_from_range = |path_range: Range<usize>, row: Option<u32>, column: Option<u32>| {
+        let path_start = advance_point_by_str(line_start, &line[..path_range.start]);
+        let path_end = advance_point_by_str(path_start, &line[path_range.clone()]);
+        let path_match = path_start
+            ..=term
+                .expand_wide(path_end, AlacDirection::Left)
+                .sub(term, Boundary::Grid, 1);
+
+        Some((
+            {
+                let mut path = line[path_range].to_string();
+                row.inspect(|line| path += &format!(":{line}"));
+                column.inspect(|column| path += &format!(":{column}"));
+                path
+            },
+            path_match,
+        ))
+    };
+
+    let found_from_captures = |captures: Captures| {
+        let Some(path) = captures.name("path") else {
+            return found_from_range(captures.get(0).unwrap().range(), None, None);
+        };
+
+        let parse = |name: &str| {
+            captures
+                .name(name)
+                .and_then(|capture| capture.as_str().parse().ok())
+        };
+
+        let Some(line) = parse("line") else {
+            return found_from_range(path.range(), None, None);
+        };
+
+        let Some(column) = parse("column") else {
+            return found_from_range(path.range(), Some(line), None);
+        };
+
+        return found_from_range(path.range(), Some(line), Some(column));
+    };
+
+    for regex in path_hyperlink_regexes {
+        let mut path_found = false;
+
+        for captures in regex.captures_iter(&line).flatten() {
+            if let Some(found) = found_from_captures(captures) {
+                path_found = true;
+                if found.1.contains(&hovered) {
+                    return Some(found);
+                }
+            }
+        }
+
+        if path_found {
+            return None;
+        }
+
+        if let Some((timed_out_ms, timeout_ms)) = timed_out() {
+            warn!("Timed out processing path hyperlink regexes after {timed_out_ms}ms");
+            info!("{timeout_ms}ms time out specified in `terminal.path_hyperlink_timeout_ms`");
+            return None;
+        }
+    }
+
+    None
 }
 
 #[cfg(any(test, feature = "bench-support"))]
