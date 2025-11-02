@@ -1,0 +1,63 @@
+# Generated from xtask::workflows::run_agent_evals
+# Rebuild with `cargo xtask workflows`.
+name: run_agent_evals
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+  RUST_BACKTRACE: '1'
+  ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+on:
+  schedule:
+  - cron: 47 1 * * 2
+  workflow_dispatch: {}
+jobs:
+  unit_evals:
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      shell: bash -euxo pipefail {0}
+    - name: steps::cache_rust_dependencies
+      uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
+      with:
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+    - name: steps::setup_linux
+      run: ./script/linux
+      shell: bash -euxo pipefail {0}
+    - name: steps::install_mold
+      run: ./script/install-mold
+      shell: bash -euxo pipefail {0}
+    - name: steps::cargo_install_nextest
+      run: cargo install cargo-nextest --locked
+      shell: bash -euxo pipefail {0}
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than 100
+      shell: bash -euxo pipefail {0}
+    - name: ./script/run-unit-evals
+      run: ./script/run-unit-evals
+      shell: bash -euxo pipefail {0}
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    - name: run_agent_evals::unit_evals::send_failure_to_slack
+      if: ${{ failure() }}
+      uses: slackapi/slack-github-action@b0fa283ad8fea605de13dc3f449259339835fc52
+      with:
+        method: chat.postMessage
+        token: ${{ secrets.SLACK_APP_ZED_UNIT_EVALS_BOT_TOKEN }}
+        payload: |
+          channel: C04UDRNNJFQ
+          text: "Unit Evals Failed: https://github.com/zed-industries/zed/actions/runs/${{ github.run_id }}"
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        rm -rf ./../.cargo
+      shell: bash -euxo pipefail {0}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
+  cancel-in-progress: true
