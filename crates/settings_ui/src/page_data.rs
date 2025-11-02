@@ -7960,7 +7960,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    fn miscellaneous_section() -> [SettingsPageItem; 6] {
+    fn miscellaneous_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Miscellaneous"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8054,6 +8054,19 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.colorize_brackets = value;
                         })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Vim/Emacs Modeline Support",
+                description: "Number of lines to search for modelines (set to 0 to disable).",
+                field: Box::new(SettingField {
+                    json_path: Some("modeline_lines"),
+                    pick: |settings_content| settings_content.modeline_lines.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.modeline_lines = value;
                     },
                 }),
                 metadata: None,
