@@ -291,17 +291,19 @@ impl AcpTools {
         let expanded = self.expanded.contains(&index);
 
         v_flex()
-            .w_full()
-            .px_4()
-            .py_3()
-            .border_color(colors.border)
-            .border_b_1()
-            .gap_2()
-            .items_start()
-            .font_buffer(cx)
-            .text_size(base_size)
             .id(index)
             .group("message")
+            .cursor_pointer()
+            .font_buffer(cx)
+            .w_full()
+            .py_3()
+            .pl_4()
+            .pr_5()
+            .gap_2()
+            .items_start()
+            .text_size(base_size)
+            .border_color(colors.border)
+            .border_b_1()
             .hover(|this| this.bg(colors.element_background.opacity(0.5)))
             .on_click(cx.listener(move |this, _, _, cx| {
                 if this.expanded.contains(&index) {
@@ -323,15 +325,14 @@ impl AcpTools {
                 h_flex()
                     .w_full()
                     .gap_2()
-                    .items_center()
                     .flex_shrink_0()
                     .child(match message.direction {
-                        acp::StreamMessageDirection::Incoming => {
-                            ui::Icon::new(ui::IconName::ArrowDown).color(Color::Error)
-                        }
-                        acp::StreamMessageDirection::Outgoing => {
-                            ui::Icon::new(ui::IconName::ArrowUp).color(Color::Success)
-                        }
+                        acp::StreamMessageDirection::Incoming => Icon::new(IconName::ArrowDown)
+                            .color(Color::Error)
+                            .size(IconSize::Small),
+                        acp::StreamMessageDirection::Outgoing => Icon::new(IconName::ArrowUp)
+                            .color(Color::Success)
+                            .size(IconSize::Small),
                     })
                     .child(
                         Label::new(message.name.clone())
@@ -517,8 +518,8 @@ impl Render for AcpTools {
                             .into_any()
                     } else {
                         div()
-                            .flex_grow()
                             .size_full()
+                            .flex_grow()
                             .child(
                                 list(
                                     connection.list_state.clone(),
