@@ -24,6 +24,8 @@ To debug code written in a specific language, Zed needs to find a debug adapter 
 - [Rust](./languages/rust.md#debugging) (built-in)
 - [Swift](./languages/swift.md#debugging) (provided by extension)
 - [TypeScript](./languages/typescript.md#debugging) (built-in)
+- [Java](./languages/java.md#debugging)(provided by extension)
+
 
 > If your language isn't listed, you can contribute by adding a debug adapter for it. Check out our [debugger extensions](./extensions/debugger-extensions.md) documentation for more information.
 
