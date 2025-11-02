@@ -263,7 +263,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         match motion {
-            Motion::EndOfLine { display_lines } => {
+            Motion::EndOfLine { .. } => {
                 // In Helix mode, EndOfLine should position cursor ON the last character,
                 // not after it. We need special handling it.
                 self.update_editor(cx, |_, editor, cx| {
