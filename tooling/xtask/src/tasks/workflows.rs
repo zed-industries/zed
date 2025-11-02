@@ -10,6 +10,7 @@ mod release_nightly;
 mod run_bundling;
 
 mod release;
+mod run_agent_evals;
 mod run_tests;
 mod runners;
 mod steps;
@@ -28,6 +29,8 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         ("run_tests.yml", run_tests::run_tests()),
         ("release.yml", release::release()),
         ("compare_perf.yml", compare_perf::compare_perf()),
+        ("run_unit_evals.yml", run_agent_evals::run_unit_evals()),
+        ("run_agent_evals.yml", run_agent_evals::run_agent_evals()),
     ];
     fs::create_dir_all(dir)
         .with_context(|| format!("Failed to create directory: {}", dir.display()))?;
