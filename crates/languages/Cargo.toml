@@ -97,6 +97,7 @@ text.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 tree-sitter-bash.workspace = true
 tree-sitter-c.workspace = true
+tree-sitter-cpp.workspace = true
 tree-sitter-css.workspace = true
 tree-sitter-go.workspace = true
 tree-sitter-python.workspace = true

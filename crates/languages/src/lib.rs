@@ -19,6 +19,7 @@ use crate::{
 
 mod bash;
 mod c;
+mod cpp;
 mod css;
 mod go;
 mod json;
