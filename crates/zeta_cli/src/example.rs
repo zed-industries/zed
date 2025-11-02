@@ -10,6 +10,7 @@ use std::{
 
 use anyhow::{Context as _, Result};
 use clap::ValueEnum;
+use futures::AsyncWriteExt as _;
 use gpui::http_client::Url;
 use pulldown_cmark::CowStr;
 use serde::{Deserialize, Serialize};
@@ -199,12 +200,13 @@ impl NamedExample {
 
     #[allow(unused)]
     pub async fn setup_worktree(&self) -> Result<PathBuf> {
+        let (repo_owner, repo_name) = self.repo_name()?;
+        let file_name = self.file_name();
+
         let worktrees_dir = env::current_dir()?.join("target").join("zeta-worktrees");
         let repos_dir = env::current_dir()?.join("target").join("zeta-repos");
         fs::create_dir_all(&repos_dir)?;
         fs::create_dir_all(&worktrees_dir)?;
-
-        let (repo_owner, repo_name) = self.repo_name()?;
 
         let repo_dir = repos_dir.join(repo_owner.as_ref()).join(repo_name.as_ref());
         if !repo_dir.is_dir() {
@@ -217,34 +219,79 @@ impl NamedExample {
             .await?;
         }
 
-        run_git(
-            &repo_dir,
-            &["fetch", "--depth", "1", "origin", &self.example.revision],
-        )
-        .await?;
+        // Resolve the example to a revision, fetching it if needed.
+        let revision = run_git(&repo_dir, &["rev-parse", &self.example.revision]).await;
+        let revision = if let Ok(revision) = revision {
+            revision
+        } else {
+            run_git(
+                &repo_dir,
+                &["fetch", "--depth", "1", "origin", &self.example.revision],
+            )
+            .await?;
+            let revision = run_git(&repo_dir, &["rev-parse", "FETCH_HEAD"]).await?;
+            if revision != self.example.revision {
+                run_git(&repo_dir, &["tag", &self.example.revision, &revision]).await?;
+            }
+            revision
+        };
 
-        let worktree_path = worktrees_dir.join(&self.name);
-
+        // Create the worktree for this example if needed.
+        let worktree_path = worktrees_dir.join(&file_name);
         if worktree_path.is_dir() {
             run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
             run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
-            run_git(&worktree_path, &["checkout", &self.example.revision]).await?;
+            run_git(&worktree_path, &["checkout", revision.as_str()]).await?;
         } else {
             let worktree_path_string = worktree_path.to_string_lossy();
+            run_git(&repo_dir, &["branch", "-f", &file_name, revision.as_str()]).await?;
             run_git(
                 &repo_dir,
-                &[
-                    "worktree",
-                    "add",
-                    "-f",
-                    &worktree_path_string,
-                    &self.example.revision,
-                ],
+                &["worktree", "add", "-f", &worktree_path_string, &file_name],
             )
             .await?;
         }
 
+        // Apply the uncommitted diff for this example.
+        if !self.example.uncommitted_diff.is_empty() {
+            let mut apply_process = smol::process::Command::new("git")
+                .current_dir(&worktree_path)
+                .args(&["apply", "-"])
+                .stdin(std::process::Stdio::piped())
+                .spawn()?;
+
+            let mut stdin = apply_process.stdin.take().unwrap();
+            stdin
+                .write_all(self.example.uncommitted_diff.as_bytes())
+                .await?;
+            stdin.close().await?;
+            drop(stdin);
+
+            let apply_result = apply_process.output().await?;
+            if !apply_result.status.success() {
+                anyhow::bail!(
+                    "Failed to apply uncommitted diff patch with status: {}\nstderr:\n{}\nstdout:\n{}",
+                    apply_result.status,
+                    String::from_utf8_lossy(&apply_result.stderr),
+                    String::from_utf8_lossy(&apply_result.stdout),
+                );
+            }
+        }
+
         Ok(worktree_path)
+    }
+
+    fn file_name(&self) -> String {
+        self.name
+            .chars()
+            .map(|c| {
+                if c.is_whitespace() {
+                    '-'
+                } else {
+                    c.to_ascii_lowercase()
+                }
+            })
+            .collect()
     }
 
     #[allow(unused)]
