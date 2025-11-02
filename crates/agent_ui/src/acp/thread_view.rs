@@ -3803,21 +3803,29 @@ impl AcpThreadView {
                     })
                     .child(
                         h_flex()
-                            .id(("file-name", index))
+                            .id(("file-name-row", index))
                             .relative()
-                            .cursor_pointer()
                             .pr_8()
                             .w_full()
                             .overflow_x_scroll()
                             .child(
                                 h_flex()
+                                    .id(("file-name-path", index))
+                                    .cursor_pointer()
                                     .pr_0p5()
                                     .gap_0p5()
                                     .hover(|s| s.bg(cx.theme().colors().element_hover))
                                     .rounded_xs()
                                     .child(file_icon)
                                     .children(file_name)
-                                    .children(file_path),
+                                    .children(file_path)
+                                    .tooltip(Tooltip::text("Go to File"))
+                                    .on_click({
+                                        let buffer = buffer.clone();
+                                        cx.listener(move |this, _, window, cx| {
+                                            this.open_edited_buffer(&buffer, window, cx);
+                                        })
+                                    }),
                             )
                             .child(
                                 div()
@@ -3828,14 +3836,7 @@ impl AcpThreadView {
                                     .bottom_0()
                                     .right_0()
                                     .bg(overlay_gradient),
-                            )
-                            .tooltip(Tooltip::text("Go to File"))
-                            .on_click({
-                                let buffer = buffer.clone();
-                                cx.listener(move |this, _, window, cx| {
-                                    this.open_edited_buffer(&buffer, window, cx);
-                                })
-                            }),
+                            ),
                     )
                     .child(
                         h_flex()
