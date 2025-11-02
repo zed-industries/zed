@@ -22,6 +22,7 @@ Or manually download and install [OpenJDK 23](https://jdk.java.net/23/).
 You can install by opening {#action zed::Extensions}({#kb zed::Extensions}) and searching for `java`.
 
 ## Quick start and configuration
+
 For the majority of users, Java support should work out of the box.
 
 - It is generally recommended to open projects with the Zed-project root at the Java project root folder (where you would commonly have your `pom.xml` or `build.gradle` file).
@@ -41,9 +42,9 @@ Here is a common `settings.json` including the above mentioned configurations:
       "settings": {
         "java_home": "/path/to/your/JDK21+",
         "lombok_support": true,
-      }
-    }
-  }
+      },
+    },
+  },
 }
 ```
 
@@ -52,6 +53,7 @@ Here is a common `settings.json` including the above mentioned configurations:
 Debug support is enabled via our [Fork of Java Debug](https://github.com/zed-industries/java-debug), which the extension will automatically download and start for you. Please refer to the [Debugger Documentation](https://zed.dev/docs/debugger#getting-started) for general information about how debugging works in Zed.
 
 To get started with Java, click the `edit debug.json` button in the Debug menu, and replace the contents of the file with the following:
+
 ```jsonc
 [
   {
@@ -64,8 +66,8 @@ To get started with Java, click the `edit debug.json` button in the Debug menu, 
     // this effectively sets a breakpoint at your program entry:
     "stopOnEntry": true,
     // the working directory for the debug process
-    "cwd": "$ZED_WORKTREE_ROOT"
-  }
+    "cwd": "$ZED_WORKTREE_ROOT",
+  },
 ]
 ```
 
@@ -78,6 +80,7 @@ This extension provides tasks for running your application and tests from within
 There is a fairly straightforward fix that you can apply to make it work on Windows by supplying your own task scripts. Please see [this Issue](https://github.com/zed-extensions/java/issues/94) for information on how to do that and read the [Tasks section in Zeds documentation](https://zed.dev/docs/tasks) for more information.
 
 ## Advanced Configuration/JDTLS initialization Options
+
 JDTLS provides many configuration options that can be passed via the `initialize` LSP-request. The extension will pass the JSON-object from `lsp.jdtls.settings.initialization_options` in your settings on to JDTLS. Please refer to the [JDTLS Configuration Wiki Page](https://github.com/eclipse-jdtls/eclipse.jdt.ls/wiki/Running-the-JAVA-LS-server-from-the-command-line#initialize-request) for the available options and values. Below is an example `settings.json` that would pass on the example configuration from the above wiki page to JDTLS:
 
 ```jsonc
@@ -85,7 +88,7 @@ JDTLS provides many configuration options that can be passed via the `initialize
   "lsp": {
     "jdtls": {
       "settings": {
-          // this will be sent to JDTLS as initializationOptions:
+        // this will be sent to JDTLS as initializationOptions:
         "initialization_options": {
           "bundles": [],
           // use this if your zed project root folder is not the same as the java project root:
@@ -95,48 +98,48 @@ JDTLS provides many configuration options that can be passed via the `initialize
               "home": "/usr/local/jdk-9.0.1",
               "errors": {
                 "incompleteClasspath": {
-                  "severity": "warning"
-                }
+                  "severity": "warning",
+                },
               },
               "configuration": {
                 "updateBuildConfiguration": "interactive",
                 "maven": {
-                  "userSettings": null
-                }
+                  "userSettings": null,
+                },
               },
               "import": {
                 "gradle": {
-                  "enabled": true
+                  "enabled": true,
                 },
                 "maven": {
-                  "enabled": true
+                  "enabled": true,
                 },
                 "exclusions": [
                   "**/node_modules/**",
                   "**/.metadata/**",
                   "**/archetype-resources/**",
                   "**/META-INF/maven/**",
-                  "/**/test/**"
-                ]
+                  "/**/test/**",
+                ],
               },
               "referencesCodeLens": {
-                "enabled": false
+                "enabled": false,
               },
               "signatureHelp": {
-                "enabled": false
+                "enabled": false,
               },
               "implementationCodeLens": "all",
               "format": {
-                "enabled": true
+                "enabled": true,
               },
               "saveActions": {
-                "organizeImports": false
+                "organizeImports": false,
               },
               "contentProvider": {
-                "preferred": null
+                "preferred": null,
               },
               "autobuild": {
-                "enabled": false
+                "enabled": false,
               },
               "completion": {
                 "favoriteStaticMembers": [
@@ -145,18 +148,19 @@ JDTLS provides many configuration options that can be passed via the `initialize
                   "org.junit.jupiter.api.Assertions.*",
                   "org.junit.jupiter.api.Assumptions.*",
                   "org.junit.jupiter.api.DynamicContainer.*",
-                  "org.junit.jupiter.api.DynamicTest.*"
+                  "org.junit.jupiter.api.DynamicTest.*",
                 ],
-                "importOrder": ["java", "javax", "com", "org"]
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+                "importOrder": ["java", "javax", "com", "org"],
+              },
+            },
+          },
+        },
+      },
+    },
+  },
 }
 ```
+
 ## See also
 
 [Zed Java Repo](https://github.com/zed-extensions/java)
