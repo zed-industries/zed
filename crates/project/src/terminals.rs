@@ -128,9 +128,19 @@ impl Project {
                         .await
                         .ok();
                     let lister = language?.toolchain_lister()?;
+<<<<<<< HEAD
                     return cx
                         .update(|cx| lister.activation_script(&toolchain, shell_kind, cx))
                         .ok();
+=======
+                    return Some(
+                        project
+                            .update(cx, |_, cx| {
+                                lister.activation_script(&toolchain, shell_kind, cx)
+                            })
+                            .ok()?,
+                    );
+>>>>>>> d423e91677 (use global settings)
                 }
                 None
             })
@@ -323,17 +333,23 @@ impl Project {
         };
 
         let is_windows = self.path_style(cx).is_windows();
+<<<<<<< HEAD
 
         // Prepare a task for resolving the environment
         let env_task =
             self.resolve_directory_environment(&shell, path.clone(), remote_client.clone(), cx);
+=======
+>>>>>>> d423e91677 (use global settings)
 
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
             let shell_kind = ShellKind::new(&shell, is_windows);
+<<<<<<< HEAD
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
 
+=======
+>>>>>>> d423e91677 (use global settings)
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
                     let Some(toolchain) = toolchain.await else {
@@ -344,9 +360,19 @@ impl Project {
                         .await
                         .ok();
                     let lister = language?.toolchain_lister()?;
+<<<<<<< HEAD
                     return cx
                         .update(|cx| lister.activation_script(&toolchain, shell_kind, cx))
                         .ok();
+=======
+                    return Some(
+                        project
+                            .update(cx, |_, cx| {
+                                lister.activation_script(&toolchain, shell_kind, cx)
+                            })
+                            .ok()?,
+                    );
+>>>>>>> d423e91677 (use global settings)
                 }
                 None
             })

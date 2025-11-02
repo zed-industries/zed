@@ -1291,13 +1291,34 @@ impl ToolchainLister for PythonToolchainProvider {
 
         match toolchain.environment.kind {
             Some(PythonEnvironmentKind::Conda) => {
-                let manager = TerminalSettings::get("conda_manager")
-                    .filter(|m| matches!(m.as_str(), "conda" | "mamba" | "micromamba"))
-                    .unwrap_or_else(|| "conda".to_string());
+                let settings = TerminalSettings::get_global(cx);
+                let conda_manager = settings
+                    .detect_venv
+                    .as_option()
+                    .map(|venv| venv.conda_manager)
+                    .unwrap_or(settings::CondaManager::Auto);
+
+                let manager = match conda_manager {
+                    settings::CondaManager::Conda => "conda",
+                    settings::CondaManager::Mamba => "mamba",
+                    settings::CondaManager::Micromamba => "micromamba",
+                    settings::CondaManager::Auto => {
+                        // When auto, prefer the detected manager or fall back to conda
+                        toolchain
+                            .environment
+                            .manager
+                            .as_ref()
+                            .and_then(|m| m.executable.file_name())
+                            .and_then(|name| name.to_str())
+                            .filter(|name| matches!(*name, "conda" | "mamba" | "micromamba"))
+                            .unwrap_or("conda")
+                    }
+                };
+
                 if let Some(name) = &toolchain.environment.name {
                     activation_script.push(format!("{manager} activate {name}"));
                 } else {
-                    activation_script.push("{manager} activate base".to_string());
+                    activation_script.push(format!("{manager} activate base"));
                 }
             }
             Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {
