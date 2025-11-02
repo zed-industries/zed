@@ -129,6 +129,7 @@ impl Project {
                         .ok();
                     let lister = language?.toolchain_lister()?;
 <<<<<<< HEAD
+<<<<<<< HEAD
                     return cx
                         .update(|cx| lister.activation_script(&toolchain, shell_kind, cx))
                         .ok();
@@ -141,6 +142,13 @@ impl Project {
                             .ok()?,
                     );
 >>>>>>> d423e91677 (use global settings)
+=======
+                    return project
+                        .update(cx, |_, cx| {
+                            lister.activation_script(&toolchain, shell_kind, cx)
+                        })
+                        .ok();
+>>>>>>> 68c27c3ee5 (satisfy clippy)
                 }
                 None
             })
@@ -361,6 +369,7 @@ impl Project {
                         .ok();
                     let lister = language?.toolchain_lister()?;
 <<<<<<< HEAD
+<<<<<<< HEAD
                     return cx
                         .update(|cx| lister.activation_script(&toolchain, shell_kind, cx))
                         .ok();
@@ -373,6 +382,13 @@ impl Project {
                             .ok()?,
                     );
 >>>>>>> d423e91677 (use global settings)
+=======
+                    return project
+                        .update(cx, |_, cx| {
+                            lister.activation_script(&toolchain, shell_kind, cx)
+                        })
+                        .ok();
+>>>>>>> 68c27c3ee5 (satisfy clippy)
                 }
                 None
             })
