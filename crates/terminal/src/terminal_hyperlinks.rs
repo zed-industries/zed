@@ -8,7 +8,7 @@ use alacritty_terminal::{
         search::{Match, RegexIter, RegexSearch},
     },
 };
-use fancy_regex::{Captures, Regex};
+use fancy_regex::Regex;
 use log::{info, warn};
 use std::{
     ops::{Index, Range},
@@ -239,26 +239,26 @@ fn path_match<T>(
     }
     let line = line.trim_ascii_end();
 
-    let advance_point_by_str = |mut point: AlacPoint, s: &str| {
-        for _ in s.chars() {
-            point = term
-                .expand_wide(point, AlacDirection::Right)
-                .add(term, Boundary::Grid, 1);
-        }
-
-        // There does not appear to be an alacritty api that is
-        // "move to start of current wide char", so we have to do it ourselves.
-        let flags = term.grid().index(point).flags;
-        if flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
-            AlacPoint::new(point.line + 1, Column(0))
-        } else if flags.contains(Flags::WIDE_CHAR_SPACER) {
-            AlacPoint::new(point.line, point.column - 1)
-        } else {
-            point
-        }
-    };
-
     let found_from_range = |path_range: Range<usize>, row: Option<u32>, column: Option<u32>| {
+        let advance_point_by_str = |mut point: AlacPoint, s: &str| {
+            for _ in s.chars() {
+                point = term
+                    .expand_wide(point, AlacDirection::Right)
+                    .add(term, Boundary::Grid, 1);
+            }
+
+            // There does not appear to be an alacritty api that is
+            // "move to start of current wide char", so we have to do it ourselves.
+            let flags = term.grid().index(point).flags;
+            if flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
+                AlacPoint::new(point.line + 1, Column(0))
+            } else if flags.contains(Flags::WIDE_CHAR_SPACER) {
+                AlacPoint::new(point.line, point.column - 1)
+            } else {
+                point
+            }
+        };
+
         let path_start = advance_point_by_str(line_start, &line[..path_range.start]);
         let path_end = advance_point_by_str(path_start, &line[path_range.clone()]);
         let path_match = path_start
@@ -277,33 +277,24 @@ fn path_match<T>(
         ))
     };
 
-    let found_from_captures = |captures: Captures| {
-        let Some(path) = captures.name("path") else {
-            return found_from_range(captures.get(0).unwrap().range(), None, None);
-        };
-
-        let parse = |name: &str| {
-            captures
-                .name(name)
-                .and_then(|capture| capture.as_str().parse().ok())
-        };
-
-        let Some(line) = parse("line") else {
-            return found_from_range(path.range(), None, None);
-        };
-
-        let Some(column) = parse("column") else {
-            return found_from_range(path.range(), Some(line), None);
-        };
-
-        return found_from_range(path.range(), Some(line), Some(column));
-    };
-
     for regex in path_hyperlink_regexes {
         let mut path_found = false;
 
         for captures in regex.captures_iter(&line).flatten() {
-            if let Some(found) = found_from_captures(captures) {
+            let found = if let Some(path) = captures.name("path") {
+                let parse = |name: &str| {
+                    captures
+                        .name(name)
+                        .and_then(|capture| capture.as_str().parse().ok())
+                };
+
+                let line = parse("line");
+                found_from_range(path.range(), parse("line"), line.and(parse("column")))
+            } else {
+                found_from_range(captures.get(0).unwrap().range(), None, None)
+            };
+
+            if let Some(found) = found {
                 path_found = true;
                 if found.1.contains(&hovered) {
                     return Some(found);
