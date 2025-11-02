@@ -1293,6 +1293,12 @@ fn find_text_in_buffer(
         None
     }
 }
+
+// OpenAI-compatible providers are user-configured and can be removed,
+// whereas built-in providers (like Anthropic, OpenAI, Google, etc.) can't.
+//
+// If in the future we have more "API-compatible-type" of providers,
+// they should be included here as removable providers.
 fn is_removable_provider(provider_id: &LanguageModelProviderId, cx: &App) -> bool {
     AllLanguageModelSettings::get_global(cx)
         .openai_compatible
