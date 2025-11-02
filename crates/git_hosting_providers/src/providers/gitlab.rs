@@ -225,7 +225,11 @@ impl GitHostingProvider for Gitlab {
                 if let Some(host) = url.host_str() {
                     let size_query = if host.contains("gravatar") || host.contains("libravatar") {
                         Some("s=128")
-                    } else if host.contains("gitlab") {
+                    } else if self
+                        .base_url
+                        .host_str()
+                        .is_some_and(|base_host| host.contains(base_host))
+                    {
                         Some("width=128")
                     } else {
                         None
