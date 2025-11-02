@@ -31,8 +31,9 @@ use project::{
 use rope::Rope;
 use settings::{SettingsStore, update_settings_file};
 use ui::{
-    Chip, CommonAnimationExt, ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex,
-    Indicator, PopoverMenu, Switch, SwitchColor, Tooltip, WithScrollbar, prelude::*,
+    Button, ButtonStyle, Chip, CommonAnimationExt, ContextMenu, Disclosure, Divider, DividerColor,
+    ElevationIndex, IconName, IconPosition, IconSize, Indicator, LabelSize, PopoverMenu, Switch,
+    SwitchColor, Tooltip, WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{Workspace, create_and_open_local_file};
@@ -154,6 +155,63 @@ pub enum AssistantConfigurationEvent {
 impl EventEmitter<AssistantConfigurationEvent> for AgentConfiguration {}
 
 impl AgentConfiguration {
+    fn delete_provider(
+        &mut self,
+        provider: Arc<dyn LanguageModelProvider>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let fs = self.fs.clone();
+        let provider_id = provider.id();
+        let provider_name = provider.name().0.clone();
+
+        // Clone the provider_id for use in async operations
+        let provider_id_for_settings = provider_id.clone();
+        let provider_id_for_registry = provider_id.clone();
+
+        cx.spawn_in(window, async move |_, cx| {
+            // Show a confirmation before deleting
+            let answer = cx
+                .prompt(
+                    gpui::PromptLevel::Warning,
+                    &format!("Delete provider \"{}\"?", provider_name),
+                    Some("This will remove the provider configuration and you will no longer be able to use it."),
+                    &["Delete", "Cancel"],
+                )
+                .await
+                .ok();
+
+            if let Some(answer) = answer && answer == 0 {
+                let fs_clone = fs.clone();
+                let provider_id_clone = provider_id_for_settings.clone();
+
+                // Remove from settings
+                cx.update(move |_window, cx| {
+                    update_settings_file(fs_clone, cx, move |settings, _| {
+                        // Remove the provider from openai_compatible settings
+                        if let Some(ref mut openai_compatible) = settings
+                            .language_models
+                            .as_mut()
+                            .and_then(|lm| lm.openai_compatible.as_mut())
+                        {
+                            // Convert SharedString to Arc<str> directly in the closure
+                            let key_to_remove: Arc<str> = Arc::from(provider_id_clone.0.as_ref());
+                            openai_compatible.remove(&key_to_remove);
+                        }
+                    });
+                }).ok();
+
+                // Unregister the provider from the registry
+                cx.update(move |_window, cx| {
+                    LanguageModelRegistry::global(cx).update(cx, move |registry, cx| {
+                        registry.unregister_provider(provider_id_for_registry, cx);
+                    });
+                }).ok();
+            }
+
+            anyhow::Ok(())
+        }).detach_and_log_err(cx);
+    }
     fn render_provider_configuration_block(
         &mut self,
         provider: &Arc<dyn LanguageModelProvider>,
@@ -253,9 +311,39 @@ impl AgentConfiguration {
                                     ),
                             )
                             .child(
-                                Disclosure::new(provider_id_string, is_expanded)
-                                    .opened_icon(IconName::ChevronUp)
-                                    .closed_icon(IconName::ChevronDown),
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Disclosure::new(provider_id_string, is_expanded)
+                                            .opened_icon(IconName::ChevronUp)
+                                            .closed_icon(IconName::ChevronDown),
+                                    )
+                                    .when(provider.icon() == IconName::AiOpenAiCompat, |this| {
+                                        this.child(
+                                            Button::new(
+                                                SharedString::from(format!(
+                                                    "delete-provider-{provider_id}"
+                                                )),
+                                                "Delete",
+                                            )
+                                            .style(ButtonStyle::Subtle)
+                                            .color(Color::Muted)
+                                            .label_size(LabelSize::Small)
+                                            .tooltip(Tooltip::text("Delete this provider"))
+                                            .on_click(
+                                                cx.listener({
+                                                    let provider = provider.clone();
+                                                    move |this, _event, window, cx| {
+                                                        this.delete_provider(
+                                                            provider.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }
+                                                }),
+                                            ),
+                                        )
+                                    }),
                             )
                             .on_click(cx.listener({
                                 let provider_id = provider.id();
