@@ -19,7 +19,7 @@ use markdown::{CodeBlockRenderer, Markdown, MarkdownElement, MarkdownStyle};
 use project::Project;
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{Tooltip, prelude::*};
+use ui::{Tooltip, WithScrollbar, prelude::*};
 use util::ResultExt as _;
 use workspace::{
     Item, ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -501,7 +501,7 @@ impl Focusable for AcpTools {
 }
 
 impl Render for AcpTools {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .track_focus(&self.focus_handle)
             .size_full()
@@ -516,13 +516,19 @@ impl Render for AcpTools {
                             .child("No messages recorded yet")
                             .into_any()
                     } else {
-                        list(
-                            connection.list_state.clone(),
-                            cx.processor(Self::render_message),
-                        )
-                        .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
-                        .flex_grow()
-                        .into_any()
+                        div()
+                            .flex_grow()
+                            .size_full()
+                            .child(
+                                list(
+                                    connection.list_state.clone(),
+                                    cx.processor(Self::render_message),
+                                )
+                                .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
+                                .size_full(),
+                            )
+                            .vertical_scrollbar_for(connection.list_state.clone(), window, cx)
+                            .into_any()
                     }
                 }
                 None => h_flex()
