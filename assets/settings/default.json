@@ -1719,6 +1719,9 @@
         "allowed": true
       }
     },
+    "HTML+ERB": {
+      "language_servers": ["herb", "!ruby-lsp", "..."]
+    },
     "Java": {
       "prettier": {
         "allowed": true,
@@ -1740,6 +1743,9 @@
       "prettier": {
         "allowed": true
       }
+    },
+    "JS+ERB": {
+      "language_servers": ["!ruby-lsp", "..."]
     },
     "Kotlin": {
       "language_servers": ["!kotlin-language-server", "kotlin-lsp", "..."]
@@ -1844,6 +1850,9 @@
       "prettier": {
         "allowed": true
       }
+    },
+    "YAML+ERB": {
+      "language_servers": ["!ruby-lsp", "..."]
     },
     "Zig": {
       "language_servers": ["zls", "..."]
