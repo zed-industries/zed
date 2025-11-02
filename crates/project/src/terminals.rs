@@ -132,13 +132,11 @@ impl Project {
                         .await
                         .ok();
                     let lister = language?.toolchain_lister()?;
-                    return Some(
-                        project
-                            .update(cx, |_, cx| {
-                                lister.activation_script(&toolchain, shell_kind, cx)
-                            })
-                            .ok()?,
-                    );
+                    return project
+                        .update(cx, |_, cx| {
+                            lister.activation_script(&toolchain, shell_kind, cx)
+                        })
+                        .ok();
                 }
                 None
             })
@@ -359,13 +357,11 @@ impl Project {
                         .await
                         .ok();
                     let lister = language?.toolchain_lister()?;
-                    return Some(
-                        project
-                            .update(cx, |_, cx| {
-                                lister.activation_script(&toolchain, shell_kind, cx)
-                            })
-                            .ok()?,
-                    );
+                    return project
+                        .update(cx, |_, cx| {
+                            lister.activation_script(&toolchain, shell_kind, cx)
+                        })
+                        .ok();
                 }
                 None
             })
