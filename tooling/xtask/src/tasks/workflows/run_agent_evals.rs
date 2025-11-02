@@ -46,6 +46,7 @@ fn agent_evals() -> NamedJob {
                 (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'run-eval'))
             "#}))
             .runs_on(runners::LINUX_DEFAULT)
+            .timeout_minutes(60_u32)
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies())
             .map(steps::install_linux_dependencies)
@@ -78,10 +79,6 @@ pub(crate) fn run_unit_evals() -> Workflow {
 }
 
 fn unit_evals() -> NamedJob {
-    fn run_evals() -> Step<Run> {
-        named::bash("./script/run-unit-evals")
-    }
-
     fn send_failure_to_slack() -> Step<Use> {
         named::uses(
             "slackapi",
@@ -106,7 +103,10 @@ fn unit_evals() -> NamedJob {
             .map(steps::install_linux_dependencies)
             .add_step(steps::cargo_install_nextest(Platform::Linux))
             .add_step(steps::clear_target_dir_if_large(Platform::Linux))
-            .add_step(run_evals())
+            .add_step(
+                steps::script("./script/run-unit-evals")
+                    .add_env(("ANTHROPIC_API_KEY", "${{ secrets.ANTHROPIC_API_KEY }}")),
+            )
             .add_step(send_failure_to_slack())
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )

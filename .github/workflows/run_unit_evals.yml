@@ -39,9 +39,11 @@ jobs:
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 100
       shell: bash -euxo pipefail {0}
-    - name: run_agent_evals::unit_evals::run_evals
+    - name: ./script/run-unit-evals
       run: ./script/run-unit-evals
       shell: bash -euxo pipefail {0}
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     - name: run_agent_evals::unit_evals::send_failure_to_slack
       if: ${{ failure() }}
       uses: slackapi/slack-github-action@b0fa283ad8fea605de13dc3f449259339835fc52
