@@ -3453,37 +3453,35 @@ where
         } else {
             current_value_label.to_string()
         },
-        window.use_state(cx, |window, cx| {
-            ContextMenu::new(window, cx, move |mut menu, _, _| {
-                for (&value, &label) in std::iter::zip(variants(), labels()) {
-                    let file = file.clone();
-                    menu = menu.toggleable_entry(
-                        if should_do_titlecase {
-                            label.to_title_case()
-                        } else {
-                            label.to_string()
-                        },
-                        value == current_value,
-                        IconPosition::End,
-                        None,
-                        move |_, cx| {
-                            if value == current_value {
-                                return;
-                            }
-                            update_settings_file(
-                                file.clone(),
-                                field.json_path,
-                                cx,
-                                move |settings, _cx| {
-                                    (field.write)(settings, Some(value));
-                                },
-                            )
-                            .log_err(); // todo(settings_ui) don't log err
-                        },
-                    );
-                }
-                menu
-            })
+        ContextMenu::build(window, cx, move |mut menu, _, _| {
+            for (&value, &label) in std::iter::zip(variants(), labels()) {
+                let file = file.clone();
+                menu = menu.toggleable_entry(
+                    if should_do_titlecase {
+                        label.to_title_case()
+                    } else {
+                        label.to_string()
+                    },
+                    value == current_value,
+                    IconPosition::End,
+                    None,
+                    move |_, cx| {
+                        if value == current_value {
+                            return;
+                        }
+                        update_settings_file(
+                            file.clone(),
+                            field.json_path,
+                            cx,
+                            move |settings, _cx| {
+                                (field.write)(settings, Some(value));
+                            },
+                        )
+                        .log_err(); // todo(settings_ui) don't log err
+                    },
+                );
+            }
+            menu
         }),
     )
     .tab_index(0)
