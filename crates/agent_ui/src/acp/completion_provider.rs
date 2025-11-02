@@ -138,7 +138,7 @@ impl ContextPickerCompletionProvider {
 
         let new_text = format!("{} ", uri.as_link());
 
-        let new_text_len = new_text.len();
+        let link_len = new_text.len() - 1;
         Completion {
             replace_range: source_range.clone(),
             new_text,
@@ -148,9 +148,8 @@ impl ContextPickerCompletionProvider {
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_for_completion),
             confirm: Some(confirm_completion_callback(
-                thread_entry.title().clone(),
                 source_range.start,
-                new_text_len - 1,
+                link_len,
                 editor,
                 uri,
             )),
@@ -168,8 +167,9 @@ impl ContextPickerCompletionProvider {
             name: rule.title.to_string(),
         };
         let new_text = format!("{} ", uri.as_link());
-        let new_text_len = new_text.len();
+
         let icon_path = uri.icon_path(cx);
+        let link_len = new_text.len() - 1;
         Completion {
             replace_range: source_range.clone(),
             new_text,
@@ -179,9 +179,8 @@ impl ContextPickerCompletionProvider {
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_path),
             confirm: Some(confirm_completion_callback(
-                rule.title,
                 source_range.start,
-                new_text_len - 1,
+                link_len,
                 editor,
                 uri,
             )),
@@ -225,7 +224,8 @@ impl ContextPickerCompletionProvider {
         };
 
         let new_text = format!("{} ", uri.as_link());
-        let new_text_len = new_text.len();
+
+        let link_len = new_text.len() - 1;
         Some(Completion {
             replace_range: source_range.clone(),
             new_text,
@@ -235,9 +235,8 @@ impl ContextPickerCompletionProvider {
             icon_path: Some(completion_icon_path),
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
-                file_name,
                 source_range.start,
-                new_text_len - 1,
+                link_len,
                 message_editor,
                 uri,
             )),
@@ -275,8 +274,8 @@ impl ContextPickerCompletionProvider {
             line_range: symbol.range.start.0.row..=symbol.range.end.0.row,
         };
         let new_text = format!("{} ", uri.as_link());
-        let new_text_len = new_text.len();
         let icon_path = uri.icon_path(cx);
+        let link_len = new_text.len() - 1;
         Some(Completion {
             replace_range: source_range.clone(),
             new_text,
@@ -286,9 +285,8 @@ impl ContextPickerCompletionProvider {
             icon_path: Some(icon_path),
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
-                symbol.name.into(),
                 source_range.start,
-                new_text_len - 1,
+                link_len,
                 message_editor,
                 uri,
             )),
@@ -309,6 +307,7 @@ impl ContextPickerCompletionProvider {
             url: url_to_fetch.clone(),
         };
         let icon_path = mention_uri.icon_path(cx);
+        let link_len = new_text.len() - 1;
         Some(Completion {
             replace_range: source_range.clone(),
             new_text: new_text.clone(),
@@ -318,9 +317,8 @@ impl ContextPickerCompletionProvider {
             icon_path: Some(icon_path),
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
-                url_to_fetch.to_string().into(),
                 source_range.start,
-                new_text.len() - 1,
+                link_len,
                 message_editor,
                 mention_uri,
             )),
@@ -975,7 +973,6 @@ impl CompletionProvider for ContextPickerCompletionProvider {
 }
 
 fn confirm_completion_callback(
-    crease_text: SharedString,
     start: Anchor,
     content_len: usize,
     message_editor: WeakEntity<MessageEditor>,
@@ -983,21 +980,13 @@ fn confirm_completion_callback(
 ) -> Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync> {
     Arc::new(move |_, window, cx| {
         let message_editor = message_editor.clone();
-        let crease_text = crease_text.clone();
         let mention_uri = mention_uri.clone();
         window.defer(cx, move |window, cx| {
             message_editor
                 .clone()
                 .update(cx, |message_editor, cx| {
                     message_editor
-                        .confirm_mention_completion(
-                            crease_text,
-                            start,
-                            content_len,
-                            mention_uri,
-                            window,
-                            cx,
-                        )
+                        .confirm_mention_completion(start, content_len, mention_uri, window, cx)
                         .detach();
                 })
                 .ok();

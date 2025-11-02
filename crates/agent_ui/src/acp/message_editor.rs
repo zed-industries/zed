@@ -1,3 +1,5 @@
+use crate::acp::MentionUriExt;
+
 use crate::{
     ChatWithFollow,
     acp::completion_provider::{ContextPickerCompletionProvider, SlashCommandCompletion},
@@ -49,7 +51,7 @@ use std::{
 };
 use text::OffsetRangeExt;
 use theme::ThemeSettings;
-use ui::{ButtonLike, TintColor, Toggleable, prelude::*};
+use ui::{ButtonLike, TintColor, Toggleable, Tooltip, prelude::*};
 use util::{ResultExt, debug_panic, rel_path::RelPath};
 use workspace::{CollaboratorId, Workspace, notifications::NotifyResultExt as _};
 use zed_actions::agent::Chat;
@@ -254,7 +256,7 @@ impl MessageEditor {
                 .text_anchor
         });
 
-        self.confirm_mention_completion(thread.title, start, content_len, uri, window, cx)
+        self.confirm_mention_completion(start, content_len, uri, window, cx)
             .detach();
     }
 
@@ -282,7 +284,6 @@ impl MessageEditor {
 
     pub fn confirm_mention_completion(
         &mut self,
-        crease_text: SharedString,
         start: text::Anchor,
         content_len: usize,
         mention_uri: MentionUri,
@@ -330,9 +331,8 @@ impl MessageEditor {
                 excerpt_id,
                 start,
                 content_len,
-                mention_uri.name().into(),
-                IconName::Image.path().into(),
                 Some(image),
+                mention_uri.clone(),
                 self.editor.clone(),
                 window,
                 cx,
@@ -342,9 +342,8 @@ impl MessageEditor {
                 excerpt_id,
                 start,
                 content_len,
-                crease_text,
-                mention_uri.icon_path(cx),
                 None,
+                mention_uri.clone(),
                 self.editor.clone(),
                 window,
                 cx,
@@ -392,7 +391,7 @@ impl MessageEditor {
             if result.is_none() {
                 this.update(cx, |this, cx| {
                     this.editor.update(cx, |editor, cx| {
-                        // Remove mention
+                        // Remove mention using precomputed end_anchor range (link + delimiter).
                         editor.edit([(start_anchor..end_anchor, "")], cx);
                     });
                     this.mention_set.mentions.remove(&crease_id);
@@ -907,9 +906,8 @@ impl MessageEditor {
                 excerpt_id,
                 text_anchor,
                 content_len,
-                MentionUri::PastedImage.name().into(),
-                IconName::Image.path().into(),
                 Some(Task::ready(Ok(image.clone())).shared()),
+                MentionUri::PastedImage,
                 self.editor.clone(),
                 window,
                 cx,
@@ -963,7 +961,6 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let path_style = self.project.read(cx).path_style(cx);
         let buffer = self.editor.read(cx).buffer().clone();
         let Some(buffer) = buffer.read(cx).as_singleton() else {
             return;
@@ -977,12 +974,6 @@ impl MessageEditor {
                 continue;
             };
             let abs_path = worktree.read(cx).absolutize(&path.path);
-            let (file_name, _) =
-                crate::context_picker::file_context_picker::extract_file_name_and_directory(
-                    &path.path,
-                    worktree.read(cx).root_name(),
-                    path_style,
-                );
 
             let uri = if entry.is_dir() {
                 MentionUri::Directory { abs_path }
@@ -991,7 +982,8 @@ impl MessageEditor {
             };
 
             let new_text = format!("{} ", uri.as_link());
-            let content_len = new_text.len() - 1;
+
+            let new_text_len = new_text.len();
 
             let anchor = buffer.update(cx, |buffer, _cx| buffer.anchor_before(buffer.len()));
 
@@ -1004,14 +996,7 @@ impl MessageEditor {
                     cx,
                 );
             });
-            tasks.push(self.confirm_mention_completion(
-                file_name,
-                anchor,
-                content_len,
-                uri,
-                window,
-                cx,
-            ));
+            tasks.push(self.confirm_mention_completion(anchor, new_text_len - 1, uri, window, cx));
         }
         cx.spawn(async move |_, _| {
             join_all(tasks).await;
@@ -1160,9 +1145,8 @@ impl MessageEditor {
                 anchor.excerpt_id,
                 anchor.text_anchor,
                 range.end - range.start,
-                mention_uri.name().into(),
-                mention_uri.icon_path(cx),
                 None,
+                mention_uri.clone(),
                 self.editor.clone(),
                 window,
                 cx,
@@ -1343,10 +1327,8 @@ pub(crate) fn insert_crease_for_mention(
     excerpt_id: ExcerptId,
     anchor: text::Anchor,
     content_len: usize,
-    crease_label: SharedString,
-    crease_icon: SharedString,
-    // abs_path: Option<Arc<Path>>,
     image: Option<Shared<Task<Result<Arc<Image>, String>>>>,
+    mention_uri: MentionUri,
     editor: Entity<Editor>,
     window: &mut Window,
     cx: &mut App,
@@ -1359,15 +1341,29 @@ pub(crate) fn insert_crease_for_mention(
         let start = snapshot.anchor_in_excerpt(excerpt_id, anchor)?;
 
         let start = start.bias_right(&snapshot);
-        let end = snapshot.anchor_before(start.to_offset(&snapshot) + content_len);
+        let start_offset = start.to_offset(&snapshot);
+        let snap_len = snapshot.len();
+        debug_assert!(
+            start_offset + content_len <= snap_len,
+            "confirm_mention_completion: crease range exceeds snapshot (start_offset={}, content_len={}, snapshot_len={})",
+            start_offset,
+            content_len,
+            snap_len
+        );
+        log::debug!(
+            "confirm_mention_completion crease insertion: start_offset={}, content_len={}, snapshot_len={}",
+            start_offset,
+            content_len,
+            snap_len
+        );
+        let end = snapshot.anchor_before(start_offset + content_len);
 
         let placeholder = FoldPlaceholder {
             render: render_mention_fold_button(
-                crease_label,
-                crease_icon,
                 start..end,
                 rx,
                 image,
+                mention_uri,
                 cx.weak_entity(),
                 cx,
             ),
@@ -1393,56 +1389,93 @@ pub(crate) fn insert_crease_for_mention(
 }
 
 fn render_mention_fold_button(
-    label: SharedString,
-    icon: SharedString,
     range: Range<Anchor>,
     mut loading_finished: postage::barrier::Receiver,
     image_task: Option<Shared<Task<Result<Arc<Image>, String>>>>,
+    mention_uri: MentionUri,
     editor: WeakEntity<Editor>,
     cx: &mut App,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
     let loading = cx.new(|cx| {
-        let loading = cx.spawn(async move |this, cx| {
+        let loading_task = cx.spawn(async move |this, cx| {
             loading_finished.recv().await;
-            this.update(cx, |this: &mut LoadingContext, cx| {
+            this.update(cx, |this: &mut MentionButton, cx| {
                 this.loading = None;
                 cx.notify();
             })
             .ok();
         });
-        LoadingContext {
+
+        MentionButton {
             id: cx.entity_id(),
-            label,
-            icon,
             range,
             editor,
-            loading: Some(loading),
+            loading: Some(loading_task),
+            mention_uri: mention_uri.clone(),
             image: image_task.clone(),
         }
     });
     Arc::new(move |_fold_id, _fold_range, _cx| loading.clone().into_any_element())
 }
 
-struct LoadingContext {
+#[derive(Debug)]
+struct MentionButton {
     id: EntityId,
-    label: SharedString,
-    icon: SharedString,
     range: Range<Anchor>,
     editor: WeakEntity<Editor>,
     loading: Option<Task<()>>,
     image: Option<Shared<Task<Result<Arc<Image>, String>>>>,
+    mention_uri: MentionUri,
 }
 
-impl Render for LoadingContext {
+impl MentionButton {
+    fn tooltip(&self) -> Option<SharedString> {
+        match &self.mention_uri {
+            MentionUri::File { .. } => Some("Open File".into()),
+            MentionUri::Directory { .. } => Some("Reveal in Project Panel".into()),
+            MentionUri::Symbol { .. } => Some("Show Symbol location".into()),
+            _ => None,
+        }
+    }
+
+    fn label(&self) -> SharedString {
+        self.mention_uri.name().into()
+    }
+
+    fn icon(&self, cx: &mut App) -> SharedString {
+        self.mention_uri.icon_path(cx)
+    }
+
+    fn open_uri(&self, window: &mut Window, cx: &mut App) {
+        if let Some(workspace) = window.root::<Workspace>().flatten() {
+            let weak = workspace.downgrade();
+            if self.mention_uri.open(&weak, window, cx) {
+                return;
+            }
+        }
+
+        let url: SharedString = self.mention_uri.to_uri().to_string().into();
+        cx.open_url(&url);
+    }
+}
+
+impl Render for MentionButton {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_in_text_selection = self
             .editor
             .update(cx, |editor, cx| editor.is_range_selected(&self.range, cx))
             .unwrap_or_default();
+
         ButtonLike::new(("loading-context", self.id))
             .style(ButtonStyle::Filled)
             .selected_style(ButtonStyle::Tinted(TintColor::Accent))
             .toggle_state(is_in_text_selection)
+            .when_some(self.tooltip(), |el, tooltip| {
+                el.hoverable_tooltip(move |window, cx| Tooltip::text(tooltip.clone())(window, cx))
+            })
+            .on_click(cx.listener(|this, _event, window, cx| {
+                this.open_uri(window, cx);
+            }))
             .when_some(self.image.clone(), |el, image_task| {
                 el.hoverable_tooltip(move |_, cx| {
                     let image = image_task.peek().cloned().transpose().ok().flatten();
@@ -1467,12 +1500,12 @@ impl Render for LoadingContext {
                 h_flex()
                     .gap_1()
                     .child(
-                        Icon::from_path(self.icon.clone())
+                        Icon::from_path(self.icon(cx))
                             .size(IconSize::XSmall)
                             .color(Color::Muted),
                     )
                     .child(
-                        Label::new(self.label.clone())
+                        Label::new(self.label())
                             .size(LabelSize::Small)
                             .buffer_font(cx)
                             .single_line(),
