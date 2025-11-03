@@ -100,13 +100,13 @@ jobs:
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
         name: zed-linux-aarch64.tar.gz
-        path: target/release/zed-*.tar.gz
+        path: target/release/zed-linux-aarch64.tar.gz
         if-no-files-found: error
     - name: '@actions/upload-artifact zed-remote-server-linux-aarch64.gz'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
         name: zed-remote-server-linux-aarch64.gz
-        path: target/zed-remote-server-*.gz
+        path: target/zed-remote-server-linux-aarch64.gz
         if-no-files-found: error
     timeout-minutes: 60
   bundle_linux_x86_64:
@@ -147,13 +147,13 @@ jobs:
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
         name: zed-linux-x86_64.tar.gz
-        path: target/release/zed-*.tar.gz
+        path: target/release/zed-linux-x86_64.tar.gz
         if-no-files-found: error
     - name: '@actions/upload-artifact zed-remote-server-linux-x86_64.gz'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
         name: zed-remote-server-linux-x86_64.gz
-        path: target/zed-remote-server-*.gz
+        path: target/zed-remote-server-linux-x86_64.gz
         if-no-files-found: error
     timeout-minutes: 60
   bundle_mac_aarch64:
@@ -305,7 +305,7 @@ jobs:
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
         name: Zed-aarch64.exe
-        path: ${{ env.SETUP_PATH }}
+        path: target/Zed-aarch64.exe
         if-no-files-found: error
     timeout-minutes: 60
   bundle_windows_x86_64:
@@ -351,7 +351,7 @@ jobs:
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
         name: Zed-x86_64.exe
-        path: ${{ env.SETUP_PATH }}
+        path: target/Zed-x86_64.exe
         if-no-files-found: error
     timeout-minutes: 60
   build_nix_linux_x86_64:

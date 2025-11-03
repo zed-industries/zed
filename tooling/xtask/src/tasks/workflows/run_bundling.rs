@@ -78,12 +78,12 @@ pub(crate) fn bundle_mac(
             .add_step(steps::clear_target_dir_if_large(runners::Platform::Mac))
             .add_step(bundle_mac(arch))
             .add_step(steps::upload_artifact(
-                &artifact_name,
-                &format!("target/{arch}-apple-darwin/release/Zed-{arch}.dmg"),
+                artifact_name,
+                &format!("target/{arch}-apple-darwin/release/{artifact_name}"),
             ))
             .add_step(steps::upload_artifact(
-                &remote_server_artifact_name,
-                &format!("target/zed-remote-server-macos-{arch}.gz"),
+                remote_server_artifact_name,
+                &format!("target/{remote_server_artifact_name}"),
             )),
     }
 }
@@ -115,12 +115,12 @@ pub(crate) fn bundle_linux(
             .map(steps::install_linux_dependencies)
             .add_step(steps::script("./script/bundle-linux"))
             .add_step(steps::upload_artifact(
-                &artifact_name,
-                "target/release/zed-*.tar.gz",
+                artifact_name,
+                &format!("target/release/{artifact_name}"),
             ))
             .add_step(steps::upload_artifact(
-                &remote_server_artifact_name,
-                "target/zed-remote-server-*.gz",
+                remote_server_artifact_name,
+                &format!("target/{remote_server_artifact_name}"),
             )),
     }
 }
@@ -154,8 +154,8 @@ pub(crate) fn bundle_windows(
             .add_step(steps::setup_sentry())
             .add_step(bundle_windows(arch))
             .add_step(steps::upload_artifact(
-                &artifact_name,
-                "${{ env.SETUP_PATH }}",
+                artifact_name,
+                &format!("target/{artifact_name}"),
             )),
     }
 }
