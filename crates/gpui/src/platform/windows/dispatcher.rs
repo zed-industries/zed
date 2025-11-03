@@ -80,7 +80,7 @@ impl PlatformDispatcher for WindowsDispatcher {
     }
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
-        let was_empty = self.main_sender.is_empty();
+        let pre_len = self.main_sender.len();
         match self.main_sender.send(runnable) {
             Ok(_) => unsafe {
                 // Only send a `WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD` to the
@@ -92,7 +92,15 @@ impl PlatformDispatcher for WindowsDispatcher {
                 // When the message loop receives a
                 // `WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD` message we drain the
                 // runnable queue entirely.
-                if was_empty {
+                //
+                // Note that we check whether our task sending did not increase
+                // the channel length, that would imply the main thread is
+                // processing tasks right now which means we might have observed
+                // a non empty channel while missing the processing with our
+                // task in that case we send another
+                // `WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD` message to make sure
+                // we get processed
+                if pre_len == 0 || self.main_sender.len() <= pre_len {
                     PostMessageW(
                         Some(self.platform_window_handle.as_raw()),
                         WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
