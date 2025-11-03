@@ -440,6 +440,20 @@ fn paint_line_background(
             line_height * (wrap_boundaries.len() as f32 + 1.),
         ),
     );
+
+    // let mut decoration_runs: Vec<_> = decoration_runs.iter().cloned().collect();
+    // decoration_runs.insert(
+    //     0,
+    //     DecorationRun {
+    //         len: 1,
+    //         color: Hsla::black(),
+    //         background_color: Some(Hsla::blue()),
+    //         underline: None,
+    //         strikethrough: None,
+    //     },
+    // );
+    // let decoration_runs = decoration_runs.as_slice();
+
     window.paint_layer(line_bounds, |window| {
         let mut decoration_runs = decoration_runs.iter();
         let mut wraps = wrap_boundaries.iter().peekable();

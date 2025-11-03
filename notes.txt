@@ -1,0 +1,59 @@
+https://github.com/zed-industries/zed/blob/dc503e997589c6d5cf4475ca36e5bbb75aa57b76/crates/git_ui/src/text_diff_view.rs#L157
+
+Editor has a `start_temporary_diff_override`
+
+there is:
+- [ ] text_diff_view (clipboard vs selection diffing)
+- [ ] file_diff_view
+- [ ] toggle_single_diff_hunk -> ... -> sync_diff_transforms
+
+there is something called diff_transform on MultiBuffer no idea what it does
+
+
+editorelement prepaint contains:
+```rust
+let background_color = match diff_status.kind {
+    DiffHunkStatusKind::Added => cx.theme().colors().version_control_added,
+    DiffHunkStatusKind::Deleted => {
+        cx.theme().colors().version_control_deleted
+    }
+    DiffHunkStatusKind::Modified => {
+        debug_panic!("modified diff status for row info");
+        continue;
+    }
+};
+```
+
+^ That only has to do with staging
+
+
+There is `decoration_runs` in `paint_line_background`. They seem to be for coloring the background of only some glyphs
+
+adding this unconditionally in paint_line_background makes the background of every first character in the line blue :party
+```
+let mut decoration_runs: Vec<_> = decoration_runs.iter().cloned().collect();
+decoration_runs.insert(
+    0,
+    DecorationRun {
+        len: 1,
+        color: Hsla::black(),
+        background_color: Some(Hsla::blue()),
+        underline: None,
+        strikethrough: None,
+    },
+);
+let decoration_runs = decoration_runs.as_slice();
+```
+
+`self.paint_lines(&invisible_display_ranges, layout, window, cx)` draws
+- the red diff (text and background)
+- the current text (only text)
+The green background for the current text is drawn elsewhere.
+
+
+quite intresting:
+```
+let chunks = snapshot.highlighted_chunks(rows.clone(), true, style);
+LineWithInvisibles::from_chunks(
+```
+slightly above that a TextRun is made

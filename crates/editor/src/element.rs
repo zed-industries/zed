@@ -12,8 +12,8 @@ use crate::{
     ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
-        Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
-        HighlightKey, HighlightedChunk, ToDisplayPoint,
+        Block, BlockContext, BlockPoint, BlockStyle, ChunkRendererId, DisplaySnapshot,
+        EditorMargins, HighlightKey, HighlightedChunk, ToDisplayPoint,
     },
     editor_settings::{
         CurrentLineHighlight, DocumentColorsRenderMode, DoubleClickInMultibuffer, Minimap,
@@ -8749,7 +8749,7 @@ impl Element for EditorElement {
                             .or_insert(background);
                     }
 
-                    let highlighted_ranges = self
+                    let mut highlighted_ranges = self
                         .editor_with_selections(cx)
                         .map(|editor| {
                             editor.read(cx).background_highlights_in_range(
@@ -8759,6 +8759,15 @@ impl Element for EditorElement {
                             )
                         })
                         .unwrap_or_default();
+
+                    highlighted_ranges.insert(
+                        0,
+                        (
+                            DisplayPoint::zero()..DisplayPoint::new(DisplayRow(0), 5),
+                            Hsla::blue(),
+                        ),
+                    );
+
                     let highlighted_gutter_ranges =
                         self.editor.read(cx).gutter_highlights_in_range(
                             start_anchor..end_anchor,
