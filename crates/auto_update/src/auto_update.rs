@@ -24,7 +24,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use util::ResultExt;
 use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
@@ -333,10 +332,14 @@ impl AutoUpdater {
     pub fn start_polling(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         cx.spawn(async move |this, cx| {
             #[cfg(target_os = "windows")]
-            cleanup_windows()
-                .await
-                .context("failed to cleanup old directories")
-                .log_err();
+            {
+                use util::ResultExt;
+
+                cleanup_windows()
+                    .await
+                    .context("failed to cleanup old directories")
+                    .log_err();
+            }
 
             loop {
                 this.update(cx, |this, cx| this.poll(UpdateCheckType::Automatic, cx))?;
@@ -932,6 +935,8 @@ async fn install_release_macos(
 
 #[cfg(target_os = "windows")]
 async fn cleanup_windows() -> Result<()> {
+    use util::ResultExt;
+
     let parent = std::env::current_exe()?
         .parent()
         .context("No parent dir for Zed.exe")?
