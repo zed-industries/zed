@@ -19,6 +19,7 @@ use windows::{
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
+        Graphics::Dwm::*,
         System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*},
         UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
@@ -775,17 +776,24 @@ impl PlatformWindow for WindowsWindow {
 
         match background_appearance {
             WindowBackgroundAppearance::Opaque => {
-                // ACCENT_DISABLED
-                set_window_composition_attribute(hwnd, None, 0);
+                // DWMSBT_AUTO
+                set_window_composition_attribute(hwnd, 0)
             }
             WindowBackgroundAppearance::Transparent => {
-                // Use ACCENT_ENABLE_TRANSPARENTGRADIENT for transparent background
-                set_window_composition_attribute(hwnd, None, 2);
+                // DWMSBT_NONE
+                set_window_composition_attribute(hwnd, 1)
+            },
+            WindowBackgroundAppearance::MicaBackdrop => {
+                // DWMSBT_MAINWINDOW => MicaBase
+                set_window_composition_attribute(hwnd, 2)
             }
             WindowBackgroundAppearance::Blurred => {
-                // Enable acrylic blur
-                // ACCENT_ENABLE_ACRYLICBLURBEHIND
-                set_window_composition_attribute(hwnd, Some((0, 0, 0, 0)), 4);
+                // DWMSBT_TRANSIENTWINDOW => Blur
+                set_window_composition_attribute(hwnd, 3)
+            },
+            WindowBackgroundAppearance::MicaAltBackdrop => {
+                // DWMSBT_TABBEDWINDOW => MicaAlt
+                set_window_composition_attribute(hwnd, 4)
             }
         }
     }
@@ -1105,23 +1113,6 @@ struct StyleAndBounds {
     cy: i32,
 }
 
-#[repr(C)]
-struct WINDOWCOMPOSITIONATTRIBDATA {
-    attrib: u32,
-    pv_data: *mut std::ffi::c_void,
-    cb_data: usize,
-}
-
-#[repr(C)]
-struct AccentPolicy {
-    accent_state: u32,
-    accent_flags: u32,
-    gradient_color: u32,
-    animation_id: u32,
-}
-
-type Color = (u8, u8, u8, u8);
-
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct WindowBorderOffset {
     pub(crate) width_offset: i32,
@@ -1330,7 +1321,7 @@ fn retrieve_window_placement(
     Ok(placement)
 }
 
-fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32) {
+fn set_window_composition_attribute(hwnd: HWND, backdrop_type: u32) {
     let mut version = unsafe { std::mem::zeroed() };
     let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut version) };
     if !status.is_ok() || version.dwBuildNumber < 17763 {
@@ -1338,36 +1329,15 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
     }
 
     unsafe {
-        type SetWindowCompositionAttributeType =
-            unsafe extern "system" fn(HWND, *mut WINDOWCOMPOSITIONATTRIBDATA) -> BOOL;
-        let module_name = PCSTR::from_raw(c"user32.dll".as_ptr() as *const u8);
-        if let Some(user32) = GetModuleHandleA(module_name)
-            .context("Unable to get user32.dll handle")
-            .log_err()
-        {
-            let func_name = PCSTR::from_raw(c"SetWindowCompositionAttribute".as_ptr() as *const u8);
-            let set_window_composition_attribute: SetWindowCompositionAttributeType =
-                std::mem::transmute(GetProcAddress(user32, func_name));
-            let mut color = color.unwrap_or_default();
-            let is_acrylic = state == 4;
-            if is_acrylic && color.3 == 0 {
-                color.3 = 1;
-            }
-            let accent = AccentPolicy {
-                accent_state: state,
-                accent_flags: if is_acrylic { 0 } else { 2 },
-                gradient_color: (color.0 as u32)
-                    | ((color.1 as u32) << 8)
-                    | ((color.2 as u32) << 16)
-                    | ((color.3 as u32) << 24),
-                animation_id: 0,
-            };
-            let mut data = WINDOWCOMPOSITIONATTRIBDATA {
-                attrib: 0x13,
-                pv_data: &accent as *const _ as *mut _,
-                cb_data: std::mem::size_of::<AccentPolicy>(),
-            };
-            let _ = set_window_composition_attribute(hwnd, &mut data as *mut _ as _);
+        let result = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_SYSTEMBACKDROP_TYPE,
+            &backdrop_type as *const _ as *const _,
+            std::mem::size_of_val(&backdrop_type) as u32,
+        );
+
+        if !result.is_ok() {
+            return;
         }
     }
 }
