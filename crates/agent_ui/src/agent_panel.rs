@@ -71,7 +71,7 @@ use ui::{
 use util::ResultExt as _;
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedTab, ToggleZoom, ToolbarItemView, Workspace,
-    dock::{DockPosition, Panel, PanelEvent, PanelHandle},
+    dock::{DockPosition, Panel, PanelEvent},
 };
 use zed_actions::{
     DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
