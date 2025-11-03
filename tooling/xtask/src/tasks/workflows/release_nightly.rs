@@ -122,7 +122,7 @@ fn update_nightly_tag_job(bundle: &ReleaseBundleJobs) -> NamedJob {
             .add_step(steps::checkout_repo().add_with(("fetch-depth", 0)))
             .add_step(download_workflow_artifacts())
             .add_step(steps::script("ls -lR ./artifacts"))
-            .add_step(prep_release_artifacts(bundle))
+            .add_step(prep_release_artifacts())
             .add_step(
                 steps::script("./script/upload-nightly")
                     .add_env((

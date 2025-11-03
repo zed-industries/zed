@@ -2,10 +2,10 @@ use crate::tasks::workflows::{
     release::ReleaseBundleJobs,
     runners::{Arch, Platform, ReleaseChannel},
     steps::{FluentBuilder, NamedJob, dependant_job, named},
-    vars::bundle_envs,
+    vars::{assets, bundle_envs},
 };
 
-use super::{runners, steps, vars};
+use super::{runners, steps};
 use gh_workflow::*;
 use indexmap::IndexMap;
 
@@ -49,17 +49,22 @@ fn bundle_job(deps: &[&NamedJob]) -> Job {
 }
 
 pub(crate) fn bundle_mac(
-    arch: runners::Arch,
+    arch: Arch,
     release_channel: Option<ReleaseChannel>,
     deps: &[&NamedJob],
 ) -> NamedJob {
-    pub fn bundle_mac(arch: runners::Arch) -> Step<Run> {
+    pub fn bundle_mac(arch: Arch) -> Step<Run> {
         named::bash(&format!("./script/bundle-mac {arch}-apple-darwin"))
     }
-    use vars::GITHUB_SHA;
     let platform = Platform::Mac;
-    let artifact_name = format!("Zed_{GITHUB_SHA}-{arch}.dmg");
-    let remote_server_artifact_name = format!("zed-remote-server-{GITHUB_SHA}-macos-{arch}.gz");
+    let artifact_name = match arch {
+        Arch::X86_64 => assets::MAC_X86_64,
+        Arch::AARCH64 => assets::MAC_AARCH64,
+    };
+    let remote_server_artifact_name = match arch {
+        Arch::X86_64 => assets::REMOTE_SERVER_MAC_X86_64,
+        Arch::AARCH64 => assets::REMOTE_SERVER_MAC_AARCH64,
+    };
     NamedJob {
         name: format!("bundle_mac_{arch}"),
         job: bundle_job(deps)
@@ -83,8 +88,11 @@ pub(crate) fn bundle_mac(
             ))
             .outputs(
                 [
-                    ("zed".to_string(), artifact_name),
-                    ("remote-server".to_string(), remote_server_artifact_name),
+                    ("zed".to_string(), artifact_name.to_string()),
+                    (
+                        "remote-server".to_string(),
+                        remote_server_artifact_name.to_string(),
+                    ),
                 ]
                 .into_iter()
                 .collect::<IndexMap<_, _>>(),
@@ -93,17 +101,19 @@ pub(crate) fn bundle_mac(
 }
 
 pub(crate) fn bundle_linux(
-    arch: runners::Arch,
+    arch: Arch,
     release_channel: Option<ReleaseChannel>,
     deps: &[&NamedJob],
 ) -> NamedJob {
     let platform = Platform::Linux;
-    let artifact_name = format!("zed-{}-{}.tar.gz", vars::GITHUB_SHA, arch.triple());
-    let remote_server_artifact_name = format!(
-        "zed-remote-server-{}-{}.tar.gz",
-        vars::GITHUB_SHA,
-        arch.triple()
-    );
+    let artifact_name = match arch {
+        Arch::X86_64 => assets::LINUX_X86_64,
+        Arch::AARCH64 => assets::LINUX_AARCH64,
+    };
+    let remote_server_artifact_name = match arch {
+        Arch::X86_64 => assets::REMOTE_SERVER_LINUX_X86_64,
+        Arch::AARCH64 => assets::REMOTE_SERVER_LINUX_AARCH64,
+    };
     NamedJob {
         name: format!("bundle_linux_{arch}"),
         job: bundle_job(deps)
@@ -126,8 +136,11 @@ pub(crate) fn bundle_linux(
             ))
             .outputs(
                 [
-                    ("zed".to_string(), artifact_name),
-                    ("remote-server".to_string(), remote_server_artifact_name),
+                    ("zed".to_string(), artifact_name.to_string()),
+                    (
+                        "remote-server".to_string(),
+                        remote_server_artifact_name.to_string(),
+                    ),
                 ]
                 .into_iter()
                 .collect::<IndexMap<_, _>>(),
@@ -136,23 +149,22 @@ pub(crate) fn bundle_linux(
 }
 
 pub(crate) fn bundle_windows(
-    arch: runners::Arch,
+    arch: Arch,
     release_channel: Option<ReleaseChannel>,
     deps: &[&NamedJob],
 ) -> NamedJob {
     let platform = Platform::Windows;
-    pub fn bundle_windows(arch: runners::Arch) -> Step<Run> {
+    pub fn bundle_windows(arch: Arch) -> Step<Run> {
         let step = match arch {
-            runners::Arch::X86_64 => named::pwsh("script/bundle-windows.ps1 -Architecture x86_64"),
-            runners::Arch::AARCH64 => {
-                named::pwsh("script/bundle-windows.ps1 -Architecture aarch64")
-            }
+            Arch::X86_64 => named::pwsh("script/bundle-windows.ps1 -Architecture x86_64"),
+            Arch::AARCH64 => named::pwsh("script/bundle-windows.ps1 -Architecture aarch64"),
         };
         step.working_directory("${{ env.ZED_WORKSPACE }}")
     }
-
-    use vars::GITHUB_SHA;
-    let artifact_name = format!("Zed_{GITHUB_SHA}-{arch}.exe");
+    let artifact_name = match arch {
+        Arch::X86_64 => assets::WINDOWS_X86_64,
+        Arch::AARCH64 => assets::WINDOWS_AARCH64,
+    };
     NamedJob {
         name: format!("bundle_windows_{arch}"),
         job: bundle_job(deps)
@@ -169,7 +181,7 @@ pub(crate) fn bundle_windows(
                 "${{ env.SETUP_PATH }}",
             ))
             .outputs(
-                [("zed".to_string(), artifact_name)]
+                [("zed".to_string(), artifact_name.to_string())]
                     .into_iter()
                     .collect::<IndexMap<_, _>>(),
             ),

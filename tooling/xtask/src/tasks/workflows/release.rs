@@ -5,7 +5,7 @@ use crate::tasks::workflows::{
     run_tests,
     runners::{self, Arch},
     steps::{self, FluentBuilder, NamedJob, dependant_job, named, release_job},
-    vars,
+    vars::{self, assets},
 };
 
 pub(crate) fn release() -> Workflow {
@@ -124,45 +124,10 @@ pub(crate) fn download_workflow_artifacts() -> Step<Use> {
     .add_with(("path", "./artifacts/"))
 }
 
-pub(crate) fn prep_release_artifacts(bundle: &ReleaseBundleJobs) -> Step<Run> {
-    let assets = [
-        (&bundle.mac_x86_64.name, "zed", "Zed-x86_64.dmg"),
-        (&bundle.mac_aarch64.name, "zed", "Zed-aarch64.dmg"),
-        (&bundle.windows_x86_64.name, "zed", "Zed-x86_64.exe"),
-        (&bundle.windows_aarch64.name, "zed", "Zed-aarch64.exe"),
-        (
-            &bundle.linux_aarch64.name,
-            "zed",
-            "zed-linux-aarch64.tar.gz",
-        ),
-        (&bundle.linux_x86_64.name, "zed", "zed-linux-x86_64.tar.gz"),
-        (
-            &bundle.linux_x86_64.name,
-            "remote-server",
-            "zed-remote-server-linux-x86_64.gz",
-        ),
-        (
-            &bundle.linux_aarch64.name,
-            "remote-server",
-            "zed-remote-server-linux-aarch64.gz",
-        ),
-        (
-            &bundle.mac_x86_64.name,
-            "remote-server",
-            "zed-remote-server-macos-x86_64.gz",
-        ),
-        (
-            &bundle.mac_aarch64.name,
-            "remote-server",
-            "zed-remote-server-macos-aarch64.gz",
-        ),
-    ];
-
+pub(crate) fn prep_release_artifacts() -> Step<Run> {
     let mut script_lines = vec!["mkdir -p release-artifacts/\n".to_string()];
-    for (job_name, artifact_kind, release_artifact_name) in assets {
-        let artifact_path = ["${{ needs.", job_name, ".outputs.", artifact_kind, " }}"].join("");
-        let mv_command =
-            format!("mv ./artifacts/{artifact_path}/* release-artifacts/{release_artifact_name}");
+    for asset in assets::all() {
+        let mv_command = format!("mv ./artifacts/{asset}/{asset} release-artifacts/{asset}");
         script_lines.push(mv_command)
     }
 
@@ -178,7 +143,7 @@ fn upload_release_assets(deps: &[&NamedJob], bundle: &ReleaseBundleJobs) -> Name
             .runs_on(runners::LINUX_MEDIUM)
             .add_step(download_workflow_artifacts())
             .add_step(steps::script("ls -lR ./artifacts"))
-            .add_step(prep_release_artifacts(bundle))
+            .add_step(prep_release_artifacts())
             .add_step(
                 steps::script("gh release upload \"$GITHUB_REF_NAME\" --repo=zed-industries/zed release-artifacts/*")
                     .add_env(("GITHUB_TOKEN", "${{ secrets.GITHUB_TOKEN }}")),

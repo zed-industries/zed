@@ -35,13 +35,6 @@ impl std::fmt::Display for Arch {
 }
 
 impl Arch {
-    pub fn triple(&self) -> &'static str {
-        match self {
-            Arch::X86_64 => "x86_64-unknown-linux-gnu",
-            Arch::AARCH64 => "aarch64-unknown-linux-gnu",
-        }
-    }
-
     pub fn linux_bundler(&self) -> Runner {
         match self {
             Arch::X86_64 => LINUX_X86_BUNDLER,
