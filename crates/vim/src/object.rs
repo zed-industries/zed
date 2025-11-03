@@ -133,10 +133,17 @@ fn cover_or_next<I: Iterator<Item = (Range<usize>, Range<usize>)>>(
 
     if let Some(ranges) = candidates {
         for (open_range, close_range) in ranges {
+            let mut excerpt = snapshot
+                .excerpt_containing(open_range.clone())
+                .expect("Should be ok!");
+
+            let buffer_open_range = excerpt.map_range_to_buffer(open_range.clone());
+            let buffer_close_range = excerpt.map_range_to_buffer(close_range.clone());
             let start_off = open_range.start;
             let end_off = close_range.end;
+            // with calling `range_filter`.
             if let Some(range_filter) = range_filter
-                && !range_filter(open_range.clone(), close_range.clone())
+                && !range_filter(buffer_open_range, buffer_close_range)
             {
                 continue;
             }
@@ -214,7 +221,7 @@ fn find_mini_delimiters(
     let visible_line_range = get_visible_line_range(&line_range);
 
     let snapshot = &map.buffer_snapshot();
-    let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
+    let excerpt = snapshot.excerpt_containing(offset..offset)?;
     let buffer = excerpt.buffer();
 
     let bracket_filter = |open: Range<usize>, close: Range<usize>| {
@@ -222,17 +229,7 @@ fn find_mini_delimiters(
     };
 
     // Try to find delimiters in visible range first
-    let ranges = map
-        .buffer_snapshot()
-        .bracket_ranges(visible_line_range)
-        .map(|ranges| {
-            ranges.map(|(open, close)| {
-                (
-                    excerpt.map_range_to_buffer(open),
-                    excerpt.map_range_to_buffer(close),
-                )
-            })
-        });
+    let ranges = map.buffer_snapshot().bracket_ranges(visible_line_range);
     if let Some(candidate) = cover_or_next(ranges, display_point, map, Some(&bracket_filter)) {
         return Some(
             DelimiterRange {
