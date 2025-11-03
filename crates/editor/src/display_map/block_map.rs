@@ -571,7 +571,6 @@ impl BlockMap {
         let mut edits = edits.into_iter().peekable();
 
         while let Some(edit) = edits.next() {
-            dbg!(&edit);
             let mut old_start = WrapRow(edit.old.start);
             let mut new_start = WrapRow(edit.new.start);
 
@@ -621,7 +620,7 @@ impl BlockMap {
                     // replacement.
                     debug_assert!(transform.summary.input_rows > 0);
                     old_start.0 -= transform_rows_before_edit;
-                    new_start.0 -= dbg!(transform_rows_before_edit);
+                    new_start.0 -= transform_rows_before_edit;
                 }
             }
 
@@ -677,17 +676,14 @@ impl BlockMap {
             if true {
                 // FIXME persistent cursors/iterators for row boundaries and diff hunks
                 let mut current_wrap_row = new_start.0;
-                dbg!("---------", new_end.0);
                 loop {
-                    if dbg!(current_wrap_row) > new_end.0 {
-                        dbg!();
+                    if current_wrap_row > new_end.0 {
                         break;
                     }
 
                     let Some(next_row_boundary) =
                         wrap_snapshot.next_row_boundary(WrapPoint::new(current_wrap_row, 0))
                     else {
-                        dbg!();
                         break;
                     };
 
@@ -2345,9 +2341,6 @@ mod tests {
                 (6..7, BlockId::ExcerptBoundary(excerpt_ids[2])), // path, header
             ]
         );
-
-        dbg!(wrap_snapshot.row_infos(0).collect::<Vec<_>>());
-        // dbg!(block_map.transforms.borrow().iter().collect::<Vec<_>>());
     }
 
     #[gpui::test]

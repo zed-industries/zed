@@ -126,6 +126,13 @@ pub enum Event {
     BufferDiffChanged,
 }
 
+// ex1
+// line4 of buffer1
+// ex2
+// line17 of buffer2
+// 
+// in multibuffer coordinates, Point::new(1, 0)
+
 /// A diff hunk, representing a range of consequent lines in a multibuffer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultiBufferDiffHunk {
@@ -7174,26 +7181,66 @@ pub mod debug {
     }
 }
 
+// FIXME figure out whether this should have a different API or something
 #[cfg(feature = "test-support")]
 pub fn randomly_mutate_multibuffer_with_diffs(
     multibuffer: Entity<MultiBuffer>,
     buffers: &mut Vec<Entity<Buffer>>,
     base_texts: &mut HashMap<BufferId, String>,
     needs_diff_calculation: &mut bool,
-    mut rng: rand::rngs::StdRng,
+    rng: &mut rand::rngs::StdRng,
     cx: &mut gpui::TestAppContext,
 ) {
     use rand::Rng as _;
     use rand::seq::IndexedRandom as _;
 
+    fn format_diff(
+        text: &str,
+        row_infos: &Vec<RowInfo>,
+        boundary_rows: &HashSet<MultiBufferRow>,
+        has_diff: Option<bool>,
+    ) -> String {
+        let has_diff =
+            has_diff.unwrap_or_else(|| row_infos.iter().any(|info| info.diff_status.is_some()));
+        text.split('\n')
+            .enumerate()
+            .zip(row_infos)
+            .map(|((ix, line), info)| {
+                let marker = match info.diff_status.map(|status| status.kind) {
+                    Some(DiffHunkStatusKind::Added) => "+ ",
+                    Some(DiffHunkStatusKind::Deleted) => "- ",
+                    Some(DiffHunkStatusKind::Modified) => unreachable!(),
+                    None => {
+                        if has_diff && !line.is_empty() {
+                            "  "
+                        } else {
+                            ""
+                        }
+                    }
+                };
+                let boundary_row = if boundary_rows.contains(&MultiBufferRow(ix as u32)) {
+                    if has_diff {
+                        "  ----------\n"
+                    } else {
+                        "---------\n"
+                    }
+                } else {
+                    ""
+                };
+                format!("{boundary_row}{marker}{line}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     let excerpt_ids = multibuffer.read_with(cx, |multibuffer, _| multibuffer.excerpt_ids());
     match rng.random_range(0..100) {
         0..=14 if !buffers.is_empty() => {
-            let buffer = buffers.choose(&mut rng).unwrap();
+            let buffer = buffers.choose(rng).unwrap();
             buffer.update(cx, |buf, cx| {
                 let edit_count = rng.random_range(1..5);
                 log::info!("editing buffer");
-                buf.randomly_edit(&mut rng, edit_count, cx);
+                buf.randomly_edit(rng, edit_count, cx);
                 *needs_diff_calculation = true;
             });
         }
@@ -7202,7 +7249,7 @@ pub fn randomly_mutate_multibuffer_with_diffs(
                 let ids = multibuffer.excerpt_ids();
                 let mut excerpts = HashSet::default();
                 for _ in 0..rng.random_range(0..ids.len()) {
-                    excerpts.extend(ids.choose(&mut rng).copied());
+                    excerpts.extend(ids.choose(rng).copied());
                 }
 
                 let line_count = rng.random_range(0..5);
@@ -7219,7 +7266,7 @@ pub fn randomly_mutate_multibuffer_with_diffs(
         20..=29 if !excerpt_ids.is_empty() => {
             let mut ids_to_remove = vec![];
             for _ in 0..rng.random_range(1..=3) {
-                let Some(id) = excerpt_ids.choose(&mut rng) else {
+                let Some(id) = excerpt_ids.choose(rng) else {
                     break;
                 };
                 ids_to_remove.push(*id);
@@ -7239,7 +7286,7 @@ pub fn randomly_mutate_multibuffer_with_diffs(
                         .diff_for(snapshot.remote_id())
                         .unwrap()
                         .update(cx, |diff, cx| {
-                            log::info!("recalculating diff for buffer {:?}", snapshot.remote_id(),);
+                            log::info!("recalculating diff for buffer {:?}", snapshot.remote_id());
                             diff.recalculate_diff_sync(snapshot.text, cx);
                         });
                 }
@@ -7248,7 +7295,7 @@ pub fn randomly_mutate_multibuffer_with_diffs(
         }
         _ => {
             let buffer_handle = if buffers.is_empty() || rng.random_bool(0.4) {
-                let mut base_text = util::RandomCharIter::new(&mut rng)
+                let mut base_text = util::RandomCharIter::new(&mut *rng)
                     .take(256)
                     .collect::<String>();
 
@@ -7261,12 +7308,12 @@ pub fn randomly_mutate_multibuffer_with_diffs(
                 buffers.push(buffer);
                 buffers.last().unwrap()
             } else {
-                buffers.choose(&mut rng).unwrap()
+                buffers.choose(rng).unwrap()
             };
 
             let prev_excerpt_id = multibuffer
                 .read_with(cx, |multibuffer, cx| multibuffer.excerpt_ids())
-                .choose(&mut rng)
+                .choose(rng)
                 .copied()
                 .unwrap_or(ExcerptId::max());
 
@@ -7309,5 +7356,18 @@ pub fn randomly_mutate_multibuffer_with_diffs(
                     .unwrap()
             });
         }
+    }
+
+    {
+        let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+        log::info!(
+            "multibuffer contents:\n{}",
+            format_diff(
+                &snapshot.text(),
+                &snapshot.row_infos(MultiBufferRow(0)).collect(),
+                &Default::default(),
+                Some(true)
+            )
+        )
     }
 }

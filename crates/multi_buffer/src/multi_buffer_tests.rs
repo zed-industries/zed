@@ -3962,3 +3962,57 @@ fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
         }
     }
 }
+
+// FIXME
+#[gpui::test]
+async fn test_diff_hunk_row_ranges(cx: &mut TestAppContext) {
+    let text = indoc!(
+        "
+        ONE
+        "
+    );
+    let base_text = indoc!(
+        "
+        one
+        "
+    );
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+    cx.run_until_parked();
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::singleton(buffer.clone(), cx);
+        multibuffer.set_all_diff_hunks_expanded(cx);
+        multibuffer.add_diff(diff.clone(), cx);
+        multibuffer
+    });
+
+    let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
+        (multibuffer.snapshot(cx), multibuffer.subscribe())
+    });
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+             - one
+             + ONE
+             "
+        ),
+    );
+    let hunks = dbg!(
+        snapshot
+            .diff_hunks_in_range(Anchor::min()..Anchor::max())
+            .collect::<Vec<_>>()
+    );
+    dbg!(
+        hunks[0]
+            .multi_buffer_range()
+            .start
+            .bias_right(&snapshot)
+            .to_point(&snapshot)
+    );
+}

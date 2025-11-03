@@ -1,7 +1,7 @@
 use std::{cmp, ops::Range};
 
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
-use multi_buffer::{AnchorRangeExt as _, MultiBufferSnapshot};
+use multi_buffer::{AnchorRangeExt as _, MultiBufferSnapshot, ToPoint as _};
 use rope::{Point, TextSummary};
 use schemars::transform;
 use sum_tree::{Dimensions, SumTree};
@@ -223,22 +223,45 @@ impl FilterMap {
         let mut expected_summary = TextSummary::default();
         let mut anchor = multi_buffer::Anchor::min();
         for hunk in self.snapshot.buffer_snapshot.diff_hunks() {
+            dbg!(&hunk);
+
             expected_summary += self
                 .snapshot
                 .buffer_snapshot
-                .text_summary_for_range::<TextSummary, _>(anchor..hunk.multi_buffer_range().start);
-            if !mode.should_remove(hunk.status().kind) {
-                expected_summary += self
-                    .snapshot
-                    .buffer_snapshot
-                    .text_summary_for_range::<TextSummary, _>(hunk.multi_buffer_range());
+                .text_summary_for_range::<TextSummary, _>(
+                    anchor
+                        ..hunk
+                            .multi_buffer_range()
+                            .start
+                            .bias_left(&self.snapshot.buffer_snapshot),
+                );
+            let (deletion_summary, addition_summary) =
+                text_summaries_for_diff_hunk(&hunk, &self.snapshot.buffer_snapshot);
+
+            dbg!(deletion_summary.len, addition_summary.len,);
+
+            match mode {
+                FilterMode::RemoveDeletions => {
+                    expected_summary += addition_summary;
+                }
+                FilterMode::RemoveInsertions => {
+                    expected_summary += deletion_summary;
+                }
             }
+            // if !mode.should_remove(hunk.status().kind) {
+            //     expected_summary += self
+            //         .snapshot
+            //         .buffer_snapshot
+            //         .text_summary_for_range::<TextSummary, _>(hunk.multi_buffer_range());
+            // }
             anchor = hunk.multi_buffer_range().end;
         }
         expected_summary += self
             .snapshot
             .buffer_snapshot
             .text_summary_for_range::<TextSummary, _>(anchor..multi_buffer::Anchor::max());
+
+        dbg!(self.snapshot.transforms.iter().collect::<Vec<_>>());
 
         pretty_assertions::assert_eq!(
             self.snapshot.transforms.summary().output.0,
@@ -275,8 +298,6 @@ impl FilterMap {
                     .collect(),
             );
         };
-
-        dbg!(&buffer_edits);
 
         let mut new_transforms: SumTree<Transform> = SumTree::new(());
         let mut transform_cursor = self
@@ -328,11 +349,6 @@ impl FilterMap {
         while let Some(buffer_edit) = buffer_edits.next() {
             debug_assert!(transform_cursor.start().0 <= buffer_edit.old.end);
 
-            dbg!(
-                transform_cursor.start(),
-                buffer_edit.old.end,
-                transform_cursor.end()
-            );
             // Reuse any old transforms that strictly precede the start of the edit.
             log::info!(
                 "input len before append is {}",
@@ -342,11 +358,6 @@ impl FilterMap {
             log::info!(
                 "input len after append is {}",
                 new_transforms.summary().input.0.len
-            );
-            dbg!(
-                transform_cursor.start(),
-                buffer_edit.old.end,
-                transform_cursor.end()
             );
 
             let mut edit_old_start = transform_cursor.start().1;
@@ -399,14 +410,31 @@ impl FilterMap {
                     &mut new_transforms,
                     buffer_snapshot.text_summary_for_range(prefix_range),
                 );
-                let hunk_summary = buffer_snapshot.text_summary_for_range(hunk_range);
-                if (mode == FilterMode::RemoveDeletions)
-                    == (hunk.status().kind == DiffHunkStatusKind::Deleted)
-                {
-                    push_filter(&mut new_transforms, hunk_summary);
-                } else {
-                    push_isomorphic(&mut new_transforms, hunk_summary);
+
+                let (deletion_summary, addition_summary) =
+                    text_summaries_for_diff_hunk(&hunk, &buffer_snapshot);
+
+                // let hunk_summary = buffer_snapshot.text_summary_for_range(hunk_range);
+                // let start_of_hunk_line = ...;
+                // let switch_mode_line = ...;
+                // let end_of_hunk_line = ...;
+                match mode {
+                    FilterMode::RemoveDeletions => {
+                        push_filter(&mut new_transforms, deletion_summary);
+                        push_isomorphic(&mut new_transforms, addition_summary);
+                    }
+                    FilterMode::RemoveInsertions => {
+                        push_isomorphic(&mut new_transforms, deletion_summary);
+                        push_filter(&mut new_transforms, addition_summary);
+                    }
                 }
+                // if (mode == FilterMode::RemoveDeletions)
+                //     == (hunk.status().kind == DiffHunkStatusKind::Deleted)
+                // {
+                //     push_filter(&mut new_transforms, hunk_summary);
+                // } else {
+                //     push_isomorphic(&mut new_transforms, hunk_summary);
+                // }
             }
 
             // Push any non-hunk content after the last hunk.
@@ -453,8 +481,6 @@ impl FilterMap {
             }) {
                 let suffix_start = new_transforms.summary().input.0.len;
                 let suffix_len = transform_cursor.end().0 - buffer_edit.old.end;
-                dbg!(suffix_start, suffix_start + suffix_len);
-                dbg!(buffer_snapshot.text());
                 let summary = buffer_snapshot.text_summary_for_range(
                     suffix_start..std::cmp::min(suffix_start + suffix_len, buffer_snapshot.len()),
                 );
@@ -490,6 +516,23 @@ impl FilterMap {
         self.check_invariants();
         (self.snapshot.clone(), output_edits)
     }
+}
+
+fn text_summaries_for_diff_hunk(
+    hunk: &multi_buffer::MultiBufferDiffHunk,
+    buffer_snapshot: &MultiBufferSnapshot,
+) -> (TextSummary, TextSummary) {
+    // TODO does it make sense to do this in terms of points?
+    let start_of_hunk = Point::new(hunk.row_range.start.0, 0);
+    let switch_point = hunk
+        .multi_buffer_range()
+        .start
+        .bias_right(&buffer_snapshot)
+        .to_point(&buffer_snapshot);
+    let end_of_hunk = Point::new(hunk.row_range.end.0, 0);
+    let deletion_summary = buffer_snapshot.text_summary_for_range(start_of_hunk..switch_point);
+    let addition_summary = buffer_snapshot.text_summary_for_range(switch_point..end_of_hunk);
+    (deletion_summary, addition_summary)
 }
 
 impl FilterSnapshot {
@@ -683,7 +726,7 @@ mod tests {
                 &mut buffers,
                 &mut base_texts,
                 &mut needs_diff_calculation,
-                rng.clone(),
+                &mut rng,
                 cx,
             );
             let buffer_snapshot =
