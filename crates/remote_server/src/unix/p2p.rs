@@ -2,8 +2,7 @@ use std::mem;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result, anyhow};
-use base64::prelude::{BASE64_STANDARD, Engine as _};
+use anyhow::Result;
 use extension::ExtensionHostProxy;
 use fs::RealFs;
 use futures::SinkExt;
@@ -13,7 +12,8 @@ use gpui::AppContext;
 use gpui_tokio::Tokio;
 use iroh::endpoint::Connection;
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
-use iroh::{Endpoint, SecretKey};
+use iroh::Endpoint;
+use iroh_persist::KeyRetriever;
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use proto::Envelope;
@@ -21,7 +21,6 @@ use release_channel::AppVersion;
 use remote::{MAX_MESSAGE_SIZE, Message, RemoteClient, ZED_ALPN, ZedIrohTicket};
 use reqwest_client::ReqwestClient;
 use smol::stream::StreamExt as _;
-use tokio::io::AsyncWriteExt;
 use tokio_util::bytes::Bytes;
 use tokio_util::codec::LengthDelimitedCodec;
 
@@ -75,7 +74,7 @@ pub(crate) fn execute(persist: bool, mut persist_at: Option<PathBuf>) -> Result<
 
     if persist && persist_at.is_none() {
         let mut secret_path = paths::config_dir().clone();
-        secret_path.push("zedIrohNode.key");
+        secret_path.push("zedIrohKey.pem");
         persist_at = Some(secret_path);
     }
 
@@ -230,7 +229,7 @@ struct IrohZedListener {
 
 impl IrohZedListener {
     async fn accept(tx: mpsc::UnboundedSender<Im>, persist_at: Option<&PathBuf>) -> Result<Self> {
-        let key = get_secret_key(persist_at).await;
+        let key = KeyRetriever::new("zed").persist_at(persist_at).lenient().get().await;
         let endpoint = Endpoint::builder()
             .secret_key(key)
             .discovery_n0()
@@ -369,68 +368,4 @@ impl ProtocolHandler for IrohZedProtocolHandler {
 
         Ok(())
     }
-}
-
-async fn get_secret_key(persist: Option<&PathBuf>) -> SecretKey {
-    if let Some(node_path) = persist {
-        match read_key(&node_path).await {
-            Ok(Some(result)) => return result,
-            Ok(None) => {}
-            Err(error) => {
-                log::error!("Error reading persisted Iroh Zed node: [{}]", error);
-            }
-        }
-    }
-    let key = SecretKey::generate(&mut rand::rng());
-    if let Some(node_path) = persist {
-        if let Err(error) = write_key(&node_path, &key).await {
-            log::error!(
-                "Could not persist Iroh Zed node: {:?}: {}",
-                &node_path,
-                error
-            );
-        }
-    }
-    key
-}
-
-async fn read_key(key_path: &PathBuf) -> Result<Option<SecretKey>> {
-    if !key_path.exists() {
-        log::debug!("Secret key not found: {:?}", &key_path);
-        return Ok(None);
-    }
-    let key_base64 = tokio::fs::read_to_string(key_path.clone()).await?;
-    let key_base64 = key_base64.trim();
-    let key_bytes = BASE64_STANDARD.decode(&key_base64)?;
-    if key_bytes.len() != 32 {
-        return Err(anyhow!("Invalid secret key size"));
-    }
-    let key = SecretKey::try_from(&key_bytes[0..32])?;
-
-    Ok(Some(key))
-}
-
-async fn write_key(key_path: &PathBuf, key: &SecretKey) -> Result<()> {
-    let mut secret_base64 = BASE64_STANDARD.encode(key.to_bytes());
-    secret_base64.push('\n');
-    let mut open_options = tokio::fs::OpenOptions::new();
-    open_options.mode(0o400);
-    create_file(open_options, &key_path, &secret_base64)
-        .await
-        .context(format!("Key file: [{:?}]", key_path))?;
-    Ok(())
-}
-
-async fn create_file(
-    mut open_options: tokio::fs::OpenOptions,
-    file: &PathBuf,
-    content: &str,
-) -> Result<()> {
-    let mut open_file = open_options
-        .create(true)
-        .write(true)
-        .open(file.clone())
-        .await?;
-    open_file.write_all(content.as_bytes()).await?;
-    Ok(())
 }
