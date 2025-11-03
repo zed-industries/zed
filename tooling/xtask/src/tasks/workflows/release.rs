@@ -90,7 +90,7 @@ pub(crate) fn create_sentry_release() -> Step<Use> {
     )
     .add_env(("SENTRY_ORG", "zed-dev"))
     .add_env(("SENTRY_PROJECT", "zed"))
-    .add_env(("SENTRY_AUTH_TOKEN", "${{ secrets.SENTRY_AUTH_TOKEN }}"))
+    .add_env(("SENTRY_AUTH_TOKEN", vars::SENTRY_AUTH_TOKEN))
     .add_with(("environment", "production"))
 }
 
@@ -109,7 +109,7 @@ fn auto_release_preview(deps: &[&NamedJob; 1]) -> NamedJob {
                 steps::script(
                     r#"gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false"#,
                 )
-                .add_env(("GITHUB_TOKEN", "${{ secrets.GITHUB_TOKEN }}")),
+                .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)),
             )
             .add_step(create_sentry_release()),
     )
@@ -146,7 +146,7 @@ fn upload_release_assets(deps: &[&NamedJob], bundle: &ReleaseBundleJobs) -> Name
             .add_step(prep_release_artifacts())
             .add_step(
                 steps::script("gh release upload \"$GITHUB_REF_NAME\" --repo=zed-industries/zed release-artifacts/*")
-                    .add_env(("GITHUB_TOKEN", "${{ secrets.GITHUB_TOKEN }}")),
+                    .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)),
             ),
     )
 }
@@ -160,7 +160,7 @@ fn create_draft_release() -> NamedJob {
 
     fn create_release() -> Step<Run> {
         named::bash("script/create-draft-release target/release-notes.md")
-            .add_env(("GITHUB_TOKEN", "${{ secrets.GITHUB_TOKEN }}"))
+            .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN))
     }
 
     named::job(
