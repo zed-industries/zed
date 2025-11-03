@@ -2454,19 +2454,20 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Center on Match",
                     description: "Whether to center the current match in the editor",
                     field: Box::new(SettingField {
+                        json_path: Some("editor.search.center_on_match"),
                         pick: |settings_content| {
-                            if let Some(search) = &settings_content.editor.search {
-                                &search.center_on_match
-                            } else {
-                                &None
-                            }
+                            settings_content
+                                .editor
+                                .search
+                                .as_ref()
+                                .and_then(|search| search.center_on_match.as_ref())
                         },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
+                        write: |settings_content, value| {
+                            settings_content
                                 .editor
                                 .search
                                 .get_or_insert_default()
-                                .center_on_match
+                                .center_on_match = value;
                         },
                     }),
                     metadata: None,
