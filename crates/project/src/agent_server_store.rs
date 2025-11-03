@@ -245,21 +245,14 @@ impl AgentServerStore {
 
         // Remove all extension-provided agents
         // (They will be re-added below if they're in the currently installed extensions)
-        let keys_to_remove: Vec<_> = self
-            .external_agents
-            .iter_mut()
-            .filter_map(|(name, agent)| {
-                if agent.downcast_mut::<LocalExtensionArchiveAgent>().is_some() {
-                    Some(name.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-        for key in &keys_to_remove {
-            self.external_agents.remove(key);
-            self.agent_icons.remove(key);
-        }
+        self.external_agents.retain(|name, agent| {
+            if agent.downcast_mut::<LocalExtensionArchiveAgent>().is_none() {
+                true
+            } else {
+                self.agent_icons.remove(name);
+                false
+            }
+        });
 
         // Insert agent servers from extension manifests
         match &self.state {
