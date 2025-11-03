@@ -61,3 +61,4 @@ zlog.workspace = true
 indoc.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true

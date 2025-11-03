@@ -21756,6 +21756,7 @@ dependencies = [
  "ordered-float 2.10.1",
  "paths",
  "polars",
+ "pretty_assertions",
  "project",
  "prompt_store",
  "pulldown-cmark 0.12.2",

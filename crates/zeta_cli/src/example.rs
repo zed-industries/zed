@@ -465,10 +465,6 @@ pub async fn apply_diff(
                 writeln!(&mut pending.context, "{del}")?;
             }
             DiffLine::Addition(add) => {
-                if pending.context.is_empty() {
-                    anyhow::bail!("Found an addition before any context or deletion lines");
-                }
-
                 writeln!(&mut pending.addition, "{add}")?;
             }
             DiffLine::Garbage => {}
@@ -527,6 +523,11 @@ pub async fn apply_diff(
 
             // TODO is it worth using project search?
             buffer.update(cx, |buffer, cx| {
+                if edit.context.is_empty() {
+                    buffer.edit([(0..0, edit.addition)], None, cx);
+                    return anyhow::Ok(());
+                }
+
                 let text = buffer.text();
                 // todo! check there's only one
                 if let Some(context_offset) = text.find(&edit.context) {
@@ -553,11 +554,13 @@ pub async fn apply_diff(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fs::FakeFs;
+    use ::fs::FakeFs;
     use gpui::TestAppContext;
     use indoc::indoc;
+    use pretty_assertions::assert_eq;
     use project::Project;
     use serde_json::json;
+    use settings::SettingsStore;
 
     #[gpui::test]
     async fn test_apply_diff(cx: &mut TestAppContext) {
@@ -569,6 +572,12 @@ mod tests {
             five
         "# };
 
+        let buffer_1_text_final = indoc! {r#"
+            3
+            4
+            5
+        "# };
+
         let buffer_2_text = indoc! {r#"
             six
             seven
@@ -576,6 +585,24 @@ mod tests {
             nine
             ten
         "# };
+
+        let buffer_2_text_final = indoc! {r#"
+            5
+            six
+            seven
+            7.5
+            eight
+            nine
+            ten
+            11
+        "# };
+
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            Project::init_settings(cx);
+            language::init(cx);
+        });
 
         let fs = FakeFs::new(cx.background_executor().clone());
         fs.insert_tree(
@@ -598,6 +625,32 @@ mod tests {
             +3
              four
              five
+            --- a/root/file1
+            +++ b/root/file1
+             3
+            -four
+            -five
+            +4
+            +5
+            --- a/root/file1
+            +++ b/root/file1
+            -one
+            -two
+             3
+             4
+            --- a/root/file2
+            +++ b/root/file2
+            +5
+             six
+            --- a/root/file2
+            +++ b/root/file2
+             seven
+            +7.5
+             eight
+            --- a/root/file2
+            +++ b/root/file2
+             ten
+            +11
         "#};
 
         let _buffers = apply_diff(diff, &project, &mut cx.to_async())
@@ -607,11 +660,23 @@ mod tests {
             .update(cx, |project, cx| {
                 let project_path = project.find_project_path("/root/file1", cx).unwrap();
                 project.open_buffer(project_path, cx)
-            })?
-            .await?;
+            })
+            .await
+            .unwrap();
 
-        buffer_1.read_with(cx, |buffer, cx| {
-            pretty_assertions::assert_eq!(buffer.text())
-        })
+        buffer_1.read_with(cx, |buffer, _cx| {
+            assert_eq!(buffer.text(), buffer_1_text_final);
+        });
+        let buffer_2 = project
+            .update(cx, |project, cx| {
+                let project_path = project.find_project_path("/root/file2", cx).unwrap();
+                project.open_buffer(project_path, cx)
+            })
+            .await
+            .unwrap();
+
+        buffer_2.read_with(cx, |buffer, _cx| {
+            assert_eq!(buffer.text(), buffer_2_text_final);
+        });
     }
 }
