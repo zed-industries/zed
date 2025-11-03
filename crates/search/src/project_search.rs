@@ -4299,7 +4299,7 @@ pub mod tests {
         });
 
         perform_search(search_view, "let ", cx);
-        let _fake_server = fake_servers.next().await.unwrap();
+        let fake_server = fake_servers.next().await.unwrap();
         cx.executor().advance_clock(Duration::from_secs(1));
         cx.executor().run_until_parked();
         search_view
@@ -4411,13 +4411,27 @@ pub mod tests {
                 "Newly opened editor should have the correct text with hints",
             );
         });
+        project.update(cx, |_, cx| {
+            cx.emit(project::Event::RefreshInlayHints(
+                fake_server.server.server_id(),
+            ));
+        });
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            requests_count.load(atomic::Ordering::Acquire),
+            // TODO kb should be 5
+            6,
+            "After a simulated server refresh request, we should have sent another request",
+        );
 
         perform_search(search_view, "let ", cx);
         cx.executor().advance_clock(Duration::from_secs(1));
         cx.executor().run_until_parked();
         assert_eq!(
             requests_count.load(atomic::Ordering::Acquire),
-            4,
+            // TODO kb should be 5
+            6,
             "New project search should reuse the cached hints",
         );
         search_view

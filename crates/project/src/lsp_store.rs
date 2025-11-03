@@ -6665,6 +6665,12 @@ impl LspStore {
 
         let last_chunk_number = existing_inlay_hints.buffer_chunks_len() - 1;
 
+        dbg!((
+            buffer.read(cx).file().map(|f| f.path()),
+            invalidate,
+            &applicable_chunks,
+            lsp_refresh_requested,
+        ));
         for row_chunk in applicable_chunks {
             match (
                 existing_inlay_hints
@@ -6720,10 +6726,20 @@ impl LspStore {
             }
         }
 
-        if hint_fetch_tasks.is_empty()
-            && ranges_to_query
-                .as_ref()
-                .is_none_or(|ranges| ranges.is_empty())
+        let o = cached_inlay_hints
+            .iter()
+            .flatten()
+            .flat_map(|a| a.1.iter())
+            .flat_map(|(_, a)| a.iter())
+            .map(|(id, hint)| (*id, hint.text().to_string()))
+            .collect::<Vec<_>>();
+        dbg!(o);
+        if dbg!(hint_fetch_tasks.is_empty())
+            && dbg!(
+                ranges_to_query
+                    .as_ref()
+                    .is_none_or(|ranges| ranges.is_empty())
+            )
             && let Some(cached_inlay_hints) = cached_inlay_hints
         {
             cached_inlay_hints
@@ -6731,7 +6747,7 @@ impl LspStore {
                 .map(|(row_chunk, hints)| (row_chunk, Task::ready(Ok(hints))))
                 .collect()
         } else {
-            for (chunk, range_to_query) in ranges_to_query.into_iter().flatten() {
+            for (chunk, range_to_query) in dbg!(ranges_to_query).into_iter().flatten() {
                 let next_hint_id = next_hint_id.clone();
                 let buffer = buffer.clone();
                 let new_inlay_hints = cx
@@ -6769,6 +6785,13 @@ impl LspStore {
                                                     })
                                                     .collect::<Vec<_>>();
                                                 if update_cache {
+                                                    let n = new_hints
+                                                        .iter()
+                                                        .map(|(id, hint)| {
+                                                            (*id, hint.text().to_string())
+                                                        })
+                                                        .collect::<Vec<_>>();
+                                                    dbg!(n);
                                                     lsp_data.inlay_hints.insert_new_hints(
                                                         chunk,
                                                         server_id,

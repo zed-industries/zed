@@ -369,6 +369,12 @@ impl Editor {
                 continue;
             };
 
+            dbg!((
+                self.buffer.read(cx).is_singleton(),
+                buffer.read(cx).file().map(|f| f.path()),
+                invalidate_cache,
+                ignore_previous_fetches,
+            ));
             let (fetched_for_version, fetched_chunks) = inlay_hints
                 .hint_chunk_fetching
                 .entry(buffer_id)
