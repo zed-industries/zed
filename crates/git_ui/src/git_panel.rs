@@ -4153,23 +4153,20 @@ impl GitPanel {
                     .items_center()
                     .flex_1()
                     // .overflow_hidden()
+                    .child(
+                        self.entry_label(format!("{display_name} "), label_color)
+                            .when(status.is_deleted(), |this| this.strikethrough()),
+                    )
                     .when_some(entry.parent_dir(path_style), |this, parent| {
                         if !parent.is_empty() {
                             this.child(
-                                self.entry_label(
-                                    format!("{parent}{}", path_style.separator()),
-                                    path_color,
-                                )
-                                .when(status.is_deleted(), |this| this.strikethrough()),
+                                self.entry_label(parent, path_color)
+                                    .when(status.is_deleted(), |this| this.strikethrough()),
                             )
                         } else {
                             this
                         }
-                    })
-                    .child(
-                        self.entry_label(display_name, label_color)
-                            .when(status.is_deleted(), |this| this.strikethrough()),
-                    ),
+                    }),
             )
             .into_any_element()
     }
