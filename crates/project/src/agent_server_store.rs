@@ -243,8 +243,8 @@ impl AgentServerStore {
         // Collect manifests first so we can iterate twice
         let manifests: Vec<_> = manifests.into_iter().collect();
 
-        // Remove all extension-provided agents (LocalExtensionArchiveAgent)
-        // They will be re-added below if they're in the currently installed extensions
+        // Remove all extension-provided agents
+        // (They will be re-added below if they're in the currently installed extensions)
         let keys_to_remove: Vec<_> = self
             .external_agents
             .iter_mut()
