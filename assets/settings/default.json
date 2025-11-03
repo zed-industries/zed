@@ -602,7 +602,9 @@
     "whole_word": false,
     "case_sensitive": false,
     "include_ignored": false,
-    "regex": false
+    "regex": false,
+    // Whether to center the cursor on each search match when navigating.
+    "center_on_match": false
   },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
@@ -1719,6 +1721,9 @@
         "allowed": true
       }
     },
+    "HTML+ERB": {
+      "language_servers": ["herb", "!ruby-lsp", "..."]
+    },
     "Java": {
       "prettier": {
         "allowed": true,
@@ -1740,6 +1745,9 @@
       "prettier": {
         "allowed": true
       }
+    },
+    "JS+ERB": {
+      "language_servers": ["!ruby-lsp", "..."]
     },
     "Kotlin": {
       "language_servers": ["!kotlin-language-server", "kotlin-lsp", "..."]
@@ -1844,6 +1852,9 @@
       "prettier": {
         "allowed": true
       }
+    },
+    "YAML+ERB": {
+      "language_servers": ["!ruby-lsp", "..."]
     },
     "Zig": {
       "language_servers": ["zls", "..."]

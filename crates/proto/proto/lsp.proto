@@ -466,6 +466,7 @@ message ResolveInlayHintResponse {
 message RefreshInlayHints {
     uint64 project_id = 1;
     uint64 server_id = 2;
+    optional uint64 request_id = 3;
 }
 
 message CodeLens {
