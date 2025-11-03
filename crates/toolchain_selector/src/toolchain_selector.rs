@@ -490,7 +490,6 @@ impl Render for AddToolchainState {
                                                 .key_binding(KeyBinding::for_action_in(
                                                     &menu::Confirm,
                                                     &handle,
-                                                    window,
                                                     cx,
                                                 ))
                                                 .on_click(cx.listener(|this, _, window, cx| {
@@ -1117,7 +1116,6 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                                 .key_binding(KeyBinding::for_action_in(
                                     &AddToolchain,
                                     &self.focus_handle,
-                                    _window,
                                     cx,
                                 ))
                                 .on_click(|_, window, cx| {
@@ -1129,7 +1127,6 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                                 .key_binding(KeyBinding::for_action_in(
                                     &menu::Confirm,
                                     &self.focus_handle,
-                                    _window,
                                     cx,
                                 ))
                                 .on_click(|_, window, cx| {

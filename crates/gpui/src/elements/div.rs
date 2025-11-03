@@ -1034,6 +1034,18 @@ pub trait InteractiveElement: Sized {
         self.interactivity().in_focus_style = Some(Box::new(f(StyleRefinement::default())));
         self
     }
+
+    /// Set the given styles to be applied when this element is focused via keyboard navigation.
+    /// This is similar to CSS's `:focus-visible` pseudo-class - it only applies when the element
+    /// is focused AND the user is navigating via keyboard (not mouse clicks).
+    /// Requires that the element is focusable. Elements can be made focusable using [`InteractiveElement::track_focus`].
+    fn focus_visible(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().focus_visible_style = Some(Box::new(f(StyleRefinement::default())));
+        self
+    }
 }
 
 /// A trait for elements that want to use the standard GPUI interactivity features
@@ -1497,6 +1509,7 @@ pub struct Interactivity {
     pub base_style: Box<StyleRefinement>,
     pub(crate) focus_style: Option<Box<StyleRefinement>>,
     pub(crate) in_focus_style: Option<Box<StyleRefinement>>,
+    pub(crate) focus_visible_style: Option<Box<StyleRefinement>>,
     pub(crate) hover_style: Option<Box<StyleRefinement>>,
     pub(crate) group_hover_style: Option<GroupStyle>,
     pub(crate) active_style: Option<Box<StyleRefinement>>,
@@ -2491,6 +2504,13 @@ impl Interactivity {
                 && focus_handle.is_focused(window)
             {
                 style.refine(focus_style);
+            }
+
+            if let Some(focus_visible_style) = self.focus_visible_style.as_ref()
+                && focus_handle.is_focused(window)
+                && window.last_input_was_keyboard()
+            {
+                style.refine(focus_visible_style);
             }
         }
 

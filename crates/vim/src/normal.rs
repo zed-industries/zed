@@ -100,6 +100,10 @@ actions!(
         GoToTab,
         /// Go to previous tab page (with count support).
         GoToPreviousTab,
+        /// Go to tab page (with count support).
+        GoToPreviousReference,
+        /// Go to previous tab page (with count support).
+        GoToNextReference,
     ]
 );
 
@@ -200,6 +204,36 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
     Vim::action(editor, cx, |vim, _: &JoinLinesNoWhitespace, window, cx| {
         vim.join_lines_impl(false, window, cx);
+    });
+
+    Vim::action(editor, cx, |vim, _: &GoToPreviousReference, window, cx| {
+        let count = Vim::take_count(cx);
+        vim.update_editor(cx, |_, editor, cx| {
+            let task = editor.go_to_reference_before_or_after_position(
+                editor::Direction::Prev,
+                count.unwrap_or(1),
+                window,
+                cx,
+            );
+            if let Some(task) = task {
+                task.detach_and_log_err(cx);
+            };
+        });
+    });
+
+    Vim::action(editor, cx, |vim, _: &GoToNextReference, window, cx| {
+        let count = Vim::take_count(cx);
+        vim.update_editor(cx, |_, editor, cx| {
+            let task = editor.go_to_reference_before_or_after_position(
+                editor::Direction::Next,
+                count.unwrap_or(1),
+                window,
+                cx,
+            );
+            if let Some(task) = task {
+                task.detach_and_log_err(cx);
+            };
+        });
     });
 
     Vim::action(editor, cx, |vim, _: &Undo, window, cx| {
@@ -931,8 +965,17 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // We need to use `text.chars().count()` instead of `text.len()` here as
+        // `len()` counts bytes, not characters.
+        let char_count = text.chars().count();
+        let count = Vim::take_count(cx).unwrap_or(char_count);
         let is_return_char = text == "\n".into() || text == "\r".into();
-        let count = Vim::take_count(cx).unwrap_or(1);
+        let repeat_count = match (is_return_char, char_count) {
+            (true, _) => 0,
+            (_, 1) => count,
+            (_, _) => 1,
+        };
+
         Vim::take_forced_motion(cx);
         self.stop_recording(cx);
         self.update_editor(cx, |_, editor, cx| {
@@ -955,7 +998,7 @@ impl Vim {
                     edits.push((
                         range.start.to_offset(&display_map, Bias::Left)
                             ..range.end.to_offset(&display_map, Bias::Left),
-                        text.repeat(if is_return_char { 0 } else { count }),
+                        text.repeat(repeat_count),
                     ));
                 }
 

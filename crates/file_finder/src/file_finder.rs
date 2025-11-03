@@ -1663,11 +1663,7 @@ impl PickerDelegate for FileFinderDelegate {
         )
     }
 
-    fn render_footer(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Option<AnyElement> {
+    fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         let focus_handle = self.focus_handle.clone();
 
         Some(
@@ -1696,12 +1692,11 @@ impl PickerDelegate for FileFinderDelegate {
                                 }),
                             {
                                 let focus_handle = focus_handle.clone();
-                                move |window, cx| {
+                                move |_window, cx| {
                                     Tooltip::for_action_in(
                                         "Filter Options",
                                         &ToggleFilterMenu,
                                         &focus_handle,
-                                        window,
                                         cx,
                                     )
                                 }
@@ -1751,14 +1746,13 @@ impl PickerDelegate for FileFinderDelegate {
                                     ButtonLike::new("split-trigger")
                                         .child(Label::new("Split…"))
                                         .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                                        .children(
+                                        .child(
                                             KeyBinding::for_action_in(
                                                 &ToggleSplitMenu,
                                                 &focus_handle,
-                                                window,
                                                 cx,
                                             )
-                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                            .size(rems_from_px(12.)),
                                         ),
                                 )
                                 .menu({
@@ -1790,13 +1784,8 @@ impl PickerDelegate for FileFinderDelegate {
                         .child(
                             Button::new("open-selection", "Open")
                                 .key_binding(
-                                    KeyBinding::for_action_in(
-                                        &menu::Confirm,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    )
-                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                    KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
+                                        .map(|kb| kb.size(rems_from_px(12.))),
                                 )
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(menu::Confirm.boxed_clone(), cx)

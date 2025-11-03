@@ -1,5 +1,5 @@
 use agent::outline;
-use assistant_context::AssistantContext;
+use assistant_text_thread::TextThread;
 use futures::future;
 use futures::{FutureExt, future::Shared};
 use gpui::{App, AppContext as _, ElementId, Entity, SharedString, Task};
@@ -581,7 +581,7 @@ impl Display for ThreadContext {
 
 #[derive(Debug, Clone)]
 pub struct TextThreadContextHandle {
-    pub context: Entity<AssistantContext>,
+    pub text_thread: Entity<TextThread>,
     pub context_id: ContextId,
 }
 
@@ -595,20 +595,20 @@ pub struct TextThreadContext {
 impl TextThreadContextHandle {
     // pub fn lookup_key() ->
     pub fn eq_for_key(&self, other: &Self) -> bool {
-        self.context == other.context
+        self.text_thread == other.text_thread
     }
 
     pub fn hash_for_key<H: Hasher>(&self, state: &mut H) {
-        self.context.hash(state)
+        self.text_thread.hash(state)
     }
 
     pub fn title(&self, cx: &App) -> SharedString {
-        self.context.read(cx).summary().or_default()
+        self.text_thread.read(cx).summary().or_default()
     }
 
     fn load(self, cx: &App) -> Task<Option<AgentContext>> {
         let title = self.title(cx);
-        let text = self.context.read(cx).to_xml(cx);
+        let text = self.text_thread.read(cx).to_xml(cx);
         let context = AgentContext::TextThread(TextThreadContext {
             title,
             text: text.into(),

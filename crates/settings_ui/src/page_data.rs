@@ -5,7 +5,7 @@ use strum::IntoDiscriminant as _;
 use ui::{IntoElement, SharedString};
 
 use crate::{
-    DynamicItem, LOCAL, SettingField, SettingItem, SettingsFieldMetadata, SettingsPage,
+    DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata, SettingsPage,
     SettingsPageItem, SubPageLink, USER, all_language_names, sub_page_stack,
 };
 
@@ -26,7 +26,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
             items: vec![
                 SettingsPageItem::SectionHeader("General Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    files: LOCAL,
+                    files: PROJECT,
                     title: "Project Name",
                     description: "The displayed name of this project. If left empty, the root directory name will be displayed.",
                     field: Box::new(
@@ -177,18 +177,17 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SectionHeader("Scoped Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    // todo(settings_ui): Implement another setting item type that just shows an edit in settings.json
                     files: USER,
                     title: "Preview Channel",
                     description: "Which settings should be activated only in Preview build of Zed.",
                     field: Box::new(
                         SettingField {
-                            json_path: Some("use_system_prompts"),
+                            json_path: Some("preview_channel_settings"),
                             pick: |settings_content| {
-                                settings_content.workspace.use_system_prompts.as_ref()
+                                Some(settings_content)
                             },
-                            write: |settings_content, value| {
-                                settings_content.workspace.use_system_prompts = value;
+                            write: |_settings_content, _value| {
+
                             },
                         }
                         .unimplemented(),
@@ -201,12 +200,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Any number of settings profiles that are temporarily applied on top of your existing user settings.",
                     field: Box::new(
                         SettingField {
-                            json_path: Some(""),
+                            json_path: Some("settings_profiles"),
                             pick: |settings_content| {
-                                settings_content.workspace.use_system_prompts.as_ref()
+                                Some(settings_content)
                             },
-                            write: |settings_content, value| {
-                                settings_content.workspace.use_system_prompts = value;
+                            write: |_settings_content, _value| {
                             },
                         }
                         .unimplemented(),
@@ -290,6 +288,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             },
                             write: |settings_content, value| {
                                 let Some(value) = value else {
+                                    settings_content.theme.theme = None;
                                     return;
                                 };
                                 let settings_value = settings_content.theme.theme.get_or_insert_with(|| {
@@ -459,6 +458,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             },
                             write: |settings_content, value| {
                                 let Some(value) = value else {
+                                    settings_content.theme.icon_theme = None;
                                     return;
                                 };
                                 let settings_value = settings_content.theme.icon_theme.get_or_insert_with(|| {
@@ -662,6 +662,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             },
                             write: |settings_content, value| {
                                 let Some(value) = value else {
+                                    settings_content.theme.buffer_line_height = None;
                                     return;
                                 };
                                 let settings_value = settings_content.theme.buffer_line_height.get_or_insert_with(|| {
@@ -796,7 +797,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
                     title: "Font Features",
-                    description: "The Opentype features to enable for rendering in UI elements.",
+                    description: "The OpenType features to enable for rendering in UI elements.",
                     field: Box::new(
                         SettingField {
                             json_path: Some("ui_font_features"),
@@ -1022,7 +1023,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
-                    files: USER | LOCAL,
+                    files: USER | PROJECT,
                 }),
                 // todo(settings_ui): This needs a custom component
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1046,7 +1047,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         .unimplemented(),
                     ),
                     metadata: None,
-                    files: USER | LOCAL,
+                    files: USER | PROJECT,
                 }),
             ],
         },
@@ -1123,6 +1124,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 },
                                 write: |settings_content, value| {
                                     let Some(value) = value else {
+                                        settings_content.workspace.autosave = None;
                                         return;
                                     };
                                     let settings_value = settings_content.workspace.autosave.get_or_insert_with(|| {
@@ -1171,6 +1173,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             },
                                             write: |settings_content, value| {
                                                 let Some(value) = value else {
+                                                    settings_content.workspace.autosave = None;
                                                     return;
                                                 };
                                                 match settings_content
@@ -2105,7 +2108,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         description: "A mapping from languages to files and file extensions that should be treated as that language.",
                         field: Box::new(
                             SettingField {
-                                json_path: Some("file_types"),
+                                json_path: Some("file_type_associations"),
                                 pick: |settings_content| {
                                     settings_content.project.all_languages.file_types.as_ref()
                                 },
@@ -2117,7 +2120,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             .unimplemented(),
                         ),
                         metadata: None,
-                        files: USER | LOCAL,
+                        files: USER | PROJECT,
                     }),
                 ]);
 
@@ -2314,12 +2317,13 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 items.extend(all_language_names(cx).into_iter().map(|language_name| {
                     SettingsPageItem::SubPageLink(SubPageLink {
                         title: language_name,
-                        files: USER | LOCAL,
+                        files: USER | PROJECT,
                         render: Arc::new(|this, window, cx| {
                             this.render_sub_page_items(
                                 language_settings_data()
                                     .iter()
                                     .chain(non_editor_language_settings_data().iter())
+                                    .chain(edit_prediction_language_settings_section().iter())
                                     .enumerate(),
                                 None,
                                 window,
@@ -2441,6 +2445,29 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| settings_content.editor.search_wrap.as_ref(),
                         write: |settings_content, value| {
                             settings_content.editor.search_wrap = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Center on Match",
+                    description: "Whether to center the current match in the editor",
+                    field: Box::new(SettingField {
+                        json_path: Some("editor.search.center_on_match"),
+                        pick: |settings_content| {
+                            settings_content
+                                .editor
+                                .search
+                                .as_ref()
+                                .and_then(|search| search.center_on_match.as_ref())
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .editor
+                                .search
+                                .get_or_insert_default()
+                                .center_on_match = value;
                         },
                     }),
                     metadata: None,
@@ -4432,7 +4459,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Environment"),
                 SettingsPageItem::DynamicItem(DynamicItem {
                     discriminant: SettingItem {
-                        files: USER | LOCAL,
+                        files: USER | PROJECT,
                         title: "Shell",
                         description: "What shell to use when opening a terminal.",
                         field: Box::new(SettingField {
@@ -4449,6 +4476,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             },
                             write: |settings_content, value| {
                                 let Some(value) = value else {
+                                    if let Some(terminal) = settings_content.terminal.as_mut() {
+                                        terminal.project.shell = None;
+                                    }
                                     return;
                                 };
                                 let settings_value = settings_content
@@ -4496,11 +4526,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings::ShellDiscriminants::System => vec![],
                             settings::ShellDiscriminants::Program => vec![
                                 SettingItem {
-                                    files: USER | LOCAL,
+                                    files: USER | PROJECT,
                                     title: "Program",
                                     description: "The shell program to use.",
                                     field: Box::new(SettingField {
-                                        json_path: Some("terminal.shell.program"),
+                                        json_path: Some("terminal.shell"),
                                         pick: |settings_content| {
                                             match settings_content.terminal.as_ref()?.project.shell.as_ref() {
                                                 Some(settings::Shell::Program(program)) => Some(program),
@@ -4526,7 +4556,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             ],
                             settings::ShellDiscriminants::WithArguments => vec![
                                 SettingItem {
-                                    files: USER | LOCAL,
+                                    files: USER | PROJECT,
                                     title: "Program",
                                     description: "The shell program to run.",
                                     field: Box::new(SettingField {
@@ -4554,7 +4584,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     metadata: None,
                                 },
                                 SettingItem {
-                                    files: USER | LOCAL,
+                                    files: USER | PROJECT,
                                     title: "Arguments",
                                     description: "The arguments to pass to the shell program.",
                                     field: Box::new(
@@ -4585,7 +4615,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     metadata: None,
                                 },
                                 SettingItem {
-                                    files: USER | LOCAL,
+                                    files: USER | PROJECT,
                                     title: "Title Override",
                                     description: "An optional string to override the title of the terminal tab.",
                                     field: Box::new(SettingField {
@@ -4615,7 +4645,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::DynamicItem(DynamicItem {
                     discriminant: SettingItem {
-                        files: USER | LOCAL,
+                        files: USER | PROJECT,
                         title: "Working Directory",
                         description: "What working directory to use when launching the terminal.",
                         field: Box::new(SettingField {
@@ -4632,6 +4662,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             },
                             write: |settings_content, value| {
                                 let Some(value) = value else {
+                                    if let Some(terminal) = settings_content.terminal.as_mut() {
+                                        terminal.project.working_directory = None;
+                                    }
                                     return;
                                 };
                                 let settings_value = settings_content
@@ -4672,7 +4705,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings::WorkingDirectoryDiscriminants::AlwaysHome => vec![],
                             settings::WorkingDirectoryDiscriminants::Always => vec![
                                 SettingItem {
-                                    files: USER | LOCAL,
+                                    files: USER | PROJECT,
                                     title: "Directory",
                                     description: "The directory path to use (will be shell expanded).",
                                     field: Box::new(SettingField {
@@ -4721,7 +4754,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         .unimplemented(),
                     ),
                     metadata: None,
-                    files: USER | LOCAL,
+                    files: USER | PROJECT,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Detect Virtual Environment",
@@ -4748,7 +4781,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         .unimplemented(),
                     ),
                     metadata: None,
-                    files: USER | LOCAL,
+                    files: USER | PROJECT,
                 }),
                 SettingsPageItem::SectionHeader("Font"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -5503,209 +5536,283 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "AI",
-            items: vec![
-                SettingsPageItem::SectionHeader("General"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Disable AI",
-                    description: "Whether to disable all AI features in Zed.",
-                    field: Box::new(SettingField {
-                        json_path: Some("disable_ai"),
-                        pick: |settings_content| settings_content.disable_ai.as_ref(),
-                        write: |settings_content, value| {
-                            settings_content.disable_ai = value;
-                        },
+            items: {
+                let mut items = vec![
+                    SettingsPageItem::SectionHeader("General"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Disable AI",
+                        description: "Whether to disable all AI features in Zed.",
+                        field: Box::new(SettingField {
+                            json_path: Some("disable_ai"),
+                            pick: |settings_content| settings_content.disable_ai.as_ref(),
+                            write: |settings_content, value| {
+                                settings_content.disable_ai = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
                     }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("Agent Configuration"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Always Allow Tool Actions",
-                    description: "When enabled, the agent can run potentially destructive actions without asking for your confirmation. This setting has no effect on external agents.",
-                    field: Box::new(SettingField {
-                        json_path: Some("agent.always_allow_tool_actions"),
-                        pick: |settings_content| {
-                            settings_content
-                                .agent
-                                .as_ref()?
-                                .always_allow_tool_actions
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .agent
-                                .get_or_insert_default()
-                                .always_allow_tool_actions = value;
-                        },
+                    SettingsPageItem::SectionHeader("Agent Configuration"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Always Allow Tool Actions",
+                        description: "When enabled, the agent can run potentially destructive actions without asking for your confirmation. This setting has no effect on external agents.",
+                        field: Box::new(SettingField {
+                            json_path: Some("agent.always_allow_tool_actions"),
+                            pick: |settings_content| {
+                                settings_content
+                                    .agent
+                                    .as_ref()?
+                                    .always_allow_tool_actions
+                                    .as_ref()
+                            },
+                            write: |settings_content, value| {
+                                settings_content
+                                    .agent
+                                    .get_or_insert_default()
+                                    .always_allow_tool_actions = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
                     }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Single File Review",
-                    description: "When enabled, agent edits will also be displayed in single-file buffers for review.",
-                    field: Box::new(SettingField {
-                        json_path: Some("agent.single_file_review"),
-                        pick: |settings_content| {
-                            settings_content.agent.as_ref()?.single_file_review.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .agent
-                                .get_or_insert_default()
-                                .single_file_review = value;
-                        },
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Single File Review",
+                        description: "When enabled, agent edits will also be displayed in single-file buffers for review.",
+                        field: Box::new(SettingField {
+                            json_path: Some("agent.single_file_review"),
+                            pick: |settings_content| {
+                                settings_content.agent.as_ref()?.single_file_review.as_ref()
+                            },
+                            write: |settings_content, value| {
+                                settings_content
+                                    .agent
+                                    .get_or_insert_default()
+                                    .single_file_review = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
                     }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Enable Feedback",
-                    description: "Show voting thumbs up/down icon buttons for feedback on agent edits.",
-                    field: Box::new(SettingField {
-                        json_path: Some("agent.enable_feedback"),
-                        pick: |settings_content| {
-                            settings_content.agent.as_ref()?.enable_feedback.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .agent
-                                .get_or_insert_default()
-                                .enable_feedback = value;
-                        },
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Enable Feedback",
+                        description: "Show voting thumbs up/down icon buttons for feedback on agent edits.",
+                        field: Box::new(SettingField {
+                            json_path: Some("agent.enable_feedback"),
+                            pick: |settings_content| {
+                                settings_content.agent.as_ref()?.enable_feedback.as_ref()
+                            },
+                            write: |settings_content, value| {
+                                settings_content
+                                    .agent
+                                    .get_or_insert_default()
+                                    .enable_feedback = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
                     }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Notify When Agent Waiting",
-                    description: "Where to show notifications when the agent has completed its response or needs confirmation before running a tool action.",
-                    field: Box::new(SettingField {
-                        json_path: Some("agent.notify_when_agent_waiting"),
-                        pick: |settings_content| {
-                            settings_content
-                                .agent
-                                .as_ref()?
-                                .notify_when_agent_waiting
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .agent
-                                .get_or_insert_default()
-                                .notify_when_agent_waiting = value;
-                        },
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Notify When Agent Waiting",
+                        description: "Where to show notifications when the agent has completed its response or needs confirmation before running a tool action.",
+                        field: Box::new(SettingField {
+                            json_path: Some("agent.notify_when_agent_waiting"),
+                            pick: |settings_content| {
+                                settings_content
+                                    .agent
+                                    .as_ref()?
+                                    .notify_when_agent_waiting
+                                    .as_ref()
+                            },
+                            write: |settings_content, value| {
+                                settings_content
+                                    .agent
+                                    .get_or_insert_default()
+                                    .notify_when_agent_waiting = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
                     }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Play Sound When Agent Done",
-                    description: "Whether to play a sound when the agent has either completed its response, or needs user input.",
-                    field: Box::new(SettingField {
-                        json_path: Some("agent.play_sound_when_agent_done"),
-                        pick: |settings_content| {
-                            settings_content
-                                .agent
-                                .as_ref()?
-                                .play_sound_when_agent_done
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .agent
-                                .get_or_insert_default()
-                                .play_sound_when_agent_done = value;
-                        },
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Play Sound When Agent Done",
+                        description: "Whether to play a sound when the agent has either completed its response, or needs user input.",
+                        field: Box::new(SettingField {
+                            json_path: Some("agent.play_sound_when_agent_done"),
+                            pick: |settings_content| {
+                                settings_content
+                                    .agent
+                                    .as_ref()?
+                                    .play_sound_when_agent_done
+                                    .as_ref()
+                            },
+                            write: |settings_content, value| {
+                                settings_content
+                                    .agent
+                                    .get_or_insert_default()
+                                    .play_sound_when_agent_done = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
                     }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Expand Edit Card",
-                    description: "Whether to have edit cards in the agent panel expanded, showing a Preview of the diff.",
-                    field: Box::new(SettingField {
-                        json_path: Some("agent.expand_edit_card"),
-                        pick: |settings_content| {
-                            settings_content.agent.as_ref()?.expand_edit_card.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .agent
-                                .get_or_insert_default()
-                                .expand_edit_card = value;
-                        },
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Expand Edit Card",
+                        description: "Whether to have edit cards in the agent panel expanded, showing a Preview of the diff.",
+                        field: Box::new(SettingField {
+                            json_path: Some("agent.expand_edit_card"),
+                            pick: |settings_content| {
+                                settings_content.agent.as_ref()?.expand_edit_card.as_ref()
+                            },
+                            write: |settings_content, value| {
+                                settings_content
+                                    .agent
+                                    .get_or_insert_default()
+                                    .expand_edit_card = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
                     }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Expand Terminal Card",
-                    description: "Whether to have terminal cards in the agent panel expanded, showing the whole command output.",
-                    field: Box::new(SettingField {
-                        json_path: Some("agent.expand_terminal_card"),
-                        pick: |settings_content| {
-                            settings_content
-                                .agent
-                                .as_ref()?
-                                .expand_terminal_card
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .agent
-                                .get_or_insert_default()
-                                .expand_terminal_card = value;
-                        },
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Expand Terminal Card",
+                        description: "Whether to have terminal cards in the agent panel expanded, showing the whole command output.",
+                        field: Box::new(SettingField {
+                            json_path: Some("agent.expand_terminal_card"),
+                            pick: |settings_content| {
+                                settings_content
+                                    .agent
+                                    .as_ref()?
+                                    .expand_terminal_card
+                                    .as_ref()
+                            },
+                            write: |settings_content, value| {
+                                settings_content
+                                    .agent
+                                    .get_or_insert_default()
+                                    .expand_terminal_card = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
                     }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Use Modifier To Send",
-                    description: "Whether to always use cmd-enter (or ctrl-enter on Linux or Windows) to send messages.",
-                    field: Box::new(SettingField {
-                        json_path: Some("agent.use_modifier_to_send"),
-                        pick: |settings_content| {
-                            settings_content
-                                .agent
-                                .as_ref()?
-                                .use_modifier_to_send
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .agent
-                                .get_or_insert_default()
-                                .use_modifier_to_send = value;
-                        },
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Use Modifier To Send",
+                        description: "Whether to always use cmd-enter (or ctrl-enter on Linux or Windows) to send messages.",
+                        field: Box::new(SettingField {
+                            json_path: Some("agent.use_modifier_to_send"),
+                            pick: |settings_content| {
+                                settings_content
+                                    .agent
+                                    .as_ref()?
+                                    .use_modifier_to_send
+                                    .as_ref()
+                            },
+                            write: |settings_content, value| {
+                                settings_content
+                                    .agent
+                                    .get_or_insert_default()
+                                    .use_modifier_to_send = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
                     }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Message Editor Min Lines",
-                    description: "Minimum number of lines to display in the agent message editor.",
-                    field: Box::new(SettingField {
-                        json_path: Some("agent.message_editor_min_lines"),
-                        pick: |settings_content| {
-                            settings_content
-                                .agent
-                                .as_ref()?
-                                .message_editor_min_lines
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .agent
-                                .get_or_insert_default()
-                                .message_editor_min_lines = value;
-                        },
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Message Editor Min Lines",
+                        description: "Minimum number of lines to display in the agent message editor.",
+                        field: Box::new(SettingField {
+                            json_path: Some("agent.message_editor_min_lines"),
+                            pick: |settings_content| {
+                                settings_content
+                                    .agent
+                                    .as_ref()?
+                                    .message_editor_min_lines
+                                    .as_ref()
+                            },
+                            write: |settings_content, value| {
+                                settings_content
+                                    .agent
+                                    .get_or_insert_default()
+                                    .message_editor_min_lines = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
                     }),
-                    metadata: None,
-                    files: USER,
-                }),
-            ],
+                ];
+                items.extend(edit_prediction_language_settings_section());
+                items.extend(
+                    [
+                        SettingsPageItem::SettingItem(SettingItem {
+                            title: "Display Mode",
+                            description: "When to show edit predictions previews in buffer. The eager mode displays them inline, while the subtle mode displays them only when holding a modifier key.",
+                            field: Box::new(SettingField {
+                                json_path: Some("edit_prediction.display_mode"),
+                                pick: |settings_content| {
+                                    settings_content.project.all_languages.edit_predictions.as_ref()?.mode.as_ref()
+                                },
+                                write: |settings_content, value| {
+                                    settings_content.project.all_languages.edit_predictions.get_or_insert_default().mode = value;
+                                },
+                            }),
+                            metadata: None,
+                            files: USER,
+                        }),
+                        SettingsPageItem::SettingItem(SettingItem {
+                            title: "In Text Threads",
+                            description: "Whether edit predictions are enabled when editing text threads in the agent panel.",
+                            field: Box::new(SettingField {
+                                json_path: Some("edit_prediction.in_text_threads"),
+                                pick: |settings_content| {
+                                    settings_content.project.all_languages.edit_predictions.as_ref()?.enabled_in_text_threads.as_ref()
+                                },
+                                write: |settings_content, value| {
+                                    settings_content.project.all_languages.edit_predictions.get_or_insert_default().enabled_in_text_threads = value;
+                                },
+                            }),
+                            metadata: None,
+                            files: USER,
+                        }),
+                        SettingsPageItem::SettingItem(SettingItem {
+                            title: "Copilot Provider",
+                            description: "Use GitHub Copilot as your edit prediction provider.",
+                            field: Box::new(
+                                SettingField {
+                                    json_path: Some("edit_prediction.copilot_provider"),
+                                    pick: |settings_content| {
+                                        settings_content.project.all_languages.edit_predictions.as_ref()?.copilot.as_ref()
+                                    },
+                                    write: |settings_content, value| {
+                                        settings_content.project.all_languages.edit_predictions.get_or_insert_default().copilot = value;
+                                    },
+                                }
+                                .unimplemented(),
+                            ),
+                            metadata: None,
+                            files: USER | PROJECT,
+                        }),
+                        SettingsPageItem::SettingItem(SettingItem {
+                            title: "Codestral Provider",
+                            description: "Use Mistral's Codestral as your edit prediction provider.",
+                            field: Box::new(
+                                SettingField {
+                                    json_path: Some("edit_prediction.codestral_provider"),
+                                    pick: |settings_content| {
+                                        settings_content.project.all_languages.edit_predictions.as_ref()?.codestral.as_ref()
+                                    },
+                                    write: |settings_content, value| {
+                                        settings_content.project.all_languages.edit_predictions.get_or_insert_default().codestral = value;
+                                    },
+                                }
+                                .unimplemented(),
+                            ),
+                            metadata: None,
+                            files: USER | PROJECT,
+                        }),
+                    ]
+                );
+                items
+            },
         },
         SettingsPage {
             title: "Network",
@@ -5813,7 +5920,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Hard Tabs",
@@ -5832,7 +5939,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Auto Indent",
@@ -5851,7 +5958,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Auto Indent On Paste",
@@ -5870,7 +5977,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SectionHeader("Wrapping"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -5890,7 +5997,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Wrap Guides",
@@ -5909,7 +6016,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Preferred Line Length",
@@ -5928,7 +6035,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Wrap Guides",
@@ -5950,7 +6057,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Allow Rewrap",
@@ -5969,7 +6076,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SectionHeader("Indent Guides"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -5992,7 +6099,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Line Width",
@@ -6014,7 +6121,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Active Line Width",
@@ -6039,7 +6146,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Coloring",
@@ -6061,7 +6168,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Background Coloring",
@@ -6086,7 +6193,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SectionHeader("Formatting"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -6109,7 +6216,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Remove Trailing Whitespace On Save",
@@ -6128,7 +6235,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Ensure Final Newline On Save",
@@ -6147,7 +6254,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Formatter",
@@ -6169,7 +6276,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Use On Type Format",
@@ -6188,7 +6295,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Code Actions On Format",
@@ -6210,7 +6317,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SectionHeader("Autoclose"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -6230,7 +6337,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Use Auto Surround",
@@ -6249,7 +6356,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Always Treat Brackets As Autoclosed",
@@ -6268,7 +6375,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Jsx Tag Auto Close",
@@ -6288,49 +6395,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
-        }),
-        SettingsPageItem::SectionHeader("Edit Predictions"),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Show Edit Predictions",
-            description: "Controls whether edit predictions are shown immediately (true) or manually by triggering `editor::showeditprediction` (false).",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).show_edit_predictions"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.show_edit_predictions.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.show_edit_predictions = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | LOCAL,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Edit Predictions Disabled In",
-            description: "Controls whether edit predictions are shown in the given language scopes.",
-            field: Box::new(
-                SettingField {
-                    json_path: Some("languages.$(language).edit_predictions_disabled_in"),
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| {
-                            language.edit_predictions_disabled_in.as_ref()
-                        })
-                    },
-                    write: |settings_content, value| {
-                        language_settings_field_mut(settings_content, value, |language, value| {
-                            language.edit_predictions_disabled_in = value;
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
-            metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SectionHeader("Whitespace"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -6350,7 +6415,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Space Whitespace Indicator",
@@ -6372,7 +6437,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Tab Whitespace Indicator",
@@ -6394,7 +6459,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SectionHeader("Completions"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -6414,7 +6479,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Completion Documentation",
@@ -6433,7 +6498,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Words",
@@ -6452,7 +6517,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Words Min Length",
@@ -6474,7 +6539,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SectionHeader("Inlay Hints"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -6494,7 +6559,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Value Hints",
@@ -6516,7 +6581,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Type Hints",
@@ -6535,7 +6600,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Parameter Hints",
@@ -6557,7 +6622,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Other Hints",
@@ -6579,7 +6644,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Background",
@@ -6598,7 +6663,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Edit Debounce Ms",
@@ -6620,7 +6685,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Scroll Debounce Ms",
@@ -6642,7 +6707,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Toggle On Modifiers Press",
@@ -6671,7 +6736,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
     ];
     if current_language().is_none() {
@@ -6709,7 +6774,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Variables",
@@ -6732,7 +6797,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Prefer LSP",
@@ -6752,7 +6817,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SectionHeader("Miscellaneous"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -6774,7 +6839,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Middle Click Paste",
@@ -6805,7 +6870,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
     ]);
 
@@ -6886,7 +6951,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Language Servers",
@@ -6908,7 +6973,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Linked Edits",
@@ -6927,7 +6992,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Go To Definition Fallback",
@@ -6960,7 +7025,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Fetch Timeout (milliseconds)",
@@ -6982,7 +7047,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Insert Mode",
@@ -7001,7 +7066,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SectionHeader("Debuggers"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -7024,7 +7089,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SectionHeader("Prettier"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -7044,7 +7109,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Parser",
@@ -7063,7 +7128,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Plugins",
@@ -7085,14 +7150,14 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Options",
             description: "Default Prettier options, in the format as in package.json section for Prettier.",
             field: Box::new(
                 SettingField {
-                    json_path: Some("languages.$(language).prettier"),
+                    json_path: Some("languages.$(language).prettier.options"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
                             language.prettier.as_ref()?.options.as_ref()
@@ -7107,7 +7172,54 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
+        }),
+    ]
+}
+
+fn edit_prediction_language_settings_section() -> Vec<SettingsPageItem> {
+    vec![
+        SettingsPageItem::SectionHeader("Edit Predictions"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Show Edit Predictions",
+            description: "Controls whether edit predictions are shown immediately or manually by triggering `editor::showeditprediction` (false).",
+            field: Box::new(SettingField {
+                json_path: Some("languages.$(language).show_edit_predictions"),
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        language.show_edit_predictions.as_ref()
+                    })
+                },
+                write: |settings_content, value| {
+                    language_settings_field_mut(settings_content, value, |language, value| {
+                        language.show_edit_predictions = value;
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | PROJECT,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Edit Predictions Disabled In",
+            description: "Controls whether edit predictions are shown in the given language scopes.",
+            field: Box::new(
+                SettingField {
+                    json_path: Some("languages.$(language).edit_predictions_disabled_in"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.edit_predictions_disabled_in.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.edit_predictions_disabled_in = value;
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+            files: USER | PROJECT,
         }),
     ]
 }

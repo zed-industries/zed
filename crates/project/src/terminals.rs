@@ -8,7 +8,6 @@ use remote::RemoteClient;
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::{
-    borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -122,6 +121,7 @@ impl Project {
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
             let shell_kind = ShellKind::new(&shell, is_windows);
+
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
                     let Some(toolchain) = toolchain.await else {
@@ -143,14 +143,8 @@ impl Project {
                 .update(cx, move |_, cx| {
                     let format_to_run = || {
                         if let Some(command) = &spawn_task.command {
-                            let mut command: Option<Cow<str>> = shell_kind.try_quote(command);
-                            if let Some(command) = &mut command
-                                && command.starts_with('"')
-                                && let Some(prefix) = shell_kind.command_prefix()
-                            {
-                                *command = Cow::Owned(format!("{prefix}{command}"));
-                            }
-
+                            let command = shell_kind.prepend_command_prefix(command);
+                            let command = shell_kind.try_quote_prefix_aware(&command);
                             let args = spawn_task
                                 .args
                                 .iter()
@@ -168,20 +162,20 @@ impl Project {
                         match remote_client {
                             Some(remote_client) => match activation_script.clone() {
                                 activation_script if !activation_script.is_empty() => {
-                                    let activation_script = activation_script.join("; ");
+                                    let separator = shell_kind.sequential_commands_separator();
+                                    let activation_script =
+                                        activation_script.join(&format!("{separator} "));
                                     let to_run = format_to_run();
-                                    let args = vec![
-                                        "-c".to_owned(),
-                                        format!("{activation_script}; {to_run}"),
-                                    ];
+
+                                    let arg = format!("{activation_script}{separator} {to_run}");
+                                    let args = shell_kind.args_for_shell(false, arg);
+                                    let shell = remote_client
+                                        .read(cx)
+                                        .shell()
+                                        .unwrap_or_else(get_default_system_shell);
+
                                     create_remote_shell(
-                                        Some((
-                                            &remote_client
-                                                .read(cx)
-                                                .shell()
-                                                .unwrap_or_else(get_default_system_shell),
-                                            &args,
-                                        )),
+                                        Some((&shell, &args)),
                                         env,
                                         path,
                                         remote_client,
@@ -422,7 +416,6 @@ impl Project {
         if terminal.read(cx).task().is_some() {
             return self.create_terminal_shell(cwd, cx);
         }
-
         let local_path = if self.is_via_remote_server() {
             None
         } else {
@@ -562,7 +555,7 @@ fn create_remote_shell(
         Shell::WithArguments {
             program: command.program,
             args: command.args,
-            title_override: Some(format!("{} — Terminal", host).into()),
+            title_override: Some(format!("{} — Terminal", host)),
         },
         command.env,
     ))

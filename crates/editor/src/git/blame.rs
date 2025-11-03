@@ -1,6 +1,7 @@
 use crate::Editor;
 use anyhow::Result;
 use collections::HashMap;
+use futures::StreamExt;
 use git::{
     GitHostingProviderRegistry, GitRemote, Oid,
     blame::{Blame, BlameEntry, ParsedCommitMessage},
@@ -16,7 +17,7 @@ use markdown::Markdown;
 use multi_buffer::{MultiBuffer, RowInfo};
 use project::{
     Project, ProjectItem as _,
-    git_store::{GitStoreEvent, Repository, RepositoryEvent},
+    git_store::{GitStoreEvent, Repository},
 };
 use smallvec::SmallVec;
 use std::{sync::Arc, time::Duration};
@@ -235,8 +236,8 @@ impl GitBlame {
         let git_store = project.read(cx).git_store().clone();
         let git_store_subscription =
             cx.subscribe(&git_store, move |this, _, event, cx| match event {
-                GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, _)
-                | GitStoreEvent::RepositoryAdded(_)
+                GitStoreEvent::RepositoryUpdated(_, _, _)
+                | GitStoreEvent::RepositoryAdded
                 | GitStoreEvent::RepositoryRemoved(_) => {
                     log::debug!("Status of git repositories updated. Regenerating blame data...",);
                     this.generate(cx);
@@ -507,7 +508,7 @@ impl GitBlame {
                     let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
 
                     let blame_buffer = project.blame_buffer(&buffer, None, cx);
-                    Some((id, snapshot, buffer_edits, blame_buffer))
+                    Some(async move { (id, snapshot, buffer_edits, blame_buffer.await) })
                 })
                 .collect::<Vec<_>>()
         });
@@ -517,10 +518,14 @@ impl GitBlame {
             let (result, errors) = cx
                 .background_spawn({
                     async move {
+                        let blame = futures::stream::iter(blame)
+                            .buffered(4)
+                            .collect::<Vec<_>>()
+                            .await;
                         let mut res = vec![];
                         let mut errors = vec![];
                         for (id, snapshot, buffer_edits, blame) in blame {
-                            match blame.await {
+                            match blame {
                                 Ok(Some(Blame {
                                     entries,
                                     messages,
@@ -597,6 +602,7 @@ impl GitBlame {
     }
 
     fn regenerate_on_edit(&mut self, cx: &mut Context<Self>) {
+        // todo(lw): hot foreground spawn
         self.regenerate_on_edit_task = cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL)
@@ -1109,18 +1115,19 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let buffer_initial_text_len = rng.random_range(5..15);
-        let mut buffer_initial_text = Rope::from(
+        let mut buffer_initial_text = Rope::from_str(
             RandomCharIter::new(&mut rng)
                 .take(buffer_initial_text_len)
                 .collect::<String>()
                 .as_str(),
+            cx.background_executor(),
         );
 
         let mut newline_ixs = (0..buffer_initial_text_len).choose_multiple(&mut rng, 5);
         newline_ixs.sort_unstable();
         for newline_ix in newline_ixs.into_iter().rev() {
             let newline_ix = buffer_initial_text.clip_offset(newline_ix, Bias::Right);
-            buffer_initial_text.replace(newline_ix..newline_ix, "\n");
+            buffer_initial_text.replace(newline_ix..newline_ix, "\n", cx.background_executor());
         }
         log::info!("initial buffer text: {:?}", buffer_initial_text);
 

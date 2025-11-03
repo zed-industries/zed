@@ -1,9 +1,10 @@
 use futures::FutureExt;
 use gpui::{
-    AnyElement, AnyView, App, ElementId, FontStyle, FontWeight, HighlightStyle, InteractiveText,
-    IntoElement, SharedString, StrikethroughStyle, StyledText, UnderlineStyle, Window,
+    AnyElement, AnyView, App, BackgroundExecutor, ElementId, FontStyle, FontWeight, HighlightStyle,
+    InteractiveText, IntoElement, SharedString, StrikethroughStyle, StyledText, UnderlineStyle,
+    Window,
 };
-use language::{HighlightId, Language, LanguageRegistry};
+use language::{HighlightId, Language, LanguageRegistry, Rope};
 use std::{ops::Range, sync::Arc};
 use theme::ActiveTheme;
 use ui::LinkPreview;
@@ -56,6 +57,7 @@ impl RichText {
         block: String,
         mentions: &[Mention],
         language_registry: &Arc<LanguageRegistry>,
+        executor: &BackgroundExecutor,
     ) -> Self {
         let mut text = String::new();
         let mut highlights = Vec::new();
@@ -70,6 +72,7 @@ impl RichText {
             &mut highlights,
             &mut link_ranges,
             &mut link_urls,
+            executor,
         );
         text.truncate(text.trim_end().len());
 
@@ -184,6 +187,7 @@ pub fn render_markdown_mut(
     highlights: &mut Vec<(Range<usize>, Highlight)>,
     link_ranges: &mut Vec<Range<usize>>,
     link_urls: &mut Vec<String>,
+    executor: &BackgroundExecutor,
 ) {
     use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
@@ -202,7 +206,7 @@ pub fn render_markdown_mut(
         match event {
             Event::Text(t) => {
                 if let Some(language) = &current_language {
-                    render_code(text, highlights, t.as_ref(), language);
+                    render_code(text, highlights, t.as_ref(), language, executor);
                 } else {
                     while let Some(mention) = mentions.first() {
                         if !source_range.contains_inclusive(&mention.range) {
@@ -373,11 +377,14 @@ pub fn render_code(
     highlights: &mut Vec<(Range<usize>, Highlight)>,
     content: &str,
     language: &Arc<Language>,
+    executor: &BackgroundExecutor,
 ) {
     let prev_len = text.len();
     text.push_str(content);
     let mut offset = 0;
-    for (range, highlight_id) in language.highlight_text(&content.into(), 0..content.len()) {
+    for (range, highlight_id) in
+        language.highlight_text(&Rope::from_str(content, executor), 0..content.len())
+    {
         if range.start > offset {
             highlights.push((prev_len + offset..prev_len + range.start, Highlight::Code));
         }

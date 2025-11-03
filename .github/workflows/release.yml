@@ -1,0 +1,486 @@
+# Generated from xtask::workflows::release
+# Rebuild with `cargo xtask workflows`.
+name: release
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+  RUST_BACKTRACE: '1'
+  ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+  ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+on:
+  push:
+    tags:
+    - v*
+jobs:
+  run_tests_mac:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: self-mini-macos
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      shell: bash -euxo pipefail {0}
+    - name: steps::setup_node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '20'
+    - name: steps::clippy
+      run: ./script/clippy
+      shell: bash -euxo pipefail {0}
+    - name: steps::cargo_install_nextest
+      run: cargo install cargo-nextest --locked
+      shell: bash -euxo pipefail {0}
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than 300
+      shell: bash -euxo pipefail {0}
+    - name: steps::cargo_nextest
+      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      shell: bash -euxo pipefail {0}
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        rm -rf ./../.cargo
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 60
+  run_tests_linux:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      shell: bash -euxo pipefail {0}
+    - name: steps::setup_linux
+      run: ./script/linux
+      shell: bash -euxo pipefail {0}
+    - name: steps::install_mold
+      run: ./script/install-mold
+      shell: bash -euxo pipefail {0}
+    - name: steps::setup_node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '20'
+    - name: steps::clippy
+      run: ./script/clippy
+      shell: bash -euxo pipefail {0}
+    - name: steps::cargo_install_nextest
+      run: cargo install cargo-nextest --locked
+      shell: bash -euxo pipefail {0}
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than 100
+      shell: bash -euxo pipefail {0}
+    - name: steps::cargo_nextest
+      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      shell: bash -euxo pipefail {0}
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        rm -rf ./../.cargo
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 60
+  run_tests_windows:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: self-32vcpu-windows-2022
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        New-Item -ItemType Directory -Path "./../.cargo" -Force
+        Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
+      shell: pwsh
+    - name: steps::setup_node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '20'
+    - name: steps::clippy
+      run: ./script/clippy.ps1
+      shell: pwsh
+    - name: steps::cargo_install_nextest
+      run: cargo install cargo-nextest --locked
+      shell: pwsh
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than.ps1 250
+      shell: pwsh
+    - name: steps::cargo_nextest
+      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      shell: pwsh
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
+      shell: pwsh
+    timeout-minutes: 60
+  check_scripts:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: run_tests::check_scripts::run_shellcheck
+      run: ./script/shellcheck-scripts error
+      shell: bash -euxo pipefail {0}
+    - id: get_actionlint
+      name: run_tests::check_scripts::download_actionlint
+      run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+      shell: bash -euxo pipefail {0}
+    - name: run_tests::check_scripts::run_actionlint
+      run: |
+        ${{ steps.get_actionlint.outputs.executable }} -color
+      shell: bash -euxo pipefail {0}
+    - name: run_tests::check_scripts::check_xtask_workflows
+      run: |
+        cargo xtask workflows
+        if ! git diff --exit-code .github; then
+          echo "Error: .github directory has uncommitted changes after running 'cargo xtask workflows'"
+          echo "Please run 'cargo xtask workflows' locally and commit the changes"
+          exit 1
+        fi
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 60
+  create_draft_release:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+        fetch-depth: 25
+        ref: ${{ github.ref }}
+    - name: script/determine-release-channel
+      run: script/determine-release-channel
+      shell: bash -euxo pipefail {0}
+    - name: mkdir -p target/
+      run: mkdir -p target/
+      shell: bash -euxo pipefail {0}
+    - name: release::create_draft_release::generate_release_notes
+      run: node --redirect-warnings=/dev/null ./script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md
+      shell: bash -euxo pipefail {0}
+    - name: release::create_draft_release::create_release
+      run: script/create-draft-release target/release-notes.md
+      shell: bash -euxo pipefail {0}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    timeout-minutes: 60
+  bundle_linux_arm64:
+    needs:
+    - run_tests_linux
+    - check_scripts
+    runs-on: namespace-profile-8x32-ubuntu-2004-arm-m4
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_sentry
+      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
+      with:
+        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: steps::setup_linux
+      run: ./script/linux
+      shell: bash -euxo pipefail {0}
+    - name: steps::install_mold
+      run: ./script/install-mold
+      shell: bash -euxo pipefail {0}
+    - name: ./script/bundle-linux
+      run: ./script/bundle-linux
+      shell: bash -euxo pipefail {0}
+    - name: '@actions/upload-artifact zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
+        path: target/release/zed-*.tar.gz
+        if-no-files-found: error
+    - name: '@actions/upload-artifact zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
+        path: target/zed-remote-server-*.gz
+        if-no-files-found: error
+    outputs:
+      zed: zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
+      remote-server: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
+    timeout-minutes: 60
+  bundle_linux_x86_64:
+    needs:
+    - run_tests_linux
+    - check_scripts
+    runs-on: namespace-profile-32x64-ubuntu-2004
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_sentry
+      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
+      with:
+        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: steps::setup_linux
+      run: ./script/linux
+      shell: bash -euxo pipefail {0}
+    - name: steps::install_mold
+      run: ./script/install-mold
+      shell: bash -euxo pipefail {0}
+    - name: ./script/bundle-linux
+      run: ./script/bundle-linux
+      shell: bash -euxo pipefail {0}
+    - name: '@actions/upload-artifact zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
+        path: target/release/zed-*.tar.gz
+        if-no-files-found: error
+    - name: '@actions/upload-artifact zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
+        path: target/zed-remote-server-*.gz
+        if-no-files-found: error
+    outputs:
+      zed: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
+      remote-server: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
+    timeout-minutes: 60
+  bundle_mac_arm64:
+    needs:
+    - run_tests_mac
+    - check_scripts
+    runs-on: self-mini-macos
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
+      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '20'
+    - name: steps::setup_sentry
+      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
+      with:
+        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than 300
+      shell: bash -euxo pipefail {0}
+    - name: run_bundling::bundle_mac
+      run: ./script/bundle-mac aarch64-apple-darwin
+      shell: bash -euxo pipefail {0}
+    - name: '@actions/upload-artifact Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg
+        path: target/aarch64-apple-darwin/release/Zed.dmg
+        if-no-files-found: error
+    - name: '@actions/upload-artifact zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-macos-aarch64.gz'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-macos-aarch64.gz
+        path: target/zed-remote-server-macos-aarch64.gz
+        if-no-files-found: error
+    outputs:
+      zed: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg
+      remote-server: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-macos-aarch64.gz
+    timeout-minutes: 60
+  bundle_mac_x86_64:
+    needs:
+    - run_tests_mac
+    - check_scripts
+    runs-on: self-mini-macos
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
+      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '20'
+    - name: steps::setup_sentry
+      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
+      with:
+        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than 300
+      shell: bash -euxo pipefail {0}
+    - name: run_bundling::bundle_mac
+      run: ./script/bundle-mac x86_64-apple-darwin
+      shell: bash -euxo pipefail {0}
+    - name: '@actions/upload-artifact Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
+        path: target/x86_64-apple-darwin/release/Zed.dmg
+        if-no-files-found: error
+    - name: '@actions/upload-artifact zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-macos-x86_64.gz'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-macos-x86_64.gz
+        path: target/zed-remote-server-macos-x86_64.gz
+        if-no-files-found: error
+    outputs:
+      zed: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
+      remote-server: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-macos-x86_64.gz
+    timeout-minutes: 60
+  bundle_windows_arm64:
+    needs:
+    - run_tests_windows
+    - check_scripts
+    runs-on: self-32vcpu-windows-2022
+    env:
+      AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+      ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+      CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
+      ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      FILE_DIGEST: SHA256
+      TIMESTAMP_DIGEST: SHA256
+      TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_sentry
+      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
+      with:
+        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: run_bundling::bundle_windows
+      run: script/bundle-windows.ps1 -Architecture aarch64
+      shell: pwsh
+      working-directory: ${{ env.ZED_WORKSPACE }}
+    - name: '@actions/upload-artifact Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.exe'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.exe
+        path: ${{ env.SETUP_PATH }}
+        if-no-files-found: error
+    outputs:
+      zed: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.exe
+    timeout-minutes: 60
+  bundle_windows_x86_64:
+    needs:
+    - run_tests_windows
+    - check_scripts
+    runs-on: self-32vcpu-windows-2022
+    env:
+      AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+      ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+      CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
+      ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      FILE_DIGEST: SHA256
+      TIMESTAMP_DIGEST: SHA256
+      TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_sentry
+      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
+      with:
+        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: run_bundling::bundle_windows
+      run: script/bundle-windows.ps1 -Architecture x86_64
+      shell: pwsh
+      working-directory: ${{ env.ZED_WORKSPACE }}
+    - name: '@actions/upload-artifact Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.exe'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.exe
+        path: ${{ env.SETUP_PATH }}
+        if-no-files-found: error
+    outputs:
+      zed: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.exe
+    timeout-minutes: 60
+  upload_release_assets:
+    needs:
+    - create_draft_release
+    - bundle_linux_arm64
+    - bundle_linux_x86_64
+    - bundle_mac_arm64
+    - bundle_mac_x86_64
+    - bundle_windows_arm64
+    - bundle_windows_x86_64
+    runs-on: namespace-profile-4x8-ubuntu-2204
+    steps:
+    - name: release::upload_release_assets::download_workflow_artifacts
+      uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+      with:
+        path: ./artifacts/
+    - name: ls -lR ./artifacts
+      run: ls -lR ./artifacts
+      shell: bash -euxo pipefail {0}
+    - name: release::upload_release_assets::prep_release_artifacts
+      run: |-
+        mkdir -p release-artifacts/
+
+        mv ./artifacts/${{ needs.bundle_mac_x86_64.outputs.zed }}/* release-artifacts/Zed-x86_64.dmg
+        mv ./artifacts/${{ needs.bundle_mac_arm64.outputs.zed }}/* release-artifacts/Zed-aarch64.dmg
+        mv ./artifacts/${{ needs.bundle_windows_x86_64.outputs.zed }}/* release-artifacts/Zed-x86_64.exe
+        mv ./artifacts/${{ needs.bundle_windows_arm64.outputs.zed }}/* release-artifacts/Zed-aarch64.exe
+        mv ./artifacts/${{ needs.bundle_linux_arm64.outputs.zed }}/* release-artifacts/zed-linux-aarch64.tar.gz
+        mv ./artifacts/${{ needs.bundle_linux_x86_64.outputs.zed }}/* release-artifacts/zed-linux-x86_64.tar.gz
+        mv ./artifacts/${{ needs.bundle_linux_x86_64.outputs.remote-server }}/* release-artifacts/zed-remote-server-linux-x86_64.gz
+        mv ./artifacts/${{ needs.bundle_linux_arm64.outputs.remote-server }}/* release-artifacts/zed-remote-server-linux-aarch64.gz
+        mv ./artifacts/${{ needs.bundle_mac_x86_64.outputs.remote-server }}/* release-artifacts/zed-remote-server-macos-x86_64.gz
+        mv ./artifacts/${{ needs.bundle_mac_arm64.outputs.remote-server }}/* release-artifacts/zed-remote-server-macos-aarch64.gz
+      shell: bash -euxo pipefail {0}
+    - name: gh release upload "$GITHUB_REF_NAME" --repo=zed-industries/zed release-artifacts/*
+      run: gh release upload "$GITHUB_REF_NAME" --repo=zed-industries/zed release-artifacts/*
+      shell: bash -euxo pipefail {0}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  auto_release_preview:
+    needs:
+    - upload_release_assets
+    if: |
+      false
+      && startsWith(github.ref, 'refs/tags/v')
+      && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false
+      run: gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false
+      shell: bash -euxo pipefail {0}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: release::auto_release_preview::create_sentry_release
+      uses: getsentry/action-release@526942b68292201ac6bbb99b9a0747d4abee354c
+      with:
+        environment: production
+      env:
+        SENTRY_ORG: zed-dev
+        SENTRY_PROJECT: zed
+        SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
+  cancel-in-progress: true

@@ -19,6 +19,7 @@ use pet_core::python_environment::{PythonEnvironment, PythonEnvironmentKind};
 use pet_virtualenv::is_virtualenv_dir;
 use project::Fs;
 use project::lsp_store::language_server_settings;
+use rope::Rope;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use smol::lock::OnceCell;
@@ -466,7 +467,7 @@ impl LspAdapter for PyrightLspAdapter {
         Some(language::CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
+            language.highlight_text(&Rope::from_str_small(text.as_str()), display_range),
         ))
     }
 
@@ -1210,7 +1211,7 @@ impl ToolchainLister for PythonToolchainProvider {
                 activation_script.extend(match shell {
                     ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
                     ShellKind::Posix => Some(format!("\"{pyenv}\" shell - sh {version}")),
-                    ShellKind::Nushell => Some(format!("\"{pyenv}\" shell - nu {version}")),
+                    ShellKind::Nushell => Some(format!("^\"{pyenv}\" shell - nu {version}")),
                     ShellKind::PowerShell => None,
                     ShellKind::Csh => None,
                     ShellKind::Tcsh => None,
@@ -1344,9 +1345,13 @@ impl pet_core::os_environment::Environment for EnvironmentApi<'_> {
 
     fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
         if self.global_search_locations.lock().is_empty() {
-            let mut paths =
-                std::env::split_paths(&self.get_env_var("PATH".to_string()).unwrap_or_default())
-                    .collect::<Vec<PathBuf>>();
+            let mut paths = std::env::split_paths(
+                &self
+                    .get_env_var("PATH".to_string())
+                    .or_else(|| self.get_env_var("Path".to_string()))
+                    .unwrap_or_default(),
+            )
+            .collect::<Vec<PathBuf>>();
 
             log::trace!("Env PATH: {:?}", paths);
             for p in self.pet_env.get_know_global_search_locations() {
@@ -1507,7 +1512,7 @@ impl LspAdapter for PyLspAdapter {
         Some(language::CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
+            language.highlight_text(&Rope::from_str_small(text.as_str()), display_range),
         ))
     }
 
@@ -1796,7 +1801,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
         Some(language::CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
+            language.highlight_text(&Rope::from_str_small(text.as_str()), display_range),
         ))
     }
 
@@ -1862,12 +1867,8 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 }
                 // Basedpyright by default uses `strict` type checking, we tone it down as to not surpris users
                 maybe!({
-                    let basedpyright = object
-                        .entry("basedpyright")
-                        .or_insert(Value::Object(serde_json::Map::default()));
-                    let analysis = basedpyright
-                        .as_object_mut()?
-                        .entry("analysis")
+                    let analysis = object
+                        .entry("basedpyright.analysis")
                         .or_insert(Value::Object(serde_json::Map::default()));
                     if let serde_json::map::Entry::Vacant(v) =
                         analysis.as_object_mut()?.entry("typeCheckingMode")

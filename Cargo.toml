@@ -13,7 +13,7 @@ members = [
     "crates/anthropic",
     "crates/askpass",
     "crates/assets",
-    "crates/assistant_context",
+    "crates/assistant_text_thread",
     "crates/assistant_slash_command",
     "crates/assistant_slash_commands",
     "crates/audio",
@@ -58,7 +58,7 @@ members = [
     "crates/edit_prediction_context",
     "crates/zeta2_tools",
     "crates/editor",
-    # "crates/eval",
+    "crates/eval",
     "crates/explorer_command_injector",
     "crates/extension",
     "crates/extension_api",
@@ -148,6 +148,7 @@ members = [
     "crates/semantic_version",
     "crates/session",
     "crates/settings",
+    "crates/settings_json",
     "crates/settings_macros",
     "crates/settings_profile_selector",
     "crates/settings_ui",
@@ -246,7 +247,7 @@ ai_onboarding = { path = "crates/ai_onboarding" }
 anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
-assistant_context = { path = "crates/assistant_context" }
+assistant_text_thread = { path = "crates/assistant_text_thread" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_slash_commands = { path = "crates/assistant_slash_commands" }
 audio = { path = "crates/audio" }
@@ -380,6 +381,7 @@ search = { path = "crates/search" }
 semantic_version = { path = "crates/semantic_version" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
+settings_json = { path = "crates/settings_json" }
 settings_macros = { path = "crates/settings_macros" }
 settings_ui = { path = "crates/settings_ui" }
 snippet = { path = "crates/snippet" }
@@ -438,7 +440,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
-agent-client-protocol = { version = "0.5.0", features = ["unstable"] }
+agent-client-protocol = { version = "0.7.0", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = "0.25.1-rc1"
 any_vec = "0.14"
@@ -452,8 +454,7 @@ async-fs = "2.1"
 async-lock = "2.1"
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 async-recursion = "1.0.0"
-# WARNING: If you change this, you must also publish a new version of zed-async-tar to crates.io
-async-tar = { git = "https://github.com/zed-industries/async-tar", rev = "a307f6bf3e4219c3a457bea0cab198b6d7c36e25", package = "zed-async-tar", version = "0.5.0-zed" }
+async-tar = "0.5.1"
 async-task = "4.7"
 async-trait = "0.1"
 async-tungstenite = "0.31.0"
@@ -507,6 +508,7 @@ fork = "0.2.0"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"
+gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "0090c6b6ef82fff02bc8616645953e778d1acc08" }
 git2 = { version = "0.20.1", default-features = false }
 globset = "0.4"
 handlebars = "4.3"
@@ -535,7 +537,7 @@ libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
-lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "0874f8742fe55b4dc94308c1e3c0069710d8eeaf" }
+lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "b71ab4eeb27d9758be8092020a46fe33fbca4e33" }
 mach2 = "0.5"
 markup5ever_rcdom = "0.3.0"
 metal = "0.29"
@@ -678,7 +680,7 @@ tree-sitter-elixir = "0.3"
 tree-sitter-embedded-template = "0.23.0"
 tree-sitter-gitcommit = { git = "https://github.com/zed-industries/tree-sitter-git-commit", rev = "88309716a69dd13ab83443721ba6e0b491d37ee9" }
 tree-sitter-go = "0.23"
-tree-sitter-go-mod = { git = "https://github.com/camdencheek/tree-sitter-go-mod", rev = "6efb59652d30e0e9cd5f3b3a669afd6f1a926d3c", package = "tree-sitter-gomod" }
+tree-sitter-go-mod = { git = "https://github.com/camdencheek/tree-sitter-go-mod", rev = "2e886870578eeba1927a2dc4bd2e2b3f598c5f9a", package = "tree-sitter-gomod" }
 tree-sitter-gowork = { git = "https://github.com/zed-industries/tree-sitter-go-work", rev = "acb0617bf7f4fda02c6217676cc64acb89536dc7" }
 tree-sitter-heex = { git = "https://github.com/zed-industries/tree-sitter-heex", rev = "1dd45142fbb05562e35b2040c6129c9bca346592" }
 tree-sitter-html = "0.23"
@@ -776,6 +778,8 @@ windows-capture = { git = "https://github.com/zed-industries/windows-capture.git
 
 [profile.dev]
 split-debuginfo = "unpacked"
+# https://github.com/rust-lang/cargo/issues/16104
+incremental = false
 codegen-units = 16
 
 # mirror configuration for crates compiled for the build platform

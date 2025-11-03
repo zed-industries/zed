@@ -421,7 +421,13 @@ message Envelope {
         RemoteStarted remote_started = 381;
 
         GetDirectoryEnvironment get_directory_environment = 382;
-        DirectoryEnvironment directory_environment = 383; // current max
+        DirectoryEnvironment directory_environment = 383;
+
+        GetTreeDiff get_tree_diff = 384;
+        GetTreeDiffResponse get_tree_diff_response = 385;
+
+        GetBlobContent get_blob_content = 386;
+        GetBlobContentResponse get_blob_content_response = 387; // current max
     }
 
     reserved 87 to 88;

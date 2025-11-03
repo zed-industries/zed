@@ -150,6 +150,12 @@ Otherwise, follow debugging best practices:
 Operating System: {{os}}
 Default Shell: {{shell}}
 
+{{#if model_name}}
+## Model Information
+
+You are powered by the model named {{model_name}}.
+
+{{/if}}
 {{#if (or has_rules has_user_rules)}}
 ## User's Custom Instructions
 

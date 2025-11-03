@@ -232,6 +232,8 @@ impl EditorElement {
         register_action(editor, window, Editor::blame_hover);
         register_action(editor, window, Editor::delete);
         register_action(editor, window, Editor::tab);
+        register_action(editor, window, Editor::next_snippet_tabstop);
+        register_action(editor, window, Editor::previous_snippet_tabstop);
         register_action(editor, window, Editor::backtab);
         register_action(editor, window, Editor::indent);
         register_action(editor, window, Editor::outdent);
@@ -458,7 +460,6 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_code_actions);
         register_action(editor, window, Editor::open_excerpts);
         register_action(editor, window, Editor::open_excerpts_in_split);
-        register_action(editor, window, Editor::open_proposed_changes_editor);
         register_action(editor, window, Editor::toggle_soft_wrap);
         register_action(editor, window, Editor::toggle_tab_bar);
         register_action(editor, window, Editor::toggle_line_numbers);
@@ -496,6 +497,8 @@ impl EditorElement {
         register_action(editor, window, Editor::collapse_all_diff_hunks);
         register_action(editor, window, Editor::go_to_previous_change);
         register_action(editor, window, Editor::go_to_next_change);
+        register_action(editor, window, Editor::go_to_prev_reference);
+        register_action(editor, window, Editor::go_to_next_reference);
 
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.format(action, window, cx) {
@@ -1422,7 +1425,11 @@ impl EditorElement {
                     layouts.push(layout);
                 }
 
-                let player = editor.current_user_player_color(cx);
+                let mut player = editor.current_user_player_color(cx);
+                if !editor.is_focused(window) {
+                    const UNFOCUS_EDITOR_SELECTION_OPACITY: f32 = 0.5;
+                    player.selection = player.selection.opacity(UNFOCUS_EDITOR_SELECTION_OPACITY);
+                }
                 selections.push((player, layouts));
 
                 if let SelectionDragState::Dragging {
@@ -3170,7 +3177,7 @@ impl EditorElement {
             i += 1;
         }
         delta = 1;
-        i = head_idx.min(buffer_rows.len() as u32 - 1);
+        i = head_idx.min(buffer_rows.len().saturating_sub(1) as u32);
         while i > 0 && buffer_rows[i as usize].buffer_row.is_none() {
             i -= 1;
         }
@@ -3824,13 +3831,7 @@ impl EditorElement {
         let multi_buffer = editor.buffer.read(cx);
         let file_status = multi_buffer
             .all_diff_hunks_expanded()
-            .then(|| {
-                editor
-                    .project
-                    .as_ref()?
-                    .read(cx)
-                    .status_for_buffer_id(for_excerpt.buffer_id, cx)
-            })
+            .then(|| editor.status_for_buffer_id(for_excerpt.buffer_id, cx))
             .flatten();
         let indicator = multi_buffer
             .buffer(for_excerpt.buffer_id)
@@ -3910,7 +3911,7 @@ impl EditorElement {
                                         .children(toggle_chevron_icon)
                                         .tooltip({
                                             let focus_handle = focus_handle.clone();
-                                            move |window, cx| {
+                                            move |_window, cx| {
                                                 Tooltip::with_meta_in(
                                                     "Toggle Excerpt Fold",
                                                     Some(&ToggleFold),
@@ -3923,7 +3924,6 @@ impl EditorElement {
                                                         )
                                                     ),
                                                     &focus_handle,
-                                                    window,
                                                     cx,
                                                 )
                                             }
@@ -4024,15 +4024,11 @@ impl EditorElement {
                                             .id("jump-to-file-button")
                                             .gap_2p5()
                                             .child(Label::new("Jump To File"))
-                                            .children(
-                                                KeyBinding::for_action_in(
-                                                    &OpenExcerpts,
-                                                    &focus_handle,
-                                                    window,
-                                                    cx,
-                                                )
-                                                .map(|binding| binding.into_any_element()),
-                                            ),
+                                            .child(KeyBinding::for_action_in(
+                                                &OpenExcerpts,
+                                                &focus_handle,
+                                                cx,
+                                            )),
                                     )
                                 },
                             )
@@ -5113,23 +5109,26 @@ impl EditorElement {
                 snapshot,
                 visible_display_row_range.clone(),
                 max_size,
+                &editor.text_layout_details(window),
                 window,
                 cx,
             )
         });
-        let Some((position, hover_popovers)) = hover_popovers else {
+        let Some((popover_position, hover_popovers)) = hover_popovers else {
             return;
         };
 
         // This is safe because we check on layout whether the required row is available
-        let hovered_row_layout =
-            &line_layouts[position.row().minus(visible_display_row_range.start) as usize];
+        let hovered_row_layout = &line_layouts[popover_position
+            .row()
+            .minus(visible_display_row_range.start)
+            as usize];
 
         // Compute Hovered Point
-        let x = hovered_row_layout.x_for_index(position.column() as usize)
+        let x = hovered_row_layout.x_for_index(popover_position.column() as usize)
             - Pixels::from(scroll_pixel_position.x);
         let y = Pixels::from(
-            position.row().as_f64() * ScrollPixelOffset::from(line_height)
+            popover_position.row().as_f64() * ScrollPixelOffset::from(line_height)
                 - scroll_pixel_position.y,
         );
         let hovered_point = content_origin + point(x, y);
@@ -7233,16 +7232,9 @@ impl EditorElement {
                             * ScrollPixelOffset::from(max_glyph_advance)
                             - ScrollPixelOffset::from(delta.x * scroll_sensitivity))
                             / ScrollPixelOffset::from(max_glyph_advance);
-
-                        let scale_factor = window.scale_factor();
-                        let y = (current_scroll_position.y
-                            * ScrollPixelOffset::from(line_height)
-                            * ScrollPixelOffset::from(scale_factor)
+                        let y = (current_scroll_position.y * ScrollPixelOffset::from(line_height)
                             - ScrollPixelOffset::from(delta.y * scroll_sensitivity))
-                        .round()
-                            / ScrollPixelOffset::from(line_height)
-                            / ScrollPixelOffset::from(scale_factor);
-
+                            / ScrollPixelOffset::from(line_height);
                         let mut scroll_position =
                             point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
                         let forbid_vertical_scroll = editor.scroll_manager.forbid_vertical_scroll();

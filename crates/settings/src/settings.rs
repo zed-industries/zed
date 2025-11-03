@@ -5,7 +5,6 @@ pub mod merge_from;
 mod serde_helper;
 mod settings_content;
 mod settings_file;
-mod settings_json;
 mod settings_store;
 mod vscode_import;
 
@@ -26,8 +25,8 @@ pub use serde_helper::*;
 pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
-    InvalidSettingsError, LocalSettingsKind, Settings, SettingsFile, SettingsKey, SettingsLocation,
-    SettingsStore,
+    InvalidSettingsError, LocalSettingsKind, MigrationStatus, ParseStatus, Settings, SettingsFile,
+    SettingsJsonSchemaParams, SettingsKey, SettingsLocation, SettingsStore,
 };
 
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};

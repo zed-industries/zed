@@ -1,6 +1,5 @@
 {
-  "assistant": {
-    "always_allow_tool_actions": true,
-    "version": "2"
+  "agent": {
+    "always_allow_tool_actions": true
   }
 }

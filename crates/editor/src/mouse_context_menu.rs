@@ -11,6 +11,7 @@ use gpui::{Context, DismissEvent, Entity, Focusable as _, Pixels, Point, Subscri
 use std::ops::Range;
 use text::PointUtf16;
 use workspace::OpenInTerminal;
+use zed_actions::agent::AddSelectionToThread;
 
 #[derive(Debug)]
 pub enum MenuPosition {
@@ -233,6 +234,7 @@ pub fn deploy_context_menu(
                         quick_launch: false,
                     }),
                 )
+                .action("Add to Agent Thread", Box::new(AddSelectionToThread))
                 .separator()
                 .action("Cut", Box::new(Cut))
                 .action("Copy", Box::new(Copy))

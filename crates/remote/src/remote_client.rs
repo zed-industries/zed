@@ -87,6 +87,7 @@ pub trait RemoteClientDelegate: Send + Sync {
 const MAX_MISSED_HEARTBEATS: usize = 5;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
+const INITIAL_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);
 
 const MAX_RECONNECT_ATTEMPTS: usize = 3;
 
@@ -350,7 +351,7 @@ impl RemoteClient {
 
                 let ready = client
                     .wait_for_remote_started()
-                    .with_timeout(HEARTBEAT_TIMEOUT, cx.background_executor())
+                    .with_timeout(INITIAL_CONNECTION_TIMEOUT, cx.background_executor())
                     .await;
                 match ready {
                     Ok(Some(_)) => {}
@@ -527,6 +528,7 @@ impl RemoteClient {
         let reconnect_task = cx.spawn(async move |this, cx| {
             macro_rules! failed {
                 ($error:expr, $attempts:expr, $ssh_connection:expr, $delegate:expr) => {
+                    delegate.set_status(Some(&format!("{error:#}", error = $error)), cx);
                     return State::ReconnectFailed {
                         error: anyhow!($error),
                         attempts: $attempts,
@@ -998,11 +1000,10 @@ impl ConnectionPool {
         let connection = self.connections.get(&opts);
         match connection {
             Some(ConnectionPoolEntry::Connecting(task)) => {
-                let delegate = delegate.clone();
-                cx.spawn(async move |cx| {
-                    delegate.set_status(Some("Waiting for existing connection attempt"), cx);
-                })
-                .detach();
+                delegate.set_status(
+                    Some("Waiting for existing connection attempt"),
+                    &mut cx.to_async(),
+                );
                 return task.clone();
             }
             Some(ConnectionPoolEntry::Connected(ssh)) => {
@@ -1088,6 +1089,15 @@ impl From<WslConnectionOptions> for RemoteConnectionOptions {
     fn from(opts: WslConnectionOptions) -> Self {
         RemoteConnectionOptions::Wsl(opts)
     }
+}
+
+#[cfg(target_os = "windows")]
+/// Open a wsl path (\\wsl.localhost\<distro>\path)
+#[derive(Debug, Clone, PartialEq, Eq, gpui::Action)]
+#[action(namespace = workspace, no_json, no_register)]
+pub struct OpenWslPath {
+    pub distro: WslConnectionOptions,
+    pub paths: Vec<PathBuf>,
 }
 
 #[async_trait(?Send)]

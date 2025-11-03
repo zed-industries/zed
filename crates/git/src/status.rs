@@ -1,5 +1,7 @@
-use crate::repository::RepoPath;
-use anyhow::Result;
+use crate::{Oid, repository::RepoPath};
+use anyhow::{Result, anyhow};
+use collections::HashMap;
+use gpui::SharedString;
 use serde::{Deserialize, Serialize};
 use std::{str::FromStr, sync::Arc};
 use util::{ResultExt, rel_path::RelPath};
@@ -190,7 +192,11 @@ impl FileStatus {
     }
 
     pub fn is_deleted(self) -> bool {
-        matches!(self, FileStatus::Tracked(tracked) if matches!((tracked.index_status, tracked.worktree_status), (StatusCode::Deleted, _) | (_, StatusCode::Deleted)))
+        let FileStatus::Tracked(tracked) = self else {
+            return false;
+        };
+        tracked.index_status == StatusCode::Deleted && tracked.worktree_status != StatusCode::Added
+            || tracked.worktree_status == StatusCode::Deleted
     }
 
     pub fn is_untracked(self) -> bool {
@@ -484,5 +490,130 @@ impl Default for GitStatus {
         Self {
             entries: Arc::new([]),
         }
+    }
+}
+
+pub enum DiffTreeType {
+    MergeBase {
+        base: SharedString,
+        head: SharedString,
+    },
+    Since {
+        base: SharedString,
+        head: SharedString,
+    },
+}
+
+impl DiffTreeType {
+    pub fn base(&self) -> &SharedString {
+        match self {
+            DiffTreeType::MergeBase { base, .. } => base,
+            DiffTreeType::Since { base, .. } => base,
+        }
+    }
+
+    pub fn head(&self) -> &SharedString {
+        match self {
+            DiffTreeType::MergeBase { head, .. } => head,
+            DiffTreeType::Since { head, .. } => head,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct TreeDiff {
+    pub entries: HashMap<RepoPath, TreeDiffStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TreeDiffStatus {
+    Added,
+    Modified { old: Oid },
+    Deleted { old: Oid },
+}
+
+impl FromStr for TreeDiff {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        let mut fields = s.split('\0');
+        let mut parsed = HashMap::default();
+        while let Some((status, path)) = fields.next().zip(fields.next()) {
+            let path = RepoPath(RelPath::unix(path)?.into());
+
+            let mut fields = status.split(" ").skip(2);
+            let old_sha = fields
+                .next()
+                .ok_or_else(|| anyhow!("expected to find old_sha"))?
+                .to_owned()
+                .parse()?;
+            let _new_sha = fields
+                .next()
+                .ok_or_else(|| anyhow!("expected to find new_sha"))?;
+            let status = fields
+                .next()
+                .and_then(|s| {
+                    if s.len() == 1 {
+                        s.as_bytes().first()
+                    } else {
+                        None
+                    }
+                })
+                .ok_or_else(|| anyhow!("expected to find status"))?;
+
+            let result = match StatusCode::from_byte(*status)? {
+                StatusCode::Modified => TreeDiffStatus::Modified { old: old_sha },
+                StatusCode::Added => TreeDiffStatus::Added,
+                StatusCode::Deleted => TreeDiffStatus::Deleted { old: old_sha },
+                _status => continue,
+            };
+
+            parsed.insert(path, result);
+        }
+
+        Ok(Self { entries: parsed })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use crate::{
+        repository::RepoPath,
+        status::{TreeDiff, TreeDiffStatus},
+    };
+
+    #[test]
+    fn test_tree_diff_parsing() {
+        let input = ":000000 100644 0000000000000000000000000000000000000000 0062c311b8727c3a2e3cd7a41bc9904feacf8f98 A\x00.zed/settings.json\x00".to_owned() +
+            ":100644 000000 bb3e9ed2e97a8c02545bae243264d342c069afb3 0000000000000000000000000000000000000000 D\x00README.md\x00" +
+            ":100644 100644 42f097005a1f21eb2260fad02ec8c991282beee8 a437d85f63bb8c62bd78f83f40c506631fabf005 M\x00parallel.go\x00";
+
+        let output: TreeDiff = input.parse().unwrap();
+        assert_eq!(
+            output,
+            TreeDiff {
+                entries: [
+                    (
+                        RepoPath::new(".zed/settings.json").unwrap(),
+                        TreeDiffStatus::Added,
+                    ),
+                    (
+                        RepoPath::new("README.md").unwrap(),
+                        TreeDiffStatus::Deleted {
+                            old: "bb3e9ed2e97a8c02545bae243264d342c069afb3".parse().unwrap()
+                        }
+                    ),
+                    (
+                        RepoPath::new("parallel.go").unwrap(),
+                        TreeDiffStatus::Modified {
+                            old: "42f097005a1f21eb2260fad02ec8c991282beee8".parse().unwrap(),
+                        }
+                    ),
+                ]
+                .into_iter()
+                .collect()
+            }
+        )
     }
 }

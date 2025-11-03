@@ -32,6 +32,16 @@ pub struct Chunk {
     pub text: ArrayString<MAX_BASE>,
 }
 
+#[inline(always)]
+const fn saturating_shl_mask(offset: u32) -> Bitmap {
+    (1 as Bitmap).unbounded_shl(offset).wrapping_sub(1)
+}
+
+#[inline(always)]
+const fn saturating_shr_mask(offset: u32) -> Bitmap {
+    !Bitmap::MAX.unbounded_shr(offset)
+}
+
 impl Chunk {
     pub const MASK_BITS: usize = Bitmap::BITS as usize;
 
@@ -93,6 +103,71 @@ impl Chunk {
     pub fn tabs(&self) -> Bitmap {
         self.tabs
     }
+
+    #[inline(always)]
+    pub fn is_char_boundary(&self, offset: usize) -> bool {
+        (1 as Bitmap).unbounded_shl(offset as u32) & self.chars != 0 || offset == self.text.len()
+    }
+
+    pub fn floor_char_boundary(&self, index: usize) -> usize {
+        #[inline]
+        pub(crate) const fn is_utf8_char_boundary(u8: u8) -> bool {
+            // This is bit magic equivalent to: b < 128 || b >= 192
+            (u8 as i8) >= -0x40
+        }
+
+        if index >= self.text.len() {
+            self.text.len()
+        } else {
+            let mut i = index;
+            while i > 0 {
+                if is_utf8_char_boundary(self.text.as_bytes()[i]) {
+                    break;
+                }
+                i -= 1;
+            }
+
+            i
+        }
+    }
+
+    #[track_caller]
+    #[inline(always)]
+    pub fn assert_char_boundary(&self, offset: usize) {
+        if self.is_char_boundary(offset) {
+            return;
+        }
+        panic_char_boundary(self, offset);
+
+        #[cold]
+        #[inline(never)]
+        #[track_caller]
+        fn panic_char_boundary(chunk: &Chunk, offset: usize) {
+            if offset > chunk.text.len() {
+                panic!(
+                    "byte index {} is out of bounds of `{:?}` (length: {})",
+                    offset,
+                    chunk.text,
+                    chunk.text.len()
+                );
+            }
+            // find the character
+            let char_start = chunk.floor_char_boundary(offset);
+            // `char_start` must be less than len and a char boundary
+            let ch = chunk
+                .text
+                .get(char_start..)
+                .unwrap()
+                .chars()
+                .next()
+                .unwrap();
+            let char_range = char_start..char_start + ch.len_utf8();
+            panic!(
+                "byte index {} is not a char boundary; it is inside {:?} (bytes {:?})",
+                offset, ch, char_range,
+            );
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -123,8 +198,8 @@ impl<'a> ChunkSlice<'a> {
     }
 
     #[inline(always)]
-    pub fn is_char_boundary(self, offset: usize) -> bool {
-        self.text.is_char_boundary(offset)
+    pub fn is_char_boundary(&self, offset: usize) -> bool {
+        (1 as Bitmap).unbounded_shl(offset as u32) & self.chars != 0 || offset == self.text.len()
     }
 
     #[inline(always)]
@@ -162,12 +237,6 @@ impl<'a> ChunkSlice<'a> {
 
     #[inline(always)]
     pub fn slice(self, range: Range<usize>) -> Self {
-        debug_assert!(
-            self.is_char_boundary(range.end),
-            "Invalid range end {} in {:?}",
-            range.end,
-            self
-        );
         let mask = (1 as Bitmap)
             .unbounded_shl(range.end as u32)
             .wrapping_sub(1);
@@ -180,12 +249,8 @@ impl<'a> ChunkSlice<'a> {
                 text: "",
             }
         } else {
-            debug_assert!(
-                self.is_char_boundary(range.start),
-                "Invalid range start {} in {:?}",
-                range.start,
-                self
-            );
+            self.assert_char_boundary(range.start);
+            self.assert_char_boundary(range.end);
             Self {
                 chars: (self.chars & mask) >> range.start,
                 chars_utf16: (self.chars_utf16 & mask) >> range.start,
@@ -236,34 +301,19 @@ impl<'a> ChunkSlice<'a> {
     /// Get number of chars in first line
     #[inline(always)]
     pub fn first_line_chars(&self) -> u32 {
-        if self.newlines == 0 {
-            self.chars.count_ones()
-        } else {
-            let mask = ((1 as Bitmap) << self.newlines.trailing_zeros()) - 1;
-            (self.chars & mask).count_ones()
-        }
+        (self.chars & saturating_shl_mask(self.newlines.trailing_zeros())).count_ones()
     }
 
     /// Get number of chars in last line
     #[inline(always)]
     pub fn last_line_chars(&self) -> u32 {
-        if self.newlines == 0 {
-            self.chars.count_ones()
-        } else {
-            let mask = !(Bitmap::MAX >> self.newlines.leading_zeros());
-            (self.chars & mask).count_ones()
-        }
+        (self.chars & saturating_shr_mask(self.newlines.leading_zeros())).count_ones()
     }
 
     /// Get number of UTF-16 code units in last line
     #[inline(always)]
     pub fn last_line_len_utf16(&self) -> u32 {
-        if self.newlines == 0 {
-            self.chars_utf16.count_ones()
-        } else {
-            let mask = !(Bitmap::MAX >> self.newlines.leading_zeros());
-            (self.chars_utf16 & mask).count_ones()
-        }
+        (self.chars_utf16 & saturating_shr_mask(self.newlines.leading_zeros())).count_ones()
     }
 
     /// Get the longest row in the chunk and its length in characters.
@@ -335,6 +385,78 @@ impl<'a> ChunkSlice<'a> {
         }
     }
 
+    #[track_caller]
+    #[inline(always)]
+    pub fn assert_char_boundary(&self, offset: usize) {
+        if self.is_char_boundary(offset) {
+            return;
+        }
+        panic_char_boundary(self, offset);
+
+        #[cold]
+        #[inline(never)]
+        fn panic_char_boundary(chunk: &ChunkSlice, offset: usize) {
+            if offset > chunk.text.len() {
+                panic!(
+                    "byte index {} is out of bounds of `{:?}` (length: {})",
+                    offset,
+                    chunk.text,
+                    chunk.text.len()
+                );
+            }
+            // find the character
+            let char_start = chunk.floor_char_boundary(offset);
+            // `char_start` must be less than len and a char boundary
+            let ch = chunk
+                .text
+                .get(char_start..)
+                .unwrap()
+                .chars()
+                .next()
+                .unwrap();
+            let char_range = char_start..char_start + ch.len_utf8();
+            panic!(
+                "byte index {} is not a char boundary; it is inside {:?} (bytes {:?})",
+                offset, ch, char_range,
+            );
+        }
+    }
+
+    pub fn floor_char_boundary(&self, index: usize) -> usize {
+        #[inline]
+        pub(crate) const fn is_utf8_char_boundary(u8: u8) -> bool {
+            // This is bit magic equivalent to: b < 128 || b >= 192
+            (u8 as i8) >= -0x40
+        }
+
+        if index >= self.text.len() {
+            self.text.len()
+        } else {
+            let mut i = index;
+            while i > 0 {
+                if is_utf8_char_boundary(self.text.as_bytes()[i]) {
+                    break;
+                }
+                i -= 1;
+            }
+
+            i
+        }
+    }
+
+    #[inline(always)]
+    pub fn point_to_offset_utf16(&self, point: Point) -> OffsetUtf16 {
+        if point.row > self.lines().row {
+            debug_panic!(
+                "point {:?} extends beyond rows for string {:?}",
+                point,
+                self.text
+            );
+            return self.len_utf16();
+        }
+        self.offset_to_offset_utf16(self.point_to_offset(point))
+    }
+
     #[inline(always)]
     pub fn offset_to_offset_utf16(&self, offset: usize) -> OffsetUtf16 {
         let mask = (1 as Bitmap).unbounded_shl(offset as u32).wrapping_sub(1);
@@ -365,8 +487,8 @@ impl<'a> ChunkSlice<'a> {
 
     #[inline(always)]
     pub fn offset_to_point_utf16(&self, offset: usize) -> PointUtf16 {
-        let mask = (1 as Bitmap).unbounded_shl(offset as u32).wrapping_sub(1);
-        let row = (self.newlines & mask).count_ones();
+        let mask = saturating_shl_mask(offset as u32);
+        let row = (self.newlines & saturating_shl_mask(offset as u32)).count_ones();
         let newline_ix = Bitmap::BITS - (self.newlines & mask).leading_zeros();
         let column = if newline_ix as usize == MAX_BASE {
             0

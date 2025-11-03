@@ -2730,12 +2730,11 @@ impl Pane {
                 .map(|this| {
                     if is_active {
                         let focus_handle = focus_handle.clone();
-                        this.tooltip(move |window, cx| {
+                        this.tooltip(move |_window, cx| {
                             Tooltip::for_action_in(
                                 end_slot_tooltip_text,
                                 end_slot_action,
                                 &focus_handle,
-                                window,
                                 cx,
                             )
                         })
@@ -3038,9 +3037,7 @@ impl Pane {
             .disabled(!self.can_navigate_backward())
             .tooltip({
                 let focus_handle = focus_handle.clone();
-                move |window, cx| {
-                    Tooltip::for_action_in("Go Back", &GoBack, &focus_handle, window, cx)
-                }
+                move |_window, cx| Tooltip::for_action_in("Go Back", &GoBack, &focus_handle, cx)
             });
 
         let navigate_forward = IconButton::new("navigate_forward", IconName::ArrowRight)
@@ -3056,8 +3053,8 @@ impl Pane {
             .disabled(!self.can_navigate_forward())
             .tooltip({
                 let focus_handle = focus_handle.clone();
-                move |window, cx| {
-                    Tooltip::for_action_in("Go Forward", &GoForward, &focus_handle, window, cx)
+                move |_window, cx| {
+                    Tooltip::for_action_in("Go Forward", &GoForward, &focus_handle, cx)
                 }
             });
 
@@ -3295,18 +3292,22 @@ impl Pane {
                         else {
                             return;
                         };
-                        let task = item.clone_on_split(database_id, window, cx);
-                        let to_pane = to_pane.downgrade();
-                        cx.spawn_in(window, async move |_, cx| {
-                            if let Some(item) = task.await {
-                                to_pane
-                                    .update_in(cx, |pane, window, cx| {
-                                        pane.add_item(item, true, true, None, window, cx)
-                                    })
-                                    .ok();
-                            }
-                        })
-                        .detach();
+                        if item.can_split(cx) {
+                            let task = item.clone_on_split(database_id, window, cx);
+                            let to_pane = to_pane.downgrade();
+                            cx.spawn_in(window, async move |_, cx| {
+                                if let Some(item) = task.await {
+                                    to_pane
+                                        .update_in(cx, |pane, window, cx| {
+                                            pane.add_item(item, true, true, None, window, cx)
+                                        })
+                                        .ok();
+                                }
+                            })
+                            .detach();
+                        } else {
+                            move_item(&from_pane, &to_pane, item_id, ix, true, window, cx);
+                        }
                     } else {
                         move_item(&from_pane, &to_pane, item_id, ix, true, window, cx);
                     }
@@ -3600,6 +3601,11 @@ fn default_render_tab_bar_buttons(
     if !pane.has_focus(window, cx) && !pane.context_menu_focused(window, cx) {
         return (None, None);
     }
+    let (can_clone, can_split_move) = match pane.active_item() {
+        Some(active_item) if active_item.can_split(cx) => (true, false),
+        Some(_) => (false, pane.items_len() > 1),
+        None => (false, false),
+    };
     // Ideally we would return a vec of elements here to pass directly to the [TabBar]'s
     // `end_slot`, but due to needing a view here that isn't possible.
     let right_children = h_flex()
@@ -3636,17 +3642,26 @@ fn default_render_tab_bar_buttons(
         .child(
             PopoverMenu::new("pane-tab-bar-split")
                 .trigger_with_tooltip(
-                    IconButton::new("split", IconName::Split).icon_size(IconSize::Small),
+                    IconButton::new("split", IconName::Split)
+                        .icon_size(IconSize::Small)
+                        .disabled(!can_clone && !can_split_move),
                     Tooltip::text("Split Pane"),
                 )
                 .anchor(Corner::TopRight)
                 .with_handle(pane.split_item_context_menu_handle.clone())
                 .menu(move |window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _| {
-                        menu.action("Split Right", SplitRight.boxed_clone())
-                            .action("Split Left", SplitLeft.boxed_clone())
-                            .action("Split Up", SplitUp.boxed_clone())
-                            .action("Split Down", SplitDown.boxed_clone())
+                        if can_split_move {
+                            menu.action("Split Right", SplitAndMoveRight.boxed_clone())
+                                .action("Split Left", SplitAndMoveLeft.boxed_clone())
+                                .action("Split Up", SplitAndMoveUp.boxed_clone())
+                                .action("Split Down", SplitAndMoveDown.boxed_clone())
+                        } else {
+                            menu.action("Split Right", SplitRight.boxed_clone())
+                                .action("Split Left", SplitLeft.boxed_clone())
+                                .action("Split Up", SplitUp.boxed_clone())
+                                .action("Split Down", SplitDown.boxed_clone())
+                        }
                     })
                     .into()
                 }),
@@ -3660,11 +3675,10 @@ fn default_render_tab_bar_buttons(
                 .on_click(cx.listener(|pane, _, window, cx| {
                     pane.toggle_zoom(&crate::ToggleZoom, window, cx);
                 }))
-                .tooltip(move |window, cx| {
+                .tooltip(move |_window, cx| {
                     Tooltip::for_action(
                         if zoomed { "Zoom Out" } else { "Zoom In" },
                         &ToggleZoom,
-                        window,
                         cx,
                     )
                 })
@@ -3687,6 +3701,10 @@ impl Render for Pane {
         if self.active_item().is_none() {
             key_context.add("EmptyPane");
         }
+
+        self.toolbar
+            .read(cx)
+            .contribute_context(&mut key_context, cx);
 
         let should_display_tab_bar = self.should_display_tab_bar.clone();
         let display_tab_bar = should_display_tab_bar(window, cx);

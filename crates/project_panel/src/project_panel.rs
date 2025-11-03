@@ -496,8 +496,12 @@ impl ProjectPanel {
                 &git_store,
                 window,
                 |this, _, event, window, cx| match event {
-                    GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, _)
-                    | GitStoreEvent::RepositoryAdded(_)
+                    GitStoreEvent::RepositoryUpdated(
+                        _,
+                        RepositoryEvent::StatusesChanged { full_scan: _ },
+                        _,
+                    )
+                    | GitStoreEvent::RepositoryAdded
                     | GitStoreEvent::RepositoryRemoved(_) => {
                         this.update_visible_entries(None, false, false, window, cx);
                         cx.notify();
@@ -1034,9 +1038,8 @@ impl ProjectPanel {
                                 "Copy Relative Path",
                                 Box::new(zed_actions::workspace::CopyRelativePath),
                             )
-                            .separator()
                             .when(!should_hide_rename, |menu| {
-                                menu.action("Rename", Box::new(Rename))
+                                menu.separator().action("Rename", Box::new(Rename))
                             })
                             .when(!is_root && !is_remote, |menu| {
                                 menu.action("Trash", Box::new(Trash { skip_prompt: false }))
@@ -4678,12 +4681,11 @@ impl ProjectPanel {
                             div()
                                 .id("symlink_icon")
                                 .pr_3()
-                                .tooltip(move |window, cx| {
+                                .tooltip(move |_window, cx| {
                                     Tooltip::with_meta(
                                         path.to_string(),
                                         None,
                                         "Symbolic Link",
-                                        window,
                                         cx,
                                     )
                                 })
@@ -5863,7 +5865,6 @@ impl Render for ProjectPanel {
                         .key_binding(KeyBinding::for_action_in(
                             &workspace::Open,
                             &focus_handle,
-                            window,
                             cx,
                         ))
                         .on_click(cx.listener(|this, _, window, cx| {

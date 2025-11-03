@@ -338,7 +338,7 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                 .border_color(border_color)
                 .bg(bg_color)
                 .hover(|s| s.bg(hover_bg_color))
-                .focus(|s| s.border_color(focus_border_color).bg(hover_bg_color))
+                .focus_visible(|s| s.border_color(focus_border_color).bg(hover_bg_color))
                 .child(Icon::new(icon).size(IconSize::Small))
         };
 
@@ -369,7 +369,6 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                 let new_value = value.saturating_sub(step);
                                 let new_value = if new_value < min { min } else { new_value };
                                 on_change(&new_value, window, cx);
-                                window.focus_prev();
                             }
                         };
 
