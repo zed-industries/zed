@@ -452,6 +452,20 @@ pub enum SelectMode {
     All,
 }
 
+#[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
+pub enum SizingBehavior {
+    /// The editor will layout itself using `size_full` and will include the vertical
+    /// scroll margin as requested by user settings.
+    #[default]
+    Default,
+    /// The editor will layout itself using `size_full`, but will not have any
+    /// vertical overscroll.
+    ExcludeOverscrollMargin,
+    /// The editor will request a vertical size according to its content and will be
+    /// layouted without a vertical scroll margin.
+    SizeByContent,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum EditorMode {
     SingleLine,
@@ -464,8 +478,8 @@ pub enum EditorMode {
         scale_ui_elements_with_buffer_font_size: bool,
         /// When set to `true`, the editor will render a background for the active line.
         show_active_line_background: bool,
-        /// When set to `true`, the editor's height will be determined by its content.
-        sized_by_content: bool,
+        /// Determines the sizing behavior for this editor
+        sizing_behavior: SizingBehavior,
     },
     Minimap {
         parent: WeakEntity<Editor>,
@@ -477,7 +491,7 @@ impl EditorMode {
         Self::Full {
             scale_ui_elements_with_buffer_font_size: true,
             show_active_line_background: true,
-            sized_by_content: false,
+            sizing_behavior: SizingBehavior::Default,
         }
     }
 

@@ -4,7 +4,7 @@ use acp_thread::{AcpThread, AgentThreadEntry};
 use agent::HistoryStore;
 use agent_client_protocol::{self as acp, ToolCallId};
 use collections::HashMap;
-use editor::{Editor, EditorMode, MinimapVisibility};
+use editor::{Editor, EditorMode, MinimapVisibility, SizingBehavior};
 use gpui::{
     AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     ScrollHandle, SharedString, TextStyleRefinement, WeakEntity, Window,
@@ -357,7 +357,7 @@ fn create_editor_diff(
             EditorMode::Full {
                 scale_ui_elements_with_buffer_font_size: false,
                 show_active_line_background: false,
-                sized_by_content: true,
+                sizing_behavior: SizingBehavior::SizeByContent,
             },
             diff.read(cx).multibuffer().clone(),
             None,
