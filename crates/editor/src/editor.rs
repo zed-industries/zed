@@ -17847,6 +17847,7 @@ impl Editor {
             .unwrap_or(self.diagnostics_max_severity);
 
         if !self.inline_diagnostics_enabled()
+            || !self.diagnostics_enabled()
             || !self.show_inline_diagnostics
             || max_severity == DiagnosticSeverity::Off
         {
@@ -17925,7 +17926,7 @@ impl Editor {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        if self.ignore_lsp_data() {
+        if self.ignore_lsp_data() || !self.diagnostics_enabled() {
             return None;
         }
         let pull_diagnostics_settings = ProjectSettings::get_global(cx)
