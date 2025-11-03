@@ -1,0 +1,12 @@
+[package]
+name = "encodings"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+encoding_rs.workspace = true
+
+[lints]
+workspace = true

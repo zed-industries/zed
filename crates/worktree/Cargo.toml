@@ -27,6 +27,7 @@ anyhow.workspace = true
 async-lock.workspace = true
 clock.workspace = true
 collections.workspace = true
+encodings.workspace = true
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
@@ -47,6 +48,8 @@ smol.workspace = true
 sum_tree.workspace = true
 text.workspace = true
 util.workspace = true
+encoding = "0.2.33"
+
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

@@ -56,7 +56,9 @@ impl ContextProvider for JsonTaskProvider {
         cx.spawn(async move |cx| {
             let contents = file
                 .worktree
-                .update(cx, |this, cx| this.load_file(&file.path, cx))
+                .update(cx, |this, cx| {
+                    this.load_file(&file.path, &Default::default(), None, cx)
+                })
                 .ok()?
                 .await
                 .ok()?;

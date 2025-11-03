@@ -467,7 +467,12 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     let prev_read_dir_count = fs.read_dir_call_count();
     let loaded = tree
         .update(cx, |tree, cx| {
-            tree.load_file(rel_path("one/node_modules/b/b1.js"), cx)
+            tree.load_file(
+                rel_path("one/node_modules/b/b1.js"),
+                &Default::default(),
+                None,
+                cx,
+            )
         })
         .await
         .unwrap();
@@ -507,7 +512,12 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     let prev_read_dir_count = fs.read_dir_call_count();
     let loaded = tree
         .update(cx, |tree, cx| {
-            tree.load_file(rel_path("one/node_modules/a/a2.js"), cx)
+            tree.load_file(
+                rel_path("one/node_modules/a/a2.js"),
+                &Default::default(),
+                None,
+                cx,
+            )
         })
         .await
         .unwrap();
@@ -651,6 +661,7 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
         "/root/.gitignore".as_ref(),
         &Rope::from_str("e", cx.background_executor()),
         Default::default(),
+        Default::default(),
     )
     .await
     .unwrap();
@@ -723,6 +734,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
                 rel_path("tracked-dir/file.txt").into(),
                 Rope::from_str("hello", cx.background_executor()),
                 Default::default(),
+                Default::default(),
                 cx,
             )
         })
@@ -733,6 +745,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
             tree.write_file(
                 rel_path("ignored-dir/file.txt").into(),
                 Rope::from_str("world", cx.background_executor()),
+                Default::default(),
                 Default::default(),
                 cx,
             )
@@ -1769,6 +1782,7 @@ fn randomly_mutate_worktree(
                     Rope::default(),
                     Default::default(),
                     cx,
+                    Default::default(),
                 );
                 cx.background_spawn(async move {
                     task.await?;
@@ -1860,6 +1874,7 @@ async fn randomly_mutate_fs(
         fs.save(
             &ignore_path,
             &Rope::from_str(ignore_contents.as_str(), executor),
+            Default::default(),
             Default::default(),
         )
         .await

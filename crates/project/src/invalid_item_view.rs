@@ -4,7 +4,7 @@ use gpui::{EventEmitter, FocusHandle, Focusable};
 use ui::{
     App, Button, ButtonCommon, ButtonStyle, Clickable, Context, FluentBuilder, InteractiveElement,
     KeyBinding, Label, LabelCommon, LabelSize, ParentElement, Render, SharedString, Styled as _,
-    Window, h_flex, v_flex,
+    TintColor, Window, div, h_flex, v_flex,
 };
 use zed_actions::workspace::OpenWithSystem;
 
@@ -78,6 +78,7 @@ impl Focusable for InvalidItemView {
 impl Render for InvalidItemView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let abs_path = self.abs_path.clone();
+
         v_flex()
             .size_full()
             .track_focus(&self.focus_handle(cx))
@@ -86,15 +87,18 @@ impl Render for InvalidItemView {
             .overflow_hidden()
             .key_context("InvalidBuffer")
             .child(
-                h_flex().size_full().justify_center().child(
+                h_flex().size_full().justify_center().items_center().child(
                     v_flex()
-                        .justify_center()
                         .gap_2()
+                        .max_w_96()
                         .child(h_flex().justify_center().child("Could not open file"))
                         .child(
-                            h_flex()
-                                .justify_center()
-                                .child(Label::new(self.error.clone()).size(LabelSize::Small)),
+                            h_flex().justify_center().child(
+                                div()
+                                    .whitespace_normal()
+                                    .text_center()
+                                    .child(Label::new(self.error.clone()).size(LabelSize::Small)),
+                            ),
                         )
                         .when(self.is_local, |contents| {
                             contents.child(
