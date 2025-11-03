@@ -1,7 +1,6 @@
 use std::{
     any::Any,
     borrow::Borrow,
-    collections::HashSet,
     path::{Path, PathBuf},
     str::FromStr as _,
     sync::Arc,
