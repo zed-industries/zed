@@ -5,7 +5,7 @@ use gpui::{App, AppContext, Context, Entity};
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot};
 use rope::Point;
-use text::{Bias, OffsetRangeExt, locator::Locator};
+use text::{Bias, BufferId, OffsetRangeExt, locator::Locator};
 use util::{post_inc, rel_path::RelPath};
 
 use crate::{
@@ -150,6 +150,15 @@ impl MultiBuffer {
                 .ok()
                 .unwrap_or_default()
         }
+    }
+
+    pub fn remove_excerpts_for_buffer(&mut self, buffer: BufferId, cx: &mut Context<Self>) {
+        self.remove_excerpts(
+            self.excerpts_for_buffer(buffer, cx)
+                .into_iter()
+                .map(|(excerpt, _)| excerpt),
+            cx,
+        );
     }
 
     pub(super) fn expand_excerpts_with_paths(
