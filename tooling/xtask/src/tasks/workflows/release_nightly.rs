@@ -9,7 +9,6 @@ use crate::tasks::workflows::{
 
 use super::{runners, steps, steps::named, vars};
 use gh_workflow::*;
-use indexmap::IndexMap;
 
 /// Generates the release_nightly.yml workflow
 pub fn release_nightly() -> Workflow {
