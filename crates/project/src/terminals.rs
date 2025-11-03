@@ -8,7 +8,6 @@ use remote::RemoteClient;
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::{
-    borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -122,6 +121,7 @@ impl Project {
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
             let shell_kind = ShellKind::new(&shell, is_windows);
+
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
                     let Some(toolchain) = toolchain.await else {
@@ -143,14 +143,8 @@ impl Project {
                 .update(cx, move |_, cx| {
                     let format_to_run = || {
                         if let Some(command) = &spawn_task.command {
-                            let mut command: Option<Cow<str>> = shell_kind.try_quote(command);
-                            if let Some(command) = &mut command
-                                && command.starts_with('"')
-                                && let Some(prefix) = shell_kind.command_prefix()
-                            {
-                                *command = Cow::Owned(format!("{prefix}{command}"));
-                            }
-
+                            let command = shell_kind.prepend_command_prefix(command);
+                            let command = shell_kind.try_quote_prefix_aware(&command);
                             let args = spawn_task
                                 .args
                                 .iter()
@@ -172,12 +166,13 @@ impl Project {
                                     let activation_script =
                                         activation_script.join(&format!("{separator} "));
                                     let to_run = format_to_run();
+
+                                    let arg = format!("{activation_script}{separator} {to_run}");
+                                    let args = shell_kind.args_for_shell(false, arg);
                                     let shell = remote_client
                                         .read(cx)
                                         .shell()
                                         .unwrap_or_else(get_default_system_shell);
-                                    let arg = format!("{activation_script}{separator} {to_run}");
-                                    let args = shell_kind.args_for_shell(false, arg);
 
                                     create_remote_shell(
                                         Some((&shell, &args)),
