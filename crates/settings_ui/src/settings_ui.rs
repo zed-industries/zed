@@ -227,6 +227,9 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct EditCommitPromptControl;
+
 #[derive(Default, Clone)]
 struct SettingFieldRenderer {
     renderers: Rc<
@@ -497,6 +500,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::ShowIndentGuides>(render_dropdown)
         .add_basic_renderer::<settings::ShellDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::EditPredictionsMode>(render_dropdown)
+    .add_renderer::<EditCommitPromptControl>(render_edit_commit_prompt_control)
         // please semicolon stay on next line
         ;
 }
@@ -3367,6 +3371,43 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
             }
         })
         .into_any_element()
+}
+
+fn render_edit_commit_prompt_control(
+    settings_window: &SettingsWindow,
+    setting_item: &SettingItem,
+    _field: SettingField<EditCommitPromptControl>,
+    file: SettingsUiFile,
+    _metadata: Option<&SettingsFieldMetadata>,
+    sub_field: bool,
+    _window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> Stateful<Div> {
+    let prompt_path = paths::config_dir().join("commit_prompt.txt");
+    let label = if prompt_path.exists() {
+        "Edit Prompt"
+    } else {
+        "Create Prompt"
+    };
+
+    let button = Button::new("edit-commit-prompt", label)
+        .style(ButtonStyle::Subtle)
+        .size(ButtonSize::Medium)
+        .tab_index(0_isize)
+        .on_click(cx.listener(|settings_window, _, window, cx| {
+            if let Some(original_window) = settings_window.original_window.clone() {
+                original_window
+                    .update(cx, |_, window, cx| {
+                        window.dispatch_action(Box::new(zed_actions::EditCommitPrompt), cx);
+                    })
+                    .log_err();
+            } else {
+                window.dispatch_action(Box::new(zed_actions::EditCommitPrompt), cx);
+            }
+        }))
+        .into_any_element();
+
+    render_settings_item(settings_window, setting_item, file, button, sub_field, cx)
 }
 
 fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(

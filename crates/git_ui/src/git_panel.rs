@@ -45,6 +45,7 @@ use panel::{
     PanelHeader, panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
     panel_icon_button,
 };
+use paths;
 use project::{
     Fs, Project, ProjectPath,
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId},
@@ -103,6 +104,24 @@ where
 {
     let rx = window.prompt(PromptLevel::Info, msg, detail, T::VARIANTS, cx);
     cx.spawn(async move |_| Ok(T::iter().nth(rx.await?).unwrap()))
+}
+
+fn resolve_commit_prompt_from_dir(config_dir: &Path, use_custom_prompt: bool) -> String {
+    const DEFAULT_COMMIT_PROMPT: &str = include_str!("commit_message_prompt.txt");
+
+    if !use_custom_prompt {
+        return DEFAULT_COMMIT_PROMPT.to_string();
+    }
+
+    let custom_prompt_path = config_dir.join("commit_prompt.txt");
+    match std::fs::read_to_string(&custom_prompt_path) {
+        Ok(content) if !content.trim().is_empty() => content,
+        _ => DEFAULT_COMMIT_PROMPT.to_string(),
+    }
+}
+
+fn resolve_commit_prompt(use_custom_prompt: bool) -> String {
+    resolve_commit_prompt_from_dir(&paths::config_dir(), use_custom_prompt)
 }
 
 #[derive(strum::EnumIter, strum::VariantNames)]
@@ -1848,7 +1867,9 @@ impl GitPanel {
             }
         });
 
+        let agent_settings = AgentSettings::get_global(cx);
         let temperature = AgentSettings::temperature_for_model(&model, cx);
+        let prompt = resolve_commit_prompt(agent_settings.custom_git_prompt_message);
 
         self.generate_commit_message_task = Some(cx.spawn(async move |this, cx| {
              async move {
@@ -1892,12 +1913,10 @@ impl GitPanel {
                 let text_empty = subject.trim().is_empty();
 
                 let content = if text_empty {
-                    format!("{PROMPT}\nHere are the changes in this commit:\n{diff_text}")
+                    format!("{prompt}\nHere are the changes in this commit:\n{diff_text}")
                 } else {
-                    format!("{PROMPT}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
+                    format!("{prompt}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
                 };
-
-                const PROMPT: &str = include_str!("commit_message_prompt.txt");
 
                 let request = LanguageModelRequest {
                     thread_id: None,
@@ -5697,5 +5716,66 @@ mod tests {
                 expected_path.map(|s| s.to_string())
             );
         }
+    }
+
+    fn temp_config_dir(label: &str) -> std::path::PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("zed_git_panel_{label}_{unique}"));
+        std::fs::create_dir_all(&dir).expect("failed to create temp config directory");
+        dir
+    }
+
+    #[test]
+    fn resolve_commit_prompt_from_dir_returns_default_when_missing() {
+        let config_dir = temp_config_dir("missing");
+        let prompt_with_flag = resolve_commit_prompt_from_dir(&config_dir, true);
+        let prompt_without_flag = resolve_commit_prompt_from_dir(&config_dir, false);
+        assert!(prompt_with_flag.contains("writing Git commits"));
+        assert!(prompt_without_flag.contains("writing Git commits"));
+        std::fs::remove_dir_all(config_dir).ok();
+    }
+
+    #[test]
+    fn resolve_commit_prompt_from_dir_returns_custom_content() {
+        let config_dir = temp_config_dir("custom");
+        let custom_prompt_path = config_dir.join("commit_prompt.txt");
+        let custom_content = "Custom prompt for testing";
+        std::fs::write(&custom_prompt_path, custom_content).expect("failed to write custom prompt");
+
+        let prompt = resolve_commit_prompt_from_dir(&config_dir, true);
+        assert_eq!(prompt, custom_content);
+
+        std::fs::remove_dir_all(config_dir).ok();
+    }
+
+    #[test]
+    fn resolve_commit_prompt_from_dir_falls_back_on_whitespace_file() {
+        let config_dir = temp_config_dir("whitespace");
+        let custom_prompt_path = config_dir.join("commit_prompt.txt");
+        std::fs::write(&custom_prompt_path, "   \n \t  ")
+            .expect("failed to write whitespace content");
+
+        let prompt = resolve_commit_prompt_from_dir(&config_dir, true);
+        assert!(prompt.contains("writing Git commits"));
+
+        std::fs::remove_dir_all(config_dir).ok();
+    }
+
+    #[test]
+    fn resolve_commit_prompt_from_dir_returns_default_when_disabled_even_with_file() {
+        let config_dir = temp_config_dir("disabled");
+        let custom_prompt_path = config_dir.join("commit_prompt.txt");
+        std::fs::write(&custom_prompt_path, "Disabled prompt")
+            .expect("failed to write custom prompt");
+
+        let prompt = resolve_commit_prompt_from_dir(&config_dir, false);
+        assert!(prompt.contains("writing Git commits"));
+
+        std::fs::remove_dir_all(config_dir).ok();
     }
 }

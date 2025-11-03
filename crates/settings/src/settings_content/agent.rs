@@ -39,6 +39,10 @@ pub struct AgentSettingsContent {
     pub inline_assistant_model: Option<LanguageModelSelection>,
     /// Model to use for generating git commit messages. Defaults to default_model when not specified.
     pub commit_message_model: Option<LanguageModelSelection>,
+    /// Whether to use the custom git commit prompt file for AI commit messages.
+    ///
+    /// Default: false
+    pub custom_git_prompt_message: Option<bool>,
     /// Model to use for generating thread summaries. Defaults to default_model when not specified.
     pub thread_summary_model: Option<LanguageModelSelection>,
     /// Additional models with which to generate alternatives when performing inline assists.

@@ -1,9 +1,14 @@
 use std::any::Any;
+use std::fs as std_fs;
+use std::path::PathBuf;
 
 use ::settings::Settings;
+use ::settings::SettingsStore;
+use agent_settings::AgentSettings;
 use command_palette_hooks::CommandPaletteFilter;
 use commit_modal::CommitModal;
 use editor::{Editor, actions::DiffClipboardWithSelectionData};
+use fs as zed_fs;
 use ui::{
     Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, ParentElement, Render, Styled,
     StyledExt, div, h_flex, rems, v_flex,
@@ -11,21 +16,23 @@ use ui::{
 
 mod blame_ui;
 
+use ::paths::config_dir;
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use git_panel_settings::GitPanelSettings;
 use gpui::{
-    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
-    Window, actions,
+    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal,
+    SharedString, Window, actions,
 };
 use menu::{Cancel, Confirm};
+use notifications::status_toast::{StatusToast, ToastIcon};
 use onboarding::GitOnboardingModal;
 use project::git_store::Repository;
 use project_diff::ProjectDiff;
 use ui::prelude::*;
-use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr};
+use workspace::{ModalView, OpenOptions, Workspace, notifications::DetachAndPromptErr};
 use zed_actions;
 
 use crate::{git_panel::GitPanel, text_diff_view::TextDiffView};
@@ -191,6 +198,14 @@ pub fn init(cx: &mut App) {
             window.dispatch_action(workspace::RestoreBanner.boxed_clone(), cx);
             window.refresh();
         });
+        workspace.register_action(|workspace, _: &zed_actions::EditCommitPrompt, window, cx| {
+            edit_git_commit_prompt(workspace, window, cx);
+        });
+        workspace.register_action(
+            |workspace, _: &zed_actions::DisableCustomPrompt, window, cx| {
+                disable_git_custom_prompt(workspace, window, cx);
+            },
+        );
         workspace.register_action(|workspace, _action: &git::Init, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;
@@ -841,3 +856,78 @@ impl Render for GitCloneModal {
 impl EventEmitter<DismissEvent> for GitCloneModal {}
 
 impl ModalView for GitCloneModal {}
+
+fn edit_git_commit_prompt(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let prompt_path: PathBuf = config_dir().join("commit_prompt.txt");
+
+    if !prompt_path.exists() {
+        let default_template = include_str!("commit_message_prompt.txt");
+        if let Err(e) = std_fs::write(&prompt_path, default_template) {
+            let toast = StatusToast::new(
+                format!("Failed to create custom prompt file: {}", e),
+                cx,
+                |this, _| {
+                    this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
+                        .dismiss_button(true)
+                },
+            );
+            workspace.toggle_status_toast(toast, cx);
+            return;
+        }
+    }
+
+    SettingsStore::global(cx).update_settings_file(<dyn zed_fs::Fs>::global(cx), |settings, _| {
+        settings
+            .agent
+            .get_or_insert_default()
+            .custom_git_prompt_message = Some(true);
+    });
+
+    workspace
+        .open_abs_path(prompt_path, OpenOptions::default(), window, cx)
+        .detach_and_prompt_err(
+            "Failed to open custom prompt file",
+            window,
+            cx,
+            |_, _, _| None,
+        );
+}
+
+fn disable_git_custom_prompt(
+    workspace: &mut Workspace,
+    _window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let was_enabled = AgentSettings::get_global(cx).custom_git_prompt_message;
+
+    SettingsStore::global(cx).update_settings_file(<dyn zed_fs::Fs>::global(cx), |settings, _| {
+        settings
+            .agent
+            .get_or_insert_default()
+            .custom_git_prompt_message = Some(false);
+    });
+
+    let (message, icon, color) = if was_enabled {
+        (
+            "Custom git commit prompt disabled; default prompt will be used",
+            IconName::Check,
+            Color::Success,
+        )
+    } else {
+        (
+            "Custom git commit prompt is already disabled",
+            IconName::Info,
+            Color::Accent,
+        )
+    };
+
+    let toast = StatusToast::new(message, cx, |this, _| {
+        this.icon(ToastIcon::new(icon).color(color))
+            .dismiss_button(true)
+    });
+    workspace.toggle_status_toast(toast, cx);
+}

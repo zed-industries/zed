@@ -884,6 +884,8 @@
     // Note: This setting has no effect on external agents that support permission modes, such as Claude Code.
     //       You can set `agent_servers.claude.default_mode` to `bypassPermissions` to skip all permission requests.
     "always_allow_tool_actions": false,
+    // When true, use ~/.config/zed/commit_prompt.txt as the AI commit prompt if it exists and is not empty.
+    "custom_git_prompt_message": false,
     // When enabled, agent edits will be displayed in single-file editors for review
     "single_file_review": true,
     // When enabled, show voting thumbs for feedback on agent edits.
