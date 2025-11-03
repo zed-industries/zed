@@ -622,7 +622,7 @@ mod tests {
             language::init(cx);
         });
 
-        let fs = FakeFs::new(cx.background_executor().clone());
+        let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             "/root",
             json!({
@@ -720,7 +720,7 @@ mod tests {
             language::init(cx);
         });
 
-        let fs = FakeFs::new(cx.background_executor().clone());
+        let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             "/root",
             json!({
@@ -778,7 +778,7 @@ mod tests {
             language::init(cx);
         });
 
-        let fs = FakeFs::new(cx.background_executor().clone());
+        let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             "/root",
             json!({
