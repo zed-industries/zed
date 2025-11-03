@@ -16368,7 +16368,7 @@ dependencies = [
  "arrayvec",
  "ctor",
  "futures 0.3.31",
- "futures-lite 1.13.0",
+ "itertools 0.14.0",
  "log",
  "pollster 0.4.0",
  "rand 0.9.2",

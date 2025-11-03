@@ -17,7 +17,7 @@ doctest = false
 arrayvec = "0.7.1"
 log.workspace = true
 futures.workspace = true
-futures-lite.workspace = true
+itertools.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true

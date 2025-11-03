@@ -323,13 +323,21 @@ impl Rope {
         const PARALLEL_THRESHOLD: usize = 4 * (2 * sum_tree::TREE_BASE);
 
         if new_chunks.len() >= PARALLEL_THRESHOLD {
-            // SAFETY: transmuting to 'static is sound here. We block on the future making use of this
-            // and we know that the result of this computation is not stashing the static reference
-            // away.
-            let new_chunks =
-                unsafe { std::mem::transmute::<Vec<&str>, Vec<&'static str>>(new_chunks) };
-            self.chunks
-                .async_extend(new_chunks.into_iter().map(Chunk::new), executor)
+            let cx2 = executor.clone();
+            executor
+                .scoped(|scope| {
+                    // SAFETY: transmuting to 'static is safe because the future is scoped
+                    // and the underlying string data cannot go out of scope because dropping the scope
+                    // will wait for the task to finish
+                    let new_chunks =
+                        unsafe { std::mem::transmute::<Vec<&str>, Vec<&'static str>>(new_chunks) };
+
+                    let async_extend = self
+                        .chunks
+                        .async_extend(new_chunks.into_iter().map(Chunk::new), cx2);
+
+                    scope.spawn(async_extend);
+                })
                 .await;
         } else {
             self.chunks
