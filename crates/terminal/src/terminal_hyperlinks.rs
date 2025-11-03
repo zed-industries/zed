@@ -54,7 +54,7 @@ impl RegexSearches {
                                 ),
                                 error
                             );
-                            info!("Failed regex was: \n{}", regex.as_ref());
+                            info!("Ignoring path hyperlink regex: {}", regex.as_ref());
                         })
                         .ok()
                 })
@@ -280,7 +280,19 @@ fn path_match<T>(
     for regex in path_hyperlink_regexes {
         let mut path_found = false;
 
-        for captures in regex.captures_iter(&line).flatten() {
+        for captures in regex.captures_iter(&line) {
+            let captures = match captures {
+                Ok(captures) => captures,
+                Err(error) => {
+                    warn!("Error '{error}' searching for path hyperlinks in line: {line}");
+                    info!(
+                        "Skipping match from path hyperlinks with regex: {}",
+                        regex.as_str()
+                    );
+                    continue;
+                }
+            };
+
             let found = if let Some(path) = captures.name("path") {
                 let parse = |name: &str| {
                     captures
@@ -573,8 +585,12 @@ mod tests {
             test_path!("‹«/👉test/cool.rs»› /test/cool.rs");
             test_path!("/test/cool.rs ‹«/👉test/cool.rs»›");
 
-            test_path!("‹«🦀 multiple_👉same_line 🦀»›: 🦀 multiple_same_line 🦀:");
-            test_path!("🦀 multiple_same_line 🦀: ‹«🦀 multiple_👉same_line 🦀»›:");
+            test_path!(
+                "‹«🦀 multiple_👉same_line 🦀»› 🚣«4» 🏛️«2»: 🦀 multiple_same_line 🦀 🚣4 🏛️2:"
+            );
+            test_path!(
+                "🦀 multiple_same_line 🦀 🚣4 🏛️2 ‹«🦀 multiple_👉same_line 🦀»› 🚣«4» 🏛️«2»:"
+            );
 
             // ls output (tab separated)
             test_path!(
@@ -1479,7 +1495,8 @@ mod tests {
         const CARGO_DIR_REGEX: &str = r#"\s+(Compiling|Checking|Documenting) [^(]+\((?<path>.+)\)"#;
         const RUST_DIAGNOSTIC_REGEX: &str = r#"\s+(-->|:::|at) (?<path>.+?)(:$|$)"#;
         const ISSUE_12338_REGEX: &str = r#"[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} (?<path>.+)"#;
-        const MULTIPLE_SAME_LINE_REGEX: &str = r#"(?<path>🦀 multiple_same_line 🦀):"#;
+        const MULTIPLE_SAME_LINE_REGEX: &str =
+            r#"(?<path>🦀 multiple_same_line 🦀) 🚣(?<line>[0-9]+) 🏛(?<column>[0-9]+):"#;
         const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
 
         thread_local! {
