@@ -805,25 +805,22 @@ impl ExtensionsPage {
             )
             .child(
                 h_flex()
-                    .gap_2()
+                    .gap_1()
                     .justify_between()
                     .child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Icon::new(IconName::Person)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                Label::new(extension.manifest.authors.join(", "))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted)
-                                    .truncate(),
-                            ),
+                        Icon::new(IconName::Person)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(extension.manifest.authors.join(", "))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .truncate(),
                     )
                     .child(
                         h_flex()
+                            .ml_auto()
                             .gap_1()
                             .child(
                                 IconButton::new(
