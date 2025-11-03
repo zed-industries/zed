@@ -357,7 +357,7 @@ pub fn render_item<T>(
 ) -> StyledText {
     let highlight_style = HighlightStyle {
         background_color: Some(cx.theme().colors().text_accent.alpha(0.3)),
-        ..Default::default()
+        ..HighlightStyle::default()
     };
     let custom_highlights = match_ranges
         .into_iter()
@@ -376,12 +376,13 @@ pub fn render_item<T>(
         font_size: settings.buffer_font_size(cx).into(),
         font_weight: settings.buffer_font.weight,
         line_height: relative(1.),
-        ..Default::default()
+        ..TextStyle::default()
     };
     let highlights = gpui::combine_highlights(
         custom_highlights,
         outline_item.highlight_ranges.iter().cloned(),
-    );
+    )
+    .collect::<Vec<_>>();
 
     StyledText::new(outline_item.text.clone()).with_default_highlights(&text_style, highlights)
 }
