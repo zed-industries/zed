@@ -124,7 +124,6 @@ fn cover_or_next<I: Iterator<Item = (Range<usize>, Range<usize>)>>(
     candidates: Option<I>,
     caret: DisplayPoint,
     map: &DisplaySnapshot,
-    range_filter: Option<&dyn Fn(Range<usize>, Range<usize>) -> bool>,
 ) -> Option<CandidateWithRanges> {
     let caret_offset = caret.to_offset(map, Bias::Left);
     let mut covering = vec![];
@@ -133,20 +132,8 @@ fn cover_or_next<I: Iterator<Item = (Range<usize>, Range<usize>)>>(
 
     if let Some(ranges) = candidates {
         for (open_range, close_range) in ranges {
-            let mut excerpt = snapshot
-                .excerpt_containing(open_range.clone())
-                .expect("Should be ok!");
-
-            let buffer_open_range = excerpt.map_range_to_buffer(open_range.clone());
-            let buffer_close_range = excerpt.map_range_to_buffer(close_range.clone());
             let start_off = open_range.start;
             let end_off = close_range.end;
-            // with calling `range_filter`.
-            if let Some(range_filter) = range_filter
-                && !range_filter(buffer_open_range, buffer_close_range)
-            {
-                continue;
-            }
             let candidate = CandidateWithRanges {
                 candidate: CandidateRange {
                     start: start_off.to_display_point(map),
@@ -221,7 +208,7 @@ fn find_mini_delimiters(
     let visible_line_range = get_visible_line_range(&line_range);
 
     let snapshot = &map.buffer_snapshot();
-    let excerpt = snapshot.excerpt_containing(offset..offset)?;
+    let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
     let buffer = excerpt.buffer();
 
     let bracket_filter = |open: Range<usize>, close: Range<usize>| {
@@ -229,8 +216,26 @@ fn find_mini_delimiters(
     };
 
     // Try to find delimiters in visible range first
-    let ranges = map.buffer_snapshot().bracket_ranges(visible_line_range);
-    if let Some(candidate) = cover_or_next(ranges, display_point, map, Some(&bracket_filter)) {
+    let ranges = map
+        .buffer_snapshot()
+        .bracket_ranges(visible_line_range)
+        .map(|ranges| {
+            ranges.filter_map(move |(open, close)| {
+                // Convert the ranges from multibuffer space to buffer space as
+                // that is what `is_valid_delimiter` expects, otherwise it might
+                // panic as the values might be out of bounds.
+                let buffer_open = excerpt.map_range_to_buffer(open.clone());
+                let buffer_close = excerpt.map_range_to_buffer(close.clone());
+
+                if is_valid_delimiter(buffer, buffer_open.start, buffer_close.start) {
+                    Some((open, close))
+                } else {
+                    None
+                }
+            })
+        });
+
+    if let Some(candidate) = cover_or_next(ranges, display_point, map) {
         return Some(
             DelimiterRange {
                 open: candidate.open_range,
