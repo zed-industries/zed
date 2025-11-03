@@ -5341,8 +5341,8 @@ impl LspStore {
                 request.to_proto(project_id, buffer.read(cx)),
             );
             let buffer = buffer.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let Some(project) = weak_project.upgrade() else {
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let Some(lsp_store) = weak_lsp_store.upgrade() else {
                     return Ok(None);
                 };
                 let Some(responses) = request_task.await? else {
@@ -5351,7 +5351,7 @@ impl LspStore {
                 let actions = join_all(responses.payload.into_iter().map(|response| {
                     GetDefinitions { position }.response_from_proto(
                         response.response,
-                        project.clone(),
+                        lsp_store.clone(),
                         buffer.clone(),
                         cx.clone(),
                     )
@@ -5407,8 +5407,8 @@ impl LspStore {
                 request.to_proto(project_id, buffer.read(cx)),
             );
             let buffer = buffer.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let Some(project) = weak_project.upgrade() else {
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let Some(lsp_store) = weak_lsp_store.upgrade() else {
                     return Ok(None);
                 };
                 let Some(responses) = request_task.await? else {
@@ -5417,7 +5417,7 @@ impl LspStore {
                 let actions = join_all(responses.payload.into_iter().map(|response| {
                     GetDeclarations { position }.response_from_proto(
                         response.response,
-                        project.clone(),
+                        lsp_store.clone(),
                         buffer.clone(),
                         cx.clone(),
                     )
@@ -5473,8 +5473,8 @@ impl LspStore {
                 request.to_proto(project_id, buffer.read(cx)),
             );
             let buffer = buffer.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let Some(project) = weak_project.upgrade() else {
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let Some(lsp_store) = weak_lsp_store.upgrade() else {
                     return Ok(None);
                 };
                 let Some(responses) = request_task.await? else {
@@ -5483,7 +5483,7 @@ impl LspStore {
                 let actions = join_all(responses.payload.into_iter().map(|response| {
                     GetTypeDefinitions { position }.response_from_proto(
                         response.response,
-                        project.clone(),
+                        lsp_store.clone(),
                         buffer.clone(),
                         cx.clone(),
                     )
@@ -5539,8 +5539,8 @@ impl LspStore {
                 request.to_proto(project_id, buffer.read(cx)),
             );
             let buffer = buffer.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let Some(project) = weak_project.upgrade() else {
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let Some(lsp_store) = weak_lsp_store.upgrade() else {
                     return Ok(None);
                 };
                 let Some(responses) = request_task.await? else {
@@ -5549,7 +5549,7 @@ impl LspStore {
                 let actions = join_all(responses.payload.into_iter().map(|response| {
                     GetImplementations { position }.response_from_proto(
                         response.response,
-                        project.clone(),
+                        lsp_store.clone(),
                         buffer.clone(),
                         cx.clone(),
                     )
@@ -5606,8 +5606,8 @@ impl LspStore {
                 request.to_proto(project_id, buffer.read(cx)),
             );
             let buffer = buffer.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let Some(project) = weak_project.upgrade() else {
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let Some(lsp_store) = weak_lsp_store.upgrade() else {
                     return Ok(None);
                 };
                 let Some(responses) = request_task.await? else {
@@ -5617,7 +5617,7 @@ impl LspStore {
                 let locations = join_all(responses.payload.into_iter().map(|lsp_response| {
                     GetReferences { position }.response_from_proto(
                         lsp_response.response,
-                        project.clone(),
+                        lsp_store.clone(),
                         buffer.clone(),
                         cx.clone(),
                     )
@@ -5674,8 +5674,8 @@ impl LspStore {
                 request.to_proto(project_id, buffer.read(cx)),
             );
             let buffer = buffer.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let Some(project) = weak_project.upgrade() else {
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let Some(lsp_store) = weak_lsp_store.upgrade() else {
                     return Ok(None);
                 };
                 let Some(responses) = request_task.await? else {
@@ -5688,7 +5688,7 @@ impl LspStore {
                     }
                     .response_from_proto(
                         response.response,
-                        project.clone(),
+                        lsp_store.clone(),
                         buffer.clone(),
                         cx.clone(),
                     )
@@ -7187,7 +7187,7 @@ impl LspStore {
             );
             let buffer = buffer.clone();
             cx.spawn(async move |lsp_store, cx| {
-                let Some(project) = lsp_store.upgrade() else {
+                let Some(lsp_store) = lsp_store.upgrade() else {
                     return Ok(None);
                 };
                 let colors = join_all(
@@ -7201,7 +7201,7 @@ impl LspStore {
                         .map(|color_response| {
                             let response = request.response_from_proto(
                                 color_response.response,
-                                project.clone(),
+                                lsp_store.clone(),
                                 buffer.clone(),
                                 cx.clone(),
                             );
@@ -7265,8 +7265,8 @@ impl LspStore {
                 request.to_proto(upstream_project_id, buffer.read(cx)),
             );
             let buffer = buffer.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let project = weak_project.upgrade()?;
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let lsp_store = weak_lsp_store.upgrade()?;
                 let signatures = join_all(
                     request_task
                         .await
@@ -7278,7 +7278,7 @@ impl LspStore {
                         .map(|response| {
                             let response = GetSignatureHelp { position }.response_from_proto(
                                 response.response,
-                                project.clone(),
+                                lsp_store.clone(),
                                 buffer.clone(),
                                 cx.clone(),
                             );
@@ -7329,8 +7329,8 @@ impl LspStore {
                 request.to_proto(upstream_project_id, buffer.read(cx)),
             );
             let buffer = buffer.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let project = weak_project.upgrade()?;
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let lsp_store = weak_lsp_store.upgrade()?;
                 let hovers = join_all(
                     request_task
                         .await
@@ -7342,7 +7342,7 @@ impl LspStore {
                         .map(|response| {
                             let response = GetHover { position }.response_from_proto(
                                 response.response,
-                                project.clone(),
+                                lsp_store.clone(),
                                 buffer.clone(),
                                 cx.clone(),
                             );
@@ -10164,7 +10164,7 @@ impl LspStore {
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         if let Some(environment) = &self.as_local().map(|local| local.environment.clone()) {
             environment.update(cx, |env, cx| {
-                env.get_buffer_environment(buffer, &self.worktree_store, cx)
+                env.buffer_environment(buffer, &self.worktree_store, cx)
             })
         } else {
             Task::ready(None).shared()
@@ -12949,7 +12949,7 @@ impl LanguageServerWatchedPathsBuilder {
         language_server_id: LanguageServerId,
         cx: &mut Context<LspStore>,
     ) -> LanguageServerWatchedPaths {
-        let project = cx.weak_entity();
+        let lsp_store = cx.weak_entity();
 
         const LSP_ABS_PATH_OBSERVE: Duration = Duration::from_millis(100);
         let abs_paths = self
@@ -12960,7 +12960,7 @@ impl LanguageServerWatchedPathsBuilder {
                     let abs_path = abs_path.clone();
                     let fs = fs.clone();
 
-                    let lsp_store = project.clone();
+                    let lsp_store = lsp_store.clone();
                     async move |_, cx| {
                         maybe!(async move {
                             let mut push_updates = fs.watch(&abs_path, LSP_ABS_PATH_OBSERVE).await;
@@ -13428,9 +13428,8 @@ impl LocalLspAdapterDelegate {
         fs: Arc<dyn Fs>,
         cx: &mut App,
     ) -> Arc<Self> {
-        let load_shell_env_task = environment.update(cx, |env, cx| {
-            env.get_worktree_environment(worktree.clone(), cx)
-        });
+        let load_shell_env_task =
+            environment.update(cx, |env, cx| env.worktree_environment(worktree.clone(), cx));
 
         Arc::new(Self {
             lsp_store,
