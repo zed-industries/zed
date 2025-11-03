@@ -332,7 +332,7 @@ impl AutoUpdater {
 
     pub fn start_polling(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         cx.spawn(async move |this, cx| {
-            #[cfg(windows)]
+            #[cfg(target_os = "windows")]
             cleanup_windows()
                 .await
                 .context("failed to cleanup old directories")
@@ -930,6 +930,7 @@ async fn install_release_macos(
     Ok(None)
 }
 
+#[cfg(target_os = "windows")]
 async fn cleanup_windows() -> Result<()> {
     let parent = std::env::current_exe()?
         .parent()
