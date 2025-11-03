@@ -450,6 +450,7 @@ async fn zeta2_predict(
                         &mut excerpts_text,
                     );
                 }
+                break;
             }
             _ => {}
         }
@@ -771,6 +772,7 @@ fn main() {
                     Zeta2Command::Predict { example_path } => {
                         let example = NamedExample::load(example_path).unwrap();
                         zeta2_predict(example, &app_state, cx).await.unwrap();
+                        let _ = cx.update(|cx| cx.quit());
                         return;
                     }
                     Zeta2Command::Syntax {
