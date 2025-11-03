@@ -853,23 +853,32 @@ impl LocalLspStore {
         language_server
             .on_request::<lsp::request::InlayHintRefreshRequest, _, _>({
                 let lsp_store = lsp_store.clone();
+                let request_id = Arc::new(AtomicUsize::new(0));
                 move |(), cx| {
-                    let this = lsp_store.clone();
+                    let lsp_store = lsp_store.clone();
+                    let request_id = request_id.clone();
                     let mut cx = cx.clone();
                     async move {
-                        this.update(&mut cx, |lsp_store, cx| {
-                            cx.emit(LspStoreEvent::RefreshInlayHints(server_id));
-                            lsp_store
-                                .downstream_client
-                                .as_ref()
-                                .map(|(client, project_id)| {
-                                    client.send(proto::RefreshInlayHints {
-                                        project_id: *project_id,
-                                        server_id: server_id.to_proto(),
+                        lsp_store
+                            .update(&mut cx, |lsp_store, cx| {
+                                let request_id =
+                                    Some(request_id.fetch_add(1, atomic::Ordering::AcqRel));
+                                cx.emit(LspStoreEvent::RefreshInlayHints {
+                                    server_id,
+                                    request_id,
+                                });
+                                lsp_store
+                                    .downstream_client
+                                    .as_ref()
+                                    .map(|(client, project_id)| {
+                                        client.send(proto::RefreshInlayHints {
+                                            project_id: *project_id,
+                                            server_id: server_id.to_proto(),
+                                            request_id: request_id.map(|id| id as u64),
+                                        })
                                     })
-                                })
-                        })?
-                        .transpose()?;
+                            })?
+                            .transpose()?;
                         Ok(())
                     }
                 }
@@ -3659,7 +3668,10 @@ pub enum LspStoreEvent {
         new_language: Option<Arc<Language>>,
     },
     Notification(String),
-    RefreshInlayHints(LanguageServerId),
+    RefreshInlayHints {
+        server_id: LanguageServerId,
+        request_id: Option<usize>,
+    },
     RefreshCodeLens,
     DiagnosticsUpdated {
         server_id: LanguageServerId,
@@ -6639,9 +6651,15 @@ impl LspStore {
         let next_hint_id = self.next_hint_id.clone();
         let lsp_data = self.latest_lsp_data(&buffer, cx);
         let mut lsp_refresh_requested = false;
-        let for_server = if let InvalidationStrategy::RefreshRequested(server_id) = invalidate {
-            lsp_data.inlay_hints.invalidate_for_server(server_id);
-            lsp_refresh_requested = true;
+        let for_server = if let InvalidationStrategy::RefreshRequested {
+            server_id,
+            request_id,
+        } = invalidate
+        {
+            let invalidated = lsp_data
+                .inlay_hints
+                .invalidate_for_server_refresh(server_id, request_id);
+            lsp_refresh_requested = invalidated;
             Some(server_id)
         } else {
             None
@@ -6665,12 +6683,6 @@ impl LspStore {
 
         let last_chunk_number = existing_inlay_hints.buffer_chunks_len() - 1;
 
-        dbg!((
-            buffer.read(cx).file().map(|f| f.path()),
-            invalidate,
-            &applicable_chunks,
-            lsp_refresh_requested,
-        ));
         for row_chunk in applicable_chunks {
             match (
                 existing_inlay_hints
@@ -6726,20 +6738,10 @@ impl LspStore {
             }
         }
 
-        let o = cached_inlay_hints
-            .iter()
-            .flatten()
-            .flat_map(|a| a.1.iter())
-            .flat_map(|(_, a)| a.iter())
-            .map(|(id, hint)| (*id, hint.text().to_string()))
-            .collect::<Vec<_>>();
-        dbg!(o);
-        if dbg!(hint_fetch_tasks.is_empty())
-            && dbg!(
-                ranges_to_query
-                    .as_ref()
-                    .is_none_or(|ranges| ranges.is_empty())
-            )
+        if hint_fetch_tasks.is_empty()
+            && ranges_to_query
+                .as_ref()
+                .is_none_or(|ranges| ranges.is_empty())
             && let Some(cached_inlay_hints) = cached_inlay_hints
         {
             cached_inlay_hints
@@ -6747,7 +6749,7 @@ impl LspStore {
                 .map(|(row_chunk, hints)| (row_chunk, Task::ready(Ok(hints))))
                 .collect()
         } else {
-            for (chunk, range_to_query) in dbg!(ranges_to_query).into_iter().flatten() {
+            for (chunk, range_to_query) in ranges_to_query.into_iter().flatten() {
                 let next_hint_id = next_hint_id.clone();
                 let buffer = buffer.clone();
                 let new_inlay_hints = cx
@@ -6785,13 +6787,6 @@ impl LspStore {
                                                     })
                                                     .collect::<Vec<_>>();
                                                 if update_cache {
-                                                    let n = new_hints
-                                                        .iter()
-                                                        .map(|(id, hint)| {
-                                                            (*id, hint.text().to_string())
-                                                        })
-                                                        .collect::<Vec<_>>();
-                                                    dbg!(n);
                                                     lsp_data.inlay_hints.insert_new_hints(
                                                         chunk,
                                                         server_id,
@@ -9639,7 +9634,10 @@ impl LspStore {
             if let Some(work) = status.pending_work.remove(&token)
                 && !work.is_disk_based_diagnostics_progress
             {
-                cx.emit(LspStoreEvent::RefreshInlayHints(language_server_id));
+                cx.emit(LspStoreEvent::RefreshInlayHints {
+                    server_id: language_server_id,
+                    request_id: None,
+                });
             }
             cx.notify();
         }
@@ -9778,9 +9776,10 @@ impl LspStore {
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         lsp_store.update(&mut cx, |_, cx| {
-            cx.emit(LspStoreEvent::RefreshInlayHints(
-                LanguageServerId::from_proto(envelope.payload.server_id),
-            ));
+            cx.emit(LspStoreEvent::RefreshInlayHints {
+                server_id: LanguageServerId::from_proto(envelope.payload.server_id),
+                request_id: envelope.payload.request_id.map(|id| id as usize),
+            });
         })?;
         Ok(proto::Ack {})
     }

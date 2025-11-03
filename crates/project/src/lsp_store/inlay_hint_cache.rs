@@ -19,7 +19,10 @@ pub enum InvalidationStrategy {
     /// Demands to re-query all inlay hints needed and invalidate all cached entries, but does not require instant update with invalidation.
     ///
     /// Despite nothing forbids language server from sending this request on every edit, it is expected to be sent only when certain internal server state update, invisible for the editor otherwise.
-    RefreshRequested(LanguageServerId),
+    RefreshRequested {
+        server_id: LanguageServerId,
+        request_id: Option<usize>,
+    },
     /// Multibuffer excerpt(s) and/or singleton buffer(s) were edited at least on one place.
     /// Neither editor nor LSP is able to tell which open file hints' are not affected, so all of them have to be invalidated, re-queried and do that fast enough to avoid being slow, but also debounce to avoid loading hints on every fast keystroke sequence.
     BufferEdited,
@@ -36,7 +39,7 @@ impl InvalidationStrategy {
     pub fn should_invalidate(&self) -> bool {
         matches!(
             self,
-            InvalidationStrategy::RefreshRequested(_) | InvalidationStrategy::BufferEdited
+            InvalidationStrategy::RefreshRequested { .. } | InvalidationStrategy::BufferEdited
         )
     }
 }
@@ -47,6 +50,7 @@ pub struct BufferInlayHints {
     hints_by_chunks: Vec<Option<CacheInlayHints>>,
     fetches_by_chunks: Vec<Option<CacheInlayHintsTask>>,
     hints_by_id: HashMap<InlayId, HintForId>,
+    latest_invalidation_requests: HashMap<LanguageServerId, Option<usize>>,
     pub(super) hint_resolves: HashMap<InlayId, Shared<Task<()>>>,
 }
 
@@ -104,6 +108,7 @@ impl BufferInlayHints {
         Self {
             hints_by_chunks: vec![None; buffer_chunks.len()],
             fetches_by_chunks: vec![None; buffer_chunks.len()],
+            latest_invalidation_requests: HashMap::default(),
             hints_by_id: HashMap::default(),
             hint_resolves: HashMap::default(),
             snapshot,
@@ -176,6 +181,7 @@ impl BufferInlayHints {
         self.fetches_by_chunks = vec![None; self.buffer_chunks.len()];
         self.hints_by_id.clear();
         self.hint_resolves.clear();
+        self.latest_invalidation_requests.clear();
     }
 
     pub fn insert_new_hints(
@@ -223,8 +229,25 @@ impl BufferInlayHints {
         self.buffer_chunks.len()
     }
 
-    pub(crate) fn invalidate_for_server(&mut self, for_server: LanguageServerId) {
-        for chunk_data in &mut self.hints_by_chunks {
+    pub(crate) fn invalidate_for_server_refresh(
+        &mut self,
+        for_server: LanguageServerId,
+        request_id: Option<usize>,
+    ) -> bool {
+        match self.latest_invalidation_requests.entry(for_server) {
+            hash_map::Entry::Occupied(mut o) => {
+                if request_id > *o.get() {
+                    o.insert(request_id);
+                } else {
+                    return false;
+                }
+            }
+            hash_map::Entry::Vacant(v) => {
+                v.insert(request_id);
+            }
+        }
+
+        for (chunk_id, chunk_data) in self.hints_by_chunks.iter_mut().enumerate() {
             if let Some(removed_hints) = chunk_data
                 .as_mut()
                 .and_then(|chunk_data| chunk_data.remove(&for_server))
@@ -233,8 +256,11 @@ impl BufferInlayHints {
                     self.hints_by_id.remove(&id);
                     self.hint_resolves.remove(&id);
                 }
+                self.fetches_by_chunks[chunk_id] = None;
             }
         }
+
+        true
     }
 
     pub(crate) fn invalidate_for_chunk(&mut self, chunk: BufferChunk) {

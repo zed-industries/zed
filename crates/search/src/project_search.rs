@@ -4412,16 +4412,16 @@ pub mod tests {
             );
         });
         project.update(cx, |_, cx| {
-            cx.emit(project::Event::RefreshInlayHints(
-                fake_server.server.server_id(),
-            ));
+            cx.emit(project::Event::RefreshInlayHints {
+                server_id: fake_server.server.server_id(),
+                request_id: Some(1),
+            });
         });
         cx.executor().advance_clock(Duration::from_secs(1));
         cx.executor().run_until_parked();
         assert_eq!(
             requests_count.load(atomic::Ordering::Acquire),
-            // TODO kb should be 5
-            6,
+            5,
             "After a simulated server refresh request, we should have sent another request",
         );
 
@@ -4430,8 +4430,7 @@ pub mod tests {
         cx.executor().run_until_parked();
         assert_eq!(
             requests_count.load(atomic::Ordering::Acquire),
-            // TODO kb should be 5
-            6,
+            5,
             "New project search should reuse the cached hints",
         );
         search_view

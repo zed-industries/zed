@@ -209,7 +209,10 @@ pub enum InlayHintRefreshReason {
     SettingsChange(InlayHintSettings),
     NewLinesShown,
     BufferEdited(BufferId),
-    RefreshRequested(LanguageServerId),
+    RefreshRequested {
+        server_id: LanguageServerId,
+        request_id: Option<usize>,
+    },
     ExcerptsRemoved(Vec<ExcerptId>),
 }
 
@@ -294,7 +297,7 @@ impl Editor {
             | InlayHintRefreshReason::Toggle(_)
             | InlayHintRefreshReason::SettingsChange(_) => true,
             InlayHintRefreshReason::NewLinesShown
-            | InlayHintRefreshReason::RefreshRequested(_)
+            | InlayHintRefreshReason::RefreshRequested { .. }
             | InlayHintRefreshReason::ExcerptsRemoved(_) => false,
             InlayHintRefreshReason::BufferEdited(buffer_id) => {
                 let Some(affected_language) = self
@@ -369,12 +372,6 @@ impl Editor {
                 continue;
             };
 
-            dbg!((
-                self.buffer.read(cx).is_singleton(),
-                buffer.read(cx).file().map(|f| f.path()),
-                invalidate_cache,
-                ignore_previous_fetches,
-            ));
             let (fetched_for_version, fetched_chunks) = inlay_hints
                 .hint_chunk_fetching
                 .entry(buffer_id)
@@ -507,9 +504,13 @@ impl Editor {
             }
             InlayHintRefreshReason::NewLinesShown => InvalidationStrategy::None,
             InlayHintRefreshReason::BufferEdited(_) => InvalidationStrategy::BufferEdited,
-            InlayHintRefreshReason::RefreshRequested(server_id) => {
-                InvalidationStrategy::RefreshRequested(*server_id)
-            }
+            InlayHintRefreshReason::RefreshRequested {
+                server_id,
+                request_id,
+            } => InvalidationStrategy::RefreshRequested {
+                server_id: *server_id,
+                request_id: *request_id,
+            },
         };
 
         match &mut self.inlay_hints {
@@ -1105,7 +1106,10 @@ pub mod tests {
         editor
             .update(cx, |editor, _window, cx| {
                 editor.refresh_inlay_hints(
-                    InlayHintRefreshReason::RefreshRequested(fake_server.server.server_id()),
+                    InlayHintRefreshReason::RefreshRequested {
+                        server_id: fake_server.server.server_id(),
+                        request_id: Some(1),
+                    },
                     cx,
                 );
             })
@@ -3886,7 +3890,10 @@ let c = 3;"#
         editor
             .update(cx, |editor, _, cx| {
                 editor.refresh_inlay_hints(
-                    InlayHintRefreshReason::RefreshRequested(fake_server.server.server_id()),
+                    InlayHintRefreshReason::RefreshRequested {
+                        server_id: fake_server.server.server_id(),
+                        request_id: Some(1),
+                    },
                     cx,
                 );
             })
