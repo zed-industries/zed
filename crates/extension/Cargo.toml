@@ -13,8 +13,6 @@ path = "src/extension.rs"
 
 [dependencies]
 anyhow.workspace = true
-async-compression.workspace = true
-async-tar.workspace = true
 async-trait.workspace = true
 collections.workspace = true
 dap.workspace = true
