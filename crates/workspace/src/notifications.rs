@@ -291,13 +291,10 @@ impl LanguageServerPrompt {
     }
 
     fn dismiss_notification(&mut self, cx: &mut Context<Self>) {
-        self.cancel_dismiss_task();
+        self.dismiss_task = None;
         cx.emit(DismissEvent);
     }
 
-    fn cancel_dismiss_task(&mut self) {
-        self.dismiss_task = None;
-    }
 }
 
 impl Render for LanguageServerPrompt {
@@ -380,8 +377,7 @@ impl Render for LanguageServerPrompt {
                                                     if suppress {
                                                         cx.emit(SuppressEvent);
                                                     } else {
-                                                        this.cancel_dismiss_task();
-                                                        cx.emit(DismissEvent);
+                                                        this.dismiss_notification(cx);
                                                     }
                                                 },
                                             )),
