@@ -366,6 +366,8 @@ impl Vim {
 
             let mut selections = Vec::new();
             let mut row = tail.row();
+            let going_up = tail.row() > head.row();
+            let direction = if going_up { -1 } else { 1 };
 
             loop {
                 let laid_out_line = map.layout_row(row, &text_layout_details);
@@ -396,13 +398,18 @@ impl Vim {
 
                     selections.push(selection);
                 }
-                if row == head.row() {
+
+                // When dealing with soft wrapped lines, it's possible that
+                // `row` ends up being set to a value other than `head.row()` as
+                // `head.row()` might be a `DisplayPoint` mapped to a soft
+                // wrapped line, hence the need for `<=` and `>=` instead of
+                // `==`.
+                if going_up && row <= head.row() || !going_up && row >= head.row() {
                     break;
                 }
 
-                // Move to the next or previous buffer row, ensuring that
-                // wrapped lines are handled correctly.
-                let direction = if tail.row() > head.row() { -1 } else { 1 };
+                // Find the next or previous buffer row where the `row` should
+                // be moved to, so that wrapped lines are skipped.
                 row = map
                     .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
                     .row();
@@ -840,9 +847,6 @@ impl Vim {
         let mut start_selection = 0usize;
         let mut end_selection = 0usize;
 
-        self.update_editor(cx, |_, editor, _| {
-            editor.set_collapse_matches(false);
-        });
         if vim_is_normal {
             pane.update(cx, |pane, cx| {
                 if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()
@@ -853,7 +857,7 @@ impl Vim {
                         }
                         // without update_match_index there is a bug when the cursor is before the first match
                         search_bar.update_match_index(window, cx);
-                        search_bar.select_match(direction.opposite(), 1, window, cx);
+                        search_bar.select_match(direction.opposite(), 1, false, window, cx);
                     });
                 }
             });
@@ -871,7 +875,7 @@ impl Vim {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 search_bar.update(cx, |search_bar, cx| {
                     search_bar.update_match_index(window, cx);
-                    search_bar.select_match(direction, count, window, cx);
+                    search_bar.select_match(direction, count, false, window, cx);
                     match_exists = search_bar.match_exists(window, cx);
                 });
             }
@@ -898,7 +902,6 @@ impl Vim {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.select_ranges([start_selection..end_selection]);
             });
-            editor.set_collapse_matches(true);
         });
 
         match self.maybe_pop_operator() {

@@ -1,7 +1,7 @@
 use super::*;
 use crate::test_both_dbs;
 use language::proto::{self, serialize_version};
-use text::Buffer;
+use text::{Buffer, ReplicaId};
 
 test_both_dbs!(
     test_channel_buffers,
@@ -70,11 +70,25 @@ async fn test_channel_buffers(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    let mut buffer_a = Buffer::new(0, text::BufferId::new(1).unwrap(), "".to_string());
+    let mut buffer_a = Buffer::new(
+        ReplicaId::new(0),
+        text::BufferId::new(1).unwrap(),
+        "".to_string(),
+        &db.test_options.as_ref().unwrap().executor,
+    );
     let operations = vec![
-        buffer_a.edit([(0..0, "hello world")]),
-        buffer_a.edit([(5..5, ", cruel")]),
-        buffer_a.edit([(0..5, "goodbye")]),
+        buffer_a.edit(
+            [(0..0, "hello world")],
+            &db.test_options.as_ref().unwrap().executor,
+        ),
+        buffer_a.edit(
+            [(5..5, ", cruel")],
+            &db.test_options.as_ref().unwrap().executor,
+        ),
+        buffer_a.edit(
+            [(0..5, "goodbye")],
+            &db.test_options.as_ref().unwrap().executor,
+        ),
         buffer_a.undo().unwrap().1,
     ];
     assert_eq!(buffer_a.text(), "hello, cruel world");
@@ -95,18 +109,22 @@ async fn test_channel_buffers(db: &Arc<Database>) {
         .unwrap();
 
     let mut buffer_b = Buffer::new(
-        0,
+        ReplicaId::new(0),
         text::BufferId::new(1).unwrap(),
         buffer_response_b.base_text,
+        &db.test_options.as_ref().unwrap().executor,
     );
-    buffer_b.apply_ops(buffer_response_b.operations.into_iter().map(|operation| {
-        let operation = proto::deserialize_operation(operation).unwrap();
-        if let language::Operation::Buffer(operation) = operation {
-            operation
-        } else {
-            unreachable!()
-        }
-    }));
+    buffer_b.apply_ops(
+        buffer_response_b.operations.into_iter().map(|operation| {
+            let operation = proto::deserialize_operation(operation).unwrap();
+            if let language::Operation::Buffer(operation) = operation {
+                operation
+            } else {
+                unreachable!()
+            }
+        }),
+        None,
+    );
 
     assert_eq!(buffer_b.text(), "hello, cruel world");
 
@@ -124,7 +142,7 @@ async fn test_channel_buffers(db: &Arc<Database>) {
             rpc::proto::Collaborator {
                 user_id: a_id.to_proto(),
                 peer_id: Some(rpc::proto::PeerId { id: 1, owner_id }),
-                replica_id: 0,
+                replica_id: ReplicaId::FIRST_COLLAB_ID.as_u16() as u32,
                 is_host: false,
                 committer_name: None,
                 committer_email: None,
@@ -132,7 +150,7 @@ async fn test_channel_buffers(db: &Arc<Database>) {
             rpc::proto::Collaborator {
                 user_id: b_id.to_proto(),
                 peer_id: Some(rpc::proto::PeerId { id: 2, owner_id }),
-                replica_id: 1,
+                replica_id: ReplicaId::FIRST_COLLAB_ID.as_u16() as u32 + 1,
                 is_host: false,
                 committer_name: None,
                 committer_email: None,
@@ -228,7 +246,8 @@ async fn test_channel_buffers_last_operations(db: &Database) {
             .await
             .unwrap();
 
-        db.join_channel_buffer(channel, user_id, connection_id)
+        let res = db
+            .join_channel_buffer(channel, user_id, connection_id)
             .await
             .unwrap();
 
@@ -239,9 +258,10 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         );
 
         text_buffers.push(Buffer::new(
-            0,
+            ReplicaId::new(res.replica_id as u16),
             text::BufferId::new(1).unwrap(),
             "".to_string(),
+            &db.test_options.as_ref().unwrap().executor,
         ));
     }
 
@@ -250,9 +270,9 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         user_id,
         db,
         vec![
-            text_buffers[0].edit([(0..0, "a")]),
-            text_buffers[0].edit([(0..0, "b")]),
-            text_buffers[0].edit([(0..0, "c")]),
+            text_buffers[0].edit([(0..0, "a")], &db.test_options.as_ref().unwrap().executor),
+            text_buffers[0].edit([(0..0, "b")], &db.test_options.as_ref().unwrap().executor),
+            text_buffers[0].edit([(0..0, "c")], &db.test_options.as_ref().unwrap().executor),
         ],
     )
     .await;
@@ -262,9 +282,9 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         user_id,
         db,
         vec![
-            text_buffers[1].edit([(0..0, "d")]),
-            text_buffers[1].edit([(1..1, "e")]),
-            text_buffers[1].edit([(2..2, "f")]),
+            text_buffers[1].edit([(0..0, "d")], &db.test_options.as_ref().unwrap().executor),
+            text_buffers[1].edit([(1..1, "e")], &db.test_options.as_ref().unwrap().executor),
+            text_buffers[1].edit([(2..2, "f")], &db.test_options.as_ref().unwrap().executor),
         ],
     )
     .await;
@@ -276,14 +296,20 @@ async fn test_channel_buffers_last_operations(db: &Database) {
     db.join_channel_buffer(buffers[1].channel_id, user_id, connection_id)
         .await
         .unwrap();
-    text_buffers[1] = Buffer::new(1, text::BufferId::new(1).unwrap(), "def".to_string());
+    let replica_id = text_buffers[1].replica_id();
+    text_buffers[1] = Buffer::new(
+        replica_id,
+        text::BufferId::new(1).unwrap(),
+        "def".to_string(),
+        &db.test_options.as_ref().unwrap().executor,
+    );
     update_buffer(
         buffers[1].channel_id,
         user_id,
         db,
         vec![
-            text_buffers[1].edit([(0..0, "g")]),
-            text_buffers[1].edit([(0..0, "h")]),
+            text_buffers[1].edit([(0..0, "g")], &db.test_options.as_ref().unwrap().executor),
+            text_buffers[1].edit([(0..0, "h")], &db.test_options.as_ref().unwrap().executor),
         ],
     )
     .await;
@@ -292,7 +318,7 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         buffers[2].channel_id,
         user_id,
         db,
-        vec![text_buffers[2].edit([(0..0, "i")])],
+        vec![text_buffers[2].edit([(0..0, "i")], &db.test_options.as_ref().unwrap().executor)],
     )
     .await;
 
@@ -304,20 +330,32 @@ async fn test_channel_buffers_last_operations(db: &Database) {
             rpc::proto::ChannelBufferVersion {
                 channel_id: buffers[0].channel_id.to_proto(),
                 epoch: 0,
-                version: serialize_version(&text_buffers[0].version()),
+                version: serialize_version(&text_buffers[0].version())
+                    .into_iter()
+                    .filter(
+                        |vector| vector.replica_id == text_buffers[0].replica_id().as_u16() as u32
+                    )
+                    .collect::<Vec<_>>(),
             },
             rpc::proto::ChannelBufferVersion {
                 channel_id: buffers[1].channel_id.to_proto(),
                 epoch: 1,
                 version: serialize_version(&text_buffers[1].version())
                     .into_iter()
-                    .filter(|vector| vector.replica_id == text_buffers[1].replica_id() as u32)
+                    .filter(
+                        |vector| vector.replica_id == text_buffers[1].replica_id().as_u16() as u32
+                    )
                     .collect::<Vec<_>>(),
             },
             rpc::proto::ChannelBufferVersion {
                 channel_id: buffers[2].channel_id.to_proto(),
                 epoch: 0,
-                version: serialize_version(&text_buffers[2].version()),
+                version: serialize_version(&text_buffers[2].version())
+                    .into_iter()
+                    .filter(
+                        |vector| vector.replica_id == text_buffers[2].replica_id().as_u16() as u32
+                    )
+                    .collect::<Vec<_>>(),
             },
         ]
     );

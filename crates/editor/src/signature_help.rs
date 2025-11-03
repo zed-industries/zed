@@ -193,7 +193,7 @@ impl Editor {
 
                         if let Some(language) = language {
                             for signature in &mut signature_help.signatures {
-                                let text = Rope::from(signature.label.as_ref());
+                                let text = Rope::from_str_small(signature.label.as_ref());
                                 let highlights = language
                                     .highlight_text(&text, 0..signature.label.len())
                                     .into_iter()
@@ -396,13 +396,8 @@ impl SignatureHelpPopover {
                 .shape(IconButtonShape::Square)
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
-                .tooltip(move |window, cx| {
-                    ui::Tooltip::for_action(
-                        "Previous Signature",
-                        &crate::SignatureHelpPrevious,
-                        window,
-                        cx,
-                    )
+                .tooltip(move |_window, cx| {
+                    ui::Tooltip::for_action("Previous Signature", &crate::SignatureHelpPrevious, cx)
                 })
                 .on_click(cx.listener(|editor, _, window, cx| {
                     editor.signature_help_prev(&crate::SignatureHelpPrevious, window, cx);
@@ -412,8 +407,8 @@ impl SignatureHelpPopover {
                 .shape(IconButtonShape::Square)
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
-                .tooltip(move |window, cx| {
-                    ui::Tooltip::for_action("Next Signature", &crate::SignatureHelpNext, window, cx)
+                .tooltip(move |_window, cx| {
+                    ui::Tooltip::for_action("Next Signature", &crate::SignatureHelpNext, cx)
                 })
                 .on_click(cx.listener(|editor, _, window, cx| {
                     editor.signature_help_next(&crate::SignatureHelpNext, window, cx);

@@ -1,11 +1,14 @@
 //! Zeta2 prompt planning and generation code shared with cloud.
 
 use anyhow::{Context as _, Result, anyhow};
-use cloud_llm_client::predict_edits_v3::{self, Line, Point, PromptFormat, ReferencedDeclaration};
+use cloud_llm_client::predict_edits_v3::{
+    self, Excerpt, Line, Point, PromptFormat, ReferencedDeclaration,
+};
 use indoc::indoc;
 use ordered_float::OrderedFloat;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Serialize;
+use std::cmp;
 use std::fmt::Write;
 use std::sync::Arc;
 use std::{cmp::Reverse, collections::BinaryHeap, ops::Range, path::Path};
@@ -96,7 +99,195 @@ const UNIFIED_DIFF_REMINDER: &str = indoc! {"
     If you're editing multiple files, be sure to reflect filename in the hunk's header.
 "};
 
-pub struct PlannedPrompt<'a> {
+pub fn build_prompt(
+    request: &predict_edits_v3::PredictEditsRequest,
+) -> Result<(String, SectionLabels)> {
+    let mut insertions = match request.prompt_format {
+        PromptFormat::MarkedExcerpt => vec![
+            (
+                Point {
+                    line: request.excerpt_line_range.start,
+                    column: 0,
+                },
+                EDITABLE_REGION_START_MARKER_WITH_NEWLINE,
+            ),
+            (request.cursor_point, CURSOR_MARKER),
+            (
+                Point {
+                    line: request.excerpt_line_range.end,
+                    column: 0,
+                },
+                EDITABLE_REGION_END_MARKER_WITH_NEWLINE,
+            ),
+        ],
+        PromptFormat::LabeledSections => vec![(request.cursor_point, CURSOR_MARKER)],
+        PromptFormat::NumLinesUniDiff => {
+            vec![(request.cursor_point, CURSOR_MARKER)]
+        }
+        PromptFormat::OnlySnippets => vec![],
+    };
+
+    let mut prompt = match request.prompt_format {
+        PromptFormat::MarkedExcerpt => MARKED_EXCERPT_INSTRUCTIONS.to_string(),
+        PromptFormat::LabeledSections => LABELED_SECTIONS_INSTRUCTIONS.to_string(),
+        PromptFormat::NumLinesUniDiff => NUMBERED_LINES_INSTRUCTIONS.to_string(),
+        // only intended for use via zeta_cli
+        PromptFormat::OnlySnippets => String::new(),
+    };
+
+    if request.events.is_empty() {
+        prompt.push_str("(No edit history)\n\n");
+    } else {
+        prompt.push_str(
+            "The following are the latest edits made by the user, from earlier to later.\n\n",
+        );
+        push_events(&mut prompt, &request.events);
+    }
+
+    if request.prompt_format == PromptFormat::NumLinesUniDiff {
+        if request.referenced_declarations.is_empty() {
+            prompt.push_str(indoc! {"
+                # File under the cursor:
+
+                The cursor marker <|user_cursor|> indicates the current user cursor position.
+                The file is in current state, edits from edit history have been applied.
+                We prepend line numbers (e.g., `123|<actual line>`); they are not part of the file.
+
+            "});
+        } else {
+            // Note: This hasn't been trained on yet
+            prompt.push_str(indoc! {"
+                # Code Excerpts:
+
+                The cursor marker <|user_cursor|> indicates the current user cursor position.
+                Other excerpts of code from the project have been included as context based on their similarity to the code under the cursor.
+                Context excerpts are not guaranteed to be relevant, so use your own judgement.
+                Files are in their current state, edits from edit history have been applied.
+                We prepend line numbers (e.g., `123|<actual line>`); they are not part of the file.
+
+            "});
+        }
+    } else {
+        prompt.push_str("\n## Code\n\n");
+    }
+
+    let mut section_labels = Default::default();
+
+    if !request.referenced_declarations.is_empty() || !request.signatures.is_empty() {
+        let syntax_based_prompt = SyntaxBasedPrompt::populate(request)?;
+        section_labels = syntax_based_prompt.write(&mut insertions, &mut prompt)?;
+    } else {
+        if request.prompt_format == PromptFormat::LabeledSections {
+            anyhow::bail!("PromptFormat::LabeledSections cannot be used with ContextMode::Llm");
+        }
+
+        for related_file in &request.included_files {
+            write_codeblock(
+                &related_file.path,
+                &related_file.excerpts,
+                if related_file.path == request.excerpt_path {
+                    &insertions
+                } else {
+                    &[]
+                },
+                related_file.max_row,
+                request.prompt_format == PromptFormat::NumLinesUniDiff,
+                &mut prompt,
+            );
+        }
+    }
+
+    if request.prompt_format == PromptFormat::NumLinesUniDiff {
+        prompt.push_str(UNIFIED_DIFF_REMINDER);
+    }
+
+    Ok((prompt, section_labels))
+}
+
+pub fn write_codeblock<'a>(
+    path: &Path,
+    excerpts: impl IntoIterator<Item = &'a Excerpt>,
+    sorted_insertions: &[(Point, &str)],
+    file_line_count: Line,
+    include_line_numbers: bool,
+    output: &'a mut String,
+) {
+    writeln!(output, "`````{}", path.display()).unwrap();
+    write_excerpts(
+        excerpts,
+        sorted_insertions,
+        file_line_count,
+        include_line_numbers,
+        output,
+    );
+    write!(output, "`````\n\n").unwrap();
+}
+
+pub fn write_excerpts<'a>(
+    excerpts: impl IntoIterator<Item = &'a Excerpt>,
+    sorted_insertions: &[(Point, &str)],
+    file_line_count: Line,
+    include_line_numbers: bool,
+    output: &mut String,
+) {
+    let mut current_row = Line(0);
+    let mut sorted_insertions = sorted_insertions.iter().peekable();
+
+    for excerpt in excerpts {
+        if excerpt.start_line > current_row {
+            writeln!(output, "…").unwrap();
+        }
+        if excerpt.text.is_empty() {
+            return;
+        }
+
+        current_row = excerpt.start_line;
+
+        for mut line in excerpt.text.lines() {
+            if include_line_numbers {
+                write!(output, "{}|", current_row.0 + 1).unwrap();
+            }
+
+            while let Some((insertion_location, insertion_marker)) = sorted_insertions.peek() {
+                match current_row.cmp(&insertion_location.line) {
+                    cmp::Ordering::Equal => {
+                        let (prefix, suffix) = line.split_at(insertion_location.column as usize);
+                        output.push_str(prefix);
+                        output.push_str(insertion_marker);
+                        line = suffix;
+                        sorted_insertions.next();
+                    }
+                    cmp::Ordering::Less => break,
+                    cmp::Ordering::Greater => {
+                        sorted_insertions.next();
+                        break;
+                    }
+                }
+            }
+            output.push_str(line);
+            output.push('\n');
+            current_row.0 += 1;
+        }
+    }
+
+    if current_row < file_line_count {
+        writeln!(output, "…").unwrap();
+    }
+}
+
+fn push_events(output: &mut String, events: &[predict_edits_v3::Event]) {
+    if events.is_empty() {
+        return;
+    };
+
+    writeln!(output, "`````diff").unwrap();
+    for event in events {
+        writeln!(output, "{}", event).unwrap();
+    }
+    writeln!(output, "`````\n").unwrap();
+}
+
+pub struct SyntaxBasedPrompt<'a> {
     request: &'a predict_edits_v3::PredictEditsRequest,
     /// Snippets to include in the prompt. These may overlap - they are merged / deduplicated in
     /// `to_prompt_string`.
@@ -120,13 +311,13 @@ pub enum DeclarationStyle {
     Declaration,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Default, Clone, Debug, Serialize)]
 pub struct SectionLabels {
     pub excerpt_index: usize,
     pub section_ranges: Vec<(Arc<Path>, Range<Line>)>,
 }
 
-impl<'a> PlannedPrompt<'a> {
+impl<'a> SyntaxBasedPrompt<'a> {
     /// Greedy one-pass knapsack algorithm to populate the prompt plan. Does the following:
     ///
     /// Initializes a priority queue by populating it with each snippet, finding the
@@ -149,7 +340,7 @@ impl<'a> PlannedPrompt<'a> {
     ///
     /// * Does not include file paths / other text when considering max_bytes.
     pub fn populate(request: &'a predict_edits_v3::PredictEditsRequest) -> Result<Self> {
-        let mut this = PlannedPrompt {
+        let mut this = Self {
             request,
             snippets: Vec::new(),
             budget_used: request.excerpt.len(),
@@ -354,7 +545,11 @@ impl<'a> PlannedPrompt<'a> {
     /// Renders the planned context. Each file starts with "```FILE_PATH\n` and ends with triple
     /// backticks, with a newline after each file. Outputs a line with "..." between nonconsecutive
     /// chunks.
-    pub fn to_prompt_string(&'a self) -> Result<(String, SectionLabels)> {
+    pub fn write(
+        &'a self,
+        excerpt_file_insertions: &mut Vec<(Point, &'static str)>,
+        prompt: &mut String,
+    ) -> Result<SectionLabels> {
         let mut file_to_snippets: FxHashMap<&'a std::path::Path, Vec<&PlannedSnippet<'a>>> =
             FxHashMap::default();
         for snippet in &self.snippets {
@@ -383,95 +578,10 @@ impl<'a> PlannedPrompt<'a> {
         excerpt_file_snippets.push(&excerpt_snippet);
         file_snippets.push((&self.request.excerpt_path, excerpt_file_snippets, true));
 
-        let mut excerpt_file_insertions = match self.request.prompt_format {
-            PromptFormat::MarkedExcerpt => vec![
-                (
-                    Point {
-                        line: self.request.excerpt_line_range.start,
-                        column: 0,
-                    },
-                    EDITABLE_REGION_START_MARKER_WITH_NEWLINE,
-                ),
-                (self.request.cursor_point, CURSOR_MARKER),
-                (
-                    Point {
-                        line: self.request.excerpt_line_range.end,
-                        column: 0,
-                    },
-                    EDITABLE_REGION_END_MARKER_WITH_NEWLINE,
-                ),
-            ],
-            PromptFormat::LabeledSections => vec![(self.request.cursor_point, CURSOR_MARKER)],
-            PromptFormat::NumLinesUniDiff => {
-                vec![(self.request.cursor_point, CURSOR_MARKER)]
-            }
-            PromptFormat::OnlySnippets => vec![],
-        };
-
-        let mut prompt = match self.request.prompt_format {
-            PromptFormat::MarkedExcerpt => MARKED_EXCERPT_INSTRUCTIONS.to_string(),
-            PromptFormat::LabeledSections => LABELED_SECTIONS_INSTRUCTIONS.to_string(),
-            PromptFormat::NumLinesUniDiff => NUMBERED_LINES_INSTRUCTIONS.to_string(),
-            // only intended for use via zeta_cli
-            PromptFormat::OnlySnippets => String::new(),
-        };
-
-        if self.request.events.is_empty() {
-            prompt.push_str("(No edit history)\n\n");
-        } else {
-            prompt.push_str(
-                "The following are the latest edits made by the user, from earlier to later.\n\n",
-            );
-            Self::push_events(&mut prompt, &self.request.events);
-        }
-
-        if self.request.prompt_format == PromptFormat::NumLinesUniDiff {
-            if self.request.referenced_declarations.is_empty() {
-                prompt.push_str(indoc! {"
-                    # File under the cursor:
-
-                    The cursor marker <|user_cursor|> indicates the current user cursor position.
-                    The file is in current state, edits from edit history have been applied.
-                    We prepend line numbers (e.g., `123|<actual line>`); they are not part of the file.
-
-                "});
-            } else {
-                // Note: This hasn't been trained on yet
-                prompt.push_str(indoc! {"
-                    # Code Excerpts:
-
-                    The cursor marker <|user_cursor|> indicates the current user cursor position.
-                    Other excerpts of code from the project have been included as context based on their similarity to the code under the cursor.
-                    Context excerpts are not guaranteed to be relevant, so use your own judgement.
-                    Files are in their current state, edits from edit history have been applied.
-                    We prepend line numbers (e.g., `123|<actual line>`); they are not part of the file.
-
-                "});
-            }
-        } else {
-            prompt.push_str("\n## Code\n\n");
-        }
-
         let section_labels =
-            self.push_file_snippets(&mut prompt, &mut excerpt_file_insertions, file_snippets)?;
+            self.push_file_snippets(prompt, excerpt_file_insertions, file_snippets)?;
 
-        if self.request.prompt_format == PromptFormat::NumLinesUniDiff {
-            prompt.push_str(UNIFIED_DIFF_REMINDER);
-        }
-
-        Ok((prompt, section_labels))
-    }
-
-    fn push_events(output: &mut String, events: &[predict_edits_v3::Event]) {
-        if events.is_empty() {
-            return;
-        };
-
-        writeln!(output, "`````diff").unwrap();
-        for event in events {
-            writeln!(output, "{}", event).unwrap();
-        }
-        writeln!(output, "`````\n").unwrap();
+        Ok(section_labels)
     }
 
     fn push_file_snippets(
@@ -505,8 +615,7 @@ impl<'a> PlannedPrompt<'a> {
                 disjoint_snippets.push(current_snippet);
             }
 
-            // TODO: remove filename=?
-            writeln!(output, "`````filename={}", file_path.display()).ok();
+            writeln!(output, "`````path={}", file_path.display()).ok();
             let mut skipped_last_snippet = false;
             for (snippet, range) in disjoint_snippets {
                 let section_index = section_ranges.len();

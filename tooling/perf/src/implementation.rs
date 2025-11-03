@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::{num::NonZero, time::Duration};
 
 pub mod consts {
-    //! Preset idenitifiers and constants so that the profiler and proc macro agree
+    //! Preset identifiers and constants so that the profiler and proc macro agree
     //! on their communication protocol.
 
     /// The suffix on the actual test function.

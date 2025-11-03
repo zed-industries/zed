@@ -1,9 +1,8 @@
 use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
-    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GitState, GrepTool,
+    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, WebSearchTool,
-    WorktreeSnapshot,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -26,7 +25,6 @@ use futures::{
     future::Shared,
     stream::FuturesUnordered,
 };
-use git::repository::DiffType;
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
 };
@@ -37,10 +35,7 @@ use language_model::{
     LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
     LanguageModelToolUseId, Role, SelectedModel, StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
-use project::{
-    Project,
-    git_store::{GitStore, RepositoryState},
-};
+use project::Project;
 use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
@@ -55,7 +50,7 @@ use std::{
     time::{Duration, Instant},
 };
 use std::{fmt::Write, path::PathBuf};
-use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock};
+use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock, paths::PathStyle};
 use uuid::Uuid;
 
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
@@ -750,7 +745,13 @@ impl Thread {
 
         let title = tool.initial_title(tool_use.input.clone(), cx);
         let kind = tool.kind();
-        stream.send_tool_call(&tool_use.id, title, kind, tool_use.input.clone());
+        stream.send_tool_call(
+            &tool_use.id,
+            &tool_use.name,
+            title,
+            kind,
+            tool_use.input.clone(),
+        );
 
         let output = tool_result
             .as_ref()
@@ -880,98 +881,14 @@ impl Thread {
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Task<Arc<ProjectSnapshot>> {
-        let git_store = project.read(cx).git_store().clone();
-        let worktree_snapshots: Vec<_> = project
-            .read(cx)
-            .visible_worktrees(cx)
-            .map(|worktree| Self::worktree_snapshot(worktree, git_store.clone(), cx))
-            .collect();
-
+        let task = project::telemetry_snapshot::TelemetrySnapshot::new(&project, cx);
         cx.spawn(async move |_, _| {
-            let worktree_snapshots = futures::future::join_all(worktree_snapshots).await;
+            let snapshot = task.await;
 
             Arc::new(ProjectSnapshot {
-                worktree_snapshots,
+                worktree_snapshots: snapshot.worktree_snapshots,
                 timestamp: Utc::now(),
             })
-        })
-    }
-
-    fn worktree_snapshot(
-        worktree: Entity<project::Worktree>,
-        git_store: Entity<GitStore>,
-        cx: &App,
-    ) -> Task<WorktreeSnapshot> {
-        cx.spawn(async move |cx| {
-            // Get worktree path and snapshot
-            let worktree_info = cx.update(|app_cx| {
-                let worktree = worktree.read(app_cx);
-                let path = worktree.abs_path().to_string_lossy().into_owned();
-                let snapshot = worktree.snapshot();
-                (path, snapshot)
-            });
-
-            let Ok((worktree_path, _snapshot)) = worktree_info else {
-                return WorktreeSnapshot {
-                    worktree_path: String::new(),
-                    git_state: None,
-                };
-            };
-
-            let git_state = git_store
-                .update(cx, |git_store, cx| {
-                    git_store
-                        .repositories()
-                        .values()
-                        .find(|repo| {
-                            repo.read(cx)
-                                .abs_path_to_repo_path(&worktree.read(cx).abs_path())
-                                .is_some()
-                        })
-                        .cloned()
-                })
-                .ok()
-                .flatten()
-                .map(|repo| {
-                    repo.update(cx, |repo, _| {
-                        let current_branch =
-                            repo.branch.as_ref().map(|branch| branch.name().to_owned());
-                        repo.send_job(None, |state, _| async move {
-                            let RepositoryState::Local { backend, .. } = state else {
-                                return GitState {
-                                    remote_url: None,
-                                    head_sha: None,
-                                    current_branch,
-                                    diff: None,
-                                };
-                            };
-
-                            let remote_url = backend.remote_url("origin");
-                            let head_sha = backend.head_sha().await;
-                            let diff = backend.diff(DiffType::HeadToWorktree).await.ok();
-
-                            GitState {
-                                remote_url,
-                                head_sha,
-                                current_branch,
-                                diff,
-                            }
-                        })
-                    })
-                });
-
-            let git_state = match git_state {
-                Some(git_state) => match git_state.ok() {
-                    Some(git_state) => git_state.await.ok(),
-                    None => None,
-                },
-                None => None,
-            };
-
-            WorktreeSnapshot {
-                worktree_path,
-                git_state,
-            }
         })
     }
 
@@ -1133,14 +1050,18 @@ impl Thread {
         Ok(())
     }
 
-    pub fn latest_token_usage(&self) -> Option<acp_thread::TokenUsage> {
+    pub fn latest_request_token_usage(&self) -> Option<language_model::TokenUsage> {
         let last_user_message = self.last_user_message()?;
         let tokens = self.request_token_usage.get(&last_user_message.id)?;
-        let model = self.model.clone()?;
+        Some(*tokens)
+    }
 
+    pub fn latest_token_usage(&self) -> Option<acp_thread::TokenUsage> {
+        let usage = self.latest_request_token_usage()?;
+        let model = self.model.clone()?;
         Some(acp_thread::TokenUsage {
             max_tokens: model.max_token_count_for_mode(self.completion_mode.into()),
-            used_tokens: tokens.total_tokens(),
+            used_tokens: usage.total_tokens(),
         })
     }
 
@@ -1180,6 +1101,14 @@ impl Thread {
         cx.notify();
 
         log::debug!("Total messages in thread: {}", self.messages.len());
+        self.run_turn(cx)
+    }
+
+    #[cfg(feature = "eval")]
+    pub fn proceed(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
         self.run_turn(cx)
     }
 
@@ -1550,7 +1479,13 @@ impl Thread {
         });
 
         if push_new_tool_use {
-            event_stream.send_tool_call(&tool_use.id, title, kind, tool_use.input.clone());
+            event_stream.send_tool_call(
+                &tool_use.id,
+                &tool_use.name,
+                title,
+                kind,
+                tool_use.input.clone(),
+            );
             last_message
                 .content
                 .push(AgentMessageContent::ToolUse(tool_use.clone()));
@@ -1881,9 +1816,15 @@ impl Thread {
         log::debug!("Completion intent: {:?}", completion_intent);
         log::debug!("Completion mode: {:?}", self.completion_mode);
 
-        let messages = self.build_request_messages(cx);
+        let available_tools: Vec<_> = self
+            .running_turn
+            .as_ref()
+            .map(|turn| turn.tools.keys().cloned().collect())
+            .unwrap_or_default();
+
+        log::debug!("Request includes {} tools", available_tools.len());
+        let messages = self.build_request_messages(available_tools, cx);
         log::debug!("Request will include {} messages", messages.len());
-        log::debug!("Request includes {} tools", tools.len());
 
         let request = LanguageModelRequest {
             thread_id: Some(self.id.to_string()),
@@ -1922,7 +1863,7 @@ impl Thread {
             .tools
             .iter()
             .filter_map(|(tool_name, tool)| {
-                if tool.supported_provider(&model.provider_id())
+                if tool.supports_provider(&model.provider_id())
                     && profile.is_tool_enabled(tool_name)
                 {
                     Some((truncate(tool_name), tool.clone()))
@@ -1974,7 +1915,11 @@ impl Thread {
         self.running_turn.as_ref()?.tools.get(name).cloned()
     }
 
-    fn build_request_messages(&self, cx: &App) -> Vec<LanguageModelRequestMessage> {
+    fn build_request_messages(
+        &self,
+        available_tools: Vec<SharedString>,
+        cx: &App,
+    ) -> Vec<LanguageModelRequestMessage> {
         log::trace!(
             "Building request messages from {} thread messages",
             self.messages.len()
@@ -1982,7 +1927,8 @@ impl Thread {
 
         let system_prompt = SystemPromptTemplate {
             project: self.project_context.read(cx),
-            available_tools: self.tools.keys().cloned().collect(),
+            available_tools,
+            model_name: self.model.as_ref().map(|m| m.name().0.to_string()),
         }
         .render(&self.templates)
         .context("failed to build system prompt")
@@ -2198,7 +2144,7 @@ where
 
     /// Some tools rely on a provider for the underlying billing or other reasons.
     /// Allow the tool to check if they are compatible, or should be filtered out.
-    fn supported_provider(&self, _provider: &LanguageModelProviderId) -> bool {
+    fn supports_provider(_provider: &LanguageModelProviderId) -> bool {
         true
     }
 
@@ -2239,7 +2185,7 @@ pub trait AnyAgentTool {
     fn kind(&self) -> acp::ToolKind;
     fn initial_title(&self, input: serde_json::Value, _cx: &mut App) -> SharedString;
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value>;
-    fn supported_provider(&self, _provider: &LanguageModelProviderId) -> bool {
+    fn supports_provider(&self, _provider: &LanguageModelProviderId) -> bool {
         true
     }
     fn run(
@@ -2284,8 +2230,8 @@ where
         Ok(json)
     }
 
-    fn supported_provider(&self, provider: &LanguageModelProviderId) -> bool {
-        self.0.supported_provider(provider)
+    fn supports_provider(&self, provider: &LanguageModelProviderId) -> bool {
+        T::supports_provider(provider)
     }
 
     fn run(
@@ -2345,6 +2291,7 @@ impl ThreadEventStream {
     fn send_tool_call(
         &self,
         id: &LanguageModelToolUseId,
+        tool_name: &str,
         title: SharedString,
         kind: acp::ToolKind,
         input: serde_json::Value,
@@ -2352,6 +2299,7 @@ impl ThreadEventStream {
         self.0
             .unbounded_send(Ok(ThreadEvent::ToolCall(Self::initial_tool_call(
                 id,
+                tool_name,
                 title.to_string(),
                 kind,
                 input,
@@ -2361,12 +2309,15 @@ impl ThreadEventStream {
 
     fn initial_tool_call(
         id: &LanguageModelToolUseId,
+        tool_name: &str,
         title: String,
         kind: acp::ToolKind,
         input: serde_json::Value,
     ) -> acp::ToolCall {
         acp::ToolCall {
-            meta: None,
+            meta: Some(serde_json::json!({
+                "tool_name": tool_name
+            })),
             id: acp::ToolCallId(id.to_string().into()),
             title,
             kind,
@@ -2598,8 +2549,8 @@ impl From<&str> for UserMessageContent {
     }
 }
 
-impl From<acp::ContentBlock> for UserMessageContent {
-    fn from(value: acp::ContentBlock) -> Self {
+impl UserMessageContent {
+    pub fn from_content_block(value: acp::ContentBlock, path_style: PathStyle) -> Self {
         match value {
             acp::ContentBlock::Text(text_content) => Self::Text(text_content.text),
             acp::ContentBlock::Image(image_content) => Self::Image(convert_image(image_content)),
@@ -2608,7 +2559,7 @@ impl From<acp::ContentBlock> for UserMessageContent {
                 Self::Text("[audio]".to_string())
             }
             acp::ContentBlock::ResourceLink(resource_link) => {
-                match MentionUri::parse(&resource_link.uri) {
+                match MentionUri::parse(&resource_link.uri, path_style) {
                     Ok(uri) => Self::Mention {
                         uri,
                         content: String::new(),
@@ -2621,7 +2572,7 @@ impl From<acp::ContentBlock> for UserMessageContent {
             }
             acp::ContentBlock::Resource(resource) => match resource.resource {
                 acp::EmbeddedResourceResource::TextResourceContents(resource) => {
-                    match MentionUri::parse(&resource.uri) {
+                    match MentionUri::parse(&resource.uri, path_style) {
                         Ok(uri) => Self::Mention {
                             uri,
                             content: resource.text,

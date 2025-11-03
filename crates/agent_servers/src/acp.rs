@@ -9,9 +9,7 @@ use futures::io::BufReader;
 use project::Project;
 use project::agent_server_store::AgentServerCommand;
 use serde::Deserialize;
-use settings::{Settings as _, SettingsLocation};
-use task::Shell;
-use util::{ResultExt as _, get_default_system_shell_preferring_bash};
+use util::ResultExt as _;
 
 use std::path::PathBuf;
 use std::{any::Any, cell::RefCell};
@@ -23,7 +21,7 @@ use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task, WeakEntit
 
 use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
 use terminal::TerminalBuilder;
-use terminal::terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
+use terminal::terminal_settings::{AlternateScroll, CursorShape};
 
 #[derive(Debug, Error)]
 #[error("Unsupported version")]
@@ -40,7 +38,7 @@ pub struct AcpConnection {
     // NB: Don't move this into the wait_task, since we need to ensure the process is
     // killed on drop (setting kill_on_drop on the command seems to not always work).
     child: smol::process::Child,
-    _io_task: Task<Result<()>>,
+    _io_task: Task<Result<(), acp::Error>>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
 }
@@ -106,6 +104,14 @@ impl AcpConnection {
         log::trace!("Spawned (pid: {})", child.id());
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
+
+        let (release_channel, version) = cx.update(|cx| {
+            (
+                release_channel::ReleaseChannel::try_global(cx)
+                    .map(|release_channel| release_channel.display_name()),
+                release_channel::AppVersion::global(cx).to_string(),
+            )
+        })?;
 
         let client = ClientDelegate {
             sessions: sessions.clone(),
@@ -174,6 +180,11 @@ impl AcpConnection {
                         "terminal_output": true,
                     })),
                 },
+                client_info: Some(acp::Implementation {
+                    name: "zed".to_owned(),
+                    title: release_channel.map(|c| c.to_owned()),
+                    version,
+                }),
                 meta: None,
             })
             .await?;
@@ -702,7 +713,11 @@ impl acp::Client for ClientDelegate {
             .get(&notification.session_id)
             .context("Failed to get session")?;
 
-        if let acp::SessionUpdate::CurrentModeUpdate { current_mode_id } = &notification.update {
+        if let acp::SessionUpdate::CurrentModeUpdate(acp::CurrentModeUpdate {
+            current_mode_id,
+            ..
+        }) = &notification.update
+        {
             if let Some(session_modes) = &session.session_modes {
                 session_modes.borrow_mut().current_mode_id = current_mode_id.clone();
             } else {
@@ -816,62 +831,18 @@ impl acp::Client for ClientDelegate {
         let thread = self.session_thread(&args.session_id)?;
         let project = thread.read_with(&self.cx, |thread, _cx| thread.project().clone())?;
 
-        let mut env = if let Some(dir) = &args.cwd {
-            project
-                .update(&mut self.cx.clone(), |project, cx| {
-                    let worktree = project.find_worktree(dir.as_path(), cx);
-                    let shell = TerminalSettings::get(
-                        worktree.as_ref().map(|(worktree, path)| SettingsLocation {
-                            worktree_id: worktree.read(cx).id(),
-                            path: &path,
-                        }),
-                        cx,
-                    )
-                    .shell
-                    .clone();
-                    project.directory_environment(&shell, dir.clone().into(), cx)
-                })?
-                .await
-                .unwrap_or_default()
-        } else {
-            Default::default()
-        };
-        // Disables paging for `git` and hopefully other commands
-        env.insert("PAGER".into(), "".into());
-        for var in args.env {
-            env.insert(var.name, var.value);
-        }
-
-        // Use remote shell or default system shell, as appropriate
-        let shell = project
-            .update(&mut self.cx.clone(), |project, cx| {
-                project
-                    .remote_client()
-                    .and_then(|r| r.read(cx).default_system_shell())
-                    .map(Shell::Program)
-            })?
-            .unwrap_or_else(|| Shell::Program(get_default_system_shell_preferring_bash()));
-        let is_windows = project
-            .read_with(&self.cx, |project, cx| project.path_style(cx).is_windows())
-            .unwrap_or(cfg!(windows));
-        let (task_command, task_args) = task::ShellBuilder::new(&shell, is_windows)
-            .redirect_stdin_to_dev_null()
-            .build(Some(args.command.clone()), &args.args);
-
-        let terminal_entity = project
-            .update(&mut self.cx.clone(), |project, cx| {
-                project.create_terminal_task(
-                    task::SpawnInTerminal {
-                        command: Some(task_command),
-                        args: task_args,
-                        cwd: args.cwd.clone(),
-                        env,
-                        ..Default::default()
-                    },
-                    cx,
-                )
-            })?
-            .await?;
+        let terminal_entity = acp_thread::create_terminal_entity(
+            args.command.clone(),
+            &args.args,
+            args.env
+                .into_iter()
+                .map(|env| (env.name, env.value))
+                .collect(),
+            args.cwd.clone(),
+            &project,
+            &mut self.cx.clone(),
+        )
+        .await?;
 
         // Register with renderer
         let terminal_entity = thread.update(&mut self.cx.clone(), |thread, cx| {

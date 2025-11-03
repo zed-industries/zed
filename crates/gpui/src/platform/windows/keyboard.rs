@@ -9,7 +9,6 @@ use windows::Win32::UI::{
     },
     WindowsAndMessaging::KL_NAMELENGTH,
 };
-use windows_core::HSTRING;
 
 use crate::{
     KeybindingKeystroke, Keystroke, Modifiers, PlatformKeyboardLayout, PlatformKeyboardMapper,
@@ -93,14 +92,13 @@ impl PlatformKeyboardMapper for WindowsKeyboardMapper {
 
 impl WindowsKeyboardLayout {
     pub(crate) fn new() -> Result<Self> {
-        let mut buffer = [0u16; KL_NAMELENGTH as usize];
+        let mut buffer = [0u16; KL_NAMELENGTH as usize]; // KL_NAMELENGTH includes the null terminator
         unsafe { GetKeyboardLayoutNameW(&mut buffer)? };
-        let id = HSTRING::from_wide(&buffer).to_string();
+        let id = String::from_utf16_lossy(&buffer[..buffer.len() - 1]); // Remove the null terminator
         let entry = windows_registry::LOCAL_MACHINE.open(format!(
-            "System\\CurrentControlSet\\Control\\Keyboard Layouts\\{}",
-            id
+            "System\\CurrentControlSet\\Control\\Keyboard Layouts\\{id}"
         ))?;
-        let name = entry.get_hstring("Layout Text")?.to_string();
+        let name = entry.get_string("Layout Text")?;
         Ok(Self { id, name })
     }
 
@@ -135,6 +133,7 @@ impl WindowsKeyboardLayout {
                 b"0405" | // Czech
                 b"040E" | // Hungarian
                 b"0424" | // Slovenian
+                b"041A" | // Croatian
                 b"041B" | // Slovak
                 b"0418" // Romanian
             )

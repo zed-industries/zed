@@ -82,6 +82,8 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub context_servers: BTreeMap<Arc<str>, ContextServerManifestEntry>,
     #[serde(default)]
+    pub agent_servers: BTreeMap<Arc<str>, AgentServerManifestEntry>,
+    #[serde(default)]
     pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
     #[serde(default)]
     pub snippets: Option<PathBuf>,
@@ -136,6 +138,48 @@ pub fn build_debug_adapter_schema_path(
 pub struct LibManifestEntry {
     pub kind: Option<ExtensionLibraryKind>,
     pub version: Option<SemanticVersion>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct AgentServerManifestEntry {
+    /// Display name for the agent (shown in menus).
+    pub name: String,
+    /// Environment variables to set when launching the agent server.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    /// Optional icon path (relative to extension root, e.g., "ai.svg").
+    /// Should be a small SVG icon for display in menus.
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// Per-target configuration for archive-based installation.
+    /// The key format is "{os}-{arch}" where:
+    /// - os: "darwin" (macOS), "linux", "windows"
+    /// - arch: "aarch64" (arm64), "x86_64"
+    ///
+    /// Example:
+    /// ```toml
+    /// [agent_servers.myagent.targets.darwin-aarch64]
+    /// archive = "https://example.com/myagent-darwin-arm64.zip"
+    /// cmd = "./myagent"
+    /// args = ["--serve"]
+    /// sha256 = "abc123..."  # optional
+    /// ```
+    pub targets: HashMap<String, TargetConfig>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct TargetConfig {
+    /// URL to download the archive from (e.g., "https://github.com/owner/repo/releases/download/v1.0.0/myagent-darwin-arm64.zip")
+    pub archive: String,
+    /// Command to run (e.g., "./myagent" or "./myagent.exe")
+    pub cmd: String,
+    /// Command-line arguments to pass to the agent server.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Optional SHA-256 hash of the archive for verification.
+    /// If not provided and the URL is a GitHub release, we'll attempt to fetch it from GitHub.
+    #[serde(default)]
+    pub sha256: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -266,6 +310,7 @@ fn manifest_from_old_manifest(
             .collect(),
         language_servers: Default::default(),
         context_servers: BTreeMap::default(),
+        agent_servers: BTreeMap::default(),
         slash_commands: BTreeMap::default(),
         snippets: None,
         capabilities: Vec::new(),
@@ -298,6 +343,7 @@ mod tests {
             grammars: BTreeMap::default(),
             language_servers: BTreeMap::default(),
             context_servers: BTreeMap::default(),
+            agent_servers: BTreeMap::default(),
             slash_commands: BTreeMap::default(),
             snippets: None,
             capabilities: vec![],
@@ -403,5 +449,32 @@ mod tests {
                 .is_ok()
         );
         assert!(manifest.allow_exec("docker", &["ps"]).is_err()); // wrong first arg
+    }
+    #[test]
+    fn parse_manifest_with_agent_server_archive_launcher() {
+        let toml_src = r#"
+id = "example.agent-server-ext"
+name = "Agent Server Example"
+version = "1.0.0"
+schema_version = 0
+
+[agent_servers.foo]
+name = "Foo Agent"
+
+[agent_servers.foo.targets.linux-x86_64]
+archive = "https://example.com/agent-linux-x64.tar.gz"
+cmd = "./agent"
+args = ["--serve"]
+"#;
+
+        let manifest: ExtensionManifest = toml::from_str(toml_src).expect("manifest should parse");
+        assert_eq!(manifest.id.as_ref(), "example.agent-server-ext");
+        assert!(manifest.agent_servers.contains_key("foo"));
+        let entry = manifest.agent_servers.get("foo").unwrap();
+        assert!(entry.targets.contains_key("linux-x86_64"));
+        let target = entry.targets.get("linux-x86_64").unwrap();
+        assert_eq!(target.archive, "https://example.com/agent-linux-x64.tar.gz");
+        assert_eq!(target.cmd, "./agent");
+        assert_eq!(target.args, vec!["--serve"]);
     }
 }

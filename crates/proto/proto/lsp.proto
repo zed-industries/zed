@@ -465,6 +465,8 @@ message ResolveInlayHintResponse {
 
 message RefreshInlayHints {
     uint64 project_id = 1;
+    uint64 server_id = 2;
+    optional uint64 request_id = 3;
 }
 
 message CodeLens {
@@ -551,23 +553,33 @@ message UpdateLanguageServer {
     }
 }
 
+message ProgressToken {
+    oneof value {
+        int32 number = 1;
+        string string = 2;
+    }
+}
+
 message LspWorkStart {
-    string token = 1;
+    reserved 1;
     optional string title = 4;
     optional string message = 2;
     optional uint32 percentage = 3;
     optional bool is_cancellable = 5;
+    ProgressToken token = 6;
 }
 
 message LspWorkProgress {
-    string token = 1;
+    reserved 1;
     optional string message = 2;
     optional uint32 percentage = 3;
     optional bool is_cancellable = 4;
+    ProgressToken token = 5;
 }
 
 message LspWorkEnd {
-    string token = 1;
+    reserved 1;
+    ProgressToken token = 2;
 }
 
 message LspDiskBasedDiagnosticsUpdating {}
@@ -707,7 +719,8 @@ message CancelLanguageServerWork {
 
     message LanguageServerWork {
         uint64 language_server_id = 1;
-        optional string token = 2;
+        reserved 2;
+        optional ProgressToken token = 3;
     }
 }
 
@@ -781,6 +794,7 @@ message TextEdit {
 message LspQuery {
     uint64 project_id = 1;
     uint64 lsp_request_id = 2;
+    optional uint64 server_id = 15;
     oneof request {
         GetReferences get_references = 3;
         GetDocumentColor get_document_color = 4;
@@ -793,6 +807,7 @@ message LspQuery {
         GetDeclaration get_declaration = 11;
         GetTypeDefinition get_type_definition = 12;
         GetImplementation get_implementation = 13;
+        InlayHints inlay_hints = 14;
     }
 }
 
@@ -815,6 +830,7 @@ message LspResponse {
         GetTypeDefinitionResponse get_type_definition_response = 10;
         GetImplementationResponse get_implementation_response = 11;
         GetReferencesResponse get_references_response = 12;
+        InlayHintsResponse inlay_hints_response = 13;
     }
     uint64 server_id = 7;
 }

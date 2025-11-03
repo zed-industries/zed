@@ -1,12 +1,13 @@
 use super::*;
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
-use gpui::{App, TestAppContext};
+use gpui::{App, BackgroundExecutor, TestAppContext};
 use indoc::indoc;
 use language::{Buffer, Rope};
 use parking_lot::RwLock;
 use rand::prelude::*;
 use settings::SettingsStore;
 use std::env;
+use std::time::{Duration, Instant};
 use util::RandomCharIter;
 use util::rel_path::rel_path;
 use util::test::sample_text;
@@ -78,7 +79,14 @@ fn test_remote(cx: &mut App) {
         let ops = cx
             .background_executor()
             .block(host_buffer.read(cx).serialize_ops(None, cx));
-        let mut buffer = Buffer::from_proto(1, Capability::ReadWrite, state, None).unwrap();
+        let mut buffer = Buffer::from_proto(
+            ReplicaId::REMOTE_SERVER,
+            Capability::ReadWrite,
+            state,
+            None,
+            cx.background_executor(),
+        )
+        .unwrap();
         buffer.apply_ops(
             ops.into_iter()
                 .map(|op| language::proto::deserialize_operation(op).unwrap()),
@@ -1221,7 +1229,7 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
     assert_chunks_in_ranges(&snapshot);
     assert_consistent_line_numbers(&snapshot);
     assert_position_translation(&snapshot);
-    assert_line_indents(&snapshot);
+    assert_line_indents(&snapshot, cx.background_executor());
 
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
@@ -1245,7 +1253,7 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
     assert_chunks_in_ranges(&snapshot);
     assert_consistent_line_numbers(&snapshot);
     assert_position_translation(&snapshot);
-    assert_line_indents(&snapshot);
+    assert_line_indents(&snapshot, cx.background_executor());
 
     // Expand the first diff hunk
     multibuffer.update(cx, |multibuffer, cx| {
@@ -1297,7 +1305,7 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
     assert_chunks_in_ranges(&snapshot);
     assert_consistent_line_numbers(&snapshot);
     assert_position_translation(&snapshot);
-    assert_line_indents(&snapshot);
+    assert_line_indents(&snapshot, cx.background_executor());
 
     // Edit the buffer before the first hunk
     buffer.update(cx, |buffer, cx| {
@@ -1339,7 +1347,7 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
     assert_chunks_in_ranges(&snapshot);
     assert_consistent_line_numbers(&snapshot);
     assert_position_translation(&snapshot);
-    assert_line_indents(&snapshot);
+    assert_line_indents(&snapshot, cx.background_executor());
 
     // Recalculate the diff, changing the first diff hunk.
     diff.update(cx, |diff, cx| {
@@ -2064,7 +2072,7 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
     }
 
     assert_position_translation(&snapshot);
-    assert_line_indents(&snapshot);
+    assert_line_indents(&snapshot, cx.background_executor());
 
     assert_eq!(
         snapshot
@@ -2115,7 +2123,7 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
         ),
     );
 
-    assert_line_indents(&snapshot);
+    assert_line_indents(&snapshot, cx.background_executor());
 }
 
 /// A naive implementation of a multi-buffer that does not maintain
@@ -2885,7 +2893,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             );
         }
 
-        let text_rope = Rope::from(expected_text.as_str());
+        let text_rope = Rope::from_str(expected_text.as_str(), cx.background_executor());
         for _ in 0..10 {
             let end_ix = text_rope.clip_offset(rng.random_range(0..=text_rope.len()), Bias::Right);
             let start_ix = text_rope.clip_offset(rng.random_range(0..=end_ix), Bias::Left);
@@ -2982,7 +2990,7 @@ fn test_history(cx: &mut App) {
     });
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |this, _| {
-        this.history.group_interval = group_interval;
+        this.set_group_interval(group_interval);
     });
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.push_excerpts(
@@ -3509,7 +3517,7 @@ fn assert_consistent_line_numbers(snapshot: &MultiBufferSnapshot) {
 
 #[track_caller]
 fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
-    let text = Rope::from(snapshot.text());
+    let text = Rope::from_str_small(&snapshot.text());
 
     let mut left_anchors = Vec::new();
     let mut right_anchors = Vec::new();
@@ -3633,10 +3641,10 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
     }
 }
 
-fn assert_line_indents(snapshot: &MultiBufferSnapshot) {
+fn assert_line_indents(snapshot: &MultiBufferSnapshot, executor: &BackgroundExecutor) {
     let max_row = snapshot.max_point().row;
     let buffer_id = snapshot.excerpts().next().unwrap().1.remote_id();
-    let text = text::Buffer::new(0, buffer_id, snapshot.text());
+    let text = text::Buffer::new(ReplicaId::LOCAL, buffer_id, snapshot.text(), executor);
     let mut line_indents = text
         .line_indents_in_row_range(0..max_row + 1)
         .collect::<Vec<_>>();

@@ -48,22 +48,8 @@ use util::rel_path::RelPath;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectSnapshot {
-    pub worktree_snapshots: Vec<WorktreeSnapshot>,
+    pub worktree_snapshots: Vec<project::telemetry_snapshot::TelemetryWorktreeSnapshot>,
     pub timestamp: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct WorktreeSnapshot {
-    pub worktree_path: String,
-    pub git_state: Option<GitState>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct GitState {
-    pub remote_url: Option<String>,
-    pub head_sha: Option<String>,
-    pub current_branch: Option<String>,
-    pub diff: Option<String>,
 }
 
 const RULES_FILE_NAMES: [&str; 9] = [
@@ -1049,12 +1035,13 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         let session_id = params.session_id.clone();
         log::info!("Received prompt request for session: {}", session_id);
         log::debug!("Prompt blocks count: {}", params.prompt.len());
+        let path_style = self.0.read(cx).project.read(cx).path_style(cx);
 
-        self.run_turn(session_id, cx, |thread, cx| {
+        self.run_turn(session_id, cx, move |thread, cx| {
             let content: Vec<UserMessageContent> = params
                 .prompt
                 .into_iter()
-                .map(Into::into)
+                .map(|block| UserMessageContent::from_content_block(block, path_style))
                 .collect::<Vec<_>>();
             log::debug!("Converted prompt to message: {} chars", content.len());
             log::debug!("Message id: {:?}", id);
@@ -1280,8 +1267,9 @@ mod internal_tests {
         )
         .await;
         let project = Project::test(fs.clone(), [], cx).await;
-        let context_store = cx.new(|cx| assistant_context::ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let text_thread_store =
+            cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
         let agent = NativeAgent::new(
             project.clone(),
             history_store,
@@ -1341,8 +1329,9 @@ mod internal_tests {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree("/", json!({ "a": {}  })).await;
         let project = Project::test(fs.clone(), [], cx).await;
-        let context_store = cx.new(|cx| assistant_context::ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let text_thread_store =
+            cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
         let connection = NativeAgentConnection(
             NativeAgent::new(
                 project.clone(),
@@ -1416,8 +1405,9 @@ mod internal_tests {
         .await;
         let project = Project::test(fs.clone(), [], cx).await;
 
-        let context_store = cx.new(|cx| assistant_context::ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let text_thread_store =
+            cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
 
         // Create the agent and connection
         let agent = NativeAgent::new(
@@ -1488,8 +1478,9 @@ mod internal_tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
-        let context_store = cx.new(|cx| assistant_context::ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let text_thread_store =
+            cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
         let agent = NativeAgent::new(
             project.clone(),
             history_store.clone(),

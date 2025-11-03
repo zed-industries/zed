@@ -259,7 +259,7 @@ impl VsCodeSettings {
             gutter: self.gutter_content(),
             hide_mouse: None,
             horizontal_scroll_margin: None,
-            hover_popover_delay: self.read_u64("editor.hover.delay"),
+            hover_popover_delay: self.read_u64("editor.hover.delay").map(Into::into),
             hover_popover_enabled: self.read_bool("editor.hover.enabled"),
             inline_code_actions: None,
             jupyter: None,
@@ -635,6 +635,7 @@ impl VsCodeSettings {
             show: self.read_bool("workbench.statusBar.visible"),
             active_language_button: None,
             cursor_position_button: None,
+            line_endings_button: None,
         })
     }
 
@@ -791,7 +792,8 @@ impl VsCodeSettings {
                     milliseconds: self
                         .read_value("files.autoSaveDelay")
                         .and_then(|v| v.as_u64())
-                        .unwrap_or(1000),
+                        .unwrap_or(1000)
+                        .into(),
                 }),
                 "onFocusChange" => Some(AutosaveSetting::OnFocusChange),
                 "onWindowChange" => Some(AutosaveSetting::OnWindowChange),
@@ -852,7 +854,8 @@ impl VsCodeSettings {
 
     fn worktree_settings_content(&self) -> WorktreeSettingsContent {
         WorktreeSettingsContent {
-            project_name: None,
+            project_name: crate::Maybe::Unset,
+            prevent_sharing_in_public_channels: false,
             file_scan_exclusions: self
                 .read_value("files.watcherExclude")
                 .and_then(|v| v.as_array())

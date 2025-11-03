@@ -21,6 +21,10 @@ We’re working hard to expand the models supported by Zed’s subscription offe
 |                        | Anthropic | Output              | $15.00                       | $16.50                  |
 |                        | Anthropic | Input - Cache Write | $3.75                        | $4.125                  |
 |                        | Anthropic | Input - Cache Read  | $0.30                        | $0.33                   |
+| Claude Haiku 4.5       | Anthropic | Input               | $1.00                        | $1.10                   |
+|                        | Anthropic | Output              | $5.00                        | $5.50                   |
+|                        | Anthropic | Input - Cache Write | $1.25                        | $1.375                  |
+|                        | Anthropic | Input - Cache Read  | $0.10                        | $0.11                   |
 | GPT-5                  | OpenAI    | Input               | $1.25                        | $1.375                  |
 |                        | OpenAI    | Output              | $10.00                       | $11.00                  |
 |                        | OpenAI    | Cached Input        | $0.125                       | $0.1375                 |
@@ -62,6 +66,7 @@ A context window is the maximum span of text and code an LLM can consider at onc
 | Claude Opus 4.1   | Anthropic | 200k                      |
 | Claude Sonnet 4   | Anthropic | 200k                      |
 | Claude Sonnet 3.7 | Anthropic | 200k                      |
+| Claude Haiku 4.5  | Anthropic | 200k                      |
 | GPT-5             | OpenAI    | 400k                      |
 | GPT-5 mini        | OpenAI    | 400k                      |
 | GPT-5 nano        | OpenAI    | 400k                      |

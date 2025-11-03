@@ -10,12 +10,18 @@
     }
   },
   {
+    // Workaround to avoid falling back to default bindings.
+    // Unbind so Zed ignores these keys and lets emacs handle them.
+    // NOTE: must be declared before the `Editor` override.
     "context": "Editor",
     "bindings": {
-      "alt-x": "command_palette::Toggle",
+      "ctrl-g": null // currently activates `go_to_line::Toggle` when there is nothing to cancel
+    }
+  },
+  {
+    "context": "Editor",
+    "bindings": {
       "ctrl-g": "editor::Cancel",
-      "ctrl-x b": "tab_switcher::Toggle", // switch-to-buffer
-      "ctrl-x ctrl-b": "tab_switcher::Toggle", // list-buffers
       "alt-g g": "go_to_line::Toggle", // goto-line
       "alt-g alt-g": "go_to_line::Toggle", // goto-line
       "ctrl-space": "editor::SetMark", // set-mark
@@ -34,8 +40,8 @@
       "alt-m": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": false, "stop_at_indent": true }], // back-to-indentation
       "alt-left": "editor::MoveToPreviousWordStart", // left-word
       "alt-right": "editor::MoveToNextWordEnd", // right-word
-      "alt-f": "editor::MoveToNextSubwordEnd", // forward-word
-      "alt-b": "editor::MoveToPreviousSubwordStart", // backward-word
+      "alt-f": "editor::MoveToNextWordEnd", // forward-word
+      "alt-b": "editor::MoveToPreviousWordStart", // backward-word
       "alt-u": "editor::ConvertToUpperCase", // upcase-word
       "alt-l": "editor::ConvertToLowerCase", // downcase-word
       "alt-c": "editor::ConvertToUpperCamelCase", // capitalize-word
@@ -99,7 +105,7 @@
       "ctrl-e": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": false }],
       "alt-m": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": false, "stop_at_indent": true }],
       "alt-f": "editor::SelectToNextWordEnd",
-      "alt-b": "editor::SelectToPreviousSubwordStart",
+      "alt-b": "editor::SelectToPreviousWordStart",
       "alt-{": "editor::SelectToStartOfParagraph",
       "alt-}": "editor::SelectToEndOfParagraph",
       "ctrl-up": "editor::SelectToStartOfParagraph",
@@ -127,15 +133,28 @@
       "ctrl-n": "editor::SignatureHelpNext"
     }
   },
+  // Example setting for using emacs-style tab
+  // (i.e. indent the current line / selection or perform symbol completion depending on context)
+  // {
+  //   "context": "Editor && !showing_code_actions && !showing_completions",
+  //   "bindings": {
+  //     "tab": "editor::AutoIndent" // indent-for-tab-command
+  //   }
+  // },
   {
     "context": "Workspace",
     "bindings": {
+      "alt-x": "command_palette::Toggle", // execute-extended-command
+      "ctrl-x b": "tab_switcher::Toggle", // switch-to-buffer
+      "ctrl-x ctrl-b": "tab_switcher::Toggle", // list-buffers
+      // "ctrl-x ctrl-c": "workspace::CloseWindow" // in case you only want to exit the current Zed instance
       "ctrl-x ctrl-c": "zed::Quit", // save-buffers-kill-terminal
       "ctrl-x 5 0": "workspace::CloseWindow", // delete-frame
       "ctrl-x 5 2": "workspace::NewWindow", // make-frame-command
       "ctrl-x o": "workspace::ActivateNextPane", // other-window
       "ctrl-x k": "pane::CloseActiveItem", // kill-buffer
       "ctrl-x 0": "pane::CloseActiveItem", // delete-window
+      // "ctrl-x 1": "pane::JoinAll", // in case you prefer to delete the splits but keep the buffers open
       "ctrl-x 1": "pane::CloseOtherItems", // delete-other-windows
       "ctrl-x 2": "pane::SplitDown", // split-window-below
       "ctrl-x 3": "pane::SplitRight", // split-window-right
@@ -146,10 +165,19 @@
     }
   },
   {
-    // Workaround to enable using emacs in the Zed terminal.
+    // Workaround to enable using native emacs from the Zed terminal.
     // Unbind so Zed ignores these keys and lets emacs handle them.
+    // NOTE:
+    //  "terminal::SendKeystroke" only works for a single key stroke (e.g. ctrl-x),
+    //  so override with null for compound sequences (e.g. ctrl-x ctrl-c).
     "context": "Terminal",
     "bindings": {
+      // If you want to perfect your emacs-in-zed setup, also consider the following.
+      // You may need to enable "option_as_meta" from the Zed settings for "alt-x" to work.
+      // "alt-x": ["terminal::SendKeystroke", "alt-x"],
+      // "ctrl-x": ["terminal::SendKeystroke", "ctrl-x"],
+      // "ctrl-n": ["terminal::SendKeystroke", "ctrl-n"],
+      // ...
       "ctrl-x ctrl-c": null, // save-buffers-kill-terminal
       "ctrl-x ctrl-f": null, // find-file
       "ctrl-x ctrl-s": null, // save-buffer

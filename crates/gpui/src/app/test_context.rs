@@ -393,6 +393,11 @@ impl TestAppContext {
         }
     }
 
+    /// Returns the background executor for this context.
+    pub fn background_executor(&self) -> &BackgroundExecutor {
+        &self.background_executor
+    }
+
     /// Wait until there are no more pending tasks.
     pub fn run_until_parked(&mut self) {
         self.background_executor.run_until_parked()
@@ -455,7 +460,7 @@ impl TestAppContext {
             .windows
             .get_mut(window.id)
             .unwrap()
-            .as_mut()
+            .as_deref_mut()
             .unwrap()
             .platform_window
             .as_test()
@@ -836,7 +841,7 @@ impl VisualTestContext {
         })
     }
 
-    /// Simulate an event from the platform, e.g. a SrollWheelEvent
+    /// Simulate an event from the platform, e.g. a ScrollWheelEvent
     /// Make sure you've called [VisualTestContext::draw] first!
     pub fn simulate_event<E: InputEvent>(&mut self, event: E) {
         self.test_window(self.window)

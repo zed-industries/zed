@@ -169,7 +169,9 @@ impl WindowsWindowState {
                 length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
                 ..Default::default()
             };
-            GetWindowPlacement(self.hwnd, &mut placement).log_err();
+            GetWindowPlacement(self.hwnd, &mut placement)
+                .context("failed to get window placement")
+                .log_err();
             placement
         };
         (
@@ -254,7 +256,9 @@ impl WindowsWindowInner {
                     lock.fullscreen_restore_bounds = window_bounds;
                     let style = WINDOW_STYLE(unsafe { get_window_long(this.hwnd, GWL_STYLE) } as _);
                     let mut rc = RECT::default();
-                    unsafe { GetWindowRect(this.hwnd, &mut rc) }.log_err();
+                    unsafe { GetWindowRect(this.hwnd, &mut rc) }
+                        .context("failed to get window rect")
+                        .log_err();
                     let _ = lock.fullscreen.insert(StyleAndBounds {
                         style,
                         x: rc.left,
@@ -301,15 +305,20 @@ impl WindowsWindowInner {
         };
         match open_status.state {
             WindowOpenState::Maximized => unsafe {
-                SetWindowPlacement(self.hwnd, &open_status.placement)?;
+                SetWindowPlacement(self.hwnd, &open_status.placement)
+                    .context("failed to set window placement")?;
                 ShowWindowAsync(self.hwnd, SW_MAXIMIZE).ok()?;
             },
             WindowOpenState::Fullscreen => {
-                unsafe { SetWindowPlacement(self.hwnd, &open_status.placement)? };
+                unsafe {
+                    SetWindowPlacement(self.hwnd, &open_status.placement)
+                        .context("failed to set window placement")?
+                };
                 self.toggle_fullscreen();
             }
             WindowOpenState::Windowed => unsafe {
-                SetWindowPlacement(self.hwnd, &open_status.placement)?;
+                SetWindowPlacement(self.hwnd, &open_status.placement)
+                    .context("failed to set window placement")?;
             },
         }
         Ok(())

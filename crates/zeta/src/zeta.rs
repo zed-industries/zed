@@ -1581,7 +1581,7 @@ fn guess_token_count(bytes: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use client::test::FakeServer;
-    use clock::FakeSystemClock;
+    use clock::{FakeSystemClock, ReplicaId};
     use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
@@ -1836,12 +1836,13 @@ mod tests {
         let fs = project::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
 
-        let buffer = cx.new(|_cx| {
+        let buffer = cx.new(|cx| {
             Buffer::remote(
                 language::BufferId::new(1).unwrap(),
-                1,
+                ReplicaId::new(1),
                 language::Capability::ReadWrite,
                 "fn main() {\n    println!(\"Hello\");\n}",
+                cx.background_executor(),
             )
         });
 

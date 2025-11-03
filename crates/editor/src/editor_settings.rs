@@ -5,7 +5,7 @@ use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 use settings::Settings;
 pub use settings::{
-    CurrentLineHighlight, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer,
+    CurrentLineHighlight, DelayMs, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer,
     GoToDefinitionFallback, HideMouseMode, MinimapThumb, MinimapThumbBorder, MultiCursorModifier,
     ScrollBeyondLastLine, ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
 };
@@ -20,9 +20,9 @@ pub struct EditorSettings {
     pub current_line_highlight: CurrentLineHighlight,
     pub selection_highlight: bool,
     pub rounded_selection: bool,
-    pub lsp_highlight_debounce: u64,
+    pub lsp_highlight_debounce: DelayMs,
     pub hover_popover_enabled: bool,
-    pub hover_popover_delay: u64,
+    pub hover_popover_delay: DelayMs,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub minimap: Minimap,
@@ -147,7 +147,7 @@ pub struct DragAndDropSelection {
     /// The delay in milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
     ///
     /// Default: 300
-    pub delay: u64,
+    pub delay: DelayMs,
 }
 
 /// Default options for buffer and project search items.
@@ -159,6 +159,7 @@ pub struct SearchSettings {
     pub case_sensitive: bool,
     pub include_ignored: bool,
     pub regex: bool,
+    pub center_on_match: bool,
 }
 
 impl EditorSettings {
@@ -249,6 +250,7 @@ impl Settings for EditorSettings {
                 case_sensitive: search.case_sensitive.unwrap(),
                 include_ignored: search.include_ignored.unwrap(),
                 regex: search.regex.unwrap(),
+                center_on_match: search.center_on_match.unwrap(),
             },
             auto_signature_help: editor.auto_signature_help.unwrap(),
             show_signature_help_after_edits: editor.show_signature_help_after_edits.unwrap(),

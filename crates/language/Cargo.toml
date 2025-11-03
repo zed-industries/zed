@@ -20,7 +20,6 @@ test-support = [
     "text/test-support",
     "tree-sitter-rust",
     "tree-sitter-python",
-    "tree-sitter-rust",
     "tree-sitter-typescript",
     "settings/test-support",
     "util/test-support",
@@ -67,6 +66,7 @@ tree-sitter.workspace = true
 unicase = "2.6"
 util.workspace = true
 watch.workspace = true
+zlog.workspace = true
 diffy = "0.4.2"
 
 [dev-dependencies]

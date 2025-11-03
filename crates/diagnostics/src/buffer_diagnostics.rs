@@ -1,5 +1,5 @@
 use crate::{
-    DIAGNOSTICS_UPDATE_DELAY, IncludeWarnings, ToggleWarnings, context_range_for_entry,
+    DIAGNOSTICS_UPDATE_DEBOUNCE, IncludeWarnings, ToggleWarnings, context_range_for_entry,
     diagnostic_renderer::{DiagnosticBlock, DiagnosticRenderer},
     toolbar_controls::DiagnosticsToolbarEditor,
 };
@@ -283,7 +283,7 @@ impl BufferDiagnosticsEditor {
 
         self.update_excerpts_task = Some(cx.spawn_in(window, async move |editor, cx| {
             cx.background_executor()
-                .timer(DIAGNOSTICS_UPDATE_DELAY)
+                .timer(DIAGNOSTICS_UPDATE_DEBOUNCE)
                 .await;
 
             if let Some(buffer) = buffer {
@@ -688,16 +688,20 @@ impl Item for BufferDiagnosticsEditor {
         true
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| {
+        Task::ready(Some(cx.new(|cx| {
             BufferDiagnosticsEditor::new(
                 self.project_path.clone(),
                 self.project.clone(),
@@ -706,7 +710,7 @@ impl Item for BufferDiagnosticsEditor {
                 window,
                 cx,
             )
-        }))
+        })))
     }
 
     fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -932,10 +936,6 @@ impl DiagnosticsToolbarEditor for WeakEntity<BufferDiagnosticsEditor> {
             buffer_diagnostics_editor.include_warnings
         })
         .unwrap_or(false)
-    }
-
-    fn has_stale_excerpts(&self, _cx: &App) -> bool {
-        false
     }
 
     fn is_updating(&self, cx: &App) -> bool {

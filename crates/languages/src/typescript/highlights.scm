@@ -122,6 +122,15 @@
 ; Tokens
 
 [
+  ";"
+  "?."
+  "."
+  ","
+  ":"
+  "?"
+] @punctuation.delimiter
+
+[
   "..."
   "-"
   "--"
@@ -180,15 +189,6 @@
 )
 
 [
-  ";"
-  "?."
-  "."
-  ","
-  ":"
-  "?"
-] @punctuation.delimiter
-
-[
   "("
   ")"
   "["
@@ -218,27 +218,18 @@
   "as"
   "async"
   "await"
-  "break"
-  "case"
-  "catch"
   "class"
   "const"
-  "continue"
   "debugger"
   "declare"
   "default"
   "delete"
-  "do"
-  "else"
   "enum"
   "export"
   "extends"
-  "finally"
-  "for"
   "from"
   "function"
   "get"
-  "if"
   "implements"
   "import"
   "in"
@@ -257,20 +248,34 @@
   "protected"
   "public"
   "readonly"
-  "return"
   "satisfies"
   "set"
   "static"
-  "switch"
   "target"
-  "throw"
-  "try"
   "type"
   "typeof"
   "using"
   "var"
   "void"
-  "while"
   "with"
-  "yield"
 ] @keyword
+
+[
+  "break"
+  "case"
+  "catch"
+  "continue"
+  "do"
+  "else"
+  "finally"
+  "for"
+  "if"
+  "return"
+  "switch"
+  "throw"
+  "try"
+  "while"
+  "yield"
+] @keyword.control
+
+(switch_default "default" @keyword.control)

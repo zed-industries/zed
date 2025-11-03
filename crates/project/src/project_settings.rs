@@ -331,7 +331,7 @@ pub struct InlineBlameSettings {
     /// after a delay once the cursor stops moving.
     ///
     /// Default: 0
-    pub delay_ms: std::time::Duration,
+    pub delay_ms: settings::DelayMs,
     /// The amount of padding between the end of the source line and the start
     /// of the inline blame in units of columns.
     ///
@@ -357,8 +357,8 @@ pub struct BlameSettings {
 
 impl GitSettings {
     pub fn inline_blame_delay(&self) -> Option<Duration> {
-        if self.inline_blame.delay_ms.as_millis() > 0 {
-            Some(self.inline_blame.delay_ms)
+        if self.inline_blame.delay_ms.0 > 0 {
+            Some(Duration::from_millis(self.inline_blame.delay_ms.0))
         } else {
             None
         }
@@ -452,7 +452,7 @@ impl Settings for ProjectSettings {
                 let inline = git.inline_blame.unwrap();
                 InlineBlameSettings {
                     enabled: inline.enabled.unwrap(),
-                    delay_ms: std::time::Duration::from_millis(inline.delay_ms.unwrap()),
+                    delay_ms: inline.delay_ms.unwrap(),
                     padding: inline.padding.unwrap(),
                     min_column: inline.min_column.unwrap(),
                     show_commit_summary: inline.show_commit_summary.unwrap(),
@@ -504,11 +504,11 @@ impl Settings for ProjectSettings {
                 include_warnings: diagnostics.include_warnings.unwrap(),
                 lsp_pull_diagnostics: LspPullDiagnosticsSettings {
                     enabled: lsp_pull_diagnostics.enabled.unwrap(),
-                    debounce_ms: lsp_pull_diagnostics.debounce_ms.unwrap(),
+                    debounce_ms: lsp_pull_diagnostics.debounce_ms.unwrap().0,
                 },
                 inline: InlineDiagnosticsSettings {
                     enabled: inline_diagnostics.enabled.unwrap(),
-                    update_debounce_ms: inline_diagnostics.update_debounce_ms.unwrap(),
+                    update_debounce_ms: inline_diagnostics.update_debounce_ms.unwrap().0,
                     padding: inline_diagnostics.padding.unwrap(),
                     min_column: inline_diagnostics.min_column.unwrap(),
                     max_severity: inline_diagnostics.max_severity.map(Into::into),
@@ -728,6 +728,7 @@ impl SettingsObserver {
         cx.update_global(|settings_store: &mut SettingsStore, cx| {
             settings_store
                 .set_user_settings(&envelope.payload.contents, cx)
+                .result()
                 .context("setting new user settings")?;
             anyhow::Ok(())
         })??;

@@ -509,10 +509,11 @@ impl StateInner {
         if self.alignment == ListAlignment::Bottom && new_scroll_top == scroll_max {
             self.logical_scroll_top = None;
         } else {
-            let mut cursor = self.items.cursor::<ListItemSummary>(());
-            cursor.seek(&Height(new_scroll_top), Bias::Right);
-            let item_ix = cursor.start().count;
-            let offset_in_item = new_scroll_top - cursor.start().height;
+            let (start, ..) =
+                self.items
+                    .find::<ListItemSummary, _>((), &Height(new_scroll_top), Bias::Right);
+            let item_ix = start.count;
+            let offset_in_item = new_scroll_top - start.height;
             self.logical_scroll_top = Some(ListOffset {
                 item_ix,
                 offset_in_item,
@@ -550,9 +551,12 @@ impl StateInner {
     }
 
     fn scroll_top(&self, logical_scroll_top: &ListOffset) -> Pixels {
-        let mut cursor = self.items.cursor::<ListItemSummary>(());
-        cursor.seek(&Count(logical_scroll_top.item_ix), Bias::Right);
-        cursor.start().height + logical_scroll_top.offset_in_item
+        let (start, ..) = self.items.find::<ListItemSummary, _>(
+            (),
+            &Count(logical_scroll_top.item_ix),
+            Bias::Right,
+        );
+        start.height + logical_scroll_top.offset_in_item
     }
 
     fn layout_all_items(
@@ -882,11 +886,12 @@ impl StateInner {
         if self.alignment == ListAlignment::Bottom && new_scroll_top == scroll_max {
             self.logical_scroll_top = None;
         } else {
-            let mut cursor = self.items.cursor::<ListItemSummary>(());
-            cursor.seek(&Height(new_scroll_top), Bias::Right);
+            let (start, _, _) =
+                self.items
+                    .find::<ListItemSummary, _>((), &Height(new_scroll_top), Bias::Right);
 
-            let item_ix = cursor.start().count;
-            let offset_in_item = new_scroll_top - cursor.start().height;
+            let item_ix = start.count;
+            let offset_in_item = new_scroll_top - start.height;
             self.logical_scroll_top = Some(ListOffset {
                 item_ix,
                 offset_in_item,
