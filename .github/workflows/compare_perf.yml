@@ -24,12 +24,12 @@ jobs:
       run: echo ${{ inputs.base }} ${{ inputs.head }}
       shell: bash -euxo pipefail {0}
     - name: git checkout ${{ inputs.base }}
-      run: git checkout {ref_name}
+      run: git checkout ${{ inputs.base }}
     - name: compare_perf::run_perf::cargo_perf_test
       run: cargo perf-test -p gpui -- --json=${{ inputs.base }}
       shell: bash -euxo pipefail {0}
     - name: git checkout ${{ inputs.head }}
-      run: git checkout {ref_name}
+      run: git checkout ${{ inputs.head }}
     - name: compare_perf::run_perf::cargo_perf_test
       run: cargo perf-test -p gpui -- --json=${{ inputs.head }}
       shell: bash -euxo pipefail {0}

@@ -25,11 +25,12 @@ pub fn run_perf(base: &Input, head: &Input) -> NamedJob {
     }
 
     fn cargo_perf_test(ref_name: String) -> Step<Run> {
+        // TODO: vim not gpui, and ideally allow args
         named::bash(&format!("cargo perf-test -p gpui -- --json={ref_name}"))
     }
 
     fn git_checkout(ref_name: String) -> Step<Run> {
-        Step::new(&format!("git checkout {ref_name}")).run("git checkout {ref_name}")
+        Step::new(&format!("git checkout {ref_name}")).run(&format!("git checkout {ref_name}"))
     }
 
     fn compare_runs(head: String, base: String) -> Step<Run> {
