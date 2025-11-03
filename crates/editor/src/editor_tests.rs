@@ -3170,6 +3170,18 @@ async fn test_newline_yaml(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"
     test:
         - foo: bar
+        ˇ"});
+
+    // Array with objects and comment
+    cx.set_state(indoc! {"
+    test:
+        - foo: bar
+        - bar: # testˇ"});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+    test:
+        - foo: bar
+        - bar: # test
             ˇ"});
 
     // Array with objects (after second element)
@@ -3182,7 +3194,7 @@ async fn test_newline_yaml(cx: &mut TestAppContext) {
     test:
         - foo: bar
         - bar: foo
-            ˇ"});
+        ˇ"});
 
     // Array with strings (after first element)
     cx.set_state(indoc! {"
