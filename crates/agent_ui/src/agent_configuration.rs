@@ -29,7 +29,6 @@ use project::{
     agent_server_store::{AgentServerStore, CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
 };
-use rope::Rope;
 use settings::{Settings, SettingsStore, update_settings_file};
 use ui::{
     Button, ButtonStyle, Chip, CommonAnimationExt, ContextMenu, Disclosure, Divider, DividerColor,
@@ -1183,11 +1182,8 @@ async fn open_new_agent_servers_entry_in_settings_editor(
 ) -> Result<()> {
     let settings_editor = workspace
         .update_in(cx, |_, window, cx| {
-            create_and_open_local_file(paths::settings_file(), window, cx, |cx| {
-                Rope::from_str(
-                    &settings::initial_user_settings_content(),
-                    cx.background_executor(),
-                )
+            create_and_open_local_file(paths::settings_file(), window, cx, || {
+                settings::initial_user_settings_content().as_ref().into()
             })
         })?
         .await?

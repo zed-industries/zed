@@ -3096,7 +3096,6 @@ mod test {
     use indoc::indoc;
     use language::Point;
     use multi_buffer::MultiBufferRow;
-    use text::Rope;
 
     #[gpui::test]
     async fn test_start_end_of_paragraph(cx: &mut gpui::TestAppContext) {
@@ -3823,7 +3822,7 @@ mod test {
         cx.update_editor(|editor, _window, cx| {
             let range = editor.selections.newest_anchor().range();
             let inlay_text = "  field: int,\n  field2: string\n  field3: float";
-            let inlay = Inlay::edit_prediction(1, range.start, Rope::from_str_small(inlay_text));
+            let inlay = Inlay::edit_prediction(1, range.start, inlay_text);
             editor.splice_inlays(&[], vec![inlay], cx);
         });
 
@@ -3855,7 +3854,7 @@ mod test {
             let end_of_line =
                 snapshot.anchor_after(Point::new(0, snapshot.line_len(MultiBufferRow(0))));
             let inlay_text = " hint";
-            let inlay = Inlay::edit_prediction(1, end_of_line, Rope::from_str_small(inlay_text));
+            let inlay = Inlay::edit_prediction(1, end_of_line, inlay_text);
             editor.splice_inlays(&[], vec![inlay], cx);
         });
         cx.simulate_keystrokes("$");
@@ -3894,7 +3893,7 @@ mod test {
             // The empty line is at line 3 (0-indexed)
             let line_start = snapshot.anchor_after(Point::new(3, 0));
             let inlay_text = ": Vec<u32>";
-            let inlay = Inlay::edit_prediction(1, line_start, Rope::from_str_small(inlay_text));
+            let inlay = Inlay::edit_prediction(1, line_start, inlay_text);
             editor.splice_inlays(&[], vec![inlay], cx);
         });
 
@@ -3938,8 +3937,7 @@ mod test {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             let empty_line_start = snapshot.anchor_after(Point::new(2, 0));
             let inlay_text = ": i32";
-            let inlay =
-                Inlay::edit_prediction(2, empty_line_start, Rope::from_str_small(inlay_text));
+            let inlay = Inlay::edit_prediction(2, empty_line_start, inlay_text);
             editor.splice_inlays(&[], vec![inlay], cx);
         });
 

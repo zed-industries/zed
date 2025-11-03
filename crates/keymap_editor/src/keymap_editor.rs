@@ -22,7 +22,7 @@ use gpui::{
     ScrollWheelEvent, Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity,
     actions, anchored, deferred, div,
 };
-use language::{Language, LanguageConfig, Rope, ToOffset as _};
+use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{CompletionDisplayOptions, Project};
 use settings::{
@@ -2119,7 +2119,7 @@ impl RenderOnce for SyntaxHighlightedText {
 
         let highlights = self
             .language
-            .highlight_text(&Rope::from_str_small(text.as_ref()), 0..text.len());
+            .highlight_text(&text.as_ref().into(), 0..text.len());
         let mut runs = Vec::with_capacity(highlights.len());
         let mut offset = 0;
 

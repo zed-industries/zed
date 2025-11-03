@@ -305,20 +305,18 @@ impl SearchMatrix {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
     use indoc::indoc;
     use language::{BufferId, TextBuffer};
     use rand::prelude::*;
     use text::ReplicaId;
     use util::test::{generate_marked_text, marked_text_ranges};
 
-    #[gpui::test]
-    fn test_empty_query(cx: &mut gpui::TestAppContext) {
+    #[test]
+    fn test_empty_query() {
         let buffer = TextBuffer::new(
             ReplicaId::LOCAL,
             BufferId::new(1).unwrap(),
             "Hello world\nThis is a test\nFoo bar baz",
-            cx.background_executor(),
         );
         let snapshot = buffer.snapshot();
 
@@ -327,13 +325,12 @@ mod tests {
         assert_eq!(finish(finder), None);
     }
 
-    #[gpui::test]
-    fn test_streaming_exact_match(cx: &mut gpui::TestAppContext) {
+    #[test]
+    fn test_streaming_exact_match() {
         let buffer = TextBuffer::new(
             ReplicaId::LOCAL,
             BufferId::new(1).unwrap(),
             "Hello world\nThis is a test\nFoo bar baz",
-            cx.background_executor(),
         );
         let snapshot = buffer.snapshot();
 
@@ -352,8 +349,8 @@ mod tests {
         assert_eq!(finish(finder), Some("This is a test".to_string()));
     }
 
-    #[gpui::test]
-    fn test_streaming_fuzzy_match(cx: &mut gpui::TestAppContext) {
+    #[test]
+    fn test_streaming_fuzzy_match() {
         let buffer = TextBuffer::new(
             ReplicaId::LOCAL,
             BufferId::new(1).unwrap(),
@@ -366,7 +363,6 @@ mod tests {
                     return x * y;
                 }
             "},
-            cx.background_executor(),
         );
         let snapshot = buffer.snapshot();
 
@@ -387,13 +383,12 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    fn test_incremental_improvement(cx: &mut gpui::TestAppContext) {
+    #[test]
+    fn test_incremental_improvement() {
         let buffer = TextBuffer::new(
             ReplicaId::LOCAL,
             BufferId::new(1).unwrap(),
             "Line 1\nLine 2\nLine 3\nLine 4\nLine 5",
-            cx.background_executor(),
         );
         let snapshot = buffer.snapshot();
 
@@ -413,8 +408,8 @@ mod tests {
         assert_eq!(finish(finder), Some("Line 3\nLine 4".to_string()));
     }
 
-    #[gpui::test]
-    fn test_incomplete_lines_buffering(cx: &mut gpui::TestAppContext) {
+    #[test]
+    fn test_incomplete_lines_buffering() {
         let buffer = TextBuffer::new(
             ReplicaId::LOCAL,
             BufferId::new(1).unwrap(),
@@ -423,7 +418,6 @@ mod tests {
                 jumps over the lazy dog
                 Pack my box with five dozen liquor jugs
             "},
-            cx.background_executor(),
         );
         let snapshot = buffer.snapshot();
 
@@ -441,8 +435,8 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    fn test_multiline_fuzzy_match(cx: &mut gpui::TestAppContext) {
+    #[test]
+    fn test_multiline_fuzzy_match() {
         let buffer = TextBuffer::new(
             ReplicaId::LOCAL,
             BufferId::new(1).unwrap(),
@@ -462,7 +456,6 @@ mod tests {
                     }
                 }
             "#},
-            cx.background_executor(),
         );
         let snapshot = buffer.snapshot();
 
@@ -516,7 +509,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_resolve_location_single_line(mut rng: StdRng, cx: &mut TestAppContext) {
+    fn test_resolve_location_single_line(mut rng: StdRng) {
         assert_location_resolution(
             concat!(
                 "    Lorem\n",
@@ -526,12 +519,11 @@ mod tests {
             ),
             "ipsum",
             &mut rng,
-            cx,
         );
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_resolve_location_multiline(mut rng: StdRng, cx: &mut TestAppContext) {
+    fn test_resolve_location_multiline(mut rng: StdRng) {
         assert_location_resolution(
             concat!(
                 "    Lorem\n",
@@ -541,12 +533,11 @@ mod tests {
             ),
             "ipsum\ndolor sit amet",
             &mut rng,
-            cx,
         );
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_resolve_location_function_with_typo(mut rng: StdRng, cx: &mut TestAppContext) {
+    fn test_resolve_location_function_with_typo(mut rng: StdRng) {
         assert_location_resolution(
             indoc! {"
                 «fn foo1(a: usize) -> usize {
@@ -559,12 +550,11 @@ mod tests {
             "},
             "fn foo1(a: usize) -> u32 {\n40\n}",
             &mut rng,
-            cx,
         );
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_resolve_location_class_methods(mut rng: StdRng, cx: &mut TestAppContext) {
+    fn test_resolve_location_class_methods(mut rng: StdRng) {
         assert_location_resolution(
             indoc! {"
                 class Something {
@@ -585,12 +575,11 @@ mod tests {
                 six() { return 6666; }
             "},
             &mut rng,
-            cx,
         );
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_resolve_location_imports_no_match(mut rng: StdRng, cx: &mut TestAppContext) {
+    fn test_resolve_location_imports_no_match(mut rng: StdRng) {
         assert_location_resolution(
             indoc! {"
                 use std::ops::Range;
@@ -620,12 +609,11 @@ mod tests {
                 use std::sync::Arc;
             "},
             &mut rng,
-            cx,
         );
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_resolve_location_nested_closure(mut rng: StdRng, cx: &mut TestAppContext) {
+    fn test_resolve_location_nested_closure(mut rng: StdRng) {
         assert_location_resolution(
             indoc! {"
                 impl Foo {
@@ -653,12 +641,11 @@ mod tests {
                 "                    });",
             ),
             &mut rng,
-            cx,
         );
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_resolve_location_tool_invocation(mut rng: StdRng, cx: &mut TestAppContext) {
+    fn test_resolve_location_tool_invocation(mut rng: StdRng) {
         assert_location_resolution(
             indoc! {r#"
                 let tool = cx
@@ -686,12 +673,11 @@ mod tests {
                 "    .output;",
             ),
             &mut rng,
-            cx,
         );
     }
 
     #[gpui::test]
-    fn test_line_hint_selection(cx: &mut TestAppContext) {
+    fn test_line_hint_selection() {
         let text = indoc! {r#"
             fn first_function() {
                 return 42;
@@ -710,7 +696,6 @@ mod tests {
             ReplicaId::LOCAL,
             BufferId::new(1).unwrap(),
             text.to_string(),
-            cx.background_executor(),
         );
         let snapshot = buffer.snapshot();
         let mut matcher = StreamingFuzzyMatcher::new(snapshot.clone());
@@ -742,19 +727,9 @@ mod tests {
     }
 
     #[track_caller]
-    fn assert_location_resolution(
-        text_with_expected_range: &str,
-        query: &str,
-        rng: &mut StdRng,
-        cx: &mut TestAppContext,
-    ) {
+    fn assert_location_resolution(text_with_expected_range: &str, query: &str, rng: &mut StdRng) {
         let (text, expected_ranges) = marked_text_ranges(text_with_expected_range, false);
-        let buffer = TextBuffer::new(
-            ReplicaId::LOCAL,
-            BufferId::new(1).unwrap(),
-            text.clone(),
-            cx.background_executor(),
-        );
+        let buffer = TextBuffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), text.clone());
         let snapshot = buffer.snapshot();
 
         let mut matcher = StreamingFuzzyMatcher::new(snapshot);
