@@ -210,6 +210,7 @@ fn find_mini_delimiters(
     let snapshot = &map.buffer_snapshot();
     let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
     let buffer = excerpt.buffer();
+    let buffer_offset = excerpt.map_offset_to_buffer(offset);
 
     let bracket_filter = |open: Range<usize>, close: Range<usize>| {
         is_valid_delimiter(buffer, open.start, close.start)
@@ -246,8 +247,8 @@ fn find_mini_delimiters(
     }
 
     // Fall back to innermost enclosing brackets
-    let (open_bracket, close_bracket) =
-        buffer.innermost_enclosing_bracket_ranges(offset..offset, Some(&bracket_filter))?;
+    let (open_bracket, close_bracket) = buffer
+        .innermost_enclosing_bracket_ranges(buffer_offset..buffer_offset, Some(&bracket_filter))?;
 
     Some(
         DelimiterRange {
@@ -1748,8 +1749,10 @@ pub fn surrounding_markers(
 
 #[cfg(test)]
 mod test {
+    use editor::{Editor, EditorMode, MultiBuffer, test::editor_test_context::EditorTestContext};
     use gpui::KeyBinding;
     use indoc::indoc;
+    use text::Point;
 
     use crate::{
         object::{AnyBrackets, AnyQuotes, MiniBrackets},
@@ -3195,6 +3198,80 @@ mod test {
 
             cx.assert_state(initial_state, *mode);
         }
+    }
+
+    #[gpui::test]
+    async fn test_minibrackets_multibuffer(cx: &mut gpui::TestAppContext) {
+        // Initialize test context with the TypeScript language loaded, so we
+        // can actually get brackets definition.
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Update `b` to `MiniBrackets` so we can later use it when simulating
+        // keystrokes.
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new("b", MiniBrackets, None)]);
+        });
+
+        // Setup MultiBuffer with 3 different excerpts, only showing the first
+        // two rows for each buffer.
+        let (editor, cx) = cx.add_window_view(|window, cx| {
+            let multi_buffer = MultiBuffer::build_multi(
+                [
+                    ("111\n222\n333\n444\n", vec![Point::row_range(0..2)]),
+                    ("111\na {bracket} example\n", vec![Point::row_range(0..2)]),
+                ],
+                cx,
+            );
+
+            // In order for the brackets to actually be found, we need to update
+            // the language used for the second buffer. This is something that
+            // is handled automatically when simply using `VimTestContext::new`
+            // but, since this is being set manually, the language isn't
+            // automatically set.
+            let editor = Editor::new(EditorMode::full(), multi_buffer.clone(), None, window, cx);
+            let buffer_ids = multi_buffer.read(cx).excerpt_buffer_ids();
+            if let Some(buffer) = multi_buffer.read(cx).buffer(buffer_ids[1]) {
+                buffer.update(cx, |buffer, cx| {
+                    buffer.set_language(Some(language::rust_lang()), cx);
+                })
+            };
+
+            editor
+        });
+
+        let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+
+        cx.assert_excerpts_with_selections(indoc! {"
+            [EXCERPT]
+            ˇ111
+            222
+            [EXCERPT]
+            111
+            a {bracket} example
+            "
+        });
+
+        cx.simulate_keystrokes("j j j j f r");
+        cx.assert_excerpts_with_selections(indoc! {"
+            [EXCERPT]
+            111
+            222
+            [EXCERPT]
+            111
+            a {bˇracket} example
+            "
+        });
+
+        cx.simulate_keystrokes("d i b");
+        cx.assert_excerpts_with_selections(indoc! {"
+            [EXCERPT]
+            111
+            222
+            [EXCERPT]
+            111
+            a {ˇ} example
+            "
+        });
     }
 
     #[gpui::test]
