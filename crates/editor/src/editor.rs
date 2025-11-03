@@ -1833,9 +1833,15 @@ impl Editor {
                     project::Event::RefreshCodeLens => {
                         // we always query lens with actions, without storing them, always refreshing them
                     }
-                    project::Event::RefreshInlayHints(server_id) => {
+                    project::Event::RefreshInlayHints {
+                        server_id,
+                        request_id,
+                    } => {
                         editor.refresh_inlay_hints(
-                            InlayHintRefreshReason::RefreshRequested(*server_id),
+                            InlayHintRefreshReason::RefreshRequested {
+                                server_id: *server_id,
+                                request_id: *request_id,
+                            },
                             cx,
                         );
                     }

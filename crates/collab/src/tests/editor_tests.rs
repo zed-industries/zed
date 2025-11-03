@@ -37,6 +37,7 @@ use std::{
         Arc,
         atomic::{self, AtomicBool, AtomicUsize},
     },
+    time::Duration,
 };
 use text::Point;
 use util::{path, rel_path::rel_path, uri};
@@ -1813,14 +1814,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
                 settings.project.all_languages.defaults.inlay_hints =
                     Some(InlayHintSettingsContent {
                         enabled: Some(true),
-                        show_value_hints: Some(true),
-                        edit_debounce_ms: Some(0),
-                        scroll_debounce_ms: Some(0),
-                        show_type_hints: Some(true),
-                        show_parameter_hints: Some(false),
-                        show_other_hints: Some(true),
-                        show_background: Some(false),
-                        toggle_on_modifiers_press: None,
+                        ..InlayHintSettingsContent::default()
                     })
             });
         });
@@ -1830,15 +1824,8 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             store.update_user_settings(cx, |settings| {
                 settings.project.all_languages.defaults.inlay_hints =
                     Some(InlayHintSettingsContent {
-                        show_value_hints: Some(true),
                         enabled: Some(true),
-                        edit_debounce_ms: Some(0),
-                        scroll_debounce_ms: Some(0),
-                        show_type_hints: Some(true),
-                        show_parameter_hints: Some(false),
-                        show_other_hints: Some(true),
-                        show_background: Some(false),
-                        toggle_on_modifiers_press: None,
+                        ..InlayHintSettingsContent::default()
                     })
             });
         });
@@ -1931,6 +1918,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     });
     let fake_language_server = fake_language_servers.next().await.unwrap();
     let editor_a = file_a.await.unwrap().downcast::<Editor>().unwrap();
+    executor.advance_clock(Duration::from_millis(100));
     executor.run_until_parked();
 
     let initial_edit = edits_made.load(atomic::Ordering::Acquire);
@@ -1951,6 +1939,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .downcast::<Editor>()
         .unwrap();
 
+    executor.advance_clock(Duration::from_millis(100));
     executor.run_until_parked();
     editor_b.update(cx_b, |editor, cx| {
         assert_eq!(
@@ -1969,6 +1958,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     });
     cx_b.focus(&editor_b);
 
+    executor.advance_clock(Duration::from_secs(1));
     executor.run_until_parked();
     editor_a.update(cx_a, |editor, cx| {
         assert_eq!(
@@ -1992,6 +1982,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     });
     cx_a.focus(&editor_a);
 
+    executor.advance_clock(Duration::from_secs(1));
     executor.run_until_parked();
     editor_a.update(cx_a, |editor, cx| {
         assert_eq!(
@@ -2013,6 +2004,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .into_response()
         .expect("inlay refresh request failed");
 
+    executor.advance_clock(Duration::from_secs(1));
     executor.run_until_parked();
     editor_a.update(cx_a, |editor, cx| {
         assert_eq!(
