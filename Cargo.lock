@@ -1351,6 +1351,7 @@ dependencies = [
  "anyhow",
  "log",
  "simplelog",
+ "tempfile",
  "windows 0.61.3",
  "winresource",
 ]

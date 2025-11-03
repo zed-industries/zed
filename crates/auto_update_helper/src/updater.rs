@@ -209,7 +209,10 @@ pub(crate) const JOBS: LazyCell<[Job; 22]> = LazyCell::new(|| {
 // app is single threaded
 #[cfg(test)]
 #[allow(clippy::declare_interior_mutable_const)]
-pub(crate) const JOBS: LazyCell<[Job; 2]> = LazyCell::new(|| {
+pub(crate) const JOBS: LazyCell<[Job; 9]> = LazyCell::new(|| {
+    fn p(value: &str) -> &Path {
+        Path::new(value)
+    }
     [
         Job {
             apply: Box::new(|_| {
@@ -229,6 +232,21 @@ pub(crate) const JOBS: LazyCell<[Job; 2]> = LazyCell::new(|| {
                 Ok(())
             }),
         },
+        Job::mkdir(p("test1")),
+        Job::mkdir_if_exists(p("test_exists"), p("test1")),
+        Job::mkdir_if_exists(p("test_missing"), p("dont")),
+        Job {
+            apply: Box::new(|folder| {
+                std::fs::write(folder.join("test1/test"), "test")?;
+                Ok(())
+            }),
+            rollback: Box::new(|folder| {
+                std::fs::remove_file(folder.join("test1/test"))?;
+                Ok(())
+            }),
+        },
+        Job::move_file(p("test1/test"), p("test1/moved")),
+        Job::move_if_exists(p("test1/test"), p("test1/noop")),
         Job {
             apply: Box::new(|_| {
                 std::thread::sleep(Duration::from_millis(1000));
@@ -244,6 +262,7 @@ pub(crate) const JOBS: LazyCell<[Job; 2]> = LazyCell::new(|| {
             }),
             rollback: Box::new(|_| Ok(())),
         },
+        Job::rmdir_nofail(p("test1/nofolder")),
     ]
 });
 
@@ -316,22 +335,21 @@ mod test {
 
     #[test]
     fn test_perform_update() {
-        let app_dir = std::path::Path::new("C:/");
+        let app_dir = tempfile::tempdir().unwrap();
+        let app_dir = app_dir.path();
         assert!(perform_update(app_dir, None, false).is_ok());
 
+        let app_dir = tempfile::tempdir().unwrap();
+        let app_dir = app_dir.path();
         // Simulate a timeout
         unsafe { std::env::set_var("ZED_AUTO_UPDATE", "err1") };
         let ret = perform_update(app_dir, None, false);
         assert!(
             ret.is_err_and(|e| e.to_string().as_str() == "Autoupdate failed, nothing to rollback")
         );
-    }
 
-    #[test]
-    fn test_perform_update_rollback() {
-        let app_dir = std::path::Path::new("C:/");
-        assert!(perform_update(app_dir, None, false).is_ok());
-
+        let app_dir = tempfile::tempdir().unwrap();
+        let app_dir = app_dir.path();
         // Simulate a timeout
         unsafe { std::env::set_var("ZED_AUTO_UPDATE", "err2") };
         let ret = perform_update(app_dir, None, false);
