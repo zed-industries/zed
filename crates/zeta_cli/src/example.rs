@@ -434,12 +434,6 @@ pub async fn apply_diff(
         edits: Vec<Edit>,
     }
 
-    // #[derive(Debug, Default)]
-    // struct Edit {
-    //     deletion_start: Option<usize>,
-    //     addition: String,
-    // }
-
     #[derive(Debug)]
     struct Edit {
         range: Range<usize>,
