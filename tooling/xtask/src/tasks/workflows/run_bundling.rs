@@ -79,7 +79,7 @@ pub(crate) fn bundle_mac(
             .add_step(bundle_mac(arch))
             .add_step(steps::upload_artifact(
                 &artifact_name,
-                &format!("target/{arch}-apple-darwin/release/Zed.dmg"),
+                &format!("target/{arch}-apple-darwin/release/Zed-{arch}.dmg"),
             ))
             .add_step(steps::upload_artifact(
                 &remote_server_artifact_name,
