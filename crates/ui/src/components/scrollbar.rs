@@ -392,7 +392,14 @@ pub struct Scrollbars<T: ScrollableHandle = ScrollHandle> {
 
 impl Scrollbars {
     pub fn new(show_along: ScrollAxes) -> Self {
-        Self::new_with_setting(show_along, |_| ShowScrollbar::Always)
+        Self::new_with_setting(show_along, |_| ShowScrollbar::default())
+    }
+
+    pub fn new_with_visibility(
+        show_along: ScrollAxes,
+        visibility: fn(&App) -> ShowScrollbar,
+    ) -> Self {
+        Self::new_with_setting(show_along, visibility)
     }
 
     pub fn for_settings<S: ScrollbarVisibility>() -> Scrollbars {

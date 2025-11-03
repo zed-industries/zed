@@ -28,10 +28,12 @@ use std::{
     rc::Rc,
 };
 use task::ResolvedTask;
-use ui::{Color, IntoElement, ListItem, Pixels, Popover, Styled, prelude::*};
+use ui::{
+    Color, IntoElement, ListItem, Pixels, Popover, ScrollAxes, Scrollbars, Styled, WithScrollbar,
+    prelude::*,
+};
 use util::ResultExt;
 
-use crate::CodeActionSource;
 use crate::hover_popover::{hover_markdown_style, open_markdown_url};
 use crate::{
     CodeActionProvider, CompletionId, CompletionItemKind, CompletionProvider, DisplayRow, Editor,
@@ -39,7 +41,8 @@ use crate::{
     actions::{ConfirmCodeAction, ConfirmCompletion},
     split_words, styled_runs_for_code_label,
 };
-use settings::SnippetSortOrder;
+use crate::{CodeActionSource, EditorSettings};
+use settings::{Settings, SnippetSortOrder};
 
 pub const MENU_GAP: Pixels = px(4.);
 pub const MENU_ASIDE_X_PADDING: Pixels = px(16.);
@@ -898,7 +901,18 @@ impl CompletionsMenu {
             }
         });
 
-        Popover::new().child(list).into_any_element()
+        Popover::new()
+            .child(
+                div().child(list).custom_scrollbars(
+                    Scrollbars::new_with_visibility(ScrollAxes::Vertical, |cx| {
+                        EditorSettings::get_global(cx).completion_menu_scrollbar
+                    })
+                    .tracked_scroll_handle(self.scroll_handle.clone()),
+                    window,
+                    cx,
+                ),
+            )
+            .into_any_element()
     }
 
     fn render_aside(
