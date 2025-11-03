@@ -579,6 +579,7 @@ mod tests {
     use project::Project;
     use serde_json::json;
     use settings::SettingsStore;
+    use util::path;
 
     #[gpui::test]
     async fn test_apply_diff_successful(cx: &mut TestAppContext) {
@@ -624,7 +625,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "file1": buffer_1_text,
                 "file2": buffer_2_text,
@@ -632,7 +633,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/root".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
 
         let diff = indoc! {r#"
             --- a/root/file1
@@ -676,7 +677,7 @@ mod tests {
             .unwrap();
         let buffer_1 = project
             .update(cx, |project, cx| {
-                let project_path = project.find_project_path("/root/file1", cx).unwrap();
+                let project_path = project.find_project_path(path!("/root/file1"), cx).unwrap();
                 project.open_buffer(project_path, cx)
             })
             .await
@@ -687,7 +688,7 @@ mod tests {
         });
         let buffer_2 = project
             .update(cx, |project, cx| {
-                let project_path = project.find_project_path("/root/file2", cx).unwrap();
+                let project_path = project.find_project_path(path!("/root/file2"), cx).unwrap();
                 project.open_buffer(project_path, cx)
             })
             .await
@@ -722,14 +723,14 @@ mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "file1": buffer_1_text,
             }),
         )
         .await;
 
-        let project = Project::test(fs, ["/root".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
 
         let diff = indoc! {r#"
             --- a/root/file1
@@ -780,14 +781,14 @@ mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "file1": start,
             }),
         )
         .await;
 
-        let project = Project::test(fs, ["/root".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
 
         let diff = indoc! {r#"
             --- a/root/file1
@@ -807,7 +808,7 @@ mod tests {
 
         let buffer_1 = project
             .update(cx, |project, cx| {
-                let project_path = project.find_project_path("/root/file1", cx).unwrap();
+                let project_path = project.find_project_path(path!("/root/file1"), cx).unwrap();
                 project.open_buffer(project_path, cx)
             })
             .await
