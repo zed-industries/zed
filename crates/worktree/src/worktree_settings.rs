@@ -15,7 +15,7 @@ pub struct WorktreeSettings {
     pub prevent_sharing_in_public_channels: bool,
     pub file_scan_inclusions: PathMatcher,
     // Mainly useful when a glob contains ** or * for directories
-    pub parsed_file_scan_inclusions: PathMatcher,
+    pub parent_dir_scan_inclusions: PathMatcher,
     pub file_scan_exclusions: PathMatcher,
     pub private_files: PathMatcher,
 }
@@ -33,8 +33,7 @@ impl WorktreeSettings {
 
     pub fn is_path_always_included(&self, path: &RelPath, is_dir: bool) -> bool {
         if is_dir {
-            self.parsed_file_scan_inclusions
-                .is_match(path.as_std_path())
+            self.parent_dir_scan_inclusions.is_match(path.as_std_path())
         } else {
             self.file_scan_inclusions.is_match(path.as_std_path())
         }
@@ -52,6 +51,7 @@ impl Settings for WorktreeSettings {
             .flat_map(|glob| {
                 Path::new(glob)
                     .ancestors()
+                    .skip(1)
                     .map(|a| a.to_string_lossy().into())
             })
             .filter(|p: &String| !p.is_empty())
@@ -63,7 +63,7 @@ impl Settings for WorktreeSettings {
             file_scan_exclusions: path_matchers(file_scan_exclusions, "file_scan_exclusions")
                 .log_err()
                 .unwrap_or_default(),
-            parsed_file_scan_inclusions: path_matchers(
+            parent_dir_scan_inclusions: path_matchers(
                 parsed_file_scan_inclusions,
                 "file_scan_inclusions",
             )

@@ -505,7 +505,7 @@ impl Worktree {
                 project_id,
                 replica_id,
                 snapshot,
-                file_scan_inclusions: settings.file_scan_inclusions.clone(),
+                file_scan_inclusions: settings.parent_dir_scan_inclusions.clone(),
                 background_snapshot: background_snapshot.clone(),
                 updates_tx: Some(background_updates_tx),
                 update_observer: None,
@@ -520,8 +520,10 @@ impl Worktree {
                 while let Some(update) = background_updates_rx.next().await {
                     {
                         let mut lock = background_snapshot.lock();
-                        lock.0
-                            .apply_remote_update(update.clone(), &settings.file_scan_inclusions);
+                        lock.0.apply_remote_update(
+                            update.clone(),
+                            &settings.parent_dir_scan_inclusions,
+                        );
                         lock.1.push(update);
                     }
                     snapshot_updated_tx.send(()).await.ok();
