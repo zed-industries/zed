@@ -246,11 +246,11 @@ impl AgentServerStore {
         // Remove all extension-provided agents
         // (They will be re-added below if they're in the currently installed extensions)
         self.external_agents.retain(|name, agent| {
-            if agent.downcast_mut::<LocalExtensionArchiveAgent>().is_none() {
-                true
-            } else {
+            if agent.downcast_mut::<LocalExtensionArchiveAgent>().is_some() {
                 self.agent_icons.remove(name);
                 false
+            } else {
+                true
             }
         });
 
