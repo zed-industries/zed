@@ -30,7 +30,8 @@ pub fn run_perf(base: &Input, head: &Input) -> NamedJob {
     }
 
     fn git_checkout(ref_name: String) -> Step<Run> {
-        Step::new(&format!("git checkout {ref_name}")).run(&format!("git checkout {ref_name}"))
+        named::bash(
+            &format!("git fetch origin {ref_name} && git checkout {ref_name}"))
     }
 
     fn compare_runs(head: String, base: String) -> Step<Run> {
