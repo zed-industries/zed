@@ -316,30 +316,10 @@ fn path_match<T>(
     None
 }
 
-#[cfg(any(test, feature = "bench-support"))]
-const DEFAULT_PYTHON_FILE_LINE_REGEX: &str = r#"File "(?<path>[^"]+)", line (?P<line>[0-9]+)"#;
-
-#[cfg(any(test, feature = "bench-support"))]
-const DEFAULT_PATH_REGEX: &str = r#"(?x)
-    # optionally starts with prefix symbols or quotes not part of `path`
-    (?<paren>[(])?(?<brace>[{])?(?<bracket>[\[])?(?<angle>[<])?(?<quote>["'`])?
-    (?<path>[^ ]+? # `path` is the shortest sequence of any non-space character
-        # which may end with a line and optionally a column,
-        (?<line_column>:+[0-9]+(:[0-9]+)?|:?\([0-9]+([,:][0-9]+)?\))?
-    )
-    # which must be followed by,
-    # matching closing symbols if any corresponding open symbols were found, then
-    (?(<quote>)\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\]]?)(?(<angle>)[>]?)
-    (?(<line_column>)
-        # if line/column matched, may include a description followed by trailing punctuation
-        (:[^ 0-9][^ ]*|[.,:)}\]>]*)?|
-        # otherwise, may include trailing punctuation
-        (?<![.,:)}\]>])[.,:)}\]>]*
-    )
-    ([ ]+|$) # and always includes trailing whitespace or end of line"#;
-
 #[cfg(test)]
 mod tests {
+    use crate::terminal_settings::TerminalSettings;
+
     use super::*;
     use alacritty_terminal::{
         event::VoidListener,
@@ -349,7 +329,8 @@ mod tests {
         vte::ansi::Handler,
     };
     use fancy_regex::Regex;
-    use std::{cell::RefCell, ops::RangeInclusive, path::PathBuf};
+    use settings::{self, Settings, SettingsContent};
+    use std::{cell::RefCell, ops::RangeInclusive, path::PathBuf, rc::Rc};
     use url::Url;
     use util::paths::PathWithPosition;
 
@@ -1504,14 +1485,20 @@ mod tests {
         thread_local! {
             static TEST_REGEX_SEARCHES: RefCell<RegexSearches> =
                 RefCell::new({
-                    RegexSearches::new(&[
-                        DEFAULT_PYTHON_FILE_LINE_REGEX,
+                    let default_settings_content: Rc<SettingsContent> =
+                        settings::parse_json_with_comments(&settings::default_settings()).unwrap();
+                    let default_terminal_settings = TerminalSettings::from_settings(&default_settings_content);
+
+                    RegexSearches::new([
                         RUST_DIAGNOSTIC_REGEX,
                         CARGO_DIR_REGEX,
                         ISSUE_12338_REGEX,
                         MULTIPLE_SAME_LINE_REGEX,
-                        DEFAULT_PATH_REGEX,
-                    ],
+                    ]
+                        .into_iter()
+                        .chain(default_terminal_settings.path_hyperlink_regexes
+                            .iter()
+                            .map(AsRef::as_ref)),
                     PATH_HYPERLINK_TIMEOUT_MS)
                 });
         }
@@ -1556,24 +1543,30 @@ mod tests {
 #[cfg(feature = "bench-support")]
 pub mod bench {
     use super::*;
+    use crate::TerminalSettings;
     use alacritty_terminal::{
         event::VoidListener,
         index::Point as AlacPoint,
         term::{Term, search::Match},
     };
-    use std::cell::RefCell;
+    use settings::{self, Settings, SettingsContent};
+    use std::{cell::RefCell, rc::Rc};
 
     pub fn find_from_grid_point_bench(
         term: &Term<VoidListener>,
         point: AlacPoint,
     ) -> Option<(String, bool, Match)> {
-        const PATH_HYPERLINK_REGEXES: [&str; 2] =
-            [DEFAULT_PYTHON_FILE_LINE_REGEX, DEFAULT_PATH_REGEX];
         const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
 
         thread_local! {
             static TEST_REGEX_SEARCHES: RefCell<RegexSearches> =
-                RefCell::new(RegexSearches::new(&PATH_HYPERLINK_REGEXES, PATH_HYPERLINK_TIMEOUT_MS));
+                RefCell::new({
+                    let default_settings_content: Rc<SettingsContent> =
+                        settings::parse_json_with_comments(&settings::default_settings()).unwrap();
+                    let default_terminal_settings = TerminalSettings::from_settings(&default_settings_content);
+
+                    RegexSearches::new(&default_terminal_settings.path_hyperlink_regexes, PATH_HYPERLINK_TIMEOUT_MS)
+                });
         }
 
         TEST_REGEX_SEARCHES.with(|regex_searches| {
