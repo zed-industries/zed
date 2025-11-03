@@ -150,16 +150,6 @@ impl Editor {
                 inlay_hints.added_hints.remove(id_to_remove);
             }
         }
-        let a = to_insert
-            .iter()
-            .map(|inlay| (inlay.id, inlay.text().to_string()))
-            .collect::<Vec<_>>();
-        dbg!((
-            self.buffer.read(cx).is_singleton(),
-            "splice_inlays",
-            &to_remove,
-            a,
-        ));
         self.display_map.update(cx, |display_map, cx| {
             display_map.splice_inlays(to_remove, to_insert, cx)
         });

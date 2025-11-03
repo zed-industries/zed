@@ -222,4 +222,28 @@ impl BufferInlayHints {
     pub fn buffer_chunks_len(&self) -> usize {
         self.buffer_chunks.len()
     }
+
+    pub(crate) fn invalidate_for_server(&mut self, for_server: LanguageServerId) {
+        for chunk_data in &mut self.hints_by_chunks {
+            if let Some(removed_hints) = chunk_data
+                .as_mut()
+                .and_then(|chunk_data| chunk_data.remove(&for_server))
+            {
+                for (id, _) in removed_hints {
+                    self.hints_by_id.remove(&id);
+                    self.hint_resolves.remove(&id);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn invalidate_for_chunk(&mut self, chunk: BufferChunk) {
+        self.fetches_by_chunks[chunk.id] = None;
+        if let Some(hints_by_server) = self.hints_by_chunks[chunk.id].take() {
+            for (hint_id, _) in hints_by_server.into_values().flatten() {
+                self.hints_by_id.remove(&hint_id);
+                self.hint_resolves.remove(&hint_id);
+            }
+        }
+    }
 }

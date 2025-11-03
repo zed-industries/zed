@@ -4320,7 +4320,7 @@ pub mod tests {
 
         // Can do the 2nd search without any panics
         perform_search(search_view, "let ", cx);
-        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().advance_clock(Duration::from_secs(1));
         cx.executor().run_until_parked();
         search_view
             .update(cx, |search_view, _, cx| {
@@ -4386,8 +4386,7 @@ pub mod tests {
         });
         assert_eq!(
             requests_count.load(atomic::Ordering::Acquire),
-            // TODO kb this is wrong, should be 3
-            4,
+            3,
             "We have edited the buffer and should send a new request",
         );
 
@@ -4402,8 +4401,7 @@ pub mod tests {
         cx.executor().run_until_parked();
         assert_eq!(
             requests_count.load(atomic::Ordering::Acquire),
-            // TODO kb this is wrong, should be 4
-            6,
+            4,
             "We have edited the buffer again and should send a new request again",
         );
         singleton_editor.update(cx, |editor, cx| {
@@ -4419,7 +4417,7 @@ pub mod tests {
         cx.executor().run_until_parked();
         assert_eq!(
             requests_count.load(atomic::Ordering::Acquire),
-            6,
+            4,
             "New project search should reuse the cached hints",
         );
         search_view
