@@ -465,14 +465,8 @@ impl SearchData {
         let match_offset_range = match_range.to_offset(multi_buffer_snapshot);
 
         let mut search_match_indices = vec![
-            multi_buffer_snapshot.clip_offset(
-                match_offset_range.start - context_offset_range.start,
-                Bias::Left,
-            )
-                ..multi_buffer_snapshot.clip_offset(
-                    match_offset_range.end - context_offset_range.start,
-                    Bias::Right,
-                ),
+            match_offset_range.start - context_offset_range.start
+                ..match_offset_range.end - context_offset_range.start,
         ];
 
         let entire_context_text = multi_buffer_snapshot
@@ -509,20 +503,13 @@ impl SearchData {
                 .next()
                 .is_some_and(|c| !c.is_whitespace());
         search_match_indices.iter_mut().for_each(|range| {
-            range.start = multi_buffer_snapshot.clip_offset(
-                range.start.saturating_sub(left_whitespaces_offset),
-                Bias::Left,
-            );
-            range.end = multi_buffer_snapshot.clip_offset(
-                range.end.saturating_sub(left_whitespaces_offset),
-                Bias::Right,
-            );
+            range.start = range.start.saturating_sub(left_whitespaces_offset);
+            range.end = range.end.saturating_sub(left_whitespaces_offset);
         });
 
         let trimmed_row_offset_range =
             context_offset_range.start + left_whitespaces_offset..context_offset_range.end;
         let trimmed_text = entire_context_text[left_whitespaces_offset..].to_owned();
-        dbg!(&search_match_indices);
         Self {
             highlights_data: Arc::default(),
             search_match_indices,
@@ -7933,7 +7920,19 @@ outline: fn main()"
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                format!(r#"search: {{ "something": "static" }}"#)
+                "search: | Field«  »        | Meaning                |  <==== selected
+search: | Field  «  »      | Meaning                |
+search: | Field    «  »    | Meaning                |
+search: | Field      «  »  | Meaning                |
+search: | Field        «  »| Meaning                |
+search: | Field          | Meaning«  »              |
+search: | Field          | Meaning  «  »            |
+search: | Field          | Meaning    «  »          |
+search: | Field          | Meaning      «  »        |
+search: | Field          | Meaning        «  »      |
+search: | Field          | Meaning          «  »    |
+search: | Field          | Meaning            «  »  |
+search: | Field          | Meaning              «  »|"
             );
         });
     }
