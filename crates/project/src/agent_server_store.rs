@@ -1,7 +1,6 @@
 use std::{
     any::Any,
     borrow::Borrow,
-    collections::HashSet,
     path::{Path, PathBuf},
     str::FromStr as _,
     sync::Arc,
@@ -137,7 +136,7 @@ impl EventEmitter<AgentServersUpdated> for AgentServerStore {}
 #[cfg(test)]
 mod ext_agent_tests {
     use super::*;
-    use std::fmt::Write as _;
+    use std::{collections::HashSet, fmt::Write as _};
 
     // Helper to build a store in Collab mode so we can mutate internal maps without
     // needing to spin up a full project environment.
@@ -244,20 +243,18 @@ impl AgentServerStore {
         // Collect manifests first so we can iterate twice
         let manifests: Vec<_> = manifests.into_iter().collect();
 
-        // Remove existing extension-provided agents by tracking which ones we're about to add
-        let extension_agent_names: HashSet<_> = manifests
-            .iter()
-            .flat_map(|(_, manifest)| manifest.agent_servers.keys().map(|k| k.to_string()))
-            .collect();
-
+        // Remove all extension-provided agents (LocalExtensionArchiveAgent)
+        // They will be re-added below if they're in the currently installed extensions
         let keys_to_remove: Vec<_> = self
             .external_agents
-            .keys()
-            .filter(|name| {
-                // Remove if it matches an extension agent name from any extension
-                extension_agent_names.contains(name.0.as_ref())
+            .iter_mut()
+            .filter_map(|(name, agent)| {
+                if agent.downcast_mut::<LocalExtensionArchiveAgent>().is_some() {
+                    Some(name.clone())
+                } else {
+                    None
+                }
             })
-            .cloned()
             .collect();
         for key in &keys_to_remove {
             self.external_agents.remove(key);
