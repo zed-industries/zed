@@ -1,87 +1,105 @@
+use futures::channel::oneshot::Canceled;
 use git::repository::RepoPath;
 use std::ops::Add;
-use sum_tree::{ContextLessSummary, Dimension, Item, KeyedItem};
-use worktree::PathSummary;
+use sum_tree::{ContextLessSummary, Item, KeyedItem};
+use worktree::{PathKey, PathSummary};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PendingOpStatus {
+pub enum GitStatus {
     Staged,
     Unstaged,
     Reverted,
     Unchanged,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JobStatus {
+    Started,
+    Finished,
+    Canceled,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingOps {
+    pub repo_path: RepoPath,
+    pub ops: Vec<PendingOp>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingOp {
-    pub repo_path: RepoPath,
     pub id: PendingOpId,
-    pub status: PendingOpStatus,
-    pub finished: bool,
+    pub git_status: GitStatus,
+    pub job_status: JobStatus,
 }
 
 #[derive(Clone, Debug)]
-pub struct PendingOpSummary {
+pub struct PendingOpsSummary {
     pub max_id: PendingOpId,
-    pub staged_count: usize,
-    pub unstaged_count: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct PendingOpId(pub usize);
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PendingOpId(pub u16);
 
-impl Item for PendingOp {
-    type Summary = PathSummary<PendingOpSummary>;
+impl Item for PendingOps {
+    type Summary = PathSummary<PendingOpsSummary>;
 
     fn summary(&self, _cx: ()) -> Self::Summary {
         PathSummary {
             max_path: self.repo_path.0.clone(),
-            item_summary: PendingOpSummary {
-                max_id: self.id,
-                staged_count: (self.status == PendingOpStatus::Staged) as usize,
-                unstaged_count: (self.status == PendingOpStatus::Unstaged) as usize,
+            item_summary: PendingOpsSummary {
+                max_id: self.ops.last().map(|op| op.id).unwrap_or_default(),
             },
         }
     }
 }
 
-impl ContextLessSummary for PendingOpSummary {
+impl ContextLessSummary for PendingOpsSummary {
     fn zero() -> Self {
         Self {
-            max_id: PendingOpId(0),
-            staged_count: 0,
-            unstaged_count: 0,
+            max_id: PendingOpId::default(),
         }
     }
 
     fn add_summary(&mut self, summary: &Self) {
         self.max_id = summary.max_id;
-        self.staged_count += summary.staged_count;
-        self.unstaged_count += summary.unstaged_count;
     }
 }
 
-impl KeyedItem for PendingOp {
-    type Key = PendingOpId;
+impl KeyedItem for PendingOps {
+    type Key = PathKey;
 
     fn key(&self) -> Self::Key {
-        self.id
+        PathKey(self.repo_path.0.clone())
     }
 }
 
-impl Dimension<'_, PathSummary<PendingOpSummary>> for PendingOpId {
-    fn zero(_cx: ()) -> Self {
-        Self(0)
-    }
-
-    fn add_summary(&mut self, summary: &PathSummary<PendingOpSummary>, _cx: ()) {
-        *self = summary.item_summary.max_id;
-    }
-}
-
-impl Add<usize> for PendingOpId {
+impl Add<u16> for PendingOpId {
     type Output = PendingOpId;
 
-    fn add(self, rhs: usize) -> Self::Output {
+    fn add(self, rhs: u16) -> Self::Output {
         Self(self.0 + rhs)
+    }
+}
+
+impl PendingOps {
+    pub fn new(path: &RepoPath) -> Self {
+        Self {
+            repo_path: path.clone(),
+            ops: Vec::new(),
+        }
+    }
+
+    pub fn op_by_id(&self, id: PendingOpId) -> Option<&PendingOp> {
+        self.ops.iter().find(|op| op.id == id)
+    }
+
+    pub fn op_by_id_mut(&mut self, id: PendingOpId) -> Option<&mut PendingOp> {
+        self.ops.iter_mut().find(|op| op.id == id)
+    }
+}
+
+impl From<Canceled> for JobStatus {
+    fn from(_err: Canceled) -> Self {
+        Self::Canceled
     }
 }
