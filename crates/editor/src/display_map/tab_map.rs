@@ -1042,7 +1042,7 @@ mod tests {
         let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
         let tabs_snapshot = tab_map.set_max_expansion_column(32);
 
-        let text = text::Rope::from_str(tabs_snapshot.text().as_str(), cx.background_executor());
+        let text = text::Rope::from(tabs_snapshot.text().as_str());
         log::info!(
             "TabMap text (tab size: {}): {:?}",
             tab_size,

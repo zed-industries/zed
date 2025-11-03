@@ -15,12 +15,10 @@ doctest = false
 
 [dependencies]
 arrayvec = "0.7.1"
+rayon.workspace = true
 log.workspace = true
-futures.workspace = true
-itertools.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
 rand.workspace = true
 zlog.workspace = true
-pollster = "0.4.0"

@@ -779,7 +779,7 @@ impl<'a> MarkdownParser<'a> {
 
         let highlights = if let Some(language) = &language {
             if let Some(registry) = &self.language_registry {
-                let rope = language::Rope::from_str_small(code.as_str());
+                let rope: language::Rope = code.as_str().into();
                 registry
                     .language_for_name_or_extension(language)
                     .await

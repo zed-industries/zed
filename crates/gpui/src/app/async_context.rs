@@ -260,19 +260,6 @@ impl AsyncApp {
     }
 }
 
-impl sum_tree::BackgroundSpawn for BackgroundExecutor {
-    type Task<R>
-        = Task<R>
-    where
-        R: Send + Sync;
-    fn background_spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Self::Task<R>
-    where
-        R: Send + Sync + 'static,
-    {
-        self.spawn(future)
-    }
-}
-
 /// A cloneable, owned handle to the application context,
 /// composed with the window associated with the current task.
 #[derive(Clone, Deref, DerefMut)]

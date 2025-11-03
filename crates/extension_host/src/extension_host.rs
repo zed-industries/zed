@@ -1468,7 +1468,6 @@ impl ExtensionStore {
         let extensions_dir = self.installed_dir.clone();
         let index_path = self.index_path.clone();
         let proxy = self.proxy.clone();
-        let executor = cx.background_executor().clone();
         cx.background_spawn(async move {
             let start_time = Instant::now();
             let mut index = ExtensionIndex::default();
@@ -1502,14 +1501,10 @@ impl ExtensionStore {
             }
 
             if let Ok(index_json) = serde_json::to_string_pretty(&index) {
-                fs.save(
-                    &index_path,
-                    &Rope::from_str(&index_json, &executor),
-                    Default::default(),
-                )
-                .await
-                .context("failed to save extension index")
-                .log_err();
+                fs.save(&index_path, &index_json.as_str().into(), Default::default())
+                    .await
+                    .context("failed to save extension index")
+                    .log_err();
             }
 
             log::info!("rebuilt extension index in {:?}", start_time.elapsed());
@@ -1676,7 +1671,7 @@ impl ExtensionStore {
                 let manifest_toml = toml::to_string(&loaded_extension.manifest)?;
                 fs.save(
                     &tmp_dir.join(EXTENSION_TOML),
-                    &Rope::from_str_small(&manifest_toml),
+                    &Rope::from(manifest_toml),
                     language::LineEnding::Unix,
                 )
                 .await?;

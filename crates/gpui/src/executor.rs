@@ -341,7 +341,7 @@ impl BackgroundExecutor {
     /// for all of them to complete before returning.
     pub async fn scoped<'scope, F>(&self, scheduler: F)
     where
-        F: for<'a> FnOnce(&'a mut Scope<'scope>),
+        F: FnOnce(&mut Scope<'scope>),
     {
         let mut scope = Scope::new(self.clone());
         (scheduler)(&mut scope);
