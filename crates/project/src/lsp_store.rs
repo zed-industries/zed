@@ -75,14 +75,14 @@ use language::{
     range_from_lsp, range_to_lsp,
 };
 use lsp::{
-    AdapterServerCapabilities, CodeActionKind, CompletionContext, DiagnosticServerCapabilities,
-    DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions, Edit,
-    FileOperationFilter, FileOperationPatternKind, FileOperationRegistrationOptions, FileRename,
-    FileSystemWatcher, LSP_REQUEST_TIMEOUT, LanguageServer, LanguageServerBinary,
-    LanguageServerBinaryOptions, LanguageServerId, LanguageServerName, LanguageServerSelector,
-    LspRequestFuture, MessageActionItem, MessageType, OneOf, RenameFilesParams, SymbolKind,
-    TextDocumentSyncSaveOptions, TextEdit, Uri, WillRenameFiles, WorkDoneProgressCancelParams,
-    WorkspaceFolder, notification::DidRenameFiles,
+    AdapterServerCapabilities, CodeActionKind, CompletionContext, CompletionOptions,
+    DiagnosticServerCapabilities, DiagnosticSeverity, DiagnosticTag,
+    DidChangeWatchedFilesRegistrationOptions, Edit, FileOperationFilter, FileOperationPatternKind,
+    FileOperationRegistrationOptions, FileRename, FileSystemWatcher, LSP_REQUEST_TIMEOUT,
+    LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId,
+    LanguageServerName, LanguageServerSelector, LspRequestFuture, MessageActionItem, MessageType,
+    OneOf, RenameFilesParams, SymbolKind, TextDocumentSyncSaveOptions, TextEdit, Uri,
+    WillRenameFiles, WorkDoneProgressCancelParams, WorkspaceFolder, notification::DidRenameFiles,
 };
 use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;
@@ -11931,12 +11931,38 @@ impl LspStore {
                 "textDocument/completion" => {
                     if let Some(caps) = reg
                         .register_options
-                        .map(serde_json::from_value)
+                        .map(serde_json::from_value::<CompletionOptions>)
                         .transpose()?
                     {
                         server.update_capabilities(|capabilities| {
-                            capabilities.completion_provider = Some(caps);
+                            capabilities.completion_provider = Some(caps.clone());
                         });
+
+                        if let Some(local) = self.as_local() {
+                            let mut buffers_with_language_server = Vec::new();
+                            for handle in self.buffer_store.read(cx).buffers() {
+                                let buffer_id = handle.read(cx).remote_id();
+                                if local
+                                    .buffers_opened_in_servers
+                                    .get(&buffer_id)
+                                    .filter(|s| s.contains(&server_id))
+                                    .is_some()
+                                {
+                                    buffers_with_language_server.push(handle);
+                                }
+                            }
+                            let triggers = caps
+                                .trigger_characters
+                                .unwrap_or_default()
+                                .into_iter()
+                                .collect::<BTreeSet<_>>();
+                            for handle in buffers_with_language_server {
+                                let triggers = triggers.clone();
+                                let _ = handle.update(cx, move |buffer, cx| {
+                                    buffer.set_completion_triggers(server_id, triggers, cx);
+                                });
+                            }
+                        }
                         notify_server_capabilities_updated(&server, cx);
                     }
                 }
