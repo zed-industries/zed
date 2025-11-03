@@ -670,6 +670,16 @@ pub struct CodeLabel {
     pub filter_range: Range<usize>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CodeLabelBuilder {
+    /// The text to display.
+    text: String,
+    /// Syntax highlighting runs.
+    runs: Vec<(Range<usize>, HighlightId)>,
+    /// The portion of the text that should be used in fuzzy filtering.
+    filter_range: Range<usize>,
+}
+
 #[derive(Clone, Deserialize, JsonSchema)]
 pub struct LanguageConfig {
     /// Human-readable name of the language.
@@ -777,6 +787,15 @@ pub struct LanguageConfig {
     /// A list of preferred debuggers for this language.
     #[serde(default)]
     pub debuggers: IndexSet<SharedString>,
+    /// A list of import namespace segments that aren't expected to appear in file paths. For
+    /// example, "super" and "crate" in Rust.
+    #[serde(default)]
+    pub ignored_import_segments: HashSet<Arc<str>>,
+    /// Regular expression that matches substrings to omit from import paths, to make the paths more
+    /// similar to how they are specified when imported. For example, "/mod\.rs$" or "/__init__\.py$".
+    #[serde(default, deserialize_with = "deserialize_regex")]
+    #[schemars(schema_with = "regex_json_schema")]
+    pub import_path_strip_regex: Option<Regex>,
 }
 
 #[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
@@ -973,6 +992,8 @@ impl Default for LanguageConfig {
             completion_query_characters: Default::default(),
             linked_edit_characters: Default::default(),
             debuggers: Default::default(),
+            ignored_import_segments: Default::default(),
+            import_path_strip_regex: None,
         }
     }
 }
@@ -1162,6 +1183,7 @@ pub struct Grammar {
     pub(crate) injection_config: Option<InjectionConfig>,
     pub(crate) override_config: Option<OverrideConfig>,
     pub(crate) debug_variables_config: Option<DebugVariablesConfig>,
+    pub(crate) imports_config: Option<ImportsConfig>,
     pub(crate) highlight_map: Mutex<HighlightMap>,
 }
 
@@ -1314,6 +1336,17 @@ pub struct DebugVariablesConfig {
     pub objects_by_capture_ix: Vec<(u32, DebuggerTextObject)>,
 }
 
+pub struct ImportsConfig {
+    pub query: Query,
+    pub import_ix: u32,
+    pub name_ix: Option<u32>,
+    pub namespace_ix: Option<u32>,
+    pub source_ix: Option<u32>,
+    pub list_ix: Option<u32>,
+    pub wildcard_ix: Option<u32>,
+    pub alias_ix: Option<u32>,
+}
+
 impl Language {
     pub fn new(config: LanguageConfig, ts_language: Option<tree_sitter::Language>) -> Self {
         Self::new_with_id(LanguageId::new(), config, ts_language)
@@ -1346,6 +1379,7 @@ impl Language {
                     runnable_config: None,
                     error_query: Query::new(&ts_language, "(ERROR) @error").ok(),
                     debug_variables_config: None,
+                    imports_config: None,
                     ts_language,
                     highlight_map: Default::default(),
                 })
@@ -1426,6 +1460,11 @@ impl Language {
             self = self
                 .with_debug_variables_query(query.as_ref())
                 .context("Error loading debug variables query")?;
+        }
+        if let Some(query) = queries.imports {
+            self = self
+                .with_imports_query(query.as_ref())
+                .context("Error loading imports query")?;
         }
         Ok(self)
     }
@@ -1593,6 +1632,45 @@ impl Language {
             objects_by_capture_ix,
         });
         Ok(self)
+    }
+
+    pub fn with_imports_query(mut self, source: &str) -> Result<Self> {
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
+
+        let mut import_ix = 0;
+        let mut name_ix = None;
+        let mut namespace_ix = None;
+        let mut source_ix = None;
+        let mut list_ix = None;
+        let mut wildcard_ix = None;
+        let mut alias_ix = None;
+        if populate_capture_indices(
+            &query,
+            &self.config.name,
+            "imports",
+            &[],
+            &mut [
+                Capture::Required("import", &mut import_ix),
+                Capture::Optional("name", &mut name_ix),
+                Capture::Optional("namespace", &mut namespace_ix),
+                Capture::Optional("source", &mut source_ix),
+                Capture::Optional("list", &mut list_ix),
+                Capture::Optional("wildcard", &mut wildcard_ix),
+                Capture::Optional("alias", &mut alias_ix),
+            ],
+        ) {
+            self.grammar_mut()?.imports_config = Some(ImportsConfig {
+                query,
+                import_ix,
+                name_ix,
+                namespace_ix,
+                source_ix,
+                list_ix,
+                wildcard_ix,
+                alias_ix,
+            });
+        }
+        return Ok(self);
     }
 
     pub fn with_brackets_query(mut self, source: &str) -> Result<Self> {
@@ -2149,6 +2227,38 @@ impl Grammar {
     pub fn debug_variables_config(&self) -> Option<&DebugVariablesConfig> {
         self.debug_variables_config.as_ref()
     }
+
+    pub fn imports_config(&self) -> Option<&ImportsConfig> {
+        self.imports_config.as_ref()
+    }
+}
+
+impl CodeLabelBuilder {
+    pub fn respan_filter_range(&mut self, filter_text: Option<&str>) {
+        self.filter_range = filter_text
+            .and_then(|filter| self.text.find(filter).map(|ix| ix..ix + filter.len()))
+            .unwrap_or(0..self.text.len());
+    }
+
+    pub fn push_str(&mut self, text: &str, highlight: Option<HighlightId>) {
+        let start_ix = self.text.len();
+        self.text.push_str(text);
+        if let Some(highlight) = highlight {
+            let end_ix = self.text.len();
+            self.runs.push((start_ix..end_ix, highlight));
+        }
+    }
+
+    pub fn build(mut self) -> CodeLabel {
+        if self.filter_range.end == 0 {
+            self.respan_filter_range(None);
+        }
+        CodeLabel {
+            text: self.text,
+            runs: self.runs,
+            filter_range: self.filter_range,
+        }
+    }
 }
 
 impl CodeLabel {
@@ -2214,22 +2324,36 @@ impl CodeLabel {
     }
 
     pub fn plain(text: String, filter_text: Option<&str>) -> Self {
+        Self::filtered(text, filter_text, Vec::new())
+    }
+
+    pub fn filtered(
+        text: String,
+        filter_text: Option<&str>,
+        runs: Vec<(Range<usize>, HighlightId)>,
+    ) -> Self {
         let filter_range = filter_text
             .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
             .unwrap_or(0..text.len());
-        Self {
-            runs: Vec::new(),
-            filter_range,
-            text,
-        }
+        Self::new(text, filter_range, runs)
     }
 
-    pub fn push_str(&mut self, text: &str, highlight: Option<HighlightId>) {
-        let start_ix = self.text.len();
-        self.text.push_str(text);
-        let end_ix = self.text.len();
-        if let Some(highlight) = highlight {
-            self.runs.push((start_ix..end_ix, highlight));
+    pub fn new(
+        text: String,
+        filter_range: Range<usize>,
+        runs: Vec<(Range<usize>, HighlightId)>,
+    ) -> Self {
+        assert!(
+            text.get(filter_range.clone()).is_some(),
+            "invalid filter range"
+        );
+        runs.iter().for_each(|(range, _)| {
+            assert!(text.get(range.clone()).is_some(), "invalid run range");
+        });
+        Self {
+            runs,
+            filter_range,
+            text,
         }
     }
 
@@ -2465,10 +2589,74 @@ pub fn range_from_lsp(range: lsp::Range) -> Range<Unclipped<PointUtf16>> {
     let mut start = point_from_lsp(range.start);
     let mut end = point_from_lsp(range.end);
     if start > end {
-        log::warn!("range_from_lsp called with inverted range {start:?}-{end:?}");
+        // We debug instead of warn so that this is not logged by default unless explicitly requested.
+        // Using warn would write to the log file, and since we receive an enormous amount of
+        // range_from_lsp calls (especially during completions), that can hang the main thread.
+        //
+        // See issue #36223.
+        zlog::debug!("range_from_lsp called with inverted range {start:?}-{end:?}");
         mem::swap(&mut start, &mut end);
     }
     start..end
+}
+
+#[doc(hidden)]
+#[cfg(any(test, feature = "test-support"))]
+pub fn rust_lang() -> Arc<Language> {
+    use std::borrow::Cow;
+
+    let language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            line_comments: vec!["// ".into(), "/// ".into(), "//! ".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    )
+    .with_queries(LanguageQueries {
+        indents: Some(Cow::from(
+            r#"
+[
+    ((where_clause) _ @end)
+    (field_expression)
+    (call_expression)
+    (assignment_expression)
+    (let_declaration)
+    (let_chain)
+    (await_expression)
+] @indent
+
+(_ "[" "]" @end) @indent
+(_ "<" ">" @end) @indent
+(_ "{" "}" @end) @indent
+(_ "(" ")" @end) @indent"#,
+        )),
+        brackets: Some(Cow::from(
+            r#"
+("(" @open ")" @close)
+("[" @open "]" @close)
+("{" @open "}" @close)
+("<" @open ">" @close)
+("\"" @open "\"" @close)
+(closure_parameters "|" @open "|" @close)"#,
+        )),
+        text_objects: Some(Cow::from(
+            r#"
+(function_item
+    body: (_
+        "{"
+        (_)* @function.inside
+        "}" )) @function.around
+        "#,
+        )),
+        ..LanguageQueries::default()
+    })
+    .expect("Could not parse queries");
+    Arc::new(language)
 }
 
 #[cfg(test)]

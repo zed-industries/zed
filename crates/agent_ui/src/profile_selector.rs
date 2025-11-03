@@ -144,10 +144,16 @@ impl Render for ProfileSelector {
             .unwrap_or_else(|| "Unknown".into());
         let focus_handle = self.focus_handle.clone();
 
+        let icon = if self.picker_handle.is_deployed() {
+            IconName::ChevronUp
+        } else {
+            IconName::ChevronDown
+        };
+
         let trigger_button = Button::new("profile-selector", selected_profile)
             .label_size(LabelSize::Small)
             .color(Color::Muted)
-            .icon(IconName::ChevronDown)
+            .icon(icon)
             .icon_size(IconSize::XSmall)
             .icon_position(IconPosition::End)
             .icon_color(Color::Muted)
@@ -156,12 +162,11 @@ impl Render for ProfileSelector {
         PickerPopoverMenu::new(
             picker,
             trigger_button,
-            move |window, cx| {
+            move |_window, cx| {
                 Tooltip::for_action_in(
                     "Toggle Profile Menu",
                     &ToggleProfileSelector,
                     &focus_handle,
-                    window,
                     cx,
                 )
             },

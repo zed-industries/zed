@@ -4,6 +4,7 @@ use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
+use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::mem;
 use std::path::StripPrefixError;
@@ -14,7 +15,7 @@ use std::{
     sync::LazyLock,
 };
 
-use crate::rel_path::RelPath;
+use crate::{rel_path::RelPath, shell::ShellKind};
 
 static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 
@@ -83,9 +84,7 @@ pub trait PathExt {
     fn multiple_extensions(&self) -> Option<String>;
 
     /// Try to make a shell-safe representation of the path.
-    ///
-    /// For Unix, the path is escaped to be safe for POSIX shells
-    fn try_shell_safe(&self) -> anyhow::Result<String>;
+    fn try_shell_safe(&self, shell_kind: ShellKind) -> anyhow::Result<String>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
@@ -163,25 +162,42 @@ impl<T: AsRef<Path>> PathExt for T {
         Some(parts.into_iter().join("."))
     }
 
-    fn try_shell_safe(&self) -> anyhow::Result<String> {
-        #[cfg(target_os = "windows")]
-        {
-            Ok(self.as_ref().to_string_lossy().to_string())
-        }
+    fn try_shell_safe(&self, shell_kind: ShellKind) -> anyhow::Result<String> {
+        let path_str = self
+            .as_ref()
+            .to_str()
+            .with_context(|| "Path contains invalid UTF-8")?;
+        shell_kind
+            .try_quote(path_str)
+            .as_deref()
+            .map(ToOwned::to_owned)
+            .context("Failed to quote path")
+    }
+}
 
-        #[cfg(not(target_os = "windows"))]
-        {
-            let path_str = self
-                .as_ref()
-                .to_str()
-                .with_context(|| "Path contains invalid UTF-8")?;
+pub fn path_ends_with(base: &Path, suffix: &Path) -> bool {
+    strip_path_suffix(base, suffix).is_some()
+}
 
-            // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
-            // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
-            // errors are introduced in the future :(
-            Ok(shlex::try_quote(path_str)?.into_owned())
+pub fn strip_path_suffix<'a>(base: &'a Path, suffix: &Path) -> Option<&'a Path> {
+    if let Some(remainder) = base
+        .as_os_str()
+        .as_encoded_bytes()
+        .strip_suffix(suffix.as_os_str().as_encoded_bytes())
+    {
+        if remainder
+            .last()
+            .is_none_or(|last_byte| std::path::is_separator(*last_byte as char))
+        {
+            let os_str = unsafe {
+                OsStr::from_encoded_bytes_unchecked(
+                    &remainder[0..remainder.len().saturating_sub(1)],
+                )
+            };
+            return Some(Path::new(os_str));
         }
     }
+    None
 }
 
 /// In memory, this is identical to `Path`. On non-Windows conversions to this type are no-ops. On
@@ -401,6 +417,82 @@ pub fn is_absolute(path_like: &str, path_style: PathStyle) -> bool {
                         .is_some_and(|path| path.starts_with('/') || path.starts_with('\\')))
 }
 
+#[derive(Debug, PartialEq)]
+#[non_exhaustive]
+pub struct NormalizeError;
+
+impl Error for NormalizeError {}
+
+impl std::fmt::Display for NormalizeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("parent reference `..` points outside of base directory")
+    }
+}
+
+/// Copied from stdlib where it's unstable.
+///
+/// Normalize a path, including `..` without traversing the filesystem.
+///
+/// Returns an error if normalization would leave leading `..` components.
+///
+/// <div class="warning">
+///
+/// This function always resolves `..` to the "lexical" parent.
+/// That is "a/b/../c" will always resolve to `a/c` which can change the meaning of the path.
+/// In particular, `a/c` and `a/b/../c` are distinct on many systems because `b` may be a symbolic link, so its parent isn't `a`.
+///
+/// </div>
+///
+/// [`path::absolute`](absolute) is an alternative that preserves `..`.
+/// Or [`Path::canonicalize`] can be used to resolve any `..` by querying the filesystem.
+pub fn normalize_lexically(path: &Path) -> Result<PathBuf, NormalizeError> {
+    use std::path::Component;
+
+    let mut lexical = PathBuf::new();
+    let mut iter = path.components().peekable();
+
+    // Find the root, if any, and add it to the lexical path.
+    // Here we treat the Windows path "C:\" as a single "root" even though
+    // `components` splits it into two: (Prefix, RootDir).
+    let root = match iter.peek() {
+        Some(Component::ParentDir) => return Err(NormalizeError),
+        Some(p @ Component::RootDir) | Some(p @ Component::CurDir) => {
+            lexical.push(p);
+            iter.next();
+            lexical.as_os_str().len()
+        }
+        Some(Component::Prefix(prefix)) => {
+            lexical.push(prefix.as_os_str());
+            iter.next();
+            if let Some(p @ Component::RootDir) = iter.peek() {
+                lexical.push(p);
+                iter.next();
+            }
+            lexical.as_os_str().len()
+        }
+        None => return Ok(PathBuf::new()),
+        Some(Component::Normal(_)) => 0,
+    };
+
+    for component in iter {
+        match component {
+            Component::RootDir => unreachable!(),
+            Component::Prefix(_) => return Err(NormalizeError),
+            Component::CurDir => continue,
+            Component::ParentDir => {
+                // It's an error if ParentDir causes us to go above the "root".
+                if lexical.as_os_str().len() == root {
+                    return Err(NormalizeError);
+                } else {
+                    lexical.pop();
+                }
+            }
+            Component::Normal(path) => lexical.push(path),
+        }
+    }
+    Ok(lexical)
+}
+
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
@@ -456,7 +548,7 @@ impl PathWithPosition {
     /// # Examples
     ///
     /// ```
-    /// # use zed_util::paths::PathWithPosition;
+    /// # use util::paths::PathWithPosition;
     /// # use std::path::PathBuf;
     /// assert_eq!(PathWithPosition::parse_str("test_file"), PathWithPosition {
     ///     path: PathBuf::from("test_file"),
@@ -487,7 +579,7 @@ impl PathWithPosition {
     ///
     /// # Expected parsing results when encounter ill-formatted inputs.
     /// ```
-    /// # use zed_util::paths::PathWithPosition;
+    /// # use util::paths::PathWithPosition;
     /// # use std::path::PathBuf;
     /// assert_eq!(PathWithPosition::parse_str("test_file.rs:a"), PathWithPosition {
     ///     path: PathBuf::from("test_file.rs:a"),
@@ -832,7 +924,7 @@ where
 /// 2. When encountering digits, treating consecutive digits as a single number
 /// 3. Comparing numbers by their numeric value rather than lexicographically
 /// 4. For non-numeric characters, using case-sensitive comparison with lowercase priority
-fn natural_sort(a: &str, b: &str) -> Ordering {
+pub fn natural_sort(a: &str, b: &str) -> Ordering {
     let mut a_iter = a.chars().peekable();
     let mut b_iter = b.chars().peekable();
 
@@ -991,6 +1083,68 @@ pub fn compare_paths(
             (Some(_), None) => break Ordering::Greater,
             (None, Some(_)) => break Ordering::Less,
             (None, None) => break Ordering::Equal,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WslPath {
+    pub distro: String,
+
+    // the reason this is an OsString and not any of the path types is that it needs to
+    // represent a unix path (with '/' separators) on windows. `from_path` does this by
+    // manually constructing it from the path components of a given windows path.
+    pub path: std::ffi::OsString,
+}
+
+impl WslPath {
+    pub fn from_path<P: AsRef<Path>>(path: P) -> Option<WslPath> {
+        if cfg!(not(target_os = "windows")) {
+            return None;
+        }
+        use std::{
+            ffi::OsString,
+            path::{Component, Prefix},
+        };
+
+        let mut components = path.as_ref().components();
+        let Some(Component::Prefix(prefix)) = components.next() else {
+            return None;
+        };
+        let (server, distro) = match prefix.kind() {
+            Prefix::UNC(server, distro) => (server, distro),
+            Prefix::VerbatimUNC(server, distro) => (server, distro),
+            _ => return None,
+        };
+        let Some(Component::RootDir) = components.next() else {
+            return None;
+        };
+
+        let server_str = server.to_string_lossy();
+        if server_str == "wsl.localhost" || server_str == "wsl$" {
+            let mut result = OsString::from("");
+            for c in components {
+                use Component::*;
+                match c {
+                    Prefix(p) => unreachable!("got {p:?}, but already stripped prefix"),
+                    RootDir => unreachable!("got root dir, but already stripped root"),
+                    CurDir => continue,
+                    ParentDir => result.push("/.."),
+                    Normal(s) => {
+                        result.push("/");
+                        result.push(s);
+                    }
+                }
+            }
+            if result.is_empty() {
+                result.push("/");
+            }
+            Some(WslPath {
+                distro: distro.to_string_lossy().to_string(),
+                path: result,
+            })
+        } else {
+            None
         }
     }
 }
@@ -1797,5 +1951,77 @@ mod tests {
         // Longer sample extension
         let path = Path::new("/a/b/c/long.app.tar.gz");
         assert_eq!(path.multiple_extensions(), Some("app.tar.gz".to_string()));
+    }
+
+    #[test]
+    fn test_strip_path_suffix() {
+        let base = Path::new("/a/b/c/file_name");
+        let suffix = Path::new("file_name");
+        assert_eq!(strip_path_suffix(base, suffix), Some(Path::new("/a/b/c")));
+
+        let base = Path::new("/a/b/c/file_name.tsx");
+        let suffix = Path::new("file_name.tsx");
+        assert_eq!(strip_path_suffix(base, suffix), Some(Path::new("/a/b/c")));
+
+        let base = Path::new("/a/b/c/file_name.stories.tsx");
+        let suffix = Path::new("c/file_name.stories.tsx");
+        assert_eq!(strip_path_suffix(base, suffix), Some(Path::new("/a/b")));
+
+        let base = Path::new("/a/b/c/long.app.tar.gz");
+        let suffix = Path::new("b/c/long.app.tar.gz");
+        assert_eq!(strip_path_suffix(base, suffix), Some(Path::new("/a")));
+
+        let base = Path::new("/a/b/c/long.app.tar.gz");
+        let suffix = Path::new("/a/b/c/long.app.tar.gz");
+        assert_eq!(strip_path_suffix(base, suffix), Some(Path::new("")));
+
+        let base = Path::new("/a/b/c/long.app.tar.gz");
+        let suffix = Path::new("/a/b/c/no_match.app.tar.gz");
+        assert_eq!(strip_path_suffix(base, suffix), None);
+
+        let base = Path::new("/a/b/c/long.app.tar.gz");
+        let suffix = Path::new("app.tar.gz");
+        assert_eq!(strip_path_suffix(base, suffix), None);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_wsl_path() {
+        use super::WslPath;
+        let path = "/a/b/c";
+        assert_eq!(WslPath::from_path(&path), None);
+
+        let path = r"\\wsl.localhost";
+        assert_eq!(WslPath::from_path(&path), None);
+
+        let path = r"\\wsl.localhost\Distro";
+        assert_eq!(
+            WslPath::from_path(&path),
+            Some(WslPath {
+                distro: "Distro".to_owned(),
+                path: "/".into(),
+            })
+        );
+
+        let path = r"\\wsl.localhost\Distro\blue";
+        assert_eq!(
+            WslPath::from_path(&path),
+            Some(WslPath {
+                distro: "Distro".to_owned(),
+                path: "/blue".into()
+            })
+        );
+
+        let path = r"\\wsl$\archlinux\tomato\.\paprika\..\aubergine.txt";
+        assert_eq!(
+            WslPath::from_path(&path),
+            Some(WslPath {
+                distro: "archlinux".to_owned(),
+                path: "/tomato/paprika/../aubergine.txt".into()
+            })
+        );
+
+        let path = r"\\windows.localhost\Distro\foo";
+        assert_eq!(WslPath::from_path(&path), None);
     }
 }

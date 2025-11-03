@@ -7,7 +7,10 @@ use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 use util::serde::default_true;
 
-use crate::{AllLanguageSettingsContent, ExtendingVec, SlashCommandSettings};
+use crate::{
+    AllLanguageSettingsContent, DelayMs, ExtendingVec, Maybe, ProjectTerminalSettingsContent,
+    SlashCommandSettings,
+};
 
 #[skip_serializing_none]
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -28,6 +31,9 @@ pub struct ProjectSettingsContent {
     /// Default: null
     #[serde(default)]
     pub lsp: HashMap<Arc<str>, LspSettings>,
+
+    #[serde(default)]
+    pub terminal: Option<ProjectTerminalSettingsContent>,
 
     /// Configuration for Debugger-related features
     #[serde(default)]
@@ -50,11 +56,19 @@ pub struct ProjectSettingsContent {
 #[skip_serializing_none]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorktreeSettingsContent {
-    /// The displayed name of this project. If not set or empty, the root directory name
+    /// The displayed name of this project. If not set or null, the root directory name
     /// will be displayed.
     ///
-    /// Default: ""
-    pub project_name: Option<String>,
+    /// Default: null
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Maybe::is_unset")]
+    pub project_name: Maybe<String>,
+
+    /// Whether to prevent this project from being shared in public channels.
+    ///
+    /// Default: false
+    #[serde(default)]
+    pub prevent_sharing_in_public_channels: bool,
 
     /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
     /// `file_scan_inclusions`.
@@ -149,6 +163,8 @@ pub struct DapSettingsContent {
     pub binary: Option<String>,
     #[serde(default)]
     pub args: Option<Vec<String>>,
+    #[serde(default)]
+    pub env: Option<HashMap<String, String>>,
 }
 
 #[skip_serializing_none]
@@ -249,7 +265,7 @@ pub struct GitSettings {
     pub git_gutter: Option<GitGutterSetting>,
     /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
     ///
-    /// Default: null
+    /// Default: 0
     pub gutter_debounce: Option<u64>,
     /// Whether or not to show git blame data inline in
     /// the currently focused line.
@@ -303,7 +319,7 @@ pub struct InlineBlameSettings {
     /// after a delay once the cursor stops moving.
     ///
     /// Default: 0
-    pub delay_ms: Option<u64>,
+    pub delay_ms: Option<DelayMs>,
     /// The amount of padding between the end of the source line and the start
     /// of the inline blame in units of columns.
     ///
@@ -390,7 +406,7 @@ pub struct LspPullDiagnosticsSettingsContent {
     /// 0 turns the debounce off.
     ///
     /// Default: 50
-    pub debounce_ms: Option<u64>,
+    pub debounce_ms: Option<DelayMs>,
 }
 
 #[skip_serializing_none]
@@ -406,7 +422,7 @@ pub struct InlineDiagnosticsSettingsContent {
     /// last editor event.
     ///
     /// Default: 150
-    pub update_debounce_ms: Option<u64>,
+    pub update_debounce_ms: Option<DelayMs>,
     /// The amount of padding between the end of the source line and the start
     /// of the inline diagnostic in units of columns.
     ///
@@ -465,8 +481,8 @@ pub enum DiagnosticSeverityContent {
     Error,
     Warning,
     Info,
-    #[serde(alias = "all")]
     Hint,
+    All,
 }
 
 /// A custom Git hosting provider.

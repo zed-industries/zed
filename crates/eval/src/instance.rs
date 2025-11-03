@@ -1,37 +1,38 @@
-use agent::{Message, MessageSegment, SerializedThread, ThreadStore};
+use agent::ContextServerRegistry;
+use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow, bail};
-use assistant_tool::ToolWorkingSet;
 use client::proto::LspWorkProgress;
 use futures::channel::mpsc;
+use futures::future::Shared;
 use futures::{FutureExt as _, StreamExt as _, future};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
 use handlebars::Handlebars;
 use language::{Buffer, DiagnosticSeverity, OffsetRangeExt as _};
 use language_model::{
-    LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolResultContent, MessageContent, Role, TokenUsage,
+    LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelToolResultContent, MessageContent, Role, TokenUsage,
 };
-use project::lsp_store::OpenLspBufferHandle;
-use project::{DiagnosticSummary, Project, ProjectPath};
+use project::{DiagnosticSummary, Project, ProjectPath, lsp_store::OpenLspBufferHandle};
+use prompt_store::{ProjectContext, WorktreeContext};
+use rand::{distr, prelude::*};
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
-use std::fmt::Write as _;
-use std::fs;
-use std::fs::File;
-use std::io::Write as _;
-use std::path::Path;
-use std::path::PathBuf;
-use std::rc::Rc;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    fmt::Write as _,
+    fs::{self, File},
+    io::Write as _,
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use unindent::Unindent as _;
-use util::ResultExt as _;
-use util::command::new_smol_command;
-use util::markdown::MarkdownCodeBlock;
+use util::{ResultExt as _, command::new_smol_command, markdown::MarkdownCodeBlock};
 
-use crate::assertions::{AssertionsReport, RanAssertion, RanAssertionResult};
-use crate::example::{Example, ExampleContext, FailedAssertion, JudgeAssertion};
-use crate::{AgentAppState, ToolMetrics};
+use crate::{
+    AgentAppState, ToolMetrics,
+    assertions::{AssertionsReport, RanAssertion, RanAssertionResult},
+    example::{Example, ExampleContext, FailedAssertion, JudgeAssertion},
+};
 
 pub const ZED_REPO_URL: &str = "https://github.com/zed-industries/zed.git";
 
@@ -57,10 +58,9 @@ pub struct RunOutput {
     pub diagnostic_summary_after: DiagnosticSummary,
     pub diagnostics_before: Option<String>,
     pub diagnostics_after: Option<String>,
-    pub response_count: usize,
     pub token_usage: TokenUsage,
     pub tool_metrics: ToolMetrics,
-    pub all_messages: String,
+    pub thread_markdown: String,
     pub programmatic_assertions: AssertionsReport,
 }
 
@@ -194,12 +194,7 @@ impl ExampleInstance {
             .join(self.thread.meta().repo_name())
     }
 
-    pub fn run(
-        &self,
-        model: Arc<dyn LanguageModel>,
-        app_state: Arc<AgentAppState>,
-        cx: &mut App,
-    ) -> Task<Result<RunOutput>> {
+    pub fn run(&self, app_state: Arc<AgentAppState>, cx: &mut App) -> Task<Result<RunOutput>> {
         let project = Project::local(
             app_state.client.clone(),
             app_state.node_runtime.clone(),
@@ -214,15 +209,6 @@ impl ExampleInstance {
             project.create_worktree(self.worktree_path(), true, cx)
         });
 
-        let tools = cx.new(|_| ToolWorkingSet::default());
-        let prompt_store = None;
-        let thread_store = ThreadStore::load(
-            project.clone(),
-            tools,
-            prompt_store,
-            app_state.prompt_builder.clone(),
-            cx,
-        );
         let meta = self.thread.meta();
         let this = self.clone();
 
@@ -301,74 +287,62 @@ impl ExampleInstance {
             // history using undo/redo.
             std::fs::write(&last_diff_file_path, "")?;
 
-            let thread_store = thread_store.await?;
+            let thread = cx.update(|cx| {
+                //todo: Do we want to load rules files here?
+                let worktrees = project.read(cx).visible_worktrees(cx).map(|worktree| {
+                    let root_name = worktree.read(cx).root_name_str().into();
+                    let abs_path = worktree.read(cx).abs_path();
 
-
-            let thread =
-                thread_store.update(cx, |thread_store, cx| {
-                    let thread = if let Some(json) = &meta.existing_thread_json {
-                        let serialized = SerializedThread::from_json(json.as_bytes()).expect("Can't read serialized thread");
-                        thread_store.create_thread_from_serialized(serialized, cx)
-                    } else {
-                        thread_store.create_thread(cx)
-                    };
-                    thread.update(cx, |thread, cx| {
-                        thread.set_profile(meta.profile_id.clone(), cx);
-                    });
-                    thread
-                })?;
-
-
-            thread.update(cx, |thread, _cx| {
-                let mut request_count = 0;
-                let previous_diff = Rc::new(RefCell::new("".to_string()));
-                let example_output_dir = this.run_directory.clone();
-                let last_diff_file_path = last_diff_file_path.clone();
-                let messages_json_file_path = example_output_dir.join("last.messages.json");
-                let this = this.clone();
-                thread.set_request_callback(move |request, response_events| {
-                    request_count += 1;
-                    let messages_file_path = example_output_dir.join(format!("{request_count}.messages.md"));
-                    let diff_file_path = example_output_dir.join(format!("{request_count}.diff"));
-                    let last_messages_file_path = example_output_dir.join("last.messages.md");
-                    let request_markdown = RequestMarkdown::new(request);
-                    let response_events_markdown = response_events_to_markdown(response_events);
-                    let dialog = ThreadDialog::new(request, response_events);
-                    let dialog_json = serde_json::to_string_pretty(&dialog.to_combined_request()).unwrap_or_default();
-
-                    let messages = format!("{}\n\n{}", request_markdown.messages, response_events_markdown);
-                    fs::write(&messages_file_path, messages.clone()).expect("failed to write messages file");
-                    fs::write(&last_messages_file_path, messages).expect("failed to write last messages file");
-                    fs::write(&messages_json_file_path, dialog_json).expect("failed to write last.messages.json");
-
-                    let diff_result = smol::block_on(this.repository_diff());
-                    match diff_result {
-                        Ok(diff) => {
-                            if diff != previous_diff.borrow().clone() {
-                                fs::write(&diff_file_path, &diff).expect("failed to write diff file");
-                                fs::write(&last_diff_file_path, &diff).expect("failed to write last diff file");
-                                *previous_diff.borrow_mut() = diff;
-                            }
-                        }
-                        Err(err) => {
-                            let error_message = format!("{err:?}");
-                            fs::write(&diff_file_path, &error_message).expect("failed to write diff error to file");
-                            fs::write(&last_diff_file_path, &error_message).expect("failed to write last diff file");
-                        }
+                    WorktreeContext {
+                        root_name,
+                        abs_path,
+                        rules_file: None,
                     }
+                }).collect::<Vec<_>>();
+                let project_context = cx.new(|_cx| ProjectContext::new(worktrees, vec![]));
+                let context_server_registry = cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
 
-                    if request_count == 1 {
-                        let tools_file_path = example_output_dir.join("tools.md");
-                        fs::write(tools_file_path, request_markdown.tools).expect("failed to write tools file");
-                    }
+                let thread = if let Some(json) = &meta.existing_thread_json {
+                    let session_id = acp::SessionId(
+                        rand::rng()
+                            .sample_iter(&distr::Alphanumeric)
+                            .take(7)
+                            .map(char::from)
+                            .collect::<String>()
+                            .into(),
+                    );
+
+                    let db_thread = agent::DbThread::from_json(json.as_bytes()).expect("Can't read serialized thread");
+                    cx.new(|cx| agent::Thread::from_db(session_id, db_thread, project.clone(), project_context, context_server_registry, agent::Templates::new(), cx))
+                } else {
+                    cx.new(|cx| agent::Thread::new(project.clone(), project_context, context_server_registry, agent::Templates::new(), None, cx))
+                };
+
+                thread.update(cx, |thread, cx| {
+                    thread.add_default_tools(Rc::new(EvalThreadEnvironment {
+                        project: project.clone(),
+                    }), cx);
+                    thread.set_profile(meta.profile_id.clone());
+                    thread.set_model(
+                        LanguageModelInterceptor::new(
+                            LanguageModelRegistry::read_global(cx).default_model().expect("Missing model").model.clone(),
+                            this.run_directory.clone(),
+                            last_diff_file_path.clone(),
+                            this.run_directory.join("last.messages.json"),
+                            this.worktree_path(),
+                            this.repo_url(),
+                        ),
+                        cx,
+                    );
                 });
-            })?;
+
+                thread
+            }).unwrap();
 
             let mut example_cx = ExampleContext::new(
                 meta.clone(),
                 this.log_prefix.clone(),
                 thread.clone(),
-                model.clone(),
                 cx.clone(),
             );
             let result = this.thread.conversation(&mut example_cx).await;
@@ -381,7 +355,7 @@ impl ExampleInstance {
             println!("{}Stopped", this.log_prefix);
 
             println!("{}Getting repository diff", this.log_prefix);
-            let repository_diff = this.repository_diff().await?;
+            let repository_diff = Self::repository_diff(this.worktree_path(), &this.repo_url()).await?;
 
             std::fs::write(last_diff_file_path, &repository_diff)?;
 
@@ -416,34 +390,28 @@ impl ExampleInstance {
             }
 
             thread.update(cx, |thread, _cx| {
-                let response_count = thread
-                    .messages()
-                    .filter(|message| message.role == language_model::Role::Assistant)
-                    .count();
                 RunOutput {
                     repository_diff,
                     diagnostic_summary_before,
                     diagnostic_summary_after,
                     diagnostics_before,
                     diagnostics_after,
-                    response_count,
-                    token_usage: thread.cumulative_token_usage(),
+                    token_usage: thread.latest_request_token_usage().unwrap(),
                     tool_metrics: example_cx.tool_metrics.lock().unwrap().clone(),
-                    all_messages: messages_to_markdown(thread.messages()),
+                    thread_markdown: thread.to_markdown(),
                     programmatic_assertions: example_cx.assertions,
                 }
             })
         })
     }
 
-    async fn repository_diff(&self) -> Result<String> {
-        let worktree_path = self.worktree_path();
-        run_git(&worktree_path, &["add", "."]).await?;
+    async fn repository_diff(repository_path: PathBuf, repository_url: &str) -> Result<String> {
+        run_git(&repository_path, &["add", "."]).await?;
         let mut diff_args = vec!["diff", "--staged"];
-        if self.thread.meta().url == ZED_REPO_URL {
+        if repository_url == ZED_REPO_URL {
             diff_args.push(":(exclude).rules");
         }
-        run_git(&worktree_path, &diff_args).await
+        run_git(&repository_path, &diff_args).await
     }
 
     pub async fn judge(
@@ -543,7 +511,7 @@ impl ExampleInstance {
         hbs.register_template_string(judge_thread_prompt_name, judge_thread_prompt)
             .unwrap();
 
-        let complete_messages = &run_output.all_messages;
+        let complete_messages = &run_output.thread_markdown;
         let to_prompt = |assertion: String| {
             hbs.render(
                 judge_thread_prompt_name,
@@ -632,6 +600,273 @@ impl ExampleInstance {
         }
 
         (responses, report)
+    }
+}
+
+struct EvalThreadEnvironment {
+    project: Entity<Project>,
+}
+
+struct EvalTerminalHandle {
+    terminal: Entity<acp_thread::Terminal>,
+}
+
+impl agent::TerminalHandle for EvalTerminalHandle {
+    fn id(&self, cx: &AsyncApp) -> Result<acp::TerminalId> {
+        self.terminal.read_with(cx, |term, _cx| term.id().clone())
+    }
+
+    fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp::TerminalExitStatus>>> {
+        self.terminal
+            .read_with(cx, |term, _cx| term.wait_for_exit())
+    }
+
+    fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse> {
+        self.terminal
+            .read_with(cx, |term, cx| term.current_output(cx))
+    }
+}
+
+impl agent::ThreadEnvironment for EvalThreadEnvironment {
+    fn create_terminal(
+        &self,
+        command: String,
+        cwd: Option<PathBuf>,
+        output_byte_limit: Option<u64>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<Rc<dyn agent::TerminalHandle>>> {
+        let project = self.project.clone();
+        cx.spawn(async move |cx| {
+            let language_registry =
+                project.read_with(cx, |project, _cx| project.languages().clone())?;
+            let id = acp::TerminalId(uuid::Uuid::new_v4().to_string().into());
+            let terminal =
+                acp_thread::create_terminal_entity(command, &[], vec![], cwd.clone(), &project, cx)
+                    .await?;
+            let terminal = cx.new(|cx| {
+                acp_thread::Terminal::new(
+                    id,
+                    "",
+                    cwd,
+                    output_byte_limit.map(|limit| limit as usize),
+                    terminal,
+                    language_registry,
+                    cx,
+                )
+            })?;
+            Ok(Rc::new(EvalTerminalHandle { terminal }) as Rc<dyn agent::TerminalHandle>)
+        })
+    }
+}
+
+struct LanguageModelInterceptor {
+    model: Arc<dyn LanguageModel>,
+    request_count: Arc<Mutex<usize>>,
+    previous_diff: Arc<Mutex<String>>,
+    example_output_dir: PathBuf,
+    last_diff_file_path: PathBuf,
+    messages_json_file_path: PathBuf,
+    repository_path: PathBuf,
+    repository_url: String,
+}
+
+impl LanguageModelInterceptor {
+    fn new(
+        model: Arc<dyn LanguageModel>,
+        example_output_dir: PathBuf,
+        last_diff_file_path: PathBuf,
+        messages_json_file_path: PathBuf,
+        repository_path: PathBuf,
+        repository_url: String,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            model,
+            request_count: Arc::new(Mutex::new(0)),
+            previous_diff: Arc::new(Mutex::new("".to_string())),
+            example_output_dir,
+            last_diff_file_path,
+            messages_json_file_path,
+            repository_path,
+            repository_url,
+        })
+    }
+}
+
+impl language_model::LanguageModel for LanguageModelInterceptor {
+    fn id(&self) -> language_model::LanguageModelId {
+        self.model.id()
+    }
+
+    fn name(&self) -> language_model::LanguageModelName {
+        self.model.name()
+    }
+
+    fn provider_id(&self) -> language_model::LanguageModelProviderId {
+        self.model.provider_id()
+    }
+
+    fn provider_name(&self) -> language_model::LanguageModelProviderName {
+        self.model.provider_name()
+    }
+
+    fn telemetry_id(&self) -> String {
+        self.model.telemetry_id()
+    }
+
+    fn supports_images(&self) -> bool {
+        self.model.supports_images()
+    }
+
+    fn supports_tools(&self) -> bool {
+        self.model.supports_tools()
+    }
+
+    fn supports_tool_choice(&self, choice: language_model::LanguageModelToolChoice) -> bool {
+        self.model.supports_tool_choice(choice)
+    }
+
+    fn max_token_count(&self) -> u64 {
+        self.model.max_token_count()
+    }
+
+    fn count_tokens(
+        &self,
+        request: LanguageModelRequest,
+        cx: &App,
+    ) -> future::BoxFuture<'static, Result<u64>> {
+        self.model.count_tokens(request, cx)
+    }
+
+    fn stream_completion(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> future::BoxFuture<
+        'static,
+        Result<
+            futures::stream::BoxStream<
+                'static,
+                Result<LanguageModelCompletionEvent, language_model::LanguageModelCompletionError>,
+            >,
+            language_model::LanguageModelCompletionError,
+        >,
+    > {
+        let stream = self.model.stream_completion(request.clone(), cx);
+        let request_count = self.request_count.clone();
+        let previous_diff = self.previous_diff.clone();
+        let example_output_dir = self.example_output_dir.clone();
+        let last_diff_file_path = self.last_diff_file_path.clone();
+        let messages_json_file_path = self.messages_json_file_path.clone();
+        let repository_path = self.repository_path.clone();
+        let repository_url = self.repository_url.clone();
+
+        Box::pin(async move {
+            let stream = stream.await?;
+
+            let response_events = Arc::new(Mutex::new(Vec::new()));
+            let request_clone = request.clone();
+
+            let wrapped_stream = stream.then(move |event| {
+                let response_events = response_events.clone();
+                let request = request_clone.clone();
+                let request_count = request_count.clone();
+                let previous_diff = previous_diff.clone();
+                let example_output_dir = example_output_dir.clone();
+                let last_diff_file_path = last_diff_file_path.clone();
+                let messages_json_file_path = messages_json_file_path.clone();
+                let repository_path = repository_path.clone();
+                let repository_url = repository_url.clone();
+
+                async move {
+                    let event_result = match &event {
+                        Ok(ev) => Ok(ev.clone()),
+                        Err(err) => Err(err.to_string()),
+                    };
+                    response_events.lock().unwrap().push(event_result);
+
+                    let should_execute = matches!(
+                        &event,
+                        Ok(LanguageModelCompletionEvent::Stop { .. }) | Err(_)
+                    );
+
+                    if should_execute {
+                        let current_request_count = {
+                            let mut count = request_count.lock().unwrap();
+                            *count += 1;
+                            *count
+                        };
+
+                        let messages_file_path =
+                            example_output_dir.join(format!("{current_request_count}.messages.md"));
+                        let diff_file_path =
+                            example_output_dir.join(format!("{current_request_count}.diff"));
+                        let last_messages_file_path = example_output_dir.join("last.messages.md");
+
+                        let collected_events = response_events.lock().unwrap().clone();
+                        let request_markdown = RequestMarkdown::new(&request);
+                        let response_events_markdown =
+                            response_events_to_markdown(&collected_events);
+                        let dialog = ThreadDialog::new(&request, &collected_events);
+                        let dialog_json =
+                            serde_json::to_string_pretty(&dialog.to_combined_request())
+                                .unwrap_or_default();
+
+                        let messages = format!(
+                            "{}\n\n{}",
+                            request_markdown.messages, response_events_markdown
+                        );
+                        fs::write(&messages_file_path, messages.clone())
+                            .expect("failed to write messages file");
+                        fs::write(&last_messages_file_path, messages)
+                            .expect("failed to write last messages file");
+                        fs::write(&messages_json_file_path, dialog_json)
+                            .expect("failed to write last.messages.json");
+
+                        // Get repository diff
+                        let diff_result =
+                            ExampleInstance::repository_diff(repository_path, &repository_url)
+                                .await;
+
+                        match diff_result {
+                            Ok(diff) => {
+                                let prev_diff = previous_diff.lock().unwrap().clone();
+                                if diff != prev_diff {
+                                    fs::write(&diff_file_path, &diff)
+                                        .expect("failed to write diff file");
+                                    fs::write(&last_diff_file_path, &diff)
+                                        .expect("failed to write last diff file");
+                                    *previous_diff.lock().unwrap() = diff;
+                                }
+                            }
+                            Err(err) => {
+                                let error_message = format!("{err:?}");
+                                fs::write(&diff_file_path, &error_message)
+                                    .expect("failed to write diff error to file");
+                                fs::write(&last_diff_file_path, &error_message)
+                                    .expect("failed to write last diff file");
+                            }
+                        }
+
+                        if current_request_count == 1 {
+                            let tools_file_path = example_output_dir.join("tools.md");
+                            fs::write(tools_file_path, request_markdown.tools)
+                                .expect("failed to write tools file");
+                        }
+                    }
+
+                    event
+                }
+            });
+
+            Ok(Box::pin(wrapped_stream)
+                as futures::stream::BoxStream<
+                    'static,
+                    Result<
+                        LanguageModelCompletionEvent,
+                        language_model::LanguageModelCompletionError,
+                    >,
+                >)
+        })
     }
 }
 
@@ -824,40 +1059,6 @@ pub async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
         String::from_utf8_lossy(&output.stdout),
     );
     Ok(String::from_utf8(output.stdout)?.trim().to_string())
-}
-
-fn messages_to_markdown<'a>(message_iter: impl IntoIterator<Item = &'a Message>) -> String {
-    let mut messages = String::new();
-    let mut assistant_message_number: u32 = 1;
-
-    for message in message_iter {
-        push_role(&message.role, &mut messages, &mut assistant_message_number);
-
-        for segment in &message.segments {
-            match segment {
-                MessageSegment::Text(text) => {
-                    messages.push_str(text);
-                    messages.push_str("\n\n");
-                }
-                MessageSegment::Thinking { text, signature } => {
-                    messages.push_str("**Thinking**:\n\n");
-                    if let Some(sig) = signature {
-                        messages.push_str(&format!("Signature: {}\n\n", sig));
-                    }
-                    messages.push_str(text);
-                    messages.push_str("\n");
-                }
-                MessageSegment::RedactedThinking(items) => {
-                    messages.push_str(&format!(
-                        "**Redacted Thinking**: {} item(s)\n\n",
-                        items.len()
-                    ));
-                }
-            }
-        }
-    }
-
-    messages
 }
 
 fn push_role(role: &Role, buf: &mut String, assistant_message_number: &mut u32) {

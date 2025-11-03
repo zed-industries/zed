@@ -1,7 +1,8 @@
 {
-  /// The displayed name of this project. If not set or empty, the root directory name
+  "$schema": "zed://schemas/settings",
+  /// The displayed name of this project. If not set or null, the root directory name
   /// will be displayed.
-  "project_name": "",
+  "project_name": null,
   // The name of the Zed theme to use for the UI.
   //
   // `mode` is one of:
@@ -76,7 +77,7 @@
   "ui_font_size": 16,
   // The default font size for agent responses in the agent panel. Falls back to the UI font size if unset.
   "agent_ui_font_size": null,
-  // The default font size for user messages in the agent panel. Falls back to the buffer font size if unset.
+  // The default font size for user messages in the agent panel.
   "agent_buffer_font_size": 12,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
@@ -310,11 +311,11 @@
   "use_on_type_format": true,
   // Whether to automatically add matching closing characters when typing
   // opening parenthesis, bracket, brace, single or double quote characters.
-  // For example, when you type (, Zed will add a closing ) at the correct position.
+  // For example, when you type '(', Zed will add a closing ) at the correct position.
   "use_autoclose": true,
   // Whether to automatically surround selected text when typing opening parenthesis,
   // bracket, brace, single or double quote characters.
-  // For example, when you select text and type (, Zed will surround the text with ().
+  // For example, when you select text and type '(', Zed will surround the text with ().
   "use_auto_surround": true,
   // Whether indentation should be adjusted based on the context whilst typing.
   "auto_indent": true,
@@ -601,7 +602,9 @@
     "whole_word": false,
     "case_sensitive": false,
     "include_ignored": false,
-    "regex": false
+    "regex": false,
+    // Whether to center the cursor on each search match when navigating.
+    "center_on_match": false
   },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
@@ -721,7 +724,11 @@
     // Whether to enable drag-and-drop operations in the project panel.
     "drag_and_drop": true,
     // Whether to hide the root entry when only one folder is open in the window.
-    "hide_root": false
+    "hide_root": false,
+    // Whether to hide the hidden entries in the project panel.
+    "hide_hidden": false,
+    // Whether to automatically open files when pasting them in the project panel.
+    "open_file_on_paste": true
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar
@@ -879,8 +886,6 @@
     // Note: This setting has no effect on external agents that support permission modes, such as Claude Code.
     //       You can set `agent_servers.claude.default_mode` to `bypassPermissions` to skip all permission requests.
     "always_allow_tool_actions": false,
-    // When enabled, the agent will stream edits.
-    "stream_edits": false,
     // When enabled, agent edits will be displayed in single-file editors for review
     "single_file_review": true,
     // When enabled, show voting thumbs for feedback on agent edits.
@@ -903,6 +908,7 @@
           "now": true,
           "find_path": true,
           "read_file": true,
+          "open": true,
           "grep": true,
           "terminal": true,
           "thinking": true,
@@ -914,7 +920,6 @@
         // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
         // "enable_all_context_servers": true,
         "tools": {
-          "contents": true,
           "diagnostics": true,
           "fetch": true,
           "list_directory": true,
@@ -1088,10 +1093,10 @@
     // Only the file Zed had indexed will be used, not necessary all the gitignored files.
     //
     // Can accept 3 values:
-    //   * `true`: Use all gitignored files
-    //   * `false`: Use only the files Zed had indexed
-    //   * `null`: Be smart and search for ignored when called from a gitignored worktree
-    "include_ignored": null
+    //   * "all": Use all gitignored files
+    //   * "indexed": Use only the files Zed had indexed
+    //   * "smart": Be smart and search for ignored when called from a gitignored worktree
+    "include_ignored": "smart"
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -1101,25 +1106,31 @@
   // Removes any lines containing only whitespace at the end of the file and
   // ensures just one newline at the end.
   "ensure_final_newline_on_save": true,
-  // Whether or not to perform a buffer format before saving: [on, off, prettier, language_server]
+  // Whether or not to perform a buffer format before saving: [on, off]
   // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "on",
-  // How to perform a buffer format. This setting can take 4 values:
+  // How to perform a buffer format. This setting can take multiple values:
   //
-  // 1. Format code using the current language server:
+  // 1. Default. Format files using Zed's Prettier integration (if applicable),
+  //    or falling back to formatting via language server:
+  //     "formatter": "auto"
+  // 2. Format code using the current language server:
   //     "formatter": "language_server"
-  // 2. Format code using an external command:
+  // 3. Format code using a specific language server:
+  //     "formatter": {"language_server": {"name": "ruff"}}
+  // 4. Format code using an external command:
   //     "formatter": {
   //       "external": {
   //         "command": "prettier",
   //         "arguments": ["--stdin-filepath", "{buffer_path}"]
   //       }
   //     }
-  // 3. Format code using Zed's Prettier integration:
+  // 5. Format code using Zed's Prettier integration:
   //     "formatter": "prettier"
-  // 4. Default. Format files using Zed's Prettier integration (if applicable),
-  //    or falling back to formatting via language server:
-  //     "formatter": "auto"
+  // 6. Format code using a code action
+  //     "formatter": {"code_action": "source.fixAll.eslint"}
+  // 7. An array of any format step specified above to apply in order
+  //     "formatter": [{"code_action": "source.fixAll.eslint"}, "prettier"]
   "formatter": "auto",
   // How to soft-wrap long lines of text.
   // Possible values:
@@ -1233,8 +1244,8 @@
     "git_gutter": "tracked_files",
     /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
     ///
-    /// Default: null
-    "gutter_debounce": null,
+    /// Default: 0
+    "gutter_debounce": 0,
     // Control whether the git blame information is shown inline,
     // in the currently focused line.
     "inline_blame": {
@@ -1311,15 +1322,18 @@
     //   "proxy": "",
     //   "proxy_no_verify": false
     // },
-    // Whether edit predictions are enabled when editing text threads.
-    // This setting has no effect if globally disabled.
-    "enabled_in_text_threads": true,
-
     "copilot": {
       "enterprise_uri": null,
       "proxy": null,
       "proxy_no_verify": null
-    }
+    },
+    "codestral": {
+      "model": null,
+      "max_tokens": null
+    },
+    // Whether edit predictions are enabled when editing text threads in the agent panel.
+    // This setting has no effect if globally disabled.
+    "enabled_in_text_threads": true
   },
   // Settings specific to journaling
   "journal": {
@@ -1338,7 +1352,9 @@
     // Whether to show the active language button in the status bar.
     "active_language_button": true,
     // Whether to show the cursor position button in the status bar.
-    "cursor_position_button": true
+    "cursor_position_button": true,
+    // Whether to show active line endings button in the status bar.
+    "line_endings_button": false
   },
   // Settings specific to the terminal
   "terminal": {
@@ -1401,8 +1417,8 @@
     //  4. A box drawn around the following character
     //     "hollow"
     //
-    // Default: not set, defaults to "block"
-    "cursor_shape": null,
+    // Default: "block"
+    "cursor_shape": "block",
     // Set whether Alternate Scroll mode (code: ?1007) is active by default.
     // Alternate Scroll mode converts mouse scroll events into up / down key
     // presses when in the alternate screen (e.g. when running applications
@@ -1424,8 +1440,8 @@
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
     "copy_on_select": false,
-    // Whether to keep the text selection after copying it to the clipboard
-    "keep_selection_on_copy": false,
+    // Whether to keep the text selection after copying it to the clipboard.
+    "keep_selection_on_copy": true,
     // Whether to show the terminal button in the status bar
     "button": true,
     // Any key-value pairs added to this list will be added to the terminal's
@@ -1545,6 +1561,7 @@
   //
   "file_types": {
     "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json", "tsconfig*.json"],
+    "Markdown": [".rules", ".cursorrules", ".windsurfrules", ".clinerules"],
     "Shell Script": [".env.*"]
   },
   // Settings for which version of Node.js and NPM to use when installing
@@ -1685,6 +1702,7 @@
       "preferred_line_length": 72
     },
     "Go": {
+      "hard_tabs": true,
       "code_actions_on_format": {
         "source.organizeImports": true
       },
@@ -1726,7 +1744,7 @@
       }
     },
     "Kotlin": {
-      "language_servers": ["kotlin-language-server", "!kotlin-lsp", "..."]
+      "language_servers": ["!kotlin-language-server", "kotlin-lsp", "..."]
     },
     "LaTeX": {
       "formatter": "language_server",
@@ -1754,15 +1772,20 @@
       }
     },
     "Plain Text": {
-      "allow_rewrap": "anywhere"
+      "allow_rewrap": "anywhere",
+      "soft_wrap": "editor_width"
     },
     "Python": {
+      "code_actions_on_format": {
+        "source.organizeImports.ruff": true
+      },
       "formatter": {
         "language_server": {
           "name": "ruff"
         }
       },
-      "debuggers": ["Debugpy"]
+      "debuggers": ["Debugpy"],
+      "language_servers": ["basedpyright", "ruff", "!ty", "!pyrefly", "!pyright", "!pylsp", "..."]
     },
     "Ruby": {
       "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "!sorbet", "!steep", "..."]
@@ -1804,10 +1827,11 @@
     },
     "SystemVerilog": {
       "format_on_save": "off",
+      "language_servers": ["!slang", "..."],
       "use_on_type_format": false
     },
     "Vue.js": {
-      "language_servers": ["vue-language-server", "..."],
+      "language_servers": ["vue-language-server", "vtsls", "..."],
       "prettier": {
         "allowed": true
       }
@@ -1911,6 +1935,11 @@
   // DAP Specific settings.
   "dap": {
     // Specify the DAP name as a key here.
+    "CodeLLDB": {
+      "env": {
+        "RUST_LOG": "info"
+      }
+    }
   },
   // Common language server settings.
   "global_lsp_settings": {
@@ -2051,7 +2080,7 @@
   //     }
   //   }
   // }
-  "profiles": [],
+  "profiles": {},
 
   // A map of log scopes to the desired log level.
   // Useful for filtering out noisy logs or enabling more verbose logging.

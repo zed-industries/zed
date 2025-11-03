@@ -4,12 +4,11 @@ use crate::{
     context_picker::ContextPicker,
     ui::{AddedContext, ContextPill},
 };
-use agent::context_store::SuggestedContext;
-use agent::{
+use crate::{
     context::AgentContextHandle,
-    context_store::ContextStore,
-    thread_store::{TextThreadStore, ThreadStore},
+    context_store::{ContextStore, SuggestedContext},
 };
+use agent::HistoryStore;
 use collections::HashSet;
 use editor::Editor;
 use gpui::{
@@ -18,6 +17,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use project::ProjectItem;
+use prompt_store::PromptStore;
 use rope::Point;
 use std::rc::Rc;
 use text::ToPoint as _;
@@ -33,7 +33,7 @@ pub struct ContextStrip {
     focus_handle: FocusHandle,
     suggest_context_kind: SuggestContextKind,
     workspace: WeakEntity<Workspace>,
-    thread_store: Option<WeakEntity<ThreadStore>>,
+    prompt_store: Option<WeakEntity<PromptStore>>,
     _subscriptions: Vec<Subscription>,
     focused_index: Option<usize>,
     children_bounds: Option<Vec<Bounds<Pixels>>>,
@@ -44,8 +44,8 @@ impl ContextStrip {
     pub fn new(
         context_store: Entity<ContextStore>,
         workspace: WeakEntity<Workspace>,
-        thread_store: Option<WeakEntity<ThreadStore>>,
-        text_thread_store: Option<WeakEntity<TextThreadStore>>,
+        thread_store: Option<WeakEntity<HistoryStore>>,
+        prompt_store: Option<WeakEntity<PromptStore>>,
         context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
         suggest_context_kind: SuggestContextKind,
         model_usage_context: ModelUsageContext,
@@ -56,7 +56,7 @@ impl ContextStrip {
             ContextPicker::new(
                 workspace.clone(),
                 thread_store.clone(),
-                text_thread_store,
+                prompt_store.clone(),
                 context_store.downgrade(),
                 window,
                 cx,
@@ -79,7 +79,7 @@ impl ContextStrip {
             focus_handle,
             suggest_context_kind,
             workspace,
-            thread_store,
+            prompt_store,
             _subscriptions: subscriptions,
             focused_index: None,
             children_bounds: None,
@@ -96,11 +96,7 @@ impl ContextStrip {
     fn added_contexts(&self, cx: &App) -> Vec<AddedContext> {
         if let Some(workspace) = self.workspace.upgrade() {
             let project = workspace.read(cx).project().read(cx);
-            let prompt_store = self
-                .thread_store
-                .as_ref()
-                .and_then(|thread_store| thread_store.upgrade())
-                .and_then(|thread_store| thread_store.read(cx).prompt_store().as_ref());
+            let prompt_store = self.prompt_store.as_ref().and_then(|p| p.upgrade());
 
             let current_model = self.model_usage_context.language_model(cx);
 
@@ -110,7 +106,7 @@ impl ContextStrip {
                 .flat_map(|context| {
                     AddedContext::new_pending(
                         context.clone(),
-                        prompt_store,
+                        prompt_store.as_ref(),
                         project,
                         current_model.as_ref(),
                         cx,
@@ -136,19 +132,19 @@ impl ContextStrip {
         let workspace = self.workspace.upgrade()?;
         let panel = workspace.read(cx).panel::<AgentPanel>(cx)?.read(cx);
 
-        if let Some(active_context_editor) = panel.active_context_editor() {
-            let context = active_context_editor.read(cx).context();
-            let weak_context = context.downgrade();
-            let context = context.read(cx);
-            let path = context.path()?;
+        if let Some(active_text_thread_editor) = panel.active_text_thread_editor() {
+            let text_thread = active_text_thread_editor.read(cx).text_thread();
+            let weak_text_thread = text_thread.downgrade();
+            let text_thread = text_thread.read(cx);
+            let path = text_thread.path()?;
 
             if self.context_store.read(cx).includes_text_thread(path) {
                 return None;
             }
 
             Some(SuggestedContext::TextThread {
-                name: context.summary().or_default(),
-                context: weak_context,
+                name: text_thread.summary().or_default(),
+                text_thread: weak_text_thread,
             })
         } else {
             None
@@ -336,10 +332,10 @@ impl ContextStrip {
             AgentContextHandle::TextThread(text_thread_context) => {
                 workspace.update(cx, |workspace, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        let context = text_thread_context.context.clone();
+                        let context = text_thread_context.text_thread.clone();
                         window.defer(cx, move |window, cx| {
                             panel.update(cx, |panel, cx| {
-                                panel.open_prompt_editor(context, window, cx)
+                                panel.open_text_thread(context, window, cx)
                             });
                         });
                     }
@@ -487,12 +483,11 @@ impl Render for ContextStrip {
                             .style(ui::ButtonStyle::Filled),
                         {
                             let focus_handle = focus_handle.clone();
-                            move |window, cx| {
+                            move |_window, cx| {
                                 Tooltip::for_action_in(
                                     "Add Context",
                                     &ToggleContextPicker,
                                     &focus_handle,
-                                    window,
                                     cx,
                                 )
                             }
@@ -562,12 +557,11 @@ impl Render for ContextStrip {
                             .icon_size(IconSize::Small)
                             .tooltip({
                                 let focus_handle = focus_handle.clone();
-                                move |window, cx| {
+                                move |_window, cx| {
                                     Tooltip::for_action_in(
                                         "Remove All Context",
                                         &RemoveAllContext,
                                         &focus_handle,
-                                        window,
                                         cx,
                                     )
                                 }

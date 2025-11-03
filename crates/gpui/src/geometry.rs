@@ -2968,6 +2968,15 @@ impl ScaledPixels {
     /// # Returns
     ///
     /// Returns a new `ScaledPixels` instance with the rounded value.
+    pub fn round(&self) -> Self {
+        Self(self.0.round())
+    }
+
+    /// Ceils the `ScaledPixels` value to the nearest whole number.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `ScaledPixels` instance with the ceiled value.
     pub fn ceil(&self) -> Self {
         Self(self.0.ceil())
     }

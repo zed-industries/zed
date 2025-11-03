@@ -89,6 +89,7 @@ impl GitHostingProvider for Sourcehut {
 
 #[cfg(test)]
 mod tests {
+    use git::repository::repo_path;
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -145,11 +146,11 @@ mod tests {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
             },
-            BuildPermalinkParams {
-                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
-                path: "crates/editor/src/git/permalink.rs",
-                selection: None,
-            },
+            BuildPermalinkParams::new(
+                "faa6f979be417239b2e070dbbf6392b909224e0b",
+                &repo_path("crates/editor/src/git/permalink.rs"),
+                None,
+            ),
         );
 
         let expected_url = "https://git.sr.ht/~zed-industries/zed/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs";
@@ -163,11 +164,11 @@ mod tests {
                 owner: "zed-industries".into(),
                 repo: "zed.git".into(),
             },
-            BuildPermalinkParams {
-                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
-                path: "crates/editor/src/git/permalink.rs",
-                selection: None,
-            },
+            BuildPermalinkParams::new(
+                "faa6f979be417239b2e070dbbf6392b909224e0b",
+                &repo_path("crates/editor/src/git/permalink.rs"),
+                None,
+            ),
         );
 
         let expected_url = "https://git.sr.ht/~zed-industries/zed.git/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs";
@@ -181,11 +182,11 @@ mod tests {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
             },
-            BuildPermalinkParams {
-                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
-                path: "crates/editor/src/git/permalink.rs",
-                selection: Some(6..6),
-            },
+            BuildPermalinkParams::new(
+                "faa6f979be417239b2e070dbbf6392b909224e0b",
+                &repo_path("crates/editor/src/git/permalink.rs"),
+                Some(6..6),
+            ),
         );
 
         let expected_url = "https://git.sr.ht/~zed-industries/zed/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs#L7";
@@ -199,11 +200,11 @@ mod tests {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
             },
-            BuildPermalinkParams {
-                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
-                path: "crates/editor/src/git/permalink.rs",
-                selection: Some(23..47),
-            },
+            BuildPermalinkParams::new(
+                "faa6f979be417239b2e070dbbf6392b909224e0b",
+                &repo_path("crates/editor/src/git/permalink.rs"),
+                Some(23..47),
+            ),
         );
 
         let expected_url = "https://git.sr.ht/~zed-industries/zed/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs#L24-48";

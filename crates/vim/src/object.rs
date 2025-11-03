@@ -85,6 +85,41 @@ pub struct CandidateWithRanges {
     close_range: Range<usize>,
 }
 
+/// Selects text at the same indentation level.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+struct Parentheses {
+    #[serde(default)]
+    opening: bool,
+}
+
+/// Selects text at the same indentation level.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+struct SquareBrackets {
+    #[serde(default)]
+    opening: bool,
+}
+
+/// Selects text at the same indentation level.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+struct AngleBrackets {
+    #[serde(default)]
+    opening: bool,
+}
+/// Selects text at the same indentation level.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+struct CurlyBrackets {
+    #[serde(default)]
+    opening: bool,
+}
+
 fn cover_or_next<I: Iterator<Item = (Range<usize>, Range<usize>)>>(
     candidates: Option<I>,
     caret: DisplayPoint,
@@ -275,18 +310,10 @@ actions!(
         DoubleQuotes,
         /// Selects text within vertical bars (pipes).
         VerticalBars,
-        /// Selects text within parentheses.
-        Parentheses,
         /// Selects text within the nearest brackets.
         MiniBrackets,
         /// Selects text within any type of brackets.
         AnyBrackets,
-        /// Selects text within square brackets.
-        SquareBrackets,
-        /// Selects text within curly brackets.
-        CurlyBrackets,
-        /// Selects text within angle brackets.
-        AngleBrackets,
         /// Selects a function argument.
         Argument,
         /// Selects an HTML/XML tag.
@@ -350,17 +377,17 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &DoubleQuotes, window, cx| {
         vim.object(Object::DoubleQuotes, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &Parentheses, window, cx| {
-        vim.object(Object::Parentheses, window, cx)
+    Vim::action(editor, cx, |vim, action: &Parentheses, window, cx| {
+        vim.object_impl(Object::Parentheses, action.opening, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &SquareBrackets, window, cx| {
-        vim.object(Object::SquareBrackets, window, cx)
+    Vim::action(editor, cx, |vim, action: &SquareBrackets, window, cx| {
+        vim.object_impl(Object::SquareBrackets, action.opening, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &CurlyBrackets, window, cx| {
-        vim.object(Object::CurlyBrackets, window, cx)
+    Vim::action(editor, cx, |vim, action: &CurlyBrackets, window, cx| {
+        vim.object_impl(Object::CurlyBrackets, action.opening, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &AngleBrackets, window, cx| {
-        vim.object(Object::AngleBrackets, window, cx)
+    Vim::action(editor, cx, |vim, action: &AngleBrackets, window, cx| {
+        vim.object_impl(Object::AngleBrackets, action.opening, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &VerticalBars, window, cx| {
         vim.object(Object::VerticalBars, window, cx)
@@ -394,10 +421,22 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
 impl Vim {
     fn object(&mut self, object: Object, window: &mut Window, cx: &mut Context<Self>) {
+        self.object_impl(object, false, window, cx);
+    }
+
+    fn object_impl(
+        &mut self,
+        object: Object,
+        opening: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let count = Self::take_count(cx);
 
         match self.mode {
-            Mode::Normal | Mode::HelixNormal => self.normal_object(object, count, window, cx),
+            Mode::Normal | Mode::HelixNormal => {
+                self.normal_object(object, count, opening, window, cx)
+            }
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::HelixSelect => {
                 self.visual_object(object, count, window, cx)
             }

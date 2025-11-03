@@ -9,6 +9,7 @@ pub mod rel_path;
 pub mod schemars;
 pub mod serde;
 pub mod shell;
+pub mod shell_builder;
 pub mod shell_env;
 pub mod size;
 #[cfg(any(test, feature = "test-support"))]
@@ -279,7 +280,11 @@ fn load_shell_from_passwd() -> Result<()> {
     );
 
     let shell = unsafe { std::ffi::CStr::from_ptr(entry.pw_shell).to_str().unwrap() };
-    if env::var("SHELL").map_or(true, |shell_env| shell_env != shell) {
+    let should_set_shell = env::var("SHELL").map_or(true, |shell_env| {
+        shell_env != shell && !std::path::Path::new(&shell_env).exists()
+    });
+
+    if should_set_shell {
         log::info!(
             "updating SHELL environment variable to value from passwd entry: {:?}",
             shell,
@@ -291,12 +296,12 @@ fn load_shell_from_passwd() -> Result<()> {
 }
 
 /// Returns a shell escaped path for the current zed executable
-pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
+pub fn get_shell_safe_zed_path(shell_kind: shell::ShellKind) -> anyhow::Result<String> {
     let zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
     zed_path
-        .try_shell_safe()
+        .try_shell_safe(shell_kind)
         .context("Failed to shell-escape Zed executable path.")
 }
 
@@ -349,7 +354,10 @@ pub async fn load_login_shell_environment() -> Result<()> {
     // into shell's `cd` command (and hooks) to manipulate env.
     // We do this so that we get the env a user would have when spawning a shell
     // in home directory.
-    for (name, value) in shell_env::capture(get_system_shell(), &[], paths::home_dir()).await? {
+    for (name, value) in shell_env::capture(get_system_shell(), &[], paths::home_dir())
+        .await
+        .with_context(|| format!("capturing environment with {:?}", get_system_shell()))?
+    {
         unsafe { env::set_var(&name, &value) };
     }
 
@@ -605,13 +613,15 @@ where
     // so discard the prefix up to that segment to find the crate name
     let target = file
         .split_once("crates/")
-        .and_then(|(_, s)| s.split_once('/'))
-        .map(|(p, _)| p);
+        .and_then(|(_, s)| s.split_once("/src/"));
 
+    let module_path = target.map(|(krate, module)| {
+        krate.to_owned() + "::" + &module.trim_end_matches(".rs").replace('/', "::")
+    });
     log::logger().log(
         &log::Record::builder()
-            .target(target.unwrap_or(""))
-            .module_path(target)
+            .target(target.map_or("", |(krate, _)| krate))
+            .module_path(module_path.as_deref())
             .args(format_args!("{:?}", error))
             .file(Some(caller.file()))
             .line(Some(caller.line()))
@@ -621,7 +631,7 @@ where
 }
 
 pub fn log_err<E: std::fmt::Debug>(error: &E) {
-    log_error_with_caller(*Location::caller(), error, log::Level::Warn);
+    log_error_with_caller(*Location::caller(), error, log::Level::Error);
 }
 
 pub trait TryFutureExt {
@@ -921,7 +931,7 @@ impl PartialOrd for NumericPrefixWithSuffix<'_> {
 /// # Examples
 ///
 /// ```
-/// use zed_util::capitalize;
+/// use util::capitalize;
 ///
 /// assert_eq!(capitalize("hello"), "Hello");
 /// assert_eq!(capitalize("WORLD"), "WORLD");

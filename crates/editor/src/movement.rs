@@ -872,12 +872,13 @@ mod tests {
     use super::*;
     use crate::{
         Buffer, DisplayMap, DisplayRow, ExcerptRange, FoldPlaceholder, MultiBuffer,
-        display_map::Inlay,
+        inlays::Inlay,
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
     };
     use gpui::{AppContext as _, font, px};
     use language::Capability;
     use project::{Project, project_settings::DiagnosticSeverity};
+    use rope::Rope;
     use settings::SettingsStore;
     use util::post_inc;
 
@@ -1024,22 +1025,22 @@ mod tests {
                     Inlay::edit_prediction(
                         post_inc(&mut id),
                         buffer_snapshot.anchor_before(offset),
-                        "test",
+                        Rope::from_str_small("test"),
                     ),
                     Inlay::edit_prediction(
                         post_inc(&mut id),
                         buffer_snapshot.anchor_after(offset),
-                        "test",
+                        Rope::from_str_small("test"),
                     ),
                     Inlay::mock_hint(
                         post_inc(&mut id),
                         buffer_snapshot.anchor_before(offset),
-                        "test",
+                        Rope::from_str_small("test"),
                     ),
                     Inlay::mock_hint(
                         post_inc(&mut id),
                         buffer_snapshot.anchor_after(offset),
-                        "test",
+                        Rope::from_str_small("test"),
                     ),
                 ]
             })

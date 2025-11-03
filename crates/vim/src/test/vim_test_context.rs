@@ -30,6 +30,7 @@ impl VimTestContext {
             editor::init_settings(cx);
             project::Project::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
+            settings_ui::init(cx);
         });
     }
 
@@ -48,6 +49,28 @@ impl VimTestContext {
         Self::init(cx);
         Self::new_with_lsp(
             EditorLspTestContext::new_typescript(
+                lsp::ServerCapabilities {
+                    completion_provider: Some(lsp::CompletionOptions {
+                        trigger_characters: Some(vec![".".to_string()]),
+                        ..Default::default()
+                    }),
+                    rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+                        prepare_provider: Some(true),
+                        work_done_progress_options: Default::default(),
+                    })),
+                    ..Default::default()
+                },
+                cx,
+            )
+            .await,
+            true,
+        )
+    }
+
+    pub async fn new_tsx(cx: &mut gpui::TestAppContext) -> VimTestContext {
+        Self::init(cx);
+        Self::new_with_lsp(
+            EditorLspTestContext::new_tsx(
                 lsp::ServerCapabilities {
                     completion_provider: Some(lsp::CompletionOptions {
                         trigger_characters: Some(vec![".".to_string()]),

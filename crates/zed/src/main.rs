@@ -12,7 +12,6 @@ use crashes::InitCrashHandler;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use extension::ExtensionHostProxy;
-use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
@@ -40,10 +39,7 @@ use std::{
     process,
     sync::Arc,
 };
-use theme::{
-    ActiveTheme, GlobalTheme, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError,
-    ThemeRegistry, ThemeSettings,
-};
+use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
 use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use workspace::{
@@ -57,7 +53,7 @@ use zed::{
     initialize_workspace, open_paths_with_positions,
 };
 
-use crate::zed::OpenRequestKind;
+use crate::zed::{OpenRequestKind, eager_load_active_theme_and_icon_theme};
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
@@ -224,7 +220,9 @@ pub fn main() {
         Ok(path) => askpass::set_askpass_program(path),
         Err(err) => {
             eprintln!("Error: {}", err);
-            process::exit(1);
+            if std::option_env!("ZED_BUNDLE").is_some() {
+                process::exit(1);
+            }
         }
     }
 
@@ -258,6 +256,13 @@ pub fn main() {
         println!("Zed System Specs (from CLI):\n{}", system_specs);
         return;
     }
+
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .stack_size(10 * 1024 * 1024)
+        .thread_name(|ix| format!("RayonWorker{}", ix))
+        .build_global()
+        .unwrap();
 
     log::info!(
         "========== starting zed version {}, sha {} ==========",
@@ -541,10 +546,18 @@ pub fn main() {
             system_id.as_ref().map(|id| id.to_string()),
             cx,
         );
+        extension_host::init(
+            extension_host_proxy.clone(),
+            app_state.fs.clone(),
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            cx,
+        );
 
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
+        eager_load_active_theme_and_icon_theme(fs.clone(), cx);
         theme_extension::init(
-            extension_host_proxy.clone(),
+            extension_host_proxy,
             ThemeRegistry::global(cx),
             cx.background_executor().clone(),
         );
@@ -576,20 +589,11 @@ pub fn main() {
             false,
             cx,
         );
-        assistant_tools::init(app_state.client.http_client(), cx);
         repl::init(app_state.fs.clone(), cx);
-        extension_host::init(
-            extension_host_proxy,
-            app_state.fs.clone(),
-            app_state.client.clone(),
-            app_state.node_runtime.clone(),
-            cx,
-        );
         recent_projects::init(cx);
 
         load_embedded_fonts(cx);
 
-        app_state.languages.set_theme(cx.theme().clone());
         editor::init(cx);
         image_viewer::init(cx);
         repl::notebook::init(cx);
@@ -635,8 +639,6 @@ pub fn main() {
         json_schema_store::init(cx);
 
         cx.observe_global::<SettingsStore>({
-            let fs = fs.clone();
-            let languages = app_state.languages.clone();
             let http = app_state.client.http_client();
             let client = app_state.client.clone();
             move |cx| {
@@ -649,9 +651,6 @@ pub fn main() {
                         .ok();
                 }
 
-                eager_load_active_theme_and_icon_theme(fs.clone(), cx);
-
-                languages.set_theme(cx.theme().clone());
                 let new_host = &client::ClientSettings::get_global(cx).server_url;
                 if &http.base_url() != new_host {
                     http.set_base_url(new_host);
@@ -659,6 +658,14 @@ pub fn main() {
                         client.reconnect(&cx.to_async());
                     }
                 }
+            }
+        })
+        .detach();
+        app_state.languages.set_theme(cx.theme().clone());
+        cx.observe_global::<GlobalTheme>({
+            let languages = app_state.languages.clone();
+            move |cx| {
+                languages.set_theme(cx.theme().clone());
             }
         })
         .detach();
@@ -845,6 +852,21 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         res.context("Failed to open builtin JSON Schema").log_err();
                     })
                     .detach();
+                });
+            }
+            OpenRequestKind::Setting { setting_path } => {
+                // zed://settings/languages/$(language)/tab_size  - DONT SUPPORT
+                // zed://settings/languages/Rust/tab_size  - SUPPORT
+                // languages.$(language).tab_size
+                // [ languages $(language) tab_size]
+                workspace::with_active_or_new_workspace(cx, |_workspace, window, cx| {
+                    match setting_path {
+                        None => window.dispatch_action(Box::new(zed_actions::OpenSettings), cx),
+                        Some(setting_path) => window.dispatch_action(
+                            Box::new(zed_actions::OpenSettingsAt { path: setting_path }),
+                            cx,
+                        ),
+                    }
                 });
             }
         }
@@ -1349,63 +1371,6 @@ fn load_embedded_fonts(cx: &App) {
     cx.text_system()
         .add_fonts(embedded_fonts.into_inner())
         .unwrap();
-}
-
-/// Eagerly loads the active theme and icon theme based on the selections in the
-/// theme settings.
-///
-/// This fast path exists to load these themes as soon as possible so the user
-/// doesn't see the default themes while waiting on extensions to load.
-fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &App) {
-    let extension_store = ExtensionStore::global(cx);
-    let theme_registry = ThemeRegistry::global(cx);
-    let theme_settings = ThemeSettings::get_global(cx);
-    let appearance = SystemAppearance::global(cx).0;
-
-    let theme_name = theme_settings.theme.name(appearance);
-    if matches!(
-        theme_registry.get(&theme_name.0),
-        Err(ThemeNotFoundError(_))
-    ) && let Some(theme_path) = extension_store
-        .read(cx)
-        .path_to_extension_theme(&theme_name.0)
-    {
-        cx.spawn({
-            let theme_registry = theme_registry.clone();
-            let fs = fs.clone();
-            async move |cx| {
-                theme_registry.load_user_theme(&theme_path, fs).await?;
-
-                cx.update(|cx| {
-                    GlobalTheme::reload_theme(cx);
-                })
-            }
-        })
-        .detach_and_log_err(cx);
-    }
-
-    let icon_theme_name = theme_settings.icon_theme.name(appearance);
-    if matches!(
-        theme_registry.get_icon_theme(&icon_theme_name.0),
-        Err(IconThemeNotFoundError(_))
-    ) && let Some((icon_theme_path, icons_root_path)) = extension_store
-        .read(cx)
-        .path_to_extension_icon_theme(&icon_theme_name.0)
-    {
-        cx.spawn({
-            let fs = fs.clone();
-            async move |cx| {
-                theme_registry
-                    .load_icon_theme(&icon_theme_path, &icons_root_path, fs)
-                    .await?;
-
-                cx.update(|cx| {
-                    GlobalTheme::reload_icon_theme(cx);
-                })
-            }
-        })
-        .detach_and_log_err(cx);
-    }
 }
 
 /// Spawns a background task to load the user themes from the themes directory.

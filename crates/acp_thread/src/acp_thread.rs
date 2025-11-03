@@ -3,7 +3,6 @@ mod diff;
 mod mention;
 mod terminal;
 
-use ::terminal::terminal_settings::TerminalSettings;
 use agent_settings::AgentSettings;
 use collections::HashSet;
 pub use connection::*;
@@ -12,7 +11,7 @@ use language::language_settings::FormatOnSave;
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use serde::{Deserialize, Serialize};
-use settings::{Settings as _, SettingsLocation};
+use settings::Settings as _;
 use task::{Shell, ShellBuilder};
 pub use terminal::*;
 
@@ -35,7 +34,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
 use ui::App;
-use util::{ResultExt, get_default_system_shell_preferring_bash};
+use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -95,9 +94,14 @@ pub enum AssistantMessageChunk {
 }
 
 impl AssistantMessageChunk {
-    pub fn from_str(chunk: &str, language_registry: &Arc<LanguageRegistry>, cx: &mut App) -> Self {
+    pub fn from_str(
+        chunk: &str,
+        language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
+        cx: &mut App,
+    ) -> Self {
         Self::Message {
-            block: ContentBlock::new(chunk.into(), language_registry, cx),
+            block: ContentBlock::new(chunk.into(), language_registry, path_style, cx),
         }
     }
 
@@ -186,6 +190,7 @@ impl ToolCall {
         tool_call: acp::ToolCall,
         status: ToolCallStatus,
         language_registry: Arc<LanguageRegistry>,
+        path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<Self> {
@@ -199,6 +204,7 @@ impl ToolCall {
             content.push(ToolCallContent::from_acp(
                 item,
                 language_registry.clone(),
+                path_style,
                 terminals,
                 cx,
             )?);
@@ -223,6 +229,7 @@ impl ToolCall {
         &mut self,
         fields: acp::ToolCallUpdateFields,
         language_registry: Arc<LanguageRegistry>,
+        path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<()> {
@@ -260,12 +267,13 @@ impl ToolCall {
 
             // Reuse existing content if we can
             for (old, new) in self.content.iter_mut().zip(content.by_ref()) {
-                old.update_from_acp(new, language_registry.clone(), terminals, cx)?;
+                old.update_from_acp(new, language_registry.clone(), path_style, terminals, cx)?;
             }
             for new in content {
                 self.content.push(ToolCallContent::from_acp(
                     new,
                     language_registry.clone(),
+                    path_style,
                     terminals,
                     cx,
                 )?)
@@ -328,7 +336,7 @@ impl ToolCall {
         location: acp::ToolCallLocation,
         project: WeakEntity<Project>,
         cx: &mut AsyncApp,
-    ) -> Option<AgentLocation> {
+    ) -> Option<ResolvedLocation> {
         let buffer = project
             .update(cx, |project, cx| {
                 project
@@ -350,17 +358,14 @@ impl ToolCall {
             })
             .ok()?;
 
-        Some(AgentLocation {
-            buffer: buffer.downgrade(),
-            position,
-        })
+        Some(ResolvedLocation { buffer, position })
     }
 
     fn resolve_locations(
         &self,
         project: Entity<Project>,
         cx: &mut App,
-    ) -> Task<Vec<Option<AgentLocation>>> {
+    ) -> Task<Vec<Option<ResolvedLocation>>> {
         let locations = self.locations.clone();
         project.update(cx, |_, cx| {
             cx.spawn(async move |project, cx| {
@@ -371,6 +376,23 @@ impl ToolCall {
                 new_locations
             })
         })
+    }
+}
+
+// Separate so we can hold a strong reference to the buffer
+// for saving on the thread
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ResolvedLocation {
+    buffer: Entity<Buffer>,
+    position: Anchor,
+}
+
+impl From<&ResolvedLocation> for AgentLocation {
+    fn from(value: &ResolvedLocation) -> Self {
+        Self {
+            buffer: value.buffer.downgrade(),
+            position: value.position,
+        }
     }
 }
 
@@ -436,21 +458,23 @@ impl ContentBlock {
     pub fn new(
         block: acp::ContentBlock,
         language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
         cx: &mut App,
     ) -> Self {
         let mut this = Self::Empty;
-        this.append(block, language_registry, cx);
+        this.append(block, language_registry, path_style, cx);
         this
     }
 
     pub fn new_combined(
         blocks: impl IntoIterator<Item = acp::ContentBlock>,
         language_registry: Arc<LanguageRegistry>,
+        path_style: PathStyle,
         cx: &mut App,
     ) -> Self {
         let mut this = Self::Empty;
         for block in blocks {
-            this.append(block, &language_registry, cx);
+            this.append(block, &language_registry, path_style, cx);
         }
         this
     }
@@ -459,6 +483,7 @@ impl ContentBlock {
         &mut self,
         block: acp::ContentBlock,
         language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
         cx: &mut App,
     ) {
         if matches!(self, ContentBlock::Empty)
@@ -468,7 +493,7 @@ impl ContentBlock {
             return;
         }
 
-        let new_content = self.block_string_contents(block);
+        let new_content = self.block_string_contents(block, path_style);
 
         match self {
             ContentBlock::Empty => {
@@ -478,7 +503,7 @@ impl ContentBlock {
                 markdown.update(cx, |markdown, cx| markdown.append(&new_content, cx));
             }
             ContentBlock::ResourceLink { resource_link } => {
-                let existing_content = Self::resource_link_md(&resource_link.uri);
+                let existing_content = Self::resource_link_md(&resource_link.uri, path_style);
                 let combined = format!("{}\n{}", existing_content, new_content);
 
                 *self = Self::create_markdown_block(combined, language_registry, cx);
@@ -497,11 +522,11 @@ impl ContentBlock {
         }
     }
 
-    fn block_string_contents(&self, block: acp::ContentBlock) -> String {
+    fn block_string_contents(&self, block: acp::ContentBlock, path_style: PathStyle) -> String {
         match block {
             acp::ContentBlock::Text(text_content) => text_content.text,
             acp::ContentBlock::ResourceLink(resource_link) => {
-                Self::resource_link_md(&resource_link.uri)
+                Self::resource_link_md(&resource_link.uri, path_style)
             }
             acp::ContentBlock::Resource(acp::EmbeddedResource {
                 resource:
@@ -510,14 +535,14 @@ impl ContentBlock {
                         ..
                     }),
                 ..
-            }) => Self::resource_link_md(&uri),
+            }) => Self::resource_link_md(&uri, path_style),
             acp::ContentBlock::Image(image) => Self::image_md(&image),
             acp::ContentBlock::Audio(_) | acp::ContentBlock::Resource(_) => String::new(),
         }
     }
 
-    fn resource_link_md(uri: &str) -> String {
-        if let Some(uri) = MentionUri::parse(uri).log_err() {
+    fn resource_link_md(uri: &str, path_style: PathStyle) -> String {
+        if let Some(uri) = MentionUri::parse(uri, path_style).log_err() {
             uri.as_link().to_string()
         } else {
             uri.to_string()
@@ -563,6 +588,7 @@ impl ToolCallContent {
     pub fn from_acp(
         content: acp::ToolCallContent,
         language_registry: Arc<LanguageRegistry>,
+        path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<Self> {
@@ -570,6 +596,7 @@ impl ToolCallContent {
             acp::ToolCallContent::Content { content } => Ok(Self::ContentBlock(ContentBlock::new(
                 content,
                 &language_registry,
+                path_style,
                 cx,
             ))),
             acp::ToolCallContent::Diff { diff } => Ok(Self::Diff(cx.new(|cx| {
@@ -593,6 +620,7 @@ impl ToolCallContent {
         &mut self,
         new: acp::ToolCallContent,
         language_registry: Arc<LanguageRegistry>,
+        path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<()> {
@@ -608,7 +636,7 @@ impl ToolCallContent {
         };
 
         if needs_update {
-            *self = Self::from_acp(new, language_registry, terminals, cx)?;
+            *self = Self::from_acp(new, language_registry, path_style, terminals, cx)?;
         }
         Ok(())
     }
@@ -1091,13 +1119,13 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Result<(), acp::Error> {
         match update {
-            acp::SessionUpdate::UserMessageChunk { content } => {
+            acp::SessionUpdate::UserMessageChunk(acp::ContentChunk { content, .. }) => {
                 self.push_user_content_block(None, content, cx);
             }
-            acp::SessionUpdate::AgentMessageChunk { content } => {
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk { content, .. }) => {
                 self.push_assistant_content_block(content, false, cx);
             }
-            acp::SessionUpdate::AgentThoughtChunk { content } => {
+            acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk { content, .. }) => {
                 self.push_assistant_content_block(content, true, cx);
             }
             acp::SessionUpdate::ToolCall(tool_call) => {
@@ -1109,12 +1137,14 @@ impl AcpThread {
             acp::SessionUpdate::Plan(plan) => {
                 self.update_plan(plan, cx);
             }
-            acp::SessionUpdate::AvailableCommandsUpdate { available_commands } => {
-                cx.emit(AcpThreadEvent::AvailableCommandsUpdated(available_commands))
-            }
-            acp::SessionUpdate::CurrentModeUpdate { current_mode_id } => {
-                cx.emit(AcpThreadEvent::ModeUpdated(current_mode_id))
-            }
+            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate {
+                available_commands,
+                ..
+            }) => cx.emit(AcpThreadEvent::AvailableCommandsUpdated(available_commands)),
+            acp::SessionUpdate::CurrentModeUpdate(acp::CurrentModeUpdate {
+                current_mode_id,
+                ..
+            }) => cx.emit(AcpThreadEvent::ModeUpdated(current_mode_id)),
         }
         Ok(())
     }
@@ -1126,6 +1156,7 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) {
         let language_registry = self.project.read(cx).languages().clone();
+        let path_style = self.project.read(cx).path_style(cx);
         let entries_len = self.entries.len();
 
         if let Some(last_entry) = self.entries.last_mut()
@@ -1137,12 +1168,12 @@ impl AcpThread {
             }) = last_entry
         {
             *id = message_id.or(id.take());
-            content.append(chunk.clone(), &language_registry, cx);
+            content.append(chunk.clone(), &language_registry, path_style, cx);
             chunks.push(chunk);
             let idx = entries_len - 1;
             cx.emit(AcpThreadEvent::EntryUpdated(idx));
         } else {
-            let content = ContentBlock::new(chunk.clone(), &language_registry, cx);
+            let content = ContentBlock::new(chunk.clone(), &language_registry, path_style, cx);
             self.push_entry(
                 AgentThreadEntry::UserMessage(UserMessage {
                     id: message_id,
@@ -1162,6 +1193,7 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) {
         let language_registry = self.project.read(cx).languages().clone();
+        let path_style = self.project.read(cx).path_style(cx);
         let entries_len = self.entries.len();
         if let Some(last_entry) = self.entries.last_mut()
             && let AgentThreadEntry::AssistantMessage(AssistantMessage { chunks }) = last_entry
@@ -1171,10 +1203,10 @@ impl AcpThread {
             match (chunks.last_mut(), is_thought) {
                 (Some(AssistantMessageChunk::Message { block }), false)
                 | (Some(AssistantMessageChunk::Thought { block }), true) => {
-                    block.append(chunk, &language_registry, cx)
+                    block.append(chunk, &language_registry, path_style, cx)
                 }
                 _ => {
-                    let block = ContentBlock::new(chunk, &language_registry, cx);
+                    let block = ContentBlock::new(chunk, &language_registry, path_style, cx);
                     if is_thought {
                         chunks.push(AssistantMessageChunk::Thought { block })
                     } else {
@@ -1183,7 +1215,7 @@ impl AcpThread {
                 }
             }
         } else {
-            let block = ContentBlock::new(chunk, &language_registry, cx);
+            let block = ContentBlock::new(chunk, &language_registry, path_style, cx);
             let chunk = if is_thought {
                 AssistantMessageChunk::Thought { block }
             } else {
@@ -1235,6 +1267,7 @@ impl AcpThread {
     ) -> Result<()> {
         let update = update.into();
         let languages = self.project.read(cx).languages().clone();
+        let path_style = self.project.read(cx).path_style(cx);
 
         let ix = match self.index_for_tool_call(update.id()) {
             Some(ix) => ix,
@@ -1251,6 +1284,7 @@ impl AcpThread {
                             meta: None,
                         }),
                         &languages,
+                        path_style,
                         cx,
                     ))],
                     status: ToolCallStatus::Failed,
@@ -1270,7 +1304,7 @@ impl AcpThread {
         match update {
             ToolCallUpdate::UpdateFields(update) => {
                 let location_updated = update.fields.locations.is_some();
-                call.update_fields(update.fields, languages, &self.terminals, cx)?;
+                call.update_fields(update.fields, languages, path_style, &self.terminals, cx)?;
                 if location_updated {
                     self.resolve_locations(update.id, cx);
                 }
@@ -1309,6 +1343,7 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Result<(), acp::Error> {
         let language_registry = self.project.read(cx).languages().clone();
+        let path_style = self.project.read(cx).path_style(cx);
         let id = update.id.clone();
 
         if let Some(ix) = self.index_for_tool_call(&id) {
@@ -1316,7 +1351,13 @@ impl AcpThread {
                 unreachable!()
             };
 
-            call.update_fields(update.fields, language_registry, &self.terminals, cx)?;
+            call.update_fields(
+                update.fields,
+                language_registry,
+                path_style,
+                &self.terminals,
+                cx,
+            )?;
             call.status = status;
 
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
@@ -1325,6 +1366,7 @@ impl AcpThread {
                 update.try_into()?,
                 status,
                 language_registry,
+                self.project.read(cx).path_style(cx),
                 &self.terminals,
                 cx,
             )?;
@@ -1393,35 +1435,46 @@ impl AcpThread {
         let task = tool_call.resolve_locations(project, cx);
         cx.spawn(async move |this, cx| {
             let resolved_locations = task.await;
+
             this.update(cx, |this, cx| {
                 let project = this.project.clone();
+
+                for location in resolved_locations.iter().flatten() {
+                    this.shared_buffers
+                        .insert(location.buffer.clone(), location.buffer.read(cx).snapshot());
+                }
                 let Some((ix, tool_call)) = this.tool_call_mut(&id) else {
                     return;
                 };
+
                 if let Some(Some(location)) = resolved_locations.last() {
                     project.update(cx, |project, cx| {
-                        if let Some(agent_location) = project.agent_location() {
-                            let should_ignore = agent_location.buffer == location.buffer
-                                && location
-                                    .buffer
-                                    .update(cx, |buffer, _| {
-                                        let snapshot = buffer.snapshot();
-                                        let old_position =
-                                            agent_location.position.to_point(&snapshot);
-                                        let new_position = location.position.to_point(&snapshot);
-                                        // ignore this so that when we get updates from the edit tool
-                                        // the position doesn't reset to the startof line
-                                        old_position.row == new_position.row
-                                            && old_position.column > new_position.column
-                                    })
-                                    .ok()
-                                    .unwrap_or_default();
-                            if !should_ignore {
-                                project.set_agent_location(Some(location.clone()), cx);
-                            }
+                        let should_ignore = if let Some(agent_location) = project
+                            .agent_location()
+                            .filter(|agent_location| agent_location.buffer == location.buffer)
+                        {
+                            let snapshot = location.buffer.read(cx).snapshot();
+                            let old_position = agent_location.position.to_point(&snapshot);
+                            let new_position = location.position.to_point(&snapshot);
+
+                            // ignore this so that when we get updates from the edit tool
+                            // the position doesn't reset to the startof line
+                            old_position.row == new_position.row
+                                && old_position.column > new_position.column
+                        } else {
+                            false
+                        };
+                        if !should_ignore {
+                            project.set_agent_location(Some(location.into()), cx);
                         }
                     });
                 }
+
+                let resolved_locations = resolved_locations
+                    .iter()
+                    .map(|l| l.as_ref().map(|l| AgentLocation::from(l)))
+                    .collect::<Vec<_>>();
+
                 if tool_call.resolved_locations != resolved_locations {
                     tool_call.resolved_locations = resolved_locations;
                     cx.emit(AcpThreadEvent::EntryUpdated(ix));
@@ -1593,6 +1646,7 @@ impl AcpThread {
         let block = ContentBlock::new_combined(
             message.clone(),
             self.project.read(cx).languages().clone(),
+            self.project.read(cx).path_style(cx),
             cx,
         );
         let request = acp::PromptRequest {
@@ -2086,17 +2140,9 @@ impl AcpThread {
     ) -> Task<Result<Entity<Terminal>>> {
         let env = match &cwd {
             Some(dir) => self.project.update(cx, |project, cx| {
-                let worktree = project.find_worktree(dir.as_path(), cx);
-                let shell = TerminalSettings::get(
-                    worktree.as_ref().map(|(worktree, path)| SettingsLocation {
-                        worktree_id: worktree.read(cx).id(),
-                        path: &path,
-                    }),
-                    cx,
-                )
-                .shell
-                .clone();
-                project.directory_environment(&shell, dir.as_path().into(), cx)
+                project.environment().update(cx, |env, cx| {
+                    env.directory_environment(dir.as_path().into(), cx)
+                })
             }),
             None => Task::ready(None).shared(),
         };
@@ -2112,6 +2158,7 @@ impl AcpThread {
 
         let project = self.project.clone();
         let language_registry = project.read(cx).languages().clone();
+        let is_windows = project.read(cx).path_style(cx).is_windows();
 
         let terminal_id = acp::TerminalId(Uuid::new_v4().to_string().into());
         let terminal_task = cx.spawn({
@@ -2125,9 +2172,10 @@ impl AcpThread {
                             .and_then(|r| r.read(cx).default_system_shell())
                     })?
                     .unwrap_or_else(|| get_default_system_shell_preferring_bash());
-                let (task_command, task_args) = ShellBuilder::new(&Shell::Program(shell))
-                    .redirect_stdin_to_dev_null()
-                    .build(Some(command.clone()), &args);
+                let (task_command, task_args) =
+                    ShellBuilder::new(&Shell::Program(shell), is_windows)
+                        .redirect_stdin_to_dev_null()
+                        .build(Some(command.clone()), &args);
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
@@ -2559,17 +2607,19 @@ mod tests {
                     thread.update(&mut cx, |thread, cx| {
                         thread
                             .handle_session_update(
-                                acp::SessionUpdate::AgentThoughtChunk {
+                                acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk {
                                     content: "Thinking ".into(),
-                                },
+                                    meta: None,
+                                }),
                                 cx,
                             )
                             .unwrap();
                         thread
                             .handle_session_update(
-                                acp::SessionUpdate::AgentThoughtChunk {
+                                acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk {
                                     content: "hard!".into(),
-                                },
+                                    meta: None,
+                                }),
                                 cx,
                             )
                             .unwrap();
@@ -3068,9 +3118,10 @@ mod tests {
                     thread.update(&mut cx, |thread, cx| {
                         thread
                             .handle_session_update(
-                                acp::SessionUpdate::AgentMessageChunk {
+                                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
                                     content: content.text.to_uppercase().into(),
-                                },
+                                    meta: None,
+                                }),
                                 cx,
                             )
                             .unwrap();
@@ -3427,9 +3478,10 @@ mod tests {
                     thread.update(&mut cx, |thread, cx| {
                         thread
                             .handle_session_update(
-                                acp::SessionUpdate::AgentMessageChunk {
+                                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
                                     content: content.text.to_uppercase().into(),
-                                },
+                                    meta: None,
+                                }),
                                 cx,
                             )
                             .unwrap();

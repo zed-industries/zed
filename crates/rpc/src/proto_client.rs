@@ -226,6 +226,7 @@ impl AnyProtoClient {
     pub fn request_lsp<T>(
         &self,
         project_id: u64,
+        server_id: Option<u64>,
         timeout: Duration,
         executor: BackgroundExecutor,
         request: T,
@@ -247,6 +248,7 @@ impl AnyProtoClient {
 
         let query = proto::LspQuery {
             project_id,
+            server_id,
             lsp_request_id: new_id.0,
             request: Some(request.to_proto_query()),
         };
@@ -359,6 +361,9 @@ impl AnyProtoClient {
                                 to_any_envelope(&envelope, response)
                             }
                             Response::GetImplementationResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::InlayHintsResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
                         };

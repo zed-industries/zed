@@ -24,8 +24,8 @@
       "ctrl-<": "editor::ScrollCursorCenter", // editor:scroll-to-cursor
       "f3": ["editor::SelectNext", { "replace_newest": true }], // find-and-replace:find-next
       "shift-f3": ["editor::SelectPrevious", { "replace_newest": true }], //find-and-replace:find-previous
-      "alt-shift-down": "editor::AddSelectionBelow", // editor:add-selection-below
-      "alt-shift-up": "editor::AddSelectionAbove", // editor:add-selection-above
+      "alt-shift-down": ["editor::AddSelectionBelow", { "skip_soft_wrap": true }], // editor:add-selection-below
+      "alt-shift-up": ["editor::AddSelectionAbove", { "skip_soft_wrap": true }], // editor:add-selection-above
       "ctrl-j": "editor::JoinLines", // editor:join-lines
       "ctrl-shift-d": "editor::DuplicateLineDown", // editor:duplicate-lines
       "ctrl-up": "editor::MoveLineUp", // editor:move-line-up

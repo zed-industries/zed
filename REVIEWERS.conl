@@ -1,0 +1,114 @@
+; This file contains a list of people who're interested in reviewing pull requests
+; to certain parts of the code-base.
+;
+; This is mostly used internally for PR assignment, and may change over time.
+;
+; If you have permission to merge PRs (mostly equivalent to "do you work at Zed Industries"),
+; we strongly encourage you to put your name in the "all" bucket, but you can also add yourself
+; to other areas too.
+
+<all>
+  = @ConradIrwin
+  = @maxdeviant
+  = @SomeoneToIgnore
+  = @probably-neb
+  = @danilo-leal
+  = @Veykril
+  = @kubkon
+  = @p1n3appl3
+  = @dinocosta
+  = @smitbarmase
+  = @cole-miller
+  = @HactarCE
+
+vim
+  = @ConradIrwin
+  = @probably-neb
+  = @p1n3appl3
+  = @dinocosta
+
+gpui
+  = @mikayla-maki
+
+git
+  = @cole-miller
+  = @danilo-leal
+
+linux
+  = @dvdsk
+  = @smitbarmase
+  = @p1n3appl3
+  = @cole-miller
+  = @probably-neb
+
+windows
+  = @reflectronic
+  = @localcc
+
+pickers
+  = @p1n3appl3
+  = @dvdsk
+  = @SomeoneToIgnore
+
+audio
+  = @dvdsk
+
+helix
+  = @kubkon
+
+terminal
+  = @kubkon
+  = @Veykril
+
+debugger
+  = @kubkon
+  = @osiewicz
+  = @Anthony-Eid
+
+extension
+  = @kubkon
+
+settings_ui
+  = @probably-neb
+  = @danilo-leal
+  = @Anthony-Eid
+
+crashes
+  = @p1n3appl3
+  = @Veykril
+
+ai
+  = @rtfeldman
+  = @danilo-leal
+  = @benbrandt
+  = @bennetbo
+
+design
+  = @danilo-leal
+
+multi_buffer
+  = @Veykril
+  = @SomeoneToIgnore
+
+lsp
+  = @osiewicz
+  = @Veykril
+  = @smitbarmase
+  = @SomeoneToIgnore
+
+languages
+  = @osiewicz
+  = @Veykril
+  = @smitbarmase
+  = @SomeoneToIgnore
+  = @probably-neb
+
+project_panel
+  = @smitbarmase
+
+tasks
+  = @SomeoneToIgnore
+  = @Veykril
+
+docs
+  = @probably-neb

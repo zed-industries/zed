@@ -20,7 +20,7 @@ use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 
 use ui::{Icon, IconName, List, prelude::*};
-use ui_input::SingleLineInput;
+use ui_input::InputField;
 use util::{ResultExt, truncate_and_trailoff};
 use zed_env_vars::{EnvVar, env_var};
 
@@ -525,7 +525,7 @@ impl DeepSeekEventMapper {
 }
 
 struct ConfigurationView {
-    api_key_editor: Entity<SingleLineInput>,
+    api_key_editor: Entity<InputField>,
     state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
@@ -533,7 +533,7 @@ struct ConfigurationView {
 impl ConfigurationView {
     fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let api_key_editor =
-            cx.new(|cx| SingleLineInput::new(window, cx, "sk-00000000000000000000000000000000"));
+            cx.new(|cx| InputField::new(window, cx, "sk-00000000000000000000000000000000"));
 
         cx.observe(&state, |_, _, cx| {
             cx.notify();

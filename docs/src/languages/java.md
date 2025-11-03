@@ -31,7 +31,7 @@ You can add these customizations to your Zed Settings by launching {#action zed:
 
 ### Zed Java Settings
 
-```json
+```json [settings]
 {
   "lsp": {
     "jdtls": {
@@ -47,7 +47,7 @@ You can add these customizations to your Zed Settings by launching {#action zed:
 
 By default, zed will look in your `PATH` for a `jdtls` binary, if you wish to specify an explicit binary you can do so via settings:
 
-```json
+```json [settings]
   "lsp": {
     "jdtls": {
       "binary": {
@@ -64,7 +64,7 @@ By default, zed will look in your `PATH` for a `jdtls` binary, if you wish to sp
 
 There are also many more options you can pass directly to the language server, for example:
 
-```json
+```json [settings]
 {
   "lsp": {
     "jdtls": {

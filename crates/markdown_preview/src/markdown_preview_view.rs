@@ -278,8 +278,12 @@ impl MarkdownPreviewView {
                         this.parse_markdown_from_active_editor(true, window, cx);
                     }
                     EditorEvent::SelectionsChanged { .. } => {
-                        let selection_range = editor
-                            .update(cx, |editor, cx| editor.selections.last::<usize>(cx).range());
+                        let selection_range = editor.update(cx, |editor, cx| {
+                            editor
+                                .selections
+                                .last::<usize>(&editor.display_snapshot(cx))
+                                .range()
+                        });
                         this.selected_block = this.get_block_index_under_cursor(selection_range);
                         this.list_state.scroll_to_reveal_item(this.selected_block);
                         cx.notify();
