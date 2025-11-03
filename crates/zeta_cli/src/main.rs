@@ -372,6 +372,8 @@ async fn zeta2_predict(
         })?
         .await;
 
+    let _edited_buffers = example.apply_edit_history(&project, cx).await?;
+
     let cursor_path = RelPath::new(&example.example.cursor_path, PathStyle::Posix)?.into_arc();
 
     let cursor_buffer = project
@@ -420,15 +422,12 @@ async fn zeta2_predict(
         zeta.register_buffer(&cursor_buffer, &project, cx);
     })?;
 
-    example.apply_edit_history(&project, cx).await?;
-
     let (prediction_task, mut debug_rx) = zeta.update(cx, |zeta, cx| {
         let receiver = zeta.debug_info();
         let prediction_task = zeta.request_prediction(&project, &cursor_buffer, cursor_anchor, cx);
         (prediction_task, receiver)
     })?;
 
-    prediction_task.await.context("No prediction")?;
     let mut response = None;
 
     let mut excerpts_text = String::new();
@@ -455,6 +454,8 @@ async fn zeta2_predict(
             _ => {}
         }
     }
+
+    prediction_task.await.context("No prediction")?;
 
     println!("## Excerpts\n");
     println!("{excerpts_text}");

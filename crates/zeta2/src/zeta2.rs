@@ -135,6 +135,7 @@ impl ContextMode {
     }
 }
 
+#[derive(Debug)]
 pub enum ZetaDebugInfo {
     ContextRetrievalStarted(ZetaContextRetrievalStartedDebugInfo),
     SearchQueriesGenerated(ZetaSearchQueryDebugInfo),
@@ -144,17 +145,20 @@ pub enum ZetaDebugInfo {
     EditPredicted(ZetaEditPredictionDebugInfo),
 }
 
+#[derive(Debug)]
 pub struct ZetaContextRetrievalStartedDebugInfo {
     pub project: Entity<Project>,
     pub timestamp: Instant,
     pub search_prompt: String,
 }
 
+#[derive(Debug)]
 pub struct ZetaContextRetrievalDebugInfo {
     pub project: Entity<Project>,
     pub timestamp: Instant,
 }
 
+#[derive(Debug)]
 pub struct ZetaEditPredictionDebugInfo {
     pub request: predict_edits_v3::PredictEditsRequest,
     pub retrieval_time: TimeDelta,
@@ -164,6 +168,7 @@ pub struct ZetaEditPredictionDebugInfo {
     pub response_rx: oneshot::Receiver<Result<predict_edits_v3::PredictEditsResponse, String>>,
 }
 
+#[derive(Debug)]
 pub struct ZetaSearchQueryDebugInfo {
     pub project: Entity<Project>,
     pub timestamp: Instant,
