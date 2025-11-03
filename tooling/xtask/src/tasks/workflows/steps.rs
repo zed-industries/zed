@@ -89,7 +89,7 @@ pub fn cleanup_cargo_config(platform: Platform) -> Step<Run> {
 pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
     match platform {
         Platform::Windows => named::pwsh("./script/clear-target-dir-if-larger-than.ps1 250"),
-        Platform::Linux => named::bash("./script/clear-target-dir-if-larger-than 100"),
+        Platform::Linux => named::bash("./script/clear-target-dir-if-larger-than 250"),
         Platform::Mac => named::bash("./script/clear-target-dir-if-larger-than 300"),
     }
 }
