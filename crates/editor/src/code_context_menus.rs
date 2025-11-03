@@ -16,7 +16,6 @@ use project::{CodeAction, Completion, TaskSourceKind};
 use project::{CompletionDisplayOptions, CompletionSource};
 use task::DebugScenario;
 use task::TaskContext;
-use ui::scrollbars::ShowScrollbar;
 
 use std::collections::VecDeque;
 use std::sync::Arc;
