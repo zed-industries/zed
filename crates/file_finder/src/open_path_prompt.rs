@@ -711,7 +711,9 @@ impl PickerDelegate for OpenPathDelegate {
 
         match &self.directory_state {
             DirectoryState::List { parent_path, .. } => {
-                let (label, indices) = if *parent_path == self.prompt_root {
+                let (label, indices) = if is_current_dir_candidate {
+                    ("open this directory".to_string(), vec![])
+                } else if *parent_path == self.prompt_root {
                     match_positions.iter_mut().for_each(|position| {
                         *position += self.prompt_root.len();
                     });
@@ -719,8 +721,6 @@ impl PickerDelegate for OpenPathDelegate {
                         format!("{}{}", self.prompt_root, candidate.path.string),
                         match_positions,
                     )
-                } else if is_current_dir_candidate {
-                    ("open this directory".to_string(), vec![])
                 } else {
                     (candidate.path.string, match_positions)
                 };
