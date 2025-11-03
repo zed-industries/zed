@@ -9672,6 +9672,7 @@ dependencies = [
  "settings",
  "theme",
  "ui",
+ "urlencoding",
  "util",
  "workspace",
 ]
