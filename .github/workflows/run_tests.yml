@@ -164,7 +164,7 @@ jobs:
       run: cargo install cargo-nextest --locked
       shell: bash -euxo pipefail {0}
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than 100
+      run: ./script/clear-target-dir-if-larger-than 250
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final

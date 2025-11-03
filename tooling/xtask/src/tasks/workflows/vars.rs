@@ -16,6 +16,7 @@ macro_rules! var {
     };
 }
 
+secret!(ANTHROPIC_API_KEY);
 secret!(APPLE_NOTARIZATION_ISSUER_ID);
 secret!(APPLE_NOTARIZATION_KEY);
 secret!(APPLE_NOTARIZATION_KEY_ID);
@@ -32,6 +33,7 @@ secret!(SENTRY_AUTH_TOKEN);
 secret!(ZED_CLIENT_CHECKSUM_SEED);
 secret!(ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON);
 secret!(ZED_SENTRY_MINIDUMP_ENDPOINT);
+secret!(SLACK_APP_ZED_UNIT_EVALS_BOT_TOKEN);
 
 // todo(ci) make these secrets too...
 var!(AZURE_SIGNING_ACCOUNT_NAME);
