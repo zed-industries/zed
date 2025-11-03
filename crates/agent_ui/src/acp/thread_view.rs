@@ -881,6 +881,7 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) {
         self.set_editor_is_expanded(!self.editor_expanded, cx);
+        cx.stop_propagation();
         cx.notify();
     }
 
@@ -3966,8 +3967,12 @@ impl AcpThreadView {
                                             )
                                         }
                                     })
-                                    .on_click(cx.listener(|_, _, window, cx| {
-                                        window.dispatch_action(Box::new(ExpandMessageEditor), cx);
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.expand_message_editor(
+                                            &ExpandMessageEditor,
+                                            window,
+                                            cx,
+                                        );
                                     })),
                             ),
                     ),
