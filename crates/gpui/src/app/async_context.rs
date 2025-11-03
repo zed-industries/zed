@@ -176,7 +176,7 @@ impl AsyncApp {
         lock.open_window(options, build_root_view)
     }
 
-    /// Schedule a future to be polled in the background.
+    /// Schedule a future to be polled in the foreground.
     #[track_caller]
     pub fn spawn<AsyncFn, R>(&self, f: AsyncFn) -> Task<R>
     where
@@ -257,6 +257,19 @@ impl AsyncApp {
         util::defer(move || {
             entity.update(&mut cx, f).ok();
         })
+    }
+}
+
+impl sum_tree::BackgroundSpawn for BackgroundExecutor {
+    type Task<R>
+        = Task<R>
+    where
+        R: Send + Sync;
+    fn background_spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Self::Task<R>
+    where
+        R: Send + Sync + 'static,
+    {
+        self.spawn(future)
     }
 }
 

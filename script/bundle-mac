@@ -6,8 +6,6 @@ source script/lib/blob-store.sh
 build_flag="--release"
 target_dir="release"
 open_result=false
-local_arch=false
-local_only=false
 local_install=false
 can_code_sign=false
 
@@ -196,10 +194,6 @@ function sign_app_binaries() {
         /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${app_path}" -v
     else
         echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_KEY, APPLE_NOTARIZATION_KEY_ID, APPLE_NOTARIZATION_ISSUER_ID"
-        if [[ "$local_only" = false ]]; then
-            echo "To create a self-signed local build use ./scripts/build.sh -ldf"
-            exit 1
-        fi
 
         echo "====== WARNING ======"
         echo "This bundle is being signed without all entitlements, some features (e.g. universal links) will not work"
@@ -215,7 +209,7 @@ function sign_app_binaries() {
         codesign --force --deep --entitlements "${app_path}/Contents/Resources/zed.entitlements" --sign ${MACOS_SIGNING_KEY:- -} "${app_path}" -v
     fi
 
-    if [[ "$target_dir" = "debug" && "$local_only" = false ]]; then
+    if [[ "$target_dir" = "debug" ]]; then
         if [ "$open_result" = true ]; then
             open "$app_path"
         else
@@ -227,20 +221,13 @@ function sign_app_binaries() {
 
     bundle_name=$(basename "$app_path")
 
-    if [ "$local_only" = true ]; then
-        if [ "$local_install" = true ]; then
-            rm -rf "/Applications/$bundle_name"
-            mv "$app_path" "/Applications/$bundle_name"
-            echo "Installed application bundle: /Applications/$bundle_name"
-            if [ "$open_result" = true ]; then
-                echo "Opening /Applications/$bundle_name"
-                open "/Applications/$bundle_name"
-            fi
-        else
-            if [ "$open_result" = true ]; then
-                echo "Opening $app_path"
-                open "$app_path"
-            fi
+    if [ "$local_install" = true ]; then
+        rm -rf "/Applications/$bundle_name"
+        mv "$app_path" "/Applications/$bundle_name"
+        echo "Installed application bundle: /Applications/$bundle_name"
+        if [ "$open_result" = true ]; then
+            echo "Opening /Applications/$bundle_name"
+            open "/Applications/$bundle_name"
         fi
     else
         dmg_target_directory="target/${target_triple}/${target_dir}"
@@ -291,30 +278,36 @@ function sign_binary() {
         /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${binary_path}" -v
     fi
 }
+
+function upload_debug_symbols() {
+    if [[ -n "${SENTRY_AUTH_TOKEN:-}" ]]; then
+        echo "Uploading zed debug symbols to sentry..."
+        exe_path="target/${target_triple}/release/Zed"
+        if ! dsymutil --flat "target/${target_triple}/${target_dir}/zed" 2> target/dsymutil.log; then
+            echo "dsymutil failed"
+            cat target/dsymutil.log
+            exit 1
+        fi
+        if ! dsymutil --flat "target/${target_triple}/${target_dir}/remote_server" 2> target/dsymutil.log; then
+            echo "dsymutil failed"
+            cat target/dsymutil.log
+            exit 1
+        fi
+        # note: this uploads the unstripped binary which is needed because it contains
+        # .eh_frame data for stack unwinding. see https://github.com/getsentry/symbolic/issues/783
+        sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
+            "target/${target_triple}/${target_dir}/zed.dwarf" \
+            "target/${target_triple}/${target_dir}/remote_server.dwarf"
+    else
+        echo "missing SENTRY_AUTH_TOKEN. skipping sentry upload."
+    fi
+}
+
+upload_debug_symbols
+
 cp target/${target_triple}/${target_dir}/zed "${app_path}/Contents/MacOS/zed"
 cp target/${target_triple}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
 sign_app_binaries
 
 sign_binary "target/$target_triple/release/remote_server"
 gzip -f --stdout --best target/$target_triple/release/remote_server > target/zed-remote-server-macos-$remote_server_arch.gz
-
-function upload_debug_info() {
-    if [[ -n "${SENTRY_AUTH_TOKEN:-}" ]]; then
-        echo "Uploading zed debug symbols to sentry..."
-        # note: this uploads the unstripped binary which is needed because it contains
-        # .eh_frame data for stack unwinding. see https://github.com/getsentry/symbolic/issues/783
-        sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
-            "target/${target_triple}/${target_dir}/zed" \
-            "target/${target_triple}/${target_dir}/remote_server" \
-            "target/${target_triple}/${target_dir}/zed.dwarf"
-    else
-        echo "missing SENTRY_AUTH_TOKEN. skipping sentry upload."
-    fi
-}
-
-if command -v sentry-cli >/dev/null 2>&1; then
-    upload_debug_info
-else
-    echo "sentry-cli not found. skipping sentry upload."
-    echo "install with: 'curl -sL https://sentry.io/get-cli | bash'"
-fi

@@ -49,6 +49,9 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
+    - name: steps::clippy
+      run: ./script/clippy
+      shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
       run: cargo install cargo-nextest --locked
       shell: bash -euxo pipefail {0}
@@ -81,6 +84,9 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
+    - name: steps::clippy
+      run: ./script/clippy.ps1
+      shell: pwsh
     - name: steps::cargo_install_nextest
       run: cargo install cargo-nextest --locked
       shell: pwsh
@@ -195,9 +201,6 @@ jobs:
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
-    - name: release_nightly::add_rust_to_path
-      run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      shell: bash -euxo pipefail {0}
     - name: ./script/linux
       run: ./script/linux
       shell: bash -euxo pipefail {0}
@@ -236,9 +239,6 @@ jobs:
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
-    - name: release_nightly::add_rust_to_path
-      run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      shell: bash -euxo pipefail {0}
     - name: ./script/linux
       run: ./script/linux
       shell: bash -euxo pipefail {0}
@@ -292,11 +292,11 @@ jobs:
         "nightly" | Set-Content -Path "crates/zed/RELEASE_CHANNEL"
       shell: pwsh
       working-directory: ${{ env.ZED_WORKSPACE }}
-    - name: release_nightly::build_zed_installer
+    - name: run_bundling::bundle_windows
       run: script/bundle-windows.ps1 -Architecture x86_64
       shell: pwsh
       working-directory: ${{ env.ZED_WORKSPACE }}
-    - name: release_nightly::upload_zed_nightly_windows
+    - name: release_nightly::upload_zed_nightly
       run: script/upload-nightly.ps1 -Architecture x86_64
       shell: pwsh
       working-directory: ${{ env.ZED_WORKSPACE }}
@@ -334,11 +334,11 @@ jobs:
         "nightly" | Set-Content -Path "crates/zed/RELEASE_CHANNEL"
       shell: pwsh
       working-directory: ${{ env.ZED_WORKSPACE }}
-    - name: release_nightly::build_zed_installer
+    - name: run_bundling::bundle_windows
       run: script/bundle-windows.ps1 -Architecture aarch64
       shell: pwsh
       working-directory: ${{ env.ZED_WORKSPACE }}
-    - name: release_nightly::upload_zed_nightly_windows
+    - name: release_nightly::upload_zed_nightly
       run: script/upload-nightly.ps1 -Architecture aarch64
       shell: pwsh
       working-directory: ${{ env.ZED_WORKSPACE }}
@@ -359,17 +359,17 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: nix_build::install_nix
+    - name: nix_build::build_nix::install_nix
       uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
       with:
         github_access_token: ${{ secrets.GITHUB_TOKEN }}
-    - name: nix_build::cachix_action
+    - name: nix_build::build_nix::cachix_action
       uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
       with:
         name: zed
         authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
         cachixArgs: -v
-    - name: nix_build::build
+    - name: nix_build::build_nix::build
       run: nix build .#default -L --accept-flake-config
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
@@ -390,21 +390,21 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: nix_build::set_path
+    - name: nix_build::build_nix::set_path
       run: |
         echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
         echo "/Users/administrator/.nix-profile/bin" >> "$GITHUB_PATH"
       shell: bash -euxo pipefail {0}
-    - name: nix_build::cachix_action
+    - name: nix_build::build_nix::cachix_action
       uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
       with:
         name: zed
         authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
         cachixArgs: -v
-    - name: nix_build::build
+    - name: nix_build::build_nix::build
       run: nix build .#default -L --accept-flake-config
       shell: bash -euxo pipefail {0}
-    - name: nix_build::limit_store
+    - name: nix_build::build_nix::limit_store
       run: |-
         if [ "$(du -sm /nix/store | cut -f1)" -gt 50000 ]; then
             nix-collect-garbage -d || true
@@ -428,7 +428,7 @@ jobs:
       with:
         clean: false
         fetch-depth: 0
-    - name: release_nightly::update_nightly_tag
+    - name: release_nightly::update_nightly_tag_job::update_nightly_tag
       run: |
         if [ "$(git rev-parse nightly)" = "$(git rev-parse HEAD)" ]; then
           echo "Nightly tag already points to current commit. Skipping tagging."
@@ -439,7 +439,7 @@ jobs:
         git tag -f nightly
         git push origin nightly --force
       shell: bash -euxo pipefail {0}
-    - name: release_nightly::create_sentry_release
+    - name: release_nightly::update_nightly_tag_job::create_sentry_release
       uses: getsentry/action-release@526942b68292201ac6bbb99b9a0747d4abee354c
       with:
         environment: production

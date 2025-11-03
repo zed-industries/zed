@@ -1,6 +1,7 @@
 use crate::tasks::workflows::{
     nix_build::build_nix,
-    run_bundling::bundle_mac,
+    run_bundling::{bundle_mac, bundle_windows},
+    run_tests::run_platform_tests,
     runners::{Arch, Platform},
     steps::NamedJob,
     vars::{mac_bundle_envs, windows_bundle_envs},
@@ -32,8 +33,8 @@ pub fn release_nightly() -> Workflow {
     .collect();
 
     let style = check_style();
-    let tests = run_tests(Platform::Mac);
-    let windows_tests = run_tests(Platform::Windows);
+    let tests = run_platform_tests(Platform::Mac);
+    let windows_tests = run_platform_tests(Platform::Windows);
     let bundle_mac_x86 = bundle_mac_nightly(Arch::X86_64, &[&style, &tests]);
     let bundle_mac_arm = bundle_mac_nightly(Arch::ARM64, &[&style, &tests]);
     let linux_x86 = bundle_linux_nightly(Arch::X86_64, &[&style, &tests]);
@@ -111,26 +112,6 @@ fn release_job(deps: &[&NamedJob]) -> Job {
     }
 }
 
-fn run_tests(platform: Platform) -> NamedJob {
-    let runner = match platform {
-        Platform::Windows => runners::WINDOWS_DEFAULT,
-        Platform::Linux => runners::LINUX_DEFAULT,
-        Platform::Mac => runners::MAC_DEFAULT,
-    };
-    NamedJob {
-        name: format!("run_tests_{platform}"),
-        job: release_job(&[])
-            .runs_on(runner)
-            .add_step(steps::checkout_repo())
-            .add_step(steps::setup_cargo_config(platform))
-            .add_step(steps::setup_node())
-            .add_step(steps::cargo_install_nextest(platform))
-            .add_step(steps::clear_target_dir_if_large(platform))
-            .add_step(steps::cargo_nextest(platform))
-            .add_step(steps::cleanup_cargo_config(platform)),
-    }
-}
-
 fn bundle_mac_nightly(arch: Arch, deps: &[&NamedJob]) -> NamedJob {
     let platform = Platform::Mac;
     NamedJob {
@@ -150,11 +131,10 @@ fn bundle_mac_nightly(arch: Arch, deps: &[&NamedJob]) -> NamedJob {
 
 fn bundle_linux_nightly(arch: Arch, deps: &[&NamedJob]) -> NamedJob {
     let platform = Platform::Linux;
-    let mut job = release_job(deps)
+    let mut job = steps::release_job(deps)
         .runs_on(arch.linux_bundler())
         .add_step(steps::checkout_repo())
         .add_step(steps::setup_sentry())
-        .add_step(add_rust_to_path())
         .add_step(steps::script("./script/linux"));
 
     // todo(ci) can we do this on arm too?
@@ -176,22 +156,47 @@ fn bundle_windows_nightly(arch: Arch, deps: &[&NamedJob]) -> NamedJob {
     let platform = Platform::Windows;
     NamedJob {
         name: format!("bundle_windows_nightly_{arch}"),
-        job: release_job(deps)
+        job: steps::release_job(deps)
             .runs_on(runners::WINDOWS_DEFAULT)
             .envs(windows_bundle_envs())
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_sentry())
             .add_step(set_release_channel_to_nightly(platform))
-            .add_step(build_zed_installer(arch))
-            .add_step(upload_zed_nightly_windows(arch)),
+            .add_step(bundle_windows(arch))
+            .add_step(upload_zed_nightly(platform, arch)),
     }
 }
 
 fn update_nightly_tag_job(deps: &[&NamedJob]) -> NamedJob {
+    fn update_nightly_tag() -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            if [ "$(git rev-parse nightly)" = "$(git rev-parse HEAD)" ]; then
+              echo "Nightly tag already points to current commit. Skipping tagging."
+              exit 0
+            fi
+            git config user.name github-actions
+            git config user.email github-actions@github.com
+            git tag -f nightly
+            git push origin nightly --force
+        "#})
+    }
+
+    fn create_sentry_release() -> Step<Use> {
+        named::uses(
+            "getsentry",
+            "action-release",
+            "526942b68292201ac6bbb99b9a0747d4abee354c", // v3
+        )
+        .add_env(("SENTRY_ORG", "zed-dev"))
+        .add_env(("SENTRY_PROJECT", "zed"))
+        .add_env(("SENTRY_AUTH_TOKEN", vars::SENTRY_AUTH_TOKEN))
+        .add_with(("environment", "production"))
+    }
+
     NamedJob {
         name: "update_nightly_tag".to_owned(),
-        job: release_job(deps)
-            .runs_on(runners::LINUX_CHEAP)
+        job: steps::release_job(deps)
+            .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo().add_with(("fetch-depth", 0)))
             .add_step(update_nightly_tag())
             .add_step(create_sentry_release()),
@@ -216,10 +221,6 @@ fn set_release_channel_to_nightly(platform: Platform) -> Step<Run> {
     }
 }
 
-fn add_rust_to_path() -> Step<Run> {
-    named::bash(r#"echo "$HOME/.cargo/bin" >> "$GITHUB_PATH""#)
-}
-
 fn upload_zed_nightly(platform: Platform, arch: Arch) -> Step<Run> {
     match platform {
         Platform::Linux => named::bash(&format!("script/upload-nightly linux-targz {arch}")),
@@ -232,45 +233,4 @@ fn upload_zed_nightly(platform: Platform, arch: Arch) -> Step<Run> {
             named::pwsh(cmd).working_directory("${{ env.ZED_WORKSPACE }}")
         }
     }
-}
-
-fn build_zed_installer(arch: Arch) -> Step<Run> {
-    let cmd = match arch {
-        Arch::X86_64 => "script/bundle-windows.ps1 -Architecture x86_64",
-        Arch::ARM64 => "script/bundle-windows.ps1 -Architecture aarch64",
-    };
-    named::pwsh(cmd).working_directory("${{ env.ZED_WORKSPACE }}")
-}
-
-fn upload_zed_nightly_windows(arch: Arch) -> Step<Run> {
-    let cmd = match arch {
-        Arch::X86_64 => "script/upload-nightly.ps1 -Architecture x86_64",
-        Arch::ARM64 => "script/upload-nightly.ps1 -Architecture aarch64",
-    };
-    named::pwsh(cmd).working_directory("${{ env.ZED_WORKSPACE }}")
-}
-
-fn update_nightly_tag() -> Step<Run> {
-    named::bash(indoc::indoc! {r#"
-        if [ "$(git rev-parse nightly)" = "$(git rev-parse HEAD)" ]; then
-          echo "Nightly tag already points to current commit. Skipping tagging."
-          exit 0
-        fi
-        git config user.name github-actions
-        git config user.email github-actions@github.com
-        git tag -f nightly
-        git push origin nightly --force
-    "#})
-}
-
-fn create_sentry_release() -> Step<Use> {
-    named::uses(
-        "getsentry",
-        "action-release",
-        "526942b68292201ac6bbb99b9a0747d4abee354c", // v3
-    )
-    .add_env(("SENTRY_ORG", "zed-dev"))
-    .add_env(("SENTRY_PROJECT", "zed"))
-    .add_env(("SENTRY_AUTH_TOKEN", vars::SENTRY_AUTH_TOKEN))
-    .add_with(("environment", "production"))
 }

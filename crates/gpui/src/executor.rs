@@ -342,7 +342,7 @@ impl BackgroundExecutor {
     /// for all of them to complete before returning.
     pub async fn scoped<'scope, F>(&self, scheduler: F)
     where
-        F: FnOnce(&mut Scope<'scope>),
+        F: for<'a> FnOnce(&'a mut Scope<'scope>),
     {
         let mut scope = Scope::new(self.clone());
         (scheduler)(&mut scope);
@@ -479,7 +479,6 @@ impl ForegroundExecutor {
     }
 
     /// Enqueues the given Task to run on the main thread at some point in the future.
-    #[track_caller]
     pub fn spawn<R>(&self, future: impl Future<Output = R> + 'static) -> Task<R>
     where
         R: 'static,

@@ -1,28 +1,41 @@
-use std::{cmp::Reverse, fmt::Write, ops::Range, path::PathBuf, sync::Arc, time::Instant};
+use std::{
+    cmp::Reverse, collections::hash_map::Entry, ops::Range, path::PathBuf, sync::Arc, time::Instant,
+};
 
 use crate::{
-    ZetaContextRetrievalDebugInfo, ZetaDebugInfo, ZetaSearchQueryDebugInfo,
-    merge_excerpts::write_merged_excerpts,
+    ZetaContextRetrievalDebugInfo, ZetaContextRetrievalStartedDebugInfo, ZetaDebugInfo,
+    ZetaSearchQueryDebugInfo, merge_excerpts::merge_excerpts,
 };
 use anyhow::{Result, anyhow};
+use cloud_zeta2_prompt::write_codeblock;
 use collections::HashMap;
 use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions, Line};
-use futures::{StreamExt, channel::mpsc, stream::BoxStream};
-use gpui::{App, AsyncApp, Entity, Task};
+use futures::{
+    StreamExt,
+    channel::mpsc::{self, UnboundedSender},
+    stream::BoxStream,
+};
+use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use indoc::indoc;
-use language::{Anchor, Bias, Buffer, OffsetRangeExt, Point, TextBufferSnapshot, ToPoint as _};
+use language::{
+    Anchor, Bias, Buffer, BufferSnapshot, OffsetRangeExt, Point, TextBufferSnapshot, ToPoint as _,
+};
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, LanguageModelToolResult, MessageContent, Role,
+    LanguageModelProviderId, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
+    LanguageModelToolUse, MessageContent, Role,
 };
 use project::{
     Project, WorktreeSettings,
     search::{SearchQuery, SearchResult},
 };
 use schemars::JsonSchema;
-use serde::Deserialize;
-use util::paths::{PathMatcher, PathStyle};
+use serde::{Deserialize, Serialize};
+use util::{
+    ResultExt as _,
+    paths::{PathMatcher, PathStyle},
+};
 use workspace::item::Settings as _;
 
 const SEARCH_PROMPT: &str = indoc! {r#"
@@ -51,7 +64,7 @@ const SEARCH_PROMPT: &str = indoc! {r#"
 
     ## Current cursor context
 
-    `````filename={current_file_path}
+    `````{current_file_path}
     {cursor_excerpt}
     `````
 
@@ -64,22 +77,19 @@ const SEARCH_TOOL_NAME: &str = "search";
 /// Search for relevant code
 ///
 /// For the best results, run multiple queries at once with a single invocation of this tool.
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Deserialize, Serialize, JsonSchema)]
 pub struct SearchToolInput {
     /// An array of queries to run for gathering context relevant to the next prediction
     #[schemars(length(max = 5))]
     pub queries: Box<[SearchToolQuery]>,
 }
 
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SearchToolQuery {
     /// A glob pattern to match file paths in the codebase
     pub glob: String,
     /// A regular expression to match content within the files matched by the glob pattern
     pub regex: String,
-    /// Whether the regex is case-sensitive. Defaults to false (case-insensitive).
-    #[serde(default)]
-    pub case_sensitive: bool,
 }
 
 const RESULTS_MESSAGE: &str = indoc! {"
@@ -121,11 +131,13 @@ pub struct LlmContextOptions {
     pub excerpt: EditPredictionExcerptOptions,
 }
 
-pub fn find_related_excerpts<'a>(
+pub const MODEL_PROVIDER_ID: LanguageModelProviderId = language_model::ANTHROPIC_PROVIDER_ID;
+
+pub fn find_related_excerpts(
     buffer: Entity<language::Buffer>,
     cursor_position: Anchor,
     project: &Entity<Project>,
-    events: impl Iterator<Item = &'a crate::Event>,
+    mut edit_history_unified_diff: String,
     options: &LlmContextOptions,
     debug_tx: Option<mpsc::UnboundedSender<ZetaDebugInfo>>,
     cx: &App,
@@ -135,23 +147,15 @@ pub fn find_related_excerpts<'a>(
         .read(cx)
         .available_models(cx)
         .find(|model| {
-            model.provider_id() == language_model::ANTHROPIC_PROVIDER_ID
+            model.provider_id() == MODEL_PROVIDER_ID
                 && model.id() == LanguageModelId("claude-haiku-4-5-latest".into())
         })
     else {
-        return Task::ready(Err(anyhow!("could not find claude model")));
+        return Task::ready(Err(anyhow!("could not find context model")));
     };
 
-    let mut edits_string = String::new();
-
-    for event in events {
-        if let Some(event) = event.to_request_event(cx) {
-            writeln!(&mut edits_string, "{event}").ok();
-        }
-    }
-
-    if edits_string.is_empty() {
-        edits_string.push_str("(No user edits yet)");
+    if edit_history_unified_diff.is_empty() {
+        edit_history_unified_diff.push_str("(No user edits yet)");
     }
 
     // TODO [zeta2] include breadcrumbs?
@@ -169,9 +173,21 @@ pub fn find_related_excerpts<'a>(
         .unwrap_or_else(|| "untitled".to_string());
 
     let prompt = SEARCH_PROMPT
-        .replace("{edits}", &edits_string)
+        .replace("{edits}", &edit_history_unified_diff)
         .replace("{current_file_path}", &current_file_path)
         .replace("{cursor_excerpt}", &cursor_excerpt.text(&snapshot).body);
+
+    if let Some(debug_tx) = &debug_tx {
+        debug_tx
+            .unbounded_send(ZetaDebugInfo::ContextRetrievalStarted(
+                ZetaContextRetrievalStartedDebugInfo {
+                    project: project.clone(),
+                    timestamp: Instant::now(),
+                    search_prompt: prompt.clone(),
+                },
+            ))
+            .ok();
+    }
 
     let path_style = project.read(cx).path_style(cx);
 
@@ -209,6 +225,8 @@ pub fn find_related_excerpts<'a>(
 
         let mut select_request_messages = Vec::with_capacity(5); // initial prompt, LLM response/thinking, tool use, tool result, select prompt
         select_request_messages.push(initial_prompt_message);
+
+        let mut regex_by_glob: HashMap<String, String> = HashMap::default();
         let mut search_calls = Vec::new();
 
         while let Some(event) = search_stream.next().await {
@@ -219,7 +237,18 @@ pub fn find_related_excerpts<'a>(
                     }
 
                     if tool_use.name.as_ref() == SEARCH_TOOL_NAME {
-                        search_calls.push((select_request_messages.len(), tool_use));
+                        let input =
+                            serde_json::from_value::<SearchToolInput>(tool_use.input.clone())?;
+
+                        for query in input.queries {
+                            let regex = regex_by_glob.entry(query.glob).or_default();
+                            if !regex.is_empty() {
+                                regex.push('|');
+                            }
+                            regex.push_str(&query.regex);
+                        }
+
+                        search_calls.push(tool_use);
                     } else {
                         log::warn!(
                             "context gathering model tried to use unknown tool: {}",
@@ -303,19 +332,35 @@ pub fn find_related_excerpts<'a>(
             }
         }
 
-        struct ResultBuffer {
-            buffer: Entity<Buffer>,
-            snapshot: TextBufferSnapshot,
-        }
-
-        let search_queries = search_calls
-            .iter()
-            .map(|(_, tool_use)| {
-                Ok(serde_json::from_value::<SearchToolInput>(
-                    tool_use.input.clone(),
-                )?)
+        let search_tool_use = if search_calls.is_empty() {
+            log::warn!("context model ran 0 searches");
+            return anyhow::Ok(Default::default());
+        } else if search_calls.len() == 1 {
+            search_calls.swap_remove(0)
+        } else {
+            // In theory, the model could perform multiple search calls
+            // Dealing with them separately is not worth it when it doesn't happen in practice.
+            // If it were to happen, here we would combine them into one.
+            // The second request doesn't need to know it was actually two different calls ;)
+            let input = serde_json::to_value(&SearchToolInput {
+                queries: regex_by_glob
+                    .iter()
+                    .map(|(glob, regex)| SearchToolQuery {
+                        glob: glob.clone(),
+                        regex: regex.clone(),
+                    })
+                    .collect(),
             })
-            .collect::<Result<Vec<_>>>()?;
+            .unwrap_or_default();
+
+            LanguageModelToolUse {
+                id: search_calls.swap_remove(0).id,
+                name: SELECT_TOOL_NAME.into(),
+                raw_input: serde_json::to_string(&input).unwrap_or_default(),
+                input,
+                is_input_complete: true,
+            }
+        };
 
         if let Some(debug_tx) = &debug_tx {
             debug_tx
@@ -323,113 +368,126 @@ pub fn find_related_excerpts<'a>(
                     ZetaSearchQueryDebugInfo {
                         project: project.clone(),
                         timestamp: Instant::now(),
-                        queries: search_queries
+                        queries: regex_by_glob
                             .iter()
-                            .flat_map(|call| call.queries.iter().cloned())
+                            .map(|(glob, regex)| SearchToolQuery {
+                                glob: glob.clone(),
+                                regex: regex.clone(),
+                            })
                             .collect(),
                     },
                 ))
                 .ok();
         }
 
-        let mut result_buffers_by_path = HashMap::default();
+        let (results_tx, mut results_rx) = mpsc::unbounded();
 
-        for ((index, tool_use), call) in search_calls.into_iter().zip(search_queries).rev() {
-            let mut excerpts_by_buffer = HashMap::default();
-
-            for query in call.queries {
-                // TODO [zeta2] parallelize?
-
+        for (glob, regex) in regex_by_glob {
+            let exclude_matcher = exclude_matcher.clone();
+            let results_tx = results_tx.clone();
+            let project = project.clone();
+            cx.spawn(async move |cx| {
                 run_query(
-                    query,
-                    &mut excerpts_by_buffer,
+                    &glob,
+                    &regex,
+                    results_tx.clone(),
                     path_style,
-                    exclude_matcher.clone(),
+                    exclude_matcher,
                     &project,
                     cx,
                 )
-                .await?;
-            }
-
-            if excerpts_by_buffer.is_empty() {
-                continue;
-            }
-
-            let mut merged_result = RESULTS_MESSAGE.to_string();
-
-            for (buffer_entity, mut excerpts_for_buffer) in excerpts_by_buffer {
-                excerpts_for_buffer.sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
-
-                buffer_entity
-                    .clone()
-                    .read_with(cx, |buffer, cx| {
-                        let Some(file) = buffer.file() else {
-                            return;
-                        };
-
-                        let path = file.full_path(cx);
-
-                        writeln!(&mut merged_result, "`````filename={}", path.display()).unwrap();
-
-                        let snapshot = buffer.snapshot();
-
-                        write_merged_excerpts(
-                            &snapshot,
-                            excerpts_for_buffer,
-                            &[],
-                            &mut merged_result,
-                        );
-
-                        merged_result.push_str("`````\n\n");
-
-                        result_buffers_by_path.insert(
-                            path,
-                            ResultBuffer {
-                                buffer: buffer_entity,
-                                snapshot: snapshot.text,
-                            },
-                        );
-                    })
-                    .ok();
-            }
-
-            let tool_result = LanguageModelToolResult {
-                tool_use_id: tool_use.id.clone(),
-                tool_name: SEARCH_TOOL_NAME.into(),
-                is_error: false,
-                content: merged_result.into(),
-                output: None,
-            };
-
-            // Almost always appends at the end, but in theory, the model could return some text after the tool call
-            // or perform parallel tool calls, so we splice at the message index for correctness.
-            select_request_messages.splice(
-                index..index,
-                [
-                    LanguageModelRequestMessage {
-                        role: Role::Assistant,
-                        content: vec![MessageContent::ToolUse(tool_use)],
-                        cache: false,
-                    },
-                    LanguageModelRequestMessage {
-                        role: Role::User,
-                        content: vec![MessageContent::ToolResult(tool_result)],
-                        cache: false,
-                    },
-                ],
-            );
-
-            if let Some(debug_tx) = &debug_tx {
-                debug_tx
-                    .unbounded_send(ZetaDebugInfo::SearchQueriesExecuted(
-                        ZetaContextRetrievalDebugInfo {
-                            project: project.clone(),
-                            timestamp: Instant::now(),
-                        },
-                    ))
-                    .ok();
-            }
+                .await
+                .log_err();
+            })
+            .detach()
         }
+        drop(results_tx);
+
+        struct ResultBuffer {
+            buffer: Entity<Buffer>,
+            snapshot: TextBufferSnapshot,
+        }
+
+        let (result_buffers_by_path, merged_result) = cx
+            .background_spawn(async move {
+                let mut excerpts_by_buffer: HashMap<Entity<Buffer>, MatchedBuffer> =
+                    HashMap::default();
+
+                while let Some((buffer, matched)) = results_rx.next().await {
+                    match excerpts_by_buffer.entry(buffer) {
+                        Entry::Occupied(mut entry) => {
+                            let entry = entry.get_mut();
+                            entry.full_path = matched.full_path;
+                            entry.snapshot = matched.snapshot;
+                            entry.line_ranges.extend(matched.line_ranges);
+                        }
+                        Entry::Vacant(entry) => {
+                            entry.insert(matched);
+                        }
+                    }
+                }
+
+                let mut result_buffers_by_path = HashMap::default();
+                let mut merged_result = RESULTS_MESSAGE.to_string();
+
+                for (buffer, mut matched) in excerpts_by_buffer {
+                    matched
+                        .line_ranges
+                        .sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
+
+                    write_codeblock(
+                        &matched.full_path,
+                        merge_excerpts(&matched.snapshot, matched.line_ranges).iter(),
+                        &[],
+                        Line(matched.snapshot.max_point().row),
+                        true,
+                        &mut merged_result,
+                    );
+
+                    result_buffers_by_path.insert(
+                        matched.full_path,
+                        ResultBuffer {
+                            buffer,
+                            snapshot: matched.snapshot.text,
+                        },
+                    );
+                }
+
+                (result_buffers_by_path, merged_result)
+            })
+            .await;
+
+        if let Some(debug_tx) = &debug_tx {
+            debug_tx
+                .unbounded_send(ZetaDebugInfo::SearchQueriesExecuted(
+                    ZetaContextRetrievalDebugInfo {
+                        project: project.clone(),
+                        timestamp: Instant::now(),
+                    },
+                ))
+                .ok();
+        }
+
+        let tool_result = LanguageModelToolResult {
+            tool_use_id: search_tool_use.id.clone(),
+            tool_name: SEARCH_TOOL_NAME.into(),
+            is_error: false,
+            content: merged_result.into(),
+            output: None,
+        };
+
+        select_request_messages.extend([
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::ToolUse(search_tool_use)],
+                cache: false,
+            },
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::ToolResult(tool_result)],
+                cache: false,
+            },
+        ]);
 
         if result_buffers_by_path.is_empty() {
             log::trace!("context gathering queries produced no results");
@@ -449,73 +507,85 @@ pub fn find_related_excerpts<'a>(
             cx,
         )
         .await?;
-        let mut selected_ranges = Vec::new();
 
-        while let Some(event) = select_stream.next().await {
-            match event? {
-                LanguageModelCompletionEvent::ToolUse(tool_use) => {
-                    if !tool_use.is_input_complete {
-                        continue;
-                    }
+        cx.background_spawn(async move {
+            let mut selected_ranges = Vec::new();
 
-                    if tool_use.name.as_ref() == SELECT_TOOL_NAME {
-                        let call =
-                            serde_json::from_value::<SelectToolInput>(tool_use.input.clone())?;
-                        selected_ranges.extend(call.ranges);
-                    } else {
-                        log::warn!(
-                            "context gathering model tried to use unknown tool: {}",
-                            tool_use.name
-                        );
+            while let Some(event) = select_stream.next().await {
+                match event? {
+                    LanguageModelCompletionEvent::ToolUse(tool_use) => {
+                        if !tool_use.is_input_complete {
+                            continue;
+                        }
+
+                        if tool_use.name.as_ref() == SELECT_TOOL_NAME {
+                            let call =
+                                serde_json::from_value::<SelectToolInput>(tool_use.input.clone())?;
+                            selected_ranges.extend(call.ranges);
+                        } else {
+                            log::warn!(
+                                "context gathering model tried to use unknown tool: {}",
+                                tool_use.name
+                            );
+                        }
                     }
-                }
-                ev @ LanguageModelCompletionEvent::ToolUseJsonParseError { .. } => {
-                    log::error!("{ev:?}");
-                }
-                ev => {
-                    log::trace!("context select event: {ev:?}")
+                    ev @ LanguageModelCompletionEvent::ToolUseJsonParseError { .. } => {
+                        log::error!("{ev:?}");
+                    }
+                    ev => {
+                        log::trace!("context select event: {ev:?}")
+                    }
                 }
             }
-        }
 
-        if selected_ranges.is_empty() {
-            log::trace!("context gathering selected no ranges")
-        }
-
-        let mut related_excerpts_by_buffer: HashMap<_, Vec<_>> = HashMap::default();
-
-        for selected_range in selected_ranges {
-            if let Some(ResultBuffer { buffer, snapshot }) =
-                result_buffers_by_path.get(&selected_range.path)
-            {
-                let start_point = Point::new(selected_range.start_line.saturating_sub(1), 0);
-                let end_point =
-                    snapshot.clip_point(Point::new(selected_range.end_line, 0), Bias::Left);
-                let range = snapshot.anchor_after(start_point)..snapshot.anchor_before(end_point);
-
-                related_excerpts_by_buffer
-                    .entry(buffer.clone())
-                    .or_default()
-                    .push(range);
-            } else {
-                log::warn!(
-                    "selected path that wasn't included in search results: {}",
-                    selected_range.path.display()
-                );
+            if let Some(debug_tx) = &debug_tx {
+                debug_tx
+                    .unbounded_send(ZetaDebugInfo::SearchResultsFiltered(
+                        ZetaContextRetrievalDebugInfo {
+                            project: project.clone(),
+                            timestamp: Instant::now(),
+                        },
+                    ))
+                    .ok();
             }
-        }
 
-        for (buffer, ranges) in &mut related_excerpts_by_buffer {
-            buffer.read_with(cx, |buffer, _cx| {
-                ranges.sort_unstable_by(|a, b| {
-                    a.start
-                        .cmp(&b.start, buffer)
-                        .then(b.end.cmp(&a.end, buffer))
-                });
-            })?;
-        }
+            if selected_ranges.is_empty() {
+                log::trace!("context gathering selected no ranges")
+            }
 
-        anyhow::Ok(related_excerpts_by_buffer)
+            selected_ranges.sort_unstable_by(|a, b| {
+                a.start_line
+                    .cmp(&b.start_line)
+                    .then(b.end_line.cmp(&a.end_line))
+            });
+
+            let mut related_excerpts_by_buffer: HashMap<_, Vec<_>> = HashMap::default();
+
+            for selected_range in selected_ranges {
+                if let Some(ResultBuffer { buffer, snapshot }) =
+                    result_buffers_by_path.get(&selected_range.path)
+                {
+                    let start_point = Point::new(selected_range.start_line.saturating_sub(1), 0);
+                    let end_point =
+                        snapshot.clip_point(Point::new(selected_range.end_line, 0), Bias::Left);
+                    let range =
+                        snapshot.anchor_after(start_point)..snapshot.anchor_before(end_point);
+
+                    related_excerpts_by_buffer
+                        .entry(buffer.clone())
+                        .or_default()
+                        .push(range);
+                } else {
+                    log::warn!(
+                        "selected path that wasn't included in search results: {}",
+                        selected_range.path.display()
+                    );
+                }
+            }
+
+            anyhow::Ok(related_excerpts_by_buffer)
+        })
+        .await
     })
 }
 
@@ -549,20 +619,27 @@ const MIN_EXCERPT_LEN: usize = 16;
 const MAX_EXCERPT_LEN: usize = 768;
 const MAX_RESULT_BYTES_PER_QUERY: usize = MAX_EXCERPT_LEN * 5;
 
+struct MatchedBuffer {
+    snapshot: BufferSnapshot,
+    line_ranges: Vec<Range<Line>>,
+    full_path: PathBuf,
+}
+
 async fn run_query(
-    args: SearchToolQuery,
-    excerpts_by_buffer: &mut HashMap<Entity<Buffer>, Vec<Range<Line>>>,
+    glob: &str,
+    regex: &str,
+    results_tx: UnboundedSender<(Entity<Buffer>, MatchedBuffer)>,
     path_style: PathStyle,
     exclude_matcher: PathMatcher,
     project: &Entity<Project>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    let include_matcher = PathMatcher::new(vec![args.glob], path_style)?;
+    let include_matcher = PathMatcher::new(vec![glob], path_style)?;
 
     let query = SearchQuery::regex(
-        &args.regex,
+        regex,
         false,
-        args.case_sensitive,
+        true,
         false,
         true,
         include_matcher,
@@ -581,42 +658,56 @@ async fn run_query(
             continue;
         }
 
-        let excerpts_for_buffer = excerpts_by_buffer
-            .entry(buffer.clone())
-            .or_insert_with(|| Vec::with_capacity(ranges.len()));
+        let Some((snapshot, full_path)) = buffer.read_with(cx, |buffer, cx| {
+            Some((buffer.snapshot(), buffer.file()?.full_path(cx)))
+        })?
+        else {
+            continue;
+        };
 
-        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+        let results_tx = results_tx.clone();
+        cx.background_spawn(async move {
+            let mut line_ranges = Vec::with_capacity(ranges.len());
 
-        for range in ranges {
-            let offset_range = range.to_offset(&snapshot);
-            let query_point = (offset_range.start + offset_range.len() / 2).to_point(&snapshot);
+            for range in ranges {
+                let offset_range = range.to_offset(&snapshot);
+                let query_point = (offset_range.start + offset_range.len() / 2).to_point(&snapshot);
 
-            if total_bytes + MIN_EXCERPT_LEN >= MAX_RESULT_BYTES_PER_QUERY {
-                break;
-            }
+                if total_bytes + MIN_EXCERPT_LEN >= MAX_RESULT_BYTES_PER_QUERY {
+                    break;
+                }
 
-            let excerpt = EditPredictionExcerpt::select_from_buffer(
-                query_point,
-                &snapshot,
-                &EditPredictionExcerptOptions {
-                    max_bytes: MAX_EXCERPT_LEN.min(MAX_RESULT_BYTES_PER_QUERY - total_bytes),
-                    min_bytes: MIN_EXCERPT_LEN,
-                    target_before_cursor_over_total_bytes: 0.5,
-                },
-                None,
-            );
+                let excerpt = EditPredictionExcerpt::select_from_buffer(
+                    query_point,
+                    &snapshot,
+                    &EditPredictionExcerptOptions {
+                        max_bytes: MAX_EXCERPT_LEN.min(MAX_RESULT_BYTES_PER_QUERY - total_bytes),
+                        min_bytes: MIN_EXCERPT_LEN,
+                        target_before_cursor_over_total_bytes: 0.5,
+                    },
+                    None,
+                );
 
-            if let Some(excerpt) = excerpt {
-                total_bytes += excerpt.range.len();
-                if !excerpt.line_range.is_empty() {
-                    excerpts_for_buffer.push(excerpt.line_range);
+                if let Some(excerpt) = excerpt {
+                    total_bytes += excerpt.range.len();
+                    if !excerpt.line_range.is_empty() {
+                        line_ranges.push(excerpt.line_range);
+                    }
                 }
             }
-        }
 
-        if excerpts_for_buffer.is_empty() {
-            excerpts_by_buffer.remove(&buffer);
-        }
+            results_tx
+                .unbounded_send((
+                    buffer,
+                    MatchedBuffer {
+                        snapshot,
+                        line_ranges,
+                        full_path,
+                    },
+                ))
+                .log_err();
+        })
+        .detach();
     }
 
     anyhow::Ok(())

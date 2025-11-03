@@ -220,6 +220,8 @@ impl TitleBar {
                                 .on_click({
                                     let peer_id = collaborator.peer_id;
                                     cx.listener(move |this, _, window, cx| {
+                                        cx.stop_propagation();
+
                                         this.workspace
                                             .update(cx, |workspace, cx| {
                                                 if is_following {

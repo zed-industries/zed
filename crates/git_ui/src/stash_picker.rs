@@ -5,16 +5,14 @@ use git::stash::StashEntry;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
-    SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, rems, svg,
+    SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, rems,
 };
 use picker::{Picker, PickerDelegate};
 use project::git_store::{Repository, RepositoryEvent};
 use std::sync::Arc;
 use time::{OffsetDateTime, UtcOffset};
 use time_format;
-use ui::{
-    ButtonLike, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*,
-};
+use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
@@ -434,7 +432,7 @@ impl PickerDelegate for StashListDelegate {
         ix: usize,
         selected: bool,
         _window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
+        _cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let entry_match = &self.matches[ix];
 
@@ -446,23 +444,14 @@ impl PickerDelegate for StashListDelegate {
             .into_any_element();
 
         let branch_name = entry_match.entry.branch.clone().unwrap_or_default();
-        let branch_label = h_flex()
+        let branch_info = h_flex()
             .gap_1p5()
             .w_full()
             .child(
-                h_flex()
-                    .gap_0p5()
-                    .child(
-                        Icon::new(IconName::GitBranch)
-                            .color(Color::Muted)
-                            .size(IconSize::Small),
-                    )
-                    .child(
-                        Label::new(branch_name)
-                            .truncate()
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    ),
+                Label::new(branch_name)
+                    .truncate()
+                    .color(Color::Muted)
+                    .size(LabelSize::Small),
             )
             .child(
                 Label::new("•")
@@ -476,42 +465,12 @@ impl PickerDelegate for StashListDelegate {
                     .size(LabelSize::Small),
             );
 
-        let show_button = div()
-            .group("show-button-hover")
-            .child(
-                ButtonLike::new("show-button")
-                    .child(
-                        svg()
-                            .size(IconSize::Medium.rems())
-                            .flex_none()
-                            .path(IconName::Eye.path())
-                            .text_color(Color::Default.color(cx))
-                            .group_hover("show-button-hover", |this| {
-                                this.text_color(Color::Accent.color(cx))
-                            })
-                            .hover(|this| this.text_color(Color::Accent.color(cx))),
-                    )
-                    .tooltip(Tooltip::for_action_title("Show Stash", &ShowStashItem))
-                    .on_click(cx.listener(move |picker, _, window, cx| {
-                        cx.stop_propagation();
-                        picker.delegate.show_stash_at(ix, window, cx);
-                    })),
-            )
-            .into_any_element();
-
         Some(
             ListItem::new(SharedString::from(format!("stash-{ix}")))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .end_slot(show_button)
-                .child(
-                    v_flex()
-                        .w_full()
-                        .overflow_hidden()
-                        .child(stash_label)
-                        .child(branch_label.into_element()),
-                )
+                .child(v_flex().w_full().child(stash_label).child(branch_info))
                 .tooltip(Tooltip::text(format!(
                     "stash@{{{}}}",
                     entry_match.entry.index
@@ -535,14 +494,34 @@ impl PickerDelegate for StashListDelegate {
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
-                    Button::new("apply-stash", "Apply")
+                    Button::new("drop-stash", "Drop")
                         .key_binding(
-                            KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
-                                .map(|kb| kb.size(rems_from_px(12.))),
+                            KeyBinding::for_action_in(
+                                &stash_picker::DropStashItem,
+                                &focus_handle,
+                                cx,
+                            )
+                            .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(|_, window, cx| {
-                            window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                            window.dispatch_action(stash_picker::DropStashItem.boxed_clone(), cx)
                         }),
+                )
+                .child(
+                    Button::new("view-stash", "View")
+                        .key_binding(
+                            KeyBinding::for_action_in(
+                                &stash_picker::ShowStashItem,
+                                &focus_handle,
+                                cx,
+                            )
+                            .map(|kb| kb.size(rems_from_px(12.))),
+                        )
+                        .on_click(cx.listener(move |picker, _, window, cx| {
+                            cx.stop_propagation();
+                            let selected_ix = picker.delegate.selected_index();
+                            picker.delegate.show_stash_at(selected_ix, window, cx);
+                        })),
                 )
                 .child(
                     Button::new("pop-stash", "Pop")
@@ -555,17 +534,13 @@ impl PickerDelegate for StashListDelegate {
                         }),
                 )
                 .child(
-                    Button::new("drop-stash", "Drop")
+                    Button::new("apply-stash", "Apply")
                         .key_binding(
-                            KeyBinding::for_action_in(
-                                &stash_picker::DropStashItem,
-                                &focus_handle,
-                                cx,
-                            )
-                            .map(|kb| kb.size(rems_from_px(12.))),
+                            KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(|_, window, cx| {
-                            window.dispatch_action(stash_picker::DropStashItem.boxed_clone(), cx)
+                            window.dispatch_action(menu::Confirm.boxed_clone(), cx)
                         }),
                 )
                 .into_any(),

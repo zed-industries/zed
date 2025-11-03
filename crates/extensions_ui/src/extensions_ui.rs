@@ -225,6 +225,9 @@ impl ExtensionFilter {
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 enum Feature {
+    AgentClaude,
+    AgentCodex,
+    AgentGemini,
     ExtensionRuff,
     ExtensionTailwind,
     Git,
@@ -244,6 +247,9 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
     static KEYWORDS_BY_FEATURE: OnceLock<BTreeMap<Feature, Vec<&'static str>>> = OnceLock::new();
     KEYWORDS_BY_FEATURE.get_or_init(|| {
         BTreeMap::from_iter([
+            (Feature::AgentClaude, vec!["claude", "claude code"]),
+            (Feature::AgentCodex, vec!["codex", "codex cli"]),
+            (Feature::AgentGemini, vec!["gemini", "gemini cli"]),
             (Feature::ExtensionRuff, vec!["ruff"]),
             (Feature::ExtensionTailwind, vec!["tail", "tailwind"]),
             (Feature::Git, vec!["git"]),
@@ -799,25 +805,22 @@ impl ExtensionsPage {
             )
             .child(
                 h_flex()
-                    .gap_2()
+                    .gap_1()
                     .justify_between()
                     .child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Icon::new(IconName::Person)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                Label::new(extension.manifest.authors.join(", "))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted)
-                                    .truncate(),
-                            ),
+                        Icon::new(IconName::Person)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(extension.manifest.authors.join(", "))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .truncate(),
                     )
                     .child(
                         h_flex()
+                            .ml_auto()
                             .gap_1()
                             .child(
                                 IconButton::new(
@@ -1422,6 +1425,24 @@ impl ExtensionsPage {
 
         for feature in &self.upsells {
             let banner = match feature {
+                Feature::AgentClaude => self.render_feature_upsell_banner(
+                    "Claude Code support is built-in to Zed!".into(),
+                    "https://zed.dev/docs/ai/external-agents#claude-code".into(),
+                    false,
+                    cx,
+                ),
+                Feature::AgentCodex => self.render_feature_upsell_banner(
+                    "Codex CLI support is built-in to Zed!".into(),
+                    "https://zed.dev/docs/ai/external-agents#codex-cli".into(),
+                    false,
+                    cx,
+                ),
+                Feature::AgentGemini => self.render_feature_upsell_banner(
+                    "Gemini CLI support is built-in to Zed!".into(),
+                    "https://zed.dev/docs/ai/external-agents#gemini-cli".into(),
+                    false,
+                    cx,
+                ),
                 Feature::ExtensionRuff => self.render_feature_upsell_banner(
                     "Ruff (linter for Python) support is built-in to Zed!".into(),
                     "https://zed.dev/docs/languages/python#code-formatting--linting".into(),

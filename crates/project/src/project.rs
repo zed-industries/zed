@@ -337,7 +337,10 @@ pub enum Event {
     HostReshared,
     Reshared,
     Rejoined,
-    RefreshInlayHints(LanguageServerId),
+    RefreshInlayHints {
+        server_id: LanguageServerId,
+        request_id: Option<usize>,
+    },
     RefreshCodeLens,
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
@@ -712,8 +715,10 @@ pub enum ResolveState {
 impl InlayHint {
     pub fn text(&self) -> Rope {
         match &self.label {
-            InlayHintLabel::String(s) => Rope::from(s),
-            InlayHintLabel::LabelParts(parts) => parts.iter().map(|part| &*part.value).collect(),
+            InlayHintLabel::String(s) => Rope::from_str_small(s),
+            InlayHintLabel::LabelParts(parts) => {
+                Rope::from_iter_small(parts.iter().map(|part| &*part.value))
+            }
         }
     }
 }
@@ -3074,9 +3079,13 @@ impl Project {
                     return;
                 };
             }
-            LspStoreEvent::RefreshInlayHints(server_id) => {
-                cx.emit(Event::RefreshInlayHints(*server_id))
-            }
+            LspStoreEvent::RefreshInlayHints {
+                server_id,
+                request_id,
+            } => cx.emit(Event::RefreshInlayHints {
+                server_id: *server_id,
+                request_id: *request_id,
+            }),
             LspStoreEvent::RefreshCodeLens => cx.emit(Event::RefreshCodeLens),
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 cx.emit(Event::LanguageServerPrompt(prompt.clone()))
@@ -5402,7 +5411,12 @@ impl Project {
             worktree
                 .update(cx, |worktree, cx| {
                     let line_ending = text::LineEnding::detect(&new_text);
-                    worktree.write_file(rel_path.clone(), new_text.into(), line_ending, cx)
+                    worktree.write_file(
+                        rel_path.clone(),
+                        Rope::from_str(&new_text, cx.background_executor()),
+                        line_ending,
+                        cx,
+                    )
                 })?
                 .await
                 .context("Failed to write settings file")?;

@@ -19,6 +19,7 @@ use pet_core::python_environment::{PythonEnvironment, PythonEnvironmentKind};
 use pet_virtualenv::is_virtualenv_dir;
 use project::Fs;
 use project::lsp_store::language_server_settings;
+use rope::Rope;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use smol::lock::OnceCell;
@@ -466,7 +467,7 @@ impl LspAdapter for PyrightLspAdapter {
         Some(language::CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
+            language.highlight_text(&Rope::from_str_small(text.as_str()), display_range),
         ))
     }
 
@@ -1210,7 +1211,7 @@ impl ToolchainLister for PythonToolchainProvider {
                 activation_script.extend(match shell {
                     ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
                     ShellKind::Posix => Some(format!("\"{pyenv}\" shell - sh {version}")),
-                    ShellKind::Nushell => Some(format!("\"{pyenv}\" shell - nu {version}")),
+                    ShellKind::Nushell => Some(format!("^\"{pyenv}\" shell - nu {version}")),
                     ShellKind::PowerShell => None,
                     ShellKind::Csh => None,
                     ShellKind::Tcsh => None,
@@ -1511,7 +1512,7 @@ impl LspAdapter for PyLspAdapter {
         Some(language::CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
+            language.highlight_text(&Rope::from_str_small(text.as_str()), display_range),
         ))
     }
 
@@ -1800,7 +1801,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
         Some(language::CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
+            language.highlight_text(&Rope::from_str_small(text.as_str()), display_range),
         ))
     }
 

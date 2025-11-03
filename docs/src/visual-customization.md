@@ -1,14 +1,14 @@
 # Visual Customization
 
-Various aspects of Zed's visual layout can be configured via Zed settings.json which you can access via {#action zed::OpenSettings} ({#kb zed::OpenSettings}).
+Various aspects of Zed's visual layout can be configured via either the settings window or the `settings.json` file, which you can access via {#action zed::OpenSettings} ({#kb zed::OpenSettings}) and {#action zed::OpenSettingsFile} ({#kb zed::OpenSettingsFile}) respectively.
 
 See [Configuring Zed](./configuring-zed.md) for additional information and other non-visual settings.
 
 ## Themes
 
-Use may install zed extensions providing [Themes](./themes.md) and [Icon Themes](./icon-themes.md) via {#action zed::Extensions} from the command palette or menu.
+You can install many [themes](./themes.md) and [icon themes](./icon-themes.md) in form of extensions by running {#action zed::Extensions} from the command palette.
 
-You can preview/choose amongst your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and ({#action icon_theme_selector::Toggle}) which will modify the following settings:
+You can preview/choose amongst your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and {#action icon_theme_selector::Toggle} ({#kb icon_theme_selector::Toggle}) which will modify the following settings:
 
 ```json [settings]
 {
@@ -61,15 +61,20 @@ If you would like to use distinct themes for light mode/dark mode that can be se
     "line_height": "standard",
   },
 
-  // Agent Panel Font Settings
-  "agent_font_size": 15
+  // Controls the font size for agent responses in the agent panel.
+  // If not specified, it falls back to the UI font size.
+  "agent_ui_font_size": 15,
+  // Controls the font size for the agent panel's message editor, user message,
+  // and any other snippet of code.
+  "agent_buffer_font_size": 12
 ```
 
 ### Font ligatures
 
 By default Zed enable font ligatures which will visually combines certain adjacent characters.
 
-For example `=>` will be displayed as `→` and `!=` will be `≠`. This is purely cosmetic and the individual characters remain unchanged.
+For example `=>` will be displayed as `→` and `!=` will be `≠`.
+This is purely cosmetic and the individual characters remain unchanged.
 
 To disable this behavior use:
 
@@ -464,7 +469,12 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     "default_width": 640,   // Default width (left/right docked)
     "default_height": 320,  // Default height (bottom docked)
   },
-  "agent_font_size": 16
+  // Controls the font size for agent responses in the agent panel.
+  // If not specified, it falls back to the UI font size.
+  "agent_ui_font_size": 15,
+  // Controls the font size for the agent panel's message editor, user message,
+  // and any other snippet of code.
+  "agent_buffer_font_size": 12
 ```
 
 See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settings.

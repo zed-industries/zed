@@ -1,4 +1,5 @@
 use crate::{
+    ChatWithFollow,
     acp::completion_provider::{ContextPickerCompletionProvider, SlashCommandCompletion},
     context_picker::{ContextPickerAction, fetch_context_picker::fetch_url_content},
 };
@@ -15,6 +16,7 @@ use editor::{
     MultiBuffer, ToOffset,
     actions::Paste,
     display_map::{Crease, CreaseId, FoldId},
+    scroll::Autoscroll,
 };
 use futures::{
     FutureExt as _,
@@ -49,7 +51,7 @@ use text::OffsetRangeExt;
 use theme::ThemeSettings;
 use ui::{ButtonLike, TintColor, Toggleable, prelude::*};
 use util::{ResultExt, debug_panic, rel_path::RelPath};
-use workspace::{Workspace, notifications::NotifyResultExt as _};
+use workspace::{CollaboratorId, Workspace, notifications::NotifyResultExt as _};
 use zed_actions::agent::Chat;
 
 pub struct MessageEditor {
@@ -234,8 +236,16 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let uri = MentionUri::Thread {
+            id: thread.id.clone(),
+            name: thread.title.to_string(),
+        };
+        let content = format!("{}\n", uri.as_link());
+
+        let content_len = content.len() - 1;
+
         let start = self.editor.update(cx, |editor, cx| {
-            editor.set_text(format!("{}\n", thread.title), window, cx);
+            editor.set_text(content, window, cx);
             editor
                 .buffer()
                 .read(cx)
@@ -244,18 +254,8 @@ impl MessageEditor {
                 .text_anchor
         });
 
-        self.confirm_mention_completion(
-            thread.title.clone(),
-            start,
-            thread.title.len(),
-            MentionUri::Thread {
-                id: thread.id.clone(),
-                name: thread.title.to_string(),
-            },
-            window,
-            cx,
-        )
-        .detach();
+        self.confirm_mention_completion(thread.title, start, content_len, uri, window, cx)
+            .detach();
     }
 
     #[cfg(test)]
@@ -592,6 +592,21 @@ impl MessageEditor {
                 ),
             );
         }
+
+        // Take this explanation with a grain of salt but, with creases being
+        // inserted, GPUI's recomputes the editor layout in the next frames, so
+        // directly calling `editor.request_autoscroll` wouldn't work as
+        // expected. We're leveraging `cx.on_next_frame` to wait 2 frames and
+        // ensure that the layout has been recalculated so that the autoscroll
+        // request actually shows the cursor's new position.
+        let editor = self.editor.clone();
+        cx.on_next_frame(window, move |_, window, cx| {
+            cx.on_next_frame(window, move |_, _, cx| {
+                editor.update(cx, |editor, cx| {
+                    editor.request_autoscroll(Autoscroll::fit(), cx)
+                });
+            });
+        });
     }
 
     fn confirm_mention_for_thread(
@@ -813,6 +828,21 @@ impl MessageEditor {
         self.send(cx);
     }
 
+    fn chat_with_follow(
+        &mut self,
+        _: &ChatWithFollow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace
+            .update(cx, |this, cx| {
+                this.follow(CollaboratorId::Agent, window, cx)
+            })
+            .log_err();
+
+        self.send(cx);
+    }
+
     fn cancel(&mut self, _: &editor::actions::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(MessageEditorEvent::Cancel)
     }
@@ -1016,6 +1046,7 @@ impl MessageEditor {
 
         self.editor.update(cx, |message_editor, cx| {
             message_editor.edit([(cursor_anchor..cursor_anchor, completion.new_text)], cx);
+            message_editor.request_autoscroll(Autoscroll::fit(), cx);
         });
         if let Some(confirm) = completion.confirm {
             confirm(CompletionIntent::Complete, window, cx);
@@ -1276,6 +1307,7 @@ impl Render for MessageEditor {
         div()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
+            .on_action(cx.listener(Self::chat_with_follow))
             .on_action(cx.listener(Self::cancel))
             .capture_action(cx.listener(Self::paste))
             .flex_1()
@@ -1584,6 +1616,7 @@ mod tests {
     use gpui::{
         AppContext, Entity, EventEmitter, FocusHandle, Focusable, TestAppContext, VisualTestContext,
     };
+    use language_model::LanguageModelRegistry;
     use lsp::{CompletionContext, CompletionTriggerKind};
     use project::{CompletionIntent, Project, ProjectPath};
     use serde_json::json;
@@ -2731,6 +2764,82 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_insert_thread_summary(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(LanguageModelRegistry::test);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({"file": ""})).await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+
+        // Create a thread metadata to insert as summary
+        let thread_metadata = agent::DbThreadMetadata {
+            id: acp::SessionId("thread-123".into()),
+            title: "Previous Conversation".into(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        let message_editor = cx.update(|window, cx| {
+            cx.new(|cx| {
+                let mut editor = MessageEditor::new(
+                    workspace.downgrade(),
+                    project.clone(),
+                    history_store.clone(),
+                    None,
+                    Default::default(),
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        min_lines: 1,
+                        max_lines: None,
+                    },
+                    window,
+                    cx,
+                );
+                editor.insert_thread_summary(thread_metadata.clone(), window, cx);
+                editor
+            })
+        });
+
+        // Construct expected values for verification
+        let expected_uri = MentionUri::Thread {
+            id: thread_metadata.id.clone(),
+            name: thread_metadata.title.to_string(),
+        };
+        let expected_link = format!("[@{}]({})", thread_metadata.title, expected_uri.to_uri());
+
+        message_editor.read_with(cx, |editor, cx| {
+            let text = editor.text(cx);
+
+            assert!(
+                text.contains(&expected_link),
+                "Expected editor text to contain thread mention link.\nExpected substring: {}\nActual text: {}",
+                expected_link,
+                text
+            );
+
+            let mentions = editor.mentions();
+            assert_eq!(
+                mentions.len(),
+                1,
+                "Expected exactly one mention after inserting thread summary"
+            );
+
+            assert!(
+                mentions.contains(&expected_uri),
+                "Expected mentions to contain the thread URI"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_whitespace_trimming(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -2786,5 +2895,162 @@ mod tests {
                 meta: None
             })]
         );
+    }
+
+    #[gpui::test]
+    async fn test_autoscroll_after_insert_selections(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let app_state = cx.update(AppState::test);
+
+        cx.update(|cx| {
+            language::init(cx);
+            editor::init(cx);
+            workspace::init(app_state.clone(), cx);
+            Project::init_settings(cx);
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/dir"),
+                json!({
+                    "test.txt": "line1\nline2\nline3\nline4\nline5\n",
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+
+        let worktree = project.update(cx, |project, cx| {
+            let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
+            assert_eq!(worktrees.len(), 1);
+            worktrees.pop().unwrap()
+        });
+        let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+
+        let mut cx = VisualTestContext::from_window(*window, cx);
+
+        // Open a regular editor with the created file, and select a portion of
+        // the text that will be used for the selections that are meant to be
+        // inserted in the agent panel.
+        let editor = workspace
+            .update_in(&mut cx, |workspace, window, cx| {
+                workspace.open_path(
+                    ProjectPath {
+                        worktree_id,
+                        path: rel_path("test.txt").into(),
+                    },
+                    None,
+                    false,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.select_ranges([Point::new(0, 0)..Point::new(0, 5)]);
+            });
+        });
+
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+
+        // Create a new `MessageEditor`. The `EditorMode::full()` has to be used
+        // to ensure we have a fixed viewport, so we can eventually actually
+        // place the cursor outside of the visible area.
+        let message_editor = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let workspace_handle = cx.weak_entity();
+            let message_editor = cx.new(|cx| {
+                MessageEditor::new(
+                    workspace_handle,
+                    project.clone(),
+                    history_store.clone(),
+                    None,
+                    Default::default(),
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::full(),
+                    window,
+                    cx,
+                )
+            });
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+
+            message_editor
+        });
+
+        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.editor.update(cx, |editor, cx| {
+                // Update the Agent Panel's Message Editor text to have 100
+                // lines, ensuring that the cursor is set at line 90 and that we
+                // then scroll all the way to the top, so the cursor's position
+                // remains off screen.
+                let mut lines = String::new();
+                for _ in 1..=100 {
+                    lines.push_str(&"Another line in the agent panel's message editor\n");
+                }
+                editor.set_text(lines.as_str(), window, cx);
+                editor.change_selections(Default::default(), window, cx, |selections| {
+                    selections.select_ranges([Point::new(90, 0)..Point::new(90, 0)]);
+                });
+                editor.set_scroll_position(gpui::Point::new(0., 0.), window, cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        // Before proceeding, let's assert that the cursor is indeed off screen,
+        // otherwise the rest of the test doesn't make sense.
+        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.editor.update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                let cursor_row = editor.selections.newest::<Point>(&snapshot).head().row;
+                let scroll_top = snapshot.scroll_position().y as u32;
+                let visible_lines = editor.visible_line_count().unwrap() as u32;
+                let visible_range = scroll_top..(scroll_top + visible_lines);
+
+                assert!(!visible_range.contains(&cursor_row));
+            })
+        });
+
+        // Now let's insert the selection in the Agent Panel's editor and
+        // confirm that, after the insertion, the cursor is now in the visible
+        // range.
+        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.insert_selections(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.editor.update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                let cursor_row = editor.selections.newest::<Point>(&snapshot).head().row;
+                let scroll_top = snapshot.scroll_position().y as u32;
+                let visible_lines = editor.visible_line_count().unwrap() as u32;
+                let visible_range = scroll_top..(scroll_top + visible_lines);
+
+                assert!(visible_range.contains(&cursor_row));
+            })
+        });
     }
 }

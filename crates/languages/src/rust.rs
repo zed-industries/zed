@@ -252,7 +252,7 @@ impl LspAdapter for RustLspAdapter {
                 let name = &completion.label;
                 let text = format!("{name}: {signature}");
                 let prefix = "struct S { ";
-                let source = Rope::from_iter([prefix, &text, " }"]);
+                let source = Rope::from_iter_small([prefix, &text, " }"]);
                 let runs =
                     language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
                 mk_label(text, &|| 0..completion.label.len(), runs)
@@ -264,7 +264,7 @@ impl LspAdapter for RustLspAdapter {
                 let name = &completion.label;
                 let text = format!("{name}: {signature}",);
                 let prefix = "let ";
-                let source = Rope::from_iter([prefix, &text, " = ();"]);
+                let source = Rope::from_iter_small([prefix, &text, " = ();"]);
                 let runs =
                     language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
                 mk_label(text, &|| 0..completion.label.len(), runs)
@@ -302,7 +302,7 @@ impl LspAdapter for RustLspAdapter {
                     .filter(|it| it.contains(&label))
                     .and_then(|it| Some((it, FULL_SIGNATURE_REGEX.find(it)?)))
                 {
-                    let source = Rope::from(function_signature);
+                    let source = Rope::from_str_small(function_signature);
                     let runs = language.highlight_text(&source, 0..function_signature.len());
                     mk_label(
                         function_signature.to_owned(),
@@ -311,7 +311,7 @@ impl LspAdapter for RustLspAdapter {
                     )
                 } else if let Some((prefix, suffix)) = fn_prefixed {
                     let text = format!("{label}{suffix}");
-                    let source = Rope::from_iter([prefix, " ", &text, " {}"]);
+                    let source = Rope::from_iter_small([prefix, " ", &text, " {}"]);
                     let run_start = prefix.len() + 1;
                     let runs = language.highlight_text(&source, run_start..run_start + text.len());
                     mk_label(text, &|| 0..label.len(), runs)
@@ -322,7 +322,7 @@ impl LspAdapter for RustLspAdapter {
                 {
                     let text = completion.label.clone();
                     let len = text.len();
-                    let source = Rope::from(text.as_str());
+                    let source = Rope::from_str_small(text.as_str());
                     let runs = language.highlight_text(&source, 0..len);
                     mk_label(text, &|| 0..completion.label.len(), runs)
                 } else if detail_left.is_none() {
@@ -399,7 +399,10 @@ impl LspAdapter for RustLspAdapter {
         Some(CodeLabel::new(
             format!("{prefix}{name}"),
             filter_range,
-            language.highlight_text(&Rope::from_iter([prefix, name, suffix]), display_range),
+            language.highlight_text(
+                &Rope::from_iter_small([prefix, name, suffix]),
+                display_range,
+            ),
         ))
     }
 

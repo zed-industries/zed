@@ -965,8 +965,17 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // We need to use `text.chars().count()` instead of `text.len()` here as
+        // `len()` counts bytes, not characters.
+        let char_count = text.chars().count();
+        let count = Vim::take_count(cx).unwrap_or(char_count);
         let is_return_char = text == "\n".into() || text == "\r".into();
-        let count = Vim::take_count(cx).unwrap_or(1);
+        let repeat_count = match (is_return_char, char_count) {
+            (true, _) => 0,
+            (_, 1) => count,
+            (_, _) => 1,
+        };
+
         Vim::take_forced_motion(cx);
         self.stop_recording(cx);
         self.update_editor(cx, |_, editor, cx| {
@@ -989,7 +998,7 @@ impl Vim {
                     edits.push((
                         range.start.to_offset(&display_map, Bias::Left)
                             ..range.end.to_offset(&display_map, Bias::Left),
-                        text.repeat(if is_return_char { 0 } else { count }),
+                        text.repeat(repeat_count),
                     ));
                 }
 
