@@ -17,7 +17,9 @@ use client::zed_urls;
 use cloud_llm_client::PlanV1;
 use collections::{HashMap, HashSet};
 use editor::scroll::Autoscroll;
-use editor::{Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects};
+use editor::{
+    Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
+};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
@@ -893,7 +895,7 @@ impl AcpThreadView {
                     EditorMode::Full {
                         scale_ui_elements_with_buffer_font_size: false,
                         show_active_line_background: false,
-                        sized_by_content: false,
+                        sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
                     },
                     cx,
                 )

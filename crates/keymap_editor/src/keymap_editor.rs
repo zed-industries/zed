@@ -11,7 +11,7 @@ mod ui_components;
 
 use anyhow::{Context as _, anyhow};
 use collections::{HashMap, HashSet};
-use editor::{CompletionProvider, Editor, EditorEvent};
+use editor::{CompletionProvider, Editor, EditorEvent, EditorMode, SizingBehavior};
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -2788,10 +2788,10 @@ impl ActionArgumentsEditor {
                 let editor = cx.new_window_entity(|window, cx| {
                     let multi_buffer = cx.new(|cx| editor::MultiBuffer::singleton(buffer, cx));
                     let mut editor = Editor::new(
-                        editor::EditorMode::Full {
+                        EditorMode::Full {
                             scale_ui_elements_with_buffer_font_size: true,
                             show_active_line_background: false,
-                            sized_by_content: true,
+                            sizing_behavior: SizingBehavior::SizeByContent,
                         },
                         multi_buffer,
                         project.upgrade(),
