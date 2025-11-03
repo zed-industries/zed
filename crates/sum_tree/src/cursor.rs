@@ -388,6 +388,7 @@ where
     T: Item,
     D: Dimension<'a, T::Summary>,
 {
+    /// Returns whether we found the item you were seeking for.
     #[track_caller]
     pub fn seek<Target>(&mut self, pos: &Target, bias: Bias) -> bool
     where
@@ -397,6 +398,7 @@ where
         self.seek_internal(pos, bias, &mut ())
     }
 
+    /// Returns whether we found the item you were seeking for.
     #[track_caller]
     pub fn seek_forward<Target>(&mut self, pos: &Target, bias: Bias) -> bool
     where
@@ -437,7 +439,7 @@ where
         summary.0
     }
 
-    /// Returns whether we found the item you were seeking for
+    /// Returns whether we found the item you were seeking for.
     #[track_caller]
     fn seek_internal(
         &mut self,

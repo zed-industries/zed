@@ -11,14 +11,18 @@ pub struct FileFinderSettings {
 }
 
 impl Settings for FileFinderSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut ui::App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let file_finder = content.file_finder.as_ref().unwrap();
 
         Self {
             file_icons: file_finder.file_icons.unwrap(),
             modal_max_width: file_finder.modal_max_width.unwrap().into(),
             skip_focus_for_active_in_search: file_finder.skip_focus_for_active_in_search.unwrap(),
-            include_ignored: file_finder.include_ignored,
+            include_ignored: match file_finder.include_ignored.unwrap() {
+                settings::IncludeIgnoredContent::All => Some(true),
+                settings::IncludeIgnoredContent::Indexed => Some(false),
+                settings::IncludeIgnoredContent::Smart => None,
+            },
         }
     }
 }

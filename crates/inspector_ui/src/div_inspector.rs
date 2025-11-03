@@ -576,7 +576,12 @@ fn render_layout_state(inspector_state: &DivInspectorState, cx: &App) -> Div {
         .child(
             div()
                 .text_ui(cx)
-                .child(format!("Bounds: {}", inspector_state.bounds)),
+                .child(format!(
+                    "Bounds: ⌜{} - {}⌟",
+                    inspector_state.bounds.origin,
+                    inspector_state.bounds.bottom_right()
+                ))
+                .child(format!("Size: {}", inspector_state.bounds.size)),
         )
         .child(
             div()

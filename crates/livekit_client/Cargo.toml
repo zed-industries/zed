@@ -35,7 +35,7 @@ log.workspace = true
 nanoid.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
-rodio = { workspace = true, features = ["wav_output", "recording"] }
+rodio.workspace = true
 serde.workspace = true
 serde_urlencoded.workspace = true
 settings.workspace = true
@@ -43,7 +43,6 @@ smallvec.workspace = true
 tokio-tungstenite.workspace = true
 ui.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 
 [target.'cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))'.dependencies]
 libwebrtc = { rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d", git = "https://github.com/zed-industries/livekit-rust-sdks" }

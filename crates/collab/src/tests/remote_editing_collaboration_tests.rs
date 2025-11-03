@@ -14,7 +14,7 @@ use gpui::{
 use http_client::BlockedHttpClient;
 use language::{
     FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
-    language_settings::{Formatter, FormatterList, SelectedFormatter, language_settings},
+    language_settings::{Formatter, FormatterList, language_settings},
     tree_sitter_typescript,
 };
 use node_runtime::NodeRuntime;
@@ -27,7 +27,7 @@ use remote::RemoteClient;
 use remote_server::{HeadlessAppState, HeadlessProject};
 use rpc::proto;
 use serde_json::json;
-use settings::{PrettierSettingsContent, SettingsStore};
+use settings::{LanguageServerFormatterSpecifier, PrettierSettingsContent, SettingsStore};
 use std::{
     path::Path,
     sync::{Arc, atomic::AtomicUsize},
@@ -491,7 +491,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |file| {
-                file.project.all_languages.defaults.formatter = Some(SelectedFormatter::Auto);
+                file.project.all_languages.defaults.formatter = Some(FormatterList::default());
                 file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
                     allowed: Some(true),
                     ..Default::default()
@@ -502,8 +502,8 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |file| {
-                file.project.all_languages.defaults.formatter = Some(SelectedFormatter::List(
-                    FormatterList::Single(Formatter::LanguageServer { name: None }),
+                file.project.all_languages.defaults.formatter = Some(FormatterList::Single(
+                    Formatter::LanguageServer(LanguageServerFormatterSpecifier::Current),
                 ));
                 file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
                     allowed: Some(true),
@@ -550,7 +550,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |file| {
-                file.project.all_languages.defaults.formatter = Some(SelectedFormatter::Auto);
+                file.project.all_languages.defaults.formatter = Some(FormatterList::default());
                 file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
                     allowed: Some(true),
                     ..Default::default()

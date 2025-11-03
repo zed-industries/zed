@@ -1,5 +1,5 @@
+use collections::HashMap;
 use language::BufferSnapshot;
-use std::collections::HashMap;
 use std::ops::Range;
 use util::RangeExt;
 
@@ -8,7 +8,7 @@ use crate::{
     excerpt::{EditPredictionExcerpt, EditPredictionExcerptText},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Reference {
     pub identifier: Identifier,
     pub range: Range<usize>,
@@ -26,7 +26,7 @@ pub fn references_in_excerpt(
     excerpt_text: &EditPredictionExcerptText,
     snapshot: &BufferSnapshot,
 ) -> HashMap<Identifier, Vec<Reference>> {
-    let mut references = identifiers_in_range(
+    let mut references = references_in_range(
         excerpt.range.clone(),
         excerpt_text.body.as_str(),
         ReferenceRegion::Nearby,
@@ -38,7 +38,7 @@ pub fn references_in_excerpt(
         .iter()
         .zip(excerpt_text.parent_signatures.iter())
     {
-        references.extend(identifiers_in_range(
+        references.extend(references_in_range(
             range.clone(),
             text.as_str(),
             ReferenceRegion::Breadcrumb,
@@ -46,7 +46,7 @@ pub fn references_in_excerpt(
         ));
     }
 
-    let mut identifier_to_references: HashMap<Identifier, Vec<Reference>> = HashMap::new();
+    let mut identifier_to_references: HashMap<Identifier, Vec<Reference>> = HashMap::default();
     for reference in references {
         identifier_to_references
             .entry(reference.identifier.clone())
@@ -57,7 +57,7 @@ pub fn references_in_excerpt(
 }
 
 /// Finds all nodes which have a "variable" match from the highlights query within the offset range.
-pub fn identifiers_in_range(
+pub fn references_in_range(
     range: Range<usize>,
     range_text: &str,
     reference_region: ReferenceRegion,
@@ -120,7 +120,7 @@ mod test {
     use indoc::indoc;
     use language::{BufferSnapshot, Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
 
-    use crate::reference::{ReferenceRegion, identifiers_in_range};
+    use crate::reference::{ReferenceRegion, references_in_range};
 
     #[gpui::test]
     fn test_identifier_node_truncated(cx: &mut TestAppContext) {
@@ -136,7 +136,7 @@ mod test {
         let buffer = create_buffer(code, cx);
 
         let range = 0..35;
-        let references = identifiers_in_range(
+        let references = references_in_range(
             range.clone(),
             &code[range],
             ReferenceRegion::Breadcrumb,

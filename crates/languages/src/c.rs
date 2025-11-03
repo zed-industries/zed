@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::{App, AsyncApp};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
+use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
 use project::lsp_store::clangd_ext;
@@ -10,8 +11,6 @@ use serde_json::json;
 use smol::fs;
 use std::{env::consts, path::PathBuf, sync::Arc};
 use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
-
-use crate::github_download::{GithubBinaryMetadata, download_server_binary};
 
 pub struct CLspAdapter;
 
@@ -119,7 +118,7 @@ impl LspInstaller for CLspAdapter {
             }
         }
         download_server_binary(
-            delegate,
+            &*delegate.http_client(),
             &url,
             expected_digest.as_deref(),
             &container_dir,
@@ -167,19 +166,30 @@ impl super::LspAdapter for CLspAdapter {
             None => "",
         };
 
-        let label = completion
+        let mut label = completion
             .label
             .strip_prefix('•')
             .unwrap_or(&completion.label)
             .trim()
-            .to_owned()
-            + label_detail;
+            .to_owned();
+
+        if !label_detail.is_empty() {
+            let should_add_space = match completion.kind {
+                Some(lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD) => false,
+                _ => true,
+            };
+
+            if should_add_space && !label.ends_with(' ') && !label_detail.starts_with(' ') {
+                label.push(' ');
+            }
+            label.push_str(label_detail);
+        }
 
         match completion.kind {
             Some(lsp::CompletionItemKind::FIELD) if completion.detail.is_some() => {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
-                let source = Rope::from(format!("struct S {{ {} }}", text).as_str());
+                let source = Rope::from_str_small(format!("struct S {{ {} }}", text).as_str());
                 let runs = language.highlight_text(&source, 11..11 + text.len());
                 let filter_range = completion
                     .filter_text
@@ -189,18 +199,15 @@ impl super::LspAdapter for CLspAdapter {
                             .map(|start| start..start + filter_text.len())
                     })
                     .unwrap_or(detail.len() + 1..text.len());
-                return Some(CodeLabel {
-                    filter_range,
-                    text,
-                    runs,
-                });
+                return Some(CodeLabel::new(text, filter_range, runs));
             }
             Some(lsp::CompletionItemKind::CONSTANT | lsp::CompletionItemKind::VARIABLE)
                 if completion.detail.is_some() =>
             {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
-                let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
+                let runs =
+                    language.highlight_text(&Rope::from_str_small(text.as_str()), 0..text.len());
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -209,18 +216,15 @@ impl super::LspAdapter for CLspAdapter {
                             .map(|start| start..start + filter_text.len())
                     })
                     .unwrap_or(detail.len() + 1..text.len());
-                return Some(CodeLabel {
-                    filter_range,
-                    text,
-                    runs,
-                });
+                return Some(CodeLabel::new(text, filter_range, runs));
             }
             Some(lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD)
                 if completion.detail.is_some() =>
             {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
-                let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
+                let runs =
+                    language.highlight_text(&Rope::from_str_small(text.as_str()), 0..text.len());
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -237,11 +241,7 @@ impl super::LspAdapter for CLspAdapter {
                         filter_start..filter_end
                     });
 
-                return Some(CodeLabel {
-                    filter_range,
-                    text,
-                    runs,
-                });
+                return Some(CodeLabel::new(text, filter_range, runs));
             }
             Some(kind) => {
                 let highlight_name = match kind {
@@ -325,11 +325,11 @@ impl super::LspAdapter for CLspAdapter {
             _ => return None,
         };
 
-        Some(CodeLabel {
-            runs: language.highlight_text(&text.as_str().into(), display_range.clone()),
-            text: text[display_range].to_string(),
+        Some(CodeLabel::new(
+            text[display_range.clone()].to_string(),
             filter_range,
-        })
+            language.highlight_text(&Rope::from_str_small(text.as_str()), display_range),
+        ))
     }
 
     fn prepare_initialize_params(

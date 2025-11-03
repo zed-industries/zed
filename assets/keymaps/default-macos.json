@@ -40,6 +40,7 @@
       "cmd--": ["zed::DecreaseBufferFontSize", { "persist": false }],
       "cmd-0": ["zed::ResetBufferFontSize", { "persist": false }],
       "cmd-,": "zed::OpenSettings",
+      "cmd-alt-,": "zed::OpenSettingsFile",
       "cmd-q": "zed::Quit",
       "cmd-h": "zed::Hide",
       "alt-cmd-h": "zed::HideOthers",
@@ -162,7 +163,7 @@
       "cmd-alt-f": "buffer_search::DeployReplace",
       "cmd-alt-l": ["buffer_search::Deploy", { "selection_search_enabled": true }],
       "cmd-e": ["buffer_search::Deploy", { "focus": false }],
-      "cmd->": "agent::QuoteSelection",
+      "cmd->": "agent::AddSelectionToThread",
       "cmd-<": "assistant::InsertIntoEditor",
       "cmd-alt-e": "editor::SelectEnclosingSymbol",
       "alt-enter": "editor::OpenSelectionsInMultibuffer"
@@ -281,7 +282,7 @@
       "cmd-shift-i": "agent::ToggleOptionsMenu",
       "cmd-alt-shift-n": "agent::ToggleNewThreadMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
-      "cmd->": "agent::QuoteSelection",
+      "cmd->": "agent::AddSelectionToThread",
       "cmd-alt-e": "agent::RemoveAllContext",
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-ctrl-b": "agent::ToggleBurnMode",
@@ -289,7 +290,7 @@
       "alt-enter": "agent::ContinueWithBurnMode",
       "cmd-y": "agent::AllowOnce",
       "cmd-alt-y": "agent::AllowAlways",
-      "cmd-d": "agent::RejectOnce"
+      "cmd-alt-z": "agent::RejectOnce"
     }
   },
   {
@@ -306,7 +307,7 @@
     }
   },
   {
-    "context": "AgentPanel && prompt_editor",
+    "context": "AgentPanel && text_thread",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "agent::NewTextThread",
@@ -314,7 +315,7 @@
     }
   },
   {
-    "context": "AgentPanel && external_agent_thread",
+    "context": "AgentPanel && acp_thread",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "agent::NewExternalAgentThread",
@@ -422,7 +423,7 @@
     }
   },
   {
-    "context": "PromptLibrary",
+    "context": "RulesLibrary",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "rules_library::NewRule",
@@ -467,6 +468,7 @@
     "bindings": {
       "escape": "project_search::ToggleFocus",
       "cmd-shift-j": "project_search::ToggleFilters",
+      "shift-enter": "project_search::ToggleAllSearchResults",
       "cmd-shift-f": "search::FocusSearch",
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ToggleRegex",
@@ -495,6 +497,7 @@
     "bindings": {
       "escape": "project_search::ToggleFocus",
       "cmd-shift-j": "project_search::ToggleFilters",
+      "shift-enter": "project_search::ToggleAllSearchResults",
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ToggleRegex",
       "alt-cmd-x": "search::ToggleRegex"
@@ -538,10 +541,10 @@
     "bindings": {
       "cmd-[": "editor::Outdent",
       "cmd-]": "editor::Indent",
-      "cmd-ctrl-p": "editor::AddSelectionAbove", // Insert cursor above
-      "cmd-alt-up": "editor::AddSelectionAbove",
-      "cmd-ctrl-n": "editor::AddSelectionBelow", // Insert cursor below
-      "cmd-alt-down": "editor::AddSelectionBelow",
+      "cmd-ctrl-p": ["editor::AddSelectionAbove", { "skip_soft_wrap": false }], // Insert cursor above
+      "cmd-alt-up": ["editor::AddSelectionAbove", { "skip_soft_wrap": true }],
+      "cmd-ctrl-n": ["editor::AddSelectionBelow", { "skip_soft_wrap": false }], // Insert cursor below
+      "cmd-alt-down": ["editor::AddSelectionBelow", { "skip_soft_wrap": true }],
       "cmd-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
@@ -581,15 +584,15 @@
       "cmd-k cmd-l": "editor::ToggleFold",
       "cmd-k cmd-[": "editor::FoldRecursive",
       "cmd-k cmd-]": "editor::UnfoldRecursive",
-      "cmd-k cmd-1": ["editor::FoldAtLevel", 1],
-      "cmd-k cmd-2": ["editor::FoldAtLevel", 2],
-      "cmd-k cmd-3": ["editor::FoldAtLevel", 3],
-      "cmd-k cmd-4": ["editor::FoldAtLevel", 4],
-      "cmd-k cmd-5": ["editor::FoldAtLevel", 5],
-      "cmd-k cmd-6": ["editor::FoldAtLevel", 6],
-      "cmd-k cmd-7": ["editor::FoldAtLevel", 7],
-      "cmd-k cmd-8": ["editor::FoldAtLevel", 8],
-      "cmd-k cmd-9": ["editor::FoldAtLevel", 9],
+      "cmd-k cmd-1": "editor::FoldAtLevel_1",
+      "cmd-k cmd-2": "editor::FoldAtLevel_2",
+      "cmd-k cmd-3": "editor::FoldAtLevel_3",
+      "cmd-k cmd-4": "editor::FoldAtLevel_4",
+      "cmd-k cmd-5": "editor::FoldAtLevel_5",
+      "cmd-k cmd-6": "editor::FoldAtLevel_6",
+      "cmd-k cmd-7": "editor::FoldAtLevel_7",
+      "cmd-k cmd-8": "editor::FoldAtLevel_8",
+      "cmd-k cmd-9": "editor::FoldAtLevel_9",
       "cmd-k cmd-0": "editor::FoldAll",
       "cmd-k cmd-j": "editor::UnfoldAll",
       // Using `ctrl-space` / `ctrl-shift-space` in Zed requires disabling the macOS global shortcut.
@@ -678,7 +681,7 @@
       "cmd-alt-b": "workspace::ToggleRightDock",
       "cmd-r": "workspace::ToggleRightDock",
       "cmd-j": "workspace::ToggleBottomDock",
-      "alt-cmd-y": "workspace::CloseAllDocks",
+      "alt-cmd-y": "workspace::ToggleAllDocks",
       // For 0px parameter, uses UI font size value.
       "ctrl-alt-0": "workspace::ResetActiveDockSize",
       "ctrl-alt--": ["workspace::DecreaseActiveDockSize", { "px": 0 }],
@@ -689,7 +692,7 @@
       "cmd-shift-f": "pane::DeploySearch",
       "cmd-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
       "cmd-shift-t": "pane::ReopenClosedItem",
-      "cmd-k cmd-s": "zed::OpenKeymapEditor",
+      "cmd-k cmd-s": "zed::OpenKeymap",
       "cmd-k cmd-t": "theme_selector::Toggle",
       "ctrl-alt-cmd-p": "settings_profile_selector::Toggle",
       "cmd-t": "project_symbols::Toggle",
@@ -798,6 +801,14 @@
       "enter": "editor::ConfirmCompletion",
       "shift-enter": "editor::ConfirmCompletionReplace",
       "tab": "editor::ComposeCompletion"
+    }
+  },
+  {
+    "context": "Editor && in_snippet",
+    "use_key_equivalents": true,
+    "bindings": {
+      "alt-right": "editor::NextSnippetTabstop",
+      "alt-left": "editor::PreviousSnippetTabstop"
     }
   },
   {
@@ -1076,7 +1087,8 @@
     "use_key_equivalents": true,
     "bindings": {
       "alt-up": "collab_panel::MoveChannelUp",
-      "alt-down": "collab_panel::MoveChannelDown"
+      "alt-down": "collab_panel::MoveChannelDown",
+      "alt-enter": "collab_panel::OpenSelectedChannelNotes"
     }
   },
   {
@@ -1152,7 +1164,8 @@
     "context": "StashList || (StashList > Picker > Editor)",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-shift-backspace": "stash_picker::DropStashItem"
+      "ctrl-shift-backspace": "stash_picker::DropStashItem",
+      "ctrl-shift-v": "stash_picker::ShowStashItem"
     }
   },
   {
@@ -1207,6 +1220,7 @@
       "ctrl-alt-down": "pane::SplitDown",
       "ctrl-alt-left": "pane::SplitLeft",
       "ctrl-alt-right": "pane::SplitRight",
+      "cmd-d": "pane::SplitRight",
       "cmd-alt-r": "terminal::RerunTask"
     }
   },
@@ -1333,10 +1347,7 @@
     "context": "Onboarding",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-1": "onboarding::ActivateBasicsPage",
-      "cmd-2": "onboarding::ActivateEditingPage",
-      "cmd-3": "onboarding::ActivateAISetupPage",
-      "cmd-escape": "onboarding::Finish",
+      "cmd-enter": "onboarding::Finish",
       "alt-tab": "onboarding::SignIn",
       "alt-shift-a": "onboarding::OpenAccount"
     }
@@ -1346,6 +1357,71 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-shift-enter": "workspace::OpenWithSystem"
+    }
+  },
+  {
+    "context": "SettingsWindow",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-w": "workspace::CloseWindow",
+      "escape": "workspace::CloseWindow",
+      "cmd-m": "settings_editor::Minimize",
+      "cmd-f": "search::FocusSearch",
+      "left": "settings_editor::ToggleFocusNav",
+      "cmd-shift-e": "settings_editor::ToggleFocusNav",
+      // todo(settings_ui): cut this down based on the max files and overflow UI
+      "ctrl-1": ["settings_editor::FocusFile", 0],
+      "ctrl-2": ["settings_editor::FocusFile", 1],
+      "ctrl-3": ["settings_editor::FocusFile", 2],
+      "ctrl-4": ["settings_editor::FocusFile", 3],
+      "ctrl-5": ["settings_editor::FocusFile", 4],
+      "ctrl-6": ["settings_editor::FocusFile", 5],
+      "ctrl-7": ["settings_editor::FocusFile", 6],
+      "ctrl-8": ["settings_editor::FocusFile", 7],
+      "ctrl-9": ["settings_editor::FocusFile", 8],
+      "ctrl-0": ["settings_editor::FocusFile", 9],
+      "cmd-{": "settings_editor::FocusPreviousFile",
+      "cmd-}": "settings_editor::FocusNextFile"
+    }
+  },
+  {
+    "context": "StashDiff > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-space": "git::ApplyCurrentStash",
+      "ctrl-shift-space": "git::PopCurrentStash",
+      "ctrl-shift-backspace": "git::DropCurrentStash"
+    }
+  },
+  {
+    "context": "SettingsWindow > NavigationMenu",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "settings_editor::FocusPreviousNavEntry",
+      "shift-tab": "settings_editor::FocusPreviousNavEntry",
+      "down": "settings_editor::FocusNextNavEntry",
+      "tab": "settings_editor::FocusNextNavEntry",
+      "right": "settings_editor::ExpandNavEntry",
+      "left": "settings_editor::CollapseNavEntry",
+      "pageup": "settings_editor::FocusPreviousRootNavEntry",
+      "pagedown": "settings_editor::FocusNextRootNavEntry",
+      "home": "settings_editor::FocusFirstNavEntry",
+      "end": "settings_editor::FocusLastNavEntry"
+    }
+  },
+  {
+    "context": "Zeta2Feedback > Editor",
+    "bindings": {
+      "enter": "editor::Newline",
+      "cmd-enter up": "dev::Zeta2RatePredictionPositive",
+      "cmd-enter down": "dev::Zeta2RatePredictionNegative"
+    }
+  },
+  {
+    "context": "Zeta2Context > Editor",
+    "bindings": {
+      "alt-left": "dev::Zeta2ContextGoBack",
+      "alt-right": "dev::Zeta2ContextGoForward"
     }
   }
 ]

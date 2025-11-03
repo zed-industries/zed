@@ -58,7 +58,7 @@ pub struct GitHostingProviderSettings {
 }
 
 impl Settings for GitHostingProviderSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         Self {
             git_hosting_providers: content
                 .project

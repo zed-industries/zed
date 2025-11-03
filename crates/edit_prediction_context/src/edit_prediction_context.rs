@@ -1,11 +1,16 @@
 mod declaration;
 mod declaration_scoring;
 mod excerpt;
+mod imports;
 mod outline;
 mod reference;
 mod syntax_index;
-mod text_similarity;
+pub mod text_similarity;
 
+use std::{path::Path, sync::Arc};
+
+use cloud_llm_client::predict_edits_v3;
+use collections::HashMap;
 use gpui::{App, AppContext as _, Entity, Task};
 use language::BufferSnapshot;
 use text::{Point, ToOffset as _};
@@ -13,14 +18,25 @@ use text::{Point, ToOffset as _};
 pub use declaration::*;
 pub use declaration_scoring::*;
 pub use excerpt::*;
+pub use imports::*;
 pub use reference::*;
 pub use syntax_index::*;
+
+pub use predict_edits_v3::Line;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EditPredictionContextOptions {
+    pub use_imports: bool,
+    pub excerpt: EditPredictionExcerptOptions,
+    pub score: EditPredictionScoreOptions,
+    pub max_retrieved_declarations: u8,
+}
 
 #[derive(Clone, Debug)]
 pub struct EditPredictionContext {
     pub excerpt: EditPredictionExcerpt,
     pub excerpt_text: EditPredictionExcerptText,
-    pub cursor_offset_in_excerpt: usize,
+    pub cursor_point: Point,
     pub declarations: Vec<ScoredDeclaration>,
 }
 
@@ -28,19 +44,34 @@ impl EditPredictionContext {
     pub fn gather_context_in_background(
         cursor_point: Point,
         buffer: BufferSnapshot,
-        excerpt_options: EditPredictionExcerptOptions,
+        options: EditPredictionContextOptions,
         syntax_index: Option<Entity<SyntaxIndex>>,
         cx: &mut App,
     ) -> Task<Option<Self>> {
+        let parent_abs_path = project::File::from_dyn(buffer.file()).and_then(|f| {
+            let mut path = f.worktree.read(cx).absolutize(&f.path);
+            if path.pop() { Some(path) } else { None }
+        });
+
         if let Some(syntax_index) = syntax_index {
-            let index_state = syntax_index.read_with(cx, |index, _cx| index.state().clone());
+            let index_state =
+                syntax_index.read_with(cx, |index, _cx| Arc::downgrade(index.state()));
             cx.background_spawn(async move {
+                let parent_abs_path = parent_abs_path.as_deref();
+                let index_state = index_state.upgrade()?;
                 let index_state = index_state.lock().await;
-                Self::gather_context(cursor_point, &buffer, &excerpt_options, Some(&index_state))
+                Self::gather_context(
+                    cursor_point,
+                    &buffer,
+                    parent_abs_path,
+                    &options,
+                    Some(&index_state),
+                )
             })
         } else {
             cx.background_spawn(async move {
-                Self::gather_context(cursor_point, &buffer, &excerpt_options, None)
+                let parent_abs_path = parent_abs_path.as_deref();
+                Self::gather_context(cursor_point, &buffer, parent_abs_path, &options, None)
             })
         }
     }
@@ -48,42 +79,77 @@ impl EditPredictionContext {
     pub fn gather_context(
         cursor_point: Point,
         buffer: &BufferSnapshot,
-        excerpt_options: &EditPredictionExcerptOptions,
+        parent_abs_path: Option<&Path>,
+        options: &EditPredictionContextOptions,
         index_state: Option<&SyntaxIndexState>,
+    ) -> Option<Self> {
+        let imports = if options.use_imports {
+            Imports::gather(&buffer, parent_abs_path)
+        } else {
+            Imports::default()
+        };
+        Self::gather_context_with_references_fn(
+            cursor_point,
+            buffer,
+            &imports,
+            options,
+            index_state,
+            references_in_excerpt,
+        )
+    }
+
+    pub fn gather_context_with_references_fn(
+        cursor_point: Point,
+        buffer: &BufferSnapshot,
+        imports: &Imports,
+        options: &EditPredictionContextOptions,
+        index_state: Option<&SyntaxIndexState>,
+        get_references: impl FnOnce(
+            &EditPredictionExcerpt,
+            &EditPredictionExcerptText,
+            &BufferSnapshot,
+        ) -> HashMap<Identifier, Vec<Reference>>,
     ) -> Option<Self> {
         let excerpt = EditPredictionExcerpt::select_from_buffer(
             cursor_point,
             buffer,
-            excerpt_options,
+            &options.excerpt,
             index_state,
         )?;
         let excerpt_text = excerpt.text(buffer);
-        let excerpt_occurrences = text_similarity::Occurrences::within_string(&excerpt_text.body);
 
-        let adjacent_start = Point::new(cursor_point.row.saturating_sub(2), 0);
-        let adjacent_end = Point::new(cursor_point.row + 1, 0);
-        let adjacent_occurrences = text_similarity::Occurrences::within_string(
-            &buffer
-                .text_for_range(adjacent_start..adjacent_end)
-                .collect::<String>(),
-        );
+        let declarations = if options.max_retrieved_declarations > 0
+            && let Some(index_state) = index_state
+        {
+            let excerpt_occurrences =
+                text_similarity::Occurrences::within_string(&excerpt_text.body);
 
-        let cursor_offset_in_file = cursor_point.to_offset(buffer);
-        // TODO fix this to not need saturating_sub
-        let cursor_offset_in_excerpt = cursor_offset_in_file.saturating_sub(excerpt.range.start);
+            let adjacent_start = Point::new(cursor_point.row.saturating_sub(2), 0);
+            let adjacent_end = Point::new(cursor_point.row + 1, 0);
+            let adjacent_occurrences = text_similarity::Occurrences::within_string(
+                &buffer
+                    .text_for_range(adjacent_start..adjacent_end)
+                    .collect::<String>(),
+            );
 
-        let declarations = if let Some(index_state) = index_state {
-            let references = references_in_excerpt(&excerpt, &excerpt_text, buffer);
+            let cursor_offset_in_file = cursor_point.to_offset(buffer);
 
-            scored_declarations(
+            let references = get_references(&excerpt, &excerpt_text, buffer);
+
+            let mut declarations = scored_declarations(
+                &options.score,
                 &index_state,
                 &excerpt,
                 &excerpt_occurrences,
                 &adjacent_occurrences,
+                &imports,
                 references,
                 cursor_offset_in_file,
                 buffer,
-            )
+            );
+            // TODO [zeta2] if we need this when we ship, we should probably do it in a smarter way
+            declarations.truncate(options.max_retrieved_declarations as usize);
+            declarations
         } else {
             vec![]
         };
@@ -91,7 +157,7 @@ impl EditPredictionContext {
         Some(Self {
             excerpt,
             excerpt_text,
-            cursor_offset_in_excerpt,
+            cursor_point,
             declarations,
         })
     }
@@ -135,12 +201,19 @@ mod tests {
                 EditPredictionContext::gather_context_in_background(
                     cursor_point,
                     buffer_snapshot,
-                    EditPredictionExcerptOptions {
-                        max_bytes: 60,
-                        min_bytes: 10,
-                        target_before_cursor_over_total_bytes: 0.5,
+                    EditPredictionContextOptions {
+                        use_imports: true,
+                        excerpt: EditPredictionExcerptOptions {
+                            max_bytes: 60,
+                            min_bytes: 10,
+                            target_before_cursor_over_total_bytes: 0.5,
+                        },
+                        score: EditPredictionScoreOptions {
+                            omit_excerpt_overlaps: true,
+                        },
+                        max_retrieved_declarations: u8::MAX,
                     },
-                    Some(index),
+                    Some(index.clone()),
                     cx,
                 )
             })
@@ -237,7 +310,8 @@ mod tests {
         let lang_id = lang.id();
         language_registry.add(Arc::new(lang));
 
-        let index = cx.new(|cx| SyntaxIndex::new(&project, cx));
+        let file_indexing_parallelism = 2;
+        let index = cx.new(|cx| SyntaxIndex::new(&project, file_indexing_parallelism, cx));
         cx.run_until_parked();
 
         (project, index, lang_id)

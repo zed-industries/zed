@@ -2,7 +2,7 @@ use editor::EditorSettings;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsContent, StatusStyle};
+use settings::{Settings, StatusStyle};
 use ui::{
     px,
     scrollbars::{ScrollbarVisibility, ShowScrollbar},
@@ -43,7 +43,7 @@ impl ScrollbarVisibility for GitPanelSettings {
 }
 
 impl Settings for GitPanelSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut ui::App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let git_panel = content.git_panel.clone().unwrap();
         Self {
             button: git_panel.button.unwrap(),
@@ -56,18 +56,6 @@ impl Settings for GitPanelSettings {
             fallback_branch_name: git_panel.fallback_branch_name.unwrap(),
             sort_by_path: git_panel.sort_by_path.unwrap(),
             collapse_untracked_diff: git_panel.collapse_untracked_diff.unwrap(),
-        }
-    }
-
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
-        if let Some(git_enabled) = vscode.read_bool("git.enabled") {
-            current.git_panel.get_or_insert_default().button = Some(git_enabled);
-        }
-        if let Some(default_branch) = vscode.read_string("git.defaultBranchName") {
-            current
-                .git_panel
-                .get_or_insert_default()
-                .fallback_branch_name = Some(default_branch.to_string());
         }
     }
 }

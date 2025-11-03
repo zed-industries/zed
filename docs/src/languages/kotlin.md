@@ -20,7 +20,7 @@ under `class Configuration` and initialization_options under `class Initializati
 The following example changes the JVM target from `default` (which is 1.8) to
 `17`:
 
-```json
+```json [settings]
 {
   "lsp": {
     "kotlin-language-server": {
@@ -40,7 +40,7 @@ The following example changes the JVM target from `default` (which is 1.8) to
 
 To use a specific java installation, just specify the `JAVA_HOME` environment variable with:
 
-```json
+```json [settings]
 {
   "lsp": {
     "kotlin-language-server": {

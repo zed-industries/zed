@@ -472,3 +472,37 @@ message GetDefaultBranch {
 message GetDefaultBranchResponse {
     optional string branch = 1;
 }
+
+message GetTreeDiff {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    bool is_merge = 3;
+    string base = 4;
+    string head = 5;
+}
+
+message GetTreeDiffResponse {
+    repeated TreeDiffStatus entries = 1;
+}
+
+message TreeDiffStatus {
+    enum Status {
+        ADDED = 0;
+        MODIFIED = 1;
+        DELETED = 2;
+    }
+
+    Status status = 1;
+    string path = 2;
+    optional string oid = 3;
+}
+
+message GetBlobContent {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string oid =3;
+}
+
+message GetBlobContentResponse {
+    string content = 1;
+}

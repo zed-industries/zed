@@ -5,8 +5,8 @@ use std::ops::Range;
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SelectionGoal {
     None,
-    HorizontalPosition(f32),
-    HorizontalRange { start: f32, end: f32 },
+    HorizontalPosition(f64),
+    HorizontalRange { start: f64, end: f64 },
     WrappedHorizontalPosition((u32, f32)),
 }
 

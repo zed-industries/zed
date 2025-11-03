@@ -6,7 +6,6 @@ use gpui::{
 use project::ProjectItem as _;
 use ui::{ButtonLike, ElevationIndex, KeyBinding, prelude::*};
 use util::ResultExt as _;
-use workspace::WorkspaceId;
 use workspace::item::ItemEvent;
 use workspace::{Workspace, item::Item};
 
@@ -192,22 +191,13 @@ impl Item for ReplSessionsPage {
         false
     }
 
-    fn clone_on_split(
-        &self,
-        _workspace_id: Option<WorkspaceId>,
-        _window: &mut Window,
-        _: &mut Context<Self>,
-    ) -> Option<Entity<Self>> {
-        None
-    }
-
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
         f(*event)
     }
 }
 
 impl Render for ReplSessionsPage {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let store = ReplStore::global(cx);
 
         let (kernel_specifications, sessions) = store.update(cx, |store, _cx| {
@@ -251,7 +241,7 @@ impl Render for ReplSessionsPage {
             return ReplSessionsContainer::new("No Jupyter Kernel Sessions").child(
                 v_flex()
                     .child(Label::new(instructions))
-                    .children(KeyBinding::for_action(&Run, window, cx)),
+                    .child(KeyBinding::for_action(&Run, cx)),
             );
         }
 

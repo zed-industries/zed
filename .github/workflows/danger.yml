@@ -1,42 +1,40 @@
-name: Danger
-
+# Generated from xtask::workflows::danger
+# Rebuild with `cargo xtask workflows`.
+name: danger
 on:
   pull_request:
-    branches: [main]
     types:
-      - opened
-      - synchronize
-      - reopened
-      - edited
-
+    - opened
+    - synchronize
+    - reopened
+    - edited
+    branches:
+    - main
 jobs:
   danger:
     if: github.repository_owner == 'zed-industries'
     runs-on: namespace-profile-2x4-ubuntu-2404
-
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-
-      - uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2 # v4.0.0
-        with:
-          version: 9
-
-      - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: "20"
-          cache: "pnpm"
-          cache-dependency-path: "script/danger/pnpm-lock.yaml"
-
-      - run: pnpm install --dir script/danger
-
-      - name: Run Danger
-        run: pnpm run --dir script/danger danger ci
-        env:
-          # This GitHub token is not used, but the value needs to be here to prevent
-          # Danger from throwing an error.
-          GITHUB_TOKEN: "not_a_real_token"
-          # All requests are instead proxied through an instance of
-          # https://github.com/maxdeviant/danger-proxy that allows Danger to securely
-          # authenticate with GitHub while still being able to run on PRs from forks.
-          DANGER_GITHUB_API_BASE_URL: "https://danger-proxy.fly.dev/github"
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_pnpm
+      uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
+      with:
+        version: '9'
+    - name: steps::setup_node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '20'
+        cache: pnpm
+        cache-dependency-path: script/danger/pnpm-lock.yaml
+    - name: danger::danger_job::install_deps
+      run: pnpm install --dir script/danger
+      shell: bash -euxo pipefail {0}
+    - name: danger::danger_job::run
+      run: pnpm run --dir script/danger danger ci
+      shell: bash -euxo pipefail {0}
+      env:
+        GITHUB_TOKEN: not_a_real_token
+        DANGER_GITHUB_API_BASE_URL: https://danger-proxy.fly.dev/github

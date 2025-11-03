@@ -58,7 +58,14 @@ mod prompts;
 use crate::util::atomic_incr_if_not_zero;
 pub use prompts::*;
 
-pub(crate) const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1024.), px(700.));
+pub(crate) const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1536.), px(864.));
+
+/// A 6:5 aspect ratio minimum window size to be used for functional,
+/// additional-to-main-Zed windows, like the settings and rules library windows.
+pub const DEFAULT_ADDITIONAL_WINDOW_SIZE: Size<Pixels> = Size {
+    width: Pixels(900.),
+    height: Pixels(750.),
+};
 
 /// Represents the two different phases when dispatching events.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
@@ -815,6 +822,12 @@ impl Frame {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+enum InputModality {
+    Mouse,
+    Keyboard,
+}
+
 /// Holds the state for a specific window.
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
@@ -837,7 +850,7 @@ pub struct Window {
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
-    pub(crate) element_opacity: Option<f32>,
+    pub(crate) element_opacity: f32,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
@@ -863,6 +876,7 @@ pub struct Window {
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
+    last_input_modality: InputModality,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
@@ -1222,7 +1236,7 @@ impl Window {
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
-            element_opacity: None,
+            element_opacity: 1.0,
             requested_autoscroll: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
@@ -1246,6 +1260,7 @@ impl Window {
             hovered,
             needs_present,
             last_input_timestamp,
+            last_input_modality: InputModality::Mouse,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
@@ -1307,9 +1322,7 @@ impl Window {
         for view_id in self
             .rendered_frame
             .dispatch_tree
-            .view_path(view_id)
-            .into_iter()
-            .rev()
+            .view_path_reversed(view_id)
         {
             if !self.dirty_views.insert(view_id) {
                 break;
@@ -1839,7 +1852,8 @@ impl Window {
         f: impl FnOnce(&GlobalElementId, &mut Self) -> R,
     ) -> R {
         self.element_id_stack.push(element_id);
-        let global_id = GlobalElementId(self.element_id_stack.clone());
+        let global_id = GlobalElementId(Arc::from(&*self.element_id_stack));
+
         let result = f(&global_id, self);
         self.element_id_stack.pop();
         result
@@ -1897,6 +1911,12 @@ impl Window {
     /// The current state of the keyboard's modifiers
     pub fn modifiers(&self) -> Modifiers {
         self.modifiers
+    }
+
+    /// Returns true if the last input event was keyboard-based (key press, tab navigation, etc.)
+    /// This is used for focus-visible styling to show focus indicators only for keyboard navigation.
+    pub fn last_input_was_keyboard(&self) -> bool {
+        self.last_input_modality == InputModality::Keyboard
     }
 
     /// The current state of the keyboard's capslock
@@ -2245,7 +2265,7 @@ impl Window {
             self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
                 ..range.end.accessed_element_states_index]
                 .iter()
-                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+                .map(|(id, type_id)| (id.clone(), *type_id)),
         );
         self.text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
@@ -2313,7 +2333,7 @@ impl Window {
             self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
                 ..range.end.accessed_element_states_index]
                 .iter()
-                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+                .map(|(id, type_id)| (id.clone(), *type_id)),
         );
         self.next_frame.tab_stops.replay(
             &self.rendered_frame.tab_stops.insertion_history
@@ -2435,14 +2455,16 @@ impl Window {
         opacity: Option<f32>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        if opacity.is_none() {
-            return f(self);
-        }
-
         self.invalidator.debug_assert_paint_or_prepaint();
-        self.element_opacity = opacity;
+
+        let Some(opacity) = opacity else {
+            return f(self);
+        };
+
+        let previous_opacity = self.element_opacity;
+        self.element_opacity = previous_opacity * opacity;
         let result = f(self);
-        self.element_opacity = None;
+        self.element_opacity = previous_opacity;
         result
     }
 
@@ -2539,9 +2561,10 @@ impl Window {
 
     /// Obtain the current element opacity. This method should only be called during the
     /// prepaint phase of element drawing.
+    #[inline]
     pub(crate) fn element_opacity(&self) -> f32 {
         self.invalidator.debug_assert_paint_or_prepaint();
-        self.element_opacity.unwrap_or(1.0)
+        self.element_opacity
     }
 
     /// Obtain the current content mask. This method should only be called during element drawing.
@@ -2632,10 +2655,8 @@ impl Window {
     {
         self.invalidator.debug_assert_paint_or_prepaint();
 
-        let key = (GlobalElementId(global_id.0.clone()), TypeId::of::<S>());
-        self.next_frame
-            .accessed_element_states
-            .push((GlobalElementId(key.0.clone()), TypeId::of::<S>()));
+        let key = (global_id.clone(), TypeId::of::<S>());
+        self.next_frame.accessed_element_states.push(key.clone());
 
         if let Some(any) = self
             .next_frame
@@ -3071,6 +3092,7 @@ impl Window {
 
         let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
+
         let bounds = bounds.scale(scale_factor);
         let params = RenderSvgParams {
             path,
@@ -3082,21 +3104,32 @@ impl Window {
         let Some(tile) =
             self.sprite_atlas
                 .get_or_insert_with(&params.clone().into(), &mut || {
-                    let Some(bytes) = cx.svg_renderer.render(&params)? else {
+                    let Some((size, bytes)) = cx.svg_renderer.render_alpha_mask(&params)? else {
                         return Ok(None);
                     };
-                    Ok(Some((params.size, Cow::Owned(bytes))))
+                    Ok(Some((size, Cow::Owned(bytes))))
                 })?
         else {
             return Ok(());
         };
         let content_mask = self.content_mask().scale(scale_factor);
+        let svg_bounds = Bounds {
+            origin: bounds.center()
+                - Point::new(
+                    ScaledPixels(tile.bounds.size.width.0 as f32 / SMOOTH_SVG_SCALE_FACTOR / 2.),
+                    ScaledPixels(tile.bounds.size.height.0 as f32 / SMOOTH_SVG_SCALE_FACTOR / 2.),
+                ),
+            size: tile
+                .bounds
+                .size
+                .map(|value| ScaledPixels(value.0 as f32 / SMOOTH_SVG_SCALE_FACTOR)),
+        };
 
         self.next_frame.scene.insert_primitive(MonochromeSprite {
             order: 0,
             pad: 0,
-            bounds: bounds
-                .map_origin(|origin| origin.floor())
+            bounds: svg_bounds
+                .map_origin(|origin| origin.round())
                 .map_size(|size| size.ceil()),
             content_mask,
             color: color.opacity(element_opacity),
@@ -3210,11 +3243,14 @@ impl Window {
         cx.layout_id_buffer.clear();
         cx.layout_id_buffer.extend(children);
         let rem_size = self.rem_size();
+        let scale_factor = self.scale_factor();
 
-        self.layout_engine
-            .as_mut()
-            .unwrap()
-            .request_layout(style, rem_size, &cx.layout_id_buffer)
+        self.layout_engine.as_mut().unwrap().request_layout(
+            style,
+            rem_size,
+            scale_factor,
+            &cx.layout_id_buffer,
+        )
     }
 
     /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
@@ -3225,21 +3261,19 @@ impl Window {
     /// returns a `Size`.
     ///
     /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
-    pub fn request_measured_layout<
-        F: FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
+    pub fn request_measured_layout<F>(&mut self, style: Style, measure: F) -> LayoutId
+    where
+        F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
             + 'static,
-    >(
-        &mut self,
-        style: Style,
-        measure: F,
-    ) -> LayoutId {
+    {
         self.invalidator.debug_assert_prepaint();
 
         let rem_size = self.rem_size();
+        let scale_factor = self.scale_factor();
         self.layout_engine
             .as_mut()
             .unwrap()
-            .request_measured_layout(style, rem_size, measure)
+            .request_measured_layout(style, rem_size, scale_factor, measure)
     }
 
     /// Compute the layout for the given id within the given available space.
@@ -3267,11 +3301,12 @@ impl Window {
     pub fn layout_bounds(&mut self, layout_id: LayoutId) -> Bounds<Pixels> {
         self.invalidator.debug_assert_prepaint();
 
+        let scale_factor = self.scale_factor();
         let mut bounds = self
             .layout_engine
             .as_mut()
             .unwrap()
-            .layout_bounds(layout_id)
+            .layout_bounds(layout_id, scale_factor)
             .map(Into::into);
         bounds.origin += self.element_offset();
         bounds
@@ -3560,6 +3595,16 @@ impl Window {
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
         self.last_input_timestamp.set(Instant::now());
+
+        // Track whether this input was keyboard-based for focus-visible styling
+        self.last_input_modality = match &event {
+            PlatformInput::KeyDown(_) | PlatformInput::ModifiersChanged(_) => {
+                InputModality::Keyboard
+            }
+            PlatformInput::MouseDown(e) if e.is_focusing() => InputModality::Mouse,
+            _ => self.last_input_modality,
+        };
+
         // Handlers may set this to false by calling `stop_propagation`.
         cx.propagate_event = true;
         // Handlers may set this to true by calling `prevent_default`.
@@ -4281,10 +4326,10 @@ impl Window {
     }
 
     /// Returns a generic event listener that invokes the given listener with the view and context associated with the given view handle.
-    pub fn listener_for<V: Render, E>(
+    pub fn listener_for<T: 'static, E>(
         &self,
-        view: &Entity<V>,
-        f: impl Fn(&mut V, &E, &mut Window, &mut Context<V>) + 'static,
+        view: &Entity<T>,
+        f: impl Fn(&mut T, &E, &mut Window, &mut Context<T>) + 'static,
     ) -> impl Fn(&E, &mut Window, &mut App) + 'static {
         let view = view.downgrade();
         move |e: &E, window: &mut Window, cx: &mut App| {
@@ -4293,14 +4338,14 @@ impl Window {
     }
 
     /// Returns a generic handler that invokes the given handler with the view and context associated with the given view handle.
-    pub fn handler_for<V: Render, Callback: Fn(&mut V, &mut Window, &mut Context<V>) + 'static>(
+    pub fn handler_for<E: 'static, Callback: Fn(&mut E, &mut Window, &mut Context<E>) + 'static>(
         &self,
-        view: &Entity<V>,
+        entity: &Entity<E>,
         f: Callback,
-    ) -> impl Fn(&mut Window, &mut App) + use<V, Callback> {
-        let view = view.downgrade();
+    ) -> impl Fn(&mut Window, &mut App) + 'static {
+        let entity = entity.downgrade();
         move |window: &mut Window, cx: &mut App| {
-            view.update(cx, |view, cx| f(view, window, cx)).ok();
+            entity.update(cx, |entity, cx| f(entity, window, cx)).ok();
         }
     }
 
@@ -4559,7 +4604,7 @@ impl Window {
             if let Some(inspector) = self.inspector.clone() {
                 inspector.update(cx, |inspector, _cx| {
                     if let Some(depth) = inspector.pick_depth.as_mut() {
-                        *depth += delta_y.0 / SCROLL_PIXELS_PER_LAYER;
+                        *depth += f32::from(delta_y) / SCROLL_PIXELS_PER_LAYER;
                         let max_depth = self.mouse_hit_test.ids.len() as f32 - 0.5;
                         if *depth < 0.0 {
                             *depth = 0.0;
@@ -4630,7 +4675,15 @@ pub struct WindowHandle<V> {
     #[deref]
     #[deref_mut]
     pub(crate) any_handle: AnyWindowHandle,
-    state_type: PhantomData<V>,
+    state_type: PhantomData<fn(V) -> V>,
+}
+
+impl<V> Debug for WindowHandle<V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WindowHandle")
+            .field("any_handle", &self.any_handle.id.as_u64())
+            .finish()
+    }
 }
 
 impl<V: 'static + Render> WindowHandle<V> {
@@ -4690,7 +4743,7 @@ impl<V: 'static + Render> WindowHandle<V> {
             .get(self.id)
             .and_then(|window| {
                 window
-                    .as_ref()
+                    .as_deref()
                     .and_then(|window| window.root.clone())
                     .map(|root_view| root_view.downcast::<V>())
             })
@@ -4757,9 +4810,6 @@ impl<V: 'static> From<WindowHandle<V>> for AnyWindowHandle {
         val.any_handle
     }
 }
-
-unsafe impl<V> Send for WindowHandle<V> {}
-unsafe impl<V> Sync for WindowHandle<V> {}
 
 /// A handle to a window with any root view type, which can be downcast to a window with a specific root view type.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -4854,7 +4904,7 @@ pub enum ElementId {
     /// A code location.
     CodeLocation(core::panic::Location<'static>),
     /// A labeled child of an element.
-    NamedChild(Box<ElementId>, SharedString),
+    NamedChild(Arc<ElementId>, SharedString),
 }
 
 impl ElementId {
@@ -4968,7 +5018,7 @@ impl From<(&'static str, u32)> for ElementId {
 
 impl<T: Into<SharedString>> From<(ElementId, T)> for ElementId {
     fn from((id, name): (ElementId, T)) -> Self {
-        ElementId::NamedChild(Box::new(id), name.into())
+        ElementId::NamedChild(Arc::new(id), name.into())
     }
 }
 

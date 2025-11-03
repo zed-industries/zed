@@ -4,7 +4,7 @@
 
 For costs and more information on pricing, visit [Zed’s pricing page](https://zed.dev/pricing).
 
-Please note that if you’re interested in just using Zed as the world’s fastest editor, with no AI or subscription features, you can always do so for free, without [authentication](../accounts.md).
+Please note that if you’re interested in just using Zed as the world’s fastest editor, with no AI or subscription features, you can always do so for free, without [authentication](../authentication.md).
 
 ## Usage {#usage}
 
@@ -25,3 +25,7 @@ Once the spend limit is hit, we’ll stop any further usage until your token spe
 ## Business Usage {#business-usage}
 
 Email [sales@zed.dev](mailto:sales@zed.dev) with any questions on business plans.
+
+## Trials {#trials}
+
+Note that trials will automatically convert to Zed Free plans on termination, and no cancellation is needed to prevent conversion to Zed Pro.

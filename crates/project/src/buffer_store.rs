@@ -25,8 +25,8 @@ use rpc::{
 };
 use smol::channel::Receiver;
 use std::{io, pin::pin, sync::Arc, time::Instant};
-use text::BufferId;
-use util::{ResultExt as _, TryFutureExt, debug_panic, maybe, rel_path::RelPath};
+use text::{BufferId, ReplicaId};
+use util::{ResultExt as _, TryFutureExt, debug_panic, maybe, paths::PathStyle, rel_path::RelPath};
 use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId};
 
 /// A set of open buffers.
@@ -158,7 +158,7 @@ impl RemoteBufferStore {
     pub fn handle_create_buffer_for_peer(
         &mut self,
         envelope: TypedEnvelope<proto::CreateBufferForPeer>,
-        replica_id: u16,
+        replica_id: ReplicaId,
         capability: Capability,
         cx: &mut Context<BufferStore>,
     ) -> Result<Option<Entity<Buffer>>> {
@@ -180,7 +180,13 @@ impl RemoteBufferStore {
                         buffer_file = Some(Arc::new(File::from_proto(file, worktree, cx)?)
                             as Arc<dyn language::File>);
                     }
-                    Buffer::from_proto(replica_id, capability, state, buffer_file)
+                    Buffer::from_proto(
+                        replica_id,
+                        capability,
+                        state,
+                        buffer_file,
+                        cx.background_executor(),
+                    )
                 });
 
                 match buffer_result {
@@ -619,27 +625,33 @@ impl LocalBufferStore {
         worktree: Entity<Worktree>,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {
-        let load_buffer = worktree.update(cx, |worktree, cx| {
-            let load_file = worktree.load_file(path.as_ref(), cx);
-            let reservation = cx.reserve_entity();
-            let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
-            cx.spawn(async move |_, cx| {
-                let loaded = load_file.await?;
-                let text_buffer = cx
-                    .background_spawn(async move { text::Buffer::new(0, buffer_id, loaded.text) })
-                    .await;
-                cx.insert_entity(reservation, |_| {
-                    Buffer::build(text_buffer, Some(loaded.file), Capability::ReadWrite)
-                })
-            })
-        });
-
+        let load_file = worktree.update(cx, |worktree, cx| worktree.load_file(path.as_ref(), cx));
         cx.spawn(async move |this, cx| {
-            let buffer = match load_buffer.await {
-                Ok(buffer) => Ok(buffer),
+            let path = path.clone();
+            let buffer = match load_file.await.with_context(|| {
+                format!("Could not open path: {}", path.display(PathStyle::local()))
+            }) {
+                Ok(loaded) => {
+                    let reservation = cx.reserve_entity::<Buffer>()?;
+                    let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
+                    let executor = cx.background_executor().clone();
+                    let text_buffer = cx
+                        .background_spawn(async move {
+                            text::Buffer::new(ReplicaId::LOCAL, buffer_id, loaded.text, &executor)
+                        })
+                        .await;
+                    cx.insert_entity(reservation, |_| {
+                        Buffer::build(text_buffer, Some(loaded.file), Capability::ReadWrite)
+                    })?
+                }
                 Err(error) if is_not_found_error(&error) => cx.new(|cx| {
                     let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
-                    let text_buffer = text::Buffer::new(0, buffer_id, "");
+                    let text_buffer = text::Buffer::new(
+                        ReplicaId::LOCAL,
+                        buffer_id,
+                        "",
+                        cx.background_executor(),
+                    );
                     Buffer::build(
                         text_buffer,
                         Some(Arc::new(File {
@@ -652,9 +664,9 @@ impl LocalBufferStore {
                         })),
                         Capability::ReadWrite,
                     )
-                }),
-                Err(e) => Err(e),
-            }?;
+                })?,
+                Err(e) => return Err(e),
+            };
             this.update(cx, |this, cx| {
                 this.add_buffer(buffer.clone(), cx)?;
                 let buffer_id = buffer.read(cx).remote_id();
@@ -835,6 +847,7 @@ impl BufferStore {
 
                 entry
                     .insert(
+                        // todo(lw): hot foreground spawn
                         cx.spawn(async move |this, cx| {
                             let load_result = load_buffer.await;
                             this.update(cx, |this, cx| {
@@ -904,7 +917,14 @@ impl BufferStore {
         };
         cx.spawn(async move |this, cx| {
             task.await?;
-            this.update(cx, |_, cx| {
+            this.update(cx, |this, cx| {
+                old_file.clone().and_then(|file| {
+                    this.path_to_buffer_id.remove(&ProjectPath {
+                        worktree_id: file.worktree_id(cx),
+                        path: file.path().clone(),
+                    })
+                });
+
                 cx.emit(BufferStoreEvent::BufferChangedFilePath { buffer, old_file });
             })
         })
@@ -917,7 +937,7 @@ impl BufferStore {
             path: file.path.clone(),
             worktree_id: file.worktree_id(cx),
         });
-        let is_remote = buffer.replica_id() != 0;
+        let is_remote = buffer.replica_id().is_remote();
         let open_buffer = OpenBuffer::Complete {
             buffer: buffer_entity.downgrade(),
         };
@@ -1317,7 +1337,7 @@ impl BufferStore {
     pub fn handle_create_buffer_for_peer(
         &mut self,
         envelope: TypedEnvelope<proto::CreateBufferForPeer>,
-        replica_id: u16,
+        replica_id: ReplicaId,
         capability: Capability,
         cx: &mut Context<Self>,
     ) -> Result<()> {

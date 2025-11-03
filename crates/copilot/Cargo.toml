@@ -52,7 +52,6 @@ task.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
-workspace-hack.workspace = true
 itertools.workspace = true
 
 [target.'cfg(windows)'.dependencies]

@@ -7,7 +7,7 @@ use gpui::{Entity, FocusHandle, SharedString};
 use picker::popover_menu::PickerPopoverMenu;
 use settings::update_settings_file;
 use std::sync::Arc;
-use ui::{ButtonLike, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{ButtonLike, PopoverMenuHandle, TintColor, Tooltip, prelude::*};
 use zed_actions::agent::ToggleModelSelector;
 
 pub struct AgentModelSelector {
@@ -70,6 +70,11 @@ impl Render for AgentModelSelector {
             .unwrap_or_else(|| SharedString::from("Select a Model"));
 
         let provider_icon = model.as_ref().map(|model| model.provider.icon());
+        let color = if self.menu_handle.is_deployed() {
+            Color::Accent
+        } else {
+            Color::Muted
+        };
 
         let focus_handle = self.focus_handle.clone();
 
@@ -77,32 +82,31 @@ impl Render for AgentModelSelector {
             self.selector.clone(),
             ButtonLike::new("active-model")
                 .when_some(provider_icon, |this, icon| {
-                    this.child(Icon::new(icon).color(Color::Muted).size(IconSize::XSmall))
+                    this.child(Icon::new(icon).color(color).size(IconSize::XSmall))
                 })
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .child(
                     Label::new(model_name)
-                        .color(Color::Muted)
+                        .color(color)
                         .size(LabelSize::Small)
                         .ml_0p5(),
                 )
                 .child(
                     Icon::new(IconName::ChevronDown)
-                        .color(Color::Muted)
+                        .color(color)
                         .size(IconSize::XSmall),
                 ),
-            move |window, cx| {
-                Tooltip::for_action_in(
-                    "Change Model",
-                    &ToggleModelSelector,
-                    &focus_handle,
-                    window,
-                    cx,
-                )
+            move |_window, cx| {
+                Tooltip::for_action_in("Change Model", &ToggleModelSelector, &focus_handle, cx)
             },
-            gpui::Corner::BottomRight,
+            gpui::Corner::TopRight,
             cx,
         )
         .with_handle(self.menu_handle.clone())
+        .offset(gpui::Point {
+            x: px(0.0),
+            y: px(2.0),
+        })
         .render(window, cx)
     }
 }

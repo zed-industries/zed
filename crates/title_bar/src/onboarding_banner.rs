@@ -154,12 +154,11 @@ impl Render for OnboardingBanner {
                             telemetry::event!("Banner Dismissed", source = this.source);
                             this.dismiss(cx)
                         }))
-                        .tooltip(|window, cx| {
+                        .tooltip(|_window, cx| {
                             Tooltip::with_meta(
                                 "Close Announcement Banner",
                                 None,
                                 "It won't show again for this feature",
-                                window,
                                 cx,
                             )
                         }),

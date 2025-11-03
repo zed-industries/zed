@@ -335,7 +335,7 @@ impl Markdown {
 
                 for path in paths {
                     if let Ok(language) = registry
-                        .language_for_file_path(Path::new(path.as_ref()))
+                        .load_language_for_file_path(Path::new(path.as_ref()))
                         .await
                     {
                         languages_by_path.insert(path, language);
@@ -1558,7 +1558,9 @@ impl MarkdownElementBuilder {
 
         if let Some(Some(language)) = self.code_block_stack.last() {
             let mut offset = 0;
-            for (range, highlight_id) in language.highlight_text(&Rope::from(text), 0..text.len()) {
+            for (range, highlight_id) in
+                language.highlight_text(&Rope::from_str_small(text), 0..text.len())
+            {
                 if range.start > offset {
                     self.pending_line
                         .runs

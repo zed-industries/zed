@@ -1,8 +1,8 @@
 use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use acp_thread::{AcpThread, AgentThreadEntry};
+use agent::HistoryStore;
 use agent_client_protocol::{self as acp, ToolCallId};
-use agent2::HistoryStore;
 use collections::HashMap;
 use editor::{Editor, EditorMode, MinimapVisibility};
 use gpui::{
@@ -203,7 +203,7 @@ impl EntryViewState {
         self.entries.drain(range);
     }
 
-    pub fn agent_font_size_changed(&mut self, cx: &mut App) {
+    pub fn agent_ui_font_size_changed(&mut self, cx: &mut App) {
         for entry in self.entries.iter() {
             match entry {
                 Entry::UserMessage { .. } | Entry::AssistantMessage { .. } => {}
@@ -387,7 +387,7 @@ fn diff_editor_text_style_refinement(cx: &mut App) -> TextStyleRefinement {
         font_size: Some(
             TextSize::Small
                 .rems(cx)
-                .to_pixels(ThemeSettings::get_global(cx).agent_font_size(cx))
+                .to_pixels(ThemeSettings::get_global(cx).agent_ui_font_size(cx))
                 .into(),
         ),
         ..Default::default()
@@ -399,10 +399,10 @@ mod tests {
     use std::{path::Path, rc::Rc};
 
     use acp_thread::{AgentConnection, StubAgentConnection};
+    use agent::HistoryStore;
     use agent_client_protocol as acp;
     use agent_settings::AgentSettings;
-    use agent2::HistoryStore;
-    use assistant_context::ContextStore;
+    use assistant_text_thread::TextThreadStore;
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::{EditorSettings, RowInfo};
     use fs::FakeFs;
@@ -414,7 +414,6 @@ mod tests {
     use project::Project;
     use serde_json::json;
     use settings::{Settings as _, SettingsStore};
-    use theme::ThemeSettings;
     use util::path;
     use workspace::Workspace;
 
@@ -467,8 +466,8 @@ mod tests {
             connection.send_update(session_id, acp::SessionUpdate::ToolCall(tool_call), cx)
         });
 
-        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
 
         let view_state = cx.new(|_cx| {
             EntryViewState::new(
@@ -544,7 +543,7 @@ mod tests {
             Project::init_settings(cx);
             AgentSettings::register(cx);
             workspace::init_settings(cx);
-            ThemeSettings::register(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(SemanticVersion::default(), cx);
             EditorSettings::register(cx);
         });

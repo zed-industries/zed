@@ -1,5 +1,5 @@
 use crate::{
-    DIAGNOSTICS_UPDATE_DELAY, IncludeWarnings, ToggleWarnings, context_range_for_entry,
+    DIAGNOSTICS_UPDATE_DEBOUNCE, IncludeWarnings, ToggleWarnings, context_range_for_entry,
     diagnostic_renderer::{DiagnosticBlock, DiagnosticRenderer},
     toolbar_controls::DiagnosticsToolbarEditor,
 };
@@ -15,7 +15,7 @@ use gpui::{
     InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
     Task, WeakEntity, Window, actions, div,
 };
-use language::{Buffer, DiagnosticEntry, Point};
+use language::{Buffer, DiagnosticEntry, DiagnosticEntryRef, Point};
 use project::{
     DiagnosticSummary, Event, Project, ProjectItem, ProjectPath,
     project_settings::{DiagnosticSeverity, ProjectSettings},
@@ -283,7 +283,7 @@ impl BufferDiagnosticsEditor {
 
         self.update_excerpts_task = Some(cx.spawn_in(window, async move |editor, cx| {
             cx.background_executor()
-                .timer(DIAGNOSTICS_UPDATE_DELAY)
+                .timer(DIAGNOSTICS_UPDATE_DEBOUNCE)
                 .await;
 
             if let Some(buffer) = buffer {
@@ -350,7 +350,7 @@ impl BufferDiagnosticsEditor {
                 grouped
                     .entry(entry.diagnostic.group_id)
                     .or_default()
-                    .push(DiagnosticEntry {
+                    .push(DiagnosticEntryRef {
                         range: entry.range.to_point(&buffer_snapshot),
                         diagnostic: entry.diagnostic,
                     })
@@ -560,13 +560,16 @@ impl BufferDiagnosticsEditor {
         })
     }
 
-    fn set_diagnostics(&mut self, diagnostics: &Vec<DiagnosticEntry<Anchor>>) {
-        self.diagnostics = diagnostics.clone();
+    fn set_diagnostics(&mut self, diagnostics: &[DiagnosticEntryRef<'_, Anchor>]) {
+        self.diagnostics = diagnostics
+            .iter()
+            .map(DiagnosticEntryRef::to_owned)
+            .collect();
     }
 
     fn diagnostics_are_unchanged(
         &self,
-        diagnostics: &Vec<DiagnosticEntry<Anchor>>,
+        diagnostics: &Vec<DiagnosticEntryRef<'_, Anchor>>,
         snapshot: &BufferSnapshot,
     ) -> bool {
         if self.diagnostics.len() != diagnostics.len() {
@@ -685,16 +688,20 @@ impl Item for BufferDiagnosticsEditor {
         true
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| {
+        Task::ready(Some(cx.new(|cx| {
             BufferDiagnosticsEditor::new(
                 self.project_path.clone(),
                 self.project.clone(),
@@ -703,7 +710,7 @@ impl Item for BufferDiagnosticsEditor {
                 window,
                 cx,
             )
-        }))
+        })))
     }
 
     fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -725,10 +732,6 @@ impl Item for BufferDiagnosticsEditor {
 
     fn is_dirty(&self, cx: &App) -> bool {
         self.multibuffer.read(cx).is_dirty(cx)
-    }
-
-    fn is_singleton(&self, _cx: &App) -> bool {
-        false
     }
 
     fn navigate(
@@ -933,10 +936,6 @@ impl DiagnosticsToolbarEditor for WeakEntity<BufferDiagnosticsEditor> {
             buffer_diagnostics_editor.include_warnings
         })
         .unwrap_or(false)
-    }
-
-    fn has_stale_excerpts(&self, _cx: &App) -> bool {
-        false
     }
 
     fn is_updating(&self, cx: &App) -> bool {

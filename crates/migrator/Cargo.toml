@@ -20,7 +20,10 @@ log.workspace = true
 streaming-iterator.workspace = true
 tree-sitter-json.workspace = true
 tree-sitter.workspace = true
-workspace-hack.workspace = true
+serde_json_lenient.workspace = true
+serde_json.workspace = true
+settings_json.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true
+unindent.workspace = true

@@ -613,7 +613,7 @@ pub struct SystemNodeRuntime {
 }
 
 impl SystemNodeRuntime {
-    const MIN_VERSION: semver::Version = Version::new(20, 0, 0);
+    const MIN_VERSION: semver::Version = Version::new(22, 0, 0);
     async fn new(node: PathBuf, npm: PathBuf) -> Result<Self> {
         let output = util::command::new_smol_command(&node)
             .arg("--version")

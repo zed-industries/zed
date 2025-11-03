@@ -393,6 +393,11 @@ impl TestAppContext {
         }
     }
 
+    /// Returns the background executor for this context.
+    pub fn background_executor(&self) -> &BackgroundExecutor {
+        &self.background_executor
+    }
+
     /// Wait until there are no more pending tasks.
     pub fn run_until_parked(&mut self) {
         self.background_executor.run_until_parked()
@@ -455,7 +460,7 @@ impl TestAppContext {
             .windows
             .get_mut(window.id)
             .unwrap()
-            .as_mut()
+            .as_deref_mut()
             .unwrap()
             .platform_window
             .as_test()
@@ -836,7 +841,7 @@ impl VisualTestContext {
         })
     }
 
-    /// Simulate an event from the platform, e.g. a SrollWheelEvent
+    /// Simulate an event from the platform, e.g. a ScrollWheelEvent
     /// Make sure you've called [VisualTestContext::draw] first!
     pub fn simulate_event<E: InputEvent>(&mut self, event: E) {
         self.test_window(self.window)
@@ -888,7 +893,9 @@ impl VisualTestContext {
         // safety: on_quit will be called after the test has finished.
         // the executor will ensure that all tasks related to the test have stopped.
         // so there is no way for cx to be accessed after on_quit is called.
-        let cx = Box::leak(unsafe { Box::from_raw(ptr) });
+        // todo: This is unsound under stacked borrows (also tree borrows probably?)
+        // the mutable reference invalidates `ptr` which is later used in the closure
+        let cx = unsafe { &mut *ptr };
         cx.on_quit(move || unsafe {
             drop(Box::from_raw(ptr));
         });

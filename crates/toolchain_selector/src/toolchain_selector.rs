@@ -128,66 +128,67 @@ impl AddToolchainState {
     ) -> (OpenPathDelegate, oneshot::Receiver<Option<Vec<PathBuf>>>) {
         let (tx, rx) = oneshot::channel();
         let weak = cx.weak_entity();
-        let lister = OpenPathDelegate::new(
-            tx,
-            DirectoryLister::Project(project),
-            false,
-            PathStyle::local(),
-        )
-        .show_hidden()
-        .with_footer(Arc::new(move |_, cx| {
-            let error = weak
-                .read_with(cx, |this, _| {
-                    if let AddState::Path { error, .. } = &this.state {
-                        error.clone()
-                    } else {
-                        None
-                    }
-                })
-                .ok()
-                .flatten();
-            let is_loading = weak
-                .read_with(cx, |this, _| {
-                    matches!(
-                        this.state,
-                        AddState::Path {
-                            input_state: PathInputState::Resolving(_),
-                            ..
-                        }
+        let path_style = project.read(cx).path_style(cx);
+        let lister =
+            OpenPathDelegate::new(tx, DirectoryLister::Project(project), false, path_style)
+                .show_hidden()
+                .with_footer(Arc::new(move |_, cx| {
+                    let error = weak
+                        .read_with(cx, |this, _| {
+                            if let AddState::Path { error, .. } = &this.state {
+                                error.clone()
+                            } else {
+                                None
+                            }
+                        })
+                        .ok()
+                        .flatten();
+                    let is_loading = weak
+                        .read_with(cx, |this, _| {
+                            matches!(
+                                this.state,
+                                AddState::Path {
+                                    input_state: PathInputState::Resolving(_),
+                                    ..
+                                }
+                            )
+                        })
+                        .unwrap_or_default();
+                    Some(
+                        v_flex()
+                            .child(Divider::horizontal())
+                            .child(
+                                h_flex()
+                                    .p_1()
+                                    .justify_between()
+                                    .gap_2()
+                                    .child(
+                                        Label::new("Select Toolchain Path")
+                                            .color(Color::Muted)
+                                            .map(|this| {
+                                                if is_loading {
+                                                    this.with_animation(
+                                                        "select-toolchain-label",
+                                                        Animation::new(Duration::from_secs(2))
+                                                            .repeat()
+                                                            .with_easing(pulsating_between(
+                                                                0.4, 0.8,
+                                                            )),
+                                                        |label, delta| label.alpha(delta),
+                                                    )
+                                                    .into_any()
+                                                } else {
+                                                    this.into_any_element()
+                                                }
+                                            }),
+                                    )
+                                    .when_some(error, |this, error| {
+                                        this.child(Label::new(error).color(Color::Error))
+                                    }),
+                            )
+                            .into_any(),
                     )
-                })
-                .unwrap_or_default();
-            Some(
-                v_flex()
-                    .child(Divider::horizontal())
-                    .child(
-                        h_flex()
-                            .p_1()
-                            .justify_between()
-                            .gap_2()
-                            .child(Label::new("Select Toolchain Path").color(Color::Muted).map(
-                                |this| {
-                                    if is_loading {
-                                        this.with_animation(
-                                            "select-toolchain-label",
-                                            Animation::new(Duration::from_secs(2))
-                                                .repeat()
-                                                .with_easing(pulsating_between(0.4, 0.8)),
-                                            |label, delta| label.alpha(delta),
-                                        )
-                                        .into_any()
-                                    } else {
-                                        this.into_any_element()
-                                    }
-                                },
-                            ))
-                            .when_some(error, |this, error| {
-                                this.child(Label::new(error).color(Color::Error))
-                            }),
-                    )
-                    .into_any(),
-            )
-        }));
+                }));
 
         (lister, rx)
     }
@@ -489,7 +490,6 @@ impl Render for AddToolchainState {
                                                 .key_binding(KeyBinding::for_action_in(
                                                     &menu::Confirm,
                                                     &handle,
-                                                    window,
                                                     cx,
                                                 ))
                                                 .on_click(cx.listener(|this, _, window, cx| {
@@ -867,12 +867,16 @@ impl ToolchainSelectorDelegate {
             add_toolchain_text: Arc::from("Add Toolchain"),
         }
     }
-    fn relativize_path(path: SharedString, worktree_root: &Path) -> SharedString {
+    fn relativize_path(
+        path: SharedString,
+        worktree_root: &Path,
+        path_style: PathStyle,
+    ) -> SharedString {
         Path::new(&path.as_ref())
             .strip_prefix(&worktree_root)
             .ok()
-            .map(|suffix| Path::new(".").join(suffix))
-            .and_then(|path| path.to_str().map(String::from).map(SharedString::from))
+            .and_then(|suffix| suffix.to_str())
+            .map(|suffix| format!(".{}{suffix}", path_style.separator()).into())
             .unwrap_or(path)
     }
 }
@@ -954,14 +958,18 @@ impl PickerDelegate for ToolchainSelectorDelegate {
         let background = cx.background_executor().clone();
         let candidates = self.candidates.clone();
         let worktree_root_path = self.worktree_abs_path_root.clone();
+        let path_style = self.project.read(cx).path_style(cx);
         cx.spawn_in(window, async move |this, cx| {
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()
                     .enumerate()
                     .map(|(index, (candidate, _))| {
-                        let path =
-                            Self::relativize_path(candidate.path.clone(), &worktree_root_path);
+                        let path = Self::relativize_path(
+                            candidate.path.clone(),
+                            &worktree_root_path,
+                            path_style,
+                        );
                         let string = format!("{}{}", candidate.name, path);
                         StringMatch {
                             candidate_id: index,
@@ -976,8 +984,11 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                     .into_iter()
                     .enumerate()
                     .map(|(candidate_id, (toolchain, _))| {
-                        let path =
-                            Self::relativize_path(toolchain.path.clone(), &worktree_root_path);
+                        let path = Self::relativize_path(
+                            toolchain.path.clone(),
+                            &worktree_root_path,
+                            path_style,
+                        );
                         let string = format!("{}{}", toolchain.name, path);
                         StringMatchCandidate::new(candidate_id, &string)
                     })
@@ -1017,7 +1028,12 @@ impl PickerDelegate for ToolchainSelectorDelegate {
         let (toolchain, scope) = &self.candidates.get(mat.candidate_id)?;
 
         let label = toolchain.name.clone();
-        let path = Self::relativize_path(toolchain.path.clone(), &self.worktree_abs_path_root);
+        let path_style = self.project.read(cx).path_style(cx);
+        let path = Self::relativize_path(
+            toolchain.path.clone(),
+            &self.worktree_abs_path_root,
+            path_style,
+        );
         let (name_highlights, mut path_highlights) = mat
             .positions
             .iter()
@@ -1100,7 +1116,6 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                                 .key_binding(KeyBinding::for_action_in(
                                     &AddToolchain,
                                     &self.focus_handle,
-                                    _window,
                                     cx,
                                 ))
                                 .on_click(|_, window, cx| {
@@ -1112,7 +1127,6 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                                 .key_binding(KeyBinding::for_action_in(
                                     &menu::Confirm,
                                     &self.focus_handle,
-                                    _window,
                                     cx,
                                 ))
                                 .on_click(|_, window, cx| {

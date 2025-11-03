@@ -1604,7 +1604,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
 
         let point = editor
             .snapshot(window, cx)
-            .buffer_snapshot
+            .buffer_snapshot()
             .summary_for_anchor::<language::Point>(&active_debug_lines.first().unwrap().0.start);
 
         assert_eq!(point.row, 1);
@@ -1679,7 +1679,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
 
         let point = editor
             .snapshot(window, cx)
-            .buffer_snapshot
+            .buffer_snapshot()
             .summary_for_anchor::<language::Point>(&active_debug_lines.first().unwrap().0.start);
 
         assert_eq!(point.row, 2);

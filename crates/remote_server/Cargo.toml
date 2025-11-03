@@ -60,10 +60,12 @@ settings.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
 sysinfo.workspace = true
+task.workspace = true
 util.workspace = true
 watch.workspace = true
 worktree.workspace = true
 thiserror.workspace = true
+rayon.workspace = true
 
 [target.'cfg(not(windows))'.dependencies]
 crashes.workspace = true
@@ -74,8 +76,7 @@ minidumper.workspace = true
 
 [dev-dependencies]
 action_log.workspace = true
-assistant_tool.workspace = true
-assistant_tools.workspace = true
+agent.workspace = true
 client = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
 collections.workspace = true

@@ -3,16 +3,29 @@ mod tree_map;
 
 use arrayvec::ArrayVec;
 pub use cursor::{Cursor, FilterCursor, Iter};
-use rayon::prelude::*;
+use futures::{StreamExt, stream};
+use futures_lite::future::yield_now;
 use std::marker::PhantomData;
 use std::mem;
 use std::{cmp::Ordering, fmt, iter::FromIterator, sync::Arc};
 pub use tree_map::{MapSeekTarget, TreeMap, TreeSet};
 
-#[cfg(test)]
+#[cfg(all(test, not(rust_analyzer)))]
 pub const TREE_BASE: usize = 2;
-#[cfg(not(test))]
+#[cfg(not(all(test, not(rust_analyzer))))]
 pub const TREE_BASE: usize = 6;
+
+pub trait BackgroundSpawn {
+    type Task<R>: Future<Output = R> + Send + Sync
+    where
+        R: Send + Sync;
+    fn background_spawn<R>(
+        &self,
+        future: impl Future<Output = R> + Send + Sync + 'static,
+    ) -> Self::Task<R>
+    where
+        R: Send + Sync + 'static;
+}
 
 /// An item that can be stored in a [`SumTree`]
 ///
@@ -82,6 +95,11 @@ pub trait Dimension<'a, S: Summary>: Clone {
     fn zero(cx: S::Context<'_>) -> Self;
 
     fn add_summary(&mut self, summary: &'a S, cx: S::Context<'_>);
+    #[must_use]
+    fn with_added_summary(mut self, summary: &'a S, cx: S::Context<'_>) -> Self {
+        self.add_summary(summary, cx);
+        self
+    }
 
     fn from_summary(summary: &'a S, cx: S::Context<'_>) -> Self {
         let mut dimension = Self::zero(cx);
@@ -293,62 +311,85 @@ impl<T: Item> SumTree<T> {
         }
     }
 
-    pub fn from_par_iter<I, Iter>(iter: I, cx: <T::Summary as Summary>::Context<'_>) -> Self
+    pub async fn from_iter_async<I, S>(iter: I, spawn: S) -> Self
     where
-        I: IntoParallelIterator<Iter = Iter>,
-        Iter: IndexedParallelIterator<Item = T>,
-        T: Send + Sync,
-        T::Summary: Send + Sync,
-        for<'a> <T::Summary as Summary>::Context<'a>: Sync,
+        T: 'static + Send + Sync,
+        for<'a> T::Summary: Summary<Context<'a> = ()> + Send + Sync,
+        S: BackgroundSpawn,
+        I: IntoIterator<Item = T, IntoIter: ExactSizeIterator>,
     {
-        let mut nodes = iter
-            .into_par_iter()
-            .chunks(2 * TREE_BASE)
-            .map(|items| {
-                let items: ArrayVec<T, { 2 * TREE_BASE }> = items.into_iter().collect();
-                let item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }> =
-                    items.iter().map(|item| item.summary(cx)).collect();
-                let mut summary = item_summaries[0].clone();
-                for item_summary in &item_summaries[1..] {
-                    <T::Summary as Summary>::add_summary(&mut summary, item_summary, cx);
+        let iter = iter.into_iter();
+        let num_leaves = iter.len().div_ceil(2 * TREE_BASE);
+
+        if num_leaves == 0 {
+            return Self::new(());
+        }
+
+        let mut nodes = stream::iter(iter)
+            .chunks(num_leaves.div_ceil(4))
+            .map(|chunk| async move {
+                let mut chunk = chunk.into_iter();
+                let mut leaves = vec![];
+                loop {
+                    let items: ArrayVec<T, { 2 * TREE_BASE }> =
+                        chunk.by_ref().take(2 * TREE_BASE).collect();
+                    if items.is_empty() {
+                        break;
+                    }
+                    let item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }> =
+                        items.iter().map(|item| item.summary(())).collect();
+                    let mut summary = item_summaries[0].clone();
+                    for item_summary in &item_summaries[1..] {
+                        <T::Summary as Summary>::add_summary(&mut summary, item_summary, ());
+                    }
+                    leaves.push(SumTree(Arc::new(Node::Leaf {
+                        summary,
+                        items,
+                        item_summaries,
+                    })));
+                    yield_now().await;
                 }
-                SumTree(Arc::new(Node::Leaf {
-                    summary,
-                    items,
-                    item_summaries,
-                }))
+                leaves
             })
-            .collect::<Vec<_>>();
+            .map(|future| spawn.background_spawn(future))
+            .buffered(4)
+            .flat_map(|it| stream::iter(it.into_iter()))
+            .collect::<Vec<_>>()
+            .await;
 
         let mut height = 0;
         while nodes.len() > 1 {
             height += 1;
-            nodes = nodes
-                .into_par_iter()
+            let current_nodes = mem::take(&mut nodes);
+            nodes = stream::iter(current_nodes)
                 .chunks(2 * TREE_BASE)
-                .map(|child_nodes| {
-                    let child_trees: ArrayVec<SumTree<T>, { 2 * TREE_BASE }> =
-                        child_nodes.into_iter().collect();
-                    let child_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }> = child_trees
-                        .iter()
-                        .map(|child_tree| child_tree.summary().clone())
-                        .collect();
-                    let mut summary = child_summaries[0].clone();
-                    for child_summary in &child_summaries[1..] {
-                        <T::Summary as Summary>::add_summary(&mut summary, child_summary, cx);
-                    }
-                    SumTree(Arc::new(Node::Internal {
-                        height,
-                        summary,
-                        child_summaries,
-                        child_trees,
-                    }))
+                .map(|chunk| {
+                    spawn.background_spawn(async move {
+                        let child_trees: ArrayVec<SumTree<T>, { 2 * TREE_BASE }> =
+                            chunk.into_iter().collect();
+                        let child_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }> = child_trees
+                            .iter()
+                            .map(|child_tree| child_tree.summary().clone())
+                            .collect();
+                        let mut summary = child_summaries[0].clone();
+                        for child_summary in &child_summaries[1..] {
+                            <T::Summary as Summary>::add_summary(&mut summary, child_summary, ());
+                        }
+                        SumTree(Arc::new(Node::Internal {
+                            height,
+                            summary,
+                            child_summaries,
+                            child_trees,
+                        }))
+                    })
                 })
-                .collect::<Vec<_>>();
+                .buffered(4)
+                .collect::<Vec<_>>()
+                .await;
         }
 
         if nodes.is_empty() {
-            Self::new(cx)
+            Self::new(())
         } else {
             debug_assert_eq!(nodes.len(), 1);
             nodes.pop().unwrap()
@@ -371,12 +412,122 @@ impl<T: Item> SumTree<T> {
         Iter::new(self)
     }
 
-    pub fn cursor<'a, 'b, S>(
+    /// A more efficient version of `Cursor::new()` + `Cursor::seek()` + `Cursor::item()`.
+    ///
+    /// Only returns the item that exactly has the target match.
+    pub fn find_exact<'a, 'slf, D, Target>(
+        &'slf self,
+        cx: <T::Summary as Summary>::Context<'a>,
+        target: &Target,
+        bias: Bias,
+    ) -> (D, D, Option<&'slf T>)
+    where
+        D: Dimension<'slf, T::Summary>,
+        Target: SeekTarget<'slf, T::Summary, D>,
+    {
+        let tree_end = D::zero(cx).with_added_summary(self.summary(), cx);
+        let comparison = target.cmp(&tree_end, cx);
+        if comparison == Ordering::Greater || (comparison == Ordering::Equal && bias == Bias::Right)
+        {
+            return (tree_end.clone(), tree_end, None);
+        }
+
+        let mut pos = D::zero(cx);
+        return match Self::find_recurse::<_, _, true>(cx, target, bias, &mut pos, self) {
+            Some((item, end)) => (pos, end, Some(item)),
+            None => (pos.clone(), pos, None),
+        };
+    }
+
+    /// A more efficient version of `Cursor::new()` + `Cursor::seek()` + `Cursor::item()`
+    pub fn find<'a, 'slf, D, Target>(
+        &'slf self,
+        cx: <T::Summary as Summary>::Context<'a>,
+        target: &Target,
+        bias: Bias,
+    ) -> (D, D, Option<&'slf T>)
+    where
+        D: Dimension<'slf, T::Summary>,
+        Target: SeekTarget<'slf, T::Summary, D>,
+    {
+        let tree_end = D::zero(cx).with_added_summary(self.summary(), cx);
+        let comparison = target.cmp(&tree_end, cx);
+        if comparison == Ordering::Greater || (comparison == Ordering::Equal && bias == Bias::Right)
+        {
+            return (tree_end.clone(), tree_end, None);
+        }
+
+        let mut pos = D::zero(cx);
+        return match Self::find_recurse::<_, _, false>(cx, target, bias, &mut pos, self) {
+            Some((item, end)) => (pos, end, Some(item)),
+            None => (pos.clone(), pos, None),
+        };
+    }
+
+    fn find_recurse<'tree, 'a, D, Target, const EXACT: bool>(
+        cx: <T::Summary as Summary>::Context<'a>,
+        target: &Target,
+        bias: Bias,
+        position: &mut D,
+        this: &'tree SumTree<T>,
+    ) -> Option<(&'tree T, D)>
+    where
+        D: Dimension<'tree, T::Summary>,
+        Target: SeekTarget<'tree, T::Summary, D>,
+    {
+        match &*this.0 {
+            Node::Internal {
+                child_summaries,
+                child_trees,
+                ..
+            } => {
+                for (child_tree, child_summary) in child_trees.iter().zip(child_summaries) {
+                    let child_end = position.clone().with_added_summary(child_summary, cx);
+
+                    let comparison = target.cmp(&child_end, cx);
+                    let target_in_child = comparison == Ordering::Less
+                        || (comparison == Ordering::Equal && bias == Bias::Left);
+                    if target_in_child {
+                        return Self::find_recurse::<D, Target, EXACT>(
+                            cx, target, bias, position, child_tree,
+                        );
+                    }
+                    *position = child_end;
+                }
+            }
+            Node::Leaf {
+                items,
+                item_summaries,
+                ..
+            } => {
+                for (item, item_summary) in items.iter().zip(item_summaries) {
+                    let mut child_end = position.clone();
+                    child_end.add_summary(item_summary, cx);
+
+                    let comparison = target.cmp(&child_end, cx);
+                    let entry_found = if EXACT {
+                        comparison == Ordering::Equal
+                    } else {
+                        comparison == Ordering::Less
+                            || (comparison == Ordering::Equal && bias == Bias::Left)
+                    };
+                    if entry_found {
+                        return Some((item, child_end));
+                    }
+
+                    *position = child_end;
+                }
+            }
+        }
+        None
+    }
+
+    pub fn cursor<'a, 'b, D>(
         &'a self,
         cx: <T::Summary as Summary>::Context<'b>,
-    ) -> Cursor<'a, 'b, T, S>
+    ) -> Cursor<'a, 'b, T, D>
     where
-        S: Dimension<'a, T::Summary>,
+        D: Dimension<'a, T::Summary>,
     {
         Cursor::new(self, cx)
     }
@@ -482,15 +633,15 @@ impl<T: Item> SumTree<T> {
         self.append(Self::from_iter(iter, cx), cx);
     }
 
-    pub fn par_extend<I, Iter>(&mut self, iter: I, cx: <T::Summary as Summary>::Context<'_>)
+    pub async fn async_extend<S, I>(&mut self, iter: I, spawn: S)
     where
-        I: IntoParallelIterator<Iter = Iter>,
-        Iter: IndexedParallelIterator<Item = T>,
-        T: Send + Sync,
-        T::Summary: Send + Sync,
-        for<'a> <T::Summary as Summary>::Context<'a>: Sync,
+        S: BackgroundSpawn,
+        I: IntoIterator<Item = T, IntoIter: ExactSizeIterator>,
+        T: 'static + Send + Sync,
+        for<'b> T::Summary: Summary<Context<'b> = ()> + Send + Sync,
     {
-        self.append(Self::from_par_iter(iter, cx), cx);
+        let other = Self::from_iter_async(iter, spawn);
+        self.append(other.await, ());
     }
 
     pub fn push(&mut self, item: T, cx: <T::Summary as Summary>::Context<'_>) {
@@ -787,9 +938,8 @@ impl<T: KeyedItem> SumTree<T> {
         key: &T::Key,
         cx: <T::Summary as Summary>::Context<'a>,
     ) -> Option<&'a T> {
-        let mut cursor = self.cursor::<T::Key>(cx);
-        if cursor.seek(key, Bias::Left) {
-            cursor.item()
+        if let (_, _, Some(item)) = self.find_exact::<T::Key, _>(cx, key, Bias::Left) {
+            Some(item)
         } else {
             None
         }
@@ -956,6 +1106,23 @@ mod tests {
 
     #[test]
     fn test_random() {
+        struct NoSpawn;
+        impl BackgroundSpawn for NoSpawn {
+            type Task<R>
+                = std::pin::Pin<Box<dyn Future<Output = R> + Sync + Send>>
+            where
+                R: Send + Sync;
+            fn background_spawn<R>(
+                &self,
+                future: impl Future<Output = R> + Send + Sync + 'static,
+            ) -> Self::Task<R>
+            where
+                R: Send + Sync + 'static,
+            {
+                Box::pin(future)
+            }
+        }
+
         let mut starting_seed = 0;
         if let Ok(value) = std::env::var("SEED") {
             starting_seed = value.parse().expect("invalid SEED variable");
@@ -973,7 +1140,7 @@ mod tests {
 
             let rng = &mut rng;
             let mut tree = SumTree::<u8>::default();
-            let count = rng.random_range(0..10);
+            let count = rng.random_range(0..128);
             if rng.random() {
                 tree.extend(rng.sample_iter(StandardUniform).take(count), ());
             } else {
@@ -981,13 +1148,13 @@ mod tests {
                     .sample_iter(StandardUniform)
                     .take(count)
                     .collect::<Vec<_>>();
-                tree.par_extend(items, ());
+                pollster::block_on(tree.async_extend(items, NoSpawn));
             }
 
             for _ in 0..num_operations {
                 let splice_end = rng.random_range(0..tree.extent::<Count>(()).0 + 1);
                 let splice_start = rng.random_range(0..splice_end + 1);
-                let count = rng.random_range(0..10);
+                let count = rng.random_range(0..128);
                 let tree_end = tree.extent::<Count>(());
                 let new_items = rng
                     .sample_iter(StandardUniform)
@@ -1003,7 +1170,7 @@ mod tests {
                     if rng.random() {
                         new_tree.extend(new_items, ());
                     } else {
-                        new_tree.par_extend(new_items, ());
+                        pollster::block_on(new_tree.async_extend(new_items, NoSpawn));
                     }
                     cursor.seek(&Count(splice_end), Bias::Right);
                     new_tree.append(cursor.slice(&tree_end, Bias::Right), ());

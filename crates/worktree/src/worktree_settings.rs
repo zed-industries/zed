@@ -1,8 +1,7 @@
 use std::path::Path;
 
 use anyhow::Context as _;
-use gpui::App;
-use settings::{Settings, SettingsContent};
+use settings::Settings;
 use util::{
     ResultExt,
     paths::{PathMatcher, PathStyle},
@@ -12,6 +11,8 @@ use util::{
 #[derive(Clone, PartialEq, Eq)]
 pub struct WorktreeSettings {
     pub project_name: Option<String>,
+    /// Whether to prevent this project from being shared in public channels.
+    pub prevent_sharing_in_public_channels: bool,
     pub file_scan_inclusions: PathMatcher,
     pub file_scan_exclusions: PathMatcher,
     pub private_files: PathMatcher,
@@ -35,7 +36,7 @@ impl WorktreeSettings {
 }
 
 impl Settings for WorktreeSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let worktree = content.project.worktree.clone();
         let file_scan_exclusions = worktree.file_scan_exclusions.unwrap();
         let file_scan_inclusions = worktree.file_scan_inclusions.unwrap();
@@ -51,7 +52,8 @@ impl Settings for WorktreeSettings {
             .collect();
 
         Self {
-            project_name: None,
+            project_name: worktree.project_name.into_inner(),
+            prevent_sharing_in_public_channels: worktree.prevent_sharing_in_public_channels,
             file_scan_exclusions: path_matchers(file_scan_exclusions, "file_scan_exclusions")
                 .log_err()
                 .unwrap_or_default(),
@@ -63,31 +65,6 @@ impl Settings for WorktreeSettings {
             private_files: path_matchers(private_files, "private_files")
                 .log_err()
                 .unwrap_or_default(),
-        }
-    }
-
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
-        if let Some(inclusions) = vscode
-            .read_value("files.watcherInclude")
-            .and_then(|v| v.as_array())
-            .and_then(|v| v.iter().map(|n| n.as_str().map(str::to_owned)).collect())
-        {
-            if let Some(old) = current.project.worktree.file_scan_inclusions.as_mut() {
-                old.extend(inclusions)
-            } else {
-                current.project.worktree.file_scan_inclusions = Some(inclusions)
-            }
-        }
-        if let Some(exclusions) = vscode
-            .read_value("files.watcherExclude")
-            .and_then(|v| v.as_array())
-            .and_then(|v| v.iter().map(|n| n.as_str().map(str::to_owned)).collect())
-        {
-            if let Some(old) = current.project.worktree.file_scan_exclusions.as_mut() {
-                old.extend(exclusions)
-            } else {
-                current.project.worktree.file_scan_exclusions = Some(exclusions)
-            }
         }
     }
 }

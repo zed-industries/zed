@@ -34,19 +34,66 @@ pub struct DiagnosticEntry<T> {
     pub diagnostic: Diagnostic,
 }
 
+/// A single diagnostic in a set. Generic over its range type, because
+/// the diagnostics are stored internally as [`Anchor`]s, but can be
+/// resolved to different coordinates types like [`usize`] byte offsets or
+/// [`Point`](gpui::Point)s.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct DiagnosticEntryRef<'a, T> {
+    /// The range of the buffer where the diagnostic applies.
+    pub range: Range<T>,
+    /// The information about the diagnostic.
+    pub diagnostic: &'a Diagnostic,
+}
+
+impl<T: PartialEq> PartialEq<DiagnosticEntry<T>> for DiagnosticEntryRef<'_, T> {
+    fn eq(&self, other: &DiagnosticEntry<T>) -> bool {
+        self.range == other.range && *self.diagnostic == other.diagnostic
+    }
+}
+
+impl<T: PartialEq> PartialEq<DiagnosticEntryRef<'_, T>> for DiagnosticEntry<T> {
+    fn eq(&self, other: &DiagnosticEntryRef<'_, T>) -> bool {
+        self.range == other.range && self.diagnostic == *other.diagnostic
+    }
+}
+
+impl<T: Clone> DiagnosticEntryRef<'_, T> {
+    pub fn to_owned(&self) -> DiagnosticEntry<T> {
+        DiagnosticEntry {
+            range: self.range.clone(),
+            diagnostic: self.diagnostic.clone(),
+        }
+    }
+}
+
+impl<'a> DiagnosticEntryRef<'a, Anchor> {
+    /// Converts the [DiagnosticEntry] to a different buffer coordinate type.
+    pub fn resolve<O: FromAnchor>(
+        &self,
+        buffer: &text::BufferSnapshot,
+    ) -> DiagnosticEntryRef<'a, O> {
+        DiagnosticEntryRef {
+            range: O::from_anchor(&self.range.start, buffer)
+                ..O::from_anchor(&self.range.end, buffer),
+            diagnostic: &self.diagnostic,
+        }
+    }
+}
+
 /// A group of related diagnostics, ordered by their start position
 /// in the buffer.
 #[derive(Debug, Serialize)]
-pub struct DiagnosticGroup<T> {
+pub struct DiagnosticGroup<'a, T> {
     /// The diagnostics.
-    pub entries: Vec<DiagnosticEntry<T>>,
+    pub entries: Vec<DiagnosticEntryRef<'a, T>>,
     /// The index into `entries` where the primary diagnostic is stored.
     pub primary_ix: usize,
 }
 
-impl DiagnosticGroup<Anchor> {
+impl<'a> DiagnosticGroup<'a, Anchor> {
     /// Converts the entries in this [`DiagnosticGroup`] to a different buffer coordinate type.
-    pub fn resolve<O: FromAnchor>(&self, buffer: &text::BufferSnapshot) -> DiagnosticGroup<O> {
+    pub fn resolve<O: FromAnchor>(&self, buffer: &text::BufferSnapshot) -> DiagnosticGroup<'a, O> {
         DiagnosticGroup {
             entries: self
                 .entries
@@ -68,6 +115,23 @@ pub struct Summary {
 }
 
 impl DiagnosticEntry<PointUtf16> {
+    /// Returns a raw LSP diagnostic used to provide diagnostic context to LSP
+    /// codeAction request
+    pub fn to_lsp_diagnostic_stub(&self) -> Result<lsp::Diagnostic> {
+        let range = range_to_lsp(self.range.clone())?;
+
+        Ok(lsp::Diagnostic {
+            range,
+            code: self.diagnostic.code.clone(),
+            severity: Some(self.diagnostic.severity),
+            source: self.diagnostic.source.clone(),
+            message: self.diagnostic.message.clone(),
+            data: self.diagnostic.data.clone(),
+            ..Default::default()
+        })
+    }
+}
+impl DiagnosticEntryRef<'_, PointUtf16> {
     /// Returns a raw LSP diagnostic used to provide diagnostic context to LSP
     /// codeAction request
     pub fn to_lsp_diagnostic_stub(&self) -> Result<lsp::Diagnostic> {
@@ -138,7 +202,7 @@ impl DiagnosticSet {
         buffer: &'a text::BufferSnapshot,
         inclusive: bool,
         reversed: bool,
-    ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
+    ) -> impl 'a + Iterator<Item = DiagnosticEntryRef<'a, O>>
     where
         T: 'a + ToOffset,
         O: FromAnchor,
@@ -179,10 +243,10 @@ impl DiagnosticSet {
     }
 
     /// Adds all of this set's diagnostic groups to the given output vector.
-    pub fn groups(
-        &self,
+    pub fn groups<'a>(
+        &'a self,
         language_server_id: LanguageServerId,
-        output: &mut Vec<(LanguageServerId, DiagnosticGroup<Anchor>)>,
+        output: &mut Vec<(LanguageServerId, DiagnosticGroup<'a, Anchor>)>,
         buffer: &text::BufferSnapshot,
     ) {
         let mut groups = HashMap::default();
@@ -190,7 +254,10 @@ impl DiagnosticSet {
             groups
                 .entry(entry.diagnostic.group_id)
                 .or_insert(Vec::new())
-                .push(entry.clone());
+                .push(DiagnosticEntryRef {
+                    range: entry.range.clone(),
+                    diagnostic: &entry.diagnostic,
+                });
         }
 
         let start_ix = output.len();
@@ -224,7 +291,7 @@ impl DiagnosticSet {
         &'a self,
         group_id: usize,
         buffer: &'a text::BufferSnapshot,
-    ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>> {
+    ) -> impl 'a + Iterator<Item = DiagnosticEntryRef<'a, O>> {
         self.iter()
             .filter(move |entry| entry.diagnostic.group_id == group_id)
             .map(|entry| entry.resolve(buffer))
@@ -247,11 +314,14 @@ impl sum_tree::Item for DiagnosticEntry<Anchor> {
 
 impl DiagnosticEntry<Anchor> {
     /// Converts the [DiagnosticEntry] to a different buffer coordinate type.
-    pub fn resolve<O: FromAnchor>(&self, buffer: &text::BufferSnapshot) -> DiagnosticEntry<O> {
-        DiagnosticEntry {
+    pub fn resolve<'a, O: FromAnchor>(
+        &'a self,
+        buffer: &text::BufferSnapshot,
+    ) -> DiagnosticEntryRef<'a, O> {
+        DiagnosticEntryRef {
             range: O::from_anchor(&self.range.start, buffer)
                 ..O::from_anchor(&self.range.end, buffer),
-            diagnostic: self.diagnostic.clone(),
+            diagnostic: &self.diagnostic,
         }
     }
 }

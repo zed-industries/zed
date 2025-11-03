@@ -121,9 +121,9 @@ fn scroll_editor(
     let amount = match (amount.is_full_page(), editor.visible_line_count()) {
         (true, Some(visible_line_count)) => {
             if amount.direction().is_upwards() {
-                ScrollAmount::Line(amount.lines(visible_line_count) + 1.0)
+                ScrollAmount::Line((amount.lines(visible_line_count) + 1.0) as f32)
             } else {
-                ScrollAmount::Line(amount.lines(visible_line_count) - 1.0)
+                ScrollAmount::Line((amount.lines(visible_line_count) - 1.0) as f32)
             }
         }
         _ => amount,
@@ -308,7 +308,7 @@ mod test {
         let window = cx.window;
         let margin = cx
             .update_window(window, |_, window, _cx| {
-                window.viewport_size().height - line_height * visible_line_count
+                window.viewport_size().height - line_height * visible_line_count as f32
             })
             .unwrap();
         cx.simulate_window_resize(
@@ -363,7 +363,10 @@ mod test {
                 point(0., 3.0)
             );
             assert_eq!(
-                editor.selections.newest(cx).range(),
+                editor
+                    .selections
+                    .newest(&editor.display_snapshot(cx))
+                    .range(),
                 Point::new(6, 0)..Point::new(6, 0)
             )
         });
@@ -380,7 +383,10 @@ mod test {
                 point(0., 3.0)
             );
             assert_eq!(
-                editor.selections.newest(cx).range(),
+                editor
+                    .selections
+                    .newest(&editor.display_snapshot(cx))
+                    .range(),
                 Point::new(0, 0)..Point::new(6, 1)
             )
         });

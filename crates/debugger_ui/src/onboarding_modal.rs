@@ -40,7 +40,7 @@ impl DebuggerOnboardingModal {
     }
 
     fn view_blog(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("http://zed.dev/blog/debugger");
+        cx.open_url("https://zed.dev/blog/debugger");
         cx.notify();
 
         debugger_onboarding_event!("Blog Link Clicked");

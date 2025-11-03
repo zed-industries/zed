@@ -54,9 +54,10 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
     }
 
     pub fn get(&self, key: &K) -> Option<&V> {
-        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(());
-        cursor.seek(&MapKeyRef(Some(key)), Bias::Left);
-        if let Some(item) = cursor.item() {
+        let (.., item) = self
+            .0
+            .find::<MapKeyRef<'_, K>, _>((), &MapKeyRef(Some(key)), Bias::Left);
+        if let Some(item) = item {
             if Some(key) == item.key().0.as_ref() {
                 Some(&item.value)
             } else {

@@ -54,6 +54,10 @@ actions!(
         CollapseSelectedChannel,
         /// Expands the selected channel in the tree view.
         ExpandSelectedChannel,
+        /// Opens the meeting notes for the selected channel in the panel.
+        ///
+        /// Use `collab::OpenChannelNotes` to open the channel notes for the current call.
+        OpenSelectedChannelNotes,
         /// Starts moving a channel to a new location.
         StartMoveChannel,
         /// Moves the selected item to the current location.
@@ -922,7 +926,7 @@ impl CollabPanel {
 
         ListItem::new(user.github_login.clone())
             .start_slot(Avatar::new(user.avatar_uri.clone()))
-            .child(Label::new(user.github_login.clone()))
+            .child(render_participant_name_and_handle(user))
             .toggle_state(is_selected)
             .end_slot(if is_pending {
                 Label::new("Calling").color(Color::Muted).into_any_element()
@@ -1264,6 +1268,13 @@ impl CollabPanel {
                     None,
                     window.handler_for(&this, move |this, _, cx| {
                         this.copy_channel_link(channel_id, cx)
+                    }),
+                )
+                .entry(
+                    "Copy Channel Notes Link",
+                    None,
+                    window.handler_for(&this, move |this, _, cx| {
+                        this.copy_channel_notes_link(channel_id, cx)
                     }),
                 );
 
@@ -1849,6 +1860,17 @@ impl CollabPanel {
         }
     }
 
+    fn open_selected_channel_notes(
+        &mut self,
+        _: &OpenSelectedChannelNotes,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(channel) = self.selected_channel() {
+            self.open_channel_notes(channel.id, window, cx);
+        }
+    }
+
     fn set_channel_visibility(
         &mut self,
         channel_id: ChannelId,
@@ -2220,6 +2242,15 @@ impl CollabPanel {
         cx.write_to_clipboard(item)
     }
 
+    fn copy_channel_notes_link(&mut self, channel_id: ChannelId, cx: &mut Context<Self>) {
+        let channel_store = self.channel_store.read(cx);
+        let Some(channel) = channel_store.channel_for_id(channel_id) else {
+            return;
+        };
+        let item = ClipboardItem::new_string(channel.notes_link(None, cx));
+        cx.write_to_clipboard(item)
+    }
+
     fn render_signed_out(&mut self, cx: &mut Context<Self>) -> Div {
         let collab_blurb = "Work with your team in realtime with collaborative editing, voice, shared notes and more.";
 
@@ -2250,7 +2281,7 @@ impl CollabPanel {
                             })),
                     )
                     .child(
-                        div().flex().w_full().items_center().child(
+                        v_flex().w_full().items_center().child(
                             Label::new("Sign in to enable collaboration.")
                                 .color(Color::Muted)
                                 .size(LabelSize::Small),
@@ -2505,7 +2536,7 @@ impl CollabPanel {
                 h_flex()
                     .w_full()
                     .justify_between()
-                    .child(Label::new(github_login.clone()))
+                    .child(render_participant_name_and_handle(&contact.user))
                     .when(calling, |el| {
                         el.child(Label::new("Calling").color(Color::Muted))
                     })
@@ -2940,6 +2971,14 @@ fn render_tree_branch(
     .h(line_height)
 }
 
+fn render_participant_name_and_handle(user: &User) -> impl IntoElement {
+    Label::new(if let Some(ref display_name) = user.name {
+        format!("{display_name} ({})", user.github_login)
+    } else {
+        user.github_login.to_string()
+    })
+}
+
 impl Render for CollabPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
@@ -2952,6 +2991,7 @@ impl Render for CollabPanel {
             .on_action(cx.listener(CollabPanel::remove_selected_channel))
             .on_action(cx.listener(CollabPanel::show_inline_context_menu))
             .on_action(cx.listener(CollabPanel::rename_selected_channel))
+            .on_action(cx.listener(CollabPanel::open_selected_channel_notes))
             .on_action(cx.listener(CollabPanel::collapse_selected_channel))
             .on_action(cx.listener(CollabPanel::expand_selected_channel))
             .on_action(cx.listener(CollabPanel::start_move_selected_channel))
@@ -3027,6 +3067,10 @@ impl Panel for CollabPanel {
 
     fn persistent_name() -> &'static str {
         "CollabPanel"
+    }
+
+    fn panel_key() -> &'static str {
+        COLLABORATION_PANEL_KEY
     }
 
     fn activation_priority(&self) -> u32 {
@@ -3170,8 +3214,8 @@ struct JoinChannelTooltip {
 }
 
 impl Render for JoinChannelTooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        tooltip_container(window, cx, |container, _, cx| {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        tooltip_container(cx, |container, cx| {
             let participants = self
                 .channel_store
                 .read(cx)
@@ -3183,7 +3227,7 @@ impl Render for JoinChannelTooltip {
                     h_flex()
                         .gap_2()
                         .child(Avatar::new(participant.avatar_uri.clone()))
-                        .child(Label::new(participant.github_login.clone()))
+                        .child(render_participant_name_and_handle(participant))
                 }))
         })
     }
