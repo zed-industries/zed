@@ -200,7 +200,7 @@ jobs:
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
         name: Zed-aarch64.dmg
-        path: target/aarch64-apple-darwin/release/Zed.dmg
+        path: target/aarch64-apple-darwin/release/Zed-aarch64.dmg
         if-no-files-found: error
     - name: '@actions/upload-artifact zed-remote-server-macos-aarch64.gz'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
@@ -253,7 +253,7 @@ jobs:
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
         name: Zed-x86_64.dmg
-        path: target/x86_64-apple-darwin/release/Zed.dmg
+        path: target/x86_64-apple-darwin/release/Zed-x86_64.dmg
         if-no-files-found: error
     - name: '@actions/upload-artifact zed-remote-server-macos-x86_64.gz'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
