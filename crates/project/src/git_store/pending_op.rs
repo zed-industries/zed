@@ -1,9 +1,10 @@
 use git::repository::RepoPath;
-use sum_tree::{ContextLessSummary, Dimension, Item, KeyedItem, NoSummary, SumTree};
-use worktree::{PathKey, PathSummary};
+use std::ops::Add;
+use sum_tree::{ContextLessSummary, Dimension, Item, KeyedItem};
+use worktree::PathSummary;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Status {
+pub enum PendingOpStatus {
     Staged,
     Unstaged,
     Reverted,
@@ -12,54 +13,33 @@ pub enum Status {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingOp {
-    pub id: u16,
-    pub status: Status,
+    pub repo_path: RepoPath,
+    pub id: PendingOpId,
+    pub status: PendingOpStatus,
     pub finished: bool,
 }
 
 #[derive(Clone, Debug)]
 pub struct PendingOpSummary {
-    pub max_id: u16,
-    pub staged_count: u32,
-    pub unstaged_count: u32,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PendingOps {
-    pub repo_path: RepoPath,
-    pub ops: SumTree<PendingOp>,
+    pub max_id: PendingOpId,
+    pub staged_count: usize,
+    pub unstaged_count: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct PendingOpId(u16);
+pub struct PendingOpId(pub usize);
 
-impl Item for PendingOps {
-    type Summary = PathSummary<NoSummary>;
+impl Item for PendingOp {
+    type Summary = PathSummary<PendingOpSummary>;
 
     fn summary(&self, _cx: ()) -> Self::Summary {
         PathSummary {
             max_path: self.repo_path.0.clone(),
-            item_summary: NoSummary,
-        }
-    }
-}
-
-impl KeyedItem for PendingOps {
-    type Key = PathKey;
-
-    fn key(&self) -> Self::Key {
-        PathKey(self.repo_path.0.clone())
-    }
-}
-
-impl Item for PendingOp {
-    type Summary = PendingOpSummary;
-
-    fn summary(&self, _cx: ()) -> Self::Summary {
-        PendingOpSummary {
-            max_id: self.id,
-            staged_count: (self.status == Status::Staged) as u32,
-            unstaged_count: (self.status == Status::Unstaged) as u32,
+            item_summary: PendingOpSummary {
+                max_id: self.id,
+                staged_count: (self.status == PendingOpStatus::Staged) as usize,
+                unstaged_count: (self.status == PendingOpStatus::Unstaged) as usize,
+            },
         }
     }
 }
@@ -67,7 +47,7 @@ impl Item for PendingOp {
 impl ContextLessSummary for PendingOpSummary {
     fn zero() -> Self {
         Self {
-            max_id: 0,
+            max_id: PendingOpId(0),
             staged_count: 0,
             unstaged_count: 0,
         }
@@ -84,16 +64,24 @@ impl KeyedItem for PendingOp {
     type Key = PendingOpId;
 
     fn key(&self) -> Self::Key {
-        PendingOpId(self.id)
+        self.id
     }
 }
 
-impl Dimension<'_, PendingOpSummary> for PendingOpId {
+impl Dimension<'_, PathSummary<PendingOpSummary>> for PendingOpId {
     fn zero(_cx: ()) -> Self {
         Self(0)
     }
 
-    fn add_summary(&mut self, summary: &PendingOpSummary, _cx: ()) {
-        self.0 = summary.max_id;
+    fn add_summary(&mut self, summary: &PathSummary<PendingOpSummary>, _cx: ()) {
+        *self = summary.item_summary.max_id;
+    }
+}
+
+impl Add<usize> for PendingOpId {
+    type Output = PendingOpId;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        Self(self.0 + rhs)
     }
 }

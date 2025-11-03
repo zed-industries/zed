@@ -45,7 +45,7 @@ use language::{
     proto::{deserialize_version, serialize_version},
 };
 use parking_lot::Mutex;
-use pending_op::{PendingOp, PendingOps, Status as PendingOpStatus};
+use pending_op::{PendingOp, PendingOpId, PendingOpStatus};
 use postage::stream::Stream as _;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -250,7 +250,7 @@ pub struct MergeDetails {
 pub struct RepositorySnapshot {
     pub id: RepositoryId,
     pub statuses_by_path: SumTree<StatusEntry>,
-    pub pending_ops_by_path: SumTree<PendingOps>,
+    pub pending_ops: SumTree<PendingOp>,
     pub work_directory_abs_path: Arc<Path>,
     pub path_style: PathStyle,
     pub branch: Option<Branch>,
@@ -2957,7 +2957,7 @@ impl RepositorySnapshot {
         Self {
             id,
             statuses_by_path: Default::default(),
-            pending_ops_by_path: Default::default(),
+            pending_ops: Default::default(),
             work_directory_abs_path,
             branch: None,
             head_commit: None,
@@ -3085,11 +3085,16 @@ impl RepositorySnapshot {
             .cloned()
     }
 
-    pub fn pending_ops_for_path(&self, path: &RepoPath) -> Option<SumTree<PendingOp>> {
-        self.pending_ops_by_path
-            .get(&PathKey(path.0.clone()), ())
-            .map(|ops| &ops.ops)
-            .cloned()
+    pub fn pending_op_by_id(&self, id: PendingOpId) -> Option<PendingOp> {
+        self.pending_ops.get(&id, ()).cloned()
+    }
+
+    pub fn pending_ops_for_path(&self, path: &RepoPath) -> Vec<PendingOp> {
+        self.pending_ops
+            .filter::<_, PathKey>((), |sum| sum.max_path == path.0)
+            .into_iter()
+            .map(Clone::clone)
+            .collect()
     }
 
     pub fn abs_path_to_repo_path(&self, abs_path: &Path) -> Option<RepoPath> {
@@ -3827,10 +3832,20 @@ impl Repository {
             _ => None,
         };
 
-        let entries_cloned = entries.clone();
+        let mut ids = Vec::with_capacity(entries.len());
 
-        for entry in &entries_cloned {
-            self.push_pending_op_for_path(entry, PendingOpStatus::Staged);
+        for entry in &entries {
+            let id = self.snapshot.pending_ops.summary().item_summary.max_id + 1;
+            self.snapshot.pending_ops.push(
+                PendingOp {
+                    repo_path: entry.clone(),
+                    id,
+                    status: PendingOpStatus::Staged,
+                    finished: false,
+                },
+                (),
+            );
+            ids.push(id);
         }
 
         cx.spawn(async move |this, cx| {
@@ -3870,25 +3885,16 @@ impl Repository {
             })?
             .await??;
 
-            // this.update(cx, |this, _| {
-            //     for entry in &entries_cloned {
-            //         let key = PathKey(entry.0.clone());
-            //         let Some(pending) = this.snapshot.pending_ops_by_path.get(&key) else { continue; };
-            //         let Some(mut pending) = this.snapshot.pending_ops_by_path.remove(&key, ())
-            //         else {
-            //             continue;
-            //         };
-            //         for p in &mut pending.ops {
-            //             if p.id == *op_id {
-            //                 p.finished = true;
-            //                 break;
-            //             }
-            //         }
-            //         this.snapshot
-            //             .pending_ops_by_path
-            //             .insert_or_replace(pending, ());
-            //     }
-            // })?;
+            this.update(cx, |this, _| {
+                for id in ids {
+                    if let Some(mut op) = this.snapshot.pending_op_by_id(id) {
+                        op.finished = true;
+                        this.snapshot
+                            .pending_ops
+                            .edit(vec![sum_tree::Edit::Insert(op)], ());
+                    }
+                }
+            })?;
 
             Ok(())
         })
@@ -3915,8 +3921,20 @@ impl Repository {
             _ => None,
         };
 
+        let mut ids = Vec::with_capacity(entries.len());
+
         for entry in &entries {
-            self.push_pending_op_for_path(entry, PendingOpStatus::Unstaged);
+            let id = self.snapshot.pending_ops.summary().item_summary.max_id + 1;
+            self.snapshot.pending_ops.push(
+                PendingOp {
+                    repo_path: entry.clone(),
+                    id,
+                    status: PendingOpStatus::Unstaged,
+                    finished: false,
+                },
+                (),
+            );
+            ids.push(id);
         }
 
         cx.spawn(async move |this, cx| {
@@ -3955,6 +3973,17 @@ impl Repository {
                 )
             })?
             .await??;
+
+            this.update(cx, |this, _| {
+                for id in ids {
+                    if let Some(mut op) = this.snapshot.pending_op_by_id(id) {
+                        op.finished = true;
+                        this.snapshot
+                            .pending_ops
+                            .edit(vec![sum_tree::Edit::Insert(op)], ());
+                    }
+                }
+            })?;
 
             Ok(())
         })
@@ -5240,29 +5269,6 @@ impl Repository {
     pub fn barrier(&mut self) -> oneshot::Receiver<()> {
         self.send_job(None, |_, _| async {})
     }
-
-    fn push_pending_op_for_path(&mut self, path: &RepoPath, status: PendingOpStatus) {
-        let mut ops = Vec::new();
-        let existing_ops = self.snapshot.pending_ops_for_path(path);
-        let id = existing_ops
-            .as_ref()
-            .map(|ops| ops.summary().max_id)
-            .unwrap_or(0)
-            + 1;
-        if let Some(existing_ops) = existing_ops {
-            ops.append(&mut existing_ops.items(()));
-        }
-        ops.push(PendingOp {
-            id,
-            status,
-            finished: false,
-        });
-        let edit = sum_tree::Edit::Insert(PendingOps {
-            repo_path: path.clone(),
-            ops: SumTree::from_iter(ops, ()),
-        });
-        self.snapshot.pending_ops_by_path.edit(vec![edit], ());
-    }
 }
 
 fn get_permalink_in_rust_registry_src(
@@ -5528,7 +5534,7 @@ async fn compute_snapshot(
         MergeDetails::load(&backend, &statuses_by_path, &prev_snapshot).await?;
     log::debug!("new merge details (changed={merge_heads_changed:?}): {merge_details:?}");
 
-    let pending_ops_by_path = prev_snapshot.pending_ops_by_path.clone();
+    let pending_ops = prev_snapshot.pending_ops.clone();
 
     if merge_heads_changed {
         events.push(RepositoryEvent::MergeHeadsChanged);
@@ -5555,7 +5561,7 @@ async fn compute_snapshot(
     let snapshot = RepositorySnapshot {
         id,
         statuses_by_path,
-        pending_ops_by_path,
+        pending_ops,
         work_directory_abs_path,
         path_style: prev_snapshot.path_style,
         scan_id: prev_snapshot.scan_id + 1,

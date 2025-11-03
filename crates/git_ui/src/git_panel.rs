@@ -1304,7 +1304,13 @@ impl GitPanel {
         });
 
         let repository = active_repository.read(cx);
-        dbg!(&repository.snapshot().pending_ops_by_path);
+        for entry in &entries {
+            println!(
+                "{:?} -> {:?}",
+                &entry.repo_path,
+                repository.snapshot().pending_ops_for_path(&entry.repo_path)
+            );
+        }
         self.update_counts(repository);
         cx.notify();
 
