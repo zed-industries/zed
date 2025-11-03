@@ -21745,6 +21745,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
+ "indoc",
  "language",
  "language_extension",
  "language_model",
