@@ -250,6 +250,8 @@ impl AgentServerStore {
                 self.agent_icons.remove(name);
                 false
             } else {
+                // Keep the hardcoded external agents that don't come from extensions
+                // (In the future we may move these over to being extensions too.)
                 true
             }
         });
