@@ -537,7 +537,7 @@ pub async fn apply_diff(
                 } else {
                     let text = buffer.text();
                     if let Some(offset) = text.find(&hunk.context) {
-                        if text[offset + 1..].find(&hunk.context).is_some() {
+                        if text[offset + 1..].contains(&hunk.context) {
                             anyhow::bail!("Context is not unique enough:\n{}", hunk.context);
                         }
                         offset

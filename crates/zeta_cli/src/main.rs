@@ -433,7 +433,6 @@ async fn zeta2_predict(
     let mut excerpts_text = String::new();
     let mut prediction_task = None;
     while let Some(event) = debug_rx.next().await {
-        dbg!(&event);
         match event {
             zeta2::ZetaDebugInfo::ContextRetrievalStarted(info) => {
                 context_retrieval_started_at = Some(info.timestamp);
