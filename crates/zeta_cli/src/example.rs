@@ -5,17 +5,23 @@ use std::{
     fs,
     io::Write,
     mem,
+    ops::Range,
     path::{Path, PathBuf},
 };
 
 use anyhow::{Context as _, Result};
 use clap::ValueEnum;
-use gpui::http_client::Url;
+use collections::HashSet;
+use futures::AsyncWriteExt as _;
+use gpui::{AsyncApp, Entity, http_client::Url};
+use language::Buffer;
+use project::{Project, ProjectPath};
 use pulldown_cmark::CowStr;
 use serde::{Deserialize, Serialize};
 
-const CURSOR_POSITION_HEADING: &str = "Cursor Position";
+const UNCOMMITTED_DIFF_HEADING: &str = "Uncommitted Diff";
 const EDIT_HISTORY_HEADING: &str = "Edit History";
+const CURSOR_POSITION_HEADING: &str = "Cursor Position";
 const EXPECTED_PATCH_HEADING: &str = "Expected Patch";
 const EXPECTED_EXCERPTS_HEADING: &str = "Expected Excerpts";
 const REPOSITORY_URL_FIELD: &str = "repository_url";
@@ -31,9 +37,10 @@ pub struct NamedExample {
 pub struct Example {
     pub repository_url: String,
     pub revision: String,
+    pub uncommitted_diff: String,
     pub cursor_path: PathBuf,
     pub cursor_position: String,
-    pub edit_history: Vec<String>,
+    pub edit_history: String,
     pub expected_patch: String,
     pub expected_excerpts: Vec<ExpectedExcerpt>,
 }
@@ -59,11 +66,11 @@ impl NamedExample {
 
         match ext.and_then(|s| s.to_str()) {
             Some("json") => Ok(Self {
-                name: path.file_name().unwrap_or_default().display().to_string(),
+                name: path.file_stem().unwrap_or_default().display().to_string(),
                 example: serde_json::from_str(&content)?,
             }),
             Some("toml") => Ok(Self {
-                name: path.file_name().unwrap_or_default().display().to_string(),
+                name: path.file_stem().unwrap_or_default().display().to_string(),
                 example: toml::from_str(&content)?,
             }),
             Some("md") => Self::parse_md(&content),
@@ -88,9 +95,10 @@ impl NamedExample {
             example: Example {
                 repository_url: String::new(),
                 revision: String::new(),
+                uncommitted_diff: String::new(),
                 cursor_path: PathBuf::new(),
                 cursor_position: String::new(),
-                edit_history: Vec::new(),
+                edit_history: String::new(),
                 expected_patch: String::new(),
                 expected_excerpts: Vec::new(),
             },
@@ -152,18 +160,19 @@ impl NamedExample {
                     block_info = "".into();
                 }
                 Event::End(TagEnd::CodeBlock) => {
-                    if current_section.eq_ignore_ascii_case(EDIT_HISTORY_HEADING) {
-                        named.example.edit_history.push(mem::take(&mut text));
+                    let block_info = block_info.trim();
+                    if current_section.eq_ignore_ascii_case(UNCOMMITTED_DIFF_HEADING) {
+                        named.example.uncommitted_diff = mem::take(&mut text);
+                    } else if current_section.eq_ignore_ascii_case(EDIT_HISTORY_HEADING) {
+                        named.example.edit_history.push_str(&mem::take(&mut text));
                     } else if current_section.eq_ignore_ascii_case(CURSOR_POSITION_HEADING) {
-                        let path = PathBuf::from(block_info.trim());
-                        named.example.cursor_path = path;
+                        named.example.cursor_path = block_info.into();
                         named.example.cursor_position = mem::take(&mut text);
                     } else if current_section.eq_ignore_ascii_case(EXPECTED_PATCH_HEADING) {
                         named.example.expected_patch = mem::take(&mut text);
                     } else if current_section.eq_ignore_ascii_case(EXPECTED_EXCERPTS_HEADING) {
-                        let path = PathBuf::from(block_info.trim());
                         named.example.expected_excerpts.push(ExpectedExcerpt {
-                            path,
+                            path: block_info.into(),
                             text: mem::take(&mut text),
                         });
                     } else {
@@ -195,12 +204,13 @@ impl NamedExample {
 
     #[allow(unused)]
     pub async fn setup_worktree(&self) -> Result<PathBuf> {
+        let (repo_owner, repo_name) = self.repo_name()?;
+        let file_name = self.file_name();
+
         let worktrees_dir = env::current_dir()?.join("target").join("zeta-worktrees");
         let repos_dir = env::current_dir()?.join("target").join("zeta-repos");
         fs::create_dir_all(&repos_dir)?;
         fs::create_dir_all(&worktrees_dir)?;
-
-        let (repo_owner, repo_name) = self.repo_name()?;
 
         let repo_dir = repos_dir.join(repo_owner.as_ref()).join(repo_name.as_ref());
         if !repo_dir.is_dir() {
@@ -213,34 +223,79 @@ impl NamedExample {
             .await?;
         }
 
-        run_git(
-            &repo_dir,
-            &["fetch", "--depth", "1", "origin", &self.example.revision],
-        )
-        .await?;
+        // Resolve the example to a revision, fetching it if needed.
+        let revision = run_git(&repo_dir, &["rev-parse", &self.example.revision]).await;
+        let revision = if let Ok(revision) = revision {
+            revision
+        } else {
+            run_git(
+                &repo_dir,
+                &["fetch", "--depth", "1", "origin", &self.example.revision],
+            )
+            .await?;
+            let revision = run_git(&repo_dir, &["rev-parse", "FETCH_HEAD"]).await?;
+            if revision != self.example.revision {
+                run_git(&repo_dir, &["tag", &self.example.revision, &revision]).await?;
+            }
+            revision
+        };
 
-        let worktree_path = worktrees_dir.join(&self.name);
-
+        // Create the worktree for this example if needed.
+        let worktree_path = worktrees_dir.join(&file_name);
         if worktree_path.is_dir() {
             run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
             run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
-            run_git(&worktree_path, &["checkout", &self.example.revision]).await?;
+            run_git(&worktree_path, &["checkout", revision.as_str()]).await?;
         } else {
             let worktree_path_string = worktree_path.to_string_lossy();
+            run_git(&repo_dir, &["branch", "-f", &file_name, revision.as_str()]).await?;
             run_git(
                 &repo_dir,
-                &[
-                    "worktree",
-                    "add",
-                    "-f",
-                    &worktree_path_string,
-                    &self.example.revision,
-                ],
+                &["worktree", "add", "-f", &worktree_path_string, &file_name],
             )
             .await?;
         }
 
+        // Apply the uncommitted diff for this example.
+        if !self.example.uncommitted_diff.is_empty() {
+            let mut apply_process = smol::process::Command::new("git")
+                .current_dir(&worktree_path)
+                .args(&["apply", "-"])
+                .stdin(std::process::Stdio::piped())
+                .spawn()?;
+
+            let mut stdin = apply_process.stdin.take().unwrap();
+            stdin
+                .write_all(self.example.uncommitted_diff.as_bytes())
+                .await?;
+            stdin.close().await?;
+            drop(stdin);
+
+            let apply_result = apply_process.output().await?;
+            if !apply_result.status.success() {
+                anyhow::bail!(
+                    "Failed to apply uncommitted diff patch with status: {}\nstderr:\n{}\nstdout:\n{}",
+                    apply_result.status,
+                    String::from_utf8_lossy(&apply_result.stderr),
+                    String::from_utf8_lossy(&apply_result.stdout),
+                );
+            }
+        }
+
         Ok(worktree_path)
+    }
+
+    fn file_name(&self) -> String {
+        self.name
+            .chars()
+            .map(|c| {
+                if c.is_whitespace() {
+                    '-'
+                } else {
+                    c.to_ascii_lowercase()
+                }
+            })
+            .collect()
     }
 
     #[allow(unused)]
@@ -277,6 +332,15 @@ impl NamedExample {
             Ok((owner.into(), repo.into()))
         }
     }
+
+    #[must_use]
+    pub async fn apply_edit_history(
+        &self,
+        project: &Entity<Project>,
+        cx: &mut AsyncApp,
+    ) -> Result<HashSet<Entity<Buffer>>> {
+        apply_diff(&self.example.edit_history, project, cx).await
+    }
 }
 
 async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
@@ -308,6 +372,15 @@ impl Display for NamedExample {
         )?;
         write!(f, "{REVISION_FIELD} = {}\n\n", self.example.revision)?;
 
+        write!(f, "## {UNCOMMITTED_DIFF_HEADING}\n\n")?;
+        write!(f, "`````diff\n")?;
+        write!(f, "{}", self.example.uncommitted_diff)?;
+        write!(f, "`````\n")?;
+
+        if !self.example.edit_history.is_empty() {
+            write!(f, "`````diff\n{}`````\n", self.example.edit_history)?;
+        }
+
         write!(
             f,
             "## {CURSOR_POSITION_HEADING}\n\n`````{}\n{}`````\n",
@@ -315,14 +388,6 @@ impl Display for NamedExample {
             self.example.cursor_position
         )?;
         write!(f, "## {EDIT_HISTORY_HEADING}\n\n")?;
-
-        if !self.example.edit_history.is_empty() {
-            write!(f, "`````diff\n")?;
-            for item in &self.example.edit_history {
-                write!(f, "{item}")?;
-            }
-            write!(f, "`````\n")?;
-        }
 
         if !self.example.expected_patch.is_empty() {
             write!(
@@ -351,5 +416,406 @@ impl Display for NamedExample {
         }
 
         Ok(())
+    }
+}
+
+#[must_use]
+pub async fn apply_diff(
+    diff: &str,
+    project: &Entity<Project>,
+    cx: &mut AsyncApp,
+) -> Result<HashSet<Entity<Buffer>>> {
+    use cloud_llm_client::udiff::DiffLine;
+    use std::fmt::Write;
+
+    #[derive(Debug, Default)]
+    struct HunkState {
+        context: String,
+        edits: Vec<Edit>,
+    }
+
+    #[derive(Debug)]
+    struct Edit {
+        range: Range<usize>,
+        text: String,
+    }
+
+    let mut old_path = None;
+    let mut new_path = None;
+    let mut hunk = HunkState::default();
+    let mut diff_lines = diff.lines().map(DiffLine::parse).peekable();
+    let mut open_buffers = HashSet::default();
+
+    while let Some(diff_line) = diff_lines.next() {
+        match diff_line {
+            DiffLine::OldPath { path } => old_path = Some(path),
+            DiffLine::NewPath { path } => {
+                if old_path.is_none() {
+                    anyhow::bail!(
+                        "Found a new path header (`+++`) before an (`---`) old path header"
+                    );
+                }
+                new_path = Some(path)
+            }
+            DiffLine::Context(ctx) => {
+                writeln!(&mut hunk.context, "{ctx}")?;
+            }
+            DiffLine::Deletion(del) => {
+                let range = hunk.context.len()..hunk.context.len() + del.len() + '\n'.len_utf8();
+                if let Some(last_edit) = hunk.edits.last_mut()
+                    && last_edit.range.end == range.start
+                {
+                    last_edit.range.end = range.end;
+                } else {
+                    hunk.edits.push(Edit {
+                        range,
+                        text: String::new(),
+                    });
+                }
+                writeln!(&mut hunk.context, "{del}")?;
+            }
+            DiffLine::Addition(add) => {
+                let range = hunk.context.len()..hunk.context.len();
+                if let Some(last_edit) = hunk.edits.last_mut()
+                    && last_edit.range.end == range.start
+                {
+                    writeln!(&mut last_edit.text, "{add}").unwrap();
+                } else {
+                    hunk.edits.push(Edit {
+                        range,
+                        text: format!("{add}\n"),
+                    });
+                }
+            }
+            DiffLine::HunkHeader(_) | DiffLine::Garbage => {}
+        }
+
+        let at_hunk_end = match diff_lines.peek() {
+            Some(DiffLine::OldPath { .. }) | Some(DiffLine::HunkHeader(_)) | None => true,
+            _ => false,
+        };
+
+        if at_hunk_end {
+            let hunk = mem::take(&mut hunk);
+
+            let Some(old_path) = old_path.as_deref() else {
+                anyhow::bail!("Missing old path (`---`) header")
+            };
+
+            let Some(new_path) = new_path.as_deref() else {
+                anyhow::bail!("Missing new path (`+++`) header")
+            };
+
+            let buffer = project
+                .update(cx, |project, cx| {
+                    let project_path = project
+                        .find_project_path(old_path, cx)
+                        .context("Failed to find old_path in project")?;
+
+                    anyhow::Ok(project.open_buffer(project_path, cx))
+                })??
+                .await?;
+            open_buffers.insert(buffer.clone());
+
+            if old_path != new_path {
+                project
+                    .update(cx, |project, cx| {
+                        let project_file = project::File::from_dyn(buffer.read(cx).file()).unwrap();
+                        let new_path = ProjectPath {
+                            worktree_id: project_file.worktree_id(cx),
+                            path: project_file.path.clone(),
+                        };
+                        project.rename_entry(project_file.entry_id.unwrap(), new_path, cx)
+                    })?
+                    .await?;
+            }
+
+            // TODO is it worth using project search?
+            buffer.update(cx, |buffer, cx| {
+                let context_offset = if hunk.context.is_empty() {
+                    0
+                } else {
+                    let text = buffer.text();
+                    if let Some(offset) = text.find(&hunk.context) {
+                        if text[offset + 1..].contains(&hunk.context) {
+                            anyhow::bail!("Context is not unique enough:\n{}", hunk.context);
+                        }
+                        offset
+                    } else {
+                        anyhow::bail!(
+                            "Failed to match context:\n{}\n\nBuffer:\n{}",
+                            hunk.context,
+                            text
+                        );
+                    }
+                };
+
+                buffer.edit(
+                    hunk.edits.into_iter().map(|edit| {
+                        (
+                            context_offset + edit.range.start..context_offset + edit.range.end,
+                            edit.text,
+                        )
+                    }),
+                    None,
+                    cx,
+                );
+
+                anyhow::Ok(())
+            })??;
+        }
+    }
+
+    anyhow::Ok(open_buffers)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ::fs::FakeFs;
+    use gpui::TestAppContext;
+    use indoc::indoc;
+    use pretty_assertions::assert_eq;
+    use project::Project;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+
+    #[gpui::test]
+    async fn test_apply_diff_successful(cx: &mut TestAppContext) {
+        let buffer_1_text = indoc! {r#"
+            one
+            two
+            three
+            four
+            five
+        "# };
+
+        let buffer_1_text_final = indoc! {r#"
+            3
+            4
+            5
+        "# };
+
+        let buffer_2_text = indoc! {r#"
+            six
+            seven
+            eight
+            nine
+            ten
+        "# };
+
+        let buffer_2_text_final = indoc! {r#"
+            5
+            six
+            seven
+            7.5
+            eight
+            nine
+            ten
+            11
+        "# };
+
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            Project::init_settings(cx);
+            language::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "file1": buffer_1_text,
+                "file2": buffer_2_text,
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+        let diff = indoc! {r#"
+            --- a/root/file1
+            +++ b/root/file1
+             one
+             two
+            -three
+            +3
+             four
+             five
+            --- a/root/file1
+            +++ b/root/file1
+             3
+            -four
+            -five
+            +4
+            +5
+            --- a/root/file1
+            +++ b/root/file1
+            -one
+            -two
+             3
+             4
+            --- a/root/file2
+            +++ b/root/file2
+            +5
+             six
+            --- a/root/file2
+            +++ b/root/file2
+             seven
+            +7.5
+             eight
+            --- a/root/file2
+            +++ b/root/file2
+             ten
+            +11
+        "#};
+
+        let _buffers = apply_diff(diff, &project, &mut cx.to_async())
+            .await
+            .unwrap();
+        let buffer_1 = project
+            .update(cx, |project, cx| {
+                let project_path = project.find_project_path(path!("/root/file1"), cx).unwrap();
+                project.open_buffer(project_path, cx)
+            })
+            .await
+            .unwrap();
+
+        buffer_1.read_with(cx, |buffer, _cx| {
+            assert_eq!(buffer.text(), buffer_1_text_final);
+        });
+        let buffer_2 = project
+            .update(cx, |project, cx| {
+                let project_path = project.find_project_path(path!("/root/file2"), cx).unwrap();
+                project.open_buffer(project_path, cx)
+            })
+            .await
+            .unwrap();
+
+        buffer_2.read_with(cx, |buffer, _cx| {
+            assert_eq!(buffer.text(), buffer_2_text_final);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_apply_diff_non_unique(cx: &mut TestAppContext) {
+        let buffer_1_text = indoc! {r#"
+            one
+            two
+            three
+            four
+            five
+            one
+            two
+            three
+            four
+            five
+        "# };
+
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            Project::init_settings(cx);
+            language::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "file1": buffer_1_text,
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+        let diff = indoc! {r#"
+            --- a/root/file1
+            +++ b/root/file1
+             one
+             two
+            -three
+            +3
+             four
+             five
+        "#};
+
+        apply_diff(diff, &project, &mut cx.to_async())
+            .await
+            .expect_err("Non-unique edits should fail");
+    }
+
+    #[gpui::test]
+    async fn test_apply_diff_unique_via_previous_context(cx: &mut TestAppContext) {
+        let start = indoc! {r#"
+            one
+            two
+            three
+            four
+            five
+
+            four
+            five
+        "# };
+
+        let end = indoc! {r#"
+            one
+            two
+            3
+            four
+            5
+
+            four
+            five
+        "# };
+
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            Project::init_settings(cx);
+            language::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "file1": start,
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+        let diff = indoc! {r#"
+            --- a/root/file1
+            +++ b/root/file1
+             one
+             two
+            -three
+            +3
+             four
+            -five
+            +5
+        "#};
+
+        let _buffers = apply_diff(diff, &project, &mut cx.to_async())
+            .await
+            .unwrap();
+
+        let buffer_1 = project
+            .update(cx, |project, cx| {
+                let project_path = project.find_project_path(path!("/root/file1"), cx).unwrap();
+                project.open_buffer(project_path, cx)
+            })
+            .await
+            .unwrap();
+
+        buffer_1.read_with(cx, |buffer, _cx| {
+            assert_eq!(buffer.text(), end);
+        });
     }
 }
