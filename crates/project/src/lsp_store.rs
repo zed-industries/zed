@@ -11926,15 +11926,7 @@ impl LspStore {
                             for handle in buffers_with_language_server {
                                 let triggers = triggers.clone();
                                 let _ = handle.update(cx, move |buffer, cx| {
-                                    let combined_triggers = triggers
-                                        .union(buffer.completion_triggers())
-                                        .cloned()
-                                        .collect();
-                                    buffer.set_completion_triggers(
-                                        server_id,
-                                        combined_triggers,
-                                        cx,
-                                    );
+                                    buffer.set_completion_triggers(server_id, triggers, cx);
                                 });
                             }
                         }
