@@ -213,9 +213,6 @@ jobs:
         name: zed-remote-server-linux-aarch64.gz
         path: target/zed-remote-server-*.gz
         if-no-files-found: error
-    outputs:
-      zed: zed-linux-aarch64.tar.gz
-      remote-server: zed-remote-server-linux-aarch64.gz
     timeout-minutes: 60
   bundle_linux_x86_64:
     needs:
@@ -256,9 +253,6 @@ jobs:
         name: zed-remote-server-linux-x86_64.gz
         path: target/zed-remote-server-*.gz
         if-no-files-found: error
-    outputs:
-      zed: zed-linux-x86_64.tar.gz
-      remote-server: zed-remote-server-linux-x86_64.gz
     timeout-minutes: 60
   bundle_mac_aarch64:
     needs:
@@ -305,9 +299,6 @@ jobs:
         name: zed-remote-server-macos-aarch64.gz
         path: target/zed-remote-server-macos-aarch64.gz
         if-no-files-found: error
-    outputs:
-      zed: Zed-aarch64.dmg
-      remote-server: zed-remote-server-macos-aarch64.gz
     timeout-minutes: 60
   bundle_mac_x86_64:
     needs:
@@ -354,9 +345,6 @@ jobs:
         name: zed-remote-server-macos-x86_64.gz
         path: target/zed-remote-server-macos-x86_64.gz
         if-no-files-found: error
-    outputs:
-      zed: Zed-x86_64.dmg
-      remote-server: zed-remote-server-macos-x86_64.gz
     timeout-minutes: 60
   bundle_windows_aarch64:
     needs:
@@ -395,8 +383,6 @@ jobs:
         name: Zed-aarch64.exe
         path: ${{ env.SETUP_PATH }}
         if-no-files-found: error
-    outputs:
-      zed: Zed-aarch64.exe
     timeout-minutes: 60
   bundle_windows_x86_64:
     needs:
@@ -435,8 +421,6 @@ jobs:
         name: Zed-x86_64.exe
         path: ${{ env.SETUP_PATH }}
         if-no-files-found: error
-    outputs:
-      zed: Zed-x86_64.exe
     timeout-minutes: 60
   upload_release_assets:
     needs:

@@ -7,7 +7,6 @@ use crate::tasks::workflows::{
 
 use super::{runners, steps};
 use gh_workflow::*;
-use indexmap::IndexMap;
 
 pub fn run_bundling() -> Workflow {
     let bundle = ReleaseBundleJobs {
@@ -85,18 +84,7 @@ pub(crate) fn bundle_mac(
             .add_step(steps::upload_artifact(
                 &remote_server_artifact_name,
                 &format!("target/zed-remote-server-macos-{arch}.gz"),
-            ))
-            .outputs(
-                [
-                    ("zed".to_string(), artifact_name.to_string()),
-                    (
-                        "remote-server".to_string(),
-                        remote_server_artifact_name.to_string(),
-                    ),
-                ]
-                .into_iter()
-                .collect::<IndexMap<_, _>>(),
-            ),
+            )),
     }
 }
 
@@ -133,18 +121,7 @@ pub(crate) fn bundle_linux(
             .add_step(steps::upload_artifact(
                 &remote_server_artifact_name,
                 "target/zed-remote-server-*.gz",
-            ))
-            .outputs(
-                [
-                    ("zed".to_string(), artifact_name.to_string()),
-                    (
-                        "remote-server".to_string(),
-                        remote_server_artifact_name.to_string(),
-                    ),
-                ]
-                .into_iter()
-                .collect::<IndexMap<_, _>>(),
-            ),
+            )),
     }
 }
 
@@ -179,12 +156,7 @@ pub(crate) fn bundle_windows(
             .add_step(steps::upload_artifact(
                 &artifact_name,
                 "${{ env.SETUP_PATH }}",
-            ))
-            .outputs(
-                [("zed".to_string(), artifact_name.to_string())]
-                    .into_iter()
-                    .collect::<IndexMap<_, _>>(),
-            ),
+            )),
     }
 }
 
