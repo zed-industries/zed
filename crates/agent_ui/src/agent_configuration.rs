@@ -28,7 +28,7 @@ use project::{
     agent_server_store::{AgentServerStore, CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
 };
-use settings::{Settings, SettingsStore, update_settings_file};
+use settings::{SettingsStore, update_settings_file};
 use ui::{
     Chip, CommonAnimationExt, ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex,
     Indicator, PopoverMenu, Switch, SwitchColor, Tooltip, WithScrollbar, prelude::*,
