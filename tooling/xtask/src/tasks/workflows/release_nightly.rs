@@ -13,11 +13,6 @@ use indexmap::IndexMap;
 
 /// Generates the release_nightly.yml workflow
 pub fn release_nightly() -> Workflow {
-    let env: IndexMap<_, _> = [("CARGO_TERM_COLOR", "always"), ("RUST_BACKTRACE", "1")]
-        .into_iter()
-        .map(|(key, value)| (key.into(), value.into()))
-        .collect();
-
     let style = check_style();
     // run only on windows as that's our fastest platform right now.
     let tests = run_platform_tests(Platform::Windows);
@@ -53,7 +48,8 @@ pub fn release_nightly() -> Workflow {
             // Fire every day at 7:00am UTC (Roughly before EU workday and after US workday)
             .schedule([Schedule::new("0 7 * * *")])
             .push(Push::default().add_tag("nightly")))
-        .envs(env)
+        .add_env(("CARGO_TERM_COLOR", "always"))
+        .add_env(("RUST_BACKTRACE", "1"))
         .add_job(style.name, style.job)
         .add_job(tests.name, tests.job)
         .map(|mut workflow| {

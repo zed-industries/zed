@@ -89,6 +89,7 @@ pub(crate) fn run_tests() -> Workflow {
         )
         .add_env(( "CARGO_TERM_COLOR", "always" ))
         .add_env(( "RUST_BACKTRACE", 1 ))
+        .add_env(( "CARGO_INCREMENTAL", 0 ))
         .map(|mut workflow| {
             for job in jobs {
                 workflow = workflow.add_job(job.name, job.job)
