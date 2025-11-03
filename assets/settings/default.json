@@ -1763,6 +1763,7 @@
     "Markdown": {
       "format_on_save": "off",
       "use_on_type_format": false,
+      "remove_trailing_whitespace_on_save": false,
       "allow_rewrap": "anywhere",
       "soft_wrap": "editor_width",
       "prettier": {
