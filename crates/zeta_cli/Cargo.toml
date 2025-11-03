@@ -39,8 +39,10 @@ paths.workspace = true
 polars = { version = "0.51", features = ["lazy", "dtype-struct", "parquet"] }
 project.workspace = true
 prompt_store.workspace = true
+pulldown-cmark.workspace = true
 release_channel.workspace = true
 reqwest_client.workspace = true
+toml.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true

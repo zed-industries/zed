@@ -212,7 +212,7 @@ pub fn write_codeblock<'a>(
     include_line_numbers: bool,
     output: &'a mut String,
 ) {
-    writeln!(output, "`````path={}", path.display()).unwrap();
+    writeln!(output, "`````{}", path.display()).unwrap();
     write_excerpts(
         excerpts,
         sorted_insertions,

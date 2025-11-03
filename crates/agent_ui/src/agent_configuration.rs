@@ -23,16 +23,18 @@ use language::LanguageRegistry;
 use language_model::{
     LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
 };
+use language_models::AllLanguageModelSettings;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
     agent_server_store::{AgentServerStore, CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
 };
 use rope::Rope;
-use settings::{SettingsStore, update_settings_file};
+use settings::{Settings, SettingsStore, update_settings_file};
 use ui::{
-    Chip, CommonAnimationExt, ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex,
-    Indicator, PopoverMenu, Switch, SwitchColor, Tooltip, WithScrollbar, prelude::*,
+    Button, ButtonStyle, Chip, CommonAnimationExt, ContextMenu, Disclosure, Divider, DividerColor,
+    ElevationIndex, IconName, IconPosition, IconSize, Indicator, LabelSize, PopoverMenu, Switch,
+    SwitchColor, Tooltip, WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{Workspace, create_and_open_local_file};
@@ -304,8 +306,74 @@ impl AgentConfiguration {
                                 }
                             })),
                         )
-                    }),
+                    })
+                    .when(
+                        is_expanded && is_removable_provider(&provider.id(), cx),
+                        |this| {
+                            this.child(
+                                Button::new(
+                                    SharedString::from(format!("delete-provider-{provider_id}")),
+                                    "Remove Provider",
+                                )
+                                .full_width()
+                                .style(ButtonStyle::Outlined)
+                                .icon_position(IconPosition::Start)
+                                .icon(IconName::Trash)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .label_size(LabelSize::Small)
+                                .on_click(cx.listener({
+                                    let provider = provider.clone();
+                                    move |this, _event, window, cx| {
+                                        this.delete_provider(provider.clone(), window, cx);
+                                    }
+                                })),
+                            )
+                        },
+                    ),
             )
+    }
+
+    fn delete_provider(
+        &mut self,
+        provider: Arc<dyn LanguageModelProvider>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let fs = self.fs.clone();
+        let provider_id = provider.id();
+
+        cx.spawn_in(window, async move |_, cx| {
+            cx.update(|_window, cx| {
+                update_settings_file(fs.clone(), cx, {
+                    let provider_id = provider_id.clone();
+                    move |settings, _| {
+                        if let Some(ref mut openai_compatible) = settings
+                            .language_models
+                            .as_mut()
+                            .and_then(|lm| lm.openai_compatible.as_mut())
+                        {
+                            let key_to_remove: Arc<str> = Arc::from(provider_id.0.as_ref());
+                            openai_compatible.remove(&key_to_remove);
+                        }
+                    }
+                });
+            })
+            .log_err();
+
+            cx.update(|_window, cx| {
+                LanguageModelRegistry::global(cx).update(cx, {
+                    let provider_id = provider_id.clone();
+                    move |registry, cx| {
+                        registry.unregister_provider(provider_id, cx);
+                    }
+                })
+            })
+            .log_err();
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn render_provider_configuration_section(
@@ -1224,4 +1292,15 @@ fn find_text_in_buffer(
     } else {
         None
     }
+}
+
+// OpenAI-compatible providers are user-configured and can be removed,
+// whereas built-in providers (like Anthropic, OpenAI, Google, etc.) can't.
+//
+// If in the future we have more "API-compatible-type" of providers,
+// they should be included here as removable providers.
+fn is_removable_provider(provider_id: &LanguageModelProviderId, cx: &App) -> bool {
+    AllLanguageModelSettings::get_global(cx)
+        .openai_compatible
+        .contains_key(provider_id.0.as_ref())
 }

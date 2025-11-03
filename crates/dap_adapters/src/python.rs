@@ -824,29 +824,58 @@ impl DebugAdapter for PythonDebugAdapter {
                 .await;
         }
 
-        let base_path = config
-            .config
-            .get("cwd")
-            .and_then(|cwd| {
-                RelPath::new(
-                    cwd.as_str()
-                        .map(Path::new)?
-                        .strip_prefix(delegate.worktree_root_path())
-                        .ok()?,
-                    PathStyle::local(),
-                )
-                .ok()
+        let base_paths = ["cwd", "program", "module"]
+            .into_iter()
+            .filter_map(|key| {
+                config.config.get(key).and_then(|cwd| {
+                    RelPath::new(
+                        cwd.as_str()
+                            .map(Path::new)?
+                            .strip_prefix(delegate.worktree_root_path())
+                            .ok()?,
+                        PathStyle::local(),
+                    )
+                    .ok()
+                })
             })
-            .unwrap_or_else(|| RelPath::empty().into());
-        let toolchain = delegate
-            .toolchain_store()
-            .active_toolchain(
-                delegate.worktree_id(),
-                base_path.into_arc(),
-                language::LanguageName::new(Self::LANGUAGE_NAME),
-                cx,
+            .chain(
+                // While Debugpy's wiki saids absolute paths are required, but it actually supports relative paths when cwd is passed in.
+                // (Which should always be the case because Zed defaults to the cwd worktree root)
+                // So we want to check that these relative paths find toolchains as well. Otherwise, they won't be checked
+                // because the strip prefix in the iteration above will return an error
+                config
+                    .config
+                    .get("cwd")
+                    .map(|_| {
+                        ["program", "module"].into_iter().filter_map(|key| {
+                            config.config.get(key).and_then(|value| {
+                                let path = Path::new(value.as_str()?);
+                                RelPath::new(path, PathStyle::local()).ok()
+                            })
+                        })
+                    })
+                    .into_iter()
+                    .flatten(),
             )
-            .await;
+            .chain([RelPath::empty().into()]);
+
+        let mut toolchain = None;
+
+        for base_path in base_paths {
+            if let Some(found_toolchain) = delegate
+                .toolchain_store()
+                .active_toolchain(
+                    delegate.worktree_id(),
+                    base_path.into_arc(),
+                    language::LanguageName::new(Self::LANGUAGE_NAME),
+                    cx,
+                )
+                .await
+            {
+                toolchain = Some(found_toolchain);
+                break;
+            }
+        }
 
         self.fetch_debugpy_whl(toolchain.clone(), delegate)
             .await
@@ -914,7 +943,7 @@ mod tests {
 
         let result = adapter
             .get_installed_binary(
-                &MockDelegate::new(),
+                &test_mocks::MockDelegate::new(),
                 &task_def,
                 None,
                 None,
@@ -955,7 +984,7 @@ mod tests {
 
         let result_host = adapter
             .get_installed_binary(
-                &MockDelegate::new(),
+                &test_mocks::MockDelegate::new(),
                 &task_def_host,
                 None,
                 None,

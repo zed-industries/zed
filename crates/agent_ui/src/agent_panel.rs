@@ -729,6 +729,25 @@ impl AgentPanel {
         &self.context_server_registry
     }
 
+    pub fn is_hidden(workspace: &Entity<Workspace>, cx: &App) -> bool {
+        let workspace_read = workspace.read(cx);
+
+        workspace_read
+            .panel::<AgentPanel>(cx)
+            .map(|panel| {
+                let panel_id = Entity::entity_id(&panel);
+
+                let is_visible = workspace_read.all_docks().iter().any(|dock| {
+                    dock.read(cx)
+                        .visible_panel()
+                        .is_some_and(|visible_panel| visible_panel.panel_id() == panel_id)
+                });
+
+                !is_visible
+            })
+            .unwrap_or(true)
+    }
+
     fn active_thread_view(&self) -> Option<&Entity<AcpThreadView>> {
         match &self.active_view {
             ActiveView::ExternalAgentThread { thread_view, .. } => Some(thread_view),
