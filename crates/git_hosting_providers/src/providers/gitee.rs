@@ -149,7 +149,7 @@ impl GitHostingProvider for Gitee {
             .await?
             .map(|author| -> Result<Url, url::ParseError> {
                 let mut url = Url::parse(&author.avatar_url)?;
-                url.set_query(Some("size=128"));
+                url.set_query(Some("width=128"));
                 Ok(url)
             })
             .transpose()?;
