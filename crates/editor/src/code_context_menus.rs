@@ -16,6 +16,7 @@ use project::{CodeAction, Completion, TaskSourceKind};
 use project::{CompletionDisplayOptions, CompletionSource};
 use task::DebugScenario;
 use task::TaskContext;
+use ui::scrollbars::ShowScrollbar;
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -261,6 +262,20 @@ pub enum CompletionsMenuSource {
 impl Drop for CompletionsMenu {
     fn drop(&mut self) {
         self.cancel_filter.store(true, Ordering::Relaxed);
+    }
+}
+
+struct CompletionMenuScrollBarSetting;
+
+impl ui::scrollbars::GlobalSetting for CompletionMenuScrollBarSetting {
+    fn get_value(_cx: &App) -> &Self {
+        &Self
+    }
+}
+
+impl ui::scrollbars::ScrollbarVisibility for CompletionMenuScrollBarSetting {
+    fn visibility(&self, cx: &App) -> ui::scrollbars::ShowScrollbar {
+        EditorSettings::get_global(cx).completion_menu_scrollbar
     }
 }
 
@@ -904,10 +919,9 @@ impl CompletionsMenu {
         Popover::new()
             .child(
                 div().child(list).custom_scrollbars(
-                    Scrollbars::new_with_visibility(ScrollAxes::Vertical, |cx| {
-                        EditorSettings::get_global(cx).completion_menu_scrollbar
-                    })
-                    .tracked_scroll_handle(self.scroll_handle.clone()),
+                    Scrollbars::for_settings::<CompletionMenuScrollBarSetting>()
+                        .show_along(ScrollAxes::Vertical)
+                        .tracked_scroll_handle(self.scroll_handle.clone()),
                     window,
                     cx,
                 ),
