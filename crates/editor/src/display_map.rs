@@ -177,7 +177,7 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(tab_snapshot, edits, cx));
         let block_snapshot = self.block_map.read(wrap_snapshot, edits).snapshot;
-
+        let highlight_sytnax = Self::syntax_highlight(&self.buffer, cx);
         DisplaySnapshot {
             block_snapshot,
             diagnostics_max_severity: self.diagnostics_max_severity,
@@ -187,6 +187,7 @@ impl DisplayMap {
             clip_at_line_ends: self.clip_at_line_ends,
             masked: self.masked,
             fold_placeholder: self.fold_placeholder.clone(),
+            syntax_highlight: highlight_sytnax.clone(),
         }
     }
 
@@ -603,6 +604,15 @@ impl DisplayMap {
         language_settings(language, file, cx).tab_size
     }
 
+    fn syntax_highlight(buffer: &Entity<MultiBuffer>, cx: &App) -> bool {
+        let buffer = buffer.read(cx).as_singleton().map(|buffer| buffer.read(cx));
+        let language = buffer
+            .and_then(|buffer| buffer.language())
+            .map(|l| l.name());
+        let file = buffer.and_then(|buffer| buffer.file());
+        language_settings(language, file, cx).syntax_highlight
+    }
+
     #[cfg(test)]
     pub fn is_rewrapping(&self, cx: &gpui::App) -> bool {
         self.wrap_map.read(cx).is_rewrapping()
@@ -750,6 +760,7 @@ pub struct DisplaySnapshot {
     masked: bool,
     diagnostics_max_severity: DiagnosticSeverity,
     pub(crate) fold_placeholder: FoldPlaceholder,
+    syntax_highlight: bool,
 }
 
 impl DisplaySnapshot {
@@ -959,6 +970,7 @@ impl DisplaySnapshot {
         language_aware: bool,
         editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
+        // ??
         self.chunks(
             display_rows,
             language_aware,
@@ -968,10 +980,14 @@ impl DisplaySnapshot {
             },
         )
         .flat_map(|chunk| {
-            let highlight_style = chunk
-                .syntax_highlight_id
-                .and_then(|id| id.style(&editor_style.syntax));
-
+            let highlight_style;
+            if !self.syntax_highlight {
+                highlight_style = None;
+            } else {
+                highlight_style = chunk
+                    .syntax_highlight_id
+                    .and_then(|id| id.style(&editor_style.syntax));
+            }
             let chunk_highlight = chunk.highlight_style.map(|chunk_highlight| {
                 HighlightStyle {
                     // For color inlays, blend the color with the editor background

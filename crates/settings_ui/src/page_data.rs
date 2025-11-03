@@ -5979,6 +5979,26 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
             files: USER | PROJECT,
         }),
+        SettingsPageItem::SectionHeader("Apperance"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Syntax Highlighing",
+            description: "Whether syntax should be highlighted or not.",
+            field: Box::new(SettingField {
+                json_path: Some("languages.$(language).highlight_syntax"),
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        language.highlight_syntax.as_ref()
+                    })
+                },
+                write: |settings_content, value| {
+                    language_settings_field_mut(settings_content, value, |language, value| {
+                        language.highlight_syntax = value;
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | PROJECT,
+        }),
         SettingsPageItem::SectionHeader("Wrapping"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Soft Wrap",

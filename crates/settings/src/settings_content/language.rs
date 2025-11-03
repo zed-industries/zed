@@ -227,6 +227,10 @@ pub struct LanguageSettingsContent {
     /// is enabled.
     ///
     /// Default: 80
+    /// Whether to include sytnax highlighting in the editor.
+    ///
+    /// Default: true
+    pub highlight_syntax: Option<bool>,
     pub preferred_line_length: Option<u32>,
     /// Whether to show wrap guides in the editor. Setting this to true will
     /// show a guide at the 'preferred_line_length' value if softwrap is set to

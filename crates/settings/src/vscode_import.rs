@@ -462,6 +462,7 @@ impl VsCodeSettings {
                 "off" => Some(SoftWrap::None),
                 _ => None,
             }),
+            highlight_syntax: None,
             tab_size: self
                 .read_u32("editor.tabSize")
                 .and_then(|n| NonZeroU32::new(n)),
