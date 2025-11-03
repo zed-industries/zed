@@ -460,9 +460,13 @@ impl Project {
         TerminalSettings::get(settings_location, cx)
     }
 
-    pub fn exec_in_shell(&self, command: String, cx: &App) -> Result<smol::process::Command> {
+    pub fn exec_in_shell(
+        &self,
+        command: String,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<smol::process::Command>> {
         let path = self.first_project_directory(cx);
-        let remote_client = self.remote_client.as_ref();
+        let remote_client = self.remote_client.clone();
         let settings = self.terminal_settings(&path, cx).clone();
         let shell = remote_client
             .as_ref()
@@ -473,37 +477,47 @@ impl Project {
         let builder = ShellBuilder::new(&shell, is_windows).non_interactive();
         let (command, args) = builder.build(Some(command), &Vec::new());
 
-        let mut env = self
-            .environment
-            .read(cx)
-            .get_cli_environment()
-            .unwrap_or_default();
-        env.extend(settings.env);
+        let env_task = self.resolve_directory_environment(
+            &shell.program(),
+            path.as_ref().map(|p| Arc::from(&**p)),
+            remote_client.clone(),
+            cx,
+        );
 
-        match remote_client {
-            Some(remote_client) => {
-                let command_template =
-                    remote_client
-                        .read(cx)
-                        .build_command(Some(command), &args, &env, None, None)?;
-                let mut command = std::process::Command::new(command_template.program);
-                command.args(command_template.args);
-                command.envs(command_template.env);
-                Ok(command)
-            }
-            None => {
-                let mut command = std::process::Command::new(command);
-                command.args(args);
-                command.envs(env);
-                if let Some(path) = path {
-                    command.current_dir(path);
+        cx.spawn(async move |project, cx| {
+            let mut env = env_task.await.unwrap_or_default();
+            env.extend(settings.env);
+
+            project.update(cx, move |_, cx| {
+                match remote_client {
+                    Some(remote_client) => {
+                        let command_template = remote_client.read(cx).build_command(
+                            Some(command),
+                            &args,
+                            &env,
+                            None,
+                            None,
+                        )?;
+                        let mut command = std::process::Command::new(command_template.program);
+                        command.args(command_template.args);
+                        command.envs(command_template.env);
+                        Ok(command)
+                    }
+                    None => {
+                        let mut command = std::process::Command::new(command);
+                        command.args(args);
+                        command.envs(env);
+                        if let Some(path) = path {
+                            command.current_dir(path);
+                        }
+                        Ok(command)
+                    }
                 }
-                Ok(command)
-            }
-        }
-        .map(|mut process| {
-            util::set_pre_exec_to_start_new_session(&mut process);
-            smol::process::Command::from(process)
+                .map(|mut process| {
+                    util::set_pre_exec_to_start_new_session(&mut process);
+                    smol::process::Command::from(process)
+                })
+            })?
         })
     }
 
@@ -516,7 +530,7 @@ impl Project {
         shell: &str,
         path: Option<Arc<Path>>,
         remote_client: Option<Entity<RemoteClient>>,
-        cx: &mut Context<Self>,
+        cx: &mut App,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         if let Some(path) = &path {
             let shell = Shell::Program(shell.to_string());
