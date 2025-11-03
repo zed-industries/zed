@@ -6,7 +6,6 @@ use crate::tasks::workflows::{
     vars::Input,
 };
 
-/// Generates the danger.yml workflow
 pub fn compare_perf() -> Workflow {
     let head = Input::string("head", None);
     let base = Input::string("base", None);
@@ -25,16 +24,29 @@ pub fn run_perf(base: &Input, head: &Input) -> NamedJob {
         named::bash(&format!("echo {} {}", base.var(), head.var()))
     }
 
-    fn create_results() -> Step<Run> {
-        named::bash("mkdir -p target; echo 'Perf is *much* better now' > target/results.md")
+    fn cargo_perf_test(ref_name: String) -> Step<Run> {
+        named::bash(&format!("cargo perf-test -p gpui -- --json={ref_name}"))
+    }
+
+    fn git_checkout(ref_name: String) -> Step<Run> {
+        Step::new(&format!("git checkout {ref_name}")).run("git checkout {ref_name}")
+    }
+
+    fn compare_runs(head: String, base: String) -> Step<Run> {
+        // TODO: this should really be swapped...
+        named::bash(&format!("cargo perf-compare {base} {head} --save=results.md"))
     }
 
     named::job(
         Job::default()
-            .runs_on(runners::LINUX_SMALL)
+            .runs_on(runners::LINUX_DEFAULT)
             .add_step(steps::checkout_repo())
             .add_step(echo_inputs(base, head))
-            .add_step(create_results())
-            .add_step(upload_artifact("results.md", "target/results.md")),
+            .add_step(git_checkout(base.var()))
+            .add_step(cargo_perf_test(base.var()))
+            .add_step(git_checkout(head.var()))
+            .add_step(cargo_perf_test(head.var()))
+            .add_step(compare_runs(head.var(), base.var()))
+            .add_step(upload_artifact("results.md", "results.md")),
     )
 }
