@@ -5,6 +5,7 @@ use multi_buffer::{AnchorRangeExt as _, MultiBufferSnapshot};
 use rope::{Point, TextSummary};
 use sum_tree::{Dimensions, SumTree};
 use text::Bias;
+use util::debug_panic;
 
 /// All summaries are an integral number of multibuffer rows.
 #[derive(Debug, Clone, Copy)]
@@ -78,7 +79,16 @@ enum FilterMode {
 
 impl FilterMode {
     fn should_remove(self, kind: DiffHunkStatusKind) -> bool {
-        todo!()
+        match kind {
+            DiffHunkStatusKind::Added => self == FilterMode::RemoveInsertions,
+            DiffHunkStatusKind::Modified => {
+                debug_panic!(
+                    "should not have an unexpanded modified hunk in multibuffer when filter map is active"
+                );
+                false
+            }
+            DiffHunkStatusKind::Deleted => self == FilterMode::RemoveDeletions,
+        }
     }
 }
 
@@ -493,7 +503,11 @@ mod tests {
 
         let mut buffers: Vec<Entity<Buffer>> = Vec::new();
         let mut base_texts: HashMap<BufferId, String> = HashMap::default();
-        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer
+        });
         let mut needs_diff_calculation = false;
 
         let mode = if rng.random() {
