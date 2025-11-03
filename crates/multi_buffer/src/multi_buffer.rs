@@ -7173,3 +7173,141 @@ pub mod debug {
         }
     }
 }
+
+#[cfg(feature = "test-support")]
+pub fn randomly_mutate_multibuffer_with_diffs(
+    multibuffer: Entity<MultiBuffer>,
+    buffers: &mut Vec<Entity<Buffer>>,
+    base_texts: &mut HashMap<BufferId, String>,
+    needs_diff_calculation: &mut bool,
+    mut rng: rand::rngs::StdRng,
+    cx: &mut gpui::TestAppContext,
+) {
+    use rand::Rng as _;
+    use rand::seq::IndexedRandom as _;
+
+    let excerpt_ids = multibuffer.read_with(cx, |multibuffer, _| multibuffer.excerpt_ids());
+    match rng.random_range(0..100) {
+        0..=14 if !buffers.is_empty() => {
+            let buffer = buffers.choose(&mut rng).unwrap();
+            buffer.update(cx, |buf, cx| {
+                let edit_count = rng.random_range(1..5);
+                buf.randomly_edit(&mut rng, edit_count, cx);
+                log::info!("buffer text:\n{}", buf.text());
+                *needs_diff_calculation = true;
+            });
+        }
+        15..=19 if !excerpt_ids.is_empty() => {
+            multibuffer.update(cx, |multibuffer, cx| {
+                let ids = multibuffer.excerpt_ids();
+                let mut excerpts = HashSet::default();
+                for _ in 0..rng.random_range(0..ids.len()) {
+                    excerpts.extend(ids.choose(&mut rng).copied());
+                }
+
+                let line_count = rng.random_range(0..5);
+
+                log::info!("Expanding excerpts by {line_count} lines");
+                multibuffer.expand_excerpts(
+                    excerpts.iter().cloned(),
+                    line_count,
+                    ExpandExcerptDirection::UpAndDown,
+                    cx,
+                );
+            });
+        }
+        20..=29 if !excerpt_ids.is_empty() => {
+            let mut ids_to_remove = vec![];
+            for _ in 0..rng.random_range(1..=3) {
+                let Some(id) = excerpt_ids.choose(&mut rng) else {
+                    break;
+                };
+                ids_to_remove.push(*id);
+            }
+            let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+            ids_to_remove.sort_unstable_by(|a, b| a.cmp(b, &snapshot));
+            drop(snapshot);
+            multibuffer.update(cx, |multibuffer, cx| {
+                multibuffer.remove_excerpts(ids_to_remove, cx)
+            });
+        }
+        56..=85 if *needs_diff_calculation => {
+            multibuffer.update(cx, |multibuffer, cx| {
+                for buffer in multibuffer.all_buffers() {
+                    let snapshot = buffer.read(cx).snapshot();
+                    multibuffer
+                        .diff_for(snapshot.remote_id())
+                        .unwrap()
+                        .update(cx, |diff, cx| {
+                            log::info!("recalculating diff for buffer {:?}", snapshot.remote_id(),);
+                            diff.recalculate_diff_sync(snapshot.text, cx);
+                        });
+                }
+                *needs_diff_calculation = false;
+            });
+        }
+        _ => {
+            let buffer_handle = if buffers.is_empty() || rng.random_bool(0.4) {
+                let mut base_text = util::RandomCharIter::new(&mut rng)
+                    .take(256)
+                    .collect::<String>();
+
+                let buffer = cx.new(|cx| Buffer::local(base_text.clone(), cx));
+                text::LineEnding::normalize(&mut base_text);
+                base_texts.insert(
+                    buffer.read_with(cx, |buffer, _| buffer.remote_id()),
+                    base_text,
+                );
+                buffers.push(buffer);
+                buffers.last().unwrap()
+            } else {
+                buffers.choose(&mut rng).unwrap()
+            };
+
+            let prev_excerpt_id = multibuffer
+                .read_with(cx, |multibuffer, cx| multibuffer.excerpt_ids())
+                .choose(&mut rng)
+                .copied()
+                .unwrap_or(ExcerptId::max());
+
+            let range = buffer_handle.read_with(cx, |buffer, _| {
+                let end_row = rng.random_range(0..=buffer.max_point().row);
+                let start_row = rng.random_range(0..=end_row);
+                let end_ix = buffer.point_to_offset(Point::new(end_row, 0));
+                let start_ix = buffer.point_to_offset(Point::new(start_row, 0));
+
+                log::info!(
+                    "Inserting excerpt for buffer {}: {:?}[{:?}] = {:?}",
+                    buffer.remote_id(),
+                    buffer.text(),
+                    start_ix..end_ix,
+                    &buffer.text()[start_ix..end_ix]
+                );
+
+                start_ix..end_ix
+            });
+
+            multibuffer.update(cx, |multibuffer, cx| {
+                let id = buffer_handle.read(cx).remote_id();
+                if multibuffer.diff_for(id).is_none() {
+                    let base_text = base_texts.get(&id).unwrap();
+                    let diff =
+                        cx.new(|cx| BufferDiff::new_with_base_text(base_text, buffer_handle, cx));
+                    multibuffer.add_diff(diff, cx)
+                }
+            });
+
+            multibuffer.update(cx, |multibuffer, cx| {
+                multibuffer
+                    .insert_excerpts_after(
+                        prev_excerpt_id,
+                        buffer_handle.clone(),
+                        [ExcerptRange::new(range.clone())],
+                        cx,
+                    )
+                    .pop()
+                    .unwrap()
+            });
+        }
+    }
+}

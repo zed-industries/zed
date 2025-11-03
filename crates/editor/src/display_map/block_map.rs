@@ -571,29 +571,9 @@ impl BlockMap {
         let mut edits = edits.into_iter().peekable();
 
         while let Some(edit) = edits.next() {
-            // FIXME biases?
-
-            let mut old_buffer_start = self
-                .wrap_snapshot
-                .borrow()
-                .to_point(WrapPoint::new(edit.old.start, 0), Bias::Left);
-            old_buffer_start.column = 0;
-            let mut old_start = WrapRow(
-                self.wrap_snapshot
-                    .borrow()
-                    .make_wrap_point(old_buffer_start, Bias::Left)
-                    .row(),
-            );
-
-            let mut new_buffer_start =
-                wrap_snapshot.to_point(WrapPoint::new(edit.new.start, 0), Bias::Left);
-            new_buffer_start.column = 0;
+            dbg!(&edit);
+            let mut old_start = WrapRow(edit.old.start);
             let mut new_start = WrapRow(edit.new.start);
-            let mut new_start = WrapRow(
-                wrap_snapshot
-                    .make_wrap_point(new_buffer_start, Bias::Left)
-                    .row(),
-            );
 
             // Only preserve transforms that:
             // * Strictly precedes this edit
@@ -608,6 +588,7 @@ impl BlockMap {
             {
                 // Preserve the transform (push and next)
                 new_transforms.push(transform.clone(), ());
+                // ^ FIXME wrong?
                 cursor.next();
 
                 // Preserve below blocks at end of edit
@@ -640,7 +621,7 @@ impl BlockMap {
                     // replacement.
                     debug_assert!(transform.summary.input_rows > 0);
                     old_start.0 -= transform_rows_before_edit;
-                    new_start.0 -= transform_rows_before_edit;
+                    new_start.0 -= dbg!(transform_rows_before_edit);
                 }
             }
 
@@ -684,6 +665,62 @@ impl BlockMap {
                 } else {
                     break;
                 }
+            }
+
+            // FIXME
+            // loop:
+            // peek next diff hunk in edit range
+            // peek next row boundary
+            // if they are equal, it's a diff hunk, so handle that (insert isomorphic and one non-isomorphic transform, possibly insert block)
+            // else must be a normal row boundary, so insert isomorphic transform and then block as needed
+            // and uh figure out what to do about the other kinds of block that exist
+            if true {
+                // FIXME persistent cursors/iterators for row boundaries and diff hunks
+                let mut current_wrap_row = new_start.0;
+                dbg!("---------", new_end.0);
+                loop {
+                    if dbg!(current_wrap_row) > new_end.0 {
+                        dbg!();
+                        break;
+                    }
+
+                    let Some(next_row_boundary) =
+                        wrap_snapshot.next_row_boundary(WrapPoint::new(current_wrap_row, 0))
+                    else {
+                        dbg!();
+                        break;
+                    };
+
+                    push_isomorphic(
+                        &mut new_transforms,
+                        next_row_boundary - current_wrap_row,
+                        wrap_snapshot,
+                    );
+                    new_transforms.push(
+                        Transform {
+                            summary: TransformSummary {
+                                input_rows: 0,
+                                output_rows: 1,
+                                longest_row: 0,
+                                longest_row_chars: 0,
+                            },
+                            block: Some(Block::Spacer {
+                                height: 1,
+                                id: SpacerId(self.next_block_id.fetch_add(1, SeqCst)),
+                            }),
+                        },
+                        (),
+                    );
+                    current_wrap_row = next_row_boundary;
+                }
+
+                // FIXME
+                // let rows_after_last_block = new_end
+                //     .0
+                //     .saturating_sub(new_transforms.summary().input_rows);
+                // push_isomorphic(&mut new_transforms, rows_after_last_block, wrap_snapshot);
+
+                continue;
             }
 
             // Find the blocks within this edited region.
@@ -746,10 +783,6 @@ impl BlockMap {
 
             BlockMap::sort_blocks(&mut blocks_in_edit);
 
-            let hunks = buffer
-                .diff_hunks_in_range(new_buffer_start..new_buffer_end)
-                .collect::<Vec<_>>();
-
             // For each of these blocks, insert a new isomorphic transform preceding the block,
             // and then insert the block itself.
             let mut just_processed_folded_buffer = false;
@@ -801,10 +834,11 @@ impl BlockMap {
         }
 
         new_transforms.append(cursor.suffix(), ());
-        debug_assert_eq!(
-            new_transforms.summary().input_rows,
-            wrap_snapshot.max_point().row() + 1
-        );
+        // FIXME
+        // debug_assert_eq!(
+        //     new_transforms.summary().input_rows,
+        //     wrap_snapshot.max_point().row() + 1
+        // );
 
         drop(cursor);
         *transforms = new_transforms;
@@ -3014,6 +3048,34 @@ mod tests {
             vec![None, None],
             "When fully folded, should be no buffer rows"
         );
+    }
+
+    #[gpui::test]
+    fn test_spacers(cx: &mut gpui::TestAppContext) {
+        cx.update(init_test);
+
+        let text = "aaa\nbbb\nccc\nddd\n";
+
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
+        let (wrap_map, wrap_snapshot) =
+            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let mut block_map = BlockMap::new(wrap_snapshot.clone(), 1, 1);
+
+        let snapshot = block_map.read(wrap_snapshot, Default::default());
+
+        let blocks = snapshot
+            .blocks_in_range(0..8)
+            .map(|(start_row, block)| start_row..start_row + block.height())
+            .collect::<Vec<_>>();
+
+        assert_eq!(blocks, &[1..2, 3..4, 5..6,]);
+
+        assert_eq!(snapshot.text(), "aaa\n\nbbb\n\nccc\n\nddd\n\n");
     }
 
     #[gpui::test(iterations = 100)]
