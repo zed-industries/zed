@@ -494,7 +494,7 @@ jobs:
         git tag -f nightly
         git push origin nightly --force
       shell: bash -euxo pipefail {0}
-    - name: release_nightly::update_nightly_tag_job::create_sentry_release
+    - name: release::create_sentry_release
       uses: getsentry/action-release@526942b68292201ac6bbb99b9a0747d4abee354c
       with:
         environment: production

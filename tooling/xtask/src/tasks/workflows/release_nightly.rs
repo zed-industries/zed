@@ -1,6 +1,9 @@
 use crate::tasks::workflows::{
     nix_build::build_nix,
-    release::{ReleaseBundleJobs, download_workflow_artifacts, prep_release_artifacts},
+    release::{
+        ReleaseBundleJobs, create_sentry_release, download_workflow_artifacts,
+        prep_release_artifacts,
+    },
     run_bundling::{bundle_linux, bundle_mac, bundle_windows},
     run_tests::run_platform_tests,
     runners::{Arch, Platform, ReleaseChannel},
@@ -101,18 +104,6 @@ fn update_nightly_tag_job(bundle: &ReleaseBundleJobs) -> NamedJob {
             git tag -f nightly
             git push origin nightly --force
         "#})
-    }
-
-    fn create_sentry_release() -> Step<Use> {
-        named::uses(
-            "getsentry",
-            "action-release",
-            "526942b68292201ac6bbb99b9a0747d4abee354c", // v3
-        )
-        .add_env(("SENTRY_ORG", "zed-dev"))
-        .add_env(("SENTRY_PROJECT", "zed"))
-        .add_env(("SENTRY_AUTH_TOKEN", vars::SENTRY_AUTH_TOKEN))
-        .add_with(("environment", "production"))
     }
 
     NamedJob {
