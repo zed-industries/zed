@@ -10,8 +10,10 @@ use std::{
 
 use anyhow::{Context as _, Result};
 use clap::ValueEnum;
+use collections::HashSet;
 use futures::AsyncWriteExt as _;
-use gpui::http_client::Url;
+use gpui::{AsyncApp, Entity, http_client::Url};
+use project::{Project, ProjectPath};
 use pulldown_cmark::CowStr;
 use serde::{Deserialize, Serialize};
 
@@ -36,7 +38,7 @@ pub struct Example {
     pub uncommitted_diff: String,
     pub cursor_path: PathBuf,
     pub cursor_position: String,
-    pub edit_history: Vec<String>,
+    pub edit_history: String,
     pub expected_patch: String,
     pub expected_excerpts: Vec<ExpectedExcerpt>,
 }
@@ -94,7 +96,7 @@ impl NamedExample {
                 uncommitted_diff: String::new(),
                 cursor_path: PathBuf::new(),
                 cursor_position: String::new(),
-                edit_history: Vec::new(),
+                edit_history: String::new(),
                 expected_patch: String::new(),
                 expected_excerpts: Vec::new(),
             },
@@ -160,7 +162,7 @@ impl NamedExample {
                     if current_section.eq_ignore_ascii_case(UNCOMMITTED_DIFF_HEADING) {
                         named.example.uncommitted_diff = mem::take(&mut text);
                     } else if current_section.eq_ignore_ascii_case(EDIT_HISTORY_HEADING) {
-                        named.example.edit_history.push(mem::take(&mut text));
+                        named.example.edit_history.push_str(&mem::take(&mut text));
                     } else if current_section.eq_ignore_ascii_case(CURSOR_POSITION_HEADING) {
                         named.example.cursor_path = block_info.into();
                         named.example.cursor_position = mem::take(&mut text);
@@ -328,6 +330,140 @@ impl NamedExample {
             Ok((owner.into(), repo.into()))
         }
     }
+
+    pub async fn apply_edit_history(
+        &self,
+        project: &Entity<Project>,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        use cloud_llm_client::udiff::DiffLine;
+        use std::fmt::Write;
+
+        #[derive(Default)]
+        struct Edit {
+            context: String,
+            deletion_start: Option<usize>,
+            addition: String,
+        }
+
+        let mut old_path = None;
+        let mut new_path = None;
+        let mut pending = Edit::default();
+        let mut diff_lines = self
+            .example
+            .edit_history
+            .lines()
+            .map(DiffLine::parse)
+            .peekable();
+        let mut open_buffers = HashSet::default();
+
+        while let Some(diff_line) = diff_lines.next() {
+            match diff_line {
+                DiffLine::OldPath { path } => old_path = Some(path),
+                DiffLine::NewPath { path } => {
+                    if old_path.is_none() {
+                        anyhow::bail!(
+                            "Found a new path header (`+++`) before an (`---`) old path header"
+                        );
+                    }
+                    new_path = Some(path)
+                }
+                DiffLine::Context(ctx) => {
+                    writeln!(&mut pending.context, "{ctx}")?;
+                }
+                DiffLine::Deletion(del) => {
+                    pending.deletion_start.get_or_insert(pending.context.len());
+                    writeln!(&mut pending.context, "{del}")?;
+                }
+                DiffLine::Addition(add) => {
+                    if pending.context.is_empty() {
+                        anyhow::bail!("Found an addition before any context or deletion lines");
+                    }
+
+                    writeln!(&mut pending.addition, "{add}")?;
+                }
+                DiffLine::HunkHeader(_) | DiffLine::Garbage => {}
+            }
+
+            let commit_pending = match diff_lines.peek() {
+                Some(DiffLine::OldPath { .. })
+                | Some(DiffLine::HunkHeader(_))
+                | Some(DiffLine::Context(_))
+                | None => {
+                    // commit pending edit cluster
+                    !pending.addition.is_empty() || pending.deletion_start.is_some()
+                }
+                Some(DiffLine::Deletion(_)) => {
+                    // start a new cluster if we have any additions specifically
+                    // if we only have deletions, we continue to aggregate them
+                    pending.addition.is_empty()
+                }
+                _ => false,
+            };
+
+            if commit_pending {
+                let edit = mem::take(&mut pending);
+
+                if edit.addition.is_empty() || edit.deletion_start.is_none() {
+                    return anyhow::Ok(());
+                }
+
+                let Some(old_path) = old_path.as_deref() else {
+                    anyhow::bail!("Missing old path (`---`) header")
+                };
+
+                let Some(new_path) = new_path.as_deref() else {
+                    anyhow::bail!("Missing new path (`+++`) header")
+                };
+
+                let buffer = project
+                    .update(cx, |project, cx| {
+                        let project_path = project
+                            .find_project_path(old_path, cx)
+                            .context("Failed to find old_path in project")?;
+
+                        anyhow::Ok(project.open_buffer(project_path, cx))
+                    })??
+                    .await?;
+                open_buffers.insert(buffer.clone());
+
+                if old_path != new_path {
+                    project
+                        .update(cx, |project, cx| {
+                            let project_file =
+                                project::File::from_dyn(buffer.read(cx).file()).unwrap();
+                            let new_path = ProjectPath {
+                                worktree_id: project_file.worktree_id(cx),
+                                path: project_file.path.clone(),
+                            };
+                            project.rename_entry(project_file.entry_id.unwrap(), new_path, cx)
+                        })?
+                        .await?;
+                }
+
+                // TODO is it worth using project search?
+                buffer.update(cx, |buffer, cx| {
+                    let text = buffer.text();
+                    if let Some(context_offset) = text.find(&edit.context) {
+                        let end = context_offset + edit.context.len();
+                        let start = if let Some(deletion_start) = edit.deletion_start {
+                            context_offset + deletion_start
+                        } else {
+                            end
+                        };
+
+                        buffer.edit([(start..end, edit.addition)], None, cx);
+
+                        anyhow::Ok(())
+                    } else {
+                        anyhow::bail!("Failed to match context");
+                    }
+                })??;
+            }
+        }
+
+        anyhow::Ok(())
+    }
 }
 
 async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
@@ -365,11 +501,7 @@ impl Display for NamedExample {
         write!(f, "`````\n")?;
 
         if !self.example.edit_history.is_empty() {
-            write!(f, "`````diff\n")?;
-            for item in &self.example.edit_history {
-                write!(f, "{item}")?;
-            }
-            write!(f, "`````\n")?;
+            write!(f, "`````diff\n{}`````\n", self.example.edit_history)?;
         }
 
         write!(

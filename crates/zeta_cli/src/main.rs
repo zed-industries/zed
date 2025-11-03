@@ -26,6 +26,7 @@ use project::{Project, ProjectPath, Worktree};
 use reqwest_client::ReqwestClient;
 use serde_json::json;
 use std::io;
+use std::time::Duration;
 use std::{collections::HashSet, path::PathBuf, process::exit, str::FromStr, sync::Arc};
 use zeta2::{ContextMode, LlmContextOptions, SearchToolQuery};
 
@@ -176,6 +177,7 @@ fn syntax_args_to_options(
         max_prompt_bytes: zeta2_args.max_prompt_bytes,
         prompt_format: zeta2_args.prompt_format.clone().into(),
         file_indexing_parallelism: zeta2_args.file_indexing_parallelism,
+        buffer_change_grouping_interval: Duration::ZERO,
     }
 }
 
@@ -413,6 +415,12 @@ async fn zeta2_predict(
         cursor_buffer.read_with(cx, |buffer, _| buffer.anchor_after(cursor_offset))?;
 
     let zeta = cx.update(|cx| zeta2::Zeta::global(&app_state.client, &app_state.user_store, cx))?;
+
+    zeta.update(cx, |zeta, cx| {
+        zeta.register_buffer(&cursor_buffer, &project, cx);
+    })?;
+
+    example.apply_edit_history(&project, cx).await?;
 
     let (prediction_task, mut debug_rx) = zeta.update(cx, |zeta, cx| {
         let receiver = zeta.debug_info();

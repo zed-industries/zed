@@ -50,8 +50,6 @@ use crate::related_excerpts::find_related_excerpts;
 pub use crate::related_excerpts::{LlmContextOptions, SearchToolQuery};
 pub use provider::ZetaEditPredictionProvider;
 
-const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
-
 /// Maximum number of events to track.
 const MAX_EVENT_COUNT: usize = 16;
 
@@ -83,6 +81,7 @@ pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
     max_diagnostic_bytes: 2048,
     prompt_format: PromptFormat::DEFAULT,
     file_indexing_parallelism: 1,
+    buffer_change_grouping_interval: Duration::from_secs(1),
 };
 
 pub struct Zeta2FeatureFlag;
@@ -118,6 +117,7 @@ pub struct ZetaOptions {
     pub max_diagnostic_bytes: usize,
     pub prompt_format: predict_edits_v3::PromptFormat,
     pub file_indexing_parallelism: usize,
+    pub buffer_change_grouping_interval: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -460,6 +460,7 @@ impl Zeta {
         project: &Entity<Project>,
         cx: &mut Context<Self>,
     ) -> BufferSnapshot {
+        let buffer_change_grouping_interval = self.options.buffer_change_grouping_interval;
         let zeta_project = self.get_or_init_zeta_project(project, cx);
         let registered_buffer = Self::register_buffer_impl(zeta_project, buffer, project, cx);
 
@@ -469,6 +470,7 @@ impl Zeta {
                 std::mem::replace(&mut registered_buffer.snapshot, new_snapshot.clone());
             Self::push_event(
                 zeta_project,
+                buffer_change_grouping_interval,
                 Event::BufferChange {
                     old_snapshot,
                     new_snapshot: new_snapshot.clone(),
@@ -480,14 +482,19 @@ impl Zeta {
         new_snapshot
     }
 
-    fn push_event(zeta_project: &mut ZetaProject, event: Event) {
+    fn push_event(
+        zeta_project: &mut ZetaProject,
+        buffer_change_grouping_interval: Duration,
+        event: Event,
+    ) {
         let events = &mut zeta_project.events;
 
-        if let Some(Event::BufferChange {
-            new_snapshot: last_new_snapshot,
-            timestamp: last_timestamp,
-            ..
-        }) = events.back_mut()
+        if buffer_change_grouping_interval > Duration::ZERO
+            && let Some(Event::BufferChange {
+                new_snapshot: last_new_snapshot,
+                timestamp: last_timestamp,
+                ..
+            }) = events.back_mut()
         {
             // Coalesce edits for the same buffer when they happen one after the other.
             let Event::BufferChange {
@@ -496,7 +503,7 @@ impl Zeta {
                 timestamp,
             } = &event;
 
-            if timestamp.duration_since(*last_timestamp) <= BUFFER_CHANGE_GROUPING_INTERVAL
+            if timestamp.duration_since(*last_timestamp) <= buffer_change_grouping_interval
                 && old_snapshot.remote_id() == last_new_snapshot.remote_id()
                 && old_snapshot.version == last_new_snapshot.version
             {
