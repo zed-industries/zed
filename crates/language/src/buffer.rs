@@ -24,8 +24,8 @@ use collections::HashMap;
 use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
-    App, AppContext as _, BackgroundExecutor, Context, Entity, EventEmitter, HighlightStyle,
-    SharedString, StyledText, Task, TaskLabel, TextStyle,
+    App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, SharedString, StyledText,
+    Task, TaskLabel, TextStyle,
 };
 
 use lsp::{LanguageServerId, NumberOrString};
@@ -832,7 +832,6 @@ impl Buffer {
                 ReplicaId::LOCAL,
                 cx.entity_id().as_non_zero_u64().into(),
                 base_text.into(),
-                &cx.background_executor(),
             ),
             None,
             Capability::ReadWrite,
@@ -863,10 +862,9 @@ impl Buffer {
         replica_id: ReplicaId,
         capability: Capability,
         base_text: impl Into<String>,
-        cx: &BackgroundExecutor,
     ) -> Self {
         Self::build(
-            TextBuffer::new(replica_id, remote_id, base_text.into(), cx),
+            TextBuffer::new(replica_id, remote_id, base_text.into()),
             None,
             capability,
         )
@@ -879,10 +877,9 @@ impl Buffer {
         capability: Capability,
         message: proto::BufferState,
         file: Option<Arc<dyn File>>,
-        cx: &BackgroundExecutor,
     ) -> Result<Self> {
         let buffer_id = BufferId::new(message.id).context("Could not deserialize buffer_id")?;
-        let buffer = TextBuffer::new(replica_id, buffer_id, message.base_text, cx);
+        let buffer = TextBuffer::new(replica_id, buffer_id, message.base_text);
         let mut this = Self::build(buffer, file, capability);
         this.text.set_line_ending(proto::deserialize_line_ending(
             rpc::proto::LineEnding::from_i32(message.line_ending).context("missing line_ending")?,
@@ -1141,14 +1138,13 @@ impl Buffer {
         let old_snapshot = self.text.snapshot();
         let mut branch_buffer = self.text.branch();
         let mut syntax_snapshot = self.syntax_map.lock().snapshot();
-        let executor = cx.background_executor().clone();
         cx.background_spawn(async move {
             if !edits.is_empty() {
                 if let Some(language) = language.clone() {
                     syntax_snapshot.reparse(&old_snapshot, registry.clone(), language);
                 }
 
-                branch_buffer.edit(edits.iter().cloned(), &executor);
+                branch_buffer.edit(edits.iter().cloned());
                 let snapshot = branch_buffer.snapshot();
                 syntax_snapshot.interpolate(&snapshot);
 
@@ -2365,9 +2361,7 @@ impl Buffer {
         let autoindent_request = autoindent_mode
             .and_then(|mode| self.language.as_ref().map(|_| (self.snapshot(), mode)));
 
-        let edit_operation = self
-            .text
-            .edit(edits.iter().cloned(), cx.background_executor());
+        let edit_operation = self.text.edit(edits.iter().cloned());
         let edit_id = edit_operation.timestamp();
 
         if let Some((before_edit, mode)) = autoindent_request {
@@ -2598,8 +2592,7 @@ impl Buffer {
         for operation in buffer_ops.iter() {
             self.send_operation(Operation::Buffer(operation.clone()), false, cx);
         }
-        self.text
-            .apply_ops(buffer_ops, Some(cx.background_executor()));
+        self.text.apply_ops(buffer_ops);
         self.deferred_ops.insert(deferred_ops);
         self.flush_deferred_ops(cx);
         self.did_edit(&old_version, was_dirty, cx);

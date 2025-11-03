@@ -1,7 +1,6 @@
 use std::{
     any::Any,
     borrow::Borrow,
-    collections::HashSet,
     path::{Path, PathBuf},
     str::FromStr as _,
     sync::Arc,
@@ -137,7 +136,7 @@ impl EventEmitter<AgentServersUpdated> for AgentServerStore {}
 #[cfg(test)]
 mod ext_agent_tests {
     use super::*;
-    use std::fmt::Write as _;
+    use std::{collections::HashSet, fmt::Write as _};
 
     // Helper to build a store in Collab mode so we can mutate internal maps without
     // needing to spin up a full project environment.
@@ -244,25 +243,18 @@ impl AgentServerStore {
         // Collect manifests first so we can iterate twice
         let manifests: Vec<_> = manifests.into_iter().collect();
 
-        // Remove existing extension-provided agents by tracking which ones we're about to add
-        let extension_agent_names: HashSet<_> = manifests
-            .iter()
-            .flat_map(|(_, manifest)| manifest.agent_servers.keys().map(|k| k.to_string()))
-            .collect();
-
-        let keys_to_remove: Vec<_> = self
-            .external_agents
-            .keys()
-            .filter(|name| {
-                // Remove if it matches an extension agent name from any extension
-                extension_agent_names.contains(name.0.as_ref())
-            })
-            .cloned()
-            .collect();
-        for key in &keys_to_remove {
-            self.external_agents.remove(key);
-            self.agent_icons.remove(key);
-        }
+        // Remove all extension-provided agents
+        // (They will be re-added below if they're in the currently installed extensions)
+        self.external_agents.retain(|name, agent| {
+            if agent.downcast_mut::<LocalExtensionArchiveAgent>().is_some() {
+                self.agent_icons.remove(name);
+                false
+            } else {
+                // Keep the hardcoded external agents that don't come from extensions
+                // (In the future we may move these over to being extensions too.)
+                true
+            }
+        });
 
         // Insert agent servers from extension manifests
         match &self.state {
@@ -1037,7 +1029,7 @@ impl ExternalAgentServer for LocalGemini {
         cx.spawn(async move |cx| {
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_local_directory_environment(
+                    project_environment.local_directory_environment(
                         &Shell::System,
                         root_dir.clone(),
                         cx,
@@ -1133,7 +1125,7 @@ impl ExternalAgentServer for LocalClaudeCode {
         cx.spawn(async move |cx| {
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_local_directory_environment(
+                    project_environment.local_directory_environment(
                         &Shell::System,
                         root_dir.clone(),
                         cx,
@@ -1227,7 +1219,7 @@ impl ExternalAgentServer for LocalCodex {
         cx.spawn(async move |cx| {
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_local_directory_environment(
+                    project_environment.local_directory_environment(
                         &Shell::System,
                         root_dir.clone(),
                         cx,
@@ -1402,7 +1394,7 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
             // Get project environment
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_local_directory_environment(
+                    project_environment.local_directory_environment(
                         &Shell::System,
                         root_dir.clone(),
                         cx,
@@ -1585,7 +1577,7 @@ impl ExternalAgentServer for LocalCustomAgent {
         cx.spawn(async move |cx| {
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_local_directory_environment(
+                    project_environment.local_directory_environment(
                         &Shell::System,
                         root_dir.clone(),
                         cx,
@@ -1702,6 +1694,8 @@ impl settings::Settings for AllAgentServersSettings {
 
 #[cfg(test)]
 mod extension_agent_tests {
+    use crate::worktree_store::WorktreeStore;
+
     use super::*;
     use gpui::TestAppContext;
     use std::sync::Arc;
@@ -1826,7 +1820,9 @@ mod extension_agent_tests {
     async fn archive_agent_uses_extension_and_agent_id_for_cache_key(cx: &mut TestAppContext) {
         let fs = fs::FakeFs::new(cx.background_executor.clone());
         let http_client = http_client::FakeHttpClient::with_404_response();
-        let project_environment = cx.new(|cx| crate::ProjectEnvironment::new(None, cx));
+        let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
+        let project_environment =
+            cx.new(|cx| crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, cx));
 
         let agent = LocalExtensionArchiveAgent {
             fs,

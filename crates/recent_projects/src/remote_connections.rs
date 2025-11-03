@@ -574,6 +574,7 @@ pub async fn open_remote_project(
     open_options: workspace::OpenOptions,
     cx: &mut AsyncApp,
 ) -> Result<()> {
+    let created_new_window = open_options.replace_window.is_none();
     let window = if let Some(window) = open_options.replace_window {
         window
     } else {
@@ -648,7 +649,45 @@ pub async fn open_remote_project(
         let Some(delegate) = delegate else { break };
 
         let remote_connection =
-            remote::connect(connection_options.clone(), delegate.clone(), cx).await?;
+            match remote::connect(connection_options.clone(), delegate.clone(), cx).await {
+                Ok(connection) => connection,
+                Err(e) => {
+                    window
+                        .update(cx, |workspace, _, cx| {
+                            if let Some(ui) = workspace.active_modal::<RemoteConnectionModal>(cx) {
+                                ui.update(cx, |modal, cx| modal.finished(cx))
+                            }
+                        })
+                        .ok();
+                    log::error!("Failed to open project: {e:?}");
+                    let response = window
+                        .update(cx, |_, window, cx| {
+                            window.prompt(
+                                PromptLevel::Critical,
+                                match connection_options {
+                                    RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
+                                    RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
+                                },
+                                Some(&e.to_string()),
+                                &["Retry", "Cancel"],
+                                cx,
+                            )
+                        })?
+                        .await;
+
+                    if response == Ok(0) {
+                        continue;
+                    }
+
+                    if created_new_window {
+                        window
+                            .update(cx, |_, window, _| window.remove_window())
+                            .ok();
+                    }
+                    break;
+                }
+            };
+
         let (paths, paths_with_positions) =
             determine_paths_with_positions(&remote_connection, paths.clone()).await;
 
@@ -686,7 +725,7 @@ pub async fn open_remote_project(
                                 RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
                             },
                             Some(&e.to_string()),
-                            &["Retry", "Ok"],
+                            &["Retry", "Cancel"],
                             cx,
                         )
                     })?
@@ -694,7 +733,14 @@ pub async fn open_remote_project(
                 if response == Ok(0) {
                     continue;
                 }
+
+                if created_new_window {
+                    window
+                        .update(cx, |_, window, _| window.remove_window())
+                        .ok();
+                }
             }
+
             Ok(items) => {
                 for (item, path) in items.into_iter().zip(paths_with_positions) {
                     let Some(item) = item else {

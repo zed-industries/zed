@@ -2451,6 +2451,29 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
+                    title: "Center on Match",
+                    description: "Whether to center the current match in the editor",
+                    field: Box::new(SettingField {
+                        json_path: Some("editor.search.center_on_match"),
+                        pick: |settings_content| {
+                            settings_content
+                                .editor
+                                .search
+                                .as_ref()
+                                .and_then(|search| search.center_on_match.as_ref())
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .editor
+                                .search
+                                .get_or_insert_default()
+                                .center_on_match = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
                     title: "Seed Search Query From Cursor",
                     description: "When to populate a new search's query based on the text under the cursor.",
                     field: Box::new(SettingField {
@@ -6517,6 +6540,19 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Completion Menu Scrollbar",
+            description: "When to show the scrollbar in the completion menu.",
+            field: Box::new(SettingField {
+                json_path: Some("editor.completion_menu_scrollbar"),
+                pick: |settings_content| settings_content.editor.completion_menu_scrollbar.as_ref(),
+                write: |settings_content, value| {
+                    settings_content.editor.completion_menu_scrollbar = value;
+                },
+            }),
+            metadata: None,
+            files: USER,
         }),
         SettingsPageItem::SectionHeader("Inlay Hints"),
         SettingsPageItem::SettingItem(SettingItem {

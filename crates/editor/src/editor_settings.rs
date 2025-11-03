@@ -55,6 +55,7 @@ pub struct EditorSettings {
     pub drag_and_drop_selection: DragAndDropSelection,
     pub lsp_document_colors: DocumentColorsRenderMode,
     pub minimum_contrast_for_highlights: f32,
+    pub completion_menu_scrollbar: ShowScrollbar,
 }
 #[derive(Debug, Clone)]
 pub struct Jupyter {
@@ -159,6 +160,7 @@ pub struct SearchSettings {
     pub case_sensitive: bool,
     pub include_ignored: bool,
     pub regex: bool,
+    pub center_on_match: bool,
 }
 
 impl EditorSettings {
@@ -249,6 +251,7 @@ impl Settings for EditorSettings {
                 case_sensitive: search.case_sensitive.unwrap(),
                 include_ignored: search.include_ignored.unwrap(),
                 regex: search.regex.unwrap(),
+                center_on_match: search.center_on_match.unwrap(),
             },
             auto_signature_help: editor.auto_signature_help.unwrap(),
             show_signature_help_after_edits: editor.show_signature_help_after_edits.unwrap(),
@@ -266,6 +269,7 @@ impl Settings for EditorSettings {
             },
             lsp_document_colors: editor.lsp_document_colors.unwrap(),
             minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap().0,
+            completion_menu_scrollbar: editor.completion_menu_scrollbar.map(Into::into).unwrap(),
         }
     }
 }

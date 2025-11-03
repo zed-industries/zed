@@ -180,13 +180,7 @@ impl RemoteBufferStore {
                         buffer_file = Some(Arc::new(File::from_proto(file, worktree, cx)?)
                             as Arc<dyn language::File>);
                     }
-                    Buffer::from_proto(
-                        replica_id,
-                        capability,
-                        state,
-                        buffer_file,
-                        cx.background_executor(),
-                    )
+                    Buffer::from_proto(replica_id, capability, state, buffer_file)
                 });
 
                 match buffer_result {
@@ -634,10 +628,9 @@ impl LocalBufferStore {
                 Ok(loaded) => {
                     let reservation = cx.reserve_entity::<Buffer>()?;
                     let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
-                    let executor = cx.background_executor().clone();
                     let text_buffer = cx
                         .background_spawn(async move {
-                            text::Buffer::new(ReplicaId::LOCAL, buffer_id, loaded.text, &executor)
+                            text::Buffer::new(ReplicaId::LOCAL, buffer_id, loaded.text)
                         })
                         .await;
                     cx.insert_entity(reservation, |_| {
@@ -646,12 +639,7 @@ impl LocalBufferStore {
                 }
                 Err(error) if is_not_found_error(&error) => cx.new(|cx| {
                     let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
-                    let text_buffer = text::Buffer::new(
-                        ReplicaId::LOCAL,
-                        buffer_id,
-                        "",
-                        cx.background_executor(),
-                    );
+                    let text_buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, "");
                     Buffer::build(
                         text_buffer,
                         Some(Arc::new(File {

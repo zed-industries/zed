@@ -66,6 +66,10 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
     - name: steps::setup_pnpm
       uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
       with:
@@ -145,6 +149,10 @@ jobs:
     - name: steps::install_mold
       run: ./script/install-mold
       shell: bash -euxo pipefail {0}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -156,7 +164,7 @@ jobs:
       run: cargo install cargo-nextest --locked
       shell: bash -euxo pipefail {0}
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than 100
+      run: ./script/clear-target-dir-if-larger-than 250
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
@@ -214,10 +222,10 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: steps::cache_rust_dependencies
-      uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
       with:
-        save-if: ${{ github.ref == 'refs/heads/main' }}
+        cache: rust
     - name: steps::setup_linux
       run: ./script/linux
       shell: bash -euxo pipefail {0}
@@ -261,6 +269,10 @@ jobs:
     - name: steps::install_mold
       run: ./script/install-mold
       shell: bash -euxo pipefail {0}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
     - name: cargo build -p collab
       run: cargo build -p collab
       shell: bash -euxo pipefail {0}
@@ -317,6 +329,10 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
     - name: run_tests::check_dependencies::install_cargo_machete
       uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386
       with:
@@ -350,10 +366,10 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
       shell: bash -euxo pipefail {0}
-    - name: steps::cache_rust_dependencies
-      uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
       with:
-        save-if: ${{ github.ref == 'refs/heads/main' }}
+        cache: rust
     - name: run_tests::check_docs::lychee_link_check
       uses: lycheeverse/lychee-action@82202e5e9c2f4ef1a55a3d02563e1cb6041e5332
       with:
@@ -392,6 +408,10 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
     - name: ./script/check-licenses
       run: ./script/check-licenses
       shell: bash -euxo pipefail {0}

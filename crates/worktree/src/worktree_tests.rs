@@ -20,7 +20,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use text::Rope;
 use util::{
     ResultExt, path,
     rel_path::{RelPath, rel_path},
@@ -647,13 +646,9 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
 
     // Update the gitignore so that node_modules is no longer ignored,
     // but a subdirectory is ignored
-    fs.save(
-        "/root/.gitignore".as_ref(),
-        &Rope::from_str("e", cx.background_executor()),
-        Default::default(),
-    )
-    .await
-    .unwrap();
+    fs.save("/root/.gitignore".as_ref(), &"e".into(), Default::default())
+        .await
+        .unwrap();
     cx.executor().run_until_parked();
 
     // All of the directories that are no longer ignored are now loaded.
@@ -721,7 +716,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
         .update(cx, |tree, cx| {
             tree.write_file(
                 rel_path("tracked-dir/file.txt").into(),
-                Rope::from_str("hello", cx.background_executor()),
+                "hello".into(),
                 Default::default(),
                 cx,
             )
@@ -732,7 +727,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
         .update(cx, |tree, cx| {
             tree.write_file(
                 rel_path("ignored-dir/file.txt").into(),
-                Rope::from_str("world", cx.background_executor()),
+                "world".into(),
                 Default::default(),
                 cx,
             )
@@ -1470,7 +1465,7 @@ async fn test_random_worktree_operations_during_initial_scan(
     let fs = FakeFs::new(cx.background_executor.clone()) as Arc<dyn Fs>;
     fs.as_fake().insert_tree(root_dir, json!({})).await;
     for _ in 0..initial_entries {
-        randomly_mutate_fs(&fs, root_dir, 1.0, &mut rng, cx.background_executor()).await;
+        randomly_mutate_fs(&fs, root_dir, 1.0, &mut rng).await;
     }
     log::info!("generated initial tree");
 
@@ -1560,7 +1555,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
     let fs = FakeFs::new(cx.background_executor.clone()) as Arc<dyn Fs>;
     fs.as_fake().insert_tree(root_dir, json!({})).await;
     for _ in 0..initial_entries {
-        randomly_mutate_fs(&fs, root_dir, 1.0, &mut rng, cx.background_executor()).await;
+        randomly_mutate_fs(&fs, root_dir, 1.0, &mut rng).await;
     }
     log::info!("generated initial tree");
 
@@ -1603,7 +1598,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
                 .await
                 .log_err();
         } else {
-            randomly_mutate_fs(&fs, root_dir, 1.0, &mut rng, cx.background_executor()).await;
+            randomly_mutate_fs(&fs, root_dir, 1.0, &mut rng).await;
         }
 
         let buffered_event_count = fs.as_fake().buffered_event_count();
@@ -1612,7 +1607,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
             log::info!("flushing {} events", len);
             fs.as_fake().flush_events(len);
         } else {
-            randomly_mutate_fs(&fs, root_dir, 0.6, &mut rng, cx.background_executor()).await;
+            randomly_mutate_fs(&fs, root_dir, 0.6, &mut rng).await;
             mutations_len -= 1;
         }
 
@@ -1764,12 +1759,8 @@ fn randomly_mutate_worktree(
                 })
             } else {
                 log::info!("overwriting file {:?} ({})", &entry.path, entry.id.0);
-                let task = worktree.write_file(
-                    entry.path.clone(),
-                    Rope::default(),
-                    Default::default(),
-                    cx,
-                );
+                let task =
+                    worktree.write_file(entry.path.clone(), "".into(), Default::default(), cx);
                 cx.background_spawn(async move {
                     task.await?;
                     Ok(())
@@ -1784,7 +1775,6 @@ async fn randomly_mutate_fs(
     root_path: &Path,
     insertion_probability: f64,
     rng: &mut impl Rng,
-    executor: &BackgroundExecutor,
 ) {
     log::info!("mutating fs");
     let mut files = Vec::new();
@@ -1859,7 +1849,7 @@ async fn randomly_mutate_fs(
         );
         fs.save(
             &ignore_path,
-            &Rope::from_str(ignore_contents.as_str(), executor),
+            &ignore_contents.as_str().into(),
             Default::default(),
         )
         .await

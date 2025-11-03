@@ -1569,7 +1569,6 @@ pub mod tests {
     use lsp::LanguageServerId;
     use project::Project;
     use rand::{Rng, prelude::*};
-    use rope::Rope;
     use settings::{SettingsContent, SettingsStore};
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
@@ -2075,7 +2074,7 @@ pub mod tests {
                 vec![Inlay::edit_prediction(
                     0,
                     buffer_snapshot.anchor_after(0),
-                    Rope::from_str_small("\n"),
+                    "\n",
                 )],
                 cx,
             );

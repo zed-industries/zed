@@ -70,12 +70,12 @@ target_triple=${host_line#*: }
 if [[ $# -gt 0 && -n "$1" ]]; then
     target_triple="$1"
 fi
-remote_server_arch=""
+arch_suffix=""
 
 if [[ "$target_triple" = "x86_64-apple-darwin" ]]; then
-    remote_server_arch="x86_64"
+    arch_suffix="x86_64"
 elif [[ "$target_triple" = "aarch64-apple-darwin" ]]; then
-    remote_server_arch="aarch64"
+    arch_suffix="aarch64"
 else
     echo "Unsupported architecture $target_triple"
     exit 1
@@ -232,7 +232,7 @@ function sign_app_binaries() {
     else
         dmg_target_directory="target/${target_triple}/${target_dir}"
         dmg_source_directory="${dmg_target_directory}/dmg"
-        dmg_file_path="${dmg_target_directory}/Zed.dmg"
+        dmg_file_path="${dmg_target_directory}/Zed-${arch_suffix}.dmg"
         xcode_bin_dir_path="$(xcode-select -p)/usr/bin"
 
         rm -rf ${dmg_source_directory}
@@ -310,4 +310,4 @@ cp target/${target_triple}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
 sign_app_binaries
 
 sign_binary "target/$target_triple/release/remote_server"
-gzip -f --stdout --best target/$target_triple/release/remote_server > target/zed-remote-server-macos-$remote_server_arch.gz
+gzip -f --stdout --best target/$target_triple/release/remote_server > target/zed-remote-server-macos-$arch_suffix.gz

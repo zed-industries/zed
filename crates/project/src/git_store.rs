@@ -4804,7 +4804,7 @@ impl Repository {
                 .upgrade()
                 .context("missing project environment")?
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_local_directory_environment(&Shell::System, work_directory_abs_path.clone(), cx)
+                    project_environment.local_directory_environment(&Shell::System, work_directory_abs_path.clone(), cx)
                 })?
                 .await
                 .unwrap_or_else(|| {
