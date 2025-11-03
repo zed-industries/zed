@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use crate::tasks::workflows::{
     release::ReleaseBundleJobs,
     runners::{Arch, Platform, ReleaseChannel},
@@ -77,15 +79,28 @@ pub(crate) fn bundle_mac(
             .add_step(steps::setup_sentry())
             .add_step(steps::clear_target_dir_if_large(runners::Platform::Mac))
             .add_step(bundle_mac(arch))
-            .add_step(steps::upload_artifact(
-                artifact_name,
-                &format!("target/{arch}-apple-darwin/release/{artifact_name}"),
-            ))
-            .add_step(steps::upload_artifact(
-                remote_server_artifact_name,
-                &format!("target/{remote_server_artifact_name}"),
-            )),
+            .add_step(upload_artifact(&format!(
+                "target/{arch}-apple-darwin/release/{artifact_name}"
+            )))
+            .add_step(upload_artifact(&format!(
+                "target/{remote_server_artifact_name}"
+            ))),
     }
+}
+
+pub fn upload_artifact(path: &str) -> Step<Use> {
+    let name = Path::new(path).file_name().unwrap().to_str().unwrap();
+    Step::new(format!("@actions/upload-artifact {}", name))
+        .uses(
+            "actions",
+            "upload-artifact",
+            "330a01c490aca151604b8cf639adc76d48f6c5d4", // v5
+        )
+        // N.B. "name" is the name for the asset. The uploaded
+        // file retains its filename.
+        .add_with(("name", name))
+        .add_with(("path", path))
+        .add_with(("if-no-files-found", "error"))
 }
 
 pub(crate) fn bundle_linux(
@@ -114,14 +129,10 @@ pub(crate) fn bundle_linux(
             .add_step(steps::setup_sentry())
             .map(steps::install_linux_dependencies)
             .add_step(steps::script("./script/bundle-linux"))
-            .add_step(steps::upload_artifact(
-                artifact_name,
-                &format!("target/release/{artifact_name}"),
-            ))
-            .add_step(steps::upload_artifact(
-                remote_server_artifact_name,
-                &format!("target/{remote_server_artifact_name}"),
-            )),
+            .add_step(upload_artifact(&format!("target/release/{artifact_name}")))
+            .add_step(upload_artifact(&format!(
+                "target/{remote_server_artifact_name}"
+            ))),
     }
 }
 
@@ -153,10 +164,7 @@ pub(crate) fn bundle_windows(
             })
             .add_step(steps::setup_sentry())
             .add_step(bundle_windows(arch))
-            .add_step(steps::upload_artifact(
-                artifact_name,
-                &format!("target/{artifact_name}"),
-            )),
+            .add_step(upload_artifact(&format!("target/{artifact_name}"))),
     }
 }
 
