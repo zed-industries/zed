@@ -361,12 +361,10 @@ async fn build_buffer_diff(
 ) -> Result<Entity<BufferDiff>> {
     let buffer = cx.update(|cx| buffer.read(cx).snapshot())?;
 
-    let executor = cx.background_executor().clone();
     let old_text_rope = cx
         .background_spawn({
             let old_text = old_text.clone();
-            let executor = executor.clone();
-            async move { Rope::from_str(old_text.as_str(), &executor) }
+            async move { Rope::from(old_text.as_str()) }
         })
         .await;
     let base_buffer = cx

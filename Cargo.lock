@@ -12718,12 +12718,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5da3b0203fd7ee5720aa0b5e790b591aa5d3f41c3ed2c34a3a393382198af2f7"
 
 [[package]]
-name = "pollster"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f3a9f18d041e6d0e102a0a46750538147e5e8992d3b4873aaafee2520b00ce3"
-
-[[package]]
 name = "portable-atomic"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12771,7 +12765,7 @@ dependencies = [
  "log",
  "parking_lot",
  "pin-project",
- "pollster 0.2.5",
+ "pollster",
  "static_assertions",
  "thiserror 1.0.69",
 ]
@@ -14323,6 +14317,7 @@ dependencies = [
  "gpui",
  "log",
  "rand 0.9.2",
+ "rayon",
  "sum_tree",
  "unicode-segmentation",
  "util",
@@ -16248,7 +16243,6 @@ checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 name = "streaming_diff"
 version = "0.1.0"
 dependencies = [
- "gpui",
  "ordered-float 2.10.1",
  "rand 0.9.2",
  "rope",
@@ -16367,11 +16361,9 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "ctor",
- "futures 0.3.31",
- "futures-lite 1.13.0",
  "log",
- "pollster 0.4.0",
  "rand 0.9.2",
+ "rayon",
  "zlog",
 ]
 

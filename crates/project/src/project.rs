@@ -714,10 +714,8 @@ pub enum ResolveState {
 impl InlayHint {
     pub fn text(&self) -> Rope {
         match &self.label {
-            InlayHintLabel::String(s) => Rope::from_str_small(s),
-            InlayHintLabel::LabelParts(parts) => {
-                Rope::from_iter_small(parts.iter().map(|part| &*part.value))
-            }
+            InlayHintLabel::String(s) => Rope::from(s),
+            InlayHintLabel::LabelParts(parts) => parts.iter().map(|part| &*part.value).collect(),
         }
     }
 }
@@ -5392,12 +5390,7 @@ impl Project {
             worktree
                 .update(cx, |worktree, cx| {
                     let line_ending = text::LineEnding::detect(&new_text);
-                    worktree.write_file(
-                        rel_path.clone(),
-                        Rope::from_str(&new_text, cx.background_executor()),
-                        line_ending,
-                        cx,
-                    )
+                    worktree.write_file(rel_path.clone(), new_text.into(), line_ending, cx)
                 })?
                 .await
                 .context("Failed to write settings file")?;
