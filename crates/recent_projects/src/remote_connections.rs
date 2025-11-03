@@ -659,7 +659,7 @@ pub async fn open_remote_project(
                             }
                         })
                         .ok();
-                    log::error!("Failed to connect to remote: {}", e);
+                    log::error!("Failed to open project: {e:?}");
                     let response = window
                         .update(cx, |_, window, cx| {
                             window.prompt(
