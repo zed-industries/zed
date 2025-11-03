@@ -4,7 +4,7 @@ use std::{
     mem::ManuallyDrop,
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::Arc,
+    sync::{Arc, atomic::Ordering},
 };
 
 use ::util::{ResultExt, paths::SanitizedPath};
@@ -45,6 +45,7 @@ pub(crate) struct WindowsPlatform {
 struct WindowsPlatformInner {
     state: RefCell<WindowsPlatformState>,
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
+    dispatcher: RefCell<Option<Arc<WindowsDispatcher>>>,
     // The below members will never change throughout the entire lifecycle of the app.
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
@@ -135,6 +136,7 @@ impl WindowsPlatform {
             handle,
             validation_number,
         ));
+        inner.set_dispatcher(dispatcher.clone());
         let disable_direct_composition = std::env::var(DISABLE_DIRECT_COMPOSITION)
             .is_ok_and(|value| value == "true" || value == "1");
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
@@ -682,9 +684,14 @@ impl WindowsPlatformInner {
         Ok(Rc::new(Self {
             state,
             raw_window_handles: context.raw_window_handles.clone(),
+            dispatcher: RefCell::new(None),
             validation_number: context.validation_number,
             main_receiver: context.main_receiver.take().unwrap(),
         }))
+    }
+
+    fn set_dispatcher(&self, dispatcher: Arc<WindowsDispatcher>) {
+        *self.dispatcher.borrow_mut() = Some(dispatcher);
     }
 
     fn handle_msg(
@@ -746,9 +753,28 @@ impl WindowsPlatformInner {
 
     #[inline]
     fn run_foreground_task(&self) -> Option<isize> {
-        for runnable in self.main_receiver.drain() {
-            runnable.run();
+        loop {
+            for runnable in self.main_receiver.drain() {
+                runnable.run();
+            }
+
+            // Someone could enqueue a Runnable here. The flag is still true, so they will not PostMessage.
+            // We need to check for those Runnables after we clear the flag.
+            let dispatcher = self.dispatcher.borrow().as_ref().unwrap().clone();
+
+            dispatcher.wake_posted.store(false, Ordering::Release);
+            match self.main_receiver.try_recv() {
+                Ok(runnable) => {
+                    let _ = dispatcher.wake_posted.swap(true, Ordering::AcqRel);
+                    runnable.run();
+                    continue;
+                }
+                _ => {
+                    break;
+                }
+            }
         }
+
         Some(0)
     }
 
