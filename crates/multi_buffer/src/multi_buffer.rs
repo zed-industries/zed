@@ -7192,8 +7192,8 @@ pub fn randomly_mutate_multibuffer_with_diffs(
             let buffer = buffers.choose(&mut rng).unwrap();
             buffer.update(cx, |buf, cx| {
                 let edit_count = rng.random_range(1..5);
+                log::info!("editing buffer");
                 buf.randomly_edit(&mut rng, edit_count, cx);
-                log::info!("buffer text:\n{}", buf.text());
                 *needs_diff_calculation = true;
             });
         }
