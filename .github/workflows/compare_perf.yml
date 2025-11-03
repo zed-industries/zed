@@ -20,8 +20,16 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: compare_perf::run_perf::echo_inputs
-      run: echo ${{ inputs.base }} ${{ inputs.head }}
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      shell: bash -euxo pipefail {0}
+    - name: steps::setup_linux
+      run: ./script/linux
+      shell: bash -euxo pipefail {0}
+    - name: steps::install_mold
+      run: ./script/install-mold
       shell: bash -euxo pipefail {0}
     - name: compare_perf::run_perf::git_checkout
       run: git fetch origin ${{ inputs.base }} && git checkout ${{ inputs.base }}
@@ -43,3 +51,8 @@ jobs:
       with:
         name: results.md
         path: results.md
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        rm -rf ./../.cargo
+      shell: bash -euxo pipefail {0}
