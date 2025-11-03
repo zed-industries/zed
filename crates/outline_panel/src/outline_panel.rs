@@ -6793,7 +6793,6 @@ outline: struct OutlineEntryExcerpt
                     });
                     let mut search_result = String::new();
                     let mut last_end = 0;
-
                     for range in &search_data.search_match_indices {
                         search_result.push_str(&search_data.context_text[last_end..range.start]);
                         search_result.push('«');
@@ -6803,7 +6802,7 @@ outline: struct OutlineEntryExcerpt
                     }
                     search_result.push_str(&search_data.context_text[last_end..]);
 
-                    format!("search: {}", search_result)
+                    format!("search: {search_result}")
                 }
             };
 
@@ -7863,7 +7862,7 @@ outline: fn main()"
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
         let workspace = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(*workspace.clone(), cx);
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
         let editor = workspace
             .update(cx, |workspace, window, cx| {
