@@ -101,13 +101,8 @@ pub(crate) fn clippy(platform: Platform) -> Step<Run> {
     }
 }
 
-pub(crate) fn cache_rust_dependencies() -> Step<Use> {
-    named::uses(
-        "swatinem",
-        "rust-cache",
-        "9d47c6ad4b02e050fd481d890b2ea34778fd09d6", // v2
-    )
-    .with(("save-if", "${{ github.ref == 'refs/heads/main' }}"))
+pub(crate) fn cache_rust_dependencies_namespace() -> Step<Use> {
+    named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("cache", "rust"))
 }
 
 fn setup_linux() -> Step<Run> {
