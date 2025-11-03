@@ -173,48 +173,49 @@ when zed is using a lot of CPU. Not useful for hangs.
 ### During the incident
 
 - Find the PID (process ID) using:
-`ps -eo size,pid,comm | grep zed | sort | head -n 1 | cut -d ' ' -f 2`
-Or find the pid of the command zed-editor with the most ram usage in something
-like htop/btop/top.
+  `ps -eo size,pid,comm | grep zed | sort | head -n 1 | cut -d ' ' -f 2`
+  Or find the pid of the command zed-editor with the most ram usage in something
+  like htop/btop/top.
 
-- Install perf
-On Ubuntu (derivatives) run `sudo apt install linux-tools`.
+- Install perf:
+  On Ubuntu (derivatives) run `sudo apt install linux-tools`.
 
-- Perf Record
-run `sudo perf record -p <pid you just found>`, wait a few seconds to gather data then press Ctrl+C. You should now have a perf.data file
+- Perf Record:
+  run `sudo perf record -p <pid you just found>`, wait a few seconds to gather data then press Ctrl+C. You should now have a perf.data file
 
-- Make the output file user owned
-run `sudo chown $USER:$USER perf.data`
+- Make the output file user owned:
+  run `sudo chown $USER:$USER perf.data`
 
-- Get build info
-Run zed again and type `zed: about` in the command pallet to get the exact commit.
+- Get build info:
+  Run zed again and type `zed: about` in the command pallet to get the exact commit.
 
 The `data.perf` file can be send to zed together with the exact commit.
 
 ### Later
+
 This can be done by Zed staff.
 
-- Build Zed with symbols.
-Check out the commit found previously and modify `Cargo.toml`.
-Apply the following diff then make a release build.
+- Build Zed with symbols:
+  Check out the commit found previously and modify `Cargo.toml`.
+  Apply the following diff then make a release build.
+
 ```diff
 [profile.release]
 -debug = "limited"
 +debug = "full"
 ```
 
-- Add the symbols to perf database
-`pref buildid-cache -v -a <path to release zed binary>`
+- Add the symbols to perf database:
+  `pref buildid-cache -v -a <path to release zed binary>`
 
-- Resolve the symbols from the db
-For this we are using the undocumented `--symfs` argument :)
-`perf inject -i perf.data -o perf_with_symbols.data`
+- Resolve the symbols from the db:
+  `perf inject -i perf.data -o perf_with_symbols.data`
 
-- Install flamegraph
-`cargo install cargo-flamegraph`
+- Install flamegraph:
+  `cargo install cargo-flamegraph`
 
-- Render the flamegraph
-`flamegraph --perfdata perf_with_symbols.data`
+- Render the flamegraph:
+  `flamegraph --perfdata perf_with_symbols.data`
 
 ## Troubleshooting
 
