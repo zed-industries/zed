@@ -4297,7 +4297,6 @@ impl BackgroundScanner {
                         abs_path: child_abs_path.clone(),
                         path: child_path,
                         is_external: child_entry.is_external,
-                        is_hidden: child_entry.is_hidden,
                         ignore_stack: if child_entry.is_ignored {
                             IgnoreStack::all()
                         } else {
