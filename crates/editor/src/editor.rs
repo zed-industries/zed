@@ -5502,50 +5502,35 @@ impl Editor {
                 && match &query {
                     Some(query) => query.chars().count() < completion_settings.words_min_length,
                     None => completion_settings.words_min_length != 0,
-                });
+                })
+            || (provider.is_some() && completion_settings.words == WordsCompletionMode::Disabled);
 
-        let (mut words, provider_responses) = match &provider {
-            Some(provider) => {
-                let provider_responses = provider.completions(
-                    buffer_excerpt_id,
-                    &buffer,
-                    buffer_position,
-                    completion_context,
-                    window,
-                    cx,
-                );
-
-                let words = match (omit_word_completions, completion_settings.words) {
-                    (true, _) | (_, WordsCompletionMode::Disabled) => {
-                        Task::ready(BTreeMap::default())
-                    }
-                    (false, WordsCompletionMode::Enabled | WordsCompletionMode::Fallback) => cx
-                        .background_spawn(async move {
-                            buffer_snapshot.words_in_range(WordsQuery {
-                                fuzzy_contents: None,
-                                range: word_search_range,
-                                skip_digits,
-                            })
-                        }),
-                };
-
-                (words, provider_responses)
-            }
-            None => {
-                let words = if omit_word_completions {
-                    Task::ready(BTreeMap::default())
-                } else {
-                    cx.background_spawn(async move {
-                        buffer_snapshot.words_in_range(WordsQuery {
-                            fuzzy_contents: None,
-                            range: word_search_range,
-                            skip_digits,
-                        })
-                    })
-                };
-                (words, Task::ready(Ok(Vec::new())))
-            }
+        let mut words = if omit_word_completions {
+            Task::ready(BTreeMap::default())
+        } else {
+            cx.background_spawn(async move {
+                buffer_snapshot.words_in_range(WordsQuery {
+                    fuzzy_contents: None,
+                    range: word_search_range,
+                    skip_digits,
+                })
+            })
         };
+
+        let provider_responses = if let Some(provider) = &provider {
+            provider.completions(
+                buffer_excerpt_id,
+                &buffer,
+                buffer_position,
+                completion_context,
+                window,
+                cx,
+            )
+        } else {
+            Task::ready(Ok(Vec::new()))
+        };
+        
+        let 
 
         let snippet_sort_order = EditorSettings::get_global(cx).snippet_sort_order;
 
