@@ -4987,32 +4987,6 @@ impl Editor {
         }
     }
 
-    fn is_completion_trigger(
-        &self,
-        text: &str,
-        trigger_in_words: bool,
-        menu_is_open: bool,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let position = self.selections.newest_anchor().head();
-        let Some(buffer) = self.buffer.read(cx).buffer_for_anchor(position, cx) else {
-            return false;
-        };
-
-        if let Some(completion_provider) = &self.completion_provider {
-            completion_provider.is_completion_trigger(
-                &buffer,
-                position.text_anchor,
-                text,
-                trigger_in_words,
-                menu_is_open,
-                cx,
-            )
-        } else {
-            false
-        }
-    }
-
     /// If any empty selections is touching the start of its innermost containing autoclose
     /// region, expand it to select the brackets.
     fn select_autoclose_pair(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -5493,27 +5467,32 @@ impl Editor {
             })
         };
 
-        let load_provider_completions = trigger.as_ref().is_none_or(|trigger| {
-            self.is_completion_trigger(trigger, trigger_in_words, completions_source.is_some(), cx)
+        let load_provider_completions = provider.as_ref().is_some_and(|provider| {
+            trigger.as_ref().is_none_or(|trigger| {
+                provider.is_completion_trigger(
+                    &buffer,
+                    position.text_anchor,
+                    trigger,
+                    trigger_in_words,
+                    completions_source.is_some(),
+                    cx,
+                )
+            })
         });
 
-        let provider_responses = if load_provider_completions && let Some(provider) = &provider {
-            let trigger_kind = match &trigger {
-                Some(trigger) if buffer.read(cx).completion_triggers().contains(trigger) => {
-                    CompletionTriggerKind::TRIGGER_CHARACTER
-                }
-                _ => CompletionTriggerKind::INVOKED,
-            };
+        let provider_responses = if let Some(provider) = &provider
+            && load_provider_completions
+        {
+            let trigger_character =
+                trigger.filter(|trigger| buffer.read(cx).completion_triggers().contains(trigger));
             let completion_context = CompletionContext {
-                trigger_character: trigger.as_ref().and_then(|trigger| {
-                    if trigger_kind == CompletionTriggerKind::TRIGGER_CHARACTER {
-                        Some(trigger.clone())
-                    } else {
-                        None
-                    }
-                }),
-                trigger_kind,
+                trigger_kind: match &trigger_character {
+                    Some(_) => CompletionTriggerKind::TRIGGER_CHARACTER,
+                    None => CompletionTriggerKind::INVOKED,
+                },
+                trigger_character,
             };
+
             provider.completions(
                 buffer_excerpt_id,
                 &buffer,
