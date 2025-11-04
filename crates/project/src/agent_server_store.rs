@@ -1821,8 +1821,9 @@ mod extension_agent_tests {
         let fs = fs::FakeFs::new(cx.background_executor.clone());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
-        let project_environment =
-            cx.new(|cx| crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, cx));
+        let project_environment = cx.new(|cx| {
+            crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx)
+        });
 
         let agent = LocalExtensionArchiveAgent {
             fs,

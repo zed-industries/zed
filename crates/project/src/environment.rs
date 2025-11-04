@@ -26,6 +26,7 @@ pub struct ProjectEnvironment {
     environment_error_messages_tx: mpsc::UnboundedSender<String>,
     worktree_store: WeakEntity<WorktreeStore>,
     remote_client: Option<WeakEntity<RemoteClient>>,
+    is_remote_project: bool,
     _tasks: Vec<Task<()>>,
 }
 
@@ -40,6 +41,7 @@ impl ProjectEnvironment {
         cli_environment: Option<HashMap<String, String>>,
         worktree_store: WeakEntity<WorktreeStore>,
         remote_client: Option<WeakEntity<RemoteClient>>,
+        is_remote_project: bool,
         cx: &mut Context<Self>,
     ) -> Self {
         let (tx, mut rx) = mpsc::unbounded();
@@ -60,6 +62,7 @@ impl ProjectEnvironment {
             environment_error_messages_tx: tx,
             worktree_store,
             remote_client,
+            is_remote_project,
             _tasks: vec![task],
         }
     }
@@ -128,6 +131,9 @@ impl ProjectEnvironment {
                     cx,
                 )
             }),
+            None if self.is_remote_project => {
+                Some(self.local_directory_environment(&Shell::System, abs_path, cx))
+            }
             None => Some({
                 let shell = TerminalSettings::get(
                     Some(settings::SettingsLocation {
@@ -160,6 +166,9 @@ impl ProjectEnvironment {
                     cx,
                 )
             }),
+            None if self.is_remote_project => {
+                Some(self.local_directory_environment(&Shell::System, abs_path, cx))
+            }
             None => self
                 .worktree_store
                 .read_with(cx, |worktree_store, cx| {
