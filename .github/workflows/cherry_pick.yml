@@ -23,3 +23,6 @@ jobs:
     - name: cherry_pick::run_cherry_pick::cherry_pick
       run: ./script/cherry-pick ${{ inputs.branch }} ${{ inputs.commit }}
       shell: bash -euxo pipefail {0}
+      env:
+        GIT_COMMITTER_NAME: Zed Zippy
+        GIT_COMMITTER_EMAIL: hi@zed.dev

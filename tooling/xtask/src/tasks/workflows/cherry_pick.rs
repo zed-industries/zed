@@ -22,6 +22,8 @@ pub fn cherry_pick() -> Workflow {
 fn run_cherry_pick(branch: &Input, commit: &Input) -> NamedJob {
     fn cherry_pick(branch: &str, commit: &str) -> Step<Run> {
         named::bash(&format!("./script/cherry-pick {branch} {commit}"))
+            .add_env(("GIT_COMMITTER_NAME", "Zed Zippy"))
+            .add_env(("GIT_COMMITTER_EMAIL", "hi@zed.dev"))
     }
 
     named::job(
