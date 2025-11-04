@@ -3,6 +3,7 @@ use clap::Parser;
 use std::fs;
 use std::path::Path;
 
+mod cherry_pick;
 mod compare_perf;
 mod danger;
 mod nix_build;
@@ -28,6 +29,7 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         ("release_nightly.yml", release_nightly::release_nightly()),
         ("run_tests.yml", run_tests::run_tests()),
         ("release.yml", release::release()),
+        ("cherry_pick.yml", cherry_pick::cherry_pick()),
         ("compare_perf.yml", compare_perf::compare_perf()),
         ("run_unit_evals.yml", run_agent_evals::run_unit_evals()),
         ("run_agent_evals.yml", run_agent_evals::run_agent_evals()),
