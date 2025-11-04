@@ -1,9 +1,10 @@
 use gh_workflow::*;
 
+use crate::tasks::workflows::run_bundling::upload_artifact;
 use crate::tasks::workflows::steps::FluentBuilder;
 use crate::tasks::workflows::{
     runners,
-    steps::{self, NamedJob, named, upload_artifact},
+    steps::{self, NamedJob, named},
     vars::Input,
 };
 
@@ -49,7 +50,7 @@ pub fn run_perf(base: &Input, head: &Input) -> NamedJob {
             .add_step(steps::git_checkout(&head.var()))
             .add_step(cargo_perf_test(head.var()))
             .add_step(compare_runs(head.var(), base.var()))
-            .add_step(upload_artifact("results.md", "results.md"))
+            .add_step(upload_artifact("results.md"))
             .add_step(steps::cleanup_cargo_config(runners::Platform::Linux)),
     )
 }

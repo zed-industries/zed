@@ -34,13 +34,13 @@ jobs:
     - name: compare_perf::run_perf::install_hyperfine
       run: cargo install hyperfine
       shell: bash -euxo pipefail {0}
-    - name: compare_perf::run_perf::git_checkout
+    - name: steps::git_checkout
       run: git fetch origin ${{ inputs.base }} && git checkout ${{ inputs.base }}
       shell: bash -euxo pipefail {0}
     - name: compare_perf::run_perf::cargo_perf_test
       run: cargo perf-test -p gpui -- --json=${{ inputs.base }}
       shell: bash -euxo pipefail {0}
-    - name: compare_perf::run_perf::git_checkout
+    - name: steps::git_checkout
       run: git fetch origin ${{ inputs.head }} && git checkout ${{ inputs.head }}
       shell: bash -euxo pipefail {0}
     - name: compare_perf::run_perf::cargo_perf_test
