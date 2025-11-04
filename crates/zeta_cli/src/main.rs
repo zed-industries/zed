@@ -539,14 +539,19 @@ async fn zeta2_predict(
     }
 
     refresh_task.await.context("context retrieval failed")?;
-    let prediction = prediction_task.unwrap().await?.context("No prediction")?;
+    let prediction = prediction_task.unwrap().await?;
 
-    let old_text = prediction.snapshot.text();
-    let new_text = prediction.buffer.update(cx, |buffer, cx| {
-        buffer.edit(prediction.edits.iter().cloned(), None, cx);
-        buffer.text()
-    })?;
-    result.diff = language::unified_diff(&old_text, &new_text);
+    result.diff = prediction
+        .map(|prediction| {
+            let old_text = prediction.snapshot.text();
+            let new_text = prediction.buffer.update(cx, |buffer, cx| {
+                buffer.edit(prediction.edits.iter().cloned(), None, cx);
+                buffer.text()
+            })?;
+            anyhow::Ok(language::unified_diff(&old_text, &new_text))
+        })
+        .transpose()?
+        .unwrap_or_default();
     result.excerpts_text = excerpts_text;
 
     result.planning_search_time =
