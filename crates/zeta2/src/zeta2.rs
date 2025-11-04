@@ -707,7 +707,6 @@ impl Zeta {
             .collect::<Vec<_>>();
 
         let request_task = cx.background_spawn({
-            let active_snapshot = active_snapshot.clone();
             let active_buffer = active_buffer.clone();
             async move {
                 let index_state = if let Some(index_state) = index_state {
