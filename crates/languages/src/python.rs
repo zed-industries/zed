@@ -1217,6 +1217,7 @@ impl ToolchainLister for PythonToolchainProvider {
                     ShellKind::Cmd => None,
                     ShellKind::Rc => None,
                     ShellKind::Xonsh => None,
+                    ShellKind::Elvish => None,
                 })
             }
             _ => {}
