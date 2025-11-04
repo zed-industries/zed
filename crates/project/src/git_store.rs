@@ -5256,7 +5256,7 @@ impl Repository {
         cx.spawn(async move |this, cx| {
             let job_status = match f(this.clone(), cx).await {
                 Ok(()) => pending_op::JobStatus::Finished,
-                Err(err) if err.is::<Canceled>() => pending_op::JobStatus::Canceled,
+                Err(err) if err.is::<Canceled>() => pending_op::JobStatus::Skipped,
                 Err(err) => return Err(err),
             };
 

@@ -1,4 +1,3 @@
-use futures::channel::oneshot::Canceled;
 use git::repository::RepoPath;
 use std::ops::Add;
 use sum_tree::{ContextLessSummary, Item, KeyedItem};
@@ -16,7 +15,7 @@ pub enum GitStatus {
 pub enum JobStatus {
     Started,
     Finished,
-    Canceled,
+    Skipped,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,6 +34,8 @@ pub struct PendingOp {
 #[derive(Clone, Debug)]
 pub struct PendingOpsSummary {
     pub max_id: PendingOpId,
+    pub staged_count: usize,
+    pub staging_count: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -48,6 +49,8 @@ impl Item for PendingOps {
             max_path: self.repo_path.0.clone(),
             item_summary: PendingOpsSummary {
                 max_id: self.ops.last().map(|op| op.id).unwrap_or_default(),
+                staged_count: self.staged() as usize,
+                staging_count: self.staging() as usize,
             },
         }
     }
@@ -57,11 +60,15 @@ impl ContextLessSummary for PendingOpsSummary {
     fn zero() -> Self {
         Self {
             max_id: PendingOpId::default(),
+            staged_count: 0,
+            staging_count: 0,
         }
     }
 
     fn add_summary(&mut self, summary: &Self) {
         self.max_id = summary.max_id;
+        self.staged_count += summary.staged_count;
+        self.staging_count += summary.staging_count;
     }
 }
 
@@ -96,10 +103,34 @@ impl PendingOps {
     pub fn op_by_id_mut(&mut self, id: PendingOpId) -> Option<&mut PendingOp> {
         self.ops.iter_mut().find(|op| op.id == id)
     }
+
+    /// File is staged if the last job is finished and has status Staged.
+    pub fn staged(&self) -> bool {
+        if let Some(last) = self.ops.last() {
+            if last.git_status == GitStatus::Staged && last.finished() {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// File is staged if the last job is not finished and has status Staged.
+    pub fn staging(&self) -> bool {
+        if let Some(last) = self.ops.last() {
+            if last.git_status == GitStatus::Staged && !last.finished() {
+                return true;
+            }
+        }
+        false
+    }
 }
 
-impl From<Canceled> for JobStatus {
-    fn from(_err: Canceled) -> Self {
-        Self::Canceled
+impl PendingOp {
+    pub fn finished(&self) -> bool {
+        self.job_status == JobStatus::Finished
+    }
+
+    pub fn finished_or_skipped(&self) -> bool {
+        self.job_status == JobStatus::Finished || self.job_status == JobStatus::Skipped
     }
 }
