@@ -116,7 +116,7 @@ use inlays::{InlaySplice, inlay_hints::InlayHintRefreshReason};
 use itertools::{Either, Itertools};
 use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
-    BufferSnapshot, Capability, CharKind, CharScopeContext, CodeLabel, CursorShape,
+    BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
     DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
     IndentSize, Language, OffsetRangeExt, Point, Runnable, RunnableRange, Selection, SelectionGoal,
     TextObject, TransactionId, TreeSitterOptions, WordsQuery,
@@ -5297,6 +5297,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // todo! problem: type `sf @f` into editor.
+        //                completions don't update on second `f` because query is not `None`
+        dbg!(trigger, requested_source);
         if self.pending_rename.is_some() {
             return;
         }
@@ -5323,9 +5326,14 @@ impl Editor {
         };
         let buffer_snapshot = buffer.read(cx).snapshot();
 
+        let classifier = multibuffer_snapshot
+            .char_classifier_at(buffer_position)
+            .scope_context(Some(CharScopeContext::Completion));
+
         let query: Option<Arc<String>> =
             Self::completion_query(&multibuffer_snapshot, buffer_position)
                 .map(|query| query.into());
+        dbg!(&query);
 
         drop(multibuffer_snapshot);
 
@@ -5337,9 +5345,12 @@ impl Editor {
                 Some(CodeContextMenu::Completions(_))
             );
             if menu_is_open {
+                dbg!("hide it!");
                 self.hide_context_menu(window, cx);
             }
         }
+
+        // TODO! query=None is ambiguous. typing `u ` should keep snippet completions open, but then manually triggering completions there should show LSP completions too
 
         let mut ignore_word_threshold = false;
         let provider = match requested_source {
@@ -5364,6 +5375,7 @@ impl Editor {
 
         if let Some(CodeContextMenu::Completions(menu)) = self.context_menu.borrow_mut().as_mut() {
             if filter_completions {
+                dbg!("filter these");
                 menu.filter(
                     query.clone().unwrap_or_default(),
                     buffer_position.text_anchor,
@@ -5376,10 +5388,11 @@ impl Editor {
             // When `is_incomplete` is false, no need to re-query completions when the current query
             // is a suffix of the initial query.
             if !menu.is_incomplete {
+                dbg!("is complete!");
                 // If the new query is a suffix of the old query (typing more characters) and
                 // the previous result was complete, the existing completions can be filtered.
                 //
-                // Note that this is always true for snippet completions.
+                // Note that snippet completions are always complete.
                 let query_matches = match (&menu.initial_query, &query) {
                     (Some(initial_query), Some(query)) => query.starts_with(initial_query.as_ref()),
                     (None, _) => true,
@@ -5399,11 +5412,18 @@ impl Editor {
             }
         };
 
-        let trigger_kind = match trigger {
-            Some(trigger) if buffer.read(cx).completion_triggers().contains(trigger) => {
-                CompletionTriggerKind::TRIGGER_CHARACTER
+        let (trigger_kind, snippets_only) = match trigger {
+            Some(trigger)
+                if buffer.read(cx).completion_triggers().contains(trigger)
+                    || trigger
+                        .chars()
+                        .next()
+                        .is_some_and(|c| classifier.is_word(c)) =>
+            {
+                (CompletionTriggerKind::TRIGGER_CHARACTER, false)
             }
-            _ => CompletionTriggerKind::INVOKED,
+            Some(trigger) => (CompletionTriggerKind::TRIGGER_CHARACTER, true),
+            _ => (CompletionTriggerKind::INVOKED, false),
         };
         let completion_context = CompletionContext {
             trigger_character: trigger.and_then(|trigger| {
@@ -5482,6 +5502,7 @@ impl Editor {
                     &buffer,
                     buffer_position,
                     completion_context,
+                    snippets_only,
                     None,
                     window,
                     cx,
@@ -5565,6 +5586,7 @@ impl Editor {
                 new_text: word.clone(),
                 label: CodeLabel::plain(word, None),
                 match_start: None,
+                snippet_deduplication_key: None,
                 icon_path: None,
                 documentation: None,
                 source: CompletionSource::BufferWord {
@@ -5624,7 +5646,7 @@ impl Editor {
                         return;
                     };
 
-                    // Only valid to take prev_menu because it the new menu is immediately set
+                    // Only valid to take prev_menu because either the new menu is immediately set
                     // below, or the menu is hidden.
                     if let Some(CodeContextMenu::Completions(prev_menu)) =
                         editor.context_menu.borrow_mut().take()
@@ -22669,6 +22691,7 @@ pub trait CompletionProvider {
         buffer: &Entity<Buffer>,
         buffer_position: text::Anchor,
         trigger: CompletionContext,
+        snippets_only: bool,
         text: Option<&str>,
         window: &mut Window,
         cx: &mut Context<Editor>,
@@ -22789,6 +22812,7 @@ fn snippet_completions(
     project: &Project,
     buffer: &Entity<Buffer>,
     buffer_anchor: text::Anchor,
+    classifier: CharClassifier,
     cx: &mut App,
 ) -> Task<Result<CompletionResponse>> {
     let languages = buffer.read(cx).languages_at(buffer_anchor);
@@ -22820,6 +22844,8 @@ fn snippet_completions(
     let executor = cx.background_executor().clone();
 
     cx.background_spawn(async move {
+        let is_word_char = |c| classifier.is_word(c);
+
         let mut is_incomplete = false;
         let mut completions: Vec<Completion> = Vec::new();
 
@@ -22846,21 +22872,23 @@ fn snippet_completions(
                 .iter()
                 .enumerate()
                 .flat_map(|(snippet_ix, snippet)| {
-                    snippet.prefix.iter().map(move |prefix| {
-                        (
-                            snippet_ix,
-                            prefix,
-                            snippet_candidate_suffixes(prefix).count(),
-                        )
-                    })
+                    snippet
+                        .prefix
+                        .iter()
+                        .enumerate()
+                        .map(move |(prefix_ix, prefix)| {
+                            let word_count =
+                                snippet_candidate_suffixes(prefix, is_word_char).count();
+                            ((snippet_ix, prefix_ix), prefix, word_count)
+                        })
                 })
                 .collect_vec();
             sorted_snippet_candidates
                 .sort_unstable_by_key(|(_, _, word_count)| Reverse(*word_count));
-            // One snippet may be matched multiple times, but each prefix may only be matched once.
-            let mut sorted_snippet_candidates_seen = HashSet::<usize>::default();
 
-            let buffer_windows = snippet_candidate_suffixes(&max_buffer_window)
+            // Each prefix may be matched multiple times; the completion menu must filter out duplicates.
+
+            let buffer_windows = snippet_candidate_suffixes(&max_buffer_window, is_word_char)
                 .take(
                     sorted_snippet_candidates
                         .first()
@@ -22874,7 +22902,7 @@ fn snippet_completions(
             let mut matches: Vec<(StringMatch, usize)> = vec![];
 
             let mut snippet_list_cutoff_index = 0;
-            for (buffer_index, buffer_window) in buffer_windows.iter().enumerate() {
+            for (buffer_index, buffer_window) in buffer_windows.iter().enumerate().rev() {
                 let word_count = buffer_index + 1;
                 // Increase `snippet_list_cutoff_index` until we have all of the
                 // snippets with sufficiently many words.
@@ -22910,8 +22938,6 @@ fn snippet_completions(
                                 .flat_map(|c| c.to_lowercase()),
                         )
                     })
-                    // Match each prefix only once
-                    .filter(|(ix, _prefix)| sorted_snippet_candidates_seen.insert(*ix))
                     .map(|(ix, prefix)| StringMatchCandidate::new(ix, prefix))
                     .collect::<Vec<StringMatchCandidate>>();
 
@@ -22946,7 +22972,7 @@ fn snippet_completions(
             }
 
             completions.extend(matches.iter().map(|(string_match, buffer_window_len)| {
-                let (snippet_index, matching_prefix, _snippet_word_count) =
+                let ((snippet_index, prefix_index), matching_prefix, _snippet_word_count) =
                     sorted_snippet_candidates[string_match.candidate_id];
                 let snippet = &snippets[snippet_index];
                 let start = buffer_offset - buffer_window_len;
@@ -23003,6 +23029,7 @@ fn snippet_completions(
                     insert_text_mode: None,
                     confirm: None,
                     match_start: Some(start),
+                    snippet_deduplication_key: Some((snippet_index, prefix_index)),
                 }
             }));
         }
@@ -23022,34 +23049,25 @@ impl CompletionProvider for Entity<Project> {
         buffer: &Entity<Buffer>,
         buffer_position: text::Anchor,
         options: CompletionContext,
+        snippets_only: bool,
         text: Option<&str>,
         _window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Vec<CompletionResponse>>> {
+        dbg!(&options);
         self.update(cx, |project, cx| {
             let buffer_snapshot = buffer.read(cx).snapshot();
+            dbg!("request completions", text, buffer_snapshot.text());
 
-            // if show_all_completions=false, show only snippets
-            let show_all_completions = if let Some(text) = text {
-                let first_char_is_word = match text.chars().next() {
-                    None => return Task::ready(Ok(Vec::new())), // triggered by empty string
-                    Some(first_char) => {
-                        let classifier = buffer_snapshot
-                            .char_classifier_at(buffer_position)
-                            .scope_context(Some(CharScopeContext::Completion));
-                        classifier.is_word(first_char)
-                    }
-                };
-                first_char_is_word || buffer.read(cx).completion_triggers().contains(text)
+            let classifier = buffer_snapshot
+                .char_classifier_at(buffer_position)
+                .scope_context(Some(CharScopeContext::Completion));
+
+            let snippets = snippet_completions(project, buffer, buffer_position, classifier, cx);
+            let project_completions = if snippets_only {
+                Task::ready(Ok(Vec::new()))
             } else {
-                true
-            };
-
-            let snippets = snippet_completions(project, buffer, buffer_position, cx);
-            let project_completions = if show_all_completions {
                 project.completions(buffer, buffer_position, options, cx)
-            } else {
-                Task::ready(Ok(Vec::new())) // snippets only
             };
 
             cx.background_spawn(async move {
@@ -23058,6 +23076,16 @@ impl CompletionProvider for Entity<Project> {
                 if !snippets.completions.is_empty() {
                     responses.push(snippets);
                 }
+                dbg!("new responses:");
+                for r in &responses {
+                    let filter_texts = r
+                        .completions
+                        .iter()
+                        .map(|c| c.label.filter_text())
+                        .collect_vec();
+                    dbg!(filter_texts);
+                }
+                dbg!("end of resp");
                 Ok(responses)
             })
         })
@@ -24272,14 +24300,16 @@ pub(crate) fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> +
 
 /// Given a string of text immediately before the cursor, iterates over possible
 /// strings a snippet could match to. More precisely: returns an iterator over
-/// suffixes of `text` created by splitting at word boundaries (for a particular
-/// definition of "word").
+/// suffixes of `text` created by splitting at word boundaries (before & after
+/// every non-word character).
 ///
 /// Shorter suffixes are returned first.
-pub(crate) fn snippet_candidate_suffixes(text: &str) -> impl std::iter::Iterator<Item = &str> {
+pub(crate) fn snippet_candidate_suffixes(
+    text: &str,
+    is_word_char: impl Fn(char) -> bool,
+) -> impl std::iter::Iterator<Item = &str> {
     let mut prev_index = text.len();
     let mut prev_codepoint = None;
-    let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
     text.char_indices()
         .rev()
         .chain([(0, '\0')])

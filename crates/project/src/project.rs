@@ -480,6 +480,8 @@ pub struct Completion {
     ///
     /// If None, the start of the surrounding word is used.
     pub match_start: Option<text::Anchor>,
+    /// Key used for de-duplicating snippets. If None, always considered unqiue.
+    pub snippet_deduplication_key: Option<(usize, usize)>,
     /// Whether to adjust indentation (the default) or not.
     pub insert_text_mode: Option<InsertTextMode>,
     /// An optional callback to invoke when this completion is confirmed.

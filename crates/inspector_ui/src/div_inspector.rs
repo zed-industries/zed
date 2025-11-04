@@ -645,6 +645,7 @@ impl CompletionProvider for RustStyleCompletionProvider {
         buffer: &Entity<Buffer>,
         position: Anchor,
         _: editor::CompletionContext,
+        _snippets_only: bool,
         _text: Option<&str>,
         _window: &mut Window,
         cx: &mut Context<Editor>,
@@ -666,6 +667,7 @@ impl CompletionProvider for RustStyleCompletionProvider {
                     new_text: format!(".{}()", method.name),
                     label: CodeLabel::plain(method.name.to_string(), None),
                     match_start: None,
+                    snippet_deduplication_key: None,
                     icon_path: None,
                     documentation: method.documentation.map(|documentation| {
                         CompletionDocumentation::MultiLineMarkdown(documentation.into())

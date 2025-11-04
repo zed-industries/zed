@@ -17,7 +17,6 @@ use project::{CompletionDisplayOptions, CompletionSource};
 use task::DebugScenario;
 use task::TaskContext;
 
-use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
@@ -39,6 +38,7 @@ use crate::{
     actions::{ConfirmCodeAction, ConfirmCompletion},
     split_words, styled_runs_for_code_label,
 };
+use collections::{HashSet, VecDeque};
 use settings::SnippetSortOrder;
 
 pub const MENU_GAP: Pixels = px(4.);
@@ -334,6 +334,7 @@ impl CompletionsMenu {
                 new_text: choice.to_string(),
                 label: CodeLabel::plain(choice.to_string(), None),
                 match_start: None,
+                snippet_deduplication_key: None,
                 icon_path: None,
                 documentation: None,
                 confirm: None,
@@ -1030,6 +1031,8 @@ impl CompletionsMenu {
         buffer: &Entity<Buffer>,
         cx: &Context<Editor>,
     ) -> Task<Vec<StringMatch>> {
+        dbg!("do_async_filtering");
+
         let buffer_snapshot = buffer.read(cx).snapshot();
         let background_executor = cx.background_executor().clone();
         let match_candidates = self.match_candidates.clone();
@@ -1074,14 +1077,26 @@ impl CompletionsMenu {
         cx.foreground_executor().spawn(async move {
             let mut matches = matches_task.await;
 
+            let completions_ref = completions.borrow();
+
             if sort_completions {
                 matches = Self::sort_string_matches(
                     matches,
                     Some(&query), // used for non-snippets only
                     snippet_sort_order,
-                    completions.borrow().as_ref(),
+                    &*completions_ref,
                 );
             }
+
+            // Remove duplicate snippet prefixes (e.g., "cool code" will match
+            // the text "c c" in two places; we should only show the longer one)
+            let mut snippets_seen = HashSet::<(usize, usize)>::default();
+            matches.retain(|result| {
+                match completions_ref[result.candidate_id].snippet_deduplication_key {
+                    Some(key) => snippets_seen.insert(key),
+                    None => true,
+                }
+            });
 
             matches
         })

@@ -17177,7 +17177,7 @@ fn test_split_words() {
 #[test]
 fn test_split_words_for_snippet_prefix() {
     fn split(text: &str) -> Vec<&str> {
-        snippet_candidate_suffixes(text).collect()
+        snippet_candidate_suffixes(text, |c| c.is_alphanumeric() || c == '_').collect()
     }
 
     assert_eq!(split("HelloWorld"), &["HelloWorld"]);
@@ -25520,6 +25520,12 @@ async fn test_mixed_completions_with_multi_word_snippet(cx: &mut TestAppContext)
                             description: Some("alt description".to_string()),
                             name: "other name".to_string(),
                         }),
+                        Arc::new(project::snippet_provider::Snippet {
+                            prefix: vec!["ab aa".to_string()],
+                            body: "abcd".to_string(),
+                            description: None,
+                            name: "alphabet".to_string(),
+                        }),
                     ],
                 );
             });
@@ -25539,6 +25545,20 @@ async fn test_mixed_completions_with_multi_word_snippet(cx: &mut TestAppContext)
         })
     };
 
+    // snippets:
+    //  @foo
+    //  foo bar
+    //
+    // when typing:
+    //
+    // when typing:
+    //  - if I type a symbol "open the completions with snippets only"
+    //  - if I type a word character "open the completions menu" (if it had been open snippets only, clear it out)
+    //
+    // stuff we need:
+    //  - filtering logic change?
+    //  - remember how far back the completion started.
+
     let test_cases: &[(&str, &[&str])] = &[
         (
             "un",
@@ -25551,11 +25571,22 @@ async fn test_mixed_completions_with_multi_word_snippet(cx: &mut TestAppContext)
             ],
         ),
         (
+            "u ",
+            &[
+                "unlimit word count",
+                "unlimited unknown",
+                "unlimited word count",
+            ],
+        ),
+        ("u a", &["ab aa"]),
+        (
             "u u",
             &[
-                "unlimited unknown",
+                "unsafe",
+                "unlimited unknown", // ranked highest among snippets
                 "unlimit word count",
                 "unlimited word count",
+                "unsnip",
             ],
         ),
         ("uw c", &["unlimit word count", "unlimited word count"]),
@@ -25579,6 +25610,15 @@ async fn test_mixed_completions_with_multi_word_snippet(cx: &mut TestAppContext)
         ("@", &["@few"]),
         ("@few", &["@few"]),
         ("@ ", &[]),
+        ("a@", &["@few"]),
+        ("a@f", &["@few"]),
+        ("a", &["ab aa"]),
+        ("aa", &[]),
+        ("ab", &["ab aa"]),
+        ("ab ", &["ab aa"]),
+        ("ab a", &["ab aa"]),
+        ("ab ab", &["ab aa"]),
+        ("ab ab aa", &["ab aa"]),
     ];
 
     for &(input_to_simulate, expected_completions) in test_cases {

@@ -110,6 +110,7 @@ impl ContextPickerCompletionProvider {
                 documentation: None,
                 source: project::CompletionSource::Custom,
                 match_start: None,
+                snippet_deduplication_key: None,
                 insert_text_mode: None,
                 // This ensures that when a user accepts this completion, the
                 // completion menu will still be shown after "@category " is
@@ -148,6 +149,7 @@ impl ContextPickerCompletionProvider {
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
             match_start: None,
+            snippet_deduplication_key: None,
             icon_path: Some(icon_for_completion),
             confirm: Some(confirm_completion_callback(
                 thread_entry.title().clone(),
@@ -180,6 +182,7 @@ impl ContextPickerCompletionProvider {
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
             match_start: None,
+            snippet_deduplication_key: None,
             icon_path: Some(icon_path),
             confirm: Some(confirm_completion_callback(
                 rule.title,
@@ -237,6 +240,7 @@ impl ContextPickerCompletionProvider {
             source: project::CompletionSource::Custom,
             icon_path: Some(completion_icon_path),
             match_start: None,
+            snippet_deduplication_key: None,
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 file_name,
@@ -284,6 +288,7 @@ impl ContextPickerCompletionProvider {
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_path),
             match_start: None,
+            snippet_deduplication_key: None,
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 symbol.name.into(),
@@ -317,6 +322,7 @@ impl ContextPickerCompletionProvider {
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_path),
             match_start: None,
+            snippet_deduplication_key: None,
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 url_to_fetch.to_string().into(),
@@ -386,6 +392,7 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             source: project::CompletionSource::Custom,
             match_start: None,
+            snippet_deduplication_key: None,
             insert_text_mode: None,
             // This ensures that when a user accepts this completion, the
             // completion menu will still be shown after "@category " is
@@ -702,6 +709,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         buffer: &Entity<Buffer>,
         buffer_position: Anchor,
         _trigger: CompletionContext,
+        _snippets_only: bool,
         _text: Option<&str>,
         _window: &mut Window,
         cx: &mut Context<Editor>,
@@ -760,6 +768,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 source: project::CompletionSource::Custom,
                                 icon_path: None,
                                 match_start: None,
+                                snippet_deduplication_key: None,
                                 insert_text_mode: None,
                                 confirm: Some(Arc::new({
                                     let editor = editor.clone();
