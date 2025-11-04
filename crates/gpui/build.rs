@@ -358,14 +358,12 @@ mod windows {
         };
 
         if let Some(highest_version) = versions.last() {
-            let res = Ok(Some(
+            return Ok(Some(
                 install_folder_bin
                     .join(highest_version)
                     .join(arch)
                     .join(binary),
             ));
-            dbg!("{:?}", &res);
-            return res;
         }
 
         Ok(None)
