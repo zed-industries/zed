@@ -2682,7 +2682,6 @@ impl BackgroundScannerState {
                     scan_queue: scan_job_tx.clone(),
                     ancestor_inodes,
                     is_external: entry.is_external,
-                    is_hidden: entry.is_hidden,
                 })
                 .unwrap();
         }
@@ -4282,8 +4281,6 @@ impl BackgroundScanner {
                 child_entry.canonical_path = Some(canonical_path.into());
             }
 
-            child_entry.is_hidden = job.is_hidden || self.settings.is_path_hidden(&child_path);
-
             if child_entry.is_dir() {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
                 child_entry.is_always_included =
@@ -4323,6 +4320,10 @@ impl BackgroundScanner {
                 if self.is_path_private(&relative_path) {
                     log::debug!("detected private file: {relative_path:?}");
                     child_entry.is_private = true;
+                }
+                if self.settings.is_path_hidden(&relative_path) {
+                    log::debug!("detected hidden file: {relative_path:?}");
+                    child_entry.is_hidden = true;
                 }
             }
 
@@ -4450,12 +4451,7 @@ impl BackgroundScanner {
                     fs_entry.is_private = self.is_path_private(path);
                     fs_entry.is_always_included =
                         self.settings.is_path_always_included(path, is_dir);
-
-                    let parent_is_hidden = path
-                        .parent()
-                        .and_then(|parent| state.snapshot.entry_for_path(parent))
-                        .map_or(false, |parent_entry| parent_entry.is_hidden);
-                    fs_entry.is_hidden = parent_is_hidden || self.settings.is_path_hidden(path);
+                    fs_entry.is_hidden = self.settings.is_path_hidden(path);
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, is_dir) {
                         if state.should_scan_directory(&fs_entry)
@@ -5036,7 +5032,6 @@ struct ScanJob {
     scan_queue: Sender<ScanJob>,
     ancestor_inodes: TreeSet<u64>,
     is_external: bool,
-    is_hidden: bool,
 }
 
 struct UpdateIgnoreStatusJob {

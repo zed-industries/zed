@@ -42,7 +42,8 @@ impl WorktreeSettings {
     }
 
     pub fn is_path_hidden(&self, path: &RelPath) -> bool {
-        self.hidden_files.is_match(path.as_std_path())
+        path.ancestors()
+            .any(|ancestor| self.hidden_files.is_match(ancestor.as_std_path()))
     }
 }
 
