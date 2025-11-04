@@ -4303,7 +4303,7 @@ impl Repository {
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let id = self.id;
 
-        let mut status = format!("git pull");
+        let mut status = "git pull".to_string();
         if rebase {
             status.push_str(" --rebase");
         }
