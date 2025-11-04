@@ -405,6 +405,7 @@ message Pull {
     string remote_name = 4;
     string branch_name = 5;
     uint64 askpass_id = 6;
+    bool rebase = 7;
 }
 
 message RemoteMessageResponse {
