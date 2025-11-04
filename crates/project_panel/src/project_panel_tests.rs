@@ -2197,6 +2197,68 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         ],
         "File list should be unchanged after failed rename confirmation"
     );
+    panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
+    cx.executor().run_until_parked();
+    // Try to duplicate and check history
+    panel.update_in(cx, |panel, window, cx| {
+        panel.duplicate(&Duplicate, window, cx)
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v src",
+            "    v test",
+            "          first.rs",
+            "          [EDITOR: 'first copy.rs']  <== selected  <== marked",
+            "          second.rs",
+            "          third.rs"
+        ],
+    );
+
+    let confirm = panel.update_in(cx, |panel, window, cx| {
+        panel
+            .filename_editor
+            .update(cx, |editor, cx| editor.set_text("fourth.rs", window, cx));
+        panel.confirm_edit(true, window, cx).unwrap()
+    });
+    confirm.await.unwrap();
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v src",
+            "    v test",
+            "          first.rs",
+            "          fourth.rs  <== selected",
+            "          second.rs",
+            "          third.rs"
+        ],
+        "File list should be different after rename confirmation"
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.update_visible_entries(None, false, false, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    select_path(&panel, "src/test/first.rs", cx);
+    panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
+    cx.executor().run_until_parked();
+
+    workspace
+        .read_with(cx, |this, cx| {
+            assert!(
+                this.recent_navigation_history_iter(cx)
+                    .any(|(project_path, abs_path)| {
+                        project_path.path == Arc::from(rel_path("test/fourth.rs"))
+                            && abs_path == Some(PathBuf::from("/src/test/fourth.rs"))
+                    })
+            );
+        })
+        .unwrap();
 }
 
 #[gpui::test]
