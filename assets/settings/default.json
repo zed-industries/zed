@@ -605,7 +605,7 @@
   // to both the horizontal and vertical delta values while scrolling. Fast scrolling
   // happens when a user holds the alt or option key while scrolling.
   "fast_scroll_sensitivity": 4.0,
-  "relative_line_numbers": false,
+  "relative_line_numbers": "disabled",
   // If 'search_wrap' is disabled, search result do not wrap around the end of the file.
   "search_wrap": true,
   // Search options to enable by default when opening new project and buffer searches.
@@ -1247,6 +1247,9 @@
   // that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes
   // precedence over these inclusions.
   "file_scan_inclusions": [".env*"],
+  // Globs to match files that will be considered "hidden". These files can be hidden from the
+  // project panel by toggling the "hide_hidden" setting.
+  "hidden_files": ["**/.*"],
   // Git gutter behavior configuration.
   "git": {
     // Control whether the git gutter is shown. May take 2 values:

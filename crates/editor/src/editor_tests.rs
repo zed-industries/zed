@@ -3137,6 +3137,77 @@ fn test_newline(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_newline_yaml(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let yaml_language = languages::language("yaml", tree_sitter_yaml::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(yaml_language), cx));
+
+    // Object (between 2 fields)
+    cx.set_state(indoc! {"
+    test:ˇ
+    hello: bye"});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+    test:
+        ˇ
+    hello: bye"});
+
+    // Object (first and single line)
+    cx.set_state(indoc! {"
+    test:ˇ"});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+    test:
+        ˇ"});
+
+    // Array with objects (after first element)
+    cx.set_state(indoc! {"
+    test:
+        - foo: barˇ"});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+    test:
+        - foo: bar
+        ˇ"});
+
+    // Array with objects and comment
+    cx.set_state(indoc! {"
+    test:
+        - foo: bar
+        - bar: # testˇ"});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+    test:
+        - foo: bar
+        - bar: # test
+            ˇ"});
+
+    // Array with objects (after second element)
+    cx.set_state(indoc! {"
+    test:
+        - foo: bar
+        - bar: fooˇ"});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+    test:
+        - foo: bar
+        - bar: foo
+        ˇ"});
+
+    // Array with strings (after first element)
+    cx.set_state(indoc! {"
+    test:
+        - fooˇ"});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+    test:
+        - foo
+        ˇ"});
+}
+
+#[gpui::test]
 fn test_newline_with_old_selections(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -13812,7 +13883,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
 
             cx.set_state(&run.initial_state);
             cx.update_editor(|editor, window, cx| {
-                editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+                editor.show_completions(&ShowCompletions, window, cx);
             });
 
             let counter = Arc::new(AtomicUsize::new(0));
@@ -13872,7 +13943,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
 
     cx.set_state(initial_state);
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(&ShowCompletions, window, cx);
     });
 
     let counter = Arc::new(AtomicUsize::new(0));
@@ -13908,7 +13979,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
 
     cx.set_state(initial_state);
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(&ShowCompletions, window, cx);
     });
     handle_completion_request_with_insert_and_replace(
         &mut cx,
@@ -13995,7 +14066,7 @@ async fn test_completion_replacing_surrounding_text_with_multicursors(cx: &mut T
     "};
     cx.set_state(initial_state);
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(&ShowCompletions, window, cx);
     });
     handle_completion_request_with_insert_and_replace(
         &mut cx,
@@ -14049,7 +14120,7 @@ async fn test_completion_replacing_surrounding_text_with_multicursors(cx: &mut T
     "};
     cx.set_state(initial_state);
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(&ShowCompletions, window, cx);
     });
     handle_completion_request_with_insert_and_replace(
         &mut cx,
@@ -14098,7 +14169,7 @@ async fn test_completion_replacing_surrounding_text_with_multicursors(cx: &mut T
     "};
     cx.set_state(initial_state);
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(&ShowCompletions, window, cx);
     });
     handle_completion_request_with_insert_and_replace(
         &mut cx,
@@ -14249,7 +14320,7 @@ async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppConte
     });
 
     editor.update_in(cx, |editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(&ShowCompletions, window, cx);
     });
 
     fake_server
@@ -14488,7 +14559,7 @@ async fn test_completion(cx: &mut TestAppContext) {
     cx.assert_editor_state("editor.cloˇ");
     assert!(cx.editor(|e, _, _| e.context_menu.borrow_mut().is_none()));
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(&ShowCompletions, window, cx);
     });
     handle_completion_request(
         "editor.<clo|>",
@@ -14887,7 +14958,7 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
         4.5f32
     "});
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions::default(), window, cx);
+        editor.show_completions(&ShowCompletions, window, cx);
     });
     cx.executor().run_until_parked();
     cx.condition(|editor, _| editor.context_menu_visible())
@@ -14913,7 +14984,7 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
         33.35f32
     "});
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions::default(), window, cx);
+        editor.show_completions(&ShowCompletions, window, cx);
     });
     cx.executor().run_until_parked();
     cx.condition(|editor, _| editor.context_menu_visible())
@@ -15337,13 +15408,7 @@ async fn test_as_is_completions(cx: &mut TestAppContext) {
     cx.set_state("fn a() {}\n  nˇ");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(
-            &ShowCompletions {
-                trigger: Some("\n".into()),
-            },
-            window,
-            cx,
-        );
+        editor.trigger_completion_on_input("n", true, window, cx)
     });
     cx.executor().run_until_parked();
 
@@ -15441,7 +15506,7 @@ int fn_branch(bool do_branch1, bool do_branch2);
             })))
         });
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(&ShowCompletions, window, cx);
     });
     cx.executor().run_until_parked();
     cx.update_editor(|editor, window, cx| {
@@ -15490,7 +15555,7 @@ int fn_branch(bool do_branch1, bool do_branch2);
             })))
         });
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(&ShowCompletions, window, cx);
     });
     cx.executor().run_until_parked();
     cx.update_editor(|editor, window, cx| {
@@ -17980,7 +18045,7 @@ async fn test_context_menus_hide_hover_popover(cx: &mut gpui::TestAppContext) {
             }
         });
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(&ShowCompletions, window, cx);
     });
     completion_requests.next().await;
     cx.condition(|editor, _| editor.context_menu_visible())
@@ -24376,7 +24441,7 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
             ])))
         });
     editor.update_in(cx, |editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(&ShowCompletions, window, cx);
     });
     cx.run_until_parked();
     completion_handle.next().await.unwrap();

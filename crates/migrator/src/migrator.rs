@@ -214,6 +214,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         ),
         MigrationType::Json(migrations::m_2025_10_16::restore_code_actions_on_format),
         MigrationType::Json(migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum),
+        MigrationType::Json(migrations::m_2025_10_21::make_relative_line_numbers_an_enum),
     ];
     run_migrations(text, migrations)
 }

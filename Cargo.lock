@@ -1351,6 +1351,7 @@ dependencies = [
  "anyhow",
  "log",
  "simplelog",
+ "tempfile",
  "windows 0.61.3",
  "winresource",
 ]
@@ -6960,7 +6961,7 @@ dependencies = [
 [[package]]
 name = "gh-workflow"
 version = "0.8.0"
-source = "git+https://github.com/zed-industries/gh-workflow?rev=0090c6b6ef82fff02bc8616645953e778d1acc08#0090c6b6ef82fff02bc8616645953e778d1acc08"
+source = "git+https://github.com/zed-industries/gh-workflow?rev=3eaa84abca0778eb54272f45a312cb24f9a0b435#3eaa84abca0778eb54272f45a312cb24f9a0b435"
 dependencies = [
  "async-trait",
  "derive_more 2.0.1",
@@ -6977,7 +6978,7 @@ dependencies = [
 [[package]]
 name = "gh-workflow-macros"
 version = "0.8.0"
-source = "git+https://github.com/zed-industries/gh-workflow?rev=0090c6b6ef82fff02bc8616645953e778d1acc08#0090c6b6ef82fff02bc8616645953e778d1acc08"
+source = "git+https://github.com/zed-industries/gh-workflow?rev=3eaa84abca0778eb54272f45a312cb24f9a0b435#3eaa84abca0778eb54272f45a312cb24f9a0b435"
 dependencies = [
  "heck 0.5.0",
  "quote",
@@ -7116,6 +7117,8 @@ dependencies = [
  "picker",
  "pretty_assertions",
  "project",
+ "recent_projects",
+ "remote",
  "schemars 1.0.4",
  "serde",
  "serde_json",
