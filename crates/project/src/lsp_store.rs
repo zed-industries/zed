@@ -12085,12 +12085,36 @@ impl LspStore {
                         // to know that there's at least one provider. Otherwise, it will never ask us to issue documentdiagnostic calls on their behalf,
                         // as it'll think that they're not supported.
 
+                        let mut did_update_caps = false;
                         server.update_capabilities(|capabilities| {
-                            debug_assert!(capabilities.diagnostic_provider.is_none());
-                            capabilities.diagnostic_provider = Some(caps);
+                            if capabilities.diagnostic_provider.as_ref().is_none_or(
+                                |current_caps| {
+                                    let supports_workspace_diagnostics =
+                                        |capabilities: &DiagnosticServerCapabilities| {
+                                            match capabilities {
+                                            DiagnosticServerCapabilities::Options(
+                                                diagnostic_options,
+                                            ) => diagnostic_options.workspace_diagnostics,
+                                            DiagnosticServerCapabilities::RegistrationOptions(
+                                                diagnostic_registration_options,
+                                            ) => {
+                                                diagnostic_registration_options
+                                                    .diagnostic_options
+                                                    .workspace_diagnostics
+                                            }
+                                        }
+                                        };
+                                    supports_workspace_diagnostics(current_caps)
+                                        < supports_workspace_diagnostics(&caps)
+                                },
+                            ) {
+                                did_update_caps = true;
+                                capabilities.diagnostic_provider = Some(caps);
+                            }
                         });
-
-                        notify_server_capabilities_updated(&server, cx);
+                        if did_update_caps {
+                            notify_server_capabilities_updated(&server, cx);
+                        }
                     }
                 }
                 "textDocument/documentColor" => {
