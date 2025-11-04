@@ -3446,7 +3446,6 @@ where
     let current_value = current_value.copied().unwrap_or(variants()[0]);
 
     EnumVariantDropdown::new("dropdown", current_value, variants(), labels(), {
-        let file = file.clone();
         move |value, cx| {
             if value == current_value {
                 return;
