@@ -25,7 +25,7 @@ jobs:
       uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
-        app-private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
     - name: cherry_pick::run_cherry_pick::cherry_pick
       run: ./script/cherry-pick ${{ inputs.branch }} ${{ inputs.commit }}
       shell: bash -euxo pipefail {0}
