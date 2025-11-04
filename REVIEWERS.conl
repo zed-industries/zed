@@ -8,18 +8,18 @@
 ; to other areas too.
 
 <all>
-  = @ConradIrwin
-  = @HactarCE
-  = @SomeoneToIgnore
-  = @Veykril
   = @cole-miller
+  = @ConradIrwin
   = @danilo-leal
   = @dinocosta
+  = @HactarCE
   = @kubkon
   = @maxdeviant
   = @p1n3appl3
   = @probably-neb
   = @smitbarmase
+  = @SomeoneToIgnore
+  = @Veykril
 
 vim
   = @ConradIrwin
