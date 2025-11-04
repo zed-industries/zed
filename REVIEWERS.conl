@@ -9,23 +9,23 @@
 
 <all>
   = @ConradIrwin
-  = @maxdeviant
-  = @SomeoneToIgnore
-  = @probably-neb
-  = @danilo-leal
-  = @Veykril
-  = @kubkon
-  = @p1n3appl3
-  = @dinocosta
-  = @smitbarmase
-  = @cole-miller
   = @HactarCE
+  = @SomeoneToIgnore
+  = @Veykril
+  = @cole-miller
+  = @danilo-leal
+  = @dinocosta
+  = @kubkon
+  = @maxdeviant
+  = @p1n3appl3
+  = @probably-neb
+  = @smitbarmase
 
 vim
   = @ConradIrwin
-  = @probably-neb
-  = @p1n3appl3
   = @dinocosta
+  = @p1n3appl3
+  = @probably-neb
 
 gpui
   = @mikayla-maki
@@ -35,19 +35,19 @@ git
   = @danilo-leal
 
 linux
-  = @dvdsk
-  = @smitbarmase
-  = @p1n3appl3
   = @cole-miller
+  = @dvdsk
+  = @p1n3appl3
   = @probably-neb
+  = @smitbarmase
 
 windows
-  = @reflectronic
   = @localcc
+  = @reflectronic
 
 pickers
-  = @p1n3appl3
   = @dvdsk
+  = @p1n3appl3
   = @SomeoneToIgnore
 
 audio
@@ -61,27 +61,27 @@ terminal
   = @Veykril
 
 debugger
+  = @Anthony-Eid
   = @kubkon
   = @osiewicz
-  = @Anthony-Eid
 
 extension
   = @kubkon
 
 settings_ui
-  = @probably-neb
-  = @danilo-leal
   = @Anthony-Eid
+  = @danilo-leal
+  = @probably-neb
 
 crashes
   = @p1n3appl3
   = @Veykril
 
 ai
-  = @rtfeldman
-  = @danilo-leal
   = @benbrandt
   = @bennetbo
+  = @danilo-leal
+  = @rtfeldman
 
 design
   = @danilo-leal
@@ -92,16 +92,16 @@ multi_buffer
 
 lsp
   = @osiewicz
-  = @Veykril
   = @smitbarmase
   = @SomeoneToIgnore
+  = @Veykril
 
 languages
   = @osiewicz
-  = @Veykril
+  = @probably-neb
   = @smitbarmase
   = @SomeoneToIgnore
-  = @probably-neb
+  = @Veykril
 
 project_panel
   = @smitbarmase
