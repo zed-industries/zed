@@ -245,6 +245,245 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_vim_modeline_support(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let dir = TempTree::new(json!({
+        ".zed": {
+            "settings.json": r#"{
+                "tab_size": 8,
+                "hard_tabs": false,
+                "ensure_final_newline_on_save": false,
+                "remove_trailing_whitespace_on_save": false,
+                "preferred_line_length": 80,
+                "modeline_lines": 5
+            }"#,
+        },
+        "vim_tabs.rs": "// vim: set ts=4 sw=4 et:\nfn main() {\n    println!(\"Hello, world!\");\n}",
+        "vim_notabs.js": "// vim: set ft=javascript ts=2 noet:\nfunction hello() {\n\tconsole.log(\"Hello from JS\");\n}",
+        "vim_8tabs.ts": "// vim: set ts=8 sts=4 sw=4 noexpandtab:\nfunction hello(): void {\n\tconsole.log(\"Hello from TypeScript\");\n}",
+        "subdir": {
+            "vim_3tabs.js": "/* vim: set ts=3 sw=3 expandtab: */\nfunction hello() {\n   console.log('Hello from nested JS');\n}",
+        },
+        "no_modeline.txt": "This file has no modeline\nJust regular content here",
+    }));
+
+    let path = dir.path();
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree_from_real_fs(path, path).await;
+    let project = Project::test(fs, [path], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(js_lang());
+    language_registry.add(rust_lang());
+    language_registry.add(typescript_lang());
+
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    cx.executor().run_until_parked();
+
+    // Open buffers to trigger modeline processing through language determination
+    let buffer_vim_tabs = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("vim_tabs.rs")), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_vim_notabs = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("vim_notabs.js")), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_vim_8tabs = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("vim_8tabs.ts")), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_vim_3tabs = project
+        .update(cx, |project, cx| {
+            project.open_buffer(
+                (worktree.read(cx).id(), rel_path("subdir/vim_3tabs.js")),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    let buffer_no_modeline = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("no_modeline.txt")), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let settings_for = |buffer: &Entity<Buffer>| {
+            let file = buffer.read(cx).file().unwrap().clone();
+            let file_language = buffer.read(cx).language().cloned();
+            let modeline = buffer.read(cx).modeline();
+            let file = file as _;
+            language_settings(
+                file_language.as_ref().map(|l| l.name()),
+                modeline,
+                Some(&file),
+                cx,
+            )
+            .into_owned()
+        };
+        let settings_vim_tabs = settings_for(&buffer_vim_tabs);
+        let settings_vim_notabs = settings_for(&buffer_vim_notabs);
+        let settings_vim_8tabs = settings_for(&buffer_vim_8tabs);
+        let settings_vim_3tabs = settings_for(&buffer_vim_3tabs);
+        let settings_no_modeline = settings_for(&buffer_no_modeline);
+
+        // Vim modeline in Rust file: "vim: set ts=4 sw=4 et:"
+        assert_eq!(Some(settings_vim_tabs.tab_size), NonZeroU32::new(4));
+        assert_eq!(settings_vim_tabs.hard_tabs, false); // "et" means expand tabs
+
+        // Vim modeline in JavaScript file: "vim: set ft=javascript ts=2 noet:"
+        assert_eq!(Some(settings_vim_notabs.tab_size), NonZeroU32::new(2));
+        assert_eq!(settings_vim_notabs.hard_tabs, true); // "noet" means no expand tabs
+
+        // Vim modeline in TypeScript file: "vim: set ts=8 sts=4 sw=4 noexpandtab:"
+        assert_eq!(Some(settings_vim_8tabs.tab_size), NonZeroU32::new(8));
+        assert_eq!(settings_vim_8tabs.hard_tabs, true); // "noexpandtab" means use tabs
+
+        // Vim modeline in nested JS file: "vim: set ts=3 sw=3 expandtab:"
+        assert_eq!(Some(settings_vim_3tabs.tab_size), NonZeroU32::new(3));
+        assert_eq!(settings_vim_3tabs.hard_tabs, false); // "expandtab" means expand tabs
+
+        // File without modeline should use default settings
+        assert_eq!(Some(settings_no_modeline.tab_size), NonZeroU32::new(8));
+        assert_eq!(settings_no_modeline.hard_tabs, false);
+    });
+}
+
+#[gpui::test]
+async fn test_emacs_modeline_support(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let dir = TempTree::new(json!({
+        ".zed": {
+            "settings.json": r#"{
+                "tab_size": 8,
+                "hard_tabs": false,
+                "ensure_final_newline_on_save": false,
+                "remove_trailing_whitespace_on_save": false,
+                "preferred_line_length": 80,
+                "modeline_lines": 5
+            }"#,
+        },
+        "emacs_tabs.js": "// -*- mode: javascript; tab-width: 4; indent-tabs-mode: t; -*-\nfunction hello() {\n\tconsole.log(\"Hello from JS\");\n}",
+        "emacs_notabs.rs": "// -*- mode: rust; tab-width: 2; indent-tabs-mode: nil; -*-\nfn main() {\n  println!(\"Hello, world!\");\n}",
+        "emacs_6tabs.ts": "// -*- mode: typescript; tab-width: 6; indent-tabs-mode: t; -*-\nfunction hello(): void {\n\t\tconsole.log(\"Hello from TypeScript\");\n}",
+        "subdir": {
+            "emacs_3tabs.js": "/* -*- mode: javascript; tab-width: 3; indent-tabs-mode: nil; -*- */\nfunction hello() {\n   console.log('Hello from nested JS');\n}",
+        },
+        "emacs_localvars.rs": "/* Some Rust code here */\nfn main() {\n   println!(\"test\");\n}\n\n/*\n * Local Variables:\n * tab-width: 5\n * indent-tabs-mode: t\n * End:\n */",
+        "no_modeline.txt": "This file has no modeline\nJust regular content here",
+    }));
+    let path = dir.path();
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree_from_real_fs(path, path).await;
+    let project = Project::test(fs, [path], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(js_lang());
+    language_registry.add(rust_lang());
+    language_registry.add(typescript_lang());
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    cx.executor().run_until_parked();
+
+    // Open buffers to trigger modeline processing through language determination
+    let buffer_emacs_tabs = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("emacs_tabs.js")), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_emacs_notabs = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("emacs_notabs.rs")), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_emacs_6tabs = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("emacs_6tabs.ts")), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_emacs_3tabs = project
+        .update(cx, |project, cx| {
+            project.open_buffer(
+                (worktree.read(cx).id(), rel_path("subdir/emacs_3tabs.js")),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    let buffer_emacs_localvars = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("emacs_localvars.rs")), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_no_modeline = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("no_modeline.txt")), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let settings_for = |buffer: &Entity<Buffer>| {
+            let file = buffer.read(cx).file().unwrap().clone();
+            let file_language = buffer.read(cx).language().cloned();
+            let modeline = buffer.read(cx).modeline();
+            language_settings(
+                file_language.as_ref().map(|l| l.name()),
+                modeline,
+                Some(&file),
+                cx,
+            )
+            .into_owned()
+        };
+        let settings_emacs_tabs = settings_for(&buffer_emacs_tabs);
+        let settings_emacs_notabs = settings_for(&buffer_emacs_notabs);
+        let settings_emacs_6tabs = settings_for(&buffer_emacs_6tabs);
+        let settings_emacs_3tabs = settings_for(&buffer_emacs_3tabs);
+        let settings_emacs_localvars = settings_for(&buffer_emacs_localvars);
+        let settings_no_modeline = settings_for(&buffer_no_modeline);
+
+        // Emacs modeline in JS file: "mode: javascript; tab-width: 4; indent-tabs-mode: t;"
+        assert_eq!(Some(settings_emacs_tabs.tab_size), NonZeroU32::new(4));
+        assert_eq!(settings_emacs_tabs.hard_tabs, true); // "indent-tabs-mode: t" means use tabs
+
+        // Emacs modeline in Rust file: "mode: rust; tab-width: 2; indent-tabs-mode: nil;"
+        assert_eq!(Some(settings_emacs_notabs.tab_size), NonZeroU32::new(2));
+        assert_eq!(settings_emacs_notabs.hard_tabs, false); // "indent-tabs-mode: nil" means expand tabs
+
+        // Emacs modeline in TypeScript file: "mode: typescript; tab-width: 6; indent-tabs-mode: t;"
+        assert_eq!(Some(settings_emacs_6tabs.tab_size), NonZeroU32::new(6));
+        assert_eq!(settings_emacs_6tabs.hard_tabs, true); // "indent-tabs-mode: t" means use tabs
+
+        // Emacs modeline in nested JS file: "mode: javascript; tab-width: 3; indent-tabs-mode: nil;"
+        assert_eq!(Some(settings_emacs_3tabs.tab_size), NonZeroU32::new(3));
+        assert_eq!(settings_emacs_3tabs.hard_tabs, false); // "indent-tabs-mode: nil" means expand tabs
+
+        // Emacs Local Variables in Rust file: "tab-width: 5" and "indent-tabs-mode: t"
+        assert_eq!(Some(settings_emacs_localvars.tab_size), NonZeroU32::new(5));
+        assert_eq!(settings_emacs_localvars.hard_tabs, true); // "indent-tabs-mode: t" means use tabs
+
+        // File without modeline should use default settings
+        assert_eq!(Some(settings_no_modeline.tab_size), NonZeroU32::new(8));
+        assert_eq!(settings_no_modeline.hard_tabs, false);
+    });
+}
+
+#[gpui::test]
 async fn test_git_provider_project_setting(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.update(|cx| {
