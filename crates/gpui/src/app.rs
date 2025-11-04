@@ -421,7 +421,7 @@ impl SystemWindowTabController {
     /// Insert a tab into a tab group.
     pub fn add_tab(cx: &mut App, id: WindowId, tabs: Vec<SystemWindowTab>) {
         let mut controller = cx.global_mut::<SystemWindowTabController>();
-        let Some(tab) = tabs.clone().into_iter().find(|tab| tab.id == id) else {
+        let Some(tab) = tabs.iter().find(|tab| tab.id == id).cloned() else {
             return;
         };
 
