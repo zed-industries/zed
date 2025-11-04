@@ -13,11 +13,11 @@ pub struct WorktreeSettings {
     pub project_name: Option<String>,
     /// Whether to prevent this project from being shared in public channels.
     pub prevent_sharing_in_public_channels: bool,
-    pub file_scan_inclusions: PathMatcher,
-    // Mainly useful when a glob contains ** or * for directories
-    pub parent_dir_scan_inclusions: PathMatcher,
-||||||| parent of c0a9841ba3 (file_finder: respect .gitignore and file_scan_inclusions with ** in glob)
     pub file_scan_exclusions: PathMatcher,
+    pub file_scan_inclusions: PathMatcher,
+    /// This field contains all ancestors of the `file_scan_inclusions`. It's used to
+    /// determine whether to terminate worktree scanning for a given dir.
+    pub parent_dir_scan_inclusions: PathMatcher,
     pub private_files: PathMatcher,
 }
 
