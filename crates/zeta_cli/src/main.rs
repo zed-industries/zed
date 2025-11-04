@@ -28,7 +28,9 @@ use project::{Project, ProjectPath, Worktree};
 use reqwest_client::ReqwestClient;
 use serde::Deserialize;
 use serde_json::json;
+use std::fs;
 use std::io::{self, Write};
+use std::path::Path;
 use std::time::{Duration, Instant};
 use std::{collections::HashSet, path::PathBuf, process::exit, str::FromStr, sync::Arc};
 use zeta2::{ContextMode, LlmContextOptions, SearchToolQuery};
@@ -95,7 +97,9 @@ enum Zeta2Command {
         #[clap(long, short, value_enum, default_value_t = PredictionsOutputFormat::Md)]
         format: PredictionsOutputFormat,
         #[clap(long, short)]
-        preds: Option<PathBuf>,
+        pred: Option<PathBuf>,
+        #[clap(long)]
+        re_run: bool,
     },
 }
 
@@ -893,35 +897,56 @@ fn main() {
                     }
                     Zeta2Command::Eval {
                         example_path,
-                        preds,
+                        mut pred,
+                        re_run,
                         ..
                     } => {
-                        let example = NamedExample::load(example_path).unwrap();
+                        let example = NamedExample::load(&example_path).unwrap();
+                        let cache_dir =
+                            Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default())
+                                .join("../../target/zeta-prediction-cache");
+                        fs::create_dir_all(&cache_dir).unwrap();
+                        let cache_preds = cache_dir.join(example_path.file_name().unwrap());
 
-                        let had_preds = preds.is_some();
-                        let predictions = if let Some(Ok(preds)) = preds.map(|path| {
-                            let file_contents = std::fs::read_to_string(path)?;
+                        if !re_run && pred.is_none() && cache_preds.exists() {
+                            log::debug!("Using cached predictions from {}", cache_preds.display());
+                            pred = Some(cache_preds.clone());
+                        }
+
+                        let predictions = if let Some(Ok(preds)) = pred.map(|path| {
+                            let file_contents = fs::read_to_string(path)?;
                             let as_json =
                                 serde_json::from_str::<PredictionDetails>(&file_contents)?;
                             anyhow::Ok(as_json)
                         }) {
-                            log::info!("Loaded predictions from file");
+                            log::debug!("Loaded predictions from file");
                             preds
                         } else {
-                            if had_preds {
-                                log::error!("Failed to deserialize predictions from file, creating new predictions...");
-                            }
                             zeta2_predict(example.clone(), &app_state, cx)
                                 .await
                                 .unwrap()
                         };
 
+                        if !cache_preds.exists() {
+                            fs::write(cache_preds, serde_json::to_string(&predictions).unwrap())
+                                .unwrap();
+                        }
+
                         let evaluation_result = evaluate(&example.example, &predictions);
 
                         println!("# {}\n", example.name);
-                        println!("## Expected Context: \n\n```\n{}\n```\n\n", compare_context(&example.example, &predictions));
-                        println!("## Expected edit prediction:\n\n```diff\n{}\n```\n", example.example.expected_patch);
-                        println!("## Actual edit prediction:\n\n```diff\n{}\n```\n", predictions.diff);
+                        println!(
+                            "## Expected Context: \n\n```\n{}\n```\n\n",
+                            compare_context(&example.example, &predictions)
+                        );
+                        println!(
+                            "## Expected edit prediction:\n\n```diff\n{}\n```\n",
+                            example.example.expected_patch
+                        );
+                        println!(
+                            "## Actual edit prediction:\n\n```diff\n{}\n```\n",
+                            predictions.diff
+                        );
 
                         println!("{}", evaluation_result.to_markdown());
                         let _ = cx.update(|cx| cx.quit());
