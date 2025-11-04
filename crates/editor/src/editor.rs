@@ -16025,7 +16025,6 @@ impl Editor {
         }
 
         fn filtered<'a>(
-            snapshot: EditorSnapshot,
             severity: GoToDiagnosticSeverityFilter,
             diagnostics: impl Iterator<Item = DiagnosticEntryRef<'a, usize>>,
         ) -> impl Iterator<Item = DiagnosticEntryRef<'a, usize>> {
@@ -16033,19 +16032,15 @@ impl Editor {
                 .filter(move |entry| severity.matches(entry.diagnostic.severity))
                 .filter(|entry| entry.range.start != entry.range.end)
                 .filter(|entry| !entry.diagnostic.is_unnecessary)
-                .filter(move |entry| !snapshot.intersects_fold(entry.range.start))
         }
 
-        let snapshot = self.snapshot(window, cx);
         let before = filtered(
-            snapshot.clone(),
             severity,
             buffer
                 .diagnostics_in_range(0..selection.start)
                 .filter(|entry| entry.range.start <= selection.start),
         );
         let after = filtered(
-            snapshot,
             severity,
             buffer
                 .diagnostics_in_range(selection.start..buffer.len())
@@ -16084,6 +16079,10 @@ impl Editor {
         let Some(buffer_id) = buffer.buffer_id_for_anchor(next_diagnostic_start) else {
             return;
         };
+        let snapshot = self.snapshot(window, cx);
+        if snapshot.intersects_fold(next_diagnostic.range.start) {
+            self.unfold_ranges(&[next_diagnostic.range.clone()], true, false, cx);
+        }
         self.change_selections(Default::default(), window, cx, |s| {
             s.select_ranges(vec![
                 next_diagnostic.range.start..next_diagnostic.range.start,
