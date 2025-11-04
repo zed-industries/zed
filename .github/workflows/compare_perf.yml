@@ -47,7 +47,7 @@ jobs:
                     if [ -n "${{ inputs.crate_name }}" ]; then
                         cargo perf-test -p ${{ inputs.crate_name }} -- --json=${{ inputs.base }};
                     else
-                        cargo perf-test -- --json=${{ inputs.base }};
+                        cargo perf-test -p vim -- --json=${{ inputs.base }};
                     fi
       shell: bash -euxo pipefail {0}
     - name: steps::git_checkout
@@ -59,7 +59,7 @@ jobs:
                     if [ -n "${{ inputs.crate_name }}" ]; then
                         cargo perf-test -p ${{ inputs.crate_name }} -- --json=${{ inputs.head }};
                     else
-                        cargo perf-test -- --json=${{ inputs.head }};
+                        cargo perf-test -p vim -- --json=${{ inputs.head }};
                     fi
       shell: bash -euxo pipefail {0}
     - name: compare_perf::run_perf::compare_runs

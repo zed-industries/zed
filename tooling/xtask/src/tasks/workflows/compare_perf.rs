@@ -30,7 +30,7 @@ pub fn run_perf(base: &Input, head: &Input, crate_name: &Input) -> NamedJob {
             if [ -n \"{crate_name}\" ]; then
                 cargo perf-test -p {crate_name} -- --json={ref_name};
             else
-                cargo perf-test -- --json={ref_name};
+                cargo perf-test -p vim -- --json={ref_name};
             fi"
         ))
     }
