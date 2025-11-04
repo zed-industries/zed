@@ -7576,7 +7576,14 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.show_edit_predictions_in_menu() {
+        // Ensure that the edit prediction preview is updated, even when not
+        // enabled, if there's an active edit prediction preview.
+        if self.show_edit_predictions_in_menu()
+            || matches!(
+                self.edit_prediction_preview,
+                EditPredictionPreview::Active { .. }
+            )
+        {
             self.update_edit_prediction_preview(&modifiers, window, cx);
         }
 
