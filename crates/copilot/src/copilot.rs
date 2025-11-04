@@ -964,6 +964,7 @@ impl Copilot {
         let position = position.to_point_utf16(buffer);
         let settings = language_settings(
             buffer.language_at(position).map(|l| l.name()),
+            buffer.modeline(),
             buffer.file(),
             cx,
         );

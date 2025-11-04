@@ -39,6 +39,7 @@ impl Editor {
             if let Some(buffer) = self.buffer().read(cx).as_singleton() {
                 language_settings(
                     buffer.read(cx).language().map(|l| l.name()),
+                    buffer.read(cx).modeline(),
                     buffer.read(cx).file(),
                     cx,
                 )

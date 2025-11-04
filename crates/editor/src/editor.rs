@@ -568,7 +568,7 @@ impl Default for EditorStyle {
 }
 
 pub fn make_inlay_hints_style(cx: &mut App) -> HighlightStyle {
-    let show_background = language_settings::language_settings(None, None, cx)
+    let show_background = language_settings::language_settings(None, None, None, cx)
         .inlay_hints
         .show_background;
 
@@ -5241,11 +5241,13 @@ impl Editor {
             .read(cx)
             .text_anchor_for_position(position, cx)?;
 
+        let modeline = buffer.read(cx).modeline();
         let settings = language_settings::language_settings(
             buffer
                 .read(cx)
                 .language_at(buffer_position)
                 .map(|l| l.name()),
+            modeline,
             buffer.read(cx).file(),
             cx,
         );
@@ -5455,9 +5457,14 @@ impl Editor {
             .language_at(buffer_position)
             .map(|language| language.name());
 
-        let completion_settings = language_settings(language.clone(), buffer_snapshot.file(), cx)
-            .completions
-            .clone();
+        let completion_settings = language_settings(
+            language.clone(),
+            buffer_snapshot.modeline(),
+            buffer_snapshot.file(),
+            cx,
+        )
+        .completions
+        .clone();
 
         let show_completion_documentation = buffer_snapshot
             .settings_at(buffer_position, cx)
@@ -6121,7 +6128,8 @@ impl Editor {
             let buffer = buffer.read(cx);
             let language = buffer.language()?;
             let file = buffer.file();
-            let debug_adapter = language_settings(language.name().into(), file, cx)
+            let modeline = buffer.modeline();
+            let debug_adapter = language_settings(language.name().into(), modeline, file, cx)
                 .debuggers
                 .first()
                 .map(SharedString::from)
@@ -7091,8 +7099,11 @@ impl Editor {
         let buffer = buffer.read(cx);
 
         let file = buffer.file();
+        let modeline = buffer.modeline();
 
-        if !language_settings(buffer.language().map(|l| l.name()), file, cx).show_edit_predictions {
+        if !language_settings(buffer.language().map(|l| l.name()), modeline, file, cx)
+            .show_edit_predictions
+        {
             return EditPredictionSettings::Disabled;
         };
 
@@ -22198,10 +22209,14 @@ fn process_completion_for_edit(
                 CompletionIntent::CompleteWithInsert => false,
                 CompletionIntent::CompleteWithReplace => true,
                 CompletionIntent::Complete | CompletionIntent::Compose => {
-                    let insert_mode =
-                        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
-                            .completions
-                            .lsp_insert_mode;
+                    let insert_mode = language_settings(
+                        buffer.language().map(|l| l.name()),
+                        buffer.modeline(),
+                        buffer.file(),
+                        cx,
+                    )
+                    .completions
+                    .lsp_insert_mode;
                     match insert_mode {
                         LspInsertMode::Insert => false,
                         LspInsertMode::Replace => true,

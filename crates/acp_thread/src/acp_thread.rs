@@ -2094,6 +2094,7 @@ impl AcpThread {
 
                     let settings = language::language_settings::language_settings(
                         buffer.language().map(|l| l.name()),
+                        buffer.modeline(),
                         buffer.file(),
                         cx,
                     );

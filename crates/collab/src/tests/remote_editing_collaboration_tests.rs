@@ -165,8 +165,9 @@ async fn test_sharing_an_ssh_remote_project(
 
     cx_b.read(|cx| {
         let file = buffer_b.read(cx).file();
+        let modeline = buffer_b.read(cx).modeline();
         assert_eq!(
-            language_settings(Some("Rust".into()), file, cx).language_servers,
+            language_settings(Some("Rust".into()), modeline, file, cx).language_servers,
             ["override-rust-analyzer".to_string()]
         )
     });

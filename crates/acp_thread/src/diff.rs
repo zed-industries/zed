@@ -373,6 +373,7 @@ async fn build_buffer_diff(
                 old_text_rope,
                 buffer.language().cloned(),
                 language_registry,
+                buffer.modeline().cloned(),
                 cx,
             )
         })?

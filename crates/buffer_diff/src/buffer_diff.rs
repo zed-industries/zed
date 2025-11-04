@@ -193,8 +193,13 @@ impl BufferDiffSnapshot {
         if let Some(text) = &base_text {
             let base_text_rope = Rope::from(text.as_str());
             base_text_pair = Some((text.clone(), base_text_rope.clone()));
-            let snapshot =
-                language::Buffer::build_snapshot(base_text_rope, language, language_registry, cx);
+            let snapshot = language::Buffer::build_snapshot(
+                base_text_rope,
+                language,
+                language_registry,
+                None,
+                cx,
+            );
             base_text_snapshot = cx.background_spawn(snapshot);
             base_text_exists = true;
         } else {

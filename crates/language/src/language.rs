@@ -12,7 +12,7 @@ mod highlight_map;
 mod language_registry;
 pub mod language_settings;
 mod manifest;
-mod modeline;
+pub mod modeline;
 mod outline;
 pub mod proto;
 mod syntax_map;
@@ -37,6 +37,7 @@ pub use language_registry::{
 };
 use lsp::{CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
 pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQuery};
+pub use modeline::{ModelineSettings, parse_modeline};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{JsonSchema, SchemaGenerator, json_schema};

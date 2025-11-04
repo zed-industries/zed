@@ -1852,7 +1852,12 @@ impl MultiBuffer {
             .and_then(|buffer_id| self.buffer(buffer_id))
             .map(|buffer| {
                 let buffer = buffer.read(cx);
-                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                language_settings(
+                    buffer.language().map(|l| l.name()),
+                    buffer.modeline(),
+                    buffer.file(),
+                    cx,
+                )
             })
             .unwrap_or_else(move || self.language_settings_at(0, cx))
     }
@@ -1864,12 +1869,14 @@ impl MultiBuffer {
     ) -> Cow<'a, LanguageSettings> {
         let mut language = None;
         let mut file = None;
+        let mut modeline = None;
         if let Some((buffer, offset)) = self.point_to_buffer_offset(point, cx) {
             let buffer = buffer.read(cx);
             language = buffer.language_at(offset);
             file = buffer.file();
+            modeline = buffer.modeline();
         }
-        language_settings(language.map(|l| l.name()), file, cx)
+        language_settings(language.map(|l| l.name()), modeline, file, cx)
     }
 
     pub fn for_each_buffer(&self, mut f: impl FnMut(&Entity<Buffer>)) {
@@ -5172,8 +5179,12 @@ impl MultiBufferSnapshot {
         let end_row = MultiBufferRow(range.end.row);
 
         let mut row_indents = self.line_indents(start_row, |buffer| {
-            let settings =
-                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx);
+            let settings = language_settings(
+                buffer.language().map(|l| l.name()),
+                buffer.modeline(),
+                buffer.file(),
+                cx,
+            );
             settings.indent_guides.enabled || ignore_disabled_for_language
         });
 
@@ -5197,7 +5208,12 @@ impl MultiBufferSnapshot {
                 .get_or_insert_with(|| {
                     (
                         buffer.remote_id(),
-                        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx),
+                        language_settings(
+                            buffer.language().map(|l| l.name()),
+                            buffer.modeline(),
+                            buffer.file(),
+                            cx,
+                        ),
                     )
                 })
                 .1;
@@ -5296,6 +5312,7 @@ impl MultiBufferSnapshot {
             .map(|buffer| {
                 language_settings(
                     buffer.language().map(|language| language.name()),
+                    buffer.modeline(),
                     buffer.file(),
                     cx,
                 )
@@ -5310,11 +5327,13 @@ impl MultiBufferSnapshot {
     ) -> Cow<'a, LanguageSettings> {
         let mut language = None;
         let mut file = None;
+        let mut modeline = None;
         if let Some((buffer, offset)) = self.point_to_buffer_offset(point) {
             language = buffer.language_at(offset);
             file = buffer.file();
+            modeline = buffer.modeline();
         }
-        language_settings(language.map(|l| l.name()), file, cx)
+        language_settings(language.map(|l| l.name()), modeline, file, cx)
     }
 
     pub fn language_scope_at<T: ToOffset>(&self, point: T) -> Option<LanguageScope> {

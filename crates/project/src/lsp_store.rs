@@ -64,10 +64,10 @@ use language::{
     Bias, BinaryStatus, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
     DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
     LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller, ManifestDelegate,
-    ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain,
-    Transaction, Unclipped,
+    ManifestName, ModelineSettings, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
+    Toolchain, Transaction, Unclipped,
     language_settings::{FormatOnSave, Formatter, LanguageSettings, language_settings},
-    point_to_lsp,
+    modeline, point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_lsp_edit, deserialize_version, serialize_anchor,
         serialize_lsp_edit, serialize_version,
@@ -1360,9 +1360,13 @@ impl LocalLspStore {
                     .language_servers_for_buffer(buffer, cx)
                     .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
                     .collect::<Vec<_>>();
-                let settings =
-                    language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
-                        .into_owned();
+                let settings = language_settings(
+                    buffer.language().map(|l| l.name()),
+                    buffer.modeline(),
+                    buffer.file(),
+                    cx,
+                )
+                .into_owned();
                 (adapters_and_servers, settings)
             })
         })?;
@@ -4300,7 +4304,53 @@ impl LspStore {
         let file = buffer.file()?;
 
         let content = buffer.as_rope();
-        let available_language = self.languages.language_for_file(file, Some(content), cx);
+
+        let modeline_settings = {
+            let settings_store = cx.global::<SettingsStore>();
+            let modeline_lines = settings_store
+                .raw_user_settings()
+                .and_then(|s| s.content.modeline_lines)
+                .or(settings_store.raw_default_settings().modeline_lines)
+                .unwrap_or(5);
+
+            let mut first_lines = Vec::new();
+            let mut lines = content.chunks().lines();
+            for _ in 0..modeline_lines {
+                if let Some(line) = lines.next() {
+                    first_lines.push(line.to_string());
+                } else {
+                    break;
+                }
+            }
+            let first_lines_ref: Vec<_> = first_lines.iter().map(|line| line.as_str()).collect();
+
+            // For emacs Local Variables, according to the manual:
+            // "The start of the local variables list should be no
+            // more than 3000 characters from the end of the file"
+            // but we take the last modeline_lines lines.
+            let mut last_lines = Vec::new();
+            let mut lines = content.reversed_chunks_in_range(0..content.len()).lines();
+            for _ in 0..modeline_lines {
+                if let Some(line) = lines.next() {
+                    last_lines.push(line.to_string());
+                } else {
+                    break;
+                }
+            }
+            let last_lines_ref: Vec<_> =
+                last_lines.iter().rev().map(|line| line.as_str()).collect();
+            modeline::parse_modeline(&first_lines_ref, &last_lines_ref)
+        };
+
+        let available_language = if let Some(ModelineSettings {
+            language: Some(ref language_name),
+            ..
+        }) = modeline_settings
+        {
+            self.languages.available_language_for_name(language_name)
+        } else {
+            self.languages.language_for_file(file, Some(content), cx)
+        };
         if let Some(available_language) = &available_language {
             if let Some(Ok(Ok(new_language))) = self
                 .languages
@@ -4316,6 +4366,10 @@ impl LspStore {
             });
         }
 
+        buffer_handle.update(cx, |buffer, _cx| {
+            buffer.set_modeline(modeline_settings);
+        });
+
         available_language
     }
 
@@ -4328,6 +4382,7 @@ impl LspStore {
         let buffer = buffer_entity.read(cx);
         let buffer_file = buffer.file().cloned();
         let buffer_id = buffer.remote_id();
+        let buffer_modeline = buffer.modeline().cloned();
         if let Some(local_store) = self.as_local_mut()
             && local_store.registered_buffers.contains_key(&buffer_id)
             && let Some(abs_path) =
@@ -4345,8 +4400,13 @@ impl LspStore {
             }
         });
 
-        let settings =
-            language_settings(Some(new_language.name()), buffer_file.as_ref(), cx).into_owned();
+        let settings = language_settings(
+            Some(new_language.name()),
+            buffer_modeline.as_ref(),
+            buffer_file.as_ref(),
+            cx,
+        )
+        .into_owned();
         let buffer_file = File::from_dyn(buffer_file.as_ref());
 
         let worktree_id = if let Some(file) = buffer_file {
@@ -4607,7 +4667,12 @@ impl LspStore {
             let buffer = buffer.read(cx);
             let buffer_file = File::from_dyn(buffer.file());
             let buffer_language = buffer.language();
-            let settings = language_settings(buffer_language.map(|l| l.name()), buffer.file(), cx);
+            let settings = language_settings(
+                buffer_language.map(|l| l.name()),
+                buffer.modeline(),
+                buffer.file(),
+                cx,
+            );
             if buffer_language.is_some() {
                 language_formatters_to_check.push((
                     buffer_file.map(|f| f.worktree_id(cx)),
@@ -5183,9 +5248,15 @@ impl LspStore {
             .filter(|_| {
                 maybe!({
                     let language = buffer.read(cx).language_at(position)?;
+                    let modeline = buffer.read(cx).modeline();
                     Some(
-                        language_settings(Some(language.name()), buffer.read(cx).file(), cx)
-                            .linked_edits,
+                        language_settings(
+                            Some(language.name()),
+                            modeline,
+                            buffer.read(cx).file(),
+                            cx,
+                        )
+                        .linked_edits,
                     )
                 }) == Some(true)
             })
@@ -5290,6 +5361,7 @@ impl LspStore {
             lsp_command::lsp_formatting_options(
                 language_settings(
                     buffer.language_at(position).map(|l| l.name()),
+                    buffer.modeline(),
                     buffer.file(),
                     cx,
                 )
@@ -5936,11 +6008,13 @@ impl LspStore {
             })
         } else if let Some(local) = self.as_local() {
             let snapshot = buffer.read(cx).snapshot();
+            let modeline = buffer.read(cx).modeline();
             let offset = position.to_offset(&snapshot);
             let scope = snapshot.language_scope_at(offset);
             let language = snapshot.language().cloned();
             let completion_settings = language_settings(
                 language.as_ref().map(|language| language.name()),
+                modeline,
                 buffer.read(cx).file(),
                 cx,
             )

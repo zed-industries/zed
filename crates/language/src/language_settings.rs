@@ -1,6 +1,6 @@
 //! Provides `language`-related settings.
 
-use crate::{File, Language, LanguageName, LanguageServerName};
+use crate::{File, Language, LanguageName, LanguageServerName, ModelineSettings};
 use collections::{FxHashMap, HashMap, HashSet};
 use ec4rs::{
     Properties as EditorconfigProperties,
@@ -27,6 +27,7 @@ pub fn init(cx: &mut App) {
 /// Returns the settings for the specified language from the provided file.
 pub fn language_settings<'a>(
     language: Option<LanguageName>,
+    modeline: Option<&ModelineSettings>,
     file: Option<&'a Arc<dyn File>>,
     cx: &'a App,
 ) -> Cow<'a, LanguageSettings> {
@@ -34,7 +35,7 @@ pub fn language_settings<'a>(
         worktree_id: f.worktree_id(cx),
         path: f.path().as_ref(),
     });
-    AllLanguageSettings::get(location, cx).language(location, language.as_ref(), cx)
+    AllLanguageSettings::get(location, cx).language(location, language.as_ref(), modeline, cx)
 }
 
 /// Returns the settings for all languages from the provided file.
@@ -430,6 +431,7 @@ impl AllLanguageSettings {
         &'a self,
         location: Option<SettingsLocation<'a>>,
         language_name: Option<&LanguageName>,
+        modeline: Option<&ModelineSettings>,
         cx: &'a App,
     ) -> Cow<'a, LanguageSettings> {
         let settings = language_name
@@ -440,13 +442,17 @@ impl AllLanguageSettings {
             cx.global::<SettingsStore>()
                 .editorconfig_properties(location.worktree_id, location.path)
         });
-        if let Some(editorconfig_properties) = editorconfig_properties {
+        let mut lang_settings = if let Some(editorconfig_properties) = editorconfig_properties {
             let mut settings = settings.clone();
             merge_with_editorconfig(&mut settings, &editorconfig_properties);
             Cow::Owned(settings)
         } else {
             Cow::Borrowed(settings)
+        };
+        if let Some(modeline) = modeline {
+            merge_with_modeline(lang_settings.to_mut(), modeline);
         }
+        lang_settings
     }
 
     /// Returns whether edit predictions are enabled for the given path.
@@ -456,7 +462,7 @@ impl AllLanguageSettings {
 
     /// Returns whether edit predictions are enabled for the given language and path.
     pub fn show_edit_predictions(&self, language: Option<&Arc<Language>>, cx: &App) -> bool {
-        self.language(None, language.map(|l| l.name()).as_ref(), cx)
+        self.language(None, language.map(|l| l.name()).as_ref(), None, cx)
             .show_edit_predictions
     }
 
@@ -464,6 +470,23 @@ impl AllLanguageSettings {
     pub fn edit_predictions_mode(&self) -> EditPredictionsMode {
         self.edit_predictions.mode
     }
+}
+
+fn merge_with_modeline(settings: &mut LanguageSettings, modeline: &ModelineSettings) {
+    fn merge<T>(target: &mut T, value: Option<T>) {
+        if let Some(value) = value {
+            *target = value;
+        }
+    }
+
+    merge(&mut settings.tab_size, modeline.tab_size);
+    merge(&mut settings.hard_tabs, modeline.hard_tabs);
+    merge(
+        &mut settings.preferred_line_length,
+        modeline.preferred_line_length.map(|v| u32::from(v)),
+    );
+    merge(&mut settings.auto_indent, modeline.auto_indent);
+    // TODO: support more modeline settings
 }
 
 fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigProperties) {

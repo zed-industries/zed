@@ -825,7 +825,7 @@ impl ContextProvider for PythonContextProvider {
 
 fn selected_test_runner(location: Option<&Arc<dyn language::File>>, cx: &App) -> TestRunner {
     const TEST_RUNNER_VARIABLE: &str = "TEST_RUNNER";
-    language_settings(Some(LanguageName::new("Python")), location, cx)
+    language_settings(Some(LanguageName::new("Python")), None, location, cx)
         .tasks
         .variables
         .get(TEST_RUNNER_VARIABLE)
