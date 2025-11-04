@@ -19,7 +19,7 @@ use futures::{StreamExt, stream::FuturesUnordered};
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Corner, Div,
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
-    Focusable, IsZero, KeyContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point,
+    Focusable, KeyContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point,
     PromptLevel, Render, ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
     actions, anchored, deferred, prelude::*,
 };
@@ -3101,18 +3101,11 @@ impl Pane {
                 }
             })
             .children(pinned_tabs.len().ne(&0).then(|| {
-                let max_scroll = self.tab_bar_scroll_handle.max_offset().width;
-                // We need to check both because offset returns delta values even when the scroll handle is not scrollable
-                let is_scrollable = !max_scroll.is_zero();
-                let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
-                let has_active_unpinned_tab = self.active_item_index >= self.pinned_tab_count;
-                h_flex()
-                    .children(pinned_tabs)
-                    .when(is_scrollable && is_scrolled, |this| {
-                        this.when(has_active_unpinned_tab, |this| this.border_r_2())
-                            .when(!has_active_unpinned_tab, |this| this.border_r_1())
-                            .border_color(cx.theme().colors().border)
-                    })
+                // Removed conditional border to fix layout thrashing bug (#41467).
+                // The border was conditionally applied based on scroll state, which created
+                // a circular dependency: border affects layout → layout affects scrollability
+                // → scrollability determines border → infinite loop.
+                h_flex().children(pinned_tabs)
             }))
             .child(
                 h_flex()
