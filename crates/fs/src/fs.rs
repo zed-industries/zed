@@ -58,7 +58,7 @@ use smol::io::AsyncReadExt;
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
 
-use encodings::{Encoding, EncodingOptions, from_utf8, to_utf8};
+use encodings::{Encoding, EncodingOptions};
 #[cfg(any(test, feature = "test-support"))]
 pub use fake_git_repo::{LOAD_HEAD_TEXT_TASK, LOAD_INDEX_TEXT_TASK};
 
@@ -121,9 +121,9 @@ pub trait Fs: Send + Sync {
         &self,
         path: &Path,
         options: &EncodingOptions,
-        buffer_encoding: Option<Arc<Encoding>>,
-    ) -> Result<String> {
-        Ok(to_utf8(self.load_bytes(path).await?, options, buffer_encoding).await?)
+    ) -> Result<(Encoding, String)> {
+        let bytes = self.load_bytes(path).await?;
+        options.process(bytes)
     }
 
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>>;
@@ -689,21 +689,12 @@ impl Fs for RealFs {
         let file = smol::fs::File::create(path).await?;
         let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
 
-        // BOM for UTF-16 is written at the start of the file here because
-        // if BOM is written in the `encode` function of `fs::encodings`, it would be written
-        // twice. Hence, it is written only here.
-        if encoding.get() == encodings::UTF_16BE {
-            // Write BOM for UTF-16BE
-            writer.write_all(&[0xFE, 0xFF]).await?;
-        } else if encoding.get() == encodings::UTF_16LE {
-            // Write BOM for UTF-16LE
-            writer.write_all(&[0xFF, 0xFE]).await?;
+        if let Some(bom) = encoding.bom() {
+            writer.write_all(bom).await?;
         }
 
         for chunk in chunks(text, line_ending) {
-            writer
-                .write_all(&from_utf8(chunk.to_string(), Encoding::new(encoding.get())).await?)
-                .await?
+            writer.write_all(&encoding.encode_chunk(chunk)?).await?
         }
 
         writer.flush().await?;
@@ -2424,15 +2415,18 @@ impl Fs for FakeFs {
         line_ending: LineEnding,
         encoding: Encoding,
     ) -> Result<()> {
-        use encodings::from_utf8;
-
         self.simulate_random_delay().await;
         let path = normalize_path(path);
         let content = chunks(text, line_ending).collect::<String>();
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
         }
-        self.write_file_internal(path, from_utf8(content, encoding).await?, false)?;
+        let mut bytes = Vec::new();
+        if let Some(bom) = encoding.bom() {
+            bytes.extend_from_slice(bom);
+        }
+        bytes.extend_from_slice(&encoding.encode_chunk(&content)?);
+        self.write_file_internal(path, bytes, false)?;
         Ok(())
     }
 

@@ -4,6 +4,11 @@ version = "0.1.0"
 publish.workspace = true
 edition.workspace = true
 
+
+[lib]
+path = "src/encodings.rs"
+doctest = false
+
 [dependencies]
 anyhow.workspace = true
 encoding_rs.workspace = true

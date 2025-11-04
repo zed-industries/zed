@@ -307,7 +307,7 @@ pub mod encodings_ui {
     use serde::Deserialize;
 
     #[derive(PartialEq, Debug, Clone, Action, JsonSchema, Deserialize)]
-    pub struct Toggle(pub Arc<std::path::Path>);
+    pub struct OpenWithEncoding(pub Arc<std::path::Path>);
 
     #[derive(PartialEq, Debug, Clone, Action, JsonSchema, Deserialize)]
     pub struct ForceOpen(pub Arc<std::path::Path>);

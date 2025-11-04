@@ -389,7 +389,7 @@ impl LocalBufferStore {
         let version = buffer.version();
         let buffer_id = buffer.remote_id();
         let file = buffer.file().cloned();
-        let encoding = buffer.encoding.clone();
+        let encoding = buffer.encoding().clone();
 
         if file
             .as_ref()
@@ -399,7 +399,7 @@ impl LocalBufferStore {
         }
 
         let save = worktree.update(cx, |worktree, cx| {
-            worktree.write_file(path.clone(), text, line_ending, (*encoding).clone(), cx)
+            worktree.write_file(path.clone(), text, line_ending, encoding, cx)
         });
 
         cx.spawn(async move |this, cx| {
@@ -528,7 +528,6 @@ impl LocalBufferStore {
                     path: entry.path.clone(),
                     worktree: worktree.clone(),
                     is_private: entry.is_private,
-                    encoding: None,
                 }
             } else {
                 File {
@@ -538,7 +537,6 @@ impl LocalBufferStore {
                     path: old_file.path.clone(),
                     worktree: worktree.clone(),
                     is_private: old_file.is_private,
-                    encoding: None,
                 }
             };
 
@@ -633,20 +631,19 @@ impl LocalBufferStore {
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {
         let options = options.clone();
-        let encoding = options.encoding.clone();
 
         let load_buffer = worktree.update(cx, |worktree, cx| {
             let reservation = cx.reserve_entity();
             let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
 
-            let load_file_task = worktree.load_file(path.as_ref(), &options, None, cx);
+            let load_file_task = worktree.load_file(path.as_ref(), &options, cx);
 
             cx.spawn(async move |_, cx| {
                 let loaded_file = load_file_task.await?;
                 let background_executor = cx.background_executor().clone();
 
-                let buffer = cx.insert_entity(reservation, |_| {
-                    Buffer::build(
+                let buffer = cx.insert_entity(reservation, |cx| {
+                    let mut buffer = Buffer::build(
                         text::Buffer::new(
                             ReplicaId::LOCAL,
                             buffer_id,
@@ -655,7 +652,9 @@ impl LocalBufferStore {
                         ),
                         Some(loaded_file.file),
                         Capability::ReadWrite,
-                    )
+                    );
+                    buffer.set_encoding(loaded_file.encoding, cx);
+                    buffer
                 })?;
 
                 Ok(buffer)
@@ -682,7 +681,6 @@ impl LocalBufferStore {
                             entry_id: None,
                             is_local: true,
                             is_private: false,
-                            encoding: Some(encoding.clone()),
                         })),
                         Capability::ReadWrite,
                     )
@@ -709,10 +707,6 @@ impl LocalBufferStore {
 
                 anyhow::Ok(())
             })??;
-
-            buffer.update(cx, |buffer, _| {
-                buffer.update_encoding(encoding.get().into())
-            })?;
 
             Ok(buffer)
         })

@@ -1,5 +1,4 @@
 use std::{path::Path, sync::Arc};
-use ui::TintColor;
 
 use gpui::{EventEmitter, FocusHandle, Focusable, div};
 use ui::{
@@ -79,7 +78,6 @@ impl Render for InvalidItemView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let abs_path = self.abs_path.clone();
         let path0 = self.abs_path.clone();
-        let path1 = self.abs_path.clone();
 
         v_flex()
             .size_full()
@@ -118,46 +116,25 @@ impl Render for InvalidItemView {
                                     ),
                                 )
                                 .child(
-                                    h_flex()
-                                        .justify_center()
-                                        .child(
-                                            Button::new(
-                                                "open-with-encoding",
-                                                "Open With a Different Encoding",
-                                            )
-                                            .style(ButtonStyle::Outlined)
-                                            .on_click(
-                                                move |_, window, cx| {
-                                                    window.dispatch_action(
-                                                        Box::new(
-                                                            zed_actions::encodings_ui::Toggle(
-                                                                path0.clone(),
-                                                            ),
-                                                        ),
-                                                        cx,
-                                                    )
-                                                },
-                                            ),
+                                    h_flex().justify_center().child(
+                                        Button::new(
+                                            "open-with-encoding",
+                                            "Try a Different Encoding",
                                         )
-                                        .child(
-                                            Button::new(
-                                                "accept-risk-and-open",
-                                                "Accept the Risk and Open",
-                                            )
-                                            .style(ButtonStyle::Tinted(TintColor::Warning))
-                                            .on_click(
-                                                move |_, window, cx| {
-                                                    window.dispatch_action(
-                                                        Box::new(
-                                                            zed_actions::encodings_ui::ForceOpen(
-                                                                path1.clone(),
-                                                            ),
+                                        .style(ButtonStyle::Outlined)
+                                        .on_click(
+                                            move |_, window, cx| {
+                                                window.dispatch_action(
+                                                    Box::new(
+                                                        zed_actions::encodings_ui::OpenWithEncoding(
+                                                            path0.clone(),
                                                         ),
-                                                        cx,
-                                                    );
-                                                },
-                                            ),
+                                                    ),
+                                                    cx,
+                                                )
+                                            },
                                         ),
+                                    ),
                                 )
                         }),
                 ),

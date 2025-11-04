@@ -443,9 +443,8 @@ pub fn initialize_workspace(
             }
         });
 
-        let encoding_indicator = cx.new(|_cx| {
-            encodings_ui::EncodingIndicator::new(None, workspace.weak_handle(), None, None)
-        });
+        let encoding_indicator =
+            cx.new(|_cx| encodings_ui::EncodingIndicator::new(workspace.weak_handle()));
 
         let cursor_position =
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));

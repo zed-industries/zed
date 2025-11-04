@@ -127,7 +127,7 @@ pub struct Buffer {
     has_unsaved_edits: Cell<(clock::Global, bool)>,
     change_bits: Vec<rc::Weak<Cell<bool>>>,
     _subscriptions: Vec<gpui::Subscription>,
-    pub encoding: Arc<Encoding>,
+    encoding: Encoding,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -332,6 +332,8 @@ pub enum BufferEvent {
     DiagnosticsUpdated,
     /// The buffer gained or lost editing capabilities.
     CapabilityChanged,
+    /// The buffer's encoding was changed.
+    EncodingChanged,
 }
 
 /// The file associated with a buffer.
@@ -418,12 +420,7 @@ pub trait LocalFile: File {
     fn abs_path(&self, cx: &App) -> PathBuf;
 
     /// Loads the file contents from disk and returns them as a UTF-8 encoded string.
-    fn load(
-        &self,
-        cx: &App,
-        options: &EncodingOptions,
-        buffer_encoding: Option<Arc<Encoding>>,
-    ) -> Task<Result<String>>;
+    fn load(&self, cx: &App, options: EncodingOptions) -> Task<Result<(Encoding, String)>>;
 
     /// Loads the file's contents from disk.
     fn load_bytes(&self, cx: &App) -> Task<Result<Vec<u8>>>;
@@ -1029,7 +1026,7 @@ impl Buffer {
             has_conflict: false,
             change_bits: Default::default(),
             _subscriptions: Vec::new(),
-            encoding: Arc::new(Encoding::new(encodings::UTF_8)),
+            encoding: Encoding::default(),
         }
     }
 
@@ -1365,11 +1362,6 @@ impl Buffer {
     /// Reloads the contents of the buffer from disk.
     pub fn reload(&mut self, cx: &Context<Self>) -> oneshot::Receiver<Option<Transaction>> {
         let (tx, rx) = futures::channel::oneshot::channel();
-        let encoding = (*self.encoding).clone();
-
-        let buffer_encoding = self.encoding.clone();
-        let options = EncodingOptions::default();
-        options.encoding.set(encoding.get());
 
         let prev_version = self.text.version();
         self.reload_task = Some(cx.spawn(async move |this, cx| {
@@ -1377,14 +1369,20 @@ impl Buffer {
                 let file = this.file.as_ref()?.as_local()?;
 
                 Some((file.disk_state().mtime(), {
-                    file.load(cx, &options, Some(buffer_encoding))
+                    file.load(
+                        cx,
+                        EncodingOptions {
+                            expected: this.encoding,
+                            auto_detect: false,
+                        },
+                    )
                 }))
             })?
             else {
                 return Ok(());
             };
 
-            let new_text = new_text.await?;
+            let (new_encoding, new_text) = new_text.await?;
             let diff = this
                 .update(cx, |this, cx| this.diff(new_text.clone(), cx))?
                 .await;
@@ -1394,6 +1392,9 @@ impl Buffer {
                     this.apply_diff(diff, cx);
                     tx.send(this.finalize_last_transaction().cloned()).ok();
                     this.has_conflict = false;
+                    if new_encoding != this.encoding {
+                        this.set_encoding(new_encoding, cx);
+                    }
                     this.did_reload(this.version(), this.line_ending(), new_mtime, cx);
                 } else {
                     if !diff.edits.is_empty()
@@ -2935,9 +2936,14 @@ impl Buffer {
         !self.has_edits_since(&self.preview_version)
     }
 
+    pub fn encoding(&self) -> Encoding {
+        self.encoding
+    }
+
     /// Update the buffer
-    pub fn update_encoding(&mut self, encoding: Encoding) {
-        self.encoding.set(encoding.get());
+    pub fn set_encoding(&mut self, encoding: Encoding, cx: &mut Context<Self>) {
+        self.encoding = encoding;
+        cx.emit(BufferEvent::EncodingChanged);
     }
 }
 
@@ -5260,12 +5266,7 @@ impl LocalFile for TestFile {
             .join(self.path.as_std_path())
     }
 
-    fn load(
-        &self,
-        _cx: &App,
-        _options: &EncodingOptions,
-        _buffer_encoding: Option<Arc<Encoding>>,
-    ) -> Task<Result<String>> {
+    fn load(&self, _cx: &App, _options: EncodingOptions) -> Task<Result<(Encoding, String)>> {
         unimplemented!()
     }
 

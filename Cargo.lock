@@ -5601,7 +5601,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "editor",
- "encoding_rs",
+ "encodings",
  "fs",
  "futures 0.3.31",
  "fuzzy",

@@ -27,7 +27,7 @@ mod environment;
 use buffer_diff::BufferDiff;
 use context_server_store::ContextServerStore;
 
-use encodings::{Encoding, EncodingOptions};
+use encodings::Encoding;
 pub use environment::ProjectEnvironmentEvent;
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
@@ -218,7 +218,6 @@ pub struct Project {
     settings_observer: Entity<SettingsObserver>,
     toolchain_store: Option<Entity<ToolchainStore>>,
     agent_location: Option<AgentLocation>,
-    pub encoding_options: EncodingOptions,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1229,7 +1228,6 @@ impl Project {
                 toolchain_store: Some(toolchain_store),
 
                 agent_location: None,
-                encoding_options: EncodingOptions::default(),
             }
         })
     }
@@ -1415,7 +1413,6 @@ impl Project {
 
                 toolchain_store: Some(toolchain_store),
                 agent_location: None,
-                encoding_options: EncodingOptions::default(),
             };
 
             // remote server -> local machine handlers
@@ -1669,7 +1666,6 @@ impl Project {
                 remotely_created_models: Arc::new(Mutex::new(RemotelyCreatedModels::default())),
                 toolchain_store: None,
                 agent_location: None,
-                encoding_options: EncodingOptions::default(),
             };
 
             project.set_role(role, cx);
@@ -2720,7 +2716,7 @@ impl Project {
         }
 
         self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.open_buffer(path.into(), &self.encoding_options, cx)
+            buffer_store.open_buffer(path.into(), &Default::default(), cx)
         })
     }
 
@@ -5403,7 +5399,7 @@ impl Project {
         cx.spawn(async move |cx| {
             let file = worktree
                 .update(cx, |worktree, cx| {
-                    worktree.load_file(&rel_path, &Default::default(), None, cx)
+                    worktree.load_file(&rel_path, &Default::default(), cx)
                 })?
                 .await
                 .context("Failed to load settings file")?;
