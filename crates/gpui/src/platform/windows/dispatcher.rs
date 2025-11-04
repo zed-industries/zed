@@ -1,4 +1,5 @@
 use std::{
+    sync::atomic::{AtomicBool, Ordering},
     thread::{ThreadId, current},
     time::Duration,
 };
@@ -21,6 +22,7 @@ use crate::{
 };
 
 pub(crate) struct WindowsDispatcher {
+    pub(crate) wake_posted: AtomicBool,
     main_sender: Sender<Runnable>,
     main_thread_id: ThreadId,
     platform_window_handle: SafeHwnd,
@@ -41,6 +43,7 @@ impl WindowsDispatcher {
             main_thread_id,
             platform_window_handle,
             validation_number,
+            wake_posted: AtomicBool::new(false),
         }
     }
 
@@ -81,15 +84,19 @@ impl PlatformDispatcher for WindowsDispatcher {
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
         match self.main_sender.send(runnable) {
-            Ok(_) => unsafe {
-                PostMessageW(
-                    Some(self.platform_window_handle.as_raw()),
-                    WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
-                    WPARAM(self.validation_number),
-                    LPARAM(0),
-                )
-                .log_err();
-            },
+            Ok(_) => {
+                if !self.wake_posted.swap(true, Ordering::AcqRel) {
+                    unsafe {
+                        PostMessageW(
+                            Some(self.platform_window_handle.as_raw()),
+                            WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
+                            WPARAM(self.validation_number),
+                            LPARAM(0),
+                        )
+                        .log_err();
+                    }
+                }
+            }
             Err(runnable) => {
                 // NOTE: Runnable may wrap a Future that is !Send.
                 //
