@@ -154,6 +154,11 @@ pub enum AssistantConfigurationEvent {
 
 impl EventEmitter<AssistantConfigurationEvent> for AgentConfiguration {}
 
+enum AgentIcon {
+    Name(IconName),
+    Path(SharedString),
+}
+
 impl AgentConfiguration {
     fn render_provider_configuration_block(
         &mut self,
@@ -315,7 +320,7 @@ impl AgentConfiguration {
                                     "Remove Provider",
                                 )
                                 .full_width()
-                                .style(ButtonStyle::Outlined)
+                                .style(ButtonStyle::Filled)
                                 .icon_position(IconPosition::Start)
                                 .icon(IconName::Trash)
                                 .icon_size(IconSize::Small)
@@ -407,7 +412,6 @@ impl AgentConfiguration {
                                             .trigger(
                                                 Button::new("add-provider", "Add Provider")
                                                     .style(ButtonStyle::Filled)
-                                                    .layer(ElevationIndex::ModalSurface)
                                                     .icon_position(IconPosition::Start)
                                                     .icon(IconName::Plus)
                                                     .icon_size(IconSize::Small)
@@ -533,7 +537,6 @@ impl AgentConfiguration {
             .trigger(
                 Button::new("add-server", "Add Server")
                     .style(ButtonStyle::Filled)
-                    .layer(ElevationIndex::ModalSurface)
                     .icon_position(IconPosition::Start)
                     .icon(IconName::Plus)
                     .icon_size(IconSize::Small)
@@ -665,12 +668,12 @@ impl AgentConfiguration {
 
         let (source_icon, source_tooltip) = if is_from_extension {
             (
-                IconName::ZedMcpExtension,
+                IconName::ZedSrcExtension,
                 "This MCP server was installed from an extension.",
             )
         } else {
             (
-                IconName::ZedMcpCustom,
+                IconName::ZedSrcCustom,
                 "This custom MCP server was installed directly.",
             )
         };
@@ -952,9 +955,9 @@ impl AgentConfiguration {
     }
 
     fn render_agent_servers_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let user_defined_agents = self
-            .agent_server_store
-            .read(cx)
+        let agent_server_store = self.agent_server_store.read(cx);
+
+        let user_defined_agents = agent_server_store
             .external_agents()
             .filter(|name| {
                 name.0 != GEMINI_NAME && name.0 != CLAUDE_CODE_NAME && name.0 != CODEX_NAME
@@ -965,7 +968,12 @@ impl AgentConfiguration {
         let user_defined_agents = user_defined_agents
             .into_iter()
             .map(|name| {
-                self.render_agent_server(IconName::Ai, name)
+                let icon = if let Some(icon_path) = agent_server_store.agent_icon(&name) {
+                    AgentIcon::Path(icon_path)
+                } else {
+                    AgentIcon::Name(IconName::Ai)
+                };
+                self.render_agent_server(icon, name, true)
                     .into_any_element()
             })
             .collect::<Vec<_>>();
@@ -991,7 +999,6 @@ impl AgentConfiguration {
                                     .child(
                                         Button::new("add-agent", "Add Agent")
                                             .style(ButtonStyle::Filled)
-                                            .layer(ElevationIndex::ModalSurface)
                                             .icon_position(IconPosition::Start)
                                             .icon(IconName::Plus)
                                             .icon_size(IconSize::Small)
@@ -1022,18 +1029,21 @@ impl AgentConfiguration {
                             ),
                     )
                     .child(self.render_agent_server(
-                        IconName::AiClaude,
+                        AgentIcon::Name(IconName::AiClaude),
                         "Claude Code",
+                        false,
                     ))
                     .child(Divider::horizontal().color(DividerColor::BorderFaded))
                     .child(self.render_agent_server(
-                        IconName::AiOpenAi,
+                        AgentIcon::Name(IconName::AiOpenAi),
                         "Codex",
+                        false,
                     ))
                     .child(Divider::horizontal().color(DividerColor::BorderFaded))
                     .child(self.render_agent_server(
-                        IconName::AiGemini,
+                        AgentIcon::Name(IconName::AiGemini),
                         "Gemini CLI",
+                        false,
                     ))
                     .map(|mut parent| {
                         for agent in user_defined_agents {
@@ -1047,20 +1057,40 @@ impl AgentConfiguration {
 
     fn render_agent_server(
         &self,
-        icon: IconName,
+        icon: AgentIcon,
         name: impl Into<SharedString>,
+        external: bool,
     ) -> impl IntoElement {
-        h_flex().gap_1p5().justify_between().child(
-            h_flex()
-                .gap_1p5()
-                .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
-                .child(Label::new(name.into()))
-                .child(
-                    Icon::new(IconName::Check)
-                        .size(IconSize::Small)
-                        .color(Color::Success),
-                ),
-        )
+        let name = name.into();
+        let icon = match icon {
+            AgentIcon::Name(icon_name) => Icon::new(icon_name)
+                .size(IconSize::Small)
+                .color(Color::Muted),
+            AgentIcon::Path(icon_path) => Icon::from_path(icon_path)
+                .size(IconSize::Small)
+                .color(Color::Muted),
+        };
+
+        let tooltip_id = SharedString::new(format!("agent-source-{}", name));
+        let tooltip_message = format!("The {} agent was installed from an extension.", name);
+
+        h_flex()
+            .gap_1p5()
+            .child(icon)
+            .child(Label::new(name))
+            .when(external, |this| {
+                this.child(
+                    div()
+                        .id(tooltip_id)
+                        .flex_none()
+                        .tooltip(Tooltip::text(tooltip_message))
+                        .child(
+                            Icon::new(IconName::ZedSrcExtension)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        ),
+                )
+            })
     }
 }
 
