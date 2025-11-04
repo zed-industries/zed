@@ -24,7 +24,51 @@ use gpui::Window;
 use gpui::actions;
 use project::ProjectItem;
 use project::ProjectPath;
+use regex::Regex;
 use util::rel_path::RelPath;
+
+#[derive(Debug)]
+struct Projection {
+    source: Regex,
+    target: String,
+}
+
+impl Projection {
+    fn new(source: &str, target: &str) -> Self {
+        // Replace the `*` character in the source string, if such a character
+        // is present, with a capture group, so we can then replace that value
+        // when determining the target.
+        // TODO!: Support for multiple `*` characters?
+        // TODO!: Validation that the number of `{}` in the target matches the
+        // number of `*` on the source.
+        // TODO!: Avoid `unwrap` here by updating `new` to return
+        // `Result<Self>`/`Option<Self>`.
+        let source = Regex::new(&source.replace("*", "(.*)")).unwrap();
+        let target = String::from(target);
+
+        Self { source, target }
+    }
+
+    /// Determines whether the provided path matches this projection's source.
+    /// TODO!: We'll likely want to update this to use `ProjectPath` instead of
+    /// `&str`.
+    fn matches(&self, path: &str) -> bool {
+        self.source.is_match(path)
+    }
+
+    /// Returns the alternate path for the provided path.
+    /// TODO!: Update to work with more than one capture group?
+    fn alternate(&self, path: &str) -> String {
+        // Determine the captures for the path.
+        if let Some(capture) = self.source.captures_iter(path).next() {
+            let (_, [name]) = capture.extract();
+            self.target.replace("{}", name)
+        } else {
+            // TODO!: Can't find capture. Is this a regex without capture group?
+            String::new()
+        }
+    }
+}
 
 actions!(
     vim,
@@ -84,5 +128,34 @@ impl Vim {
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Projection;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    async fn test_matches(_cx: &mut TestAppContext) {
+        let source = "lib/app/*.ex";
+        let target = "test/app/{}_test.exs";
+        let projection = Projection::new(source, target);
+
+        let path = "lib/app/module.ex";
+        assert_eq!(projection.matches(path), true);
+
+        let path = "test/app/module_test.exs";
+        assert_eq!(projection.matches(path), false);
+    }
+
+    #[gpui::test]
+    async fn test_alternate(_cx: &mut TestAppContext) {
+        let source = "lib/app/*.ex";
+        let target = "test/app/{}_test.exs";
+        let projection = Projection::new(source, target);
+
+        let path = "lib/app/module.ex";
+        assert_eq!(projection.alternate(path), "test/app/module_test.exs");
     }
 }
