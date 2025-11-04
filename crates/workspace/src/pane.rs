@@ -3040,6 +3040,21 @@ impl Pane {
                 move |_window, cx| Tooltip::for_action_in("Go Back", &GoBack, &focus_handle, cx)
             });
 
+        let open_aside = IconButton::new("open_aside", IconName::Thread).icon_size(IconSize::Small);
+        // .on_click({
+        //     let entity = cx.entity();
+        //     move |_, window, cx| {
+        //         entity.update(cx, |pane, cx| {
+        //             pane.navigate_backward(&Default::default(), window, cx)
+        //         })
+        //     }
+        // })
+        // .disabled(!self.can_navigate_backward())
+        // .tooltip({
+        //     let focus_handle = focus_handle.clone();
+        //     move |_window, cx| Tooltip::for_action_in("Go Back", &GoBack, &focus_handle, cx)
+        // });
+
         let navigate_forward = IconButton::new("navigate_forward", IconName::ArrowRight)
             .icon_size(IconSize::Small)
             .on_click({
@@ -3080,13 +3095,18 @@ impl Pane {
         }
         let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
         let pinned_tabs = tab_items;
+
+        let render_aside_toggle = true;
         TabBar::new("tab_bar")
+            .when(render_aside_toggle, |tab_bar| {
+                tab_bar.start_child(open_aside)
+            })
             .when(
                 self.display_nav_history_buttons.unwrap_or_default(),
                 |tab_bar| {
                     tab_bar
-                        .start_child(navigate_backward)
-                        .start_child(navigate_forward)
+                        .pre_end_child(navigate_backward)
+                        .pre_end_child(navigate_forward)
                 },
             )
             .map(|tab_bar| {
