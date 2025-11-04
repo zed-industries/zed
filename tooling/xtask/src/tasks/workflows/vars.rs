@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use gh_workflow::{Concurrency, Env, Expression, WorkflowDispatchInput};
+use gh_workflow::{Concurrency, Env, Expression, Step, WorkflowDispatchInput};
 
 use crate::tasks::workflows::{runners::Platform, steps::NamedJob};
 
@@ -34,6 +34,8 @@ secret!(ZED_CLIENT_CHECKSUM_SEED);
 secret!(ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON);
 secret!(ZED_SENTRY_MINIDUMP_ENDPOINT);
 secret!(SLACK_APP_ZED_UNIT_EVALS_BOT_TOKEN);
+secret!(ZED_ZIPPY_APP_ID);
+secret!(ZED_ZIPPY_APP_PRIVATE_KEY);
 
 // todo(ci) make these secrets too...
 var!(AZURE_SIGNING_ACCOUNT_NAME);
@@ -113,6 +115,28 @@ impl PathCondition {
                     &set_by_step, self.name
                 ))),
         }
+    }
+}
+
+pub(crate) struct StepOutput {
+    name: &'static str,
+    step_id: String,
+}
+
+impl StepOutput {
+    pub fn new<T>(step: &Step<T>, name: &'static str) -> Self {
+        Self {
+            name,
+            step_id: step
+                .value
+                .id
+                .clone()
+                .expect("Steps that produce outputs must have an ID"),
+        }
+    }
+
+    pub fn var(&self) -> String {
+        format!("${{{{ steps.{}.outputs.{} }}}}", self.step_id, self.name)
     }
 }
 

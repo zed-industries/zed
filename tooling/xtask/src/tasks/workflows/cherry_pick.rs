@@ -3,7 +3,7 @@ use gh_workflow::*;
 use crate::tasks::workflows::{
     runners,
     steps::{self, NamedJob, named},
-    vars::{self, Input},
+    vars::{self, Input, StepOutput},
 };
 
 pub fn cherry_pick() -> Workflow {
@@ -19,18 +19,34 @@ pub fn cherry_pick() -> Workflow {
         .add_job(cherry_pick.name, cherry_pick.job)
 }
 
+fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {
+    let step = named::uses(
+        "actions",
+        "create-github-app-token",
+        " bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1",
+    ) // v2
+    .add_env(("app-id", vars::ZED_ZIPPY_APP_ID))
+    .add_env(("app-private-key", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
+    .id("get-app-token");
+    let output = StepOutput::new(&step, "token");
+    (step, output)
+}
+
 fn run_cherry_pick(branch: &Input, commit: &Input) -> NamedJob {
-    fn cherry_pick(branch: &str, commit: &str) -> Step<Run> {
+    fn cherry_pick(branch: &str, commit: &str, token: &StepOutput) -> Step<Run> {
         named::bash(&format!("./script/cherry-pick {branch} {commit}"))
             .add_env(("GIT_COMMITTER_NAME", "Zed Zippy"))
             .add_env(("GIT_COMMITTER_EMAIL", "hi@zed.dev"))
-            .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN))
+            .add_env(("GITHUB_TOKEN", token.var()))
     }
+
+    let (authenticate, token) = authenticate_as_zippy();
 
     named::job(
         Job::default()
             .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
-            .add_step(cherry_pick(&branch.var(), &commit.var())),
+            .add_step(authenticate)
+            .add_step(cherry_pick(&branch.var(), &commit.var(), &token)),
     )
 }
