@@ -277,7 +277,6 @@ fn translate_accelerator(msg: &MSG) -> Option<()> {
         return None;
     }
 
-    // Dispatch the key down event and check if it was handled
     let result = unsafe {
         SendMessageW(
             msg.hwnd,

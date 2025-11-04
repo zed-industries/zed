@@ -131,7 +131,7 @@ impl PlatformInput {
                 NSEventType::NSKeyDown => Some(Self::KeyDown(KeyDownEvent {
                     keystroke: parse_keystroke(native_event),
                     is_held: native_event.isARepeat() == YES,
-                    are_modifiers_excessive: false,
+                    prefer_character_input: false,
                 })),
                 NSEventType::NSKeyUp => Some(Self::KeyUp(KeyUpEvent {
                     keystroke: parse_keystroke(native_event),

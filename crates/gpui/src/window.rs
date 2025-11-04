@@ -3558,7 +3558,7 @@ impl Window {
             PlatformInput::KeyDown(KeyDownEvent {
                 keystroke: keystroke.clone(),
                 is_held: false,
-                are_modifiers_excessive: true,
+                prefer_character_input: false,
             }),
             cx,
         );
@@ -3859,7 +3859,7 @@ impl Window {
 
         let skip_bindings = event
             .downcast_ref::<KeyDownEvent>()
-            .filter(|key_down_event| !key_down_event.are_modifiers_excessive)
+            .filter(|key_down_event| key_down_event.prefer_character_input)
             .map(|_| {
                 self.platform_window
                     .take_input_handler()
@@ -3994,7 +3994,7 @@ impl Window {
             let event = KeyDownEvent {
                 keystroke: replay.keystroke.clone(),
                 is_held: false,
-                are_modifiers_excessive: true,
+                prefer_character_input: true,
             };
 
             cx.propagate_event = true;

@@ -347,11 +347,11 @@ impl WindowsWindowInner {
             wparam,
             lparam,
             &mut lock,
-            |keystroke, are_modifiers_excessive| {
+            |keystroke, prefer_character_input| {
                 PlatformInput::KeyDown(KeyDownEvent {
                     keystroke,
                     is_held: lparam.0 & (0x1 << 30) > 0,
-                    are_modifiers_excessive,
+                    prefer_character_input,
                 })
             },
         ) else {
@@ -1343,7 +1343,7 @@ fn parse_normal_key(
         get_keystroke_key(vkey, scan_code as u32, &mut modifiers)
     })?;
 
-    let are_modifiers_excessive = compute_are_modifiers_excessive(vkey, lparam.hiword() & 0xFF);
+    let prefer_character_input = should_prefer_character_input(vkey, lparam.hiword() & 0xFF);
 
     Some((
         Keystroke {
@@ -1351,15 +1351,15 @@ fn parse_normal_key(
             key,
             key_char,
         },
-        are_modifiers_excessive,
+        prefer_character_input,
     ))
 }
 
-fn compute_are_modifiers_excessive(vkey: VIRTUAL_KEY, scan_code: u16) -> bool {
+fn should_prefer_character_input(vkey: VIRTUAL_KEY, scan_code: u16) -> bool {
     let mut keyboard_state = [0u8; 256];
     unsafe {
         if GetKeyboardState(&mut keyboard_state).is_err() {
-            return true;
+            return false;
         }
     }
 
@@ -1373,26 +1373,27 @@ fn compute_are_modifiers_excessive(vkey: VIRTUAL_KEY, scan_code: u16) -> bool {
             0x4,
         )
     };
-
     if result_c < 0 {
-        return true;
+        return false;
     }
 
-    let c = String::from_utf16_lossy(&buffer_c[..result_c as usize]);
+    let c = &buffer_c[..result_c as usize];
+    if char::decode_utf16(c.iter().copied())
+        .next()
+        .and_then(|ch| ch.ok())
+        .map(|ch| ch.is_control())
+        .unwrap_or(true)
+    {
+        return false;
+    }
 
     let ctrl_down = (keyboard_state[VK_CONTROL.0 as usize] & 0x80) != 0;
     let alt_down = (keyboard_state[VK_MENU.0 as usize] & 0x80) != 0;
     let win_down = (keyboard_state[VK_LWIN.0 as usize] & 0x80) != 0
         || (keyboard_state[VK_RWIN.0 as usize] & 0x80) != 0;
-
     let has_modifiers = ctrl_down || alt_down || win_down;
-
     if !has_modifiers {
-        return true;
-    }
-
-    if c.chars().next().map_or(true, |ch| ch.is_control()) {
-        return true;
+        return false;
     }
 
     let mut state_no_modifiers = keyboard_state;
@@ -1415,16 +1416,12 @@ fn compute_are_modifiers_excessive(vkey: VIRTUAL_KEY, scan_code: u16) -> bool {
             0x4,
         )
     };
-
     if result_c_no_modifiers <= 0 {
-        return true;
+        return false;
     }
 
-    let c_no_modifiers =
-        String::from_utf16_lossy(&buffer_c_no_modifiers[..result_c_no_modifiers as usize]);
-
-    // If characters differ, modifiers are NOT excessive (they're essential for the character)
-    c == c_no_modifiers
+    let c_no_modifiers = &buffer_c_no_modifiers[..result_c_no_modifiers as usize];
+    c != c_no_modifiers
 }
 
 fn parse_ime_composition_string(ctx: HIMC, comp_type: IME_COMPOSITION_STRING) -> Option<String> {

@@ -30,7 +30,7 @@ pub struct KeyDownEvent {
     /// When false, the modifiers are essential for character input (e.g., AltGr),
     /// and character input should be prioritized over keybindings.
     /// When true, the modifiers are for keybindings (e.g., Ctrl+A).
-    pub are_modifiers_excessive: bool,
+    pub prefer_character_input: bool,
 }
 
 impl Sealed for KeyDownEvent {}
