@@ -172,6 +172,31 @@ async fn capture_windows(
             );
             output
         }
+        ShellKind::Elvish => {
+            let output = crate::command::new_smol_command(shell_path)
+                .args([
+                    "-c",
+                    &format!(
+                        "cd '{}'; {} --printenv",
+                        directory.display(),
+                        zed_path.display()
+                    ),
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .await?;
+
+            anyhow::ensure!(
+                output.status.success(),
+                "Elvish command failed with {}. stdout: {:?}, stderr: {:?}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            output
+        }
         ShellKind::Nushell => {
             let output = crate::command::new_smol_command(shell_path)
                 .args([

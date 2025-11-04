@@ -60,6 +60,7 @@ pub enum ShellKind {
     Nushell,
     Cmd,
     Xonsh,
+    Elvish,
 }
 
 pub fn get_system_shell() -> String {
@@ -216,6 +217,7 @@ impl fmt::Display for ShellKind {
             ShellKind::Cmd => write!(f, "cmd"),
             ShellKind::Rc => write!(f, "rc"),
             ShellKind::Xonsh => write!(f, "xonsh"),
+            ShellKind::Elvish => write!(f, "elvish"),
         }
     }
 }
@@ -241,6 +243,7 @@ impl ShellKind {
             "tcsh" => ShellKind::Tcsh,
             "rc" => ShellKind::Rc,
             "xonsh" => ShellKind::Xonsh,
+            "elvish" => ShellKind::Elvish,
             "sh" | "bash" | "zsh" => ShellKind::Posix,
             _ if is_windows => ShellKind::PowerShell,
             // Some other shell detected, the user might install and use a
@@ -260,6 +263,7 @@ impl ShellKind {
             Self::Rc => input.to_owned(),
             Self::Nushell => Self::to_nushell_variable(input),
             Self::Xonsh => input.to_owned(),
+            Self::Elvish => input.to_owned(),
         }
     }
 
@@ -386,7 +390,8 @@ impl ShellKind {
             | ShellKind::Csh
             | ShellKind::Tcsh
             | ShellKind::Rc
-            | ShellKind::Xonsh => interactive
+            | ShellKind::Xonsh
+            | ShellKind::Elvish => interactive
                 .then(|| "-i".to_owned())
                 .into_iter()
                 .chain(["-c".to_owned(), combined_command])
@@ -404,7 +409,8 @@ impl ShellKind {
             | ShellKind::Rc
             | ShellKind::Fish
             | ShellKind::Cmd
-            | ShellKind::Xonsh => None,
+            | ShellKind::Xonsh
+            | ShellKind::Elvish => None,
         }
     }
 
@@ -427,7 +433,8 @@ impl ShellKind {
             | ShellKind::Fish
             | ShellKind::PowerShell
             | ShellKind::Nushell
-            | ShellKind::Xonsh => ';',
+            | ShellKind::Xonsh
+            | ShellKind::Elvish => ';',
         }
     }
 
@@ -441,7 +448,7 @@ impl ShellKind {
             | ShellKind::Fish
             | ShellKind::PowerShell
             | ShellKind::Xonsh => "&&",
-            ShellKind::Nushell => ";",
+            ShellKind::Nushell | ShellKind::Elvish => ";",
         }
     }
 
@@ -457,7 +464,8 @@ impl ShellKind {
             | ShellKind::Rc
             | ShellKind::Fish
             | ShellKind::Nushell
-            | ShellKind::Xonsh => arg,
+            | ShellKind::Xonsh
+            | ShellKind::Elvish => arg,
         })
     }
 
@@ -511,7 +519,8 @@ impl ShellKind {
             | ShellKind::Tcsh
             | ShellKind::Posix
             | ShellKind::Rc
-            | ShellKind::Xonsh => "source",
+            | ShellKind::Xonsh
+            | ShellKind::Elvish => "source",
         }
     }
 
@@ -525,7 +534,8 @@ impl ShellKind {
             | ShellKind::Fish
             | ShellKind::PowerShell
             | ShellKind::Nushell
-            | ShellKind::Xonsh => "clear",
+            | ShellKind::Xonsh
+            | ShellKind::Elvish => "clear",
         }
     }
 
@@ -542,7 +552,8 @@ impl ShellKind {
             | ShellKind::Fish
             | ShellKind::PowerShell
             | ShellKind::Nushell
-            | ShellKind::Xonsh => true,
+            | ShellKind::Xonsh
+            | ShellKind::Elvish => true,
         }
     }
 }
