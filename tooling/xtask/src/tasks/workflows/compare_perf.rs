@@ -33,7 +33,7 @@ pub fn run_perf(base: &Input, head: &Input) -> NamedJob {
     fn compare_runs(head: String, base: String) -> Step<Run> {
         // TODO: this should really be swapped...
         named::bash(&format!(
-            "cargo perf-compare {base} {head} --save=results.md"
+            "cargo perf-compare --save=results.md {base} {head}"
         ))
     }
 

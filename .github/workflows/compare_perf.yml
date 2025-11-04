@@ -47,7 +47,7 @@ jobs:
       run: cargo perf-test -p gpui -- --json=${{ inputs.head }}
       shell: bash -euxo pipefail {0}
     - name: compare_perf::run_perf::compare_runs
-      run: cargo perf-compare ${{ inputs.base }} ${{ inputs.head }} --save=results.md
+      run: cargo perf-compare --save=results.md ${{ inputs.base }} ${{ inputs.head }}
       shell: bash -euxo pipefail {0}
     - name: '@actions/upload-artifact results.md'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
