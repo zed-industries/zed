@@ -7,6 +7,7 @@ use menu::{Confirm, SelectNext, SelectPrevious};
 use pretty_assertions::{assert_eq, assert_matches};
 use project::{FS_WATCH_LATENCY, RemoveOptions};
 use serde_json::json;
+use settings::SettingsStore;
 use util::{path, rel_path::rel_path};
 use workspace::{AppState, CloseActiveItem, OpenOptions, ToggleFileFinder, Workspace, open_paths};
 
@@ -654,6 +655,147 @@ async fn test_matching_cancellation(cx: &mut TestAppContext) {
                 .search_matches_only()
                 .as_slice(),
             &matches[0..4]
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_ignored_root_with_file_inclusions(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_inclusions = Some(vec![
+                    "height_demo/**/hi_bonjour".to_string(),
+                    "**/height_1".to_string(),
+                ]);
+            });
+        })
+    });
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/ancestor",
+            json!({
+                ".gitignore": "ignored-root",
+                "ignored-root": {
+                    "happiness": "",
+                    "height": "",
+                    "hi": "",
+                    "hiccup": "",
+                },
+                "tracked-root": {
+                    ".gitignore": "height*",
+                    "happiness": "",
+                    "height": "",
+                    "heights": {
+                        "height_1": "",
+                        "height_2": "",
+                    },
+                    "height_demo": {
+                        "test_1": {
+                            "hi_bonjour": "hi_bonjour",
+                            "hi": "hello",
+                        },
+                        "hihi": "bye",
+                        "test_2": {
+                            "hoi": "nl"
+                        }
+                    },
+                    "height_include": {
+                        "height_1_include": "",
+                        "height_2_include": "",
+                    },
+                    "hi": "",
+                    "hiccup": "",
+                },
+            }),
+        )
+        .await;
+
+    let project = Project::test(
+        app_state.fs.clone(),
+        [
+            Path::new(path!("/ancestor/tracked-root")),
+            Path::new(path!("/ancestor/ignored-root")),
+        ],
+        cx,
+    )
+    .await;
+    let (picker, _workspace, cx) = build_find_picker(project, cx);
+
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .spawn_search(test_path_position("hi"), window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker);
+        assert_eq!(matches.history.len(), 0);
+        assert_eq!(
+            matches.search,
+            vec![
+                rel_path("ignored-root/hi").into(),
+                rel_path("tracked-root/hi").into(),
+                rel_path("ignored-root/hiccup").into(),
+                rel_path("tracked-root/hiccup").into(),
+                rel_path("tracked-root/height_demo/test_1/hi_bonjour").into(),
+                rel_path("ignored-root/height").into(),
+                rel_path("tracked-root/heights/height_1").into(),
+                rel_path("ignored-root/happiness").into(),
+                rel_path("tracked-root/happiness").into(),
+            ],
+            "All ignored files that were indexed are found for default ignored mode"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_ignored_root_with_file_inclusions_repro(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_inclusions = Some(vec!["**/.env".to_string()]);
+            });
+        })
+    });
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/src",
+            json!({
+                ".gitignore": "node_modules",
+                "node_modules": {
+                    "package.json": "// package.json",
+                    ".env": "BAR=FOO"
+                },
+                ".env": "FOO=BAR"
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [Path::new(path!("/src"))], cx).await;
+    let (picker, _workspace, cx) = build_find_picker(project, cx);
+
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .spawn_search(test_path_position("json"), window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker);
+        assert_eq!(matches.history.len(), 0);
+        assert_eq!(
+            matches.search,
+            vec![],
+            "All ignored files that were indexed are found for default ignored mode"
         );
     });
 }

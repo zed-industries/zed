@@ -505,7 +505,7 @@ impl Worktree {
                 project_id,
                 replica_id,
                 snapshot,
-                file_scan_inclusions: settings.file_scan_inclusions.clone(),
+                file_scan_inclusions: settings.parent_dir_scan_inclusions.clone(),
                 background_snapshot: background_snapshot.clone(),
                 updates_tx: Some(background_updates_tx),
                 update_observer: None,
@@ -520,8 +520,10 @@ impl Worktree {
                 while let Some(update) = background_updates_rx.next().await {
                     {
                         let mut lock = background_snapshot.lock();
-                        lock.0
-                            .apply_remote_update(update.clone(), &settings.file_scan_inclusions);
+                        lock.0.apply_remote_update(
+                            update.clone(),
+                            &settings.parent_dir_scan_inclusions,
+                        );
                         lock.1.push(update);
                     }
                     snapshot_updated_tx.send(()).await.ok();
@@ -4290,7 +4292,8 @@ impl BackgroundScanner {
 
             if child_entry.is_dir() {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
-                child_entry.is_always_included = self.settings.is_path_always_included(&child_path);
+                child_entry.is_always_included =
+                    self.settings.is_path_always_included(&child_path, true);
 
                 // Avoid recursing until crash in the case of a recursive symlink
                 if job.ancestor_inodes.contains(&child_entry.inode) {
@@ -4315,7 +4318,8 @@ impl BackgroundScanner {
                 }
             } else {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, false);
-                child_entry.is_always_included = self.settings.is_path_always_included(&child_path);
+                child_entry.is_always_included =
+                    self.settings.is_path_always_included(&child_path, false);
             }
 
             {
@@ -4450,7 +4454,8 @@ impl BackgroundScanner {
                     fs_entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, is_dir);
                     fs_entry.is_external = is_external;
                     fs_entry.is_private = self.is_path_private(path);
-                    fs_entry.is_always_included = self.settings.is_path_always_included(path);
+                    fs_entry.is_always_included =
+                        self.settings.is_path_always_included(path, is_dir);
 
                     let parent_is_hidden = path
                         .parent()
