@@ -11,6 +11,7 @@ use gpui::AsyncApp;
 use language_model::LanguageModelRegistry;
 use project::{Project, ProjectPath};
 use serde::Deserialize;
+use std::cell::OnceCell;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -40,6 +41,8 @@ pub async fn run_zeta2_predict(
     result.write(args.format, std::io::stdout()).unwrap();
 }
 
+const AUTHENTICATED: OnceCell<()> = OnceCell::new();
+
 pub async fn zeta2_predict(
     example: NamedExample,
     app_state: &Arc<ZetaCliAppState>,
@@ -47,20 +50,24 @@ pub async fn zeta2_predict(
 ) -> Result<PredictionDetails> {
     let worktree_path = example.setup_worktree().await?;
 
-    cx.update(|cx| {
-        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-            registry
-                .provider(&zeta2::related_excerpts::MODEL_PROVIDER_ID)
-                .unwrap()
-                .authenticate(cx)
-        })
-    })?
-    .await?;
-
-    app_state
-        .client
-        .sign_in_with_optional_connect(true, cx)
+    if AUTHENTICATED.get().is_some() {
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry
+                    .provider(&zeta2::related_excerpts::MODEL_PROVIDER_ID)
+                    .unwrap()
+                    .authenticate(cx)
+            })
+        })?
         .await?;
+
+        app_state
+            .client
+            .sign_in_with_optional_connect(true, cx)
+            .await?;
+
+        AUTHENTICATED.set(()).unwrap();
+    }
 
     let project = cx.update(|cx| {
         Project::local(
