@@ -11,28 +11,35 @@ use crate::tasks::workflows::{
 pub fn compare_perf() -> Workflow {
     let head = Input::string("head", None);
     let base = Input::string("base", None);
-    let run_perf = run_perf(&base, &head);
+    let crate_name = Input::string("crate_name", Some("".to_owned()));
+    let run_perf = run_perf(&base, &head, &crate_name);
     named::workflow()
         .on(Event::default().workflow_dispatch(
             WorkflowDispatch::default()
                 .add_input(head.name, head.input())
-                .add_input(base.name, base.input()),
+                .add_input(base.name, base.input())
+                .add_input(crate_name.name, crate_name.input()),
         ))
         .add_job(run_perf.name, run_perf.job)
 }
 
-pub fn run_perf(base: &Input, head: &Input) -> NamedJob {
-    fn cargo_perf_test(ref_name: String) -> Step<Run> {
-        // TODO: vim not gpui, and ideally allow args
-        named::bash(&format!("cargo perf-test -p gpui -- --json={ref_name}"))
+pub fn run_perf(base: &Input, head: &Input, crate_name: &Input) -> NamedJob {
+    fn cargo_perf_test(ref_name: &Input, crate_name: &Input) -> Step<Run> {
+        named::bash(&format!(
+            "
+            if [ -n \"{crate_name}\" ]; then
+                cargo perf-test -p {crate_name} -- --json={ref_name};
+            else
+                cargo perf-test -p vim -- --json={ref_name};
+            fi"
+        ))
     }
 
     fn install_hyperfine() -> Step<Run> {
         named::bash("cargo install hyperfine")
     }
 
-    fn compare_runs(head: String, base: String) -> Step<Run> {
-        // TODO: this should really be swapped...
+    fn compare_runs(head: &Input, base: &Input) -> Step<Run> {
         named::bash(&format!(
             "cargo perf-compare --save=results.md {base} {head}"
         ))
@@ -45,11 +52,11 @@ pub fn run_perf(base: &Input, head: &Input) -> NamedJob {
             .add_step(steps::setup_cargo_config(runners::Platform::Linux))
             .map(steps::install_linux_dependencies)
             .add_step(install_hyperfine())
-            .add_step(steps::git_checkout(&base.var()))
-            .add_step(cargo_perf_test(base.var()))
-            .add_step(steps::git_checkout(&head.var()))
-            .add_step(cargo_perf_test(head.var()))
-            .add_step(compare_runs(head.var(), base.var()))
+            .add_step(steps::git_checkout(base))
+            .add_step(cargo_perf_test(base, crate_name))
+            .add_step(steps::git_checkout(head))
+            .add_step(cargo_perf_test(head, crate_name))
+            .add_step(compare_runs(head, base))
             .add_step(upload_artifact("results.md"))
             .add_step(steps::cleanup_cargo_config(runners::Platform::Linux)),
     )

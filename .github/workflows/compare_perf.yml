@@ -12,6 +12,10 @@ on:
         description: base
         required: true
         type: string
+      crate_name:
+        description: crate_name
+        type: string
+        default: ''
 jobs:
   run_perf:
     runs-on: namespace-profile-16x32-ubuntu-2204
@@ -38,13 +42,25 @@ jobs:
       run: git fetch origin ${{ inputs.base }} && git checkout ${{ inputs.base }}
       shell: bash -euxo pipefail {0}
     - name: compare_perf::run_perf::cargo_perf_test
-      run: cargo perf-test -p gpui -- --json=${{ inputs.base }}
+      run: |2-
+
+                    if [ -n "${{ inputs.crate_name }}" ]; then
+                        cargo perf-test -p ${{ inputs.crate_name }} -- --json=${{ inputs.base }};
+                    else
+                        cargo perf-test -p vim -- --json=${{ inputs.base }};
+                    fi
       shell: bash -euxo pipefail {0}
     - name: steps::git_checkout
       run: git fetch origin ${{ inputs.head }} && git checkout ${{ inputs.head }}
       shell: bash -euxo pipefail {0}
     - name: compare_perf::run_perf::cargo_perf_test
-      run: cargo perf-test -p gpui -- --json=${{ inputs.head }}
+      run: |2-
+
+                    if [ -n "${{ inputs.crate_name }}" ]; then
+                        cargo perf-test -p ${{ inputs.crate_name }} -- --json=${{ inputs.head }};
+                    else
+                        cargo perf-test -p vim -- --json=${{ inputs.head }};
+                    fi
       shell: bash -euxo pipefail {0}
     - name: compare_perf::run_perf::compare_runs
       run: cargo perf-compare --save=results.md ${{ inputs.base }} ${{ inputs.head }}
