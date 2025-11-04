@@ -70,6 +70,15 @@ impl TabBar {
         self
     }
 
+    pub fn pre_end_child(mut self, end_child: impl IntoElement) -> Self
+    where
+        Self: Sized,
+    {
+        self.pre_end_children
+            .push(end_child.into_element().into_any());
+        self
+    }
+
     pub fn end_children(mut self, end_children: impl IntoIterator<Item = impl IntoElement>) -> Self
     where
         Self: Sized,
@@ -137,18 +146,31 @@ impl RenderOnce for TabBar {
                             .children(self.children),
                     ),
             )
-            .when(!self.end_children.is_empty(), |this| {
-                this.child(
-                    h_flex()
-                        .flex_none()
-                        .gap(DynamicSpacing::Base04.rems(cx))
-                        .px(DynamicSpacing::Base06.rems(cx))
-                        .border_b_1()
-                        .border_l_1()
-                        .border_color(cx.theme().colors().border)
-                        .children(self.end_children),
-                )
-            })
+            .when(
+                !self.end_children.is_empty() || !self.pre_end_children.is_empty(),
+                |this| {
+                    this.child(
+                        h_flex()
+                            .flex_none()
+                            .gap(DynamicSpacing::Base04.rems(cx))
+                            .px(DynamicSpacing::Base06.rems(cx))
+                            .children(self.pre_end_children)
+                            .border_color(cx.theme().colors().border)
+                            .border_b_1()
+                            .when(!self.end_children.is_empty(), |div| {
+                                div.child(
+                                    h_flex()
+                                        .flex_none()
+                                        .pl(DynamicSpacing::Base04.rems(cx))
+                                        .gap(DynamicSpacing::Base04.rems(cx))
+                                        .border_l_1()
+                                        .border_color(cx.theme().colors().border)
+                                        .children(self.end_children),
+                                )
+                            }),
+                    )
+                },
+            )
     }
 }
 
