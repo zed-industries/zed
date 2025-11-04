@@ -13,6 +13,7 @@ mod mode_indicator;
 mod motion;
 mod normal;
 mod object;
+mod projections;
 mod replace;
 mod rewrap;
 mod state;
@@ -942,6 +943,7 @@ impl Vim {
             visual::register(editor, cx);
             change_list::register(editor, cx);
             digraph::register(editor, cx);
+            projections::register(editor, cx);
 
             if editor.is_focused(window) {
                 cx.defer_in(window, |vim, window, cx| {
