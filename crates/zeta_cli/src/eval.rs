@@ -1,5 +1,6 @@
 use std::io::IsTerminal;
 
+use cloud_llm_client::udiff::DiffLine;
 use collections::HashSet;
 
 use crate::{PredictionDetails, example::Example};
@@ -82,14 +83,23 @@ pub fn evaluate(example: &Example, preds: &PredictionDetails) -> EvaluationResul
 
     result.context = precision_recall(&expected_context_lines, &actual_context_lines);
 
-    result.edit_prediction = precision_recall(
-        &example
-            .expected_patch
-            .lines()
-            .map(ToOwned::to_owned)
-            .collect(),
-        &preds.diff.lines().map(ToOwned::to_owned).collect(),
-    );
+    let expected_patch_lines = example
+        .expected_patch
+        .lines()
+        .map(DiffLine::parse)
+        .filter(|line| matches!(line, DiffLine::Addition(_) | DiffLine::Deletion(_)))
+        .map(|line| line.to_string())
+        .collect();
+
+    let actual_patch_lines = preds
+        .diff
+        .lines()
+        .map(DiffLine::parse)
+        .filter(|line| matches!(line, DiffLine::Addition(_) | DiffLine::Deletion(_)))
+        .map(|line| line.to_string())
+        .collect();
+
+    result.edit_prediction = precision_recall(&expected_patch_lines, &actual_patch_lines);
 
     result
 }

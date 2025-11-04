@@ -491,7 +491,7 @@ pub async fn apply_diff(
                     });
                 }
             }
-            DiffLine::HunkHeader(_) | DiffLine::Garbage => {}
+            DiffLine::HunkHeader(_) | DiffLine::Garbage(_) => {}
         }
 
         let at_hunk_end = match diff_lines.peek() {
