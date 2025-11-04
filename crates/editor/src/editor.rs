@@ -7071,15 +7071,6 @@ impl Editor {
             {
                 self.edit_prediction_settings =
                     self.edit_prediction_settings_at_position(&buffer, cursor_buffer_position, cx);
-
-                if matches!(
-                    self.edit_prediction_settings,
-                    EditPredictionSettings::Disabled
-                ) {
-                    self.edit_prediction_preview = EditPredictionPreview::Inactive {
-                        released_too_fast: false,
-                    };
-                }
             }
         }
     }
@@ -7582,7 +7573,14 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.show_edit_predictions_in_menu() {
+        // Ensure that the edit prediction preview is updated, even when not
+        // enabled, if there's an active edit prediction preview.
+        if self.show_edit_predictions_in_menu()
+            || matches!(
+                self.edit_prediction_preview,
+                EditPredictionPreview::Active { .. }
+            )
+        {
             self.update_edit_prediction_preview(&modifiers, window, cx);
         }
 
