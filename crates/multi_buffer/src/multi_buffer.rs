@@ -130,7 +130,7 @@ pub enum Event {
 // line4 of buffer1
 // ex2
 // line17 of buffer2
-// 
+//
 // in multibuffer coordinates, Point::new(1, 0)
 
 /// A diff hunk, representing a range of consequent lines in a multibuffer.
@@ -4120,8 +4120,8 @@ impl MultiBufferSnapshot {
             }
         };
 
-        result.add_assign(&suffix);
-        result
+        result.add_assign(dbg!(&suffix));
+        dbg!(result)
     }
 
     fn text_summary_for_excerpt_offset_range<D>(&self, mut range: Range<ExcerptOffset>) -> D
@@ -4148,6 +4148,7 @@ impl MultiBufferSnapshot {
             );
 
             if range.end > end_before_newline {
+                dbg!();
                 summary.add_assign(&D::from_text_summary(&TextSummary::from("\n")));
             }
 
@@ -7202,10 +7203,16 @@ pub fn randomly_mutate_multibuffer_with_diffs(
     ) -> String {
         let has_diff =
             has_diff.unwrap_or_else(|| row_infos.iter().any(|info| info.diff_status.is_some()));
+        let mut running_total = 0;
         text.split('\n')
             .enumerate()
             .zip(row_infos)
             .map(|((ix, line), info)| {
+                let running_total_before = running_total;
+                let line_length = line.len();
+                running_total += line_length;
+                let running_total_after = running_total;
+                running_total += 1;
                 let marker = match info.diff_status.map(|status| status.kind) {
                     Some(DiffHunkStatusKind::Added) => "+ ",
                     Some(DiffHunkStatusKind::Deleted) => "- ",
@@ -7218,16 +7225,20 @@ pub fn randomly_mutate_multibuffer_with_diffs(
                         }
                     }
                 };
-                let boundary_row = if boundary_rows.contains(&MultiBufferRow(ix as u32)) {
-                    if has_diff {
-                        "  ----------\n"
+                // format: 123->124 (len: 001)
+                let line_numbers = format!(
+                    "{running_total_before:0>3}->{running_total_after:0>3} (len: {line_length:0>3})"
+                );
+                if boundary_rows.contains(&MultiBufferRow(ix as u32)) {
+                    let boundary_row = if has_diff {
+                        "                   |  ----------\n"
                     } else {
-                        "---------\n"
-                    }
+                        "                   |----------\n"
+                    };
+                    format!("{boundary_row}{line_numbers}|{marker}{line}")
                 } else {
-                    ""
-                };
-                format!("{boundary_row}{marker}{line}")
+                    format!("{line_numbers}|{marker}{line}")
+                }
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -7263,76 +7274,90 @@ pub fn randomly_mutate_multibuffer_with_diffs(
                 );
             });
         }
-        20..=29 if !excerpt_ids.is_empty() => {
-            let mut ids_to_remove = vec![];
-            for _ in 0..rng.random_range(1..=3) {
-                let Some(id) = excerpt_ids.choose(rng) else {
-                    break;
-                };
-                ids_to_remove.push(*id);
-            }
-            let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
-            ids_to_remove.sort_unstable_by(|a, b| a.cmp(b, &snapshot));
-            drop(snapshot);
-            multibuffer.update(cx, |multibuffer, cx| {
-                multibuffer.remove_excerpts(ids_to_remove, cx)
-            });
-        }
+        // 20..=29 if !excerpt_ids.is_empty() => {
+        //     let mut ids_to_remove = vec![];
+        //     for _ in 0..rng.random_range(1..=3) {
+        //         let Some(id) = excerpt_ids.choose(rng) else {
+        //             break;
+        //         };
+        //         ids_to_remove.push(*id);
+        //     }
+        //     let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+        //     ids_to_remove.sort_unstable_by(|a, b| a.cmp(b, &snapshot));
+        //     drop(snapshot);
+        //     multibuffer.update(cx, |multibuffer, cx| {
+        //         multibuffer.remove_excerpts(ids_to_remove, cx)
+        //     });
+        // }
         56..=85 if *needs_diff_calculation => {
             multibuffer.update(cx, |multibuffer, cx| {
-                for buffer in multibuffer.all_buffers() {
+                for buffer in buffers {
+                    use util::rel_path::rel_path;
+
                     let snapshot = buffer.read(cx).snapshot();
-                    multibuffer
-                        .diff_for(snapshot.remote_id())
-                        .unwrap()
-                        .update(cx, |diff, cx| {
-                            log::info!("recalculating diff for buffer {:?}", snapshot.remote_id());
-                            diff.recalculate_diff_sync(snapshot.text, cx);
-                        });
+                    let diff = multibuffer.diff_for(snapshot.remote_id()).unwrap();
+                    diff.update(cx, |diff, cx| {
+                        log::info!("recalculating diff for buffer {:?}", snapshot.remote_id());
+                        diff.recalculate_diff_sync(snapshot.text.clone(), cx);
+                    });
+
+                    let ranges = diff
+                        .read(cx)
+                        .hunks(&snapshot, cx)
+                        .map(|hunk| hunk.buffer_range.to_point(&snapshot))
+                        .collect::<Vec<_>>();
+
+                    multibuffer.set_excerpts_for_path(
+                        PathKey {
+                            sort_prefix: None,
+                            path: rel_path(&buffer.read(cx).remote_id().to_string()).into_arc(),
+                        },
+                        buffer.clone(),
+                        ranges.into_iter(),
+                        2,
+                        cx,
+                    );
                 }
                 *needs_diff_calculation = false;
             });
         }
+        // TODO cover changes of base text
         _ => {
-            let buffer_handle = if buffers.is_empty() || rng.random_bool(0.4) {
-                let mut base_text = util::RandomCharIter::new(&mut *rng)
-                    .take(256)
-                    .collect::<String>();
+            let mut base_text = util::RandomCharIter::new(&mut *rng)
+                .take(256)
+                .collect::<String>();
 
-                let buffer = cx.new(|cx| Buffer::local(base_text.clone(), cx));
-                text::LineEnding::normalize(&mut base_text);
-                base_texts.insert(
-                    buffer.read_with(cx, |buffer, _| buffer.remote_id()),
-                    base_text,
-                );
-                buffers.push(buffer);
-                buffers.last().unwrap()
-            } else {
-                buffers.choose(rng).unwrap()
-            };
+            let buffer = cx.new(|cx| Buffer::local(base_text.clone(), cx));
+            text::LineEnding::normalize(&mut base_text);
+            base_texts.insert(
+                buffer.read_with(cx, |buffer, _| buffer.remote_id()),
+                base_text,
+            );
+            buffers.push(buffer);
+            let buffer_handle = buffers.last().unwrap();
 
-            let prev_excerpt_id = multibuffer
-                .read_with(cx, |multibuffer, cx| multibuffer.excerpt_ids())
-                .choose(rng)
-                .copied()
-                .unwrap_or(ExcerptId::max());
+            // let prev_excerpt_id = multibuffer
+            //     .read_with(cx, |multibuffer, cx| multibuffer.excerpt_ids())
+            //     .choose(rng)
+            //     .copied()
+            //     .unwrap_or(ExcerptId::max());
 
-            let range = buffer_handle.read_with(cx, |buffer, _| {
-                let end_row = rng.random_range(0..=buffer.max_point().row);
-                let start_row = rng.random_range(0..=end_row);
-                let end_ix = buffer.point_to_offset(Point::new(end_row, 0));
-                let start_ix = buffer.point_to_offset(Point::new(start_row, 0));
+            // let range = buffer_handle.read_with(cx, |buffer, _| {
+            //     let end_row = rng.random_range(0..=buffer.max_point().row);
+            //     let start_row = rng.random_range(0..=end_row);
+            //     let end_ix = buffer.point_to_offset(Point::new(end_row, 0));
+            //     let start_ix = buffer.point_to_offset(Point::new(start_row, 0));
 
-                log::info!(
-                    "Inserting excerpt for buffer {}: {:?}[{:?}] = {:?}",
-                    buffer.remote_id(),
-                    buffer.text(),
-                    start_ix..end_ix,
-                    &buffer.text()[start_ix..end_ix]
-                );
+            //     log::info!(
+            //         "Inserting excerpt for buffer {}: {:?}[{:?}] = {:?}",
+            //         buffer.remote_id(),
+            //         buffer.text(),
+            //         start_ix..end_ix,
+            //         &buffer.text()[start_ix..end_ix]
+            //     );
 
-                start_ix..end_ix
-            });
+            //     start_ix..end_ix
+            // });
 
             multibuffer.update(cx, |multibuffer, cx| {
                 let id = buffer_handle.read(cx).remote_id();
@@ -7344,28 +7369,35 @@ pub fn randomly_mutate_multibuffer_with_diffs(
                 }
             });
 
-            multibuffer.update(cx, |multibuffer, cx| {
-                multibuffer
-                    .insert_excerpts_after(
-                        prev_excerpt_id,
-                        buffer_handle.clone(),
-                        [ExcerptRange::new(range.clone())],
-                        cx,
-                    )
-                    .pop()
-                    .unwrap()
-            });
+            *needs_diff_calculation = true;
+
+            // multibuffer.update(cx, |multibuffer, cx| {
+            //     multibuffer
+            //         .insert_excerpts_after(
+            //             prev_excerpt_id,
+            //             buffer_handle.clone(),
+            //             [ExcerptRange::new(range.clone())],
+            //             cx,
+            //         )
+            //         .pop()
+            //         .unwrap()
+            // });
         }
     }
 
     {
         let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+        let actual_boundary_rows = snapshot
+            .excerpt_boundaries_in_range(0..)
+            // needle
+            .map(|b| b.row)
+            .collect::<HashSet<_>>();
         log::info!(
             "multibuffer contents:\n{}",
             format_diff(
                 &snapshot.text(),
                 &snapshot.row_infos(MultiBufferRow(0)).collect(),
-                &Default::default(),
+                &actual_boundary_rows,
                 Some(true)
             )
         )

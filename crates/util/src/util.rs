@@ -842,6 +842,7 @@ pub trait RangeExt<T> {
     fn to_inclusive(&self) -> RangeInclusive<T>;
     fn overlaps(&self, other: &Range<T>) -> bool;
     fn contains_inclusive(&self, other: &Range<T>) -> bool;
+    fn clamp(self, other: Self) -> Self;
 }
 
 impl<T: Ord + Clone> RangeExt<T> for Range<T> {
@@ -860,6 +861,10 @@ impl<T: Ord + Clone> RangeExt<T> for Range<T> {
     fn contains_inclusive(&self, other: &Range<T>) -> bool {
         self.start <= other.start && other.end <= self.end
     }
+
+    fn clamp(self, other: Range<T>) -> Range<T> {
+        self.start.max(other.start)..self.end.min(other.end)
+    }
 }
 
 impl<T: Ord + Clone> RangeExt<T> for RangeInclusive<T> {
@@ -877,6 +882,11 @@ impl<T: Ord + Clone> RangeExt<T> for RangeInclusive<T> {
 
     fn contains_inclusive(&self, other: &Range<T>) -> bool {
         self.start() <= &other.start && &other.end <= self.end()
+    }
+
+    fn clamp(self, other: Self) -> Self {
+        self.start().clone().max(other.start().clone())
+            ..=self.end().clone().min(other.end().clone())
     }
 }
 
@@ -1310,5 +1320,18 @@ Line 3"#
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], (0..6, "héllo")); // 'é' is 2 bytes
         assert_eq!(result[1], (10..15, "world")); // '🦀' is 4 bytes
+    }
+    
+    #[test]
+    fn test_range_clamp() {
+        assert_eq!((5..10).clamp(0..20), 5..10);
+        assert_eq!((5..10).clamp(0..9), 5..9);
+        assert_eq!((5..10).clamp(6..20), 6..10);
+        assert_eq!((5..10).clamp(6..9), 6..9);
+        
+        assert_eq!((5..=10).clamp(0..=20), 5..=10);
+        assert_eq!((5..=10).clamp(0..=9), 5..=9);
+        assert_eq!((5..=10).clamp(6..=20), 6..=10);
+        assert_eq!((5..=10).clamp(6..=9), 6..=9);
     }
 }
