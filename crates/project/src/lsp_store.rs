@@ -238,7 +238,7 @@ pub struct DocumentDiagnostics {
     version: Option<i32>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct DynamicRegistrations {
     did_change_watched_files: HashMap<String, Vec<FileSystemWatcher>>,
     diagnostics: HashMap<Option<String>, DiagnosticServerCapabilities>,
@@ -12062,14 +12062,11 @@ impl LspStore {
                             .context("Could not obtain Language Servers state")?;
                         local
                             .language_server_dynamic_registrations
-                            .get_mut(&server_id)
-                            .and_then(|registrations| {
-                                registrations
-                                    .diagnostics
-                                    .insert(Some(reg.id.clone()), caps.clone())
-                            });
+                            .entry(server_id)
+                            .or_default()
+                            .diagnostics
+                            .insert(Some(reg.id.clone()), caps.clone());
 
-                        let mut can_now_provide_diagnostics = false;
                         if let LanguageServerState::Running {
                             workspace_diagnostics_refresh_tasks,
                             ..
@@ -12082,18 +12079,16 @@ impl LspStore {
                             )
                         {
                             workspace_diagnostics_refresh_tasks.insert(Some(reg.id), task);
-                            can_now_provide_diagnostics = true;
                         }
 
                         // We don't actually care about capabilities.diagnostic_provider, but it IS relevant for the remote peer
                         // to know that there's at least one provider. Otherwise, it will never ask us to issue documentdiagnostic calls on their behalf,
                         // as it'll think that they're not supported.
-                        if can_now_provide_diagnostics {
-                            server.update_capabilities(|capabilities| {
-                                debug_assert!(capabilities.diagnostic_provider.is_none());
-                                capabilities.diagnostic_provider = Some(caps);
-                            });
-                        }
+
+                        server.update_capabilities(|capabilities| {
+                            debug_assert!(capabilities.diagnostic_provider.is_none());
+                            capabilities.diagnostic_provider = Some(caps);
+                        });
 
                         notify_server_capabilities_updated(&server, cx);
                     }
