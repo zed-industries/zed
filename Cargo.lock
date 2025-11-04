@@ -8835,7 +8835,6 @@ dependencies = [
  "anyhow",
  "aws-config",
  "aws-credential-types",
- "aws-smithy-runtime-api",
  "aws_http_client",
  "bedrock",
  "chrono",
