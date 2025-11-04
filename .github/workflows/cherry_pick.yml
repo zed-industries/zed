@@ -1,0 +1,25 @@
+# Generated from xtask::workflows::cherry_pick
+# Rebuild with `cargo xtask workflows`.
+name: cherry_pick
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: commit
+        required: true
+        type: string
+      branch:
+        description: branch
+        required: true
+        type: string
+jobs:
+  run_cherry_pick:
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: cherry_pick::run_cherry_pick::cherry_pick
+      run: ./scripts/cherry-pick ${{ inputs.branch }} ${{ inputs.commit }}
+      shell: bash -euxo pipefail {0}
