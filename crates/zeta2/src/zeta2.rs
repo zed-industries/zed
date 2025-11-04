@@ -541,7 +541,7 @@ impl Zeta {
             prediction,
         } = project_state.current_prediction.as_ref()?;
 
-        if prediction.targets_buffer(buffer.read(cx), cx) {
+        if prediction.targets_buffer(buffer.read(cx)) {
             Some(BufferEditPrediction::Local { prediction })
         } else if *requested_by_buffer_id == buffer.entity_id() {
             Some(BufferEditPrediction::Jump { prediction })
@@ -641,7 +641,7 @@ impl Zeta {
     pub fn request_prediction(
         &mut self,
         project: &Entity<Project>,
-        buffer: &Entity<Buffer>,
+        active_buffer: &Entity<Buffer>,
         position: language::Anchor,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPrediction>>> {
@@ -653,8 +653,8 @@ impl Zeta {
                 .read_with(cx, |index, _cx| index.state().clone())
         });
         let options = self.options.clone();
-        let snapshot = buffer.read(cx).snapshot();
-        let Some(excerpt_path) = snapshot
+        let active_snapshot = active_buffer.read(cx).snapshot();
+        let Some(excerpt_path) = active_snapshot
             .file()
             .map(|path| -> Arc<Path> { path.full_path(cx).into() })
         else {
@@ -680,12 +680,13 @@ impl Zeta {
             })
             .unwrap_or_default();
 
-        let diagnostics = snapshot.diagnostic_sets().clone();
+        let diagnostics = active_snapshot.diagnostic_sets().clone();
 
-        let parent_abs_path = project::File::from_dyn(buffer.read(cx).file()).and_then(|f| {
-            let mut path = f.worktree.read(cx).absolutize(&f.path);
-            if path.pop() { Some(path) } else { None }
-        });
+        let parent_abs_path =
+            project::File::from_dyn(active_buffer.read(cx).file()).and_then(|f| {
+                let mut path = f.worktree.read(cx).absolutize(&f.path);
+                if path.pop() { Some(path) } else { None }
+            });
 
         // TODO data collection
         let can_collect_data = cx.is_staff();
@@ -694,9 +695,10 @@ impl Zeta {
             .and_then(|project_state| project_state.context.as_ref())
             .unwrap_or(&HashMap::default())
             .iter()
-            .filter_map(|(buffer, ranges)| {
-                let buffer = buffer.read(cx);
+            .filter_map(|(buffer_entity, ranges)| {
+                let buffer = buffer_entity.read(cx);
                 Some((
+                    buffer_entity.clone(),
                     buffer.snapshot(),
                     buffer.file()?.full_path(cx).into(),
                     ranges.clone(),
@@ -705,8 +707,8 @@ impl Zeta {
             .collect::<Vec<_>>();
 
         let request_task = cx.background_spawn({
-            let snapshot = snapshot.clone();
-            let buffer = buffer.clone();
+            let active_snapshot = active_snapshot.clone();
+            let active_buffer = active_buffer.clone();
             async move {
                 let index_state = if let Some(index_state) = index_state {
                     Some(index_state.lock_owned().await)
@@ -714,8 +716,8 @@ impl Zeta {
                     None
                 };
 
-                let cursor_offset = position.to_offset(&snapshot);
-                let cursor_point = cursor_offset.to_point(&snapshot);
+                let cursor_offset = position.to_offset(&active_snapshot);
+                let cursor_point = cursor_offset.to_point(&active_snapshot);
 
                 let before_retrieval = chrono::Utc::now();
 
@@ -723,7 +725,7 @@ impl Zeta {
                     Self::gather_nearby_diagnostics(
                         cursor_offset,
                         &diagnostics,
-                        &snapshot,
+                        &active_snapshot,
                         options.max_diagnostic_bytes,
                     );
 
@@ -731,21 +733,22 @@ impl Zeta {
                     ContextMode::Llm(context_options) => {
                         let Some(excerpt) = EditPredictionExcerpt::select_from_buffer(
                             cursor_point,
-                            &snapshot,
+                            &active_snapshot,
                             &context_options.excerpt,
                             index_state.as_deref(),
                         ) else {
                             return Ok((None, None));
                         };
 
-                        let excerpt_anchor_range = snapshot.anchor_after(excerpt.range.start)
-                            ..snapshot.anchor_before(excerpt.range.end);
+                        let excerpt_anchor_range = active_snapshot.anchor_after(excerpt.range.start)
+                            ..active_snapshot.anchor_before(excerpt.range.end);
 
-                        if let Some(buffer_ix) = included_files
-                            .iter()
-                            .position(|(buffer, _, _)| buffer.remote_id() == snapshot.remote_id())
+                        if let Some(buffer_ix) =
+                            included_files.iter().position(|(_, snapshot, _, _)| {
+                                snapshot.remote_id() == active_snapshot.remote_id()
+                            })
                         {
-                            let (buffer, _, ranges) = &mut included_files[buffer_ix];
+                            let (_, buffer, _, ranges) = &mut included_files[buffer_ix];
                             let range_ix = ranges
                                 .binary_search_by(|probe| {
                                     probe
@@ -760,15 +763,16 @@ impl Zeta {
                             included_files.swap(buffer_ix, last_ix);
                         } else {
                             included_files.push((
-                                snapshot,
+                                active_buffer.clone(),
+                                active_snapshot,
                                 excerpt_path.clone(),
                                 vec![excerpt_anchor_range],
                             ));
                         }
 
                         let included_files = included_files
-                            .into_iter()
-                            .map(|(buffer, path, ranges)| {
+                            .iter()
+                            .map(|(_, buffer, path, ranges)| {
                                 let excerpts = merge_excerpts(
                                     &buffer,
                                     ranges.iter().map(|range| {
@@ -777,7 +781,7 @@ impl Zeta {
                                     }),
                                 );
                                 predict_edits_v3::IncludedFile {
-                                    path,
+                                    path: path.clone(),
                                     max_row: Line(buffer.max_point().row),
                                     excerpts,
                                 }
@@ -811,7 +815,7 @@ impl Zeta {
                     ContextMode::Syntax(context_options) => {
                         let Some(context) = EditPredictionContext::gather_context(
                             cursor_point,
-                            &snapshot,
+                            &active_snapshot,
                             parent_abs_path.as_deref(),
                             &context_options,
                             index_state.as_deref(),
@@ -847,7 +851,7 @@ impl Zeta {
                         .unbounded_send(ZetaDebugInfo::EditPredicted(ZetaEditPredictionDebugInfo {
                             request: cloud_request.clone(),
                             retrieval_time,
-                            buffer: buffer.downgrade(),
+                            buffer: active_buffer.downgrade(),
                             local_prompt: match prompt_result.as_ref() {
                                 Ok((prompt, _)) => Ok(prompt.clone()),
                                 Err(err) => Err(err.to_string()),
@@ -904,22 +908,22 @@ impl Zeta {
                         .ok();
                 }
 
-                response.map(|(res, usage)| (Some(res), usage))
+                response.map(|(res, usage)| (Some((res, included_files)), usage))
             }
         });
 
-        let buffer = buffer.clone();
+        let buffer = active_buffer.clone();
 
         cx.spawn({
-            let project = project.clone();
             async move |this, cx| {
-                let Some(response) = Self::handle_api_response(&this, request_task.await, cx)?
+                let Some((response, included_files)) =
+                    Self::handle_api_response(&this, request_task.await, cx)?
                 else {
                     return Ok(None);
                 };
 
                 // TODO telemetry: duration, etc
-                Ok(EditPrediction::from_response(response, &snapshot, &buffer, &project, cx).await)
+                Ok(EditPrediction::from_response(response, &buffer, &included_files, cx).await)
             }
         })
     }
@@ -1552,7 +1556,7 @@ mod tests {
                 .unwrap();
             assert_matches!(
                 prediction,
-                BufferEditPrediction::Jump { prediction } if prediction.path.as_ref() == Path::new(path!("root/2.txt"))
+                BufferEditPrediction::Jump { prediction } if prediction.snapshot.file().unwrap().full_path(cx) == Path::new(path!("root/2.txt"))
             );
         });
 

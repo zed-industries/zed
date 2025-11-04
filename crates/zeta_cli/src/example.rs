@@ -10,10 +10,10 @@ use std::{
 
 use anyhow::{Context as _, Result};
 use clap::ValueEnum;
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use futures::AsyncWriteExt as _;
 use gpui::{AsyncApp, Entity, http_client::Url};
-use language::Buffer;
+use language::{Buffer, BufferId};
 use project::Project;
 use pulldown_cmark::CowStr;
 use serde::{Deserialize, Serialize};
@@ -337,7 +337,7 @@ impl NamedExample {
         &self,
         project: &Entity<Project>,
         cx: &mut AsyncApp,
-    ) -> Result<HashSet<Entity<Buffer>>> {
+    ) -> Result<HashMap<BufferId, Entity<Buffer>>> {
         zeta2::udiff::apply_diff(&self.example.edit_history, project, cx).await
     }
 }

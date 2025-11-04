@@ -1,12 +1,10 @@
-use std::{borrow::Cow, ops::Range, path::Path, sync::Arc};
+use std::{borrow::Cow, ops::Range, path::Path, str::FromStr, sync::Arc};
 
-use anyhow::Context as _;
 use cloud_llm_client::predict_edits_v3;
 use gpui::{App, AsyncApp, Entity};
 use language::{
     Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, TextBufferSnapshot, text_diff,
 };
-use project::Project;
 use util::ResultExt;
 use uuid::Uuid;
 
@@ -34,7 +32,6 @@ impl std::fmt::Display for EditPredictionId {
 #[derive(Clone)]
 pub struct EditPrediction {
     pub id: EditPredictionId,
-    pub path: Arc<Path>,
     pub edits: Arc<[(Range<Anchor>, String)]>,
     pub snapshot: BufferSnapshot,
     pub edit_preview: EditPreview,
@@ -44,10 +41,14 @@ pub struct EditPrediction {
 
 impl EditPrediction {
     pub async fn from_response(
-        response: open_ai::Response,
-        active_buffer_old_snapshot: &TextBufferSnapshot,
+        mut response: open_ai::Response,
         active_buffer: &Entity<Buffer>,
-        project: &Entity<Project>,
+        included_files: &[(
+            Entity<Buffer>,
+            BufferSnapshot,
+            Arc<Path>,
+            Vec<Range<Anchor>>,
+        )],
         cx: &mut AsyncApp,
     ) -> Option<Self> {
         let Some(choice) = response.choices.pop() else {
@@ -83,66 +84,40 @@ impl EditPrediction {
             }
         };
 
-        let (edited_buffer, edits) = crate::udiff::parse_diff(&output_text, project, cx)
-            .await
-            .log_err()?;
-
-        let is_same_path = active_buffer
-            .read_with(cx, |buffer, cx| buffer_path_eq(buffer, &path, cx))
-            .ok()?;
-
-        let (buffer, edits, snapshot, edit_preview_task) = if is_same_path {
-            active_buffer
-                .read_with(cx, |buffer, cx| {
-                    let new_snapshot = buffer.snapshot();
-                    let edits = edits_from_response(&edits, &active_buffer_old_snapshot);
-                    let edits: Arc<[_]> =
-                        interpolate_edits(active_buffer_old_snapshot, &new_snapshot, edits)?.into();
-
-                    Some((
-                        active_buffer.clone(),
-                        edits.clone(),
-                        new_snapshot,
-                        buffer.preview_edits(edits, cx),
-                    ))
-                })
-                .ok()??
-        } else {
-            let buffer_handle = project
-                .update(cx, |project, cx| {
-                    let project_path = project
-                        .find_project_path(&path, cx)
-                        .context("Failed to find project path for zeta edit")?;
-                    anyhow::Ok(project.open_buffer(project_path, cx))
-                })
-                .ok()?
-                .log_err()?
+        let (edited_buffer_snapshot, edits) =
+            crate::udiff::parse_diff(&output_text, included_files)
                 .await
-                .context("Failed to open buffer for zeta edit")
                 .log_err()?;
 
-            buffer_handle
-                .read_with(cx, |buffer, cx| {
-                    let snapshot = buffer.snapshot();
-                    let edits = edits_from_response(&edits, &snapshot);
-                    if edits.is_empty() {
-                        return None;
-                    }
-                    Some((
-                        buffer_handle.clone(),
-                        edits.clone(),
-                        snapshot,
-                        buffer.preview_edits(edits, cx),
-                    ))
-                })
-                .ok()??
-        };
+        let edited_buffer = included_files
+            .iter()
+            .find_map(|(buffer, probe_snapshot, _, _)| {
+                if probe_snapshot.remote_id() == edited_buffer_snapshot.remote_id() {
+                    Some(buffer)
+                } else {
+                    None
+                }
+            })?;
+
+        let (buffer, edits, snapshot, edit_preview_task) = edited_buffer
+            .read_with(cx, |buffer, cx| {
+                let new_snapshot = buffer.snapshot();
+                let edits: Arc<[_]> =
+                    interpolate_edits(&edited_buffer_snapshot, &new_snapshot, edits.into())?.into();
+                Some((
+                    active_buffer.clone(),
+                    edits.clone(),
+                    new_snapshot,
+                    buffer.preview_edits(edits, cx),
+                ))
+            })
+            .ok()??;
 
         let edit_preview = edit_preview_task.await;
+        let request_id = Uuid::from_str(&response.id).log_err()?;
 
         Some(EditPrediction {
             id: EditPredictionId(request_id),
-            path,
             edits,
             snapshot,
             edit_preview,
@@ -157,8 +132,8 @@ impl EditPrediction {
         interpolate_edits(&self.snapshot, new_snapshot, self.edits.clone())
     }
 
-    pub fn targets_buffer(&self, buffer: &Buffer, cx: &App) -> bool {
-        buffer_path_eq(buffer, &self.path, cx)
+    pub fn targets_buffer(&self, buffer: &Buffer) -> bool {
+        self.snapshot.remote_id() == buffer.remote_id()
     }
 }
 
@@ -166,7 +141,6 @@ impl std::fmt::Debug for EditPrediction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EditPrediction")
             .field("id", &self.id)
-            .field("path", &self.path)
             .field("edits", &self.edits)
             .finish()
     }
@@ -361,7 +335,6 @@ mod tests {
             id: EditPredictionId(Uuid::new_v4()),
             edits,
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
-            path: Path::new("test.txt").into(),
             buffer: buffer.clone(),
             edit_preview,
         };

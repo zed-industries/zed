@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::sync::Arc;
 use std::{
     fmt::{Debug, Write},
     mem,
@@ -8,10 +9,10 @@ use std::{
 
 use anyhow::Context as _;
 use anyhow::Result;
-use collections::HashSet;
+use collections::HashMap;
 use gpui::AsyncApp;
 use gpui::Entity;
-use language::{Anchor, Buffer};
+use language::{Anchor, Buffer, BufferId, BufferSnapshot};
 use project::Project;
 
 #[derive(Debug, Default)]
@@ -28,19 +29,23 @@ struct Edit {
 
 pub async fn parse_diff(
     diff: &str,
-    project: &Entity<Project>,
-    cx: &mut AsyncApp,
-) -> Result<(Entity<Buffer>, Vec<(Range<Anchor>, String)>)> {
+    included_files: &[(
+        Entity<Buffer>,
+        BufferSnapshot,
+        Arc<Path>,
+        Vec<Range<Anchor>>,
+    )],
+) -> Result<(BufferSnapshot, Vec<(Range<Anchor>, String)>)> {
     let mut edited_buffer = None;
     let mut buffer_edits = Vec::new();
-    process_diff(diff, project, cx, async |buffer, renamed_to, edits, _cx| {
+    process_diff(diff, included_files, async |buffer, renamed_to, edits| {
         if edited_buffer.is_some() {
             anyhow::bail!("edited more than one file");
         }
         if renamed_to.is_some() {
             anyhow::bail!("edit predictions cannot rename files");
         }
-        edited_buffer = Some(buffer);
+        edited_buffer = Some(buffer.clone());
         buffer_edits = edits;
         Ok(())
     })
@@ -53,17 +58,38 @@ pub async fn apply_diff(
     diff: &str,
     project: &Entity<Project>,
     cx: &mut AsyncApp,
-) -> Result<HashSet<Entity<Buffer>>> {
-    let mut opened_buffers = HashSet::default();
-    process_diff(diff, project, cx, async |buffer, new_path, edits, cx| {
+) -> Result<HashMap<BufferId, Entity<Buffer>>> {
+    let mut included_files = Vec::new();
+    let mut opened_buffers = HashMap::default();
+    for line in diff.lines() {
+        let diff_line = DiffLine::parse(line);
+        if let DiffLine::OldPath { path } = diff_line {
+            let buffer = project
+                .update(cx, |project, cx| {
+                    let project_path = project
+                        .find_project_path(path.as_ref(), cx)
+                        .context("Failed to find worktree for new path")?;
+                    anyhow::Ok(project.open_buffer(project_path, cx))
+                })??
+                .await?;
+
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+
+            let path = Arc::from(Path::new(path.as_ref()));
+            opened_buffers.insert(snapshot.remote_id(), buffer.clone());
+            included_files.push((buffer, snapshot, path, vec![Anchor::MIN..Anchor::MAX]));
+        }
+    }
+
+    process_diff(diff, &included_files, async |buffer, new_path, edits| {
         if let Some(new_path) = new_path {
             project
                 .update(cx, |project, cx| {
                     let new_project_path = project
                         .find_project_path(new_path, cx)
                         .context("Failed to find worktree for new path")?;
-                    let project_file = project::File::from_dyn(buffer.read(cx).file())
-                        .context("Wrong file type")?;
+                    let project_file =
+                        project::File::from_dyn(buffer.file()).context("Wrong file type")?;
                     anyhow::Ok(project.rename_entry(
                         project_file.entry_id.unwrap(),
                         new_project_path,
@@ -72,25 +98,28 @@ pub async fn apply_diff(
                 })??
                 .await?;
         }
+
+        let buffer = opened_buffers.get(&buffer.remote_id()).unwrap();
         buffer.update(cx, |buffer, cx| {
             buffer.edit(edits, None, cx);
-        })?;
-        opened_buffers.insert(buffer);
-        Ok(())
+        })
     })
     .await?;
     Ok(opened_buffers)
 }
 
-pub async fn process_diff(
+async fn process_diff(
     diff: &str,
-    project: &Entity<Project>,
-    cx: &mut AsyncApp,
-    mut on_buffer: impl AsyncFnMut(
+    included_files: &[(
         Entity<Buffer>,
+        BufferSnapshot,
+        Arc<Path>,
+        Vec<Range<Anchor>>,
+    )],
+    mut on_buffer: impl AsyncFnMut(
+        &BufferSnapshot,
         Option<&Path>,
         Vec<(Range<Anchor>, String)>,
-        &mut AsyncApp,
     ) -> Result<()>,
 ) -> Result<()> {
     let mut buffer = None;
@@ -104,14 +133,16 @@ pub async fn process_diff(
         match diff_line {
             DiffLine::OldPath { path } => {
                 buffer = Some(
-                    project
-                        .update(cx, |project, cx| {
-                            let project_path = project
-                                .find_project_path(path.as_ref(), cx)
-                                .context("Failed to find old_path in project")?;
-                            anyhow::Ok(project.open_buffer(project_path, cx))
-                        })??
-                        .await?,
+                    included_files
+                        .iter()
+                        .find_map(|(_, buffer, probe_path, _)| {
+                            if probe_path.as_ref() == Path::new(path.as_ref()) {
+                                Some(buffer)
+                            } else {
+                                None
+                            }
+                        })
+                        .context("model tried to edit a buffer that was not provided")?,
                 );
                 old_path = Some(path);
             }
@@ -170,35 +201,31 @@ pub async fn process_diff(
             };
 
             // TODO is it worth using project search?
-            buffer.read_with(cx, |buffer, _cx| {
-                let context_offset = if hunk.context.is_empty() {
-                    0
-                } else {
-                    let text = buffer.text();
-                    if let Some(offset) = text.find(&hunk.context) {
-                        if text[offset + 1..].contains(&hunk.context) {
-                            anyhow::bail!("Context is not unique enough:\n{}", hunk.context);
-                        }
-                        offset
-                    } else {
-                        anyhow::bail!(
-                            "Failed to match context:\n{}\n\nBuffer:\n{}",
-                            hunk.context,
-                            text
-                        );
+            let context_offset = if hunk.context.is_empty() {
+                0
+            } else {
+                let text = buffer.text();
+                if let Some(offset) = text.find(&hunk.context) {
+                    if text[offset + 1..].contains(&hunk.context) {
+                        anyhow::bail!("Context is not unique enough:\n{}", hunk.context);
                     }
-                };
+                    offset
+                } else {
+                    anyhow::bail!(
+                        "Failed to match context:\n{}\n\nBuffer:\n{}",
+                        hunk.context,
+                        text
+                    );
+                }
+            };
 
-                edits.extend(hunk.edits.into_iter().map(|edit| {
-                    (
-                        buffer.anchor_after(context_offset + edit.range.start)
-                            ..buffer.anchor_before(context_offset + edit.range.end),
-                        edit.text,
-                    )
-                }));
-
-                anyhow::Ok(())
-            })??;
+            edits.extend(hunk.edits.into_iter().map(|edit| {
+                (
+                    buffer.anchor_after(context_offset + edit.range.start)
+                        ..buffer.anchor_before(context_offset + edit.range.end),
+                    edit.text,
+                )
+            }));
         }
 
         if at_file_end {
@@ -213,7 +240,7 @@ pub async fn process_diff(
             } else {
                 None
             };
-            on_buffer(buffer, renamed_to, mem::take(&mut edits), cx).await?;
+            on_buffer(buffer, renamed_to, mem::take(&mut edits)).await?;
         }
     }
 
