@@ -341,12 +341,9 @@ impl SystemWindowTabController {
 
     /// Get all tabs in the same window.
     pub fn tabs(&self, id: WindowId) -> Option<&Vec<SystemWindowTab>> {
-        let tab_group = self
-            .tab_groups
-            .iter()
-            .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| *group))?;
-
-        self.tab_groups.get(&tab_group)
+        self.tab_groups
+            .values()
+            .find(|tabs| tabs.iter().any(|tab| tab.id == id))
     }
 
     /// Initialize the visibility of the system window tab controller.
