@@ -3091,6 +3091,15 @@ impl RepositorySnapshot {
             .cloned()
     }
 
+    pub fn new_pending_op(&self, git_status: pending_op::GitStatus) -> PendingOp {
+        let id = self.pending_ops_by_path.summary().item_summary.max_id + 1;
+        PendingOp {
+            id,
+            git_status,
+            job_status: pending_op::JobStatus::Started,
+        }
+    }
+
     pub fn abs_path_to_repo_path(&self, abs_path: &Path) -> Option<RepoPath> {
         Self::abs_path_to_repo_path_inner(&self.work_directory_abs_path, abs_path, self.path_style)
     }
@@ -3830,25 +3839,14 @@ impl Repository {
         let mut edits = Vec::with_capacity(entries.len());
 
         for entry in &entries {
-            let id = self
-                .snapshot
-                .pending_ops_by_path
-                .summary()
-                .item_summary
-                .max_id
-                + 1;
-            let op = PendingOp {
-                id,
-                git_status: pending_op::GitStatus::Staged,
-                job_status: pending_op::JobStatus::Started,
-            };
+            let op = self.snapshot.new_pending_op(pending_op::GitStatus::Staged);
             let mut ops = self
                 .snapshot
                 .pending_ops_for_path(entry)
                 .unwrap_or_else(|| PendingOps::new(entry));
             ops.ops.push(op);
             edits.push(sum_tree::Edit::Insert(ops));
-            ids.push((id, entry.clone()));
+            ids.push((op.id, entry.clone()));
         }
         self.snapshot.pending_ops_by_path.edit(edits, ());
 
@@ -3938,25 +3936,16 @@ impl Repository {
         let mut edits = Vec::with_capacity(entries.len());
 
         for entry in &entries {
-            let id = self
+            let op = self
                 .snapshot
-                .pending_ops_by_path
-                .summary()
-                .item_summary
-                .max_id
-                + 1;
-            let op = PendingOp {
-                id,
-                git_status: pending_op::GitStatus::Unstaged,
-                job_status: pending_op::JobStatus::Started,
-            };
+                .new_pending_op(pending_op::GitStatus::Unstaged);
             let mut ops = self
                 .snapshot
                 .pending_ops_for_path(entry)
                 .unwrap_or_else(|| PendingOps::new(entry));
             ops.ops.push(op);
             edits.push(sum_tree::Edit::Insert(ops));
-            ids.push((id, entry.clone()));
+            ids.push((op.id, entry.clone()));
         }
         self.snapshot.pending_ops_by_path.edit(edits, ());
 

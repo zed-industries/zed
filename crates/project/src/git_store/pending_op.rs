@@ -25,7 +25,7 @@ pub struct PendingOps {
     pub ops: Vec<PendingOp>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PendingOp {
     pub id: PendingOpId,
     pub git_status: GitStatus,
