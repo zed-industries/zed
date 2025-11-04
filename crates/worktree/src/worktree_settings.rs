@@ -19,6 +19,7 @@ pub struct WorktreeSettings {
     /// determine whether to terminate worktree scanning for a given dir.
     pub parent_dir_scan_inclusions: PathMatcher,
     pub private_files: PathMatcher,
+    pub hidden_files: PathMatcher,
 }
 
 impl WorktreeSettings {
@@ -39,6 +40,11 @@ impl WorktreeSettings {
             self.file_scan_inclusions.is_match(path.as_std_path())
         }
     }
+
+    pub fn is_path_hidden(&self, path: &RelPath) -> bool {
+        path.ancestors()
+            .any(|ancestor| self.hidden_files.is_match(ancestor.as_std_path()))
+    }
 }
 
 impl Settings for WorktreeSettings {
@@ -47,6 +53,7 @@ impl Settings for WorktreeSettings {
         let file_scan_exclusions = worktree.file_scan_exclusions.unwrap();
         let file_scan_inclusions = worktree.file_scan_inclusions.unwrap();
         let private_files = worktree.private_files.unwrap().0;
+        let hidden_files = worktree.hidden_files.unwrap();
         let parsed_file_scan_inclusions: Vec<String> = file_scan_inclusions
             .iter()
             .flat_map(|glob| {
@@ -72,6 +79,9 @@ impl Settings for WorktreeSettings {
             file_scan_inclusions: path_matchers(file_scan_inclusions, "file_scan_inclusions")
                 .unwrap(),
             private_files: path_matchers(private_files, "private_files")
+                .log_err()
+                .unwrap_or_default(),
+            hidden_files: path_matchers(hidden_files, "hidden_files")
                 .log_err()
                 .unwrap_or_default(),
         }
