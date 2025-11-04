@@ -1723,11 +1723,7 @@ impl GitStore {
             &mut cx,
         );
 
-        let branch_name = if envelope.payload.branch_name.is_empty() {
-            None
-        } else {
-            Some(envelope.payload.branch_name.into())
-        };
+        let branch_name = envelope.payload.branch_name.map(|name| name.into());
         let remote_name = envelope.payload.remote_name.into();
         let rebase = envelope.payload.rebase;
 
@@ -4346,10 +4342,7 @@ impl Repository {
                             repository_id: id.to_proto(),
                             askpass_id,
                             rebase,
-                            branch_name: branch
-                                    .as_ref()
-                                    .map(|b| b.to_string())
-                                    .unwrap_or_default(),
+                            branch_name: branch.as_ref().map(|b| b.to_string()),
                             remote_name: remote.to_string(),
                         })
                         .await
