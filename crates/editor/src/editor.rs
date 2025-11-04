@@ -4977,9 +4977,7 @@ impl Editor {
                     cx,
                 );
             }
-            Some(CompletionsMenuSource::Normal)
-            | Some(CompletionsMenuSource::SnippetChoices)
-            | None => self.open_or_update_completions_menu(
+            _ => self.open_or_update_completions_menu(
                 None,
                 Some(text.to_owned()).filter(|x| !x.is_empty()),
                 true,
@@ -5325,18 +5323,6 @@ impl Editor {
                 CodeContextMenu::CodeActions(_) => None,
             });
 
-        if let Some(trigger) = &trigger
-            && !self.is_completion_trigger(
-                trigger,
-                trigger_in_words,
-                completions_source.is_some(),
-                cx,
-            )
-        {
-            self.hide_context_menu(window, cx);
-            return;
-        }
-
         let multibuffer_snapshot = self.buffer.read(cx).read(cx);
 
         // Typically `start` == `end`, but with snippet tabstop choices the default choice is
@@ -5384,7 +5370,8 @@ impl Editor {
                 ignore_word_threshold = ignore_threshold;
                 None
             }
-            Some(CompletionsMenuSource::SnippetChoices) => {
+            Some(CompletionsMenuSource::SnippetChoices)
+            | Some(CompletionsMenuSource::SnippetsOnly) => {
                 log::error!("bug: SnippetChoices requested_source is not handled");
                 None
             }
@@ -5398,13 +5385,19 @@ impl Editor {
             .as_ref()
             .is_none_or(|provider| provider.filter_completions());
 
+        let was_snippets_only = matches!(
+            completions_source,
+            Some(CompletionsMenuSource::SnippetsOnly)
+        );
+
         if let Some(CodeContextMenu::Completions(menu)) = self.context_menu.borrow_mut().as_mut() {
             if filter_completions {
                 menu.filter(query.clone(), provider.clone(), window, cx);
             }
             // When `is_incomplete` is false, no need to re-query completions when the current query
             // is a suffix of the initial query.
-            if !menu.is_incomplete {
+            let was_complete = !menu.is_incomplete;
+            if was_complete && !was_snippets_only {
                 // If the new query is a suffix of the old query (typing more characters) and
                 // the previous result was complete, the existing completions can be filtered.
                 //
@@ -5426,23 +5419,6 @@ impl Editor {
                     }
                 }
             }
-        };
-
-        let trigger_kind = match &trigger {
-            Some(trigger) if buffer.read(cx).completion_triggers().contains(trigger) => {
-                CompletionTriggerKind::TRIGGER_CHARACTER
-            }
-            _ => CompletionTriggerKind::INVOKED,
-        };
-        let completion_context = CompletionContext {
-            trigger_character: trigger.and_then(|trigger| {
-                if trigger_kind == CompletionTriggerKind::TRIGGER_CHARACTER {
-                    Some(String::from(trigger))
-                } else {
-                    None
-                }
-            }),
-            trigger_kind,
         };
 
         let Anchor {
@@ -5517,7 +5493,27 @@ impl Editor {
             })
         };
 
-        let provider_responses = if let Some(provider) = &provider {
+        let load_provider_completions = trigger.as_ref().is_none_or(|trigger| {
+            self.is_completion_trigger(trigger, trigger_in_words, completions_source.is_some(), cx)
+        });
+
+        let provider_responses = if load_provider_completions && let Some(provider) = &provider {
+            let trigger_kind = match &trigger {
+                Some(trigger) if buffer.read(cx).completion_triggers().contains(trigger) => {
+                    CompletionTriggerKind::TRIGGER_CHARACTER
+                }
+                _ => CompletionTriggerKind::INVOKED,
+            };
+            let completion_context = CompletionContext {
+                trigger_character: trigger.as_ref().and_then(|trigger| {
+                    if trigger_kind == CompletionTriggerKind::TRIGGER_CHARACTER {
+                        Some(trigger.clone())
+                    } else {
+                        None
+                    }
+                }),
+                trigger_kind,
+            };
             provider.completions(
                 buffer_excerpt_id,
                 &buffer,
@@ -5530,7 +5526,6 @@ impl Editor {
             Task::ready(Ok(Vec::new()))
         };
 
-        // is it the project snippets
         let snippets = if let Some(provider) = &provider
             && provider.show_snippets()
             && let Some(project) = self.project()
@@ -5619,7 +5614,11 @@ impl Editor {
                         .map(|workspace| workspace.read(cx).app_state().languages.clone());
                     let menu = CompletionsMenu::new(
                         id,
-                        requested_source.unwrap_or(CompletionsMenuSource::Normal),
+                        requested_source.unwrap_or(if load_provider_completions {
+                            CompletionsMenuSource::Normal
+                        } else {
+                            CompletionsMenuSource::SnippetsOnly
+                        }),
                         sort_completions,
                         show_completion_documentation,
                         position,
