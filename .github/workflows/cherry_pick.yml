@@ -21,5 +21,5 @@ jobs:
       with:
         clean: false
     - name: cherry_pick::run_cherry_pick::cherry_pick
-      run: ./scripts/cherry_pick.sh ${{ inputs.branch }} ${{ inputs.commit }}
+      run: ./scripts/cherry-pick ${{ inputs.branch }} ${{ inputs.commit }}
       shell: bash -euxo pipefail {0}
