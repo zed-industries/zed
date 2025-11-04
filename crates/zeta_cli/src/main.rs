@@ -5,7 +5,7 @@ mod source_location;
 mod syntax_retrieval_stats;
 mod util;
 
-use crate::eval::{compare_context, evaluate};
+use crate::eval::{compare_context, compare_diffs, evaluate};
 use crate::example::{ActualExcerpt, ExampleFormat, NamedExample};
 use crate::syntax_retrieval_stats::retrieval_stats;
 use ::serde::Serialize;
@@ -21,7 +21,7 @@ use edit_prediction_context::{
 };
 use futures::StreamExt as _;
 use futures::channel::mpsc;
-use gpui::{Action, Application, AsyncApp, Entity, prelude::*};
+use gpui::{Application, AsyncApp, Entity, prelude::*};
 use language::{Bias, Buffer, BufferSnapshot, OffsetRangeExt, Point};
 use language_model::LanguageModelRegistry;
 use project::{Project, ProjectPath, Worktree};
@@ -941,11 +941,11 @@ fn main() {
                         );
                         println!(
                             "## Expected edit prediction:\n\n```diff\n{}\n```\n",
-                            example.example.expected_patch
+                            compare_diffs(&example.example.expected_patch, &predictions.diff)
                         );
                         println!(
                             "## Actual edit prediction:\n\n```diff\n{}\n```\n",
-                            predictions.diff
+                            compare_diffs(&predictions.diff, &example.example.expected_patch)
                         );
 
                         println!("{}", evaluation_result.to_markdown());

@@ -180,3 +180,31 @@ pub fn compare_context(example: &Example, preds: &PredictionDetails) -> String {
 
     annotated.join("\n")
 }
+
+/// Return annotated `patch_a` so that:
+/// Additions and deletions that are not present in `patch_b` will be highlighted in red.
+/// Additions and deletions that are present in `patch_b` will be highlighted in green.
+pub fn compare_diffs(patch_a: &str, patch_b: &str) -> String {
+    let use_color = std::io::stdout().is_terminal();
+    let green = if use_color { "\x1b[32m✓ " } else { "" };
+    let red = if use_color { "\x1b[31m✗ " } else { "" };
+    let neutral = if use_color { "  " } else { "" };
+    let reset = if use_color { "\x1b[0m" } else { "" };
+    let lines_a = patch_a.lines().map(DiffLine::parse);
+    let lines_b: Vec<_> = patch_b.lines().map(DiffLine::parse).collect();
+
+    let annotated = lines_a
+        .map(|line| match line {
+            DiffLine::Addition(_) | DiffLine::Deletion(_) => {
+                if lines_b.contains(&line) {
+                    format!("{green}{line}{reset}")
+                } else {
+                    format!("{red}{line}{reset}")
+                }
+            }
+            _ => format!("{neutral}{line}{reset}"),
+        })
+        .collect::<Vec<String>>();
+
+    annotated.join("\n")
+}
