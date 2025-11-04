@@ -12081,10 +12081,6 @@ impl LspStore {
                             workspace_diagnostics_refresh_tasks.insert(Some(reg.id), task);
                         }
 
-                        // We don't actually care about capabilities.diagnostic_provider, but it IS relevant for the remote peer
-                        // to know that there's at least one provider. Otherwise, it will never ask us to issue documentdiagnostic calls on their behalf,
-                        // as it'll think that they're not supported.
-
                         let mut did_update_caps = false;
                         server.update_capabilities(|capabilities| {
                             if capabilities.diagnostic_provider.as_ref().is_none_or(
@@ -12104,8 +12100,12 @@ impl LspStore {
                                             }
                                         }
                                         };
-                                    supports_workspace_diagnostics(current_caps)
-                                        < supports_workspace_diagnostics(&caps)
+                                    // We don't actually care about capabilities.diagnostic_provider, but it IS relevant for the remote peer
+                                    // to know that there's at least one provider. Otherwise, it will never ask us to issue documentdiagnostic calls on their behalf,
+                                    // as it'll think that they're not supported.
+                                    // If we did not support any workspace diagnostics up to this point but now do, let's update.
+                                    !supports_workspace_diagnostics(current_caps)
+                                        & supports_workspace_diagnostics(&caps)
                                 },
                             ) {
                                 did_update_caps = true;
