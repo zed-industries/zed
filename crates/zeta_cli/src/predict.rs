@@ -42,7 +42,7 @@ pub async fn run_zeta2_predict(
 }
 
 thread_local! {
-    static AUTHENTICATED: Cell<bool> = Cell::new(false);
+    static AUTHENTICATED: Cell<bool> = const { Cell::new(false) };
 }
 
 pub async fn zeta2_predict(
