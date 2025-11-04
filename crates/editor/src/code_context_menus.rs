@@ -258,7 +258,7 @@ pub enum CompletionsMenuSource {
     ///
     /// Used after typing a non-word character
     SnippetsOnly,
-    /// Tab stops with in a snippet that have a predefined finite set of choices
+    /// Tab stops within a snippet that have a predefined finite set of choices
     SnippetChoices,
     /// Show only words (not snippets or LSP)
     ///
