@@ -30,12 +30,6 @@ pub fn run_perf(base: &Input, head: &Input) -> NamedJob {
         named::bash("cargo install hyperfine")
     }
 
-    fn git_checkout(ref_name: String) -> Step<Run> {
-        named::bash(&format!(
-            "git fetch origin {ref_name} && git checkout {ref_name}"
-        ))
-    }
-
     fn compare_runs(head: String, base: String) -> Step<Run> {
         // TODO: this should really be swapped...
         named::bash(&format!(
@@ -50,9 +44,9 @@ pub fn run_perf(base: &Input, head: &Input) -> NamedJob {
             .add_step(steps::setup_cargo_config(runners::Platform::Linux))
             .map(steps::install_linux_dependencies)
             .add_step(install_hyperfine())
-            .add_step(git_checkout(base.var()))
+            .add_step(steps::git_checkout(&base.var()))
             .add_step(cargo_perf_test(base.var()))
-            .add_step(git_checkout(head.var()))
+            .add_step(steps::git_checkout(&head.var()))
             .add_step(cargo_perf_test(head.var()))
             .add_step(compare_runs(head.var(), base.var()))
             .add_step(upload_artifact("results.md", "results.md"))
