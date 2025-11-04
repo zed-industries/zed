@@ -1,10 +1,7 @@
-use std::{borrow::Cow, ops::Range, path::Path, str::FromStr, sync::Arc};
+use std::{ops::Range, path::Path, str::FromStr, sync::Arc};
 
-use cloud_llm_client::predict_edits_v3;
-use gpui::{App, AsyncApp, Entity};
-use language::{
-    Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, TextBufferSnapshot, text_diff,
-};
+use gpui::{AsyncApp, Entity};
+use language::{Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, TextBufferSnapshot};
 use util::ResultExt;
 use uuid::Uuid;
 
@@ -43,12 +40,12 @@ impl EditPrediction {
     pub async fn from_response(
         mut response: open_ai::Response,
         active_buffer: &Entity<Buffer>,
-        included_files: &[(
+        included_files: Vec<(
             Entity<Buffer>,
             BufferSnapshot,
             Arc<Path>,
             Vec<Range<Anchor>>,
-        )],
+        )>,
         cx: &mut AsyncApp,
     ) -> Option<Self> {
         let Some(choice) = response.choices.pop() else {
@@ -84,20 +81,29 @@ impl EditPrediction {
             }
         };
 
+        let (included_buffers, included_files) = included_files
+            .into_iter()
+            .map(|(buffer, snapshot, path, ranges)| (buffer, (snapshot, path, ranges)))
+            .collect::<(Vec<_>, Vec<_>)>();
+
         let (edited_buffer_snapshot, edits) =
-            crate::udiff::parse_diff(&output_text, included_files)
+            crate::udiff::parse_diff(&output_text, &included_files)
                 .await
                 .log_err()?;
 
-        let edited_buffer = included_files
-            .iter()
-            .find_map(|(buffer, probe_snapshot, _, _)| {
-                if probe_snapshot.remote_id() == edited_buffer_snapshot.remote_id() {
-                    Some(buffer)
-                } else {
-                    None
-                }
-            })?;
+        // todo! use Arc<str> later too
+        let edits = edits
+            .into_iter()
+            .map(|(r, e)| (r, e.to_string()))
+            .collect::<Vec<_>>();
+
+        let edited_buffer = included_buffers.iter().find(|buffer| {
+            buffer
+                .read_with(cx, |buffer, _| {
+                    buffer.remote_id() == edited_buffer_snapshot.remote_id()
+                })
+                .unwrap_or(false)
+        })?;
 
         let (buffer, edits, snapshot, edit_preview_task) = edited_buffer
             .read_with(cx, |buffer, cx| {
@@ -146,10 +152,6 @@ impl std::fmt::Debug for EditPrediction {
     }
 }
 
-pub fn buffer_path_eq(buffer: &Buffer, path: &Path, cx: &App) -> bool {
-    buffer.file().map(|p| p.full_path(cx)).as_deref() == Some(path)
-}
-
 pub fn interpolate_edits(
     old_snapshot: &TextBufferSnapshot,
     new_snapshot: &TextBufferSnapshot,
@@ -163,7 +165,7 @@ pub fn interpolate_edits(
             let model_old_range = model_old_range.to_offset(old_snapshot);
             if model_old_range.end < user_edit.old.start {
                 let (model_old_range, model_new_text) = model_edits.next().unwrap();
-                edits.push((model_old_range.clone(), model_new_text.clone()));
+                edits.push((model_old_range.clone(), model_new_text.to_string()));
             } else {
                 break;
             }
@@ -196,124 +198,11 @@ pub fn interpolate_edits(
     if edits.is_empty() { None } else { Some(edits) }
 }
 
-pub fn line_range_to_point_range(range: Range<predict_edits_v3::Line>) -> Range<language::Point> {
-    language::Point::new(range.start.0, 0)..language::Point::new(range.end.0, 0)
-}
-
-fn edits_from_response(
-    edits: &[predict_edits_v3::Edit],
-    snapshot: &TextBufferSnapshot,
-) -> Arc<[(Range<Anchor>, String)]> {
-    edits
-        .iter()
-        .flat_map(|edit| {
-            let point_range = line_range_to_point_range(edit.range.clone());
-            let offset = point_range.to_offset(snapshot).start;
-            let old_text = snapshot.text_for_range(point_range);
-
-            excerpt_edits_from_response(
-                old_text.collect::<Cow<str>>(),
-                &edit.content,
-                offset,
-                &snapshot,
-            )
-        })
-        .collect::<Vec<_>>()
-        .into()
-}
-
-fn excerpt_edits_from_response(
-    old_text: Cow<str>,
-    new_text: &str,
-    offset: usize,
-    snapshot: &TextBufferSnapshot,
-) -> impl Iterator<Item = (Range<Anchor>, String)> {
-    text_diff(&old_text, new_text)
-        .into_iter()
-        .map(move |(mut old_range, new_text)| {
-            old_range.start += offset;
-            old_range.end += offset;
-
-            let prefix_len = common_prefix(
-                snapshot.chars_for_range(old_range.clone()),
-                new_text.chars(),
-            );
-            old_range.start += prefix_len;
-
-            let suffix_len = common_prefix(
-                snapshot.reversed_chars_for_range(old_range.clone()),
-                new_text[prefix_len..].chars().rev(),
-            );
-            old_range.end = old_range.end.saturating_sub(suffix_len);
-
-            let new_text = new_text[prefix_len..new_text.len() - suffix_len].to_string();
-            let range = if old_range.is_empty() {
-                let anchor = snapshot.anchor_after(old_range.start);
-                anchor..anchor
-            } else {
-                snapshot.anchor_after(old_range.start)..snapshot.anchor_before(old_range.end)
-            };
-            (range, new_text)
-        })
-}
-
-fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
-    a.zip(b)
-        .take_while(|(a, b)| a == b)
-        .map(|(a, _)| a.len_utf8())
-        .sum()
-}
-
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
-    use cloud_llm_client::predict_edits_v3;
-    use edit_prediction_context::Line;
     use gpui::{App, Entity, TestAppContext, prelude::*};
-    use indoc::indoc;
     use language::{Buffer, ToOffset as _};
-
-    #[gpui::test]
-    async fn test_compute_edits(cx: &mut TestAppContext) {
-        let old = indoc! {r#"
-            fn main() {
-                let args =
-                println!("{}", args[1])
-            }
-        "#};
-
-        let new = indoc! {r#"
-            fn main() {
-                let args = std::env::args();
-                println!("{}", args[1]);
-            }
-        "#};
-
-        let buffer = cx.new(|cx| Buffer::local(old, cx));
-        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
-
-        // TODO cover more cases when multi-file is supported
-        let big_edits = vec![predict_edits_v3::Edit {
-            path: PathBuf::from("test.txt").into(),
-            range: Line(0)..Line(old.lines().count() as u32),
-            content: new.into(),
-        }];
-
-        let edits = edits_from_response(&big_edits, &snapshot);
-        assert_eq!(edits.len(), 2);
-        assert_eq!(
-            edits[0].0.to_point(&snapshot).start,
-            language::Point::new(1, 14)
-        );
-        assert_eq!(edits[0].1, " std::env::args();");
-        assert_eq!(
-            edits[1].0.to_point(&snapshot).start,
-            language::Point::new(2, 27)
-        );
-        assert_eq!(edits[1].1, ";");
-    }
 
     #[gpui::test]
     async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {

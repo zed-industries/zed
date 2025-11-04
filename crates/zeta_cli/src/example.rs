@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::{Context as _, Result};
 use clap::ValueEnum;
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use futures::AsyncWriteExt as _;
 use gpui::{AsyncApp, Entity, http_client::Url};
 use language::{Buffer, BufferId};

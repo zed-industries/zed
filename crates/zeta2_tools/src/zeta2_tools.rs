@@ -5,7 +5,7 @@ use std::{cmp::Reverse, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 use chrono::TimeDelta;
 use client::{Client, UserStore};
 use cloud_llm_client::predict_edits_v3::{
-    self, DeclarationScoreComponents, PredictEditsRequest, PredictEditsResponse, PromptFormat,
+    DeclarationScoreComponents, PredictEditsRequest, PromptFormat,
 };
 use collections::HashMap;
 use editor::{Editor, EditorEvent, EditorMode, ExcerptRange, MultiBuffer};

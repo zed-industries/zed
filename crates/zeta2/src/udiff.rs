@@ -9,10 +9,11 @@ use std::{
 
 use anyhow::Context as _;
 use anyhow::Result;
+use anyhow::anyhow;
 use collections::HashMap;
 use gpui::AsyncApp;
 use gpui::Entity;
-use language::{Anchor, Buffer, BufferId, BufferSnapshot};
+use language::{Anchor, Buffer, BufferId, BufferSnapshot, OffsetRangeExt as _};
 use project::Project;
 
 #[derive(Debug, Default)]
@@ -29,13 +30,8 @@ struct Edit {
 
 pub async fn parse_diff(
     diff: &str,
-    included_files: &[(
-        Entity<Buffer>,
-        BufferSnapshot,
-        Arc<Path>,
-        Vec<Range<Anchor>>,
-    )],
-) -> Result<(BufferSnapshot, Vec<(Range<Anchor>, String)>)> {
+    included_files: &[(BufferSnapshot, Arc<Path>, Vec<Range<Anchor>>)],
+) -> Result<(BufferSnapshot, Vec<(Range<Anchor>, Arc<str>)>)> {
     let mut edited_buffer = None;
     let mut buffer_edits = Vec::new();
     process_diff(diff, included_files, async |buffer, renamed_to, edits| {
@@ -77,7 +73,7 @@ pub async fn apply_diff(
 
             let path = Arc::from(Path::new(path.as_ref()));
             opened_buffers.insert(snapshot.remote_id(), buffer.clone());
-            included_files.push((buffer, snapshot, path, vec![Anchor::MIN..Anchor::MAX]));
+            included_files.push((snapshot, path, vec![Anchor::MIN..Anchor::MAX]));
         }
     }
 
@@ -110,20 +106,14 @@ pub async fn apply_diff(
 
 async fn process_diff(
     diff: &str,
-    included_files: &[(
-        Entity<Buffer>,
-        BufferSnapshot,
-        Arc<Path>,
-        Vec<Range<Anchor>>,
-    )],
+    included_files: &[(BufferSnapshot, Arc<Path>, Vec<Range<Anchor>>)],
     mut on_buffer: impl AsyncFnMut(
         &BufferSnapshot,
         Option<&Path>,
-        Vec<(Range<Anchor>, String)>,
+        Vec<(Range<Anchor>, Arc<str>)>,
     ) -> Result<()>,
 ) -> Result<()> {
-    let mut buffer = None;
-    let mut old_path = None;
+    let mut current_file = None;
     let mut new_path = None;
     let mut hunk = HunkState::default();
     let mut edits = Vec::new();
@@ -132,22 +122,15 @@ async fn process_diff(
     while let Some(diff_line) = diff_lines.next() {
         match diff_line {
             DiffLine::OldPath { path } => {
-                buffer = Some(
+                current_file = Some(
                     included_files
                         .iter()
-                        .find_map(|(_, buffer, probe_path, _)| {
-                            if probe_path.as_ref() == Path::new(path.as_ref()) {
-                                Some(buffer)
-                            } else {
-                                None
-                            }
-                        })
+                        .find(|(_, probe_path, _)| probe_path.as_ref() == Path::new(path.as_ref()))
                         .context("model tried to edit a buffer that was not provided")?,
                 );
-                old_path = Some(path);
             }
             DiffLine::NewPath { path } => {
-                if buffer.is_none() {
+                if current_file.is_none() {
                     anyhow::bail!(
                         "Found a new path header (`+++`) before an (`---`) old path header"
                     );
@@ -196,47 +179,64 @@ async fn process_diff(
         if at_hunk_end {
             let hunk = mem::take(&mut hunk);
 
-            let Some(buffer) = buffer.as_ref() else {
+            let Some((buffer, _, ranges)) = current_file.as_ref() else {
                 anyhow::bail!("Missing old path (`---`) header")
             };
 
             // TODO is it worth using project search?
             let context_offset = if hunk.context.is_empty() {
-                0
+                Ok(0)
             } else {
-                let text = buffer.text();
-                if let Some(offset) = text.find(&hunk.context) {
-                    if text[offset + 1..].contains(&hunk.context) {
-                        anyhow::bail!("Context is not unique enough:\n{}", hunk.context);
+                let mut offset = None;
+                for range in ranges {
+                    let range = range.to_offset(buffer);
+                    let text = buffer.text_for_range(range.clone()).collect::<String>();
+                    for (ix, _) in text.match_indices(&hunk.context) {
+                        if offset.is_some() {
+                            anyhow::bail!("Context is not unique enough:\n{}", hunk.context);
+                        }
+                        offset = Some(range.start + ix);
                     }
-                    offset
-                } else {
-                    anyhow::bail!(
+                }
+                offset.ok_or_else(|| {
+                    anyhow!(
                         "Failed to match context:\n{}\n\nBuffer:\n{}",
                         hunk.context,
-                        text
-                    );
-                }
-            };
+                        buffer.text(),
+                    )
+                })
+            }?;
 
-            edits.extend(hunk.edits.into_iter().map(|edit| {
-                (
-                    buffer.anchor_after(context_offset + edit.range.start)
-                        ..buffer.anchor_before(context_offset + edit.range.end),
-                    edit.text,
-                )
+            edits.extend(hunk.edits.into_iter().flat_map(|edit| {
+                let old_text = buffer
+                    .text_for_range(edit.range.clone())
+                    .collect::<String>();
+                let edits_within_hunk = language::text_diff(&old_text, &edit.text);
+                edits_within_hunk
+                    .into_iter()
+                    .map(move |(inner_range, inner_text)| {
+                        (
+                            buffer
+                                .anchor_after(context_offset + edit.range.start + inner_range.start)
+                                ..buffer.anchor_before(
+                                    context_offset + edit.range.start + inner_range.end,
+                                ),
+                            inner_text,
+                        )
+                    })
             }));
         }
 
         if at_file_end {
-            let Some((old_path, buffer)) = old_path.take().zip(buffer.take()) else {
+            let Some((buffer, old_path, _)) = current_file else {
                 anyhow::bail!("Missing old path (`---`) header")
             };
             let Some(new_path) = new_path.take() else {
                 anyhow::bail!("Missing new path (`+++`) header")
             };
-            let renamed_to = if old_path != new_path {
-                Some(Path::new(new_path.as_ref()))
+            let new_path = Path::new(new_path.as_ref());
+            let renamed_to = if old_path.as_ref() != new_path {
+                Some(new_path)
             } else {
                 None
             };
@@ -359,6 +359,7 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use indoc::indoc;
+    use language::Point;
     use pretty_assertions::assert_eq;
     use project::{FakeFs, Project};
     use serde_json::json;
@@ -523,6 +524,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_apply_diff_successful(cx: &mut TestAppContext) {
+        let fs = init_test(cx);
+
         let buffer_1_text = indoc! {r#"
             one
             two
@@ -556,14 +559,6 @@ mod tests {
             11
         "# };
 
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            Project::init_settings(cx);
-            language::init(cx);
-        });
-
-        let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             path!("/root"),
             json!({
@@ -641,6 +636,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_apply_diff_non_unique(cx: &mut TestAppContext) {
+        let fs = init_test(cx);
+
         let buffer_1_text = indoc! {r#"
             one
             two
@@ -654,14 +651,6 @@ mod tests {
             five
         "# };
 
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            Project::init_settings(cx);
-            language::init(cx);
-        });
-
-        let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             path!("/root"),
             json!({
@@ -671,6 +660,13 @@ mod tests {
         .await;
 
         let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/file1"), cx)
+            })
+            .await
+            .unwrap();
+        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
 
         let diff = indoc! {r#"
             --- a/root/file1
@@ -683,13 +679,108 @@ mod tests {
              five
         "#};
 
+        let final_text = indoc! {r#"
+            one
+            two
+            three
+            four
+            five
+            one
+            two
+            3
+            four
+            five
+        "#};
+
         apply_diff(diff, &project, &mut cx.to_async())
             .await
             .expect_err("Non-unique edits should fail");
+
+        let (edited_snapshot, edits) = parse_diff(
+            diff,
+            &[(
+                buffer_snapshot.clone(),
+                Arc::from(path!("root/file1").as_ref()),
+                vec![
+                    buffer_snapshot.anchor_before(Point::new(1, 0))
+                        ..buffer_snapshot.anchor_after(buffer_snapshot.max_point()),
+                ],
+            )],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(edited_snapshot.remote_id(), buffer_snapshot.remote_id());
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(edits, None, cx);
+            assert_eq!(buffer.text(), final_text);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_parse_diff_with_edits_within_line(cx: &mut TestAppContext) {
+        let fs = init_test(cx);
+
+        let buffer_1_text = indoc! {r#"
+            one two three four
+            five six seven eight
+            nine ten eleven twelve
+        "# };
+
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "file1": buffer_1_text,
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/file1"), cx)
+            })
+            .await
+            .unwrap();
+        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+        let diff = indoc! {r#"
+            --- a/root/file1
+            +++ b/root/file1
+             one two three four
+            -five six seven eight
+            +five SIX seven eight!
+             nine ten eleven twelve
+        "#};
+
+        let (buffer, edits) = parse_diff(
+            diff,
+            &[(
+                buffer_snapshot,
+                Arc::from(Path::new("root/file1")),
+                vec![(Anchor::MIN..Anchor::MAX)],
+            )],
+        )
+        .await
+        .unwrap();
+
+        let edits = edits
+            .into_iter()
+            .map(|(range, text)| (range.to_point(&buffer), text))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            edits,
+            &[
+                (Point::new(1, 5)..Point::new(1, 8), "SIX".into()),
+                (Point::new(1, 20)..Point::new(1, 20), "!".into())
+            ]
+        );
     }
 
     #[gpui::test]
     async fn test_apply_diff_unique_via_previous_context(cx: &mut TestAppContext) {
+        let fs = init_test(cx);
+
         let start = indoc! {r#"
             one
             two
@@ -712,14 +803,6 @@ mod tests {
             five
         "# };
 
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            Project::init_settings(cx);
-            language::init(cx);
-        });
-
-        let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             path!("/root"),
             json!({
@@ -757,5 +840,16 @@ mod tests {
         buffer_1.read_with(cx, |buffer, _cx| {
             assert_eq!(buffer.text(), end);
         });
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            Project::init_settings(cx);
+            language::init(cx);
+        });
+
+        FakeFs::new(cx.background_executor.clone())
     }
 }

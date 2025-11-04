@@ -923,7 +923,7 @@ impl Zeta {
                 };
 
                 // TODO telemetry: duration, etc
-                Ok(EditPrediction::from_response(response, &buffer, &included_files, cx).await)
+                Ok(EditPrediction::from_response(response, &buffer, included_files, cx).await)
             }
         })
     }
