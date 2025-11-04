@@ -23,10 +23,10 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
       shell: bash -euxo pipefail {0}
-    - name: steps::cache_rust_dependencies
-      uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
       with:
-        save-if: ${{ github.ref == 'refs/heads/main' }}
+        cache: rust
     - name: steps::setup_linux
       run: ./script/linux
       shell: bash -euxo pipefail {0}
@@ -37,7 +37,7 @@ jobs:
       run: cargo install cargo-nextest --locked
       shell: bash -euxo pipefail {0}
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than 100
+      run: ./script/clear-target-dir-if-larger-than 250
       shell: bash -euxo pipefail {0}
     - name: ./script/run-unit-evals
       run: ./script/run-unit-evals

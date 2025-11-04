@@ -3,12 +3,12 @@ use core::num;
 use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
-use settings::Settings;
 pub use settings::{
     CurrentLineHighlight, DelayMs, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer,
     GoToDefinitionFallback, HideMouseMode, MinimapThumb, MinimapThumbBorder, MultiCursorModifier,
     ScrollBeyondLastLine, ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
 };
+use settings::{RelativeLineNumbers, Settings};
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
 /// Imports from the VSCode settings at
@@ -33,7 +33,7 @@ pub struct EditorSettings {
     pub horizontal_scroll_margin: f32,
     pub scroll_sensitivity: f32,
     pub fast_scroll_sensitivity: f32,
-    pub relative_line_numbers: bool,
+    pub relative_line_numbers: RelativeLineNumbers,
     pub seed_search_query_from_cursor: SeedQuerySetting,
     pub use_smartcase_search: bool,
     pub multi_cursor_modifier: MultiCursorModifier,
@@ -55,6 +55,7 @@ pub struct EditorSettings {
     pub drag_and_drop_selection: DragAndDropSelection,
     pub lsp_document_colors: DocumentColorsRenderMode,
     pub minimum_contrast_for_highlights: f32,
+    pub completion_menu_scrollbar: ShowScrollbar,
 }
 #[derive(Debug, Clone)]
 pub struct Jupyter {
@@ -268,6 +269,7 @@ impl Settings for EditorSettings {
             },
             lsp_document_colors: editor.lsp_document_colors.unwrap(),
             minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap().0,
+            completion_menu_scrollbar: editor.completion_menu_scrollbar.map(Into::into).unwrap(),
         }
     }
 }

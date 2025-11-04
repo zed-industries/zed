@@ -1574,6 +1574,21 @@ mod tests {
     }
 
     #[perf]
+    fn file_in_dirs() {
+        let path = Path::new("/work/.env");
+        let path_matcher = PathMatcher::new(&["**/.env".to_owned()], PathStyle::Posix).unwrap();
+        assert!(
+            path_matcher.is_match(path),
+            "Path matcher should match {path:?}"
+        );
+        let path = Path::new("/work/package.json");
+        assert!(
+            !path_matcher.is_match(path),
+            "Path matcher should not match {path:?}"
+        );
+    }
+
+    #[perf]
     fn project_search() {
         let path = Path::new("/Users/someonetoignore/work/zed/zed.dev/node_modules");
         let path_matcher =

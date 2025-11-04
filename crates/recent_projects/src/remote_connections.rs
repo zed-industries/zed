@@ -137,7 +137,7 @@ impl Drop for RemoteConnectionPrompt {
 }
 
 pub struct RemoteConnectionModal {
-    pub(crate) prompt: Entity<RemoteConnectionPrompt>,
+    pub prompt: Entity<RemoteConnectionPrompt>,
     paths: Vec<PathBuf>,
     finished: bool,
 }
@@ -280,7 +280,7 @@ impl Render for RemoteConnectionPrompt {
 }
 
 impl RemoteConnectionModal {
-    pub(crate) fn new(
+    pub fn new(
         connection_options: &RemoteConnectionOptions,
         paths: Vec<PathBuf>,
         window: &mut Window,

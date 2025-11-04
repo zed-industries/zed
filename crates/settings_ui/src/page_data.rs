@@ -1506,7 +1506,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Relative Line Numbers",
-                        description: "Whether the line numbers in the editor's gutter are relative or not.",
+                        description: "Controls line number display in the editor's gutter. \"disabled\" shows absolute line numbers, \"enabled\" shows relative line numbers for each absolute line, and \"wrapped\" shows relative line numbers for every line, absolute or wrapped.",
                         field: Box::new(SettingField {
                             json_path: Some("relative_line_numbers"),
                             pick: |settings_content| {
@@ -3740,6 +3740,24 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .hide_hidden = value;
                         },
                     }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Hidden Files",
+                    description: "Globs to match files that will be considered \"hidden\" and can be hidden from the project panel.",
+                    field: Box::new(
+                        SettingField {
+                            json_path: Some("worktree.hidden_files"),
+                            pick: |settings_content| {
+                                settings_content.project.worktree.hidden_files.as_ref()
+                            },
+                            write: |settings_content, value| {
+                                settings_content.project.worktree.hidden_files = value;
+                            },
+                        }
+                        .unimplemented(),
+                    ),
                     metadata: None,
                     files: USER,
                 }),
@@ -6540,6 +6558,19 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Completion Menu Scrollbar",
+            description: "When to show the scrollbar in the completion menu.",
+            field: Box::new(SettingField {
+                json_path: Some("editor.completion_menu_scrollbar"),
+                pick: |settings_content| settings_content.editor.completion_menu_scrollbar.as_ref(),
+                write: |settings_content, value| {
+                    settings_content.editor.completion_menu_scrollbar = value;
+                },
+            }),
+            metadata: None,
+            files: USER,
         }),
         SettingsPageItem::SectionHeader("Inlay Hints"),
         SettingsPageItem::SettingItem(SettingItem {

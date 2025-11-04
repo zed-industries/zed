@@ -19,7 +19,6 @@ use pet_core::python_environment::{PythonEnvironment, PythonEnvironmentKind};
 use pet_virtualenv::is_virtualenv_dir;
 use project::Fs;
 use project::lsp_store::language_server_settings;
-use rope::Rope;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use smol::lock::OnceCell;
@@ -467,7 +466,7 @@ impl LspAdapter for PyrightLspAdapter {
         Some(language::CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(&Rope::from_str_small(text.as_str()), display_range),
+            language.highlight_text(&text.as_str().into(), display_range),
         ))
     }
 
@@ -1218,6 +1217,7 @@ impl ToolchainLister for PythonToolchainProvider {
                     ShellKind::Cmd => None,
                     ShellKind::Rc => None,
                     ShellKind::Xonsh => None,
+                    ShellKind::Elvish => None,
                 })
             }
             _ => {}
@@ -1512,7 +1512,7 @@ impl LspAdapter for PyLspAdapter {
         Some(language::CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(&Rope::from_str_small(text.as_str()), display_range),
+            language.highlight_text(&text.as_str().into(), display_range),
         ))
     }
 
@@ -1801,7 +1801,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
         Some(language::CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(&Rope::from_str_small(text.as_str()), display_range),
+            language.highlight_text(&text.as_str().into(), display_range),
         ))
     }
 
