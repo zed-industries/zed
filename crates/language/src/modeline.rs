@@ -45,12 +45,15 @@ impl ModelineSettings {
 /// Parse modelines from file content.
 ///
 /// Supports:
-/// - Emacs modelines: -*- mode: rust; tab-width: 4; indent-tabs-mode: nil; -*-
+/// - Emacs modelines: -*- mode: rust; tab-width: 4; indent-tabs-mode: nil; -*- and "Local Variables"
 /// - Vim modelines: vim: set ft=rust ts=4 sw=4 et:
 pub fn parse_modeline(first_lines: &[&str], last_lines: &[&str]) -> Option<ModelineSettings> {
     let mut settings = ModelineSettings::default();
 
     parse_modelines(first_lines, &mut settings);
+
+    // Parse Emacs Local Variables in last lines
+    parse_emacs_local_variables(last_lines, &mut settings);
 
     // Also check for vim modelines in last lines if we don't have settings yet
     if !settings.has_settings() {
@@ -87,6 +90,61 @@ fn parse_emacs_modeline(line: &str, settings: &mut ModelineSettings) {
     };
     for part in modeline_content.split(';') {
         parse_emacs_key_value(part, settings, true);
+    }
+}
+
+/// Parse Emacs-style Local Variables block
+///
+/// Emacs supports a "Local Variables" block at the end of files:
+/// ```text
+/// /* Local Variables: */
+/// /* mode: c */
+/// /* tab-width: 4 */
+/// /* End: */
+/// ```
+///
+/// Emacs related code is hack-local-variables--find-variables in
+/// https://cgit.git.savannah.gnu.org/cgit/emacs.git/tree/lisp/files.el#n4346
+fn parse_emacs_local_variables(lines: &[&str], settings: &mut ModelineSettings) {
+    const LOCAL_VARIABLES: &str = "Local Variables:";
+
+    let Some((start_idx, prefix, suffix)) = lines.iter().enumerate().find_map(|(i, line)| {
+        let prefix_len = line.find(LOCAL_VARIABLES)?;
+        let suffix_start = prefix_len + LOCAL_VARIABLES.len();
+        Some((i, line.get(..prefix_len)?, line.get(suffix_start..)?))
+    }) else {
+        return;
+    };
+
+    let mut continuation = String::new();
+
+    for line in &lines[start_idx + 1..] {
+        let Some(content) = line
+            .strip_prefix(prefix)
+            .and_then(|l| l.strip_suffix(suffix))
+            .map(str::trim)
+        else {
+            return;
+        };
+
+        if let Some(continued) = content.strip_suffix('\\') {
+            continuation.push_str(continued);
+            continue;
+        }
+
+        let to_parse = if continuation.is_empty() {
+            content
+        } else {
+            continuation.push_str(content);
+            &continuation
+        };
+
+        if to_parse == "End:" {
+            return;
+        }
+
+        parse_emacs_key_value(to_parse, settings, false);
+        continuation.clear();
     }
 }
 
@@ -266,6 +324,7 @@ fn parse_vim_settings(content: &str, settings: &mut ModelineSettings) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use indoc::indoc;
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -297,6 +356,53 @@ mod tests {
                 mode: Some("rust".to_string()),
                 tab_size: Some(NonZeroU32::new(4).unwrap()),
                 hard_tabs: Some(false),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn test_emacs_last_line_parsing() {
+        let content = indoc! {r#"
+        # Local Variables:
+        # compile-command: "cc foo.c -Dfoo=bar -Dhack=whatever \
+        #   -Dmumble=blaah"
+        # End:
+        "#}
+        .lines()
+        .collect::<Vec<_>>();
+        let settings = parse_modeline(&[], &content).unwrap();
+        assert_eq!(
+            settings,
+            ModelineSettings {
+                emacs_extra_variables: vec![(
+                    "compile-command".to_string(),
+                    "\"cc foo.c -Dfoo=bar -Dhack=whatever -Dmumble=blaah\"".to_string()
+                ),],
+                ..Default::default()
+            }
+        );
+
+        let content = indoc! {"
+            foo
+            /* Local Variables: */
+            /* eval: (font-lock-mode -1) */
+            /* mode: old-c */
+            /* mode: c */
+            /* End: */
+            /* mode: ignored */
+        "}
+        .lines()
+        .collect::<Vec<_>>();
+        let settings = parse_modeline(&[], &content).unwrap();
+        assert_eq!(
+            settings,
+            ModelineSettings {
+                mode: Some("c".to_string()),
+                emacs_extra_variables: vec![(
+                    "eval".to_string(),
+                    "(font-lock-mode -1)".to_string()
+                ),],
                 ..Default::default()
             }
         );
