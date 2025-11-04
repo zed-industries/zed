@@ -3137,6 +3137,77 @@ fn test_newline(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_newline_yaml(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let yaml_language = languages::language("yaml", tree_sitter_yaml::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(yaml_language), cx));
+
+    // Object (between 2 fields)
+    cx.set_state(indoc! {"
+    test:ˇ
+    hello: bye"});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+    test:
+        ˇ
+    hello: bye"});
+
+    // Object (first and single line)
+    cx.set_state(indoc! {"
+    test:ˇ"});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+    test:
+        ˇ"});
+
+    // Array with objects (after first element)
+    cx.set_state(indoc! {"
+    test:
+        - foo: barˇ"});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+    test:
+        - foo: bar
+        ˇ"});
+
+    // Array with objects and comment
+    cx.set_state(indoc! {"
+    test:
+        - foo: bar
+        - bar: # testˇ"});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+    test:
+        - foo: bar
+        - bar: # test
+            ˇ"});
+
+    // Array with objects (after second element)
+    cx.set_state(indoc! {"
+    test:
+        - foo: bar
+        - bar: fooˇ"});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+    test:
+        - foo: bar
+        - bar: foo
+        ˇ"});
+
+    // Array with strings (after first element)
+    cx.set_state(indoc! {"
+    test:
+        - fooˇ"});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+    test:
+        - foo
+        ˇ"});
+}
+
+#[gpui::test]
 fn test_newline_with_old_selections(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
