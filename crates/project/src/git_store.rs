@@ -1716,7 +1716,7 @@ impl GitStore {
 
         let branch_name = envelope.payload.branch_name.into();
         let remote_name = envelope.payload.remote_name.into();
-        let rebase = envelope.payload.rebase.into();
+        let rebase = envelope.payload.rebase;
 
         let remote_message = repository_handle
             .update(&mut cx, |repository_handle, cx| {
