@@ -1,3 +1,5 @@
+use std::io::IsTerminal;
+
 use collections::HashSet;
 
 use crate::{PredictionDetails, example::Example};
@@ -123,10 +125,17 @@ fn precision_recall(expected: &HashSet<String>, actual: &HashSet<String>) -> Sco
     }
 }
 
-/// Compare actual and expected context. Return actual context annotated with these markers:
-/// `+ context line`  -- line was correctly predicted
-/// `- context line`  -- line has been missing from predictions
+/// Compare actual and expected context.
+///
+/// Return expected context annotated with these markers:
+///
+/// `✓ context line`  -- line was correctly predicted
+/// `✗ context line`  -- line is missing from predictions
 pub fn compare_context(example: &Example, preds: &PredictionDetails) -> String {
+    let use_color = std::io::stdout().is_terminal();
+    let green = if use_color { "\x1b[32m" } else { "" };
+    let red = if use_color { "\x1b[31m" } else { "" };
+    let reset = if use_color { "\x1b[0m" } else { "" };
     let expected: Vec<_> = example
         .expected_excerpts
         .iter()
@@ -152,9 +161,9 @@ pub fn compare_context(example: &Example, preds: &PredictionDetails) -> String {
         .iter()
         .map(|(path, line)| {
             if actual.contains(&(path.to_path_buf(), line)) {
-                format!("✓ {}", line)
+                format!("{green}✓ {line}{reset}")
             } else {
-                format!("✗ {}", line)
+                format!("{red}✗ {line}{reset}")
             }
         })
         .collect::<Vec<String>>();
