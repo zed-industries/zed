@@ -5529,8 +5529,22 @@ impl Editor {
         } else {
             Task::ready(Ok(Vec::new()))
         };
-        
-        let 
+
+        // is it the project snippets
+        let snippets = if let Some(provider) = &provider
+            && provider.show_snippets()
+            && let Some(project) = self.project()
+        {
+            project.update(cx, |project, cx| {
+                snippet_completions(project, &buffer, buffer_position, cx)
+            })
+        } else {
+            Task::ready(Ok(CompletionResponse {
+                completions: Vec::new(),
+                display_options: Default::default(),
+                is_incomplete: false,
+            }))
+        };
 
         let snippet_sort_order = EditorSettings::get_global(cx).snippet_sort_order;
 
@@ -5586,6 +5600,13 @@ impl Editor {
                 insert_text_mode: Some(InsertTextMode::AS_IS),
                 confirm: None,
             }));
+
+            completions.extend(
+                snippets
+                    .await
+                    .into_iter()
+                    .flat_map(|response| response.completions),
+            );
 
             let menu = if completions.is_empty() {
                 None
@@ -22926,6 +22947,10 @@ pub trait CompletionProvider {
     fn filter_completions(&self) -> bool {
         true
     }
+
+    fn show_snippets(&self) -> bool {
+        false
+    }
 }
 
 pub trait CodeActionProvider {
@@ -23186,16 +23211,8 @@ impl CompletionProvider for Entity<Project> {
         cx: &mut Context<Editor>,
     ) -> Task<Result<Vec<CompletionResponse>>> {
         self.update(cx, |project, cx| {
-            let snippets = snippet_completions(project, buffer, buffer_position, cx);
-            let project_completions = project.completions(buffer, buffer_position, options, cx);
-            cx.background_spawn(async move {
-                let mut responses = project_completions.await?;
-                let snippets = snippets.await?;
-                if !snippets.completions.is_empty() {
-                    responses.push(snippets);
-                }
-                Ok(responses)
-            })
+            let task = project.completions(buffer, buffer_position, options, cx);
+            cx.background_spawn(task)
         })
     }
 
@@ -23266,6 +23283,10 @@ impl CompletionProvider for Entity<Project> {
         }
 
         buffer.completion_triggers().contains(text)
+    }
+
+    fn show_snippets(&self) -> bool {
+        true
     }
 }
 
