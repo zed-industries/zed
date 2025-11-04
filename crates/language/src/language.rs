@@ -12,6 +12,7 @@ mod highlight_map;
 mod language_registry;
 pub mod language_settings;
 mod manifest;
+mod modeline;
 mod outline;
 pub mod proto;
 mod syntax_map;
