@@ -3,7 +3,7 @@ use gh_workflow::*;
 use crate::tasks::workflows::{
     runners,
     steps::{self, NamedJob, named},
-    vars::Input,
+    vars::{self, Input},
 };
 
 pub fn cherry_pick() -> Workflow {
@@ -24,6 +24,7 @@ fn run_cherry_pick(branch: &Input, commit: &Input) -> NamedJob {
         named::bash(&format!("./script/cherry-pick {branch} {commit}"))
             .add_env(("GIT_COMMITTER_NAME", "Zed Zippy"))
             .add_env(("GIT_COMMITTER_EMAIL", "hi@zed.dev"))
+            .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN))
     }
 
     named::job(

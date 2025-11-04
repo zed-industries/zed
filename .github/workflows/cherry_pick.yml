@@ -26,3 +26,4 @@ jobs:
       env:
         GIT_COMMITTER_NAME: Zed Zippy
         GIT_COMMITTER_EMAIL: hi@zed.dev
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
