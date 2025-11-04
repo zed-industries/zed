@@ -23,7 +23,7 @@ fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {
     let step = named::uses(
         "actions",
         "create-github-app-token",
-        " bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1",
+        "bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1",
     ) // v2
     .add_env(("app-id", vars::ZED_ZIPPY_APP_ID))
     .add_env(("app-private-key", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
