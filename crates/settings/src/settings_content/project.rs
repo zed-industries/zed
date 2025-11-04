@@ -98,8 +98,8 @@ pub struct WorktreeSettingsContent {
     /// Default: ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]
     pub private_files: Option<ExtendingVec<String>>,
 
-    /// Files matching these globs are considered "hidden" and can be hidden in the project panel.
-    /// Default: [".*"]
+    /// Treat the files matching these globs as hidden files. You can hide hidden files in the project panel.
+    /// Default: ["**/.*"]
     pub hidden_files: Option<Vec<String>>,
 }
 
