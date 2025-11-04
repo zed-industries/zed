@@ -1,10 +1,12 @@
+mod eval;
 mod example;
 mod headless;
 mod source_location;
 mod syntax_retrieval_stats;
 mod util;
 
-use crate::example::{ExampleFormat, NamedExample};
+use crate::eval::evaluate;
+use crate::example::{ActualExcerpt, ExampleFormat, NamedExample};
 use crate::syntax_retrieval_stats::retrieval_stats;
 use ::serde::Serialize;
 use ::util::paths::PathStyle;
@@ -19,11 +21,12 @@ use edit_prediction_context::{
 };
 use futures::StreamExt as _;
 use futures::channel::mpsc;
-use gpui::{Application, AsyncApp, Entity, prelude::*};
+use gpui::{Action, Application, AsyncApp, Entity, prelude::*};
 use language::{Bias, Buffer, BufferSnapshot, OffsetRangeExt, Point};
 use language_model::LanguageModelRegistry;
 use project::{Project, ProjectPath, Worktree};
 use reqwest_client::ReqwestClient;
+use serde::Deserialize;
 use serde_json::json;
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
@@ -86,6 +89,13 @@ enum Zeta2Command {
         example_path: PathBuf,
         #[clap(long, short, value_enum, default_value_t = PredictionsOutputFormat::Md)]
         format: PredictionsOutputFormat,
+    },
+    Eval {
+        example_path: PathBuf,
+        #[clap(long, short, value_enum, default_value_t = PredictionsOutputFormat::Md)]
+        format: PredictionsOutputFormat,
+        #[clap(long, short)]
+        preds: Option<PathBuf>,
     },
 }
 
@@ -336,10 +346,11 @@ async fn load_context(
     })
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 struct PredictionDetails {
     diff: String,
-    excerpts_text: String,
+    excerpts: Vec<ActualExcerpt>,
+    excerpts_text: String, // TODO: contains the worktree root path. Drop this field and compute it on the fly
     planning_search_time: Duration,
     filtering_search_time: Duration,
     running_search_time: Duration,
@@ -519,6 +530,12 @@ async fn zeta2_predict(
 
                 for included_file in request.request.included_files {
                     let insertions = vec![(request.request.cursor_point, CURSOR_MARKER)];
+                    result
+                        .excerpts
+                        .extend(included_file.excerpts.iter().map(|excerpt| ActualExcerpt {
+                            path: included_file.path.components().skip(1).collect(),
+                            text: String::from(excerpt.text.as_ref()),
+                        }));
                     write_codeblock(
                         &included_file.path,
                         included_file.excerpts.iter(),
@@ -871,6 +888,36 @@ fn main() {
                         let example = NamedExample::load(example_path).unwrap();
                         let result = zeta2_predict(example, &app_state, cx).await.unwrap();
                         result.write(format, std::io::stdout()).unwrap();
+                        let _ = cx.update(|cx| cx.quit());
+                        return;
+                    }
+                    Zeta2Command::Eval {
+                        example_path,
+                        preds,
+                        ..
+                    } => {
+                        let example = NamedExample::load(example_path).unwrap();
+
+                        let had_preds = preds.is_some();
+                        let predictions = if let Some(Ok(preds)) = preds.map(|path| {
+                            let file_contents = std::fs::read_to_string(path)?;
+                            let as_json =
+                                serde_json::from_str::<PredictionDetails>(&file_contents)?;
+                            anyhow::Ok(as_json)
+                        }) {
+                            log::info!("Loaded predictions from file");
+                            preds
+                        } else {
+                            if had_preds {
+                                log::error!("Failed to deserialize predictions from file, creating new predictions...");
+                            }
+                            zeta2_predict(example.clone(), &app_state, cx)
+                                .await
+                                .unwrap()
+                        };
+
+                        let evaluation_result = evaluate(example.example.clone(), predictions);
+                        println!("{}", evaluation_result.to_markdown());
                         let _ = cx.update(|cx| cx.quit());
                         return;
                     }

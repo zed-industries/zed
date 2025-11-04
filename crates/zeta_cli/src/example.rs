@@ -27,13 +27,13 @@ const EXPECTED_EXCERPTS_HEADING: &str = "Expected Excerpts";
 const REPOSITORY_URL_FIELD: &str = "repository_url";
 const REVISION_FIELD: &str = "revision";
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NamedExample {
     pub name: String,
     pub example: Example,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Example {
     pub repository_url: String,
     pub revision: String,
@@ -45,10 +45,13 @@ pub struct Example {
     pub expected_excerpts: Vec<ExpectedExcerpt>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ExpectedExcerpt {
-    path: PathBuf,
-    text: String,
+pub type ExpectedExcerpt = Excerpt;
+pub type ActualExcerpt = Excerpt;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Excerpt {
+    pub path: PathBuf,
+    pub text: String,
 }
 
 #[derive(ValueEnum, Debug, Clone)]
@@ -171,6 +174,7 @@ impl NamedExample {
                     } else if current_section.eq_ignore_ascii_case(EXPECTED_PATCH_HEADING) {
                         named.example.expected_patch = mem::take(&mut text);
                     } else if current_section.eq_ignore_ascii_case(EXPECTED_EXCERPTS_HEADING) {
+                        // TODO: "…" should not be a part of the excerpt
                         named.example.expected_excerpts.push(ExpectedExcerpt {
                             path: block_info.into(),
                             text: mem::take(&mut text),
