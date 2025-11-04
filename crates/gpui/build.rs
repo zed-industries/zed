@@ -254,11 +254,10 @@ mod windows {
         path::{Path, PathBuf},
         process::{self, Command},
     };
-    use winreg::{RegKey, enums::*};
 
     pub(super) fn build() {
         // Compile HLSL shaders
-        #[cfg(not(debug_assertions))]
+        // #[cfg(not(debug_assertions))]
         compile_shaders();
 
         // Embed the Windows manifest and resource file
@@ -328,43 +327,45 @@ mod windows {
     }
 
     /// Locate `binary` in the newest installed Windows SDK.
-    ///
-    /// Returns `None` if the SDK is not found in the registry or the binary does not exist
-    /// in any `InstallationFolder\bin\<ProductVersion>.<patch>\x64` directory.
     pub fn find_latest_windows_sdk_binary(
         binary: &str,
     ) -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
-        let key = RegKey::predef(HKEY_LOCAL_MACHINE)
-            .open_subkey("SOFTWARE\\WOW6432Node\\Microsoft\\Microsoft SDKs\\Windows\\v10.0")?;
+        let key = windows_registry::LOCAL_MACHINE
+            .open("SOFTWARE\\WOW6432Node\\Microsoft\\Microsoft SDKs\\Windows\\v10.0")?;
 
-        let install_folder: String = key.get_value("InstallationFolder")?; // "C:\Program Files (x86)\Windows Kits\10\"
-        let product_version: String = key.get_value("ProductVersion")?; // "10.0.22621" NOTE: does not include the patch number
-
+        let install_folder: String = key.get_string("InstallationFolder")?; // "C:\Program Files (x86)\Windows Kits\10\"
         let install_folder_bin = Path::new(&install_folder).join("bin");
 
-        let mut candidates: Vec<(u32, OsString)> = std::fs::read_dir(&install_folder_bin)?
-            .filter_map(|e| e.ok())
-            .filter_map(|e| {
-                if !e.file_type().ok()?.is_dir() {
-                    return None;
-                }
-                let name = e.file_name();
-                let name_str = name.to_string_lossy();
-
-                let tail = name_str.strip_prefix(&product_version)?;
-                let patch = tail.strip_prefix('.')?.parse::<u32>().ok()?;
-                Some((patch, name))
-            })
+        let mut versions: Vec<_> = std::fs::read_dir(&install_folder_bin)?
+            .flatten()
+            .filter(|entry| entry.path().is_dir())
+            .filter_map(|entry| entry.file_name().into_string().ok())
             .collect();
 
-        // Highest patch first
-        candidates.sort_by_key(|(p, _)| std::cmp::Reverse(*p));
+        versions.sort_by_key(|s| {
+            s.split('.')
+                .filter_map(|p| p.parse().ok())
+                .collect::<Vec<u32>>()
+        });
 
-        for (_, dir_name) in candidates {
-            let candidate = install_folder_bin.join(&dir_name).join("x64").join(binary);
-            if candidate.is_file() {
-                return Ok(Some(candidate));
-            }
+        let arch = match std::env::consts::ARCH {
+            "x86_64" => "x64",
+            "aarch64" => "arm64",
+            _ => Err(format!(
+                "Unsupported architecture: {}",
+                std::env::consts::ARCH
+            ))?,
+        };
+
+        if let Some(highest_version) = versions.last() {
+            let res = Ok(Some(
+                install_folder_bin
+                    .join(highest_version)
+                    .join(arch)
+                    .join(binary),
+            ));
+            dbg!("{:?}", &res);
+            return res;
         }
 
         Ok(None)

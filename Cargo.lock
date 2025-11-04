@@ -7355,7 +7355,6 @@ dependencies = [
  "windows-core 0.61.2",
  "windows-numerics",
  "windows-registry 0.5.3",
- "winreg 0.55.0",
  "x11-clipboard",
  "x11rb",
  "xkbcommon",

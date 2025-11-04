@@ -253,7 +253,7 @@ util = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 embed-resource = "3.0"
-winreg = "0.55"
+windows-registry = "0.5"
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
 bindgen = "0.71"
