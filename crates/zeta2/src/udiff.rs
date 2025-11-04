@@ -87,14 +87,12 @@ pub async fn apply_diff(
     process_diff(
         &mut included_files,
         diff,
-        {
-            |path, included_files| {
-                let (buffer, snapshot) = included_files.get_mut(path)?;
-                *snapshot = buffer
-                    .read_with(&cx_2, |buffer, _| buffer.snapshot())
-                    .ok()?;
-                Some((&*snapshot, ranges.as_slice()))
-            }
+        |path, included_files| {
+            let (buffer, snapshot) = included_files.get_mut(path)?;
+            *snapshot = buffer
+                .read_with(&cx_2, |buffer, _| buffer.snapshot())
+                .ok()?;
+            Some((&*snapshot, ranges.as_slice()))
         },
         async |buffer, new_path, edits| {
             if let Some(new_path) = new_path {
@@ -134,8 +132,7 @@ async fn process_diff<'a, T>(
         Vec<(Range<Anchor>, Arc<str>)>,
     ) -> Result<()>,
 ) -> Result<()> {
-    // let mut current_file: Option<(std::path::PathBuf, &BufferSnapshot, &[Range<Anchor>])> = None;
-    let mut old_path = None;
+    let mut current_file = None;
     let mut new_path = None;
     let mut hunk = HunkState::default();
     let mut edits = Vec::new();
@@ -144,10 +141,12 @@ async fn process_diff<'a, T>(
     while let Some(diff_line) = diff_lines.next() {
         match diff_line {
             DiffLine::OldPath { path } => {
-                old_path = Some(path);
+                let (buffer, ranges) =
+                    get_buffer(Path::new(path.as_ref()), &mut payload).context("")?;
+                current_file = Some((Path::new(path.as_ref()).to_path_buf(), buffer, ranges));
             }
             DiffLine::NewPath { path } => {
-                if old_path.is_none() {
+                if current_file.is_none() {
                     anyhow::bail!(
                         "Found a new path header (`+++`) before an (`---`) old path header"
                     );
@@ -196,18 +195,16 @@ async fn process_diff<'a, T>(
         if at_hunk_end {
             let hunk = mem::take(&mut hunk);
 
-            let Some(old_path) = old_path.as_ref() else {
+            let Some((old_path, buffer, ranges)) = current_file.as_ref() else {
                 anyhow::bail!("Missing old path (`---`) header")
             };
-            let old_path = Path::new(old_path.as_ref());
-            let (buffer, ranges) = get_buffer(old_path, &mut payload).context("")?;
 
             // TODO is it worth using project search?
             let context_offset = if hunk.context.is_empty() {
                 Ok(0)
             } else {
                 let mut offset = None;
-                for range in ranges {
+                for range in *ranges {
                     let range = range.to_offset(buffer);
                     let text = buffer.text_for_range(range.clone()).collect::<String>();
                     for (ix, _) in text.match_indices(&hunk.context) {
