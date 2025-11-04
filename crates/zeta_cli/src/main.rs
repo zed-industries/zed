@@ -25,7 +25,7 @@ use language_model::LanguageModelRegistry;
 use project::{Project, ProjectPath, Worktree};
 use reqwest_client::ReqwestClient;
 use serde_json::json;
-use std::io;
+use std::io::{self, Write};
 use std::time::{Duration, Instant};
 use std::{collections::HashSet, path::PathBuf, process::exit, str::FromStr, sync::Arc};
 use zeta2::{ContextMode, LlmContextOptions, SearchToolQuery};
@@ -84,6 +84,8 @@ enum Zeta2Command {
     },
     Predict {
         example_path: PathBuf,
+        #[clap(long, short, value_enum, default_value_t = PredictionsOutputFormat::Md)]
+        format: PredictionsOutputFormat,
     },
 }
 
@@ -111,6 +113,13 @@ enum Zeta2LlmCommand {
         #[clap(flatten)]
         context_args: ContextArgs,
     },
+}
+
+#[derive(clap::ValueEnum, Debug, Clone)]
+pub enum PredictionsOutputFormat {
+    Json,
+    Md,
+    Diff,
 }
 
 #[derive(Debug, Args)]
@@ -327,11 +336,63 @@ async fn load_context(
     })
 }
 
+#[derive(Debug, Default, Serialize)]
+struct PredictionDetails {
+    diff: String,
+    excerpts_text: String,
+    planning_search_time: Duration,
+    filtering_search_time: Duration,
+    running_search_time: Duration,
+    prediction_time: Duration,
+    total_time: Duration,
+}
+
+impl PredictionDetails {
+    pub fn write(&self, format: PredictionsOutputFormat, mut out: impl Write) -> Result<()> {
+        let formatted = match format {
+            PredictionsOutputFormat::Md => self.to_markdown(),
+            PredictionsOutputFormat::Json => serde_json::to_string_pretty(self)?,
+            PredictionsOutputFormat::Diff => self.diff.clone(),
+        };
+
+        Ok(out.write_all(formatted.as_bytes())?)
+    }
+
+    pub fn to_markdown(&self) -> String {
+        let inference_time =
+            self.planning_search_time + self.filtering_search_time + self.prediction_time;
+
+        format!(
+            "## Excerpts\n\n\
+            {}\n\n\
+            ## Prediction\n\n\
+            {}\n\n\
+            ## Time\n\n\
+            Planning searches: {}ms\n\
+            Running searches: {}ms\n\
+            Filtering context results: {}ms\n\
+            Making Prediction: {}ms\n\n\
+            -------------------\n\n\
+            Total: {}ms\n\
+            Inference: {}ms ({:.2}%)\n",
+            self.excerpts_text,
+            self.diff,
+            self.planning_search_time.as_millis(),
+            self.running_search_time.as_millis(),
+            self.filtering_search_time.as_millis(),
+            self.prediction_time.as_millis(),
+            self.total_time.as_millis(),
+            inference_time.as_millis(),
+            (inference_time.as_millis() as f64 / self.total_time.as_millis() as f64) * 100.
+        )
+    }
+}
+
 async fn zeta2_predict(
     example: NamedExample,
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
-) -> Result<()> {
+) -> Result<PredictionDetails> {
     let worktree_path = example.setup_worktree().await?;
 
     cx.update(|cx| {
@@ -432,6 +493,7 @@ async fn zeta2_predict(
     let mut prediction_finished_at = None;
     let mut excerpts_text = String::new();
     let mut prediction_task = None;
+    let mut result = PredictionDetails::default();
     while let Some(event) = debug_rx.next().await {
         match event {
             zeta2::ZetaDebugInfo::ContextRetrievalStarted(info) => {
@@ -479,54 +541,24 @@ async fn zeta2_predict(
     refresh_task.await.context("context retrieval failed")?;
     let prediction = prediction_task.unwrap().await?.context("No prediction")?;
 
-    println!("## Excerpts\n");
-    println!("{excerpts_text}");
-
     let old_text = prediction.snapshot.text();
     let new_text = prediction.buffer.update(cx, |buffer, cx| {
         buffer.edit(prediction.edits.iter().cloned(), None, cx);
         buffer.text()
     })?;
-    let diff = language::unified_diff(&old_text, &new_text);
+    result.diff = language::unified_diff(&old_text, &new_text);
+    result.excerpts_text = excerpts_text;
 
-    println!("## Prediction\n");
-    println!("{diff}");
-
-    println!("## Time\n");
-
-    let planning_search_time =
+    result.planning_search_time =
         search_queries_generated_at.unwrap() - context_retrieval_started_at.unwrap();
-
-    println!("Planning searches: {}ms", planning_search_time.as_millis());
-    println!(
-        "Running searches: {}ms",
-        (search_queries_executed_at.unwrap() - search_queries_generated_at.unwrap()).as_millis()
-    );
-
-    let filtering_search_time =
+    result.running_search_time =
+        search_queries_executed_at.unwrap() - search_queries_generated_at.unwrap();
+    result.filtering_search_time =
         context_retrieval_finished_at.unwrap() - search_queries_executed_at.unwrap();
-    println!(
-        "Filtering context results: {}ms",
-        filtering_search_time.as_millis()
-    );
+    result.prediction_time = prediction_finished_at.unwrap() - prediction_started_at.unwrap();
+    result.total_time = prediction_finished_at.unwrap() - context_retrieval_started_at.unwrap();
 
-    let prediction_time = prediction_finished_at.unwrap() - prediction_started_at.unwrap();
-    println!("Making Prediction: {}ms", prediction_time.as_millis());
-
-    println!("-------------------");
-    let total_time =
-        (prediction_finished_at.unwrap() - context_retrieval_started_at.unwrap()).as_millis();
-    println!("Total: {}ms", total_time);
-
-    let inference_time =
-        (planning_search_time + filtering_search_time + prediction_time).as_millis();
-    println!(
-        "Inference: {}ms ({:.2}%)",
-        inference_time,
-        (inference_time as f64 / total_time as f64) * 100.
-    );
-
-    anyhow::Ok(())
+    anyhow::Ok(result)
 }
 
 async fn zeta2_syntax_context(
@@ -827,9 +859,13 @@ fn main() {
                     serde_json::to_string_pretty(&context.body).map_err(|err| anyhow::anyhow!(err))
                 }
                 Command::Zeta2 { command } => match command {
-                    Zeta2Command::Predict { example_path } => {
+                    Zeta2Command::Predict {
+                        example_path,
+                        format,
+                    } => {
                         let example = NamedExample::load(example_path).unwrap();
-                        zeta2_predict(example, &app_state, cx).await.unwrap();
+                        let result = zeta2_predict(example, &app_state, cx).await.unwrap();
+                        result.write(format, std::io::stdout()).unwrap();
                         let _ = cx.update(|cx| cx.quit());
                         return;
                     }
