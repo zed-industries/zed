@@ -16081,7 +16081,12 @@ impl Editor {
         };
         let snapshot = self.snapshot(window, cx);
         if snapshot.intersects_fold(next_diagnostic.range.start) {
-            self.unfold_ranges(&[next_diagnostic.range.clone()], true, false, cx);
+            self.unfold_ranges(
+                std::slice::from_ref(&next_diagnostic.range),
+                true,
+                false,
+                cx,
+            );
         }
         self.change_selections(Default::default(), window, cx, |s| {
             s.select_ranges(vec![
