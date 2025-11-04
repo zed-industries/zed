@@ -202,6 +202,7 @@ dependencies = [
  "uuid",
  "watch",
  "web_search",
+ "workspace",
  "worktree",
  "zed_env_vars",
  "zlog",

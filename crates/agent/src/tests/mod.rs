@@ -1872,7 +1872,8 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     let cwd = Path::new("/test");
     let text_thread_store =
         cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx));
-    let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+    let history_store =
+        cx.new(|cx| HistoryStore::new(text_thread_store, HistoryScope::global(), cx));
 
     // Create agent and connection
     let agent = NativeAgent::new(

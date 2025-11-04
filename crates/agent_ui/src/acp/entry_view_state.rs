@@ -399,7 +399,7 @@ mod tests {
     use std::{path::Path, rc::Rc};
 
     use acp_thread::{AgentConnection, StubAgentConnection};
-    use agent::HistoryStore;
+    use agent::{HistoryScope, HistoryStore};
     use agent_client_protocol as acp;
     use agent_settings::AgentSettings;
     use assistant_text_thread::TextThreadStore;
@@ -467,7 +467,8 @@ mod tests {
         });
 
         let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store =
+            cx.new(|cx| HistoryStore::new(text_thread_store, HistoryScope::global(), cx));
 
         let view_state = cx.new(|_cx| {
             EntryViewState::new(

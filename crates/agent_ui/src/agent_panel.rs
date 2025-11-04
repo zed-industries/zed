@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use acp_thread::AcpThread;
-use agent::{ContextServerRegistry, DbThreadMetadata, HistoryEntry, HistoryStore};
+use agent::{ContextServerRegistry, DbThreadMetadata, HistoryEntry, HistoryScope, HistoryStore};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::{
     ExternalAgentServerName,
@@ -84,6 +84,30 @@ const AGENT_PANEL_KEY: &str = "agent_panel";
 struct SerializedAgentPanel {
     width: Option<Pixels>,
     selected_agent: Option<AgentType>,
+}
+
+fn history_scope_for_workspace(workspace: &Workspace, cx: &App) -> HistoryScope {
+    if let Some(id) = workspace.database_id() {
+        return HistoryScope::workspace_id(id);
+    }
+
+    if let Some(session_id) = workspace.session_id() {
+        return HistoryScope::workspace_key(format!("session-{}", session_id));
+    }
+
+    let mut roots = workspace
+        .root_paths(cx)
+        .into_iter()
+        .map(|path| path.to_string_lossy().replace('|', "||"))
+        .collect::<Vec<_>>();
+
+    roots.sort();
+
+    if roots.is_empty() {
+        HistoryScope::global()
+    } else {
+        HistoryScope::workspace_key(format!("roots-{}", roots.join("|")))
+    }
 }
 
 pub fn init(cx: &mut App) {
@@ -537,13 +561,21 @@ impl AgentPanel {
         let project = workspace.project();
         let language_registry = project.read(cx).languages().clone();
         let client = workspace.client().clone();
-        let workspace = workspace.weak_handle();
+        let workspace_handle = workspace.weak_handle();
+        let workspace_id = workspace.database_id();
+        println!(
+            "DEBUG: AgentPanel created with workspace_id: {:?}",
+            workspace_id
+        );
 
         let inline_assist_context_store = cx.new(|_cx| ContextStore::new(project.downgrade()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
 
-        let history_store = cx.new(|cx| agent::HistoryStore::new(text_thread_store.clone(), cx));
+        let history_scope = history_scope_for_workspace(workspace, cx);
+        let history_store = cx.new(|cx| {
+            agent::HistoryStore::new(text_thread_store.clone(), history_scope.clone(), cx)
+        });
         let acp_history = cx.new(|cx| AcpThreadHistory::new(history_store.clone(), window, cx));
         cx.subscribe_in(
             &acp_history,
@@ -573,7 +605,7 @@ impl AgentPanel {
                 prompt_store.clone(),
                 history_store.clone(),
                 project.clone(),
-                workspace.clone(),
+                workspace.weak_handle(),
                 window,
                 cx,
             ),
@@ -584,7 +616,7 @@ impl AgentPanel {
                     let mut editor = TextThreadEditor::for_text_thread(
                         context,
                         fs.clone(),
-                        workspace.clone(),
+                        workspace.weak_handle(),
                         project.clone(),
                         lsp_adapter_delegate,
                         window,
@@ -666,7 +698,7 @@ impl AgentPanel {
 
         let mut panel = Self {
             active_view,
-            workspace,
+            workspace: workspace_handle,
             user_store,
             project: project.clone(),
             fs: fs.clone(),
