@@ -9,6 +9,7 @@ mod quick_action_bar;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
+use agent_ui::agents_panel::AgentsPanel;
 use agent_ui::{AgentDiffToolbar, AgentPanelDelegate};
 use anyhow::Context as _;
 pub use app_menus::*;
@@ -590,6 +591,7 @@ fn initialize_panels(
             cx.clone(),
         );
         let debug_panel = DebugPanel::load(workspace_handle.clone(), cx);
+        let agents_panel = cx.new(|cx| AgentsPanel::new(cx)).unwrap();
 
         let (
             project_panel,
@@ -611,9 +613,10 @@ fn initialize_panels(
 
         workspace_handle.update_in(cx, |workspace, window, cx| {
             workspace.add_panel(project_panel, window, cx);
+            workspace.add_panel(agents_panel, window, cx);
+            workspace.add_panel(git_panel, window, cx);
             workspace.add_panel(outline_panel, window, cx);
             workspace.add_panel(terminal_panel, window, cx);
-            workspace.add_panel(git_panel, window, cx);
             workspace.add_panel(channels_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
             workspace.add_panel(debug_panel, window, cx);

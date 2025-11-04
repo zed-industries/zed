@@ -13,6 +13,7 @@ use settings::SettingsStore;
 use std::sync::Arc;
 use ui::{ContextMenu, Divider, DividerColor, IconButton, Tooltip, h_flex};
 use ui::{prelude::*, right_click_menu};
+use util::ResultExt as _;
 
 pub(crate) const RESIZE_HANDLE_SIZE: Pixels = px(6.);
 
@@ -882,7 +883,13 @@ impl Render for PanelButtons {
             .enumerate()
             .filter_map(|(i, entry)| {
                 let icon = entry.panel.icon(window, cx)?;
-                let icon_tooltip = entry.panel.icon_tooltip(window, cx)?;
+                let icon_tooltip = entry
+                    .panel
+                    .icon_tooltip(window, cx)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("can't render a panel button without an icon tooltip")
+                    })
+                    .log_err()?;
                 let name = entry.panel.persistent_name();
                 let panel = entry.panel.clone();
 

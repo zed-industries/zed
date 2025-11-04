@@ -3,6 +3,7 @@ mod agent_configuration;
 mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
+pub mod agents_panel;
 mod buffer_codegen;
 mod context;
 mod context_picker;
@@ -249,6 +250,7 @@ pub fn init(
     cx: &mut App,
 ) {
     AgentSettings::register(cx);
+    agents_panel::init(cx);
 
     assistant_text_thread::init(client.clone(), cx);
     rules_library::init(cx);
