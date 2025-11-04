@@ -4662,38 +4662,6 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 `integer` values between `100` and `900`
 
-## An example configuration:
-
-```json [settings]
-// ~/.config/zed/settings.json
-{
-  "theme": "cave-light",
-  "tab_size": 2,
-  "preferred_line_length": 80,
-  "soft_wrap": "none",
-
-  "buffer_font_size": 18,
-  "buffer_font_family": ".ZedMono",
-
-  "autosave": "on_focus_change",
-  "format_on_save": "off",
-  "vim_mode": false,
-  "projects_online_by_default": true,
-  "terminal": {
-    "font_family": "FiraCode Nerd Font Mono",
-    "blinking": "off"
-  },
-  "languages": {
-    "C": {
-      "format_on_save": "on",
-      "formatter": "language_server",
-      "preferred_line_length": 64,
-      "soft_wrap": "preferred_line_length"
-    }
-  }
-}
-```
-
 ## Settings Profiles
 
 - Description: Configure any number of settings profiles that are temporarily applied on top of your existing user settings when selected from `settings profile selector: toggle`.
@@ -4731,3 +4699,35 @@ Example:
 ```
 
 To preview and enable a settings profile, open the command palette via {#kb command_palette::Toggle} and search for `settings profile selector: toggle`.
+
+## An example configuration:
+
+```json [settings]
+// ~/.config/zed/settings.json
+{
+  "theme": "cave-light",
+  "tab_size": 2,
+  "preferred_line_length": 80,
+  "soft_wrap": "none",
+
+  "buffer_font_size": 18,
+  "buffer_font_family": ".ZedMono",
+
+  "autosave": "on_focus_change",
+  "format_on_save": "off",
+  "vim_mode": false,
+  "projects_online_by_default": true,
+  "terminal": {
+    "font_family": "FiraCode Nerd Font Mono",
+    "blinking": "off"
+  },
+  "languages": {
+    "C": {
+      "format_on_save": "on",
+      "formatter": "language_server",
+      "preferred_line_length": 64,
+      "soft_wrap": "preferred_line_length"
+    }
+  }
+}
+```
