@@ -1179,6 +1179,7 @@ pub struct Workspace {
     session_id: Option<String>,
     scheduled_tasks: Vec<Task<()>>,
     last_open_dock_positions: Vec<DockPosition>,
+    removing: bool,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1522,6 +1523,7 @@ impl Workspace {
 
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
+            removing: false,
         }
     }
 
@@ -2335,18 +2337,41 @@ impl Workspace {
     ) -> Task<Result<bool>> {
         let active_call = self.active_call().cloned();
 
-        // On Linux and Windows, closing the last window should restore the last workspace.
-        let save_last_workspace = cfg!(not(target_os = "macos"))
-            && close_intent != CloseIntent::ReplaceWindow
-            && cx.windows().len() == 1;
-
         cx.spawn_in(window, async move |this, cx| {
+            this.update(cx, |this, _| {
+                if close_intent == CloseIntent::CloseWindow {
+                    this.removing = true;
+                }
+            })?;
+
             let workspace_count = cx.update(|_window, cx| {
                 cx.windows()
                     .iter()
                     .filter(|window| window.downcast::<Workspace>().is_some())
                     .count()
             })?;
+
+            #[cfg(target_os = "macos")]
+            let save_last_workspace = false;
+
+            // On Linux and Windows, closing the last window should restore the last workspace.
+            #[cfg(not(target_os = "macos"))]
+            let save_last_workspace = {
+                let remaining_workspaces = cx.update(|_window, cx| {
+                    cx.windows()
+                        .iter()
+                        .filter_map(|window| window.downcast::<Workspace>())
+                        .filter_map(|workspace| {
+                            workspace
+                                .update(cx, |workspace, _, _| workspace.removing)
+                                .ok()
+                        })
+                        .filter(|removing| !removing)
+                        .count()
+                })?;
+
+                close_intent != CloseIntent::ReplaceWindow && remaining_workspaces == 0
+            };
 
             if let Some(active_call) = active_call
                 && workspace_count == 1
