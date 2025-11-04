@@ -1,0 +1,163 @@
+use collections::HashSet;
+
+use crate::{PredictionDetails, example::Example};
+
+#[derive(Debug, Default)]
+pub struct EvaluationResult {
+    pub context: Scores,
+    pub edit_prediction: Scores,
+}
+
+#[derive(Default, Debug)]
+pub struct Scores {
+    pub precision: f64,
+    pub recall: f64,
+    pub f1_score: f64,
+    pub true_positives: usize,
+    pub false_positives: usize,
+    pub false_negatives: usize,
+}
+
+impl Scores {
+    pub fn to_markdown(&self) -> String {
+        format!(
+            "
+Precision       : {:.4}
+Recall          : {:.4}
+F1 Score        : {:.4}
+True Positives  : {}
+False Positives : {}
+False Negatives : {}",
+            self.precision,
+            self.recall,
+            self.f1_score,
+            self.true_positives,
+            self.false_positives,
+            self.false_negatives
+        )
+    }
+}
+
+impl EvaluationResult {
+    pub fn to_markdown(&self) -> String {
+        format!(
+            r#"
+### Context Scores
+{}
+
+### Edit Prediction Scores
+{}
+"#,
+            self.context.to_markdown(),
+            self.edit_prediction.to_markdown()
+        )
+    }
+}
+
+pub fn evaluate(example: &Example, preds: &PredictionDetails) -> EvaluationResult {
+    let mut result = EvaluationResult::default();
+
+    let expected_context_lines = example
+        .expected_excerpts
+        .iter()
+        .flat_map(|excerpt| {
+            excerpt
+                .text
+                .lines()
+                .map(|line| format!("{}: {line}", excerpt.path.display()))
+        })
+        .collect();
+    let actual_context_lines = preds
+        .excerpts
+        .iter()
+        .flat_map(|excerpt| {
+            excerpt
+                .text
+                .lines()
+                .map(|line| format!("{}: {line}", excerpt.path.display()))
+        })
+        .collect();
+
+    result.context = precision_recall(&expected_context_lines, &actual_context_lines);
+
+    result.edit_prediction = precision_recall(
+        &example
+            .expected_patch
+            .lines()
+            .map(ToOwned::to_owned)
+            .collect(),
+        &preds.diff.lines().map(ToOwned::to_owned).collect(),
+    );
+
+    result
+}
+
+fn precision_recall(expected: &HashSet<String>, actual: &HashSet<String>) -> Scores {
+    let true_positives = expected.intersection(actual).count();
+    let false_positives = actual.difference(expected).count();
+    let false_negatives = expected.difference(actual).count();
+
+    let precision = if true_positives + false_positives == 0 {
+        0.0
+    } else {
+        true_positives as f64 / (true_positives + false_positives) as f64
+    };
+    let recall = if true_positives + false_negatives == 0 {
+        0.0
+    } else {
+        true_positives as f64 / (true_positives + false_negatives) as f64
+    };
+    let f1_score = if precision + recall == 0.0 {
+        0.0
+    } else {
+        2.0 * precision * recall / (precision + recall)
+    };
+
+    Scores {
+        precision,
+        recall,
+        f1_score,
+        true_positives,
+        false_positives,
+        false_negatives,
+    }
+}
+
+/// Compare actual and expected context. Return actual context annotated with these markers:
+/// `+ context line`  -- line was correctly predicted
+/// `- context line`  -- line has been missing from predictions
+pub fn compare_context(example: &Example, preds: &PredictionDetails) -> String {
+    let expected: Vec<_> = example
+        .expected_excerpts
+        .iter()
+        .flat_map(|excerpt| {
+            excerpt
+                .text
+                .lines()
+                .map(|line| (excerpt.path.clone(), line))
+        })
+        .collect();
+    let actual: HashSet<_> = preds
+        .excerpts
+        .iter()
+        .flat_map(|excerpt| {
+            excerpt
+                .text
+                .lines()
+                .map(|line| (excerpt.path.clone(), line))
+        })
+        .collect();
+
+    let annotated = expected
+        .iter()
+        .map(|(path, line)| {
+            if actual.contains(&(path.to_path_buf(), line)) {
+                format!("✓ {}", line)
+            } else {
+                format!("✗ {}", line)
+            }
+        })
+        .collect::<Vec<String>>();
+
+    annotated.join("\n")
+}

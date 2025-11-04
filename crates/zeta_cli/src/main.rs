@@ -5,7 +5,7 @@ mod source_location;
 mod syntax_retrieval_stats;
 mod util;
 
-use crate::eval::evaluate;
+use crate::eval::{compare_context, evaluate};
 use crate::example::{ActualExcerpt, ExampleFormat, NamedExample};
 use crate::syntax_retrieval_stats::retrieval_stats;
 use ::serde::Serialize;
@@ -916,7 +916,13 @@ fn main() {
                                 .unwrap()
                         };
 
-                        let evaluation_result = evaluate(example.example.clone(), predictions);
+                        let evaluation_result = evaluate(&example.example, &predictions);
+
+                        println!("# {}\n", example.name);
+                        println!("## Expected Context: \n\n```\n{}\n```\n\n", compare_context(&example.example, &predictions));
+                        println!("## Expected edit prediction:\n\n```diff\n{}\n```\n", example.example.expected_patch);
+                        println!("## Actual edit prediction:\n\n```diff\n{}\n```\n", predictions.diff);
+
                         println!("{}", evaluation_result.to_markdown());
                         let _ = cx.update(|cx| cx.quit());
                         return;
