@@ -7116,6 +7116,8 @@ dependencies = [
  "picker",
  "pretty_assertions",
  "project",
+ "recent_projects",
+ "remote",
  "schemars 1.0.4",
  "serde",
  "serde_json",
