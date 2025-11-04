@@ -177,7 +177,7 @@ async fn capture_windows(
                 .args([
                     "-c",
                     &format!(
-                        "cd '{}'; {}{} --printenv",
+                        "cd '{}'; {}'{}' --printenv",
                         directory.display(),
                         shell_kind
                             .command_prefix()
@@ -206,7 +206,7 @@ async fn capture_windows(
                 .args([
                     "/c",
                     &format!(
-                        "cd '{}'; {} --printenv",
+                        "cd '{}'; '{}' --printenv",
                         directory.display(),
                         zed_path.display()
                     ),
