@@ -1,16 +1,17 @@
-mod eval;
+mod evaluate;
 mod example;
 mod headless;
+mod predict;
 mod source_location;
 mod syntax_retrieval_stats;
 mod util;
 
-use crate::eval::{compare_context, compare_diffs, evaluate};
-use crate::example::{ActualExcerpt, ExampleFormat, NamedExample};
+use crate::evaluate::{EvaluateArguments, run_evaluate};
+use crate::example::{ExampleFormat, NamedExample};
+use crate::predict::{PredictArguments, run_zeta2_predict};
 use crate::syntax_retrieval_stats::retrieval_stats;
 use ::serde::Serialize;
 use ::util::paths::PathStyle;
-use ::util::rel_path::RelPath;
 use anyhow::{Context as _, Result, anyhow};
 use clap::{Args, Parser, Subcommand};
 use cloud_llm_client::predict_edits_v3::{self, Excerpt};
@@ -24,15 +25,12 @@ use futures::channel::mpsc;
 use gpui::{Application, AsyncApp, Entity, prelude::*};
 use language::{Bias, Buffer, BufferSnapshot, OffsetRangeExt, Point};
 use language_model::LanguageModelRegistry;
-use project::{Project, ProjectPath, Worktree};
+use project::{Project, Worktree};
 use reqwest_client::ReqwestClient;
-use serde::Deserialize;
 use serde_json::json;
-use std::fs;
-use std::io::{self, Write};
-use std::path::Path;
-use std::time::{Duration, Instant};
-use std::{collections::HashSet, path::PathBuf, process::exit, str::FromStr, sync::Arc};
+use std::io::{self};
+use std::time::Duration;
+use std::{collections::HashSet, path::PathBuf, str::FromStr, sync::Arc};
 use zeta2::{ContextMode, LlmContextOptions, SearchToolQuery};
 
 use crate::headless::ZetaCliAppState;
@@ -87,20 +85,8 @@ enum Zeta2Command {
         #[command(subcommand)]
         command: Zeta2LlmCommand,
     },
-    Predict {
-        example_path: PathBuf,
-        #[clap(long, short, value_enum, default_value_t = PredictionsOutputFormat::Md)]
-        format: PredictionsOutputFormat,
-    },
-    Eval {
-        example_path: PathBuf,
-        #[clap(long, short, value_enum, default_value_t = PredictionsOutputFormat::Md)]
-        format: PredictionsOutputFormat,
-        #[clap(long, short)]
-        pred: Option<PathBuf>,
-        #[clap(long)]
-        re_run: bool,
-    },
+    Predict(PredictArguments),
+    Eval(EvaluateArguments),
 }
 
 #[derive(Subcommand, Debug)]
@@ -127,13 +113,6 @@ enum Zeta2LlmCommand {
         #[clap(flatten)]
         context_args: ContextArgs,
     },
-}
-
-#[derive(clap::ValueEnum, Debug, Clone)]
-pub enum PredictionsOutputFormat {
-    Json,
-    Md,
-    Diff,
 }
 
 #[derive(Debug, Args)]
@@ -348,243 +327,6 @@ async fn load_context(
         project,
         buffer,
     })
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct PredictionDetails {
-    diff: String,
-    excerpts: Vec<ActualExcerpt>,
-    excerpts_text: String, // TODO: contains the worktree root path. Drop this field and compute it on the fly
-    planning_search_time: Duration,
-    filtering_search_time: Duration,
-    running_search_time: Duration,
-    prediction_time: Duration,
-    total_time: Duration,
-}
-
-impl PredictionDetails {
-    pub fn write(&self, format: PredictionsOutputFormat, mut out: impl Write) -> Result<()> {
-        let formatted = match format {
-            PredictionsOutputFormat::Md => self.to_markdown(),
-            PredictionsOutputFormat::Json => serde_json::to_string_pretty(self)?,
-            PredictionsOutputFormat::Diff => self.diff.clone(),
-        };
-
-        Ok(out.write_all(formatted.as_bytes())?)
-    }
-
-    pub fn to_markdown(&self) -> String {
-        let inference_time =
-            self.planning_search_time + self.filtering_search_time + self.prediction_time;
-
-        format!(
-            "## Excerpts\n\n\
-            {}\n\n\
-            ## Prediction\n\n\
-            {}\n\n\
-            ## Time\n\n\
-            Planning searches: {}ms\n\
-            Running searches: {}ms\n\
-            Filtering context results: {}ms\n\
-            Making Prediction: {}ms\n\n\
-            -------------------\n\n\
-            Total: {}ms\n\
-            Inference: {}ms ({:.2}%)\n",
-            self.excerpts_text,
-            self.diff,
-            self.planning_search_time.as_millis(),
-            self.running_search_time.as_millis(),
-            self.filtering_search_time.as_millis(),
-            self.prediction_time.as_millis(),
-            self.total_time.as_millis(),
-            inference_time.as_millis(),
-            (inference_time.as_millis() as f64 / self.total_time.as_millis() as f64) * 100.
-        )
-    }
-}
-
-async fn zeta2_predict(
-    example: NamedExample,
-    app_state: &Arc<ZetaCliAppState>,
-    cx: &mut AsyncApp,
-) -> Result<PredictionDetails> {
-    let worktree_path = example.setup_worktree().await?;
-
-    cx.update(|cx| {
-        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-            registry
-                .provider(&zeta2::related_excerpts::MODEL_PROVIDER_ID)
-                .unwrap()
-                .authenticate(cx)
-        })
-    })?
-    .await?;
-
-    app_state
-        .client
-        .sign_in_with_optional_connect(true, cx)
-        .await?;
-
-    let project = cx.update(|cx| {
-        Project::local(
-            app_state.client.clone(),
-            app_state.node_runtime.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
-            None,
-            cx,
-        )
-    })?;
-
-    let worktree = project
-        .update(cx, |project, cx| {
-            project.create_worktree(&worktree_path, true, cx)
-        })?
-        .await?;
-    worktree
-        .read_with(cx, |worktree, _cx| {
-            worktree.as_local().unwrap().scan_complete()
-        })?
-        .await;
-
-    let _edited_buffers = example.apply_edit_history(&project, cx).await?;
-
-    let cursor_path = RelPath::new(&example.example.cursor_path, PathStyle::Posix)?.into_arc();
-
-    let cursor_buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer(
-                ProjectPath {
-                    worktree_id: worktree.read(cx).id(),
-                    path: cursor_path,
-                },
-                cx,
-            )
-        })?
-        .await?;
-
-    let cursor_offset_within_excerpt = example
-        .example
-        .cursor_position
-        .find(CURSOR_MARKER)
-        .ok_or_else(|| anyhow!("missing cursor marker"))?;
-    let mut cursor_excerpt = example.example.cursor_position.clone();
-    cursor_excerpt.replace_range(
-        cursor_offset_within_excerpt..(cursor_offset_within_excerpt + CURSOR_MARKER.len()),
-        "",
-    );
-    let excerpt_offset = cursor_buffer.read_with(cx, |buffer, _cx| {
-        let text = buffer.text();
-
-        let mut matches = text.match_indices(&cursor_excerpt);
-        let Some((excerpt_offset, _)) = matches.next() else {
-            anyhow::bail!(
-                "Cursor excerpt did not exist in buffer.\nExcerpt:\n\n{cursor_excerpt}\nBuffer text:\n{text}\n"
-            );
-        };
-        assert!(matches.next().is_none());
-
-        Ok(excerpt_offset)
-    })??;
-
-    let cursor_offset = excerpt_offset + cursor_offset_within_excerpt;
-    let cursor_anchor =
-        cursor_buffer.read_with(cx, |buffer, _| buffer.anchor_after(cursor_offset))?;
-
-    let zeta = cx.update(|cx| zeta2::Zeta::global(&app_state.client, &app_state.user_store, cx))?;
-
-    let refresh_task = zeta.update(cx, |zeta, cx| {
-        zeta.register_buffer(&cursor_buffer, &project, cx);
-        zeta.refresh_context(project.clone(), cursor_buffer.clone(), cursor_anchor, cx)
-    })?;
-
-    let mut debug_rx = zeta.update(cx, |zeta, _| zeta.debug_info())?;
-    let mut context_retrieval_started_at = None;
-    let mut context_retrieval_finished_at = None;
-    let mut search_queries_generated_at = None;
-    let mut search_queries_executed_at = None;
-    let mut prediction_started_at = None;
-    let mut prediction_finished_at = None;
-    let mut excerpts_text = String::new();
-    let mut prediction_task = None;
-    let mut result = PredictionDetails::default();
-    while let Some(event) = debug_rx.next().await {
-        match event {
-            zeta2::ZetaDebugInfo::ContextRetrievalStarted(info) => {
-                context_retrieval_started_at = Some(info.timestamp);
-            }
-            zeta2::ZetaDebugInfo::SearchQueriesGenerated(info) => {
-                search_queries_generated_at = Some(info.timestamp);
-            }
-            zeta2::ZetaDebugInfo::SearchQueriesExecuted(info) => {
-                search_queries_executed_at = Some(info.timestamp);
-            }
-            zeta2::ZetaDebugInfo::ContextRetrievalFinished(info) => {
-                context_retrieval_finished_at = Some(info.timestamp);
-
-                prediction_task = Some(zeta.update(cx, |zeta, cx| {
-                    zeta.request_prediction(&project, &cursor_buffer, cursor_anchor, cx)
-                })?);
-            }
-            zeta2::ZetaDebugInfo::EditPredicted(request) => {
-                prediction_started_at = Some(Instant::now());
-                request.response_rx.await?.map_err(|err| anyhow!(err))?;
-                prediction_finished_at = Some(Instant::now());
-
-                for included_file in request.request.included_files {
-                    let insertions = vec![(request.request.cursor_point, CURSOR_MARKER)];
-                    result
-                        .excerpts
-                        .extend(included_file.excerpts.iter().map(|excerpt| ActualExcerpt {
-                            path: included_file.path.components().skip(1).collect(),
-                            text: String::from(excerpt.text.as_ref()),
-                        }));
-                    write_codeblock(
-                        &included_file.path,
-                        included_file.excerpts.iter(),
-                        if included_file.path == request.request.excerpt_path {
-                            &insertions
-                        } else {
-                            &[]
-                        },
-                        included_file.max_row,
-                        false,
-                        &mut excerpts_text,
-                    );
-                }
-                break;
-            }
-            _ => {}
-        }
-    }
-
-    refresh_task.await.context("context retrieval failed")?;
-    let prediction = prediction_task.unwrap().await?;
-
-    result.diff = prediction
-        .map(|prediction| {
-            let old_text = prediction.snapshot.text();
-            let new_text = prediction.buffer.update(cx, |buffer, cx| {
-                buffer.edit(prediction.edits.iter().cloned(), None, cx);
-                buffer.text()
-            })?;
-            anyhow::Ok(language::unified_diff(&old_text, &new_text))
-        })
-        .transpose()?
-        .unwrap_or_default();
-    result.excerpts_text = excerpts_text;
-
-    result.planning_search_time =
-        search_queries_generated_at.unwrap() - context_retrieval_started_at.unwrap();
-    result.running_search_time =
-        search_queries_executed_at.unwrap() - search_queries_generated_at.unwrap();
-    result.filtering_search_time =
-        context_retrieval_finished_at.unwrap() - search_queries_executed_at.unwrap();
-    result.prediction_time = prediction_finished_at.unwrap() - prediction_started_at.unwrap();
-    result.total_time = prediction_finished_at.unwrap() - context_retrieval_started_at.unwrap();
-
-    anyhow::Ok(result)
 }
 
 async fn zeta2_syntax_context(
@@ -877,111 +619,62 @@ fn main() {
     app.run(move |cx| {
         let app_state = Arc::new(headless::init(cx));
         cx.spawn(async move |cx| {
-            let result = match args.command {
+            match args.command {
                 Command::Zeta1 {
                     command: Zeta1Command::Context { context_args },
                 } => {
                     let context = zeta1_context(context_args, &app_state, cx).await.unwrap();
-                    serde_json::to_string_pretty(&context.body).map_err(|err| anyhow::anyhow!(err))
+                    let result = serde_json::to_string_pretty(&context.body).unwrap();
+                    println!("{}", result);
                 }
                 Command::Zeta2 { command } => match command {
-                    Zeta2Command::Predict {
-                        example_path,
-                        format,
-                    } => {
-                        let example = NamedExample::load(example_path).unwrap();
-                        let result = zeta2_predict(example, &app_state, cx).await.unwrap();
-                        result.write(format, std::io::stdout()).unwrap();
-                        let _ = cx.update(|cx| cx.quit());
-                        return;
+                    Zeta2Command::Predict(arguments) => {
+                        run_zeta2_predict(arguments, &app_state, cx).await;
                     }
-                    Zeta2Command::Eval {
-                        example_path,
-                        mut pred,
-                        re_run,
-                        ..
-                    } => {
-                        let example = NamedExample::load(&example_path).unwrap();
-                        let cache_dir =
-                            Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default())
-                                .join("../../target/zeta-prediction-cache");
-                        fs::create_dir_all(&cache_dir).unwrap();
-                        let cache_preds = cache_dir.join(example_path.file_name().unwrap());
-
-                        if !re_run && pred.is_none() && cache_preds.exists() {
-                            log::debug!("Using cached predictions from {}", cache_preds.display());
-                            pred = Some(cache_preds.clone());
-                        }
-
-                        let predictions = if let Some(Ok(preds)) = pred.map(|path| {
-                            let file_contents = fs::read_to_string(path)?;
-                            let as_json =
-                                serde_json::from_str::<PredictionDetails>(&file_contents)?;
-                            anyhow::Ok(as_json)
-                        }) {
-                            log::debug!("Loaded predictions from file");
-                            preds
-                        } else {
-                            zeta2_predict(example.clone(), &app_state, cx)
-                                .await
-                                .unwrap()
-                        };
-
-                        if !cache_preds.exists() {
-                            fs::write(cache_preds, serde_json::to_string(&predictions).unwrap())
-                                .unwrap();
-                        }
-
-                        let evaluation_result = evaluate(&example.example, &predictions);
-
-                        println!("# {}\n", example.name);
-                        println!(
-                            "## Expected Context: \n\n```\n{}\n```\n\n",
-                            compare_context(&example.example, &predictions)
-                        );
-                        println!(
-                            "## Expected edit prediction:\n\n```diff\n{}\n```\n",
-                            compare_diffs(&example.example.expected_patch, &predictions.diff)
-                        );
-                        println!(
-                            "## Actual edit prediction:\n\n```diff\n{}\n```\n",
-                            compare_diffs(&predictions.diff, &example.example.expected_patch)
-                        );
-
-                        println!("{}", evaluation_result.to_markdown());
-                        let _ = cx.update(|cx| cx.quit());
-                        return;
+                    Zeta2Command::Eval(arguments) => {
+                        run_evaluate(arguments, &app_state, cx).await;
                     }
                     Zeta2Command::Syntax {
                         args,
                         syntax_args,
                         command,
-                    } => match command {
-                        Zeta2SyntaxCommand::Context { context_args } => {
-                            zeta2_syntax_context(args, syntax_args, context_args, &app_state, cx)
+                    } => {
+                        let result = match command {
+                            Zeta2SyntaxCommand::Context { context_args } => {
+                                zeta2_syntax_context(
+                                    args,
+                                    syntax_args,
+                                    context_args,
+                                    &app_state,
+                                    cx,
+                                )
                                 .await
-                        }
-                        Zeta2SyntaxCommand::Stats {
-                            worktree,
-                            extension,
-                            limit,
-                            skip,
-                        } => {
-                            retrieval_stats(
+                            }
+                            Zeta2SyntaxCommand::Stats {
                                 worktree,
-                                app_state,
                                 extension,
                                 limit,
                                 skip,
-                                syntax_args_to_options(&args, &syntax_args, false),
-                                cx,
-                            )
-                            .await
-                        }
-                    },
+                            } => {
+                                retrieval_stats(
+                                    worktree,
+                                    app_state,
+                                    extension,
+                                    limit,
+                                    skip,
+                                    syntax_args_to_options(&args, &syntax_args, false),
+                                    cx,
+                                )
+                                .await
+                            }
+                        };
+                        println!("{}", result.unwrap());
+                    }
                     Zeta2Command::Llm { args, command } => match command {
                         Zeta2LlmCommand::Context { context_args } => {
-                            zeta2_llm_context(args, context_args, &app_state, cx).await
+                            let result =
+                                zeta2_llm_context(args, context_args, &app_state, cx).await;
+                            println!("{}", result.unwrap());
                         }
                     },
                 },
@@ -991,21 +684,10 @@ fn main() {
                 } => {
                     let example = NamedExample::load(path).unwrap();
                     example.write(output_format, io::stdout()).unwrap();
-                    let _ = cx.update(|cx| cx.quit());
-                    return;
                 }
             };
 
-            match result {
-                Ok(output) => {
-                    println!("{}", output);
-                    let _ = cx.update(|cx| cx.quit());
-                }
-                Err(e) => {
-                    eprintln!("Failed: {:?}", e);
-                    exit(1);
-                }
-            }
+            let _ = cx.update(|cx| cx.quit());
         })
         .detach();
     });
