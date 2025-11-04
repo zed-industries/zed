@@ -5832,8 +5832,6 @@ name = "extension"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-compression",
- "async-tar",
  "async-trait",
  "collections",
  "dap",
