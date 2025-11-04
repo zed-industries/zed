@@ -1049,7 +1049,7 @@ impl GitPanel {
                         cx,
                     )
                 })?
-                .await??;
+                .await?;
 
             let tasks: Vec<_> = cx.update(|cx| {
                 buffers

@@ -2167,7 +2167,7 @@ impl GitStore {
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.checkout_files(&envelope.payload.commit, paths, cx)
             })?
-            .await??;
+            .await?;
         Ok(proto::Ack {})
     }
 
@@ -3658,44 +3658,50 @@ impl Repository {
         &mut self,
         commit: &str,
         paths: Vec<RepoPath>,
-        _cx: &mut App,
-    ) -> oneshot::Receiver<Result<()>> {
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         let commit = commit.to_string();
         let id = self.id;
 
-        // let mut edits = Vec::with_capacity(paths.len());
-        // let mut ids = Vec::with_capacity(paths.len());
-        // for path in &paths {
+        self.spawn_job_with_tracking(
+            paths.clone(),
+            pending_op::GitStatus::Reverted,
+            cx,
+            async move |this, cx| {
+                this.update(cx, |this, _cx| {
+                    this.send_job(
+                        Some(format!("git checkout {}", commit).into()),
+                        move |git_repo, _| async move {
+                            match git_repo {
+                                RepositoryState::Local {
+                                    backend,
+                                    environment,
+                                    ..
+                                } => {
+                                    backend
+                                        .checkout_files(commit, paths, environment.clone())
+                                        .await
+                                }
+                                RepositoryState::Remote { project_id, client } => {
+                                    client
+                                        .request(proto::GitCheckoutFiles {
+                                            project_id: project_id.0,
+                                            repository_id: id.to_proto(),
+                                            commit,
+                                            paths: paths
+                                                .into_iter()
+                                                .map(|p| p.to_proto())
+                                                .collect(),
+                                        })
+                                        .await?;
 
-        // }
-        // self.snapshot.pending_ops_by_path.edit(edits, ());
-
-        self.send_job(
-            Some(format!("git checkout {}", commit).into()),
-            move |git_repo, _| async move {
-                match git_repo {
-                    RepositoryState::Local {
-                        backend,
-                        environment,
-                        ..
-                    } => {
-                        backend
-                            .checkout_files(commit, paths, environment.clone())
-                            .await
-                    }
-                    RepositoryState::Remote { project_id, client } => {
-                        client
-                            .request(proto::GitCheckoutFiles {
-                                project_id: project_id.0,
-                                repository_id: id.to_proto(),
-                                commit,
-                                paths: paths.into_iter().map(|p| p.to_proto()).collect(),
-                            })
-                            .await?;
-
-                        Ok(())
-                    }
-                }
+                                    Ok(())
+                                }
+                            }
+                        },
+                    )
+                })?
+                .await?
             },
         )
     }
@@ -5241,9 +5247,9 @@ impl Repository {
         git_status: pending_op::GitStatus,
         cx: &mut Context<Self>,
         f: AsyncFn,
-    ) -> Task<anyhow::Result<()>>
+    ) -> Task<Result<()>>
     where
-        AsyncFn: AsyncFnOnce(WeakEntity<Repository>, &mut AsyncApp) -> anyhow::Result<()> + 'static,
+        AsyncFn: AsyncFnOnce(WeakEntity<Repository>, &mut AsyncApp) -> Result<()> + 'static,
     {
         let ids = self.new_pending_ops_for_paths(paths, git_status);
 
