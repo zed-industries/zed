@@ -13,11 +13,11 @@ SHORT_SHA="${COMMIT_SHA:0:8}"
 NEW_BRANCH="cherry-pick-${BRANCH_NAME}-${SHORT_SHA}"
 git fetch origin
 git checkout "$BRANCH_NAME"
-git checkout -b "$NEW_BRANCH"
+git checkout -B "$NEW_BRANCH"
 
 git cherry-pick "$COMMIT_SHA"
 
-git push origin "$NEW_BRANCH"
+git push origin -f "$NEW_BRANCH"
 COMMIT_TITLE=$(git log -1 --pretty=format:"%s" "$COMMIT_SHA")
 COMMIT_BODY=$(git log -1 --pretty=format:"%b" "$COMMIT_SHA")
 
