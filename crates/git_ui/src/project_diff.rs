@@ -470,11 +470,6 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.branch_diff.read(cx).diff_base().is_merge_base() {
-            self.multibuffer.update(cx, |multibuffer, cx| {
-                multibuffer.add_diff(diff.clone(), cx);
-            });
-        }
         let subscription = cx.subscribe_in(&diff, window, move |this, _, _, window, cx| {
             this._task = window.spawn(cx, {
                 let this = cx.weak_entity();
@@ -491,8 +486,8 @@ impl ProjectDiff {
             .expect("project diff editor should have a conflict addon");
 
         let snapshot = buffer.read(cx).snapshot();
-        let diff = diff.read(cx);
-        let diff_hunk_ranges = diff
+        let diff_read = diff.read(cx);
+        let diff_hunk_ranges = diff_read
             .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
             .map(|diff_hunk| diff_hunk.buffer_range);
         let conflicts = conflict_addon
@@ -515,6 +510,9 @@ impl ProjectDiff {
                 multibuffer_context_lines(cx),
                 cx,
             );
+            if self.branch_diff.read(cx).diff_base().is_merge_base() {
+                multibuffer.add_diff(diff.clone(), cx);
+            }
             (was_empty, is_newly_added)
         });
 
