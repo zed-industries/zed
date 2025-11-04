@@ -985,7 +985,47 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let working_directory = working_directory?;
+
                 if let Some(content) = content {
+                    let output = new_smol_command(&git_binary_path)
+                        .current_dir(&working_directory)
+                        .envs(env.iter())
+                        .args(["ls-files", "-s", "--"])
+                        .arg(path.as_unix_str())
+                        .output()
+                        .await?;
+
+                    let mut mode: String = String::new();
+                    if output.status.success() {
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        if let Some(first) = stdout.lines().next() {
+                            if let Some(m) = first.split_whitespace().next() {
+                                mode = m.to_string();
+                            }
+                        }
+                    }
+
+                    if mode.is_empty() {
+                        let output = new_smol_command(&git_binary_path)
+                            .current_dir(&working_directory)
+                            .envs(env.iter())
+                            .args(["ls-tree", "HEAD", "--"])
+                            .arg(path.as_unix_str())
+                            .output()
+                            .await?;
+
+                        if output.status.success() {
+                            let stdout = String::from_utf8_lossy(&output.stdout);
+                            if let Some(first) = stdout.lines().next() {
+                                if let Some(m) = first.split_whitespace().next() {
+                                    mode = m.to_string();
+                                }
+                            }
+                        }
+                    }
+                    if mode.is_empty() {
+                        mode = "100644".to_string();
+                    }
                     let mut child = new_smol_command(&git_binary_path)
                         .current_dir(&working_directory)
                         .envs(env.iter())
@@ -1005,7 +1045,7 @@ impl GitRepository for RealGitRepository {
                     let output = new_smol_command(&git_binary_path)
                         .current_dir(&working_directory)
                         .envs(env.iter())
-                        .args(["update-index", "--add", "--cacheinfo", "100644", sha])
+                        .args(["update-index", "--add", "--cacheinfo", &mode, sha])
                         .arg(path.as_unix_str())
                         .output()
                         .await?;
