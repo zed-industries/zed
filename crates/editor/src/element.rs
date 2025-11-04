@@ -1310,7 +1310,14 @@ impl EditorElement {
                 hover_at(editor, Some(anchor), window, cx);
                 Self::update_visible_cursor(editor, point, position_map, window, cx);
             } else {
-                hover_at(editor, None, window, cx);
+                editor.update_inlay_link_and_hover_points(
+                    &position_map.snapshot,
+                    point_for_position,
+                    modifiers.secondary(),
+                    modifiers.shift,
+                    window,
+                    cx,
+                );
             }
         } else {
             editor.hide_hovered_link(cx);
