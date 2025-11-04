@@ -4303,16 +4303,16 @@ impl Repository {
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let id = self.id;
 
-        let status = if rebase {
-            Some(format!("git pull --rebase {} {}", remote, branch).into())
-        } else {
-            Some(match branch.as_ref() {
-                Some(b) => format!("git pull {} {}", remote, b).into(),
-                None => format!("git pull {}", remote).into(),
-            })
-        };
+        let mut status = format!("git pull");
+        if rebase {
+            status.push_str(" --rebase");
+        }
+        status.push_str(&format!(" {}", remote));
+        if let Some(b) = &branch {
+            status.push_str(&format!(" {}", b));
+        }
 
-        self.send_job(status, move |git_repo, cx| async move {
+        self.send_job(Some(status.into()), move |git_repo, cx| async move {
             match git_repo {
                 RepositoryState::Local {
                     backend,

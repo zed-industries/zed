@@ -2256,13 +2256,7 @@ impl GitPanel {
                 .then(|| branch.name().to_owned().into());
 
             let pull = repo.update(cx, |repo, cx| {
-                repo.pull(
-                    branch_name,
-                    remote.name.clone(),
-                    rebase,
-                    askpass,
-                    cx,
-                )
+                repo.pull(branch_name, remote.name.clone(), rebase, askpass, cx)
             })?;
 
             let remote_message = pull.await?;
