@@ -220,6 +220,8 @@
       "[ {": ["vim::UnmatchedBackward", { "char": "{" }],
       "] )": ["vim::UnmatchedForward", { "char": ")" }],
       "[ (": ["vim::UnmatchedBackward", { "char": "(" }],
+      "[ r": "vim::GoToPreviousReference",
+      "] r": "vim::GoToNextReference",
       // tree-sitter related commands
       "[ x": "vim::SelectLargerSyntaxNode",
       "] x": "vim::SelectSmallerSyntaxNode"
@@ -420,6 +422,12 @@
     }
   },
   {
+    "context": "vim_mode == helix_select && !menu",
+    "bindings": {
+      "escape": "vim::SwitchToHelixNormalMode"
+    }
+  },
+  {
     "context": "(vim_mode == helix_normal || vim_mode == helix_select) && !menu",
     "bindings": {
       // Movement
@@ -432,7 +440,7 @@
       "shift-t": ["vim::PushFindBackward", { "after": true, "multiline": true }],
       "shift-f": ["vim::PushFindBackward", { "after": false, "multiline": true }],
       "alt-.": "vim::RepeatFind",
-      
+
       // Changes
       "shift-r": "editor::Paste",
       "`": "vim::ConvertToLowerCase",
@@ -442,14 +450,14 @@
       "ctrl-r": "vim::Redo",
       "y": "vim::HelixYank",
       "p": "vim::HelixPaste",
-      "shift-p": ["vim::HelixPaste", { "before": true }],            
+      "shift-p": ["vim::HelixPaste", { "before": true }],
       ">": "vim::Indent",
       "<": "vim::Outdent",
       "=": "vim::AutoIndent",
       "d": "vim::HelixDelete",
       "c": "vim::HelixSubstitute",
       "alt-c": "vim::HelixSubstituteNoYank",
-      
+
       // Selection manipulation
       "s": "vim::HelixSelectRegex",
       "alt-s": ["editor::SplitSelectionIntoLines", { "keep_selections": true }],
@@ -466,7 +474,7 @@
       "alt-i": "editor::SelectSmallerSyntaxNode",
       "alt-p": "editor::SelectPreviousSyntaxNode",
       "alt-n": "editor::SelectNextSyntaxNode",
-      
+
       // Goto mode
       "g e": "vim::EndOfDocument",
       "g h": "vim::StartOfLine",
@@ -477,11 +485,11 @@
       "g b": "vim::WindowBottom",
       "g r": "editor::FindAllReferences", // zed specific
       "g n": "pane::ActivateNextItem",
-      "shift-l": "pane::ActivateNextItem",      
+      "shift-l": "pane::ActivateNextItem",
       "g p": "pane::ActivatePreviousItem",
       "shift-h": "pane::ActivatePreviousItem",
       "g .": "vim::HelixGotoLastModification", // go to last modification
-      
+
       // Window mode
       "space w h": "workspace::ActivatePaneLeft",
       "space w l": "workspace::ActivatePaneRight",
@@ -512,7 +520,7 @@
       "]": ["vim::PushHelixNext", { "around": true }],
       "[": ["vim::PushHelixPrevious", { "around": true }],
       "g q": "vim::PushRewrap",
-      "g w": "vim::PushRewrap",
+      "g w": "vim::PushRewrap"
       // "tab": "pane::ActivateNextItem",
       // "shift-tab": "pane::ActivatePrevItem",
     }
@@ -1016,6 +1024,17 @@
       // is because alt-tab may not be available, as it is often used for window switching on Linux
       // and Windows.
       "alt-l": "editor::AcceptEditPrediction"
+    }
+  },
+  {
+    "context": "SettingsWindow > NavigationMenu && !search",
+    "bindings": {
+      "l": "settings_editor::ExpandNavEntry",
+      "h": "settings_editor::CollapseNavEntry",
+      "k": "settings_editor::FocusPreviousNavEntry",
+      "j": "settings_editor::FocusNextNavEntry",
+      "g g": "settings_editor::FocusFirstNavEntry",
+      "shift-g": "settings_editor::FocusLastNavEntry"
     }
   }
 ]

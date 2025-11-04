@@ -32,6 +32,16 @@ pub struct Chunk {
     pub text: ArrayString<MAX_BASE>,
 }
 
+#[inline(always)]
+const fn saturating_shl_mask(offset: u32) -> Bitmap {
+    (1 as Bitmap).unbounded_shl(offset).wrapping_sub(1)
+}
+
+#[inline(always)]
+const fn saturating_shr_mask(offset: u32) -> Bitmap {
+    !Bitmap::MAX.unbounded_shr(offset)
+}
+
 impl Chunk {
     pub const MASK_BITS: usize = Bitmap::BITS as usize;
 
@@ -131,6 +141,7 @@ impl Chunk {
 
         #[cold]
         #[inline(never)]
+        #[track_caller]
         fn panic_char_boundary(chunk: &Chunk, offset: usize) {
             if offset > chunk.text.len() {
                 panic!(
@@ -290,34 +301,19 @@ impl<'a> ChunkSlice<'a> {
     /// Get number of chars in first line
     #[inline(always)]
     pub fn first_line_chars(&self) -> u32 {
-        if self.newlines == 0 {
-            self.chars.count_ones()
-        } else {
-            let mask = ((1 as Bitmap) << self.newlines.trailing_zeros()) - 1;
-            (self.chars & mask).count_ones()
-        }
+        (self.chars & saturating_shl_mask(self.newlines.trailing_zeros())).count_ones()
     }
 
     /// Get number of chars in last line
     #[inline(always)]
     pub fn last_line_chars(&self) -> u32 {
-        if self.newlines == 0 {
-            self.chars.count_ones()
-        } else {
-            let mask = !(Bitmap::MAX >> self.newlines.leading_zeros());
-            (self.chars & mask).count_ones()
-        }
+        (self.chars & saturating_shr_mask(self.newlines.leading_zeros())).count_ones()
     }
 
     /// Get number of UTF-16 code units in last line
     #[inline(always)]
     pub fn last_line_len_utf16(&self) -> u32 {
-        if self.newlines == 0 {
-            self.chars_utf16.count_ones()
-        } else {
-            let mask = !(Bitmap::MAX >> self.newlines.leading_zeros());
-            (self.chars_utf16 & mask).count_ones()
-        }
+        (self.chars_utf16 & saturating_shr_mask(self.newlines.leading_zeros())).count_ones()
     }
 
     /// Get the longest row in the chunk and its length in characters.
@@ -491,8 +487,8 @@ impl<'a> ChunkSlice<'a> {
 
     #[inline(always)]
     pub fn offset_to_point_utf16(&self, offset: usize) -> PointUtf16 {
-        let mask = (1 as Bitmap).unbounded_shl(offset as u32).wrapping_sub(1);
-        let row = (self.newlines & mask).count_ones();
+        let mask = saturating_shl_mask(offset as u32);
+        let row = (self.newlines & saturating_shl_mask(offset as u32)).count_ones();
         let newline_ix = Bitmap::BITS - (self.newlines & mask).leading_zeros();
         let column = if newline_ix as usize == MAX_BASE {
             0

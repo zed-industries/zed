@@ -1348,28 +1348,10 @@ impl WorkspaceDb {
             }
 
             let has_wsl_path = if cfg!(windows) {
-                fn is_wsl_path(path: &PathBuf) -> bool {
-                    use std::path::{Component, Prefix};
-
-                    path.components()
-                        .next()
-                        .and_then(|component| match component {
-                            Component::Prefix(prefix) => Some(prefix),
-                            _ => None,
-                        })
-                        .and_then(|prefix| match prefix.kind() {
-                            Prefix::UNC(server, _) => Some(server),
-                            Prefix::VerbatimUNC(server, _) => Some(server),
-                            _ => None,
-                        })
-                        .map(|server| {
-                            let server_str = server.to_string_lossy();
-                            server_str == "wsl.localhost" || server_str == "wsl$"
-                        })
-                        .unwrap_or(false)
-                }
-
-                paths.paths().iter().any(|path| is_wsl_path(path))
+                paths
+                    .paths()
+                    .iter()
+                    .any(|path| util::paths::WslPath::from_path(path).is_some())
             } else {
                 false
             };

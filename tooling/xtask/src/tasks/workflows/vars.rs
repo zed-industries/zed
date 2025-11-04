@@ -1,0 +1,147 @@
+use std::cell::RefCell;
+
+use gh_workflow::{Concurrency, Env, Expression};
+
+use crate::tasks::workflows::{runners::Platform, steps::NamedJob};
+
+macro_rules! secret {
+    ($secret_name:ident) => {
+        pub const $secret_name: &str = concat!("${{ secrets.", stringify!($secret_name), " }}");
+    };
+}
+
+macro_rules! var {
+    ($secret_name:ident) => {
+        pub const $secret_name: &str = concat!("${{ vars.", stringify!($secret_name), " }}");
+    };
+}
+
+secret!(ANTHROPIC_API_KEY);
+secret!(APPLE_NOTARIZATION_ISSUER_ID);
+secret!(APPLE_NOTARIZATION_KEY);
+secret!(APPLE_NOTARIZATION_KEY_ID);
+secret!(AZURE_SIGNING_CLIENT_ID);
+secret!(AZURE_SIGNING_CLIENT_SECRET);
+secret!(AZURE_SIGNING_TENANT_ID);
+secret!(CACHIX_AUTH_TOKEN);
+secret!(DIGITALOCEAN_SPACES_ACCESS_KEY);
+secret!(DIGITALOCEAN_SPACES_SECRET_KEY);
+secret!(GITHUB_TOKEN);
+secret!(MACOS_CERTIFICATE);
+secret!(MACOS_CERTIFICATE_PASSWORD);
+secret!(SENTRY_AUTH_TOKEN);
+secret!(ZED_CLIENT_CHECKSUM_SEED);
+secret!(ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON);
+secret!(ZED_SENTRY_MINIDUMP_ENDPOINT);
+secret!(SLACK_APP_ZED_UNIT_EVALS_BOT_TOKEN);
+
+// todo(ci) make these secrets too...
+var!(AZURE_SIGNING_ACCOUNT_NAME);
+var!(AZURE_SIGNING_CERT_PROFILE_NAME);
+var!(AZURE_SIGNING_ENDPOINT);
+
+pub fn bundle_envs(platform: Platform) -> Env {
+    let env = Env::default()
+        .add("CARGO_INCREMENTAL", 0)
+        .add("ZED_CLIENT_CHECKSUM_SEED", ZED_CLIENT_CHECKSUM_SEED)
+        .add("ZED_MINIDUMP_ENDPOINT", ZED_SENTRY_MINIDUMP_ENDPOINT);
+
+    match platform {
+        Platform::Linux => env,
+        Platform::Mac => env
+            .add("MACOS_CERTIFICATE", MACOS_CERTIFICATE)
+            .add("MACOS_CERTIFICATE_PASSWORD", MACOS_CERTIFICATE_PASSWORD)
+            .add("APPLE_NOTARIZATION_KEY", APPLE_NOTARIZATION_KEY)
+            .add("APPLE_NOTARIZATION_KEY_ID", APPLE_NOTARIZATION_KEY_ID)
+            .add("APPLE_NOTARIZATION_ISSUER_ID", APPLE_NOTARIZATION_ISSUER_ID),
+        Platform::Windows => env
+            .add("AZURE_TENANT_ID", AZURE_SIGNING_TENANT_ID)
+            .add("AZURE_CLIENT_ID", AZURE_SIGNING_CLIENT_ID)
+            .add("AZURE_CLIENT_SECRET", AZURE_SIGNING_CLIENT_SECRET)
+            .add("ACCOUNT_NAME", AZURE_SIGNING_ACCOUNT_NAME)
+            .add("CERT_PROFILE_NAME", AZURE_SIGNING_CERT_PROFILE_NAME)
+            .add("ENDPOINT", AZURE_SIGNING_ENDPOINT)
+            .add("FILE_DIGEST", "SHA256")
+            .add("TIMESTAMP_DIGEST", "SHA256")
+            .add("TIMESTAMP_SERVER", "http://timestamp.acs.microsoft.com"),
+    }
+}
+
+pub(crate) fn one_workflow_per_non_main_branch() -> Concurrency {
+    Concurrency::default()
+        .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}")
+        .cancel_in_progress(true)
+}
+
+// Represents a pattern to check for changed files and corresponding output variable
+pub(crate) struct PathCondition {
+    pub name: &'static str,
+    pub pattern: &'static str,
+    pub invert: bool,
+    pub set_by_step: RefCell<Option<String>>,
+}
+impl PathCondition {
+    pub fn new(name: &'static str, pattern: &'static str) -> Self {
+        Self {
+            name,
+            pattern,
+            invert: false,
+            set_by_step: Default::default(),
+        }
+    }
+    pub fn inverted(name: &'static str, pattern: &'static str) -> Self {
+        Self {
+            name,
+            pattern,
+            invert: true,
+            set_by_step: Default::default(),
+        }
+    }
+    pub fn guard(&self, job: NamedJob) -> NamedJob {
+        let set_by_step = self
+            .set_by_step
+            .borrow()
+            .clone()
+            .unwrap_or_else(|| panic!("condition {},is never set", self.name));
+        NamedJob {
+            name: job.name,
+            job: job
+                .job
+                .add_needs(set_by_step.clone())
+                .cond(Expression::new(format!(
+                    "needs.{}.outputs.{} == 'true'",
+                    &set_by_step, self.name
+                ))),
+        }
+    }
+}
+
+pub mod assets {
+    // NOTE: these asset names also exist in the zed.dev codebase.
+    pub const MAC_AARCH64: &str = "Zed-aarch64.dmg";
+    pub const MAC_X86_64: &str = "Zed-x86_64.dmg";
+    pub const LINUX_AARCH64: &str = "zed-linux-aarch64.tar.gz";
+    pub const LINUX_X86_64: &str = "zed-linux-x86_64.tar.gz";
+    pub const WINDOWS_X86_64: &str = "Zed-x86_64.exe";
+    pub const WINDOWS_AARCH64: &str = "Zed-aarch64.exe";
+
+    pub const REMOTE_SERVER_MAC_AARCH64: &str = "zed-remote-server-macos-aarch64.gz";
+    pub const REMOTE_SERVER_MAC_X86_64: &str = "zed-remote-server-macos-x86_64.gz";
+    pub const REMOTE_SERVER_LINUX_AARCH64: &str = "zed-remote-server-linux-aarch64.gz";
+    pub const REMOTE_SERVER_LINUX_X86_64: &str = "zed-remote-server-linux-x86_64.gz";
+
+    pub fn all() -> Vec<&'static str> {
+        vec![
+            MAC_AARCH64,
+            MAC_X86_64,
+            LINUX_AARCH64,
+            LINUX_X86_64,
+            WINDOWS_X86_64,
+            WINDOWS_AARCH64,
+            REMOTE_SERVER_MAC_AARCH64,
+            REMOTE_SERVER_MAC_X86_64,
+            REMOTE_SERVER_LINUX_AARCH64,
+            REMOTE_SERVER_LINUX_X86_64,
+        ]
+    }
+}

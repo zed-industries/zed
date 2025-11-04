@@ -4,8 +4,8 @@ use editor::{Editor, EditorEvent, MultiBuffer, SelectionEffects, multibuffer_con
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncApp, AsyncWindowContext, Context,
-    Entity, EventEmitter, FocusHandle, Focusable, IntoElement, PromptLevel, Render, WeakEntity,
-    Window, actions,
+    Entity, EventEmitter, FocusHandle, Focusable, IntoElement, PromptLevel, Render, Task,
+    WeakEntity, Window, actions,
 };
 use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -556,16 +556,20 @@ impl Item for CommitView {
         });
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| {
+        Task::ready(Some(cx.new(|cx| {
             let editor = cx.new(|cx| {
                 self.editor
                     .update(cx, |editor, cx| editor.clone(window, cx))
@@ -577,7 +581,7 @@ impl Item for CommitView {
                 commit: self.commit.clone(),
                 stash: self.stash,
             }
-        }))
+        })))
     }
 }
 

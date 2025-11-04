@@ -1,15 +1,14 @@
 # Summary
 
-# General
+# Getting Started
 
 - [Getting Started](./getting-started.md)
-- [System Requirements](./system-requirements.md)
-- [Accounts](./accounts.md)
-- [Linux](./linux.md)
-- [Windows](./windows.md)
+- [Installation](./installation.md)
+  - [Update](./update.md)
+  - [Uninstall](./uninstall.md)
+- [Authenticate](./authentication.md)
 - [Telemetry](./telemetry.md)
 - [Troubleshooting](./troubleshooting.md)
-- [Additional Learning Materials](./additional-learning-materials.md)
 
 # Configuration
 
@@ -31,6 +30,8 @@
 # Using Zed
 
 - [Multibuffers](./multibuffers.md)
+- [Command Palette](./command-palette.md)
+- [Command-line Interface](./command-line-interface.md)
 - [Outline Panel](./outline-panel.md)
 - [Code Completions](./completions.md)
 - [Channels](./channels.md)
@@ -42,6 +43,11 @@
 - [Remote Development](./remote-development.md)
 - [Environment Variables](./environment.md)
 - [REPL](./repl.md)
+
+# Platform Support
+
+- [Windows](./windows.md)
+- [Linux](./linux.md)
 
 # AI
 
@@ -159,6 +165,5 @@
   - [Local Collaboration](./development/local-collaboration.md)
   - [Using Debuggers](./development/debuggers.md)
   - [Glossary](./development/glossary.md)
-- [Release Process](./development/releases.md)
 - [Release Notes](./development/release-notes.md)
 - [Debugging Crashes](./development/debugging-crashes.md)

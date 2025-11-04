@@ -15,7 +15,7 @@ use std::{
     sync::LazyLock,
 };
 
-use crate::rel_path::RelPath;
+use crate::{rel_path::RelPath, shell::ShellKind};
 
 static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 
@@ -84,9 +84,7 @@ pub trait PathExt {
     fn multiple_extensions(&self) -> Option<String>;
 
     /// Try to make a shell-safe representation of the path.
-    ///
-    /// For Unix, the path is escaped to be safe for POSIX shells
-    fn try_shell_safe(&self) -> anyhow::Result<String>;
+    fn try_shell_safe(&self, shell_kind: ShellKind) -> anyhow::Result<String>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
@@ -164,24 +162,16 @@ impl<T: AsRef<Path>> PathExt for T {
         Some(parts.into_iter().join("."))
     }
 
-    fn try_shell_safe(&self) -> anyhow::Result<String> {
-        #[cfg(target_os = "windows")]
-        {
-            Ok(self.as_ref().to_string_lossy().to_string())
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            let path_str = self
-                .as_ref()
-                .to_str()
-                .with_context(|| "Path contains invalid UTF-8")?;
-
-            // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
-            // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
-            // errors are introduced in the future :(
-            Ok(shlex::try_quote(path_str)?.into_owned())
-        }
+    fn try_shell_safe(&self, shell_kind: ShellKind) -> anyhow::Result<String> {
+        let path_str = self
+            .as_ref()
+            .to_str()
+            .with_context(|| "Path contains invalid UTF-8")?;
+        shell_kind
+            .try_quote(path_str)
+            .as_deref()
+            .map(ToOwned::to_owned)
+            .context("Failed to quote path")
     }
 }
 
@@ -1097,6 +1087,68 @@ pub fn compare_paths(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WslPath {
+    pub distro: String,
+
+    // the reason this is an OsString and not any of the path types is that it needs to
+    // represent a unix path (with '/' separators) on windows. `from_path` does this by
+    // manually constructing it from the path components of a given windows path.
+    pub path: std::ffi::OsString,
+}
+
+impl WslPath {
+    pub fn from_path<P: AsRef<Path>>(path: P) -> Option<WslPath> {
+        if cfg!(not(target_os = "windows")) {
+            return None;
+        }
+        use std::{
+            ffi::OsString,
+            path::{Component, Prefix},
+        };
+
+        let mut components = path.as_ref().components();
+        let Some(Component::Prefix(prefix)) = components.next() else {
+            return None;
+        };
+        let (server, distro) = match prefix.kind() {
+            Prefix::UNC(server, distro) => (server, distro),
+            Prefix::VerbatimUNC(server, distro) => (server, distro),
+            _ => return None,
+        };
+        let Some(Component::RootDir) = components.next() else {
+            return None;
+        };
+
+        let server_str = server.to_string_lossy();
+        if server_str == "wsl.localhost" || server_str == "wsl$" {
+            let mut result = OsString::from("");
+            for c in components {
+                use Component::*;
+                match c {
+                    Prefix(p) => unreachable!("got {p:?}, but already stripped prefix"),
+                    RootDir => unreachable!("got root dir, but already stripped root"),
+                    CurDir => continue,
+                    ParentDir => result.push("/.."),
+                    Normal(s) => {
+                        result.push("/");
+                        result.push(s);
+                    }
+                }
+            }
+            if result.is_empty() {
+                result.push("/");
+            }
+            Some(WslPath {
+                distro: distro.to_string_lossy().to_string(),
+                path: result,
+            })
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1930,5 +1982,46 @@ mod tests {
         let base = Path::new("/a/b/c/long.app.tar.gz");
         let suffix = Path::new("app.tar.gz");
         assert_eq!(strip_path_suffix(base, suffix), None);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_wsl_path() {
+        use super::WslPath;
+        let path = "/a/b/c";
+        assert_eq!(WslPath::from_path(&path), None);
+
+        let path = r"\\wsl.localhost";
+        assert_eq!(WslPath::from_path(&path), None);
+
+        let path = r"\\wsl.localhost\Distro";
+        assert_eq!(
+            WslPath::from_path(&path),
+            Some(WslPath {
+                distro: "Distro".to_owned(),
+                path: "/".into(),
+            })
+        );
+
+        let path = r"\\wsl.localhost\Distro\blue";
+        assert_eq!(
+            WslPath::from_path(&path),
+            Some(WslPath {
+                distro: "Distro".to_owned(),
+                path: "/blue".into()
+            })
+        );
+
+        let path = r"\\wsl$\archlinux\tomato\.\paprika\..\aubergine.txt";
+        assert_eq!(
+            WslPath::from_path(&path),
+            Some(WslPath {
+                distro: "archlinux".to_owned(),
+                path: "/tomato/paprika/../aubergine.txt".into()
+            })
+        );
+
+        let path = r"\\windows.localhost\Distro\foo";
+        assert_eq!(WslPath::from_path(&path), None);
     }
 }

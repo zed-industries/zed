@@ -1817,10 +1817,6 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         .await;
     assert_eq!(
         events.next().await.unwrap(),
-        Event::RefreshInlayHints(fake_server.server.server_id())
-    );
-    assert_eq!(
-        events.next().await.unwrap(),
         Event::DiskBasedDiagnosticsStarted {
             language_server_id: LanguageServerId(0),
         }
@@ -1956,10 +1952,6 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             fake_server.server.name(),
             Some(worktree_id)
         )
-    );
-    assert_eq!(
-        events.next().await.unwrap(),
-        Event::RefreshInlayHints(fake_server.server.server_id())
     );
     fake_server.start_progress(progress_token).await;
     assert_eq!(
@@ -3408,7 +3400,7 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
     let fake_server = fake_language_servers.next().await.unwrap();
     let text = "let a = obj.fqn";
 
-    // Test 1: When text_edit is None but insert_text exists with default edit_range
+    // Test 1: When text_edit is None but text_edit_text exists with default edit_range
     {
         buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
         let completions = project.update(cx, |project, cx| {
@@ -3430,7 +3422,7 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
                     }),
                     items: vec![lsp::CompletionItem {
                         label: "labelText".into(),
-                        insert_text: Some("insertText".into()),
+                        text_edit_text: Some("textEditText".into()),
                         text_edit: None,
                         ..Default::default()
                     }],
@@ -3448,14 +3440,14 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
         let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
         assert_eq!(completions.len(), 1);
-        assert_eq!(completions[0].new_text, "insertText");
+        assert_eq!(completions[0].new_text, "textEditText");
         assert_eq!(
             completions[0].replace_range.to_offset(&snapshot),
             text.len() - 3..text.len()
         );
     }
 
-    // Test 2: When both text_edit and insert_text are None with default edit_range
+    // Test 2: When both text_edit and text_edit_text are None with default edit_range
     {
         buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
         let completions = project.update(cx, |project, cx| {
@@ -3477,7 +3469,8 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
                     }),
                     items: vec![lsp::CompletionItem {
                         label: "labelText".into(),
-                        insert_text: None,
+                        text_edit_text: None,
+                        insert_text: Some("irrelevant".into()),
                         text_edit: None,
                         ..Default::default()
                     }],
@@ -9170,7 +9163,9 @@ async fn test_odd_events_for_ignored_dirs(
         repository_updates.lock().drain(..).collect::<Vec<_>>(),
         vec![
             RepositoryEvent::MergeHeadsChanged,
-            RepositoryEvent::BranchChanged
+            RepositoryEvent::BranchChanged,
+            RepositoryEvent::StatusesChanged { full_scan: false },
+            RepositoryEvent::StatusesChanged { full_scan: false },
         ],
         "Initial worktree scan should produce a repo update event"
     );

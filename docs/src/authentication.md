@@ -1,11 +1,11 @@
-# Accounts
+# Authenticate with Zed
 
-Signing in to Zed is not a requirement. You can use most features you'd expect in a code editor without ever doing so. We'll outline the few features that do require signing in, and how to do so, here.
+Signing in to Zed is not required. You can use most features you'd expect in a code editor without ever doing so. We'll outline the few features that do require signing in, and how to do so, here.
 
 ## What Features Require Signing In?
 
 1. All real-time [collaboration features](./collaboration.md).
-2. [LLM-powered features](./ai/overview.md), if you are using Zed as the provider of your LLM models. Alternatively, you can [bring and configure your own API keys](./ai/llm-providers.md#use-your-own-keys) if you'd prefer, and avoid having to sign in.
+2. [LLM-powered features](./ai/overview.md), if you are using Zed as the provider of your LLM models. To use AI without signing in, you can [bring and configure your own API keys](./ai/llm-providers.md#use-your-own-keys).
 
 ## Signing In
 

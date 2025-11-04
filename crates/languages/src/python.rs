@@ -1210,7 +1210,7 @@ impl ToolchainLister for PythonToolchainProvider {
                 activation_script.extend(match shell {
                     ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
                     ShellKind::Posix => Some(format!("\"{pyenv}\" shell - sh {version}")),
-                    ShellKind::Nushell => Some(format!("\"{pyenv}\" shell - nu {version}")),
+                    ShellKind::Nushell => Some(format!("^\"{pyenv}\" shell - nu {version}")),
                     ShellKind::PowerShell => None,
                     ShellKind::Csh => None,
                     ShellKind::Tcsh => None,
@@ -1866,12 +1866,8 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 }
                 // Basedpyright by default uses `strict` type checking, we tone it down as to not surpris users
                 maybe!({
-                    let basedpyright = object
-                        .entry("basedpyright")
-                        .or_insert(Value::Object(serde_json::Map::default()));
-                    let analysis = basedpyright
-                        .as_object_mut()?
-                        .entry("analysis")
+                    let analysis = object
+                        .entry("basedpyright.analysis")
                         .or_insert(Value::Object(serde_json::Map::default()));
                     if let serde_json::map::Entry::Vacant(v) =
                         analysis.as_object_mut()?.entry("typeCheckingMode")

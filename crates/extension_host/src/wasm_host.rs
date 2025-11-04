@@ -69,6 +69,7 @@ pub struct WasmExtension {
     pub work_dir: Arc<Path>,
     #[allow(unused)]
     pub zed_api_version: SemanticVersion,
+    _task: Arc<Task<Result<(), gpui_tokio::JoinError>>>,
 }
 
 impl Drop for WasmExtension {
@@ -649,21 +650,26 @@ impl WasmHost {
 
             anyhow::Ok((
                 extension_task,
-                WasmExtension {
-                    manifest: manifest.clone(),
-                    work_dir: this.work_dir.join(manifest.id.as_ref()).into(),
-                    tx,
-                    zed_api_version,
-                },
+                manifest.clone(),
+                this.work_dir.join(manifest.id.as_ref()).into(),
+                tx,
+                zed_api_version,
             ))
         };
         cx.spawn(async move |cx| {
-            let (extension_task, extension) = load_extension_task.await?;
+            let (extension_task, manifest, work_dir, tx, zed_api_version) =
+                cx.background_executor().spawn(load_extension_task).await?;
             // we need to run run the task in an extension context as wasmtime_wasi may
             // call into tokio, accessing its runtime handle
-            gpui_tokio::Tokio::spawn(cx, extension_task)?.detach();
+            let task = Arc::new(gpui_tokio::Tokio::spawn(cx, extension_task)?);
 
-            Ok(extension)
+            Ok(WasmExtension {
+                manifest,
+                work_dir,
+                tx,
+                zed_api_version,
+                _task: task,
+            })
         })
     }
 

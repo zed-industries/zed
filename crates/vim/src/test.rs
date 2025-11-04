@@ -2,19 +2,21 @@ mod neovim_backed_test_context;
 mod neovim_connection;
 mod vim_test_context;
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::{
-    AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer, actions::DeleteLine,
-    code_context_menus::CodeContextMenu, display_map::DisplayRow,
+    AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer,
+    actions::{DeleteLine, WrapSelectionsInTag},
+    code_context_menus::CodeContextMenu,
+    display_map::DisplayRow,
     test::editor_test_context::EditorTestContext,
 };
 use futures::StreamExt;
 use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext, px};
 use itertools::Itertools;
-use language::Point;
+use language::{Language, LanguageConfig, Point};
 pub use neovim_backed_test_context::*;
 use settings::SettingsStore;
 use ui::Pixels;
@@ -2317,5 +2319,49 @@ async fn test_clipping_on_mode_change(cx: &mut gpui::TestAppContext) {
         "
         },
         Mode::Normal,
+    );
+}
+
+#[gpui::test]
+async fn test_wrap_selections_in_tag_line_mode(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    let js_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "JavaScript".into(),
+            wrap_characters: Some(language::WrapCharactersConfig {
+                start_prefix: "<".into(),
+                start_suffix: ">".into(),
+                end_prefix: "</".into(),
+                end_suffix: ">".into(),
+            }),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(js_language), cx));
+
+    cx.set_state(
+        indoc! {
+        "
+        ˇaaaaa
+        bbbbb
+        "
+        },
+        Mode::Normal,
+    );
+
+    cx.simulate_keystrokes("shift-v j");
+    cx.dispatch_action(WrapSelectionsInTag);
+
+    cx.assert_state(
+        indoc! {
+            "
+            <ˇ>aaaaa
+            bbbbb</ˇ>
+            "
+        },
+        Mode::VisualLine,
     );
 }

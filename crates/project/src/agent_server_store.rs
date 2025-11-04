@@ -1,7 +1,6 @@
 use std::{
     any::Any,
     borrow::Borrow,
-    collections::HashSet,
     path::{Path, PathBuf},
     str::FromStr as _,
     sync::Arc,
@@ -137,7 +136,7 @@ impl EventEmitter<AgentServersUpdated> for AgentServerStore {}
 #[cfg(test)]
 mod ext_agent_tests {
     use super::*;
-    use std::fmt::Write as _;
+    use std::{collections::HashSet, fmt::Write as _};
 
     // Helper to build a store in Collab mode so we can mutate internal maps without
     // needing to spin up a full project environment.
@@ -244,25 +243,18 @@ impl AgentServerStore {
         // Collect manifests first so we can iterate twice
         let manifests: Vec<_> = manifests.into_iter().collect();
 
-        // Remove existing extension-provided agents by tracking which ones we're about to add
-        let extension_agent_names: HashSet<_> = manifests
-            .iter()
-            .flat_map(|(_, manifest)| manifest.agent_servers.keys().map(|k| k.to_string()))
-            .collect();
-
-        let keys_to_remove: Vec<_> = self
-            .external_agents
-            .keys()
-            .filter(|name| {
-                // Remove if it matches an extension agent name from any extension
-                extension_agent_names.contains(name.0.as_ref())
-            })
-            .cloned()
-            .collect();
-        for key in &keys_to_remove {
-            self.external_agents.remove(key);
-            self.agent_icons.remove(key);
-        }
+        // Remove all extension-provided agents
+        // (They will be re-added below if they're in the currently installed extensions)
+        self.external_agents.retain(|name, agent| {
+            if agent.downcast_mut::<LocalExtensionArchiveAgent>().is_some() {
+                self.agent_icons.remove(name);
+                false
+            } else {
+                // Keep the hardcoded external agents that don't come from extensions
+                // (In the future we may move these over to being extensions too.)
+                true
+            }
+        });
 
         // Insert agent servers from extension manifests
         match &self.state {
@@ -773,9 +765,7 @@ fn get_or_npm_install_builtin_agent(
 ) -> Task<std::result::Result<AgentServerCommand, anyhow::Error>> {
     cx.spawn(async move |cx| {
         let node_path = node_runtime.binary_path().await?;
-        let dir = paths::data_dir()
-            .join("external_agents")
-            .join(binary_name.as_str());
+        let dir = paths::external_agents_dir().join(binary_name.as_str());
         fs.create_dir(&dir).await?;
 
         let mut stream = fs.read_dir(&dir).await?;
@@ -1039,7 +1029,7 @@ impl ExternalAgentServer for LocalGemini {
         cx.spawn(async move |cx| {
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_local_directory_environment(
+                    project_environment.local_directory_environment(
                         &Shell::System,
                         root_dir.clone(),
                         cx,
@@ -1135,7 +1125,7 @@ impl ExternalAgentServer for LocalClaudeCode {
         cx.spawn(async move |cx| {
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_local_directory_environment(
+                    project_environment.local_directory_environment(
                         &Shell::System,
                         root_dir.clone(),
                         cx,
@@ -1212,7 +1202,7 @@ impl ExternalAgentServer for LocalCodex {
         &mut self,
         root_dir: Option<&str>,
         extra_env: HashMap<String, String>,
-        _status_tx: Option<watch::Sender<SharedString>>,
+        status_tx: Option<watch::Sender<SharedString>>,
         _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
@@ -1229,7 +1219,7 @@ impl ExternalAgentServer for LocalCodex {
         cx.spawn(async move |cx| {
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_local_directory_environment(
+                    project_environment.local_directory_environment(
                         &Shell::System,
                         root_dir.clone(),
                         cx,
@@ -1246,7 +1236,7 @@ impl ExternalAgentServer for LocalCodex {
                 custom_command.env = Some(env);
                 custom_command
             } else {
-                let dir = paths::data_dir().join("external_agents").join(CODEX_NAME);
+                let dir = paths::external_agents_dir().join(CODEX_NAME);
                 fs.create_dir(&dir).await?;
 
                 // Find or install the latest Codex release (no update checks for now).
@@ -1261,6 +1251,10 @@ impl ExternalAgentServer for LocalCodex {
 
                 let version_dir = dir.join(&release.tag_name);
                 if !fs.is_dir(&version_dir).await {
+                    if let Some(mut status_tx) = status_tx {
+                        status_tx.send("Installing…".into()).ok();
+                    }
+
                     let tag = release.tag_name.clone();
                     let version_number = tag.trim_start_matches('v');
                     let asset_name = asset_name(version_number)
@@ -1287,6 +1281,9 @@ impl ExternalAgentServer for LocalCodex {
                         },
                     )
                     .await?;
+
+                    // remove older versions
+                    util::fs::remove_matching(&dir, |entry| entry != version_dir).await;
                 }
 
                 let bin_name = if cfg!(windows) {
@@ -1397,7 +1394,7 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
             // Get project environment
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_local_directory_environment(
+                    project_environment.local_directory_environment(
                         &Shell::System,
                         root_dir.clone(),
                         cx,
@@ -1411,7 +1408,7 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
             env.extend(extra_env);
 
             let cache_key = format!("{}/{}", extension_id, agent_id);
-            let dir = paths::data_dir().join("external_agents").join(&cache_key);
+            let dir = paths::external_agents_dir().join(&cache_key);
             fs.create_dir(&dir).await?;
 
             // Determine platform key
@@ -1580,7 +1577,7 @@ impl ExternalAgentServer for LocalCustomAgent {
         cx.spawn(async move |cx| {
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_local_directory_environment(
+                    project_environment.local_directory_environment(
                         &Shell::System,
                         root_dir.clone(),
                         cx,
@@ -1633,7 +1630,9 @@ impl BuiltinAgentServerSettings {
 impl From<settings::BuiltinAgentServerSettings> for BuiltinAgentServerSettings {
     fn from(value: settings::BuiltinAgentServerSettings) -> Self {
         BuiltinAgentServerSettings {
-            path: value.path,
+            path: value
+                .path
+                .map(|p| PathBuf::from(shellexpand::tilde(&p.to_string_lossy()).as_ref())),
             args: value.args,
             env: value.env,
             ignore_system_version: value.ignore_system_version,
@@ -1668,7 +1667,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
     fn from(value: settings::CustomAgentServerSettings) -> Self {
         CustomAgentServerSettings {
             command: AgentServerCommand {
-                path: value.path,
+                path: PathBuf::from(shellexpand::tilde(&value.path.to_string_lossy()).as_ref()),
                 args: value.args,
                 env: value.env,
             },
@@ -1695,6 +1694,8 @@ impl settings::Settings for AllAgentServersSettings {
 
 #[cfg(test)]
 mod extension_agent_tests {
+    use crate::worktree_store::WorktreeStore;
+
     use super::*;
     use gpui::TestAppContext;
     use std::sync::Arc;
@@ -1819,7 +1820,9 @@ mod extension_agent_tests {
     async fn archive_agent_uses_extension_and_agent_id_for_cache_key(cx: &mut TestAppContext) {
         let fs = fs::FakeFs::new(cx.background_executor.clone());
         let http_client = http_client::FakeHttpClient::with_404_response();
-        let project_environment = cx.new(|cx| crate::ProjectEnvironment::new(None, cx));
+        let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
+        let project_environment =
+            cx.new(|cx| crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, cx));
 
         let agent = LocalExtensionArchiveAgent {
             fs,
@@ -1887,5 +1890,41 @@ mod extension_agent_tests {
         assert!(manifest_entry.targets.contains_key("linux-x86_64"));
         let target = manifest_entry.targets.get("linux-x86_64").unwrap();
         assert_eq!(target.cmd, "./release-agent");
+    }
+
+    #[test]
+    fn test_tilde_expansion_in_settings() {
+        let settings = settings::BuiltinAgentServerSettings {
+            path: Some(PathBuf::from("~/bin/agent")),
+            args: Some(vec!["--flag".into()]),
+            env: None,
+            ignore_system_version: None,
+            default_mode: None,
+        };
+
+        let BuiltinAgentServerSettings { path, .. } = settings.into();
+
+        let path = path.unwrap();
+        assert!(
+            !path.to_string_lossy().starts_with("~"),
+            "Tilde should be expanded for builtin agent path"
+        );
+
+        let settings = settings::CustomAgentServerSettings {
+            path: PathBuf::from("~/custom/agent"),
+            args: vec!["serve".into()],
+            env: None,
+            default_mode: None,
+        };
+
+        let CustomAgentServerSettings {
+            command: AgentServerCommand { path, .. },
+            ..
+        } = settings.into();
+
+        assert!(
+            !path.to_string_lossy().starts_with("~"),
+            "Tilde should be expanded for custom agent path"
+        );
     }
 }

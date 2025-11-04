@@ -1392,18 +1392,17 @@ impl GitRepository for RealGitRepository {
             .remote_url("upstream")
             .or_else(|| self.remote_url("origin"));
 
-        self.executor
-            .spawn(async move {
-                crate::blame::Blame::for_path(
-                    &git_binary_path,
-                    &working_directory?,
-                    &path,
-                    &content,
-                    remote_url,
-                )
-                .await
-            })
-            .boxed()
+        async move {
+            crate::blame::Blame::for_path(
+                &git_binary_path,
+                &working_directory?,
+                &path,
+                &content,
+                remote_url,
+            )
+            .await
+        }
+        .boxed()
     }
 
     fn diff(&self, diff: DiffType) -> BoxFuture<'_, Result<String>> {
