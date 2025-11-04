@@ -4693,3 +4693,44 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
   }
 }
 ```
+
+## Settings Profiles
+
+- Description: Configure any number of settings profiles that are temporarily applied on top of your existing user settings when selected from `settings profile selector: toggle`.
+- Setting: `profiles`
+- Default: `{}`
+
+If you have settings you frequently toggle back and forth depending on your context, you can configure settings profiles within Zed.
+Settings profiles allows you to configure batches of setting that overlay on top of your current Zed settings.
+
+In your `settings.json` file, add the `profiles` object.
+Each key within this object will be the name of your settings profile, and the value of each key will be a dictionary that can include any of Zed's settings.
+
+Example:
+
+```json [settings]
+"profiles": {
+  "Presenting (Dark)": {
+    "agent_buffer_font_size": 18.0,
+    "buffer_font_size": 18.0,
+    "theme": "One Dark",
+    "ui_font_size": 18.0
+  },
+  "Presenting (Light)": {
+    "agent_buffer_font_size": 18.0,
+    "buffer_font_size": 18.0,
+    "theme": "One Light",
+    "ui_font_size": 18.0
+  },
+  "Writing": {
+    "agent_buffer_font_size": 15.0,
+    "buffer_font_size": 15.0,
+    "theme": "Catppuccin Frappé - No Italics",
+    "ui_font_size": 15.0,
+    "tab_bar": { "show": false },
+    "toolbar": { "breadcrumbs": false }
+  }
+}
+```
+
+To preview and enable a settings profile, open the command palette via {#kb command_palette::Toggle} and search for `settings profile selector: toggle`.
