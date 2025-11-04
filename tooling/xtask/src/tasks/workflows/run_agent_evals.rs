@@ -25,11 +25,8 @@ pub(crate) fn run_agent_evals() -> Workflow {
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("CARGO_INCREMENTAL", 0))
         .add_env(("RUST_BACKTRACE", 1))
-        .add_env(("ANTHROPIC_API_KEY", "${{ secrets.ANTHROPIC_API_KEY }}"))
-        .add_env((
-            "ZED_CLIENT_CHECKSUM_SEED",
-            "${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}",
-        ))
+        .add_env(("ANTHROPIC_API_KEY", vars::ANTHROPIC_API_KEY))
+        .add_env(("ZED_CLIENT_CHECKSUM_SEED", vars::ZED_CLIENT_CHECKSUM_SEED))
         .add_env(("ZED_EVAL_TELEMETRY", 1))
         .add_job(agent_evals.name, agent_evals.job)
 }
@@ -48,7 +45,7 @@ fn agent_evals() -> NamedJob {
             .runs_on(runners::LINUX_DEFAULT)
             .timeout_minutes(60_u32)
             .add_step(steps::checkout_repo())
-            .add_step(steps::cache_rust_dependencies())
+            .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
             .add_step(setup_cargo_config(Platform::Linux))
             .add_step(steps::script("cargo build --package=eval"))
@@ -71,10 +68,7 @@ pub(crate) fn run_unit_evals() -> Workflow {
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("CARGO_INCREMENTAL", 0))
         .add_env(("RUST_BACKTRACE", 1))
-        .add_env((
-            "ZED_CLIENT_CHECKSUM_SEED",
-            "${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}",
-        ))
+        .add_env(("ZED_CLIENT_CHECKSUM_SEED", vars::ZED_CLIENT_CHECKSUM_SEED))
         .add_job(unit_evals.name, unit_evals.job)
 }
 
@@ -87,7 +81,7 @@ fn unit_evals() -> NamedJob {
         )
         .if_condition(Expression::new("${{ failure() }}"))
         .add_with(("method", "chat.postMessage"))
-        .add_with(("token", "${{ secrets.SLACK_APP_ZED_UNIT_EVALS_BOT_TOKEN }}"))
+        .add_with(("token", vars::SLACK_APP_ZED_UNIT_EVALS_BOT_TOKEN))
         .add_with(("payload", indoc::indoc!{r#"
             channel: C04UDRNNJFQ
             text: "Unit Evals Failed: https://github.com/zed-industries/zed/actions/runs/${{ github.run_id }}"
@@ -99,13 +93,13 @@ fn unit_evals() -> NamedJob {
             .runs_on(runners::LINUX_DEFAULT)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(Platform::Linux))
-            .add_step(steps::cache_rust_dependencies())
+            .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
             .add_step(steps::cargo_install_nextest(Platform::Linux))
             .add_step(steps::clear_target_dir_if_large(Platform::Linux))
             .add_step(
                 steps::script("./script/run-unit-evals")
-                    .add_env(("ANTHROPIC_API_KEY", "${{ secrets.ANTHROPIC_API_KEY }}")),
+                    .add_env(("ANTHROPIC_API_KEY", vars::ANTHROPIC_API_KEY)),
             )
             .add_step(send_failure_to_slack())
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),

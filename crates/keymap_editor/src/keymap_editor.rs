@@ -11,7 +11,7 @@ mod ui_components;
 
 use anyhow::{Context as _, anyhow};
 use collections::{HashMap, HashSet};
-use editor::{CompletionProvider, Editor, EditorEvent};
+use editor::{CompletionProvider, Editor, EditorEvent, EditorMode, SizingBehavior};
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -22,7 +22,7 @@ use gpui::{
     ScrollWheelEvent, Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity,
     actions, anchored, deferred, div,
 };
-use language::{Language, LanguageConfig, Rope, ToOffset as _};
+use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{CompletionDisplayOptions, Project};
 use settings::{
@@ -2119,7 +2119,7 @@ impl RenderOnce for SyntaxHighlightedText {
 
         let highlights = self
             .language
-            .highlight_text(&Rope::from_str_small(text.as_ref()), 0..text.len());
+            .highlight_text(&text.as_ref().into(), 0..text.len());
         let mut runs = Vec::with_capacity(highlights.len());
         let mut offset = 0;
 
@@ -2788,10 +2788,10 @@ impl ActionArgumentsEditor {
                 let editor = cx.new_window_entity(|window, cx| {
                     let multi_buffer = cx.new(|cx| editor::MultiBuffer::singleton(buffer, cx));
                     let mut editor = Editor::new(
-                        editor::EditorMode::Full {
+                        EditorMode::Full {
                             scale_ui_elements_with_buffer_font_size: true,
                             show_active_line_background: false,
-                            sized_by_content: true,
+                            sizing_behavior: SizingBehavior::SizeByContent,
                         },
                         multi_buffer,
                         project.upgrade(),
