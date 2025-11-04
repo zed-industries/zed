@@ -21,7 +21,7 @@ pub fn cherry_pick() -> Workflow {
 
 fn run_cherry_pick(branch: &Input, commit: &Input) -> NamedJob {
     fn cherry_pick(branch: &str, commit: &str) -> Step<Run> {
-        named::bash(&format!("./scripts/cherry-pick {branch} {commit}"))
+        named::bash(&format!("./script/cherry-pick {branch} {commit}"))
     }
 
     named::job(
