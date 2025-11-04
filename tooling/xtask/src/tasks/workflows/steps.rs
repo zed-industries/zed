@@ -299,7 +299,7 @@ pub(crate) mod named {
     }
 }
 
-pub fn git_checkout(ref_name: &str) -> Step<Run> {
+pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
     named::bash(&format!(
         "git fetch origin {ref_name} && git checkout {ref_name}"
     ))

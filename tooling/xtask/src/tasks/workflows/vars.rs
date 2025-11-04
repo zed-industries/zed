@@ -134,9 +134,11 @@ impl StepOutput {
                 .expect("Steps that produce outputs must have an ID"),
         }
     }
+}
 
-    pub fn var(&self) -> String {
-        format!("${{{{ steps.{}.outputs.{} }}}}", self.step_id, self.name)
+impl std::fmt::Display for StepOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "${{{{ steps.{}.outputs.{} }}}}", self.step_id, self.name)
     }
 }
 
@@ -155,10 +157,6 @@ impl Input {
         }
     }
 
-    pub fn var(&self) -> String {
-        format!("${{{{ inputs.{} }}}}", self.name)
-    }
-
     pub fn input(&self) -> WorkflowDispatchInput {
         WorkflowDispatchInput {
             description: self.name.to_owned(),
@@ -166,6 +164,12 @@ impl Input {
             input_type: self.input_type.to_owned(),
             default: self.default.clone(),
         }
+    }
+}
+
+impl std::fmt::Display for Input {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "${{{{ inputs.{} }}}}", self.name)
     }
 }
 

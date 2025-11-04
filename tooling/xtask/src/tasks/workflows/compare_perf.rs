@@ -24,7 +24,7 @@ pub fn compare_perf() -> Workflow {
 }
 
 pub fn run_perf(base: &Input, head: &Input, crate_name: &Input) -> NamedJob {
-    fn cargo_perf_test(ref_name: String, crate_name: String) -> Step<Run> {
+    fn cargo_perf_test(ref_name: &Input, crate_name: &Input) -> Step<Run> {
         named::bash(&format!(
             "
             if [ -n \"{crate_name}\" ]; then
@@ -39,7 +39,7 @@ pub fn run_perf(base: &Input, head: &Input, crate_name: &Input) -> NamedJob {
         named::bash("cargo install hyperfine")
     }
 
-    fn compare_runs(head: String, base: String) -> Step<Run> {
+    fn compare_runs(head: &Input, base: &Input) -> Step<Run> {
         named::bash(&format!(
             "cargo perf-compare --save=results.md {base} {head}"
         ))
@@ -52,11 +52,11 @@ pub fn run_perf(base: &Input, head: &Input, crate_name: &Input) -> NamedJob {
             .add_step(steps::setup_cargo_config(runners::Platform::Linux))
             .map(steps::install_linux_dependencies)
             .add_step(install_hyperfine())
-            .add_step(steps::git_checkout(&base.var()))
-            .add_step(cargo_perf_test(base.var(), crate_name.var()))
-            .add_step(steps::git_checkout(&head.var()))
-            .add_step(cargo_perf_test(head.var(), crate_name.var()))
-            .add_step(compare_runs(head.var(), base.var()))
+            .add_step(steps::git_checkout(base))
+            .add_step(cargo_perf_test(base, crate_name))
+            .add_step(steps::git_checkout(head))
+            .add_step(cargo_perf_test(head, crate_name))
+            .add_step(compare_runs(head, base))
             .add_step(upload_artifact("results.md"))
             .add_step(steps::cleanup_cargo_config(runners::Platform::Linux)),
     )

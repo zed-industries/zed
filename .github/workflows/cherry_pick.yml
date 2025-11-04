@@ -12,6 +12,10 @@ on:
         description: branch
         required: true
         type: string
+      channel:
+        description: channel
+        required: true
+        type: string
 jobs:
   run_cherry_pick:
     runs-on: namespace-profile-2x4-ubuntu-2404
@@ -27,7 +31,7 @@ jobs:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
     - name: cherry_pick::run_cherry_pick::cherry_pick
-      run: ./script/cherry-pick ${{ inputs.branch }} ${{ inputs.commit }}
+      run: ./script/cherry-pick ${{ inputs.branch }} ${{ inputs.commit }} ${{ inputs.channel }}
       shell: bash -euxo pipefail {0}
       env:
         GIT_COMMITTER_NAME: Zed Zippy
