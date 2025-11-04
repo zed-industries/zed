@@ -352,7 +352,7 @@ impl Prettier {
                 let params = buffer
                     .update(cx, |buffer, cx| {
                         let buffer_language = buffer.language().map(|language| language.as_ref());
-                        let language_settings = language_settings(buffer_language.map(|l| l.name()), buffer.file(), cx);
+                        let language_settings = language_settings(buffer_language.map(|l| l.name()), buffer.modeline().map(Arc::as_ref), buffer.file(), cx);
                         let prettier_settings = &language_settings.prettier;
                         anyhow::ensure!(
                             prettier_settings.allowed,
@@ -503,6 +503,7 @@ impl Prettier {
                                 buffer.language().map(|language| language.as_ref());
                             let language_settings = language_settings(
                                 buffer_language.map(|l| l.name()),
+                                buffer.modeline().map(Arc::as_ref),
                                 buffer.file(),
                                 cx,
                             );

@@ -632,7 +632,8 @@ impl DisplayMap {
             .and_then(|buffer| buffer.language())
             .map(|l| l.name());
         let file = buffer.and_then(|buffer| buffer.file());
-        language_settings(language, file, cx).tab_size
+        let modeline = buffer.and_then(|buffer| buffer.modeline());
+        language_settings(language, modeline.map(Arc::as_ref), file, cx).tab_size
     }
 
     #[cfg(test)]

@@ -278,7 +278,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
     server_cx.read(|cx| {
         assert_eq!(
             AllLanguageSettings::get_global(cx)
-                .language(None, Some(&"Rust".into()), cx)
+                .language(None, Some(&"Rust".into()), None, cx)
                 .language_servers,
             ["from-local-settings"],
             "User language settings should be synchronized with the server settings"
@@ -299,7 +299,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
     server_cx.read(|cx| {
         assert_eq!(
             AllLanguageSettings::get_global(cx)
-                .language(None, Some(&"Rust".into()), cx)
+                .language(None, Some(&"Rust".into()), None, cx)
                 .language_servers,
             ["from-server-settings".to_string()],
             "Server language settings should take precedence over the user settings"
@@ -359,7 +359,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
                 }),
                 cx
             )
-            .language(None, Some(&"Rust".into()), cx)
+            .language(None, Some(&"Rust".into()), None, cx)
             .language_servers,
             ["override-rust-analyzer".to_string()]
         )
@@ -367,8 +367,10 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
 
     cx.read(|cx| {
         let file = buffer.read(cx).file();
+        let modeline = buffer.read(cx).modeline();
         assert_eq!(
-            language_settings(Some("Rust".into()), file, cx).language_servers,
+            language_settings(Some("Rust".into()), modeline.map(Arc::as_ref), file, cx)
+                .language_servers,
             ["override-rust-analyzer".to_string()]
         )
     });
@@ -514,8 +516,10 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     cx.read(|cx| {
         let file = buffer.read(cx).file();
+        let modeline = buffer.read(cx).modeline();
         assert_eq!(
-            language_settings(Some("Rust".into()), file, cx).language_servers,
+            language_settings(Some("Rust".into()), modeline.map(Arc::as_ref), file, cx)
+                .language_servers,
             ["rust-analyzer".to_string(), "fake-analyzer".to_string()]
         )
     });
