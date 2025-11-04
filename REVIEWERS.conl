@@ -21,43 +21,17 @@
   = @SomeoneToIgnore
   = @Veykril
 
-vim
-  = @ConradIrwin
-  = @dinocosta
-  = @p1n3appl3
-  = @probably-neb
-
-gpui
-  = @mikayla-maki
-
-git
-  = @cole-miller
+ai
+  = @benbrandt
+  = @bennetbo
   = @danilo-leal
-
-linux
-  = @cole-miller
-  = @dvdsk
-  = @p1n3appl3
-  = @probably-neb
-  = @smitbarmase
-
-windows
-  = @localcc
-  = @reflectronic
-
-pickers
-  = @dvdsk
-  = @p1n3appl3
-  = @SomeoneToIgnore
+  = @rtfeldman
 
 audio
   = @dvdsk
 
-helix
-  = @kubkon
-
-terminal
-  = @kubkon
+crashes
+  = @p1n3appl3
   = @Veykril
 
 debugger
@@ -65,36 +39,24 @@ debugger
   = @kubkon
   = @osiewicz
 
-extension
-  = @kubkon
-
-settings_ui
-  = @Anthony-Eid
-  = @danilo-leal
-  = @probably-neb
-
-crashes
-  = @p1n3appl3
-  = @Veykril
-
-ai
-  = @benbrandt
-  = @bennetbo
-  = @danilo-leal
-  = @rtfeldman
-
 design
   = @danilo-leal
 
-multi_buffer
-  = @Veykril
-  = @SomeoneToIgnore
+docs
+  = @probably-neb
 
-lsp
-  = @osiewicz
-  = @smitbarmase
-  = @SomeoneToIgnore
-  = @Veykril
+extension
+  = @kubkon
+
+git
+  = @cole-miller
+  = @danilo-leal
+
+gpui
+  = @mikayla-maki
+
+helix
+  = @kubkon
 
 languages
   = @osiewicz
@@ -103,12 +65,50 @@ languages
   = @SomeoneToIgnore
   = @Veykril
 
+linux
+  = @cole-miller
+  = @dvdsk
+  = @p1n3appl3
+  = @probably-neb
+  = @smitbarmase
+
+lsp
+  = @osiewicz
+  = @smitbarmase
+  = @SomeoneToIgnore
+  = @Veykril
+
+multi_buffer
+  = @Veykril
+  = @SomeoneToIgnore
+
+pickers
+  = @dvdsk
+  = @p1n3appl3
+  = @SomeoneToIgnore
+
 project_panel
   = @smitbarmase
+
+settings_ui
+  = @Anthony-Eid
+  = @danilo-leal
+  = @probably-neb
 
 tasks
   = @SomeoneToIgnore
   = @Veykril
 
-docs
+terminal
+  = @kubkon
+  = @Veykril
+
+vim
+  = @ConradIrwin
+  = @dinocosta
+  = @p1n3appl3
   = @probably-neb
+
+windows
+  = @localcc
+  = @reflectronic
