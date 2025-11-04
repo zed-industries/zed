@@ -1933,7 +1933,7 @@ async fn test_setting_auto_select_first_and_select_active_file(cx: &mut TestAppC
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *FileFinderSettings::get_global(cx);
+        let settings = FileFinderSettings::get_global(cx).clone();
 
         FileFinderSettings::override_global(
             FileFinderSettings {

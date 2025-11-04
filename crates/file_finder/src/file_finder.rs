@@ -416,6 +416,7 @@ pub struct FileFinderDelegate {
     focus_handle: FocusHandle,
     include_ignored: Option<bool>,
     include_ignored_refresh: Task<()>,
+    priorities: Vec<String>,
 }
 
 /// Use a custom ordering for file finder: the regular one
@@ -512,6 +513,7 @@ impl Matches {
         &self,
         entry: &Match,
         currently_opened: Option<&FoundPath>,
+        priorities: &[String],
     ) -> Result<usize, usize> {
         if let Match::History {
             path,
@@ -533,7 +535,14 @@ impl Matches {
             self.matches.binary_search_by(|m| {
                 // `reverse()` since if cmp_matches(a, b) == Ordering::Greater, then a is better than b.
                 // And we want the better entries go first.
-                Self::cmp_matches(self.separate_history, currently_opened, m, entry).reverse()
+                Self::cmp_matches(
+                    self.separate_history,
+                    currently_opened,
+                    priorities,
+                    m,
+                    entry,
+                )
+                .reverse()
             })
         }
     }
@@ -548,6 +557,7 @@ impl Matches {
         new_search_matches: impl Iterator<Item = ProjectPanelOrdMatch>,
         extend_old_matches: bool,
         path_style: PathStyle,
+        priorities: &[String],
     ) {
         let Some(query) = query else {
             // assuming that if there's no query, then there's no search matches.
@@ -610,7 +620,7 @@ impl Matches {
             .into_values()
             .chain(new_search_matches.into_iter())
         {
-            match self.position(&new_match, currently_opened) {
+            match self.position(&new_match, currently_opened, priorities) {
                 Ok(_duplicate) => continue,
                 Err(i) => {
                     self.matches.insert(i, new_match);
@@ -626,6 +636,7 @@ impl Matches {
     fn cmp_matches(
         separate_history: bool,
         currently_opened: Option<&FoundPath>,
+        priorities: &[String],
         a: &Match,
         b: &Match,
     ) -> cmp::Ordering {
@@ -636,6 +647,25 @@ impl Matches {
             _ => {}
         }
         debug_assert!(a.panel_match().is_some() && b.panel_match().is_some());
+
+        // Handle path priorities from settings
+        for priority in priorities.iter() {
+            let match_in_priority = |m: &Match| {
+                m.relative_path()
+                    .map(|m: &Arc<RelPath>| m.as_std_path().to_str())
+                    .flatten()
+                    .is_some_and(|m: &str| m.contains(priority))
+            };
+
+            let a_in_priority = match_in_priority(a);
+            let b_in_priority = match_in_priority(b);
+
+            match (a_in_priority, b_in_priority) {
+                (true, false) => return cmp::Ordering::Greater,
+                (false, true) => return cmp::Ordering::Less,
+                _ => {}
+            }
+        }
 
         match (&a, &b) {
             // bubble currently opened files to the top
@@ -861,6 +891,7 @@ impl FileFinderDelegate {
             focus_handle: cx.focus_handle(),
             include_ignored: FileFinderSettings::get_global(cx).include_ignored,
             include_ignored_refresh: Task::ready(()),
+            priorities: FileFinderSettings::get_global(cx).priorities.clone(),
         }
     }
 
@@ -976,6 +1007,7 @@ impl FileFinderDelegate {
                 matches.into_iter(),
                 extend_old_matches,
                 path_style,
+                &self.priorities,
             );
 
             let query_path = query.raw_query.as_str();
@@ -1022,7 +1054,7 @@ impl FileFinderDelegate {
                 || self.calculate_selected_index(cx),
                 |m| {
                     self.matches
-                        .position(&m, self.currently_opened_path.as_ref())
+                        .position(&m, self.currently_opened_path.as_ref(), &self.priorities)
                         .unwrap_or(0)
                 },
             );
@@ -1414,6 +1446,7 @@ impl PickerDelegate for FileFinderDelegate {
                     None.into_iter(),
                     false,
                     path_style,
+                    &self.priorities,
                 );
 
                 self.first_update = false;

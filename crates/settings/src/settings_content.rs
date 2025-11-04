@@ -613,6 +613,11 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: Smart
     pub include_ignored: Option<IncludeIgnoredContent>,
+    /// Priorities for paths of files inside file finder results.
+    /// Listed in descending order.
+    ///
+    /// Default: []
+    pub path_priorities: Option<Vec<String>>,
 }
 
 #[derive(
