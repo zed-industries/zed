@@ -81,29 +81,33 @@ impl EditPrediction {
             }
         };
 
-        let (included_buffers, included_files) = included_files
-            .into_iter()
-            .map(|(buffer, snapshot, path, ranges)| (buffer, (snapshot, path, ranges)))
-            .collect::<(Vec<_>, Vec<_>)>();
+        let (edited_buffer_snapshot, edits) = crate::udiff::parse_diff(&output_text, |path| {
+            included_files
+                .iter()
+                .find_map(|(_, buffer, probe_path, ranges)| {
+                    if probe_path.as_ref() == path {
+                        Some((buffer, ranges.as_slice()))
+                    } else {
+                        None
+                    }
+                })
+        })
+        .await
+        .log_err()?;
 
-        let (edited_buffer_snapshot, edits) =
-            crate::udiff::parse_diff(&output_text, &included_files)
-                .await
-                .log_err()?;
+        let edited_buffer = included_files.iter().find_map(|(buffer, snapshot, _, _)| {
+            if snapshot.remote_id() == edited_buffer_snapshot.remote_id() {
+                Some(buffer)
+            } else {
+                None
+            }
+        })?;
 
         // todo! use Arc<str> later too
         let edits = edits
             .into_iter()
             .map(|(r, e)| (r, e.to_string()))
             .collect::<Vec<_>>();
-
-        let edited_buffer = included_buffers.iter().find(|buffer| {
-            buffer
-                .read_with(cx, |buffer, _| {
-                    buffer.remote_id() == edited_buffer_snapshot.remote_id()
-                })
-                .unwrap_or(false)
-        })?;
 
         let (buffer, edits, snapshot, edit_preview_task) = edited_buffer
             .read_with(cx, |buffer, cx| {

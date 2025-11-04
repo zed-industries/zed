@@ -28,23 +28,28 @@ struct Edit {
     text: String,
 }
 
-pub async fn parse_diff(
+pub async fn parse_diff<'a>(
     diff: &str,
-    included_files: &[(BufferSnapshot, Arc<Path>, Vec<Range<Anchor>>)],
+    get_buffer: impl Fn(&Path) -> Option<(&'a BufferSnapshot, &'a [Range<Anchor>])> + Send,
 ) -> Result<(BufferSnapshot, Vec<(Range<Anchor>, Arc<str>)>)> {
     let mut edited_buffer = None;
     let mut buffer_edits = Vec::new();
-    process_diff(diff, included_files, async |buffer, renamed_to, edits| {
-        if edited_buffer.is_some() {
-            anyhow::bail!("edited more than one file");
-        }
-        if renamed_to.is_some() {
-            anyhow::bail!("edit predictions cannot rename files");
-        }
-        edited_buffer = Some(buffer.clone());
-        buffer_edits = edits;
-        Ok(())
-    })
+    process_diff(
+        &(),
+        diff,
+        |path, _| get_buffer(path),
+        async |buffer, renamed_to, edits| {
+            if edited_buffer.is_some() {
+                anyhow::bail!("edited more than one file");
+            }
+            if renamed_to.is_some() {
+                anyhow::bail!("edit predictions cannot rename files");
+            }
+            edited_buffer = Some(buffer.clone());
+            buffer_edits = edits;
+            Ok(())
+        },
+    )
     .await?;
     Ok((edited_buffer.context("no files in diff")?, buffer_edits))
 }
@@ -55,7 +60,7 @@ pub async fn apply_diff(
     project: &Entity<Project>,
     cx: &mut AsyncApp,
 ) -> Result<HashMap<BufferId, Entity<Buffer>>> {
-    let mut included_files = Vec::new();
+    let mut included_files = HashMap::default();
     let mut opened_buffers = HashMap::default();
     for line in diff.lines() {
         let diff_line = DiffLine::parse(line);
@@ -69,51 +74,68 @@ pub async fn apply_diff(
                 })??
                 .await?;
 
-            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-
             let path = Arc::from(Path::new(path.as_ref()));
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
             opened_buffers.insert(snapshot.remote_id(), buffer.clone());
-            included_files.push((snapshot, path, vec![Anchor::MIN..Anchor::MAX]));
+            included_files.insert(path, (buffer, snapshot));
         }
     }
 
-    process_diff(diff, &included_files, async |buffer, new_path, edits| {
-        if let Some(new_path) = new_path {
-            project
-                .update(cx, |project, cx| {
-                    let new_project_path = project
-                        .find_project_path(new_path, cx)
-                        .context("Failed to find worktree for new path")?;
-                    let project_file =
-                        project::File::from_dyn(buffer.file()).context("Wrong file type")?;
-                    anyhow::Ok(project.rename_entry(
-                        project_file.entry_id.unwrap(),
-                        new_project_path,
-                        cx,
-                    ))
-                })??
-                .await?;
-        }
+    let ranges = [Anchor::MIN..Anchor::MAX];
+    let cx_2 = cx.clone();
 
-        let buffer = opened_buffers.get(&buffer.remote_id()).unwrap();
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit(edits, None, cx);
-        })
-    })
+    process_diff(
+        &mut included_files,
+        diff,
+        {
+            |path, included_files| {
+                let (buffer, snapshot) = included_files.get_mut(path)?;
+                *snapshot = buffer
+                    .read_with(&cx_2, |buffer, _| buffer.snapshot())
+                    .ok()?;
+                Some((&*snapshot, ranges.as_slice()))
+            }
+        },
+        async |buffer, new_path, edits| {
+            if let Some(new_path) = new_path {
+                project
+                    .update(cx, |project, cx| {
+                        let new_project_path = project
+                            .find_project_path(new_path, cx)
+                            .context("Failed to find worktree for new path")?;
+                        let project_file =
+                            project::File::from_dyn(buffer.file()).context("Wrong file type")?;
+                        anyhow::Ok(project.rename_entry(
+                            project_file.entry_id.unwrap(),
+                            new_project_path,
+                            cx,
+                        ))
+                    })??
+                    .await?;
+            }
+
+            let buffer = opened_buffers.get(&buffer.remote_id()).unwrap();
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            })
+        },
+    )
     .await?;
     Ok(opened_buffers)
 }
 
-async fn process_diff(
+async fn process_diff<'a, T>(
+    mut payload: T,
     diff: &str,
-    included_files: &[(BufferSnapshot, Arc<Path>, Vec<Range<Anchor>>)],
+    get_buffer: impl for<'b> Fn(&Path, &'b mut T) -> Option<(&'b BufferSnapshot, &'b [Range<Anchor>])>,
     mut on_buffer: impl AsyncFnMut(
         &BufferSnapshot,
         Option<&Path>,
         Vec<(Range<Anchor>, Arc<str>)>,
     ) -> Result<()>,
 ) -> Result<()> {
-    let mut current_file = None;
+    // let mut current_file: Option<(std::path::PathBuf, &BufferSnapshot, &[Range<Anchor>])> = None;
+    let mut old_path = None;
     let mut new_path = None;
     let mut hunk = HunkState::default();
     let mut edits = Vec::new();
@@ -122,15 +144,10 @@ async fn process_diff(
     while let Some(diff_line) = diff_lines.next() {
         match diff_line {
             DiffLine::OldPath { path } => {
-                current_file = Some(
-                    included_files
-                        .iter()
-                        .find(|(_, probe_path, _)| probe_path.as_ref() == Path::new(path.as_ref()))
-                        .context("model tried to edit a buffer that was not provided")?,
-                );
+                old_path = Some(path);
             }
             DiffLine::NewPath { path } => {
-                if current_file.is_none() {
+                if old_path.is_none() {
                     anyhow::bail!(
                         "Found a new path header (`+++`) before an (`---`) old path header"
                     );
@@ -179,9 +196,11 @@ async fn process_diff(
         if at_hunk_end {
             let hunk = mem::take(&mut hunk);
 
-            let Some((buffer, _, ranges)) = current_file.as_ref() else {
+            let Some(old_path) = old_path.as_ref() else {
                 anyhow::bail!("Missing old path (`---`) header")
             };
+            let old_path = Path::new(old_path.as_ref());
+            let (buffer, ranges) = get_buffer(old_path, &mut payload).context("")?;
 
             // TODO is it worth using project search?
             let context_offset = if hunk.context.is_empty() {
@@ -209,7 +228,9 @@ async fn process_diff(
 
             edits.extend(hunk.edits.into_iter().flat_map(|edit| {
                 let old_text = buffer
-                    .text_for_range(edit.range.clone())
+                    .text_for_range(
+                        context_offset + edit.range.start..context_offset + edit.range.end,
+                    )
                     .collect::<String>();
                 let edits_within_hunk = language::text_diff(&old_text, &edit.text);
                 edits_within_hunk
@@ -225,22 +246,19 @@ async fn process_diff(
                         )
                     })
             }));
-        }
 
-        if at_file_end {
-            let Some((buffer, old_path, _)) = current_file else {
-                anyhow::bail!("Missing old path (`---`) header")
-            };
-            let Some(new_path) = new_path.take() else {
-                anyhow::bail!("Missing new path (`+++`) header")
-            };
-            let new_path = Path::new(new_path.as_ref());
-            let renamed_to = if old_path.as_ref() != new_path {
-                Some(new_path)
-            } else {
-                None
-            };
-            on_buffer(buffer, renamed_to, mem::take(&mut edits)).await?;
+            if at_file_end {
+                let Some(new_path) = new_path.take() else {
+                    anyhow::bail!("Missing new path (`+++`) header")
+                };
+                let new_path = Path::new(new_path.as_ref());
+                let renamed_to = if old_path != new_path {
+                    Some(new_path)
+                } else {
+                    None
+                };
+                on_buffer(buffer, renamed_to, mem::take(&mut edits)).await?;
+            }
         }
     }
 
@@ -696,19 +714,12 @@ mod tests {
             .await
             .expect_err("Non-unique edits should fail");
 
-        let (edited_snapshot, edits) = parse_diff(
-            diff,
-            &[(
-                buffer_snapshot.clone(),
-                Arc::from(path!("root/file1").as_ref()),
-                vec![
-                    buffer_snapshot.anchor_before(Point::new(1, 0))
-                        ..buffer_snapshot.anchor_after(buffer_snapshot.max_point()),
-                ],
-            )],
-        )
-        .await
-        .unwrap();
+        let ranges = [buffer_snapshot.anchor_before(Point::new(1, 0))
+            ..buffer_snapshot.anchor_after(buffer_snapshot.max_point())];
+
+        let (edited_snapshot, edits) = parse_diff(diff, |_path| Some((&buffer_snapshot, &ranges)))
+            .await
+            .unwrap();
 
         assert_eq!(edited_snapshot.remote_id(), buffer_snapshot.remote_id());
         buffer.update(cx, |buffer, cx| {
@@ -753,14 +764,9 @@ mod tests {
              nine ten eleven twelve
         "#};
 
-        let (buffer, edits) = parse_diff(
-            diff,
-            &[(
-                buffer_snapshot,
-                Arc::from(Path::new("root/file1")),
-                vec![(Anchor::MIN..Anchor::MAX)],
-            )],
-        )
+        let (buffer, edits) = parse_diff(diff, |_path| {
+            Some((&buffer_snapshot, &[(Anchor::MIN..Anchor::MAX)] as &[_]))
+        })
         .await
         .unwrap();
 
