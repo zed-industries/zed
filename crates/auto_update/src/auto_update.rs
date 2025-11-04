@@ -962,7 +962,7 @@ pub async fn finalize_auto_update_on_quit() {
             .parent()
             .map(|p| p.join("tools").join("auto_update_helper.exe"))
     {
-        let mut command = smol::process::Command::new(helper);
+        let mut command = util::command::new_smol_command(helper);
         command.arg("--launch");
         command.arg("false");
         if let Ok(mut cmd) = command.spawn() {

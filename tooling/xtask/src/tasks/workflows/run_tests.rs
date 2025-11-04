@@ -65,7 +65,7 @@ pub(crate) fn run_tests() -> Workflow {
         )),
         should_build_nix.guard(build_nix(
             Platform::Mac,
-            Arch::ARM64,
+            Arch::AARCH64,
             "debug",
             // *don't* cache the built output
             Some("-zed-editor-[0-9.]*-nightly"),
@@ -74,7 +74,7 @@ pub(crate) fn run_tests() -> Workflow {
     ];
     let tests_pass = tests_pass(&jobs);
 
-    let mut workflow = named::workflow()
+    named::workflow()
         .add_event(Event::default()
             .push(
                 Push::default()
@@ -89,11 +89,14 @@ pub(crate) fn run_tests() -> Workflow {
         )
         .add_env(( "CARGO_TERM_COLOR", "always" ))
         .add_env(( "RUST_BACKTRACE", 1 ))
-        .add_env(( "CARGO_INCREMENTAL", 0 ));
-    for job in jobs {
-        workflow = workflow.add_job(job.name, job.job)
-    }
-    workflow.add_job(tests_pass.name, tests_pass.job)
+        .add_env(( "CARGO_INCREMENTAL", 0 ))
+        .map(|mut workflow| {
+            for job in jobs {
+                workflow = workflow.add_job(job.name, job.job)
+            }
+            workflow
+        })
+        .add_job(tests_pass.name, tests_pass.job)
 }
 
 // Generates a bash script that checks changed files against regex patterns
@@ -226,6 +229,7 @@ fn check_style() -> NamedJob {
         release_job(&[])
             .runs_on(runners::LINUX_MEDIUM)
             .add_step(steps::checkout_repo())
+            .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::setup_pnpm())
             .add_step(steps::script("./script/prettier"))
             .add_step(steps::script("./script/check-todos"))
@@ -273,6 +277,7 @@ fn check_dependencies() -> NamedJob {
         release_job(&[])
             .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
+            .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(install_cargo_machete())
             .add_step(run_cargo_machete())
             .add_step(check_cargo_lock())
@@ -287,6 +292,7 @@ fn check_workspace_binaries() -> NamedJob {
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .map(steps::install_linux_dependencies)
+            .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::script("cargo build -p collab"))
             .add_step(steps::script("cargo build --workspace --bins --examples"))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
@@ -309,6 +315,9 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
                 platform == Platform::Linux,
                 steps::install_linux_dependencies,
             )
+            .when(platform == Platform::Linux, |this| {
+                this.add_step(steps::cache_rust_dependencies_namespace())
+            })
             .add_step(steps::setup_node())
             .add_step(steps::clippy(platform))
             .add_step(steps::cargo_install_nextest(platform))
@@ -368,7 +377,7 @@ fn doctests() -> NamedJob {
         release_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
             .add_step(steps::checkout_repo())
-            .add_step(steps::cache_rust_dependencies())
+            .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .add_step(run_doctests())
@@ -381,6 +390,7 @@ fn check_licenses() -> NamedJob {
         Job::default()
             .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
+            .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::script("./script/check-licenses"))
             .add_step(steps::script("./script/generate-licenses")),
     )
@@ -420,7 +430,7 @@ fn check_docs() -> NamedJob {
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(Platform::Linux))
             // todo(ci): un-inline build_docs/action.yml here
-            .add_step(steps::cache_rust_dependencies())
+            .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(
                 lychee_link_check("./docs/src/**/*"), // check markdown links
             )

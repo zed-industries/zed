@@ -17,7 +17,9 @@ use client::zed_urls;
 use cloud_llm_client::PlanV1;
 use collections::{HashMap, HashSet};
 use editor::scroll::Autoscroll;
-use editor::{Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects};
+use editor::{
+    Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
+};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
@@ -881,6 +883,7 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) {
         self.set_editor_is_expanded(!self.editor_expanded, cx);
+        cx.stop_propagation();
         cx.notify();
     }
 
@@ -892,7 +895,7 @@ impl AcpThreadView {
                     EditorMode::Full {
                         scale_ui_elements_with_buffer_font_size: false,
                         show_active_line_background: false,
-                        sized_by_content: false,
+                        sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
                     },
                     cx,
                 )
@@ -3631,6 +3634,7 @@ impl AcpThreadView {
             .child(
                 h_flex()
                     .id("edits-container")
+                    .cursor_pointer()
                     .gap_1()
                     .child(Disclosure::new("edits-disclosure", expanded))
                     .map(|this| {
@@ -3770,6 +3774,7 @@ impl AcpThreadView {
                     Label::new(name.to_string())
                         .size(LabelSize::XSmall)
                         .buffer_font(cx)
+                        .ml_1p5()
                 });
 
                 let file_icon = FileIcons::get_icon(path.as_std_path(), cx)
@@ -3801,14 +3806,30 @@ impl AcpThreadView {
                     })
                     .child(
                         h_flex()
+                            .id(("file-name-row", index))
                             .relative()
-                            .id(("file-name", index))
                             .pr_8()
-                            .gap_1p5()
                             .w_full()
                             .overflow_x_scroll()
-                            .child(file_icon)
-                            .child(h_flex().gap_0p5().children(file_name).children(file_path))
+                            .child(
+                                h_flex()
+                                    .id(("file-name-path", index))
+                                    .cursor_pointer()
+                                    .pr_0p5()
+                                    .gap_0p5()
+                                    .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                    .rounded_xs()
+                                    .child(file_icon)
+                                    .children(file_name)
+                                    .children(file_path)
+                                    .tooltip(Tooltip::text("Go to File"))
+                                    .on_click({
+                                        let buffer = buffer.clone();
+                                        cx.listener(move |this, _, window, cx| {
+                                            this.open_edited_buffer(&buffer, window, cx);
+                                        })
+                                    }),
+                            )
                             .child(
                                 div()
                                     .absolute()
@@ -3818,13 +3839,7 @@ impl AcpThreadView {
                                     .bottom_0()
                                     .right_0()
                                     .bg(overlay_gradient),
-                            )
-                            .on_click({
-                                let buffer = buffer.clone();
-                                cx.listener(move |this, _, window, cx| {
-                                    this.open_edited_buffer(&buffer, window, cx);
-                                })
-                            }),
+                            ),
                     )
                     .child(
                         h_flex()
@@ -3966,8 +3981,12 @@ impl AcpThreadView {
                                             )
                                         }
                                     })
-                                    .on_click(cx.listener(|_, _, window, cx| {
-                                        window.dispatch_action(Box::new(ExpandMessageEditor), cx);
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.expand_message_editor(
+                                            &ExpandMessageEditor,
+                                            window,
+                                            cx,
+                                        );
                                     })),
                             ),
                     ),

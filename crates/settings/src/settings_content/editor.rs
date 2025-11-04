@@ -197,6 +197,19 @@ pub struct EditorSettingsContent {
     ///
     /// Default: [`DocumentColorsRenderMode::Inlay`]
     pub lsp_document_colors: Option<DocumentColorsRenderMode>,
+    /// When to show the scrollbar in the completion menu.
+    /// This setting can take four values:
+    ///
+    /// 1. Show the scrollbar if there's important information or
+    ///    follow the system's configured behavior
+    ///   "auto"
+    /// 2. Match the system's configured behavior:
+    ///    "system"
+    /// 3. Always show the scrollbar:
+    ///    "always"
+    /// 4. Never show the scrollbar:
+    ///    "never" (default)
+    pub completion_menu_scrollbar: Option<ShowScrollbar>,
 }
 
 // Toolbar related settings
@@ -699,6 +712,8 @@ pub struct SearchSettingsContent {
     pub case_sensitive: Option<bool>,
     pub include_ignored: Option<bool>,
     pub regex: Option<bool>,
+    /// Whether to center the cursor on each search match when navigating.
+    pub center_on_match: Option<bool>,
 }
 
 #[skip_serializing_none]

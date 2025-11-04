@@ -335,6 +335,8 @@ impl Zeta2Inspector {
                         max_diagnostic_bytes: zeta_options.max_diagnostic_bytes,
                         prompt_format: zeta_options.prompt_format,
                         file_indexing_parallelism: zeta_options.file_indexing_parallelism,
+                        buffer_change_grouping_interval: zeta_options
+                            .buffer_change_grouping_interval,
                     },
                     cx,
                 );

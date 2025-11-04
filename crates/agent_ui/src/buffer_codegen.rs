@@ -487,10 +487,9 @@ impl CodegenAlternative {
     ) {
         let start_time = Instant::now();
         let snapshot = self.snapshot.clone();
-        let selected_text = Rope::from_iter(
-            snapshot.text_for_range(self.range.start..self.range.end),
-            cx.background_executor(),
-        );
+        let selected_text = snapshot
+            .text_for_range(self.range.start..self.range.end)
+            .collect::<Rope>();
 
         let selection_start = self.range.start.to_point(&snapshot);
 

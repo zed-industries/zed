@@ -1461,21 +1461,21 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     .unwrap();
     fs.save(
         path!("/the-root/Cargo.lock").as_ref(),
-        &Rope::default(),
+        &"".into(),
         Default::default(),
     )
     .await
     .unwrap();
     fs.save(
         path!("/the-stdlib/LICENSE").as_ref(),
-        &Rope::default(),
+        &"".into(),
         Default::default(),
     )
     .await
     .unwrap();
     fs.save(
         path!("/the/stdlib/src/string.rs").as_ref(),
-        &Rope::default(),
+        &"".into(),
         Default::default(),
     )
     .await
@@ -1817,10 +1817,6 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         .await;
     assert_eq!(
         events.next().await.unwrap(),
-        Event::RefreshInlayHints(fake_server.server.server_id())
-    );
-    assert_eq!(
-        events.next().await.unwrap(),
         Event::DiskBasedDiagnosticsStarted {
             language_server_id: LanguageServerId(0),
         }
@@ -1956,10 +1952,6 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             fake_server.server.name(),
             Some(worktree_id)
         )
-    );
-    assert_eq!(
-        events.next().await.unwrap(),
-        Event::RefreshInlayHints(fake_server.server.server_id())
     );
     fake_server.start_progress(progress_token).await;
     assert_eq!(
@@ -4072,7 +4064,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
     // to be detected by the worktree, so that the buffer starts reloading.
     fs.save(
         path!("/dir/file1").as_ref(),
-        &Rope::from_str("the first contents", cx.background_executor()),
+        &"the first contents".into(),
         Default::default(),
     )
     .await
@@ -4083,7 +4075,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
     // previous file change may still be in progress.
     fs.save(
         path!("/dir/file1").as_ref(),
-        &Rope::from_str("the second contents", cx.background_executor()),
+        &"the second contents".into(),
         Default::default(),
     )
     .await
@@ -4127,7 +4119,7 @@ async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
     // to be detected by the worktree, so that the buffer starts reloading.
     fs.save(
         path!("/dir/file1").as_ref(),
-        &Rope::from_str("the first contents", cx.background_executor()),
+        &"the first contents".into(),
         Default::default(),
     )
     .await
@@ -4805,7 +4797,7 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
         marked_text_offsets("oneˇ\nthree ˇFOURˇ five\nsixtyˇ seven\n");
     fs.save(
         path!("/dir/the-file").as_ref(),
-        &Rope::from_str(new_contents.as_str(), cx.background_executor()),
+        &new_contents.as_str().into(),
         LineEnding::Unix,
     )
     .await
@@ -4837,7 +4829,7 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     // Change the file on disk again, adding blank lines to the beginning.
     fs.save(
         path!("/dir/the-file").as_ref(),
-        &Rope::from_str("\n\n\nAAAA\naaa\nBB\nbbbbb\n", cx.background_executor()),
+        &"\n\n\nAAAA\naaa\nBB\nbbbbb\n".into(),
         LineEnding::Unix,
     )
     .await
@@ -4889,7 +4881,7 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
     // state updates correctly.
     fs.save(
         path!("/dir/file1").as_ref(),
-        &Rope::from_str("aaa\nb\nc\n", cx.background_executor()),
+        &"aaa\nb\nc\n".into(),
         LineEnding::Windows,
     )
     .await

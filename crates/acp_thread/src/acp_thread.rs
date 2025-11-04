@@ -3,7 +3,6 @@ mod diff;
 mod mention;
 mod terminal;
 
-use ::terminal::terminal_settings::TerminalSettings;
 use agent_settings::AgentSettings;
 use collections::HashSet;
 pub use connection::*;
@@ -12,7 +11,7 @@ use language::language_settings::FormatOnSave;
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use serde::{Deserialize, Serialize};
-use settings::{Settings as _, SettingsLocation};
+use settings::Settings as _;
 use task::{Shell, ShellBuilder};
 pub use terminal::*;
 
@@ -2141,17 +2140,9 @@ impl AcpThread {
     ) -> Task<Result<Entity<Terminal>>> {
         let env = match &cwd {
             Some(dir) => self.project.update(cx, |project, cx| {
-                let worktree = project.find_worktree(dir.as_path(), cx);
-                let shell = TerminalSettings::get(
-                    worktree.as_ref().map(|(worktree, path)| SettingsLocation {
-                        worktree_id: worktree.read(cx).id(),
-                        path: &path,
-                    }),
-                    cx,
-                )
-                .shell
-                .clone();
-                project.directory_environment(&shell, dir.as_path().into(), cx)
+                project.environment().update(cx, |env, cx| {
+                    env.directory_environment(dir.as_path().into(), cx)
+                })
             }),
             None => Task::ready(None).shared(),
         };

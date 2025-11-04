@@ -1,6 +1,6 @@
 # Snippets
 
-Use the {#action snippets::ConfigureSnippets} action to create a new snippets file or edit a existing snippets file for a specified [scope](#scopes).
+Use the {#action snippets::ConfigureSnippets} action to create a new snippets file or edit an existing snippets file for a specified [scope](#scopes).
 
 The snippets are located in `~/.config/zed/snippets` directory to which you can navigate to with the {#action snippets::OpenFolder} action.
 

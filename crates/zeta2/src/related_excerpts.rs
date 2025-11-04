@@ -64,7 +64,7 @@ const SEARCH_PROMPT: &str = indoc! {r#"
 
     ## Current cursor context
 
-    `````path={current_file_path}
+    `````{current_file_path}
     {cursor_excerpt}
     `````
 
@@ -149,6 +149,9 @@ pub fn find_related_excerpts(
         .find(|model| {
             model.provider_id() == MODEL_PROVIDER_ID
                 && model.id() == LanguageModelId("claude-haiku-4-5-latest".into())
+            // model.provider_id() == LanguageModelProviderId::new("zeta-ctx-qwen-30b")
+            // model.provider_id() == LanguageModelProviderId::new("ollama")
+            //     && model.id() == LanguageModelId("gpt-oss:20b".into())
         })
     else {
         return Task::ready(Err(anyhow!("could not find context model")));

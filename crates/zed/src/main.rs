@@ -257,6 +257,13 @@ pub fn main() {
         return;
     }
 
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .stack_size(10 * 1024 * 1024)
+        .thread_name(|ix| format!("RayonWorker{}", ix))
+        .build_global()
+        .unwrap();
+
     log::info!(
         "========== starting zed version {}, sha {} ==========",
         app_version,
