@@ -4700,11 +4700,8 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 - Setting: `profiles`
 - Default: `{}`
 
-If you have settings you frequently toggle back and forth depending on your context, you can configure settings profiles within Zed.
-Settings profiles allows you to configure batches of setting that overlay on top of your current Zed settings.
-
 In your `settings.json` file, add the `profiles` object.
-Each key within this object will be the name of your settings profile, and the value of each key will be a dictionary that can include any of Zed's settings.
+Each key within this object is the name of a settings profile, and each value is an object that can include any of Zed's settings.
 
 Example:
 
