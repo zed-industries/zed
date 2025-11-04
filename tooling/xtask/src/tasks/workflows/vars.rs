@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use gh_workflow::{Concurrency, Env, Expression};
+use gh_workflow::{Concurrency, Env, Expression, WorkflowDispatchInput};
 
 use crate::tasks::workflows::{runners::Platform, steps::NamedJob};
 
@@ -107,11 +107,40 @@ impl PathCondition {
             name: job.name,
             job: job
                 .job
-                .add_needs(set_by_step.clone())
+                .add_need(set_by_step.clone())
                 .cond(Expression::new(format!(
                     "needs.{}.outputs.{} == 'true'",
                     &set_by_step, self.name
                 ))),
+        }
+    }
+}
+
+pub(crate) struct Input {
+    pub input_type: &'static str,
+    pub name: &'static str,
+    pub default: Option<String>,
+}
+
+impl Input {
+    pub fn string(name: &'static str, default: Option<String>) -> Self {
+        Self {
+            input_type: "string",
+            name,
+            default,
+        }
+    }
+
+    pub fn var(&self) -> String {
+        format!("${{{{ inputs.{} }}}}", self.name)
+    }
+
+    pub fn input(&self) -> WorkflowDispatchInput {
+        WorkflowDispatchInput {
+            description: self.name.to_owned(),
+            required: self.default.is_none(),
+            input_type: self.input_type.to_owned(),
+            default: self.default.clone(),
         }
     }
 }
