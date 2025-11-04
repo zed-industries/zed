@@ -7,6 +7,7 @@ use anyhow::Context as _;
 use call::ActiveCall;
 use channel::{Channel, ChannelEvent, ChannelStore};
 use client::{ChannelId, Client, Contact, User, UserStore};
+use collections::HashSet;
 use contact_finder::ContactFinder;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
@@ -630,6 +631,10 @@ impl CollabPanel {
                     .enumerate()
                     .map(|(ix, (_, channel))| StringMatchCandidate::new(ix, &channel.name)),
             );
+            let mut channels = channel_store
+                .ordered_channels()
+                .map(|(_, chan)| chan)
+                .collect::<Vec<_>>();
             let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
@@ -639,14 +644,29 @@ impl CollabPanel {
                 &Default::default(),
                 executor.clone(),
             ));
+
+            let channel_ids_of_matches_or_parents = matches
+                .iter()
+                .flat_map(|mat| {
+                    let match_channel = channels[mat.candidate_id];
+
+                    match_channel
+                        .parent_path
+                        .iter()
+                        .copied()
+                        .chain(Some(match_channel.id))
+                })
+                .collect::<HashSet<_>>();
+
+            channels.retain(|chan| channel_ids_of_matches_or_parents.contains(&chan.id));
+
             if let Some(state) = &self.channel_editing_state
                 && matches!(state, ChannelEditingState::Create { location: None, .. })
             {
                 self.entries.push(ListEntry::ChannelEditor { depth: 0 });
             }
             let mut collapse_depth = None;
-            for mat in matches {
-                let channel = channel_store.channel_at_index(mat.candidate_id).unwrap();
+            for (idx, channel) in channels.into_iter().enumerate() {
                 let depth = channel.parent_path.len();
 
                 if collapse_depth.is_none() && self.is_channel_collapsed(channel.id) {
@@ -663,7 +683,7 @@ impl CollabPanel {
                 }
 
                 let has_children = channel_store
-                    .channel_at_index(mat.candidate_id + 1)
+                    .channel_at_index(idx + 1)
                     .is_some_and(|next_channel| next_channel.parent_path.ends_with(&[channel.id]));
 
                 match &self.channel_editing_state {
