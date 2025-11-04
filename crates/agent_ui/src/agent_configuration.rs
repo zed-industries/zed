@@ -294,7 +294,7 @@ impl AgentConfiguration {
                                 "Start New Thread",
                             )
                             .full_width()
-                            .style(ButtonStyle::Filled)
+                            .style(ButtonStyle::Outlined)
                             .layer(ElevationIndex::ModalSurface)
                             .icon_position(IconPosition::Start)
                             .icon(IconName::Thread)
@@ -320,7 +320,7 @@ impl AgentConfiguration {
                                     "Remove Provider",
                                 )
                                 .full_width()
-                                .style(ButtonStyle::Filled)
+                                .style(ButtonStyle::Outlined)
                                 .icon_position(IconPosition::Start)
                                 .icon(IconName::Trash)
                                 .icon_size(IconSize::Small)
@@ -411,7 +411,7 @@ impl AgentConfiguration {
                                         PopoverMenu::new("add-provider-popover")
                                             .trigger(
                                                 Button::new("add-provider", "Add Provider")
-                                                    .style(ButtonStyle::Filled)
+                                                    .style(ButtonStyle::Outlined)
                                                     .icon_position(IconPosition::Start)
                                                     .icon(IconName::Plus)
                                                     .icon_size(IconSize::Small)
@@ -536,7 +536,7 @@ impl AgentConfiguration {
         let add_server_popover = PopoverMenu::new("add-server-popover")
             .trigger(
                 Button::new("add-server", "Add Server")
-                    .style(ButtonStyle::Filled)
+                    .style(ButtonStyle::Outlined)
                     .icon_position(IconPosition::Start)
                     .icon(IconName::Plus)
                     .icon_size(IconSize::Small)
@@ -998,7 +998,7 @@ impl AgentConfiguration {
                                     .child(Headline::new("External Agents"))
                                     .child(
                                         Button::new("add-agent", "Add Agent")
-                                            .style(ButtonStyle::Filled)
+                                            .style(ButtonStyle::Outlined)
                                             .icon_position(IconPosition::Start)
                                             .icon(IconName::Plus)
                                             .icon_size(IconSize::Small)
