@@ -81,7 +81,7 @@ use ::git::{
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, BuildError};
 use anyhow::{Context as _, Result, anyhow};
 use blink_manager::BlinkManager;
-use buffer_diff::DiffHunkStatus;
+use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use client::{Collaborator, ParticipantIndex, parse_zed_link};
 use clock::ReplicaId;
 use code_context_menus::{
@@ -20621,7 +20621,50 @@ impl Editor {
 
             let selection = text::ToPoint::to_point(&range.start, buffer).row
                 ..text::ToPoint::to_point(&range.end, buffer).row;
-            Some((multi_buffer.buffer(buffer.remote_id()).unwrap(), selection))
+
+            let end_line_start_point = Point::new(selection.end, 0);
+            let end_line_start_anchor = multi_buffer_snapshot.anchor_before(end_line_start_point);
+
+            let ranges = [Anchor::min()..end_line_start_anchor];
+
+            let diff_hunks = self
+                .diff_hunks_in_ranges(&ranges, &multi_buffer_snapshot)
+                .filter(|hunk| hunk.row_range.start.0 < selection.end);
+
+            struct Offsets {
+                start: isize,
+                end: isize,
+            }
+
+            let offsets = diff_hunks.fold(Offsets { start: 0, end: 0 }, |mut acc, h| {
+                let hunk_offset = match h.status() {
+                    DiffHunkStatus {
+                        kind: DiffHunkStatusKind::Added,
+                        secondary: _,
+                    } => -(h.row_range.len() as isize),
+                    DiffHunkStatus {
+                        kind: DiffHunkStatusKind::Deleted,
+                        secondary: _,
+                    } => h.row_range.len() as isize,
+                    _ => 0,
+                };
+
+                if h.row_range.start.0 < selection.start {
+                    acc.start += hunk_offset;
+                }
+                acc.end += hunk_offset;
+                acc
+            });
+
+            let diff_aware_selection = Range {
+                start: selection.start.saturating_add_signed(offsets.start as i32),
+                end: selection.end.saturating_add_signed(offsets.end as i32),
+            };
+
+            Some((
+                multi_buffer.buffer(buffer.remote_id()).unwrap(),
+                diff_aware_selection,
+            ))
         });
 
         let Some((buffer, selection)) = buffer_and_selection else {
