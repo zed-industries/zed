@@ -3080,6 +3080,14 @@ impl Pane {
         }
         let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
         let pinned_tabs = tab_items;
+
+        // Avoid flickering when max_offset is very small (< 2px).
+        // The border adds 1-2px which can push max_offset back to 0, creating a loop.
+        let max_scroll = self.tab_bar_scroll_handle.max_offset().width;
+        let current_offset = self.tab_bar_scroll_handle.offset().x;
+        let is_scrollable = max_scroll > px(2.0);
+        let is_scrolled = current_offset < px(0.);
+
         TabBar::new("tab_bar")
             .when(
                 self.display_nav_history_buttons.unwrap_or_default(),
@@ -3101,11 +3109,14 @@ impl Pane {
                 }
             })
             .children(pinned_tabs.len().ne(&0).then(|| {
-                // Removed conditional border to fix layout thrashing bug (#41467).
-                // The border was conditionally applied based on scroll state, which created
-                // a circular dependency: border affects layout → layout affects scrollability
-                // → scrollability determines border → infinite loop.
-                h_flex().children(pinned_tabs)
+                let has_active_unpinned_tab = self.active_item_index >= self.pinned_tab_count;
+                h_flex()
+                    .children(pinned_tabs)
+                    .when(is_scrollable && is_scrolled, |this| {
+                        this.when(has_active_unpinned_tab, |this| this.border_r_2())
+                            .when(!has_active_unpinned_tab, |this| this.border_r_1())
+                            .border_color(cx.theme().colors().border)
+                    })
             }))
             .child(
                 h_flex()
