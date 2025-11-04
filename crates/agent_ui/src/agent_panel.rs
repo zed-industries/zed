@@ -19,7 +19,6 @@ use settings::{
 use zed_actions::OpenBrowser;
 use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
 
-use crate::context_store::ContextStore;
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
     AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, Follow, InlineAssistant,
@@ -39,6 +38,7 @@ use crate::{
 use crate::{
     ExternalAgent, NewExternalAgentThread, NewNativeAgentThreadFromSummary, placeholder_command,
 };
+use crate::{ManageProfiles, context_store::ContextStore};
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Result, anyhow};
@@ -1780,10 +1780,9 @@ impl AgentPanel {
                                 }),
                             )
                             .action("Add Custom Server…", Box::new(AddContextServer))
-                            .separator();
-
-                        menu = menu
+                            .separator()
                             .action("Rules", Box::new(OpenRulesLibrary::default()))
+                            .action("Profiles", Box::new(ManageProfiles::default()))
                             .action("Settings", Box::new(OpenSettings))
                             .separator()
                             .action(full_screen_label, Box::new(ToggleZoom));
