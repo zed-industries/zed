@@ -2,9 +2,9 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{runners::Platform, vars};
 
-const BASH_SHELL: &str = "bash -euxo pipefail {0}";
+pub const BASH_SHELL: &str = "bash -euxo pipefail {0}";
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
-const PWSH_SHELL: &str = "pwsh";
+pub const PWSH_SHELL: &str = "pwsh";
 
 pub fn checkout_repo() -> Step<Use> {
     named::uses(
@@ -86,23 +86,35 @@ pub fn cleanup_cargo_config(platform: Platform) -> Step<Run> {
     step.if_condition(Expression::new("always()"))
 }
 
-pub fn upload_artifact(name: &str, path: &str) -> Step<Use> {
-    Step::new(format!("@actions/upload-artifact {}", name))
-        .uses(
-            "actions",
-            "upload-artifact",
-            "330a01c490aca151604b8cf639adc76d48f6c5d4", // v5
-        )
-        .add_with(("name", name))
-        .add_with(("path", path))
-}
-
 pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
     match platform {
         Platform::Windows => named::pwsh("./script/clear-target-dir-if-larger-than.ps1 250"),
-        Platform::Linux => named::bash("./script/clear-target-dir-if-larger-than 100"),
+        Platform::Linux => named::bash("./script/clear-target-dir-if-larger-than 250"),
         Platform::Mac => named::bash("./script/clear-target-dir-if-larger-than 300"),
     }
+}
+
+pub(crate) fn clippy(platform: Platform) -> Step<Run> {
+    match platform {
+        Platform::Windows => named::pwsh("./script/clippy.ps1"),
+        _ => named::bash("./script/clippy"),
+    }
+}
+
+pub(crate) fn cache_rust_dependencies_namespace() -> Step<Use> {
+    named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("cache", "rust"))
+}
+
+fn setup_linux() -> Step<Run> {
+    named::bash("./script/linux")
+}
+
+fn install_mold() -> Step<Run> {
+    named::bash("./script/install-mold")
+}
+
+pub(crate) fn install_linux_dependencies(job: Job) -> Job {
+    job.add_step(setup_linux()).add_step(install_mold())
 }
 
 pub fn script(name: &str) -> Step<Run> {
@@ -116,6 +128,91 @@ pub fn script(name: &str) -> Step<Run> {
 pub(crate) struct NamedJob {
     pub name: String,
     pub job: Job,
+}
+
+// impl NamedJob {
+//     pub fn map(self, f: impl FnOnce(Job) -> Job) -> Self {
+//         NamedJob {
+//             name: self.name,
+//             job: f(self.job),
+//         }
+//     }
+// }
+
+pub(crate) fn release_job(deps: &[&NamedJob]) -> Job {
+    dependant_job(deps)
+        .cond(Expression::new(
+            "github.repository_owner == 'zed-industries'",
+        ))
+        .timeout_minutes(60u32)
+}
+
+pub(crate) fn dependant_job(deps: &[&NamedJob]) -> Job {
+    let job = Job::default();
+    if deps.len() > 0 {
+        job.needs(deps.iter().map(|j| j.name.clone()).collect::<Vec<_>>())
+    } else {
+        job
+    }
+}
+
+impl FluentBuilder for Job {}
+impl FluentBuilder for Workflow {}
+
+/// A helper trait for building complex objects with imperative conditionals in a fluent style.
+/// Copied from GPUI to avoid adding GPUI as dependency
+/// todo(ci) just put this in gh-workflow
+#[allow(unused)]
+pub(crate) trait FluentBuilder {
+    /// Imperatively modify self with the given closure.
+    fn map<U>(self, f: impl FnOnce(Self) -> U) -> U
+    where
+        Self: Sized,
+    {
+        f(self)
+    }
+
+    /// Conditionally modify self with the given closure.
+    fn when(self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| if condition { then(this) } else { this })
+    }
+
+    /// Conditionally modify self with the given closure.
+    fn when_else(
+        self,
+        condition: bool,
+        then: impl FnOnce(Self) -> Self,
+        else_fn: impl FnOnce(Self) -> Self,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| if condition { then(this) } else { else_fn(this) })
+    }
+
+    /// Conditionally unwrap and modify self with the given closure, if the given option is Some.
+    fn when_some<T>(self, option: Option<T>, then: impl FnOnce(Self, T) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| {
+            if let Some(value) = option {
+                then(this, value)
+            } else {
+                this
+            }
+        })
+    }
+    /// Conditionally unwrap and modify self with the given closure, if the given option is None.
+    fn when_none<T>(self, option: &Option<T>, then: impl FnOnce(Self) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| if option.is_some() { this } else { then(this) })
+    }
 }
 
 // (janky) helper to generate steps with a name that corresponds

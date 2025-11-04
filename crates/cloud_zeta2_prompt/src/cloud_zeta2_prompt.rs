@@ -182,8 +182,8 @@ pub fn build_prompt(
         }
 
         for related_file in &request.included_files {
-            writeln!(&mut prompt, "`````filename={}", related_file.path.display()).unwrap();
-            write_excerpts(
+            write_codeblock(
+                &related_file.path,
                 &related_file.excerpts,
                 if related_file.path == request.excerpt_path {
                     &insertions
@@ -194,7 +194,6 @@ pub fn build_prompt(
                 request.prompt_format == PromptFormat::NumLinesUniDiff,
                 &mut prompt,
             );
-            write!(&mut prompt, "`````\n\n").unwrap();
         }
     }
 
@@ -203,6 +202,25 @@ pub fn build_prompt(
     }
 
     Ok((prompt, section_labels))
+}
+
+pub fn write_codeblock<'a>(
+    path: &Path,
+    excerpts: impl IntoIterator<Item = &'a Excerpt>,
+    sorted_insertions: &[(Point, &str)],
+    file_line_count: Line,
+    include_line_numbers: bool,
+    output: &'a mut String,
+) {
+    writeln!(output, "`````{}", path.display()).unwrap();
+    write_excerpts(
+        excerpts,
+        sorted_insertions,
+        file_line_count,
+        include_line_numbers,
+        output,
+    );
+    write!(output, "`````\n\n").unwrap();
 }
 
 pub fn write_excerpts<'a>(
@@ -597,8 +615,7 @@ impl<'a> SyntaxBasedPrompt<'a> {
                 disjoint_snippets.push(current_snippet);
             }
 
-            // TODO: remove filename=?
-            writeln!(output, "`````filename={}", file_path.display()).ok();
+            writeln!(output, "`````path={}", file_path.display()).ok();
             let mut skipped_last_snippet = false;
             for (snippet, range) in disjoint_snippets {
                 let section_index = section_ranges.len();

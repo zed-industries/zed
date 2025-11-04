@@ -3104,7 +3104,7 @@ impl Window {
         let Some(tile) =
             self.sprite_atlas
                 .get_or_insert_with(&params.clone().into(), &mut || {
-                    let Some((size, bytes)) = cx.svg_renderer.render(&params)? else {
+                    let Some((size, bytes)) = cx.svg_renderer.render_alpha_mask(&params)? else {
                         return Ok(None);
                     };
                     Ok(Some((size, Cow::Owned(bytes))))
@@ -4326,10 +4326,10 @@ impl Window {
     }
 
     /// Returns a generic event listener that invokes the given listener with the view and context associated with the given view handle.
-    pub fn listener_for<V: Render, E>(
+    pub fn listener_for<T: 'static, E>(
         &self,
-        view: &Entity<V>,
-        f: impl Fn(&mut V, &E, &mut Window, &mut Context<V>) + 'static,
+        view: &Entity<T>,
+        f: impl Fn(&mut T, &E, &mut Window, &mut Context<T>) + 'static,
     ) -> impl Fn(&E, &mut Window, &mut App) + 'static {
         let view = view.downgrade();
         move |e: &E, window: &mut Window, cx: &mut App| {

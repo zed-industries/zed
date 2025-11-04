@@ -28,28 +28,27 @@ use project::Project;
 use release_channel::AppVersion;
 use serde::de::DeserializeOwned;
 use std::collections::{VecDeque, hash_map};
+use std::fmt::Write;
 use std::ops::Range;
 use std::path::Path;
 use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
-use util::ResultExt as _;
 use util::rel_path::RelPathBuf;
+use util::{LogErrorFuture, TryFutureExt};
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
-mod merge_excerpts;
+pub mod merge_excerpts;
 mod prediction;
 mod provider;
-mod related_excerpts;
+pub mod related_excerpts;
 
 use crate::merge_excerpts::merge_excerpts;
 use crate::prediction::EditPrediction;
 use crate::related_excerpts::find_related_excerpts;
 pub use crate::related_excerpts::{LlmContextOptions, SearchToolQuery};
 pub use provider::ZetaEditPredictionProvider;
-
-const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Maximum number of events to track.
 const MAX_EVENT_COUNT: usize = 16;
@@ -82,6 +81,7 @@ pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
     max_diagnostic_bytes: 2048,
     prompt_format: PromptFormat::DEFAULT,
     file_indexing_parallelism: 1,
+    buffer_change_grouping_interval: Duration::from_secs(1),
 };
 
 pub struct Zeta2FeatureFlag;
@@ -117,6 +117,7 @@ pub struct ZetaOptions {
     pub max_diagnostic_bytes: usize,
     pub prompt_format: predict_edits_v3::PromptFormat,
     pub file_indexing_parallelism: usize,
+    pub buffer_change_grouping_interval: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -134,19 +135,30 @@ impl ContextMode {
     }
 }
 
+#[derive(Debug)]
 pub enum ZetaDebugInfo {
-    ContextRetrievalStarted(ZetaContextRetrievalDebugInfo),
+    ContextRetrievalStarted(ZetaContextRetrievalStartedDebugInfo),
     SearchQueriesGenerated(ZetaSearchQueryDebugInfo),
     SearchQueriesExecuted(ZetaContextRetrievalDebugInfo),
+    SearchResultsFiltered(ZetaContextRetrievalDebugInfo),
     ContextRetrievalFinished(ZetaContextRetrievalDebugInfo),
     EditPredicted(ZetaEditPredictionDebugInfo),
 }
 
+#[derive(Debug)]
+pub struct ZetaContextRetrievalStartedDebugInfo {
+    pub project: Entity<Project>,
+    pub timestamp: Instant,
+    pub search_prompt: String,
+}
+
+#[derive(Debug)]
 pub struct ZetaContextRetrievalDebugInfo {
     pub project: Entity<Project>,
     pub timestamp: Instant,
 }
 
+#[derive(Debug)]
 pub struct ZetaEditPredictionDebugInfo {
     pub request: predict_edits_v3::PredictEditsRequest,
     pub retrieval_time: TimeDelta,
@@ -156,6 +168,7 @@ pub struct ZetaEditPredictionDebugInfo {
     pub response_rx: oneshot::Receiver<Result<predict_edits_v3::PredictEditsResponse, String>>,
 }
 
+#[derive(Debug)]
 pub struct ZetaSearchQueryDebugInfo {
     pub project: Entity<Project>,
     pub timestamp: Instant,
@@ -170,7 +183,7 @@ struct ZetaProject {
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
     current_prediction: Option<CurrentEditPrediction>,
     context: Option<HashMap<Entity<Buffer>, Vec<Range<Anchor>>>>,
-    refresh_context_task: Option<Task<Option<()>>>,
+    refresh_context_task: Option<LogErrorFuture<Task<Result<()>>>>,
     refresh_context_debounce_task: Option<Task<Option<()>>>,
     refresh_context_timestamp: Option<Instant>,
 }
@@ -452,6 +465,7 @@ impl Zeta {
         project: &Entity<Project>,
         cx: &mut Context<Self>,
     ) -> BufferSnapshot {
+        let buffer_change_grouping_interval = self.options.buffer_change_grouping_interval;
         let zeta_project = self.get_or_init_zeta_project(project, cx);
         let registered_buffer = Self::register_buffer_impl(zeta_project, buffer, project, cx);
 
@@ -461,6 +475,7 @@ impl Zeta {
                 std::mem::replace(&mut registered_buffer.snapshot, new_snapshot.clone());
             Self::push_event(
                 zeta_project,
+                buffer_change_grouping_interval,
                 Event::BufferChange {
                     old_snapshot,
                     new_snapshot: new_snapshot.clone(),
@@ -472,14 +487,19 @@ impl Zeta {
         new_snapshot
     }
 
-    fn push_event(zeta_project: &mut ZetaProject, event: Event) {
+    fn push_event(
+        zeta_project: &mut ZetaProject,
+        buffer_change_grouping_interval: Duration,
+        event: Event,
+    ) {
         let events = &mut zeta_project.events;
 
-        if let Some(Event::BufferChange {
-            new_snapshot: last_new_snapshot,
-            timestamp: last_timestamp,
-            ..
-        }) = events.back_mut()
+        if buffer_change_grouping_interval > Duration::ZERO
+            && let Some(Event::BufferChange {
+                new_snapshot: last_new_snapshot,
+                timestamp: last_timestamp,
+                ..
+            }) = events.back_mut()
         {
             // Coalesce edits for the same buffer when they happen one after the other.
             let Event::BufferChange {
@@ -488,7 +508,7 @@ impl Zeta {
                 timestamp,
             } = &event;
 
-            if timestamp.duration_since(*last_timestamp) <= BUFFER_CHANGE_GROUPING_INTERVAL
+            if timestamp.duration_since(*last_timestamp) <= buffer_change_grouping_interval
                 && old_snapshot.remote_id() == last_new_snapshot.remote_id()
                 && old_snapshot.version == last_new_snapshot.version
             {
@@ -616,7 +636,7 @@ impl Zeta {
         })
     }
 
-    fn request_prediction(
+    pub fn request_prediction(
         &mut self,
         project: &Entity<Project>,
         buffer: &Entity<Buffer>,
@@ -1060,7 +1080,11 @@ impl Zeta {
                     log::debug!("refetching edit prediction context after pause");
                 }
                 this.update(cx, |this, cx| {
-                    this.refresh_context(project, buffer, cursor_position, cx);
+                    let task = this.refresh_context(project.clone(), buffer, cursor_position, cx);
+
+                    if let Some(zeta_project) = this.projects.get_mut(&project.entity_id()) {
+                        zeta_project.refresh_context_task = Some(task.log_err());
+                    };
                 })
                 .ok()
             }
@@ -1069,76 +1093,68 @@ impl Zeta {
 
     // Refresh the related excerpts asynchronously. Ensure the task runs to completion,
     // and avoid spawning more than one concurrent task.
-    fn refresh_context(
+    pub fn refresh_context(
         &mut self,
         project: Entity<Project>,
         buffer: Entity<language::Buffer>,
         cursor_position: language::Anchor,
         cx: &mut Context<Self>,
-    ) {
-        let Some(zeta_project) = self.projects.get_mut(&project.entity_id()) else {
-            return;
-        };
+    ) -> Task<Result<()>> {
+        cx.spawn(async move |this, cx| {
+            let related_excerpts_result = this
+                .update(cx, |this, cx| {
+                    let Some(zeta_project) = this.projects.get(&project.entity_id()) else {
+                        return Task::ready(anyhow::Ok(HashMap::default()));
+                    };
 
-        let debug_tx = self.debug_tx.clone();
+                    let ContextMode::Llm(options) = &this.options().context else {
+                        return Task::ready(anyhow::Ok(HashMap::default()));
+                    };
 
-        zeta_project
-            .refresh_context_task
-            .get_or_insert(cx.spawn(async move |this, cx| {
-                if let Some(debug_tx) = &debug_tx {
+                    let mut edit_history_unified_diff = String::new();
+
+                    for event in zeta_project.events.iter() {
+                        if let Some(event) = event.to_request_event(cx) {
+                            writeln!(&mut edit_history_unified_diff, "{event}").ok();
+                        }
+                    }
+
+                    find_related_excerpts(
+                        buffer.clone(),
+                        cursor_position,
+                        &project,
+                        edit_history_unified_diff,
+                        options,
+                        this.debug_tx.clone(),
+                        cx,
+                    )
+                })?
+                .await;
+
+            this.update(cx, |this, _cx| {
+                let Some(zeta_project) = this.projects.get_mut(&project.entity_id()) else {
+                    return Ok(());
+                };
+                zeta_project.refresh_context_task.take();
+                if let Some(debug_tx) = &this.debug_tx {
                     debug_tx
-                        .unbounded_send(ZetaDebugInfo::ContextRetrievalStarted(
+                        .unbounded_send(ZetaDebugInfo::ContextRetrievalFinished(
                             ZetaContextRetrievalDebugInfo {
-                                project: project.clone(),
+                                project,
                                 timestamp: Instant::now(),
                             },
                         ))
                         .ok();
                 }
-
-                let related_excerpts = this
-                    .update(cx, |this, cx| {
-                        let Some(zeta_project) = this.projects.get(&project.entity_id()) else {
-                            return Task::ready(anyhow::Ok(HashMap::default()));
-                        };
-
-                        let ContextMode::Llm(options) = &this.options().context else {
-                            return Task::ready(anyhow::Ok(HashMap::default()));
-                        };
-
-                        find_related_excerpts(
-                            buffer.clone(),
-                            cursor_position,
-                            &project,
-                            zeta_project.events.iter(),
-                            options,
-                            debug_tx,
-                            cx,
-                        )
-                    })
-                    .ok()?
-                    .await
-                    .log_err()
-                    .unwrap_or_default();
-                this.update(cx, |this, _cx| {
-                    let Some(zeta_project) = this.projects.get_mut(&project.entity_id()) else {
-                        return;
-                    };
-                    zeta_project.context = Some(related_excerpts);
-                    zeta_project.refresh_context_task.take();
-                    if let Some(debug_tx) = &this.debug_tx {
-                        debug_tx
-                            .unbounded_send(ZetaDebugInfo::ContextRetrievalFinished(
-                                ZetaContextRetrievalDebugInfo {
-                                    project,
-                                    timestamp: Instant::now(),
-                                },
-                            ))
-                            .ok();
+                match related_excerpts_result {
+                    Ok(excerpts) => {
+                        zeta_project.context = Some(excerpts);
+                        Ok(())
                     }
-                })
-                .ok()
-            }));
+                    Err(error) => Err(error),
+                }
+            })?
+        })
     }
 
     fn gather_nearby_diagnostics(

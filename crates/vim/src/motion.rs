@@ -672,31 +672,40 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
 impl Vim {
     pub(crate) fn search_motion(&mut self, m: Motion, window: &mut Window, cx: &mut Context<Self>) {
-        if let Motion::ZedSearchResult {
-            prior_selections, ..
+        let Motion::ZedSearchResult {
+            prior_selections,
+            new_selections,
         } = &m
-        {
-            match self.mode {
-                Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                    if !prior_selections.is_empty() {
-                        self.update_editor(cx, |_, editor, cx| {
-                            editor.change_selections(Default::default(), window, cx, |s| {
-                                s.select_ranges(prior_selections.iter().cloned())
-                            })
-                        });
-                    }
-                }
-                Mode::Normal | Mode::Replace | Mode::Insert => {
-                    if self.active_operator().is_none() {
-                        return;
-                    }
-                }
+        else {
+            return;
+        };
 
-                Mode::HelixNormal | Mode::HelixSelect => {}
+        match self.mode {
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                if !prior_selections.is_empty() {
+                    self.update_editor(cx, |_, editor, cx| {
+                        editor.change_selections(Default::default(), window, cx, |s| {
+                            s.select_ranges(prior_selections.iter().cloned());
+                        });
+                    });
+                }
+                self.motion(m, window, cx);
+            }
+            Mode::Normal | Mode::Replace | Mode::Insert => {
+                if self.active_operator().is_some() {
+                    self.motion(m, window, cx);
+                }
+            }
+
+            Mode::HelixNormal => {}
+            Mode::HelixSelect => {
+                self.update_editor(cx, |_, editor, cx| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
+                        s.select_ranges(prior_selections.iter().chain(new_selections).cloned());
+                    });
+                });
             }
         }
-
-        self.motion(m, window, cx)
     }
 
     pub(crate) fn motion(&mut self, motion: Motion, window: &mut Window, cx: &mut Context<Self>) {

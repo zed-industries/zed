@@ -8,8 +8,8 @@ use crate::{
     HandleInput, HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp,
     MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown,
     PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase,
-    SelectedTextHighlight, Selection, SelectionDragState, SoftWrap, StickyHeaderExcerpt, ToPoint,
-    ToggleFold, ToggleFoldAll,
+    SelectedTextHighlight, Selection, SelectionDragState, SizingBehavior, SoftWrap,
+    StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
@@ -232,6 +232,8 @@ impl EditorElement {
         register_action(editor, window, Editor::blame_hover);
         register_action(editor, window, Editor::delete);
         register_action(editor, window, Editor::tab);
+        register_action(editor, window, Editor::next_snippet_tabstop);
+        register_action(editor, window, Editor::previous_snippet_tabstop);
         register_action(editor, window, Editor::backtab);
         register_action(editor, window, Editor::indent);
         register_action(editor, window, Editor::outdent);
@@ -1316,7 +1318,14 @@ impl EditorElement {
                 hover_at(editor, Some(anchor), window, cx);
                 Self::update_visible_cursor(editor, point, position_map, window, cx);
             } else {
-                hover_at(editor, None, window, cx);
+                editor.update_inlay_link_and_hover_points(
+                    &position_map.snapshot,
+                    point_for_position,
+                    modifiers.secondary(),
+                    modifiers.shift,
+                    window,
+                    cx,
+                );
             }
         } else {
             editor.hide_hovered_link(cx);
@@ -3153,7 +3162,7 @@ impl EditorElement {
 
     fn calculate_relative_line_numbers(
         &self,
-        buffer_rows: &[RowInfo],
+        snapshot: &EditorSnapshot,
         rows: &Range<DisplayRow>,
         relative_to: Option<DisplayRow>,
         count_wrapped_lines: bool,
@@ -3164,6 +3173,12 @@ impl EditorElement {
         };
 
         let start = rows.start.min(relative_to);
+        let end = rows.end.max(relative_to);
+
+        let buffer_rows = snapshot
+            .row_infos(start)
+            .take(1 + end.minus(start) as usize)
+            .collect::<Vec<_>>();
 
         let head_idx = relative_to.minus(start);
         let mut delta = 1;
@@ -3249,12 +3264,8 @@ impl EditorElement {
         } else {
             None
         };
-        let relative_rows = self.calculate_relative_line_numbers(
-            &buffer_rows,
-            &rows,
-            relative_to,
-            relative.wrapped(),
-        );
+        let relative_rows =
+            self.calculate_relative_line_numbers(snapshot, &rows, relative_to, relative.wrapped());
         let mut line_number = String::new();
         let segments = buffer_rows.iter().enumerate().flat_map(|(ix, row_info)| {
             let display_row = DisplayRow(rows.start.0 + ix as u32);
@@ -5135,23 +5146,26 @@ impl EditorElement {
                 snapshot,
                 visible_display_row_range.clone(),
                 max_size,
+                &editor.text_layout_details(window),
                 window,
                 cx,
             )
         });
-        let Some((position, hover_popovers)) = hover_popovers else {
+        let Some((popover_position, hover_popovers)) = hover_popovers else {
             return;
         };
 
         // This is safe because we check on layout whether the required row is available
-        let hovered_row_layout =
-            &line_layouts[position.row().minus(visible_display_row_range.start) as usize];
+        let hovered_row_layout = &line_layouts[popover_position
+            .row()
+            .minus(visible_display_row_range.start)
+            as usize];
 
         // Compute Hovered Point
-        let x = hovered_row_layout.x_for_index(position.column() as usize)
+        let x = hovered_row_layout.x_for_index(popover_position.column() as usize)
             - Pixels::from(scroll_pixel_position.x);
         let y = Pixels::from(
-            position.row().as_f64() * ScrollPixelOffset::from(line_height)
+            popover_position.row().as_f64() * ScrollPixelOffset::from(line_height)
                 - scroll_pixel_position.y,
         );
         let hovered_point = content_origin + point(x, y);
@@ -8466,11 +8480,11 @@ impl Element for EditorElement {
                         window.request_layout(style, None, cx)
                     }
                     EditorMode::Full {
-                        sized_by_content, ..
+                        sizing_behavior, ..
                     } => {
                         let mut style = Style::default();
                         style.size.width = relative(1.).into();
-                        if sized_by_content {
+                        if sizing_behavior == SizingBehavior::SizeByContent {
                             let snapshot = editor.snapshot(window, cx);
                             let line_height =
                                 self.style.text.line_height_in_pixels(window.rem_size());
@@ -8634,7 +8648,8 @@ impl Element for EditorElement {
                         EditorMode::SingleLine
                             | EditorMode::AutoHeight { .. }
                             | EditorMode::Full {
-                                sized_by_content: true,
+                                sizing_behavior: SizingBehavior::ExcludeOverscrollMargin
+                                    | SizingBehavior::SizeByContent,
                                 ..
                             }
                     ) {
@@ -10877,18 +10892,11 @@ mod tests {
             .unwrap();
         assert_eq!(layouts.len(), 6);
 
-        let get_row_infos = |snapshot: &EditorSnapshot| {
-            snapshot
-                .row_infos(DisplayRow(0))
-                .take(6)
-                .collect::<Vec<RowInfo>>()
-        };
-
         let relative_rows = window
             .update(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
                 element.calculate_relative_line_numbers(
-                    &get_row_infos(&snapshot),
+                    &snapshot,
                     &(DisplayRow(0)..DisplayRow(6)),
                     Some(DisplayRow(3)),
                     false,
@@ -10907,7 +10915,7 @@ mod tests {
             .update(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
                 element.calculate_relative_line_numbers(
-                    &get_row_infos(&snapshot),
+                    &snapshot,
                     &(DisplayRow(3)..DisplayRow(6)),
                     Some(DisplayRow(1)),
                     false,
@@ -10924,7 +10932,7 @@ mod tests {
             .update(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
                 element.calculate_relative_line_numbers(
-                    &get_row_infos(&snapshot),
+                    &snapshot,
                     &(DisplayRow(0)..DisplayRow(3)),
                     Some(DisplayRow(6)),
                     false,
@@ -10995,15 +11003,8 @@ mod tests {
         let relative_rows = window
             .update(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
-                let start_row = DisplayRow(0);
-                let end_row = DisplayRow(6);
-                let row_infos = snapshot
-                    .row_infos(start_row)
-                    .take((start_row..end_row).len())
-                    .collect::<Vec<RowInfo>>();
-
                 element.calculate_relative_line_numbers(
-                    &row_infos,
+                    &snapshot,
                     &(DisplayRow(0)..DisplayRow(6)),
                     Some(DisplayRow(3)),
                     true,

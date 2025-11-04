@@ -54,6 +54,10 @@ actions!(
         CollapseSelectedChannel,
         /// Expands the selected channel in the tree view.
         ExpandSelectedChannel,
+        /// Opens the meeting notes for the selected channel in the panel.
+        ///
+        /// Use `collab::OpenChannelNotes` to open the channel notes for the current call.
+        OpenSelectedChannelNotes,
         /// Starts moving a channel to a new location.
         StartMoveChannel,
         /// Moves the selected item to the current location.
@@ -1856,6 +1860,17 @@ impl CollabPanel {
         }
     }
 
+    fn open_selected_channel_notes(
+        &mut self,
+        _: &OpenSelectedChannelNotes,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(channel) = self.selected_channel() {
+            self.open_channel_notes(channel.id, window, cx);
+        }
+    }
+
     fn set_channel_visibility(
         &mut self,
         channel_id: ChannelId,
@@ -2976,6 +2991,7 @@ impl Render for CollabPanel {
             .on_action(cx.listener(CollabPanel::remove_selected_channel))
             .on_action(cx.listener(CollabPanel::show_inline_context_menu))
             .on_action(cx.listener(CollabPanel::rename_selected_channel))
+            .on_action(cx.listener(CollabPanel::open_selected_channel_notes))
             .on_action(cx.listener(CollabPanel::collapse_selected_channel))
             .on_action(cx.listener(CollabPanel::expand_selected_channel))
             .on_action(cx.listener(CollabPanel::start_move_selected_channel))

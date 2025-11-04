@@ -299,6 +299,7 @@ impl VsCodeSettings {
             toolbar: None,
             use_smartcase_search: self.read_bool("search.smartCase"),
             vertical_scroll_margin: self.read_f32("editor.cursorSurroundingLines"),
+            completion_menu_scrollbar: None,
             smart_tab: None,
         }
     }
@@ -876,6 +877,7 @@ impl VsCodeSettings {
                 })
                 .filter(|r| !r.is_empty()),
             private_files: None,
+            hidden_files: None,
         }
     }
 }

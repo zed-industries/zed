@@ -448,11 +448,12 @@ impl PickerDelegate for TasksModalDelegate {
         let template = resolved_task.original_task();
         let display_label = resolved_task.display_label();
 
-        let mut tooltip_label_text = if display_label != &template.label {
-            resolved_task.resolved_label.clone()
-        } else {
-            String::new()
-        };
+        let mut tooltip_label_text =
+            if display_label != &template.label || source_kind == &TaskSourceKind::UserInput {
+                resolved_task.resolved_label.clone()
+            } else {
+                String::new()
+            };
 
         if resolved_task.resolved.command_label != resolved_task.resolved_label {
             if !tooltip_label_text.trim().is_empty() {

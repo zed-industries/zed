@@ -26,6 +26,7 @@ serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
 tempfile.workspace = true
+util.workspace = true
 workspace.workspace = true
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]

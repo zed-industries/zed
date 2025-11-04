@@ -3,11 +3,15 @@ use clap::Parser;
 use std::fs;
 use std::path::Path;
 
+mod compare_perf;
 mod danger;
 mod nix_build;
 mod release_nightly;
 mod run_bundling;
 
+mod release;
+mod run_agent_evals;
+mod run_tests;
 mod runners;
 mod steps;
 mod vars;
@@ -20,11 +24,13 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
 
     let workflows = vec![
         ("danger.yml", danger::danger()),
-        ("nix_build.yml", nix_build::nix_build()),
         ("run_bundling.yml", run_bundling::run_bundling()),
         ("release_nightly.yml", release_nightly::release_nightly()),
-        // ("run_tests.yml", run_tests::run_tests()),
-        // ("release.yml", release::release()),
+        ("run_tests.yml", run_tests::run_tests()),
+        ("release.yml", release::release()),
+        ("compare_perf.yml", compare_perf::compare_perf()),
+        ("run_unit_evals.yml", run_agent_evals::run_unit_evals()),
+        ("run_agent_evals.yml", run_agent_evals::run_agent_evals()),
     ];
     fs::create_dir_all(dir)
         .with_context(|| format!("Failed to create directory: {}", dir.display()))?;

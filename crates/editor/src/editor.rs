@@ -455,6 +455,20 @@ pub enum SelectMode {
     All,
 }
 
+#[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
+pub enum SizingBehavior {
+    /// The editor will layout itself using `size_full` and will include the vertical
+    /// scroll margin as requested by user settings.
+    #[default]
+    Default,
+    /// The editor will layout itself using `size_full`, but will not have any
+    /// vertical overscroll.
+    ExcludeOverscrollMargin,
+    /// The editor will request a vertical size according to its content and will be
+    /// layouted without a vertical scroll margin.
+    SizeByContent,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum EditorMode {
     SingleLine,
@@ -467,8 +481,8 @@ pub enum EditorMode {
         scale_ui_elements_with_buffer_font_size: bool,
         /// When set to `true`, the editor will render a background for the active line.
         show_active_line_background: bool,
-        /// When set to `true`, the editor's height will be determined by its content.
-        sized_by_content: bool,
+        /// Determines the sizing behavior for this editor
+        sizing_behavior: SizingBehavior,
     },
     Minimap {
         parent: WeakEntity<Editor>,
@@ -480,7 +494,7 @@ impl EditorMode {
         Self::Full {
             scale_ui_elements_with_buffer_font_size: true,
             show_active_line_background: true,
-            sized_by_content: false,
+            sizing_behavior: SizingBehavior::Default,
         }
     }
 
@@ -1072,7 +1086,6 @@ pub struct Editor {
     searchable: bool,
     cursor_shape: CursorShape,
     current_line_highlight: Option<CurrentLineHighlight>,
-    collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
     workspace: Option<(WeakEntity<Workspace>, Option<WorkspaceId>)>,
     input_enabled: bool,
@@ -1836,9 +1849,15 @@ impl Editor {
                     project::Event::RefreshCodeLens => {
                         // we always query lens with actions, without storing them, always refreshing them
                     }
-                    project::Event::RefreshInlayHints(server_id) => {
+                    project::Event::RefreshInlayHints {
+                        server_id,
+                        request_id,
+                    } => {
                         editor.refresh_inlay_hints(
-                            InlayHintRefreshReason::RefreshRequested(*server_id),
+                            InlayHintRefreshReason::RefreshRequested {
+                                server_id: *server_id,
+                                request_id: *request_id,
+                            },
                             cx,
                         );
                     }
@@ -2122,7 +2141,7 @@ impl Editor {
                 .unwrap_or_default(),
             current_line_highlight: None,
             autoindent_mode: Some(AutoindentMode::EachLine),
-            collapse_matches: false,
+
             workspace: None,
             input_enabled: !is_minimap,
             use_modal_editing: full_mode,
@@ -2275,7 +2294,7 @@ impl Editor {
                     }
                 }
                 EditorEvent::Edited { .. } => {
-                    if !vim_enabled(cx) {
+                    if vim_flavor(cx).is_none() {
                         let display_map = editor.display_snapshot(cx);
                         let selections = editor.selections.all_adjusted_display(&display_map);
                         let pop_state = editor
@@ -2440,6 +2459,10 @@ impl Editor {
         key_context.set("mode", mode);
         if self.pending_rename.is_some() {
             key_context.add("renaming");
+        }
+
+        if !self.snippet_stack.is_empty() {
+            key_context.add("in_snippet");
         }
 
         match self.context_menu.borrow().as_ref() {
@@ -2891,12 +2914,12 @@ impl Editor {
         self.current_line_highlight = current_line_highlight;
     }
 
-    pub fn set_collapse_matches(&mut self, collapse_matches: bool) {
-        self.collapse_matches = collapse_matches;
-    }
-
-    pub fn range_for_match<T: std::marker::Copy>(&self, range: &Range<T>) -> Range<T> {
-        if self.collapse_matches {
+    pub fn range_for_match<T: std::marker::Copy>(
+        &self,
+        range: &Range<T>,
+        collapse: bool,
+    ) -> Range<T> {
+        if collapse {
             return range.start..range.start;
         }
         range.clone()
@@ -7564,7 +7587,14 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.show_edit_predictions_in_menu() {
+        // Ensure that the edit prediction preview is updated, even when not
+        // enabled, if there's an active edit prediction preview.
+        if self.show_edit_predictions_in_menu()
+            || matches!(
+                self.edit_prediction_preview,
+                EditPredictionPreview::Active { .. }
+            )
+        {
             self.update_edit_prediction_preview(&modifiers, window, cx);
         }
 
@@ -9975,6 +10005,38 @@ impl Editor {
         }
 
         self.outdent(&Outdent, window, cx);
+    }
+
+    pub fn next_snippet_tabstop(
+        &mut self,
+        _: &NextSnippetTabstop,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.mode.is_single_line() || self.snippet_stack.is_empty() {
+            return;
+        }
+
+        if self.move_to_next_snippet_tabstop(window, cx) {
+            self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+            return;
+        }
+    }
+
+    pub fn previous_snippet_tabstop(
+        &mut self,
+        _: &PreviousSnippetTabstop,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.mode.is_single_line() || self.snippet_stack.is_empty() {
+            return;
+        }
+
+        if self.move_to_prev_snippet_tabstop(window, cx) {
+            self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+            return;
+        }
     }
 
     pub fn tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
@@ -16025,7 +16087,7 @@ impl Editor {
     ) {
         let current_scroll_position = self.scroll_position(cx);
         let lines_to_expand = EditorSettings::get_global(cx).expand_excerpt_lines;
-        let mut should_scroll_up = false;
+        let mut scroll = None;
 
         if direction == ExpandExcerptDirection::Down {
             let multi_buffer = self.buffer.read(cx);
@@ -16038,17 +16100,30 @@ impl Editor {
                 let excerpt_end_row = Point::from_anchor(&excerpt_range.end, &buffer_snapshot).row;
                 let last_row = buffer_snapshot.max_point().row;
                 let lines_below = last_row.saturating_sub(excerpt_end_row);
-                should_scroll_up = lines_below >= lines_to_expand;
+                if lines_below >= lines_to_expand {
+                    scroll = Some(
+                        current_scroll_position
+                            + gpui::Point::new(0.0, lines_to_expand as ScrollOffset),
+                    );
+                }
             }
+        }
+        if direction == ExpandExcerptDirection::Up
+            && self
+                .buffer
+                .read(cx)
+                .snapshot(cx)
+                .excerpt_before(excerpt)
+                .is_none()
+        {
+            scroll = Some(current_scroll_position);
         }
 
         self.buffer.update(cx, |buffer, cx| {
             buffer.expand_excerpts([excerpt], lines_to_expand, direction, cx)
         });
 
-        if should_scroll_up {
-            let new_scroll_position =
-                current_scroll_position + gpui::Point::new(0.0, lines_to_expand as ScrollOffset);
+        if let Some(new_scroll_position) = scroll {
             self.set_scroll_position(new_scroll_position, window, cx);
         }
     }
@@ -16788,7 +16863,7 @@ impl Editor {
 
                 editor.update_in(cx, |editor, window, cx| {
                     let range = target_range.to_point(target_buffer.read(cx));
-                    let range = editor.range_for_match(&range);
+                    let range = editor.range_for_match(&range, false);
                     let range = collapse_multiline_range(range);
 
                     if !split
@@ -17962,6 +18037,7 @@ impl Editor {
             .unwrap_or(self.diagnostics_max_severity);
 
         if !self.inline_diagnostics_enabled()
+            || !self.diagnostics_enabled()
             || !self.show_inline_diagnostics
             || max_severity == DiagnosticSeverity::Off
         {
@@ -18040,7 +18116,7 @@ impl Editor {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        if self.ignore_lsp_data() {
+        if self.ignore_lsp_data() || !self.diagnostics_enabled() {
             return None;
         }
         let pull_diagnostics_settings = ProjectSettings::get_global(cx)
@@ -21598,7 +21674,7 @@ impl Editor {
             .and_then(|e| e.to_str())
             .map(|a| a.to_string()));
 
-        let vim_mode = vim_enabled(cx);
+        let vim_mode = vim_flavor(cx).is_some();
 
         let edit_predictions_provider = all_language_settings(file, cx).edit_predictions.provider;
         let copilot_enabled = edit_predictions_provider
@@ -22229,10 +22305,26 @@ fn edit_for_markdown_paste<'a>(
     (range, new_text)
 }
 
-fn vim_enabled(cx: &App) -> bool {
-    vim_mode_setting::VimModeSetting::try_get(cx)
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum VimFlavor {
+    Vim,
+    Helix,
+}
+
+pub fn vim_flavor(cx: &App) -> Option<VimFlavor> {
+    if vim_mode_setting::HelixModeSetting::try_get(cx)
+        .map(|helix_mode| helix_mode.0)
+        .unwrap_or(false)
+    {
+        Some(VimFlavor::Helix)
+    } else if vim_mode_setting::VimModeSetting::try_get(cx)
         .map(|vim_mode| vim_mode.0)
         .unwrap_or(false)
+    {
+        Some(VimFlavor::Vim)
+    } else {
+        None // neither vim nor helix mode
+    }
 }
 
 fn process_completion_for_edit(

@@ -20,11 +20,13 @@ use project::Project;
 use text::OffsetRangeExt;
 use ui::{
     ButtonCommon, Clickable, Color, Disableable, FluentBuilder as _, Icon, IconButton, IconName,
-    IconSize, InteractiveElement, IntoElement, ListItem, StyledTypography, div, h_flex, v_flex,
+    IconSize, InteractiveElement, IntoElement, ListHeader, ListItem, StyledTypography, div, h_flex,
+    v_flex,
 };
 use workspace::{Item, ItemHandle as _};
 use zeta2::{
-    SearchToolQuery, Zeta, ZetaContextRetrievalDebugInfo, ZetaDebugInfo, ZetaSearchQueryDebugInfo,
+    Zeta, ZetaContextRetrievalDebugInfo, ZetaContextRetrievalStartedDebugInfo, ZetaDebugInfo,
+    ZetaSearchQueryDebugInfo,
 };
 
 pub struct Zeta2ContextView {
@@ -37,13 +39,20 @@ pub struct Zeta2ContextView {
 }
 
 #[derive(Debug)]
-pub struct RetrievalRun {
+struct RetrievalRun {
     editor: Entity<Editor>,
-    search_queries: Vec<SearchToolQuery>,
+    search_queries: Vec<GlobQueries>,
     started_at: Instant,
     search_results_generated_at: Option<Instant>,
     search_results_executed_at: Option<Instant>,
+    search_results_filtered_at: Option<Instant>,
     finished_at: Option<Instant>,
+}
+
+#[derive(Debug)]
+struct GlobQueries {
+    glob: String,
+    alternations: Vec<String>,
 }
 
 actions!(
@@ -108,6 +117,11 @@ impl Zeta2ContextView {
                     self.handle_search_queries_executed(info, window, cx);
                 }
             }
+            ZetaDebugInfo::SearchResultsFiltered(info) => {
+                if info.project == self.project {
+                    self.handle_search_results_filtered(info, window, cx);
+                }
+            }
             ZetaDebugInfo::ContextRetrievalFinished(info) => {
                 if info.project == self.project {
                     self.handle_context_retrieval_finished(info, window, cx);
@@ -119,7 +133,7 @@ impl Zeta2ContextView {
 
     fn handle_context_retrieval_started(
         &mut self,
-        info: ZetaContextRetrievalDebugInfo,
+        info: ZetaContextRetrievalStartedDebugInfo,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -145,6 +159,7 @@ impl Zeta2ContextView {
             started_at: info.timestamp,
             search_results_generated_at: None,
             search_results_executed_at: None,
+            search_results_filtered_at: None,
             finished_at: None,
         });
 
@@ -202,7 +217,23 @@ impl Zeta2ContextView {
         };
 
         run.search_results_generated_at = Some(info.timestamp);
-        run.search_queries = info.queries;
+        run.search_queries = info
+            .queries
+            .into_iter()
+            .map(|query| {
+                let mut regex_parser = regex_syntax::ast::parse::Parser::new();
+
+                GlobQueries {
+                    glob: query.glob,
+                    alternations: match regex_parser.parse(&query.regex) {
+                        Ok(regex_syntax::ast::Ast::Alternation(ref alt)) => {
+                            alt.asts.iter().map(|ast| ast.to_string()).collect()
+                        }
+                        _ => vec![query.regex],
+                    },
+                }
+            })
+            .collect();
         cx.notify();
     }
 
@@ -222,6 +253,20 @@ impl Zeta2ContextView {
         };
 
         run.search_results_executed_at = Some(info.timestamp);
+        cx.notify();
+    }
+
+    fn handle_search_results_filtered(
+        &mut self,
+        info: ZetaContextRetrievalDebugInfo,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(run) = self.runs.back_mut() else {
+            return;
+        };
+
+        run.search_results_filtered_at = Some(info.timestamp);
         cx.notify();
     }
 
@@ -255,28 +300,37 @@ impl Zeta2ContextView {
         let run = &self.runs[self.current_ix];
 
         h_flex()
+            .p_2()
             .w_full()
             .font_buffer(cx)
             .text_xs()
             .border_t_1()
+            .gap_2()
             .child(
-                v_flex()
-                    .h_full()
-                    .flex_1()
-                    .children(run.search_queries.iter().enumerate().map(|(ix, query)| {
-                        ListItem::new(ix)
-                            .start_slot(
-                                Icon::new(IconName::MagnifyingGlass)
-                                    .color(Color::Muted)
-                                    .size(IconSize::Small),
-                            )
-                            .child(query.regex.clone())
-                    })),
+                v_flex().h_full().flex_1().children(
+                    run.search_queries
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(ix, query)| {
+                            std::iter::once(ListHeader::new(query.glob.clone()).into_any_element())
+                                .chain(query.alternations.iter().enumerate().map(
+                                    move |(alt_ix, alt)| {
+                                        ListItem::new(ix * 100 + alt_ix)
+                                            .start_slot(
+                                                Icon::new(IconName::MagnifyingGlass)
+                                                    .color(Color::Muted)
+                                                    .size(IconSize::Small),
+                                            )
+                                            .child(alt.clone())
+                                            .into_any_element()
+                                    },
+                                ))
+                        }),
+                ),
             )
             .child(
                 v_flex()
                     .h_full()
-                    .pr_2()
                     .text_align(TextAlign::Right)
                     .child(
                         h_flex()
@@ -325,25 +379,38 @@ impl Zeta2ContextView {
                             ),
                     )
                     .map(|mut div| {
-                        let t0 = run.started_at;
-                        let Some(t1) = run.search_results_generated_at else {
-                            return div.child("Planning search...");
-                        };
-                        div = div.child(format!("Planned search: {:>5} ms", (t1 - t0).as_millis()));
-
-                        let Some(t2) = run.search_results_executed_at else {
-                            return div.child("Running search...");
-                        };
-                        div = div.child(format!("Ran search: {:>5} ms", (t2 - t1).as_millis()));
-
-                        let Some(t3) = run.finished_at else {
+                        let pending_message = |div: ui::Div, msg: &'static str| {
                             if is_latest {
-                                return div.child("Filtering results...");
+                                return div.child(msg);
                             } else {
                                 return div.child("Canceled");
                             }
                         };
-                        div.child(format!("Filtered results: {:>5} ms", (t3 - t2).as_millis()))
+
+                        let t0 = run.started_at;
+                        let Some(t1) = run.search_results_generated_at else {
+                            return pending_message(div, "Planning search...");
+                        };
+                        div = div.child(format!("Planned search: {:>5} ms", (t1 - t0).as_millis()));
+
+                        let Some(t2) = run.search_results_executed_at else {
+                            return pending_message(div, "Running search...");
+                        };
+                        div = div.child(format!("Ran search: {:>5} ms", (t2 - t1).as_millis()));
+
+                        let Some(t3) = run.search_results_filtered_at else {
+                            return pending_message(div, "Filtering results...");
+                        };
+                        div =
+                            div.child(format!("Filtered results: {:>5} ms", (t3 - t2).as_millis()));
+
+                        let Some(t4) = run.finished_at else {
+                            return pending_message(div, "Building excerpts");
+                        };
+                        div = div
+                            .child(format!("Build excerpts: {:>5} µs", (t4 - t3).as_micros()))
+                            .child(format!("Total: {:>5} ms", (t4 - t0).as_millis()));
+                        div
                     }),
             )
     }

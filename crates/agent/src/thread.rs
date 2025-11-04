@@ -1928,6 +1928,7 @@ impl Thread {
         let system_prompt = SystemPromptTemplate {
             project: self.project_context.read(cx),
             available_tools,
+            model_name: self.model.as_ref().map(|m| m.name().0.to_string()),
         }
         .render(&self.templates)
         .context("failed to build system prompt")

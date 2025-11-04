@@ -1339,6 +1339,7 @@ dependencies = [
  "settings",
  "smol",
  "tempfile",
+ "util",
  "which 6.0.3",
  "workspace",
 ]
@@ -1350,6 +1351,7 @@ dependencies = [
  "anyhow",
  "log",
  "simplelog",
+ "tempfile",
  "windows 0.61.3",
  "winresource",
 ]
@@ -4528,12 +4530,15 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
+ "http_client",
  "json_dotpath",
  "language",
  "log",
+ "node_runtime",
  "paths",
  "serde",
  "serde_json",
+ "settings",
  "smol",
  "task",
  "util",
@@ -4932,6 +4937,7 @@ dependencies = [
  "editor",
  "gpui",
  "indoc",
+ "itertools 0.14.0",
  "language",
  "log",
  "lsp",
@@ -5832,8 +5838,6 @@ name = "extension"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-compression",
- "async-tar",
  "async-trait",
  "collections",
  "dap",
@@ -7074,6 +7078,7 @@ dependencies = [
  "serde_json",
  "settings",
  "url",
+ "urlencoding",
  "util",
 ]
 
@@ -7112,6 +7117,8 @@ dependencies = [
  "picker",
  "pretty_assertions",
  "project",
+ "recent_projects",
+ "remote",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -7263,6 +7270,7 @@ dependencies = [
  "async-task",
  "backtrace",
  "bindgen 0.71.1",
+ "bitflags 2.9.4",
  "blade-graphics",
  "blade-macros",
  "blade-util",
@@ -7342,6 +7350,7 @@ dependencies = [
  "wayland-cursor",
  "wayland-protocols 0.31.2",
  "wayland-protocols-plasma",
+ "wayland-protocols-wlr",
  "windows 0.61.3",
  "windows-core 0.61.2",
  "windows-numerics",
@@ -13123,7 +13132,6 @@ dependencies = [
  "paths",
  "rope",
  "serde",
- "serde_json",
  "text",
  "util",
  "uuid",
@@ -16494,7 +16502,7 @@ dependencies = [
  "editor",
  "file_icons",
  "gpui",
- "multi_buffer",
+ "language",
  "ui",
  "workspace",
 ]
@@ -18041,7 +18049,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-gomod"
 version = "1.1.1"
-source = "git+https://github.com/camdencheek/tree-sitter-go-mod?rev=6efb59652d30e0e9cd5f3b3a669afd6f1a926d3c#6efb59652d30e0e9cd5f3b3a669afd6f1a926d3c"
+source = "git+https://github.com/camdencheek/tree-sitter-go-mod?rev=2e886870578eeba1927a2dc4bd2e2b3f598c5f9a#2e886870578eeba1927a2dc4bd2e2b3f598c5f9a"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -19487,6 +19495,19 @@ dependencies = [
  "wayland-backend",
  "wayland-client",
  "wayland-protocols 0.31.2",
+ "wayland-scanner",
+]
+
+[[package]]
+name = "wayland-protocols-wlr"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "efd94963ed43cf9938a090ca4f7da58eb55325ec8200c3848963e98dc25b78ec"
+dependencies = [
+ "bitflags 2.9.4",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols 0.32.9",
  "wayland-scanner",
 ]
 
@@ -21206,6 +21227,7 @@ dependencies = [
  "project_symbols",
  "prompt_store",
  "proto",
+ "rayon",
  "recent_projects",
  "release_channel",
  "remote",
@@ -21688,6 +21710,7 @@ dependencies = [
  "ordered-float 2.10.1",
  "pretty_assertions",
  "project",
+ "regex-syntax",
  "serde",
  "serde_json",
  "settings",
@@ -21719,6 +21742,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
+ "indoc",
  "language",
  "language_extension",
  "language_model",
@@ -21729,8 +21753,10 @@ dependencies = [
  "ordered-float 2.10.1",
  "paths",
  "polars",
+ "pretty_assertions",
  "project",
  "prompt_store",
+ "pulldown-cmark 0.12.2",
  "release_channel",
  "reqwest_client",
  "serde",
@@ -21740,6 +21766,7 @@ dependencies = [
  "smol",
  "soa-rs",
  "terminal_view",
+ "toml 0.8.23",
  "util",
  "watch",
  "zeta",

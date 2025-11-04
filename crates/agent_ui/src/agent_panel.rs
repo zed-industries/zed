@@ -19,8 +19,6 @@ use settings::{
 use zed_actions::OpenBrowser;
 use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
 
-use crate::acp::{AcpThreadHistory, ThreadHistoryEvent};
-use crate::context_store::ContextStore;
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
     AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, Follow, InlineAssistant,
@@ -34,8 +32,13 @@ use crate::{
     ui::{AgentOnboardingModal, EndTrialUpsell},
 };
 use crate::{
+    ExpandMessageEditor,
+    acp::{AcpThreadHistory, ThreadHistoryEvent},
+};
+use crate::{
     ExternalAgent, NewExternalAgentThread, NewNativeAgentThreadFromSummary, placeholder_command,
 };
+use crate::{ManageProfiles, context_store::ContextStore};
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Result, anyhow};
@@ -106,6 +109,12 @@ pub fn init(cx: &mut App) {
                         }
                     },
                 )
+                .register_action(|workspace, _: &ExpandMessageEditor, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
+                        panel.update(cx, |panel, cx| panel.expand_message_editor(window, cx));
+                    }
+                })
                 .register_action(|workspace, _: &OpenHistory, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
@@ -729,6 +738,25 @@ impl AgentPanel {
         &self.context_server_registry
     }
 
+    pub fn is_hidden(workspace: &Entity<Workspace>, cx: &App) -> bool {
+        let workspace_read = workspace.read(cx);
+
+        workspace_read
+            .panel::<AgentPanel>(cx)
+            .map(|panel| {
+                let panel_id = Entity::entity_id(&panel);
+
+                let is_visible = workspace_read.all_docks().iter().any(|dock| {
+                    dock.read(cx)
+                        .visible_panel()
+                        .is_some_and(|visible_panel| visible_panel.panel_id() == panel_id)
+                });
+
+                !is_visible
+            })
+            .unwrap_or(true)
+    }
+
     fn active_thread_view(&self) -> Option<&Entity<AcpThreadView>> {
         match &self.active_view {
             ActiveView::ExternalAgentThread { thread_view, .. } => Some(thread_view),
@@ -923,6 +951,15 @@ impl AgentPanel {
             cx,
         )
         .detach_and_log_err(cx);
+    }
+
+    fn expand_message_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(thread_view) = self.active_thread_view() {
+            thread_view.update(cx, |view, cx| {
+                view.expand_message_editor(&ExpandMessageEditor, window, cx);
+                view.focus_handle(cx).focus(window);
+            });
+        }
     }
 
     fn open_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1743,10 +1780,9 @@ impl AgentPanel {
                                 }),
                             )
                             .action("Add Custom Server…", Box::new(AddContextServer))
-                            .separator();
-
-                        menu = menu
+                            .separator()
                             .action("Rules", Box::new(OpenRulesLibrary::default()))
+                            .action("Profiles", Box::new(ManageProfiles::default()))
                             .action("Settings", Box::new(OpenSettings))
                             .separator()
                             .action(full_screen_label, Box::new(ToggleZoom));
