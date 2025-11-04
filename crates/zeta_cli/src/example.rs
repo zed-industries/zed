@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    cell::RefCell,
     env,
     fmt::{self, Display},
     fs,
@@ -7,12 +8,16 @@ use std::{
     mem,
     ops::Range,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use anyhow::{Context as _, Result};
 use clap::ValueEnum;
-use collections::HashSet;
-use futures::AsyncWriteExt as _;
+use collections::{HashMap, HashSet};
+use futures::{
+    AsyncWriteExt as _,
+    lock::{Mutex, OwnedMutexGuard},
+};
 use gpui::{AsyncApp, Entity, http_client::Url};
 use language::Buffer;
 use project::{Project, ProjectPath};
@@ -206,7 +211,6 @@ impl NamedExample {
         }
     }
 
-    #[allow(unused)]
     pub async fn setup_worktree(&self) -> Result<PathBuf> {
         let (repo_owner, repo_name) = self.repo_name()?;
         let file_name = self.file_name();
@@ -217,6 +221,8 @@ impl NamedExample {
         fs::create_dir_all(&worktrees_dir)?;
 
         let repo_dir = repos_dir.join(repo_owner.as_ref()).join(repo_name.as_ref());
+        let repo_lock = lock_repo(&repo_dir).await;
+
         if !repo_dir.is_dir() {
             fs::create_dir_all(&repo_dir)?;
             run_git(&repo_dir, &["init"]).await?;
@@ -259,6 +265,7 @@ impl NamedExample {
             )
             .await?;
         }
+        drop(repo_lock);
 
         // Apply the uncommitted diff for this example.
         if !self.example.uncommitted_diff.is_empty() {
@@ -421,6 +428,23 @@ impl Display for NamedExample {
 
         Ok(())
     }
+}
+
+thread_local! {
+    static REPO_LOCKS: RefCell<HashMap<PathBuf, Arc<Mutex<()>>>> = RefCell::new(HashMap::default());
+}
+
+#[must_use]
+pub async fn lock_repo(path: impl AsRef<Path>) -> OwnedMutexGuard<()> {
+    REPO_LOCKS
+        .with(|cell| {
+            cell.borrow_mut()
+                .entry(path.as_ref().to_path_buf())
+                .or_default()
+                .clone()
+        })
+        .lock_owned()
+        .await
 }
 
 #[must_use]
