@@ -1,6 +1,7 @@
 use std::{
     collections::hash_map,
     ops::{ControlFlow, Range},
+    sync::Arc,
     time::Duration,
 };
 
@@ -38,7 +39,8 @@ pub fn inlay_hint_settings(
 ) -> InlayHintSettings {
     let file = snapshot.file_at(location);
     let language = snapshot.language_at(location).map(|l| l.name());
-    language_settings(language, file, cx).inlay_hints
+    let modeline = snapshot.modeline_at(location);
+    language_settings(language, modeline.map(Arc::as_ref), file, cx).inlay_hints
 }
 
 #[derive(Debug)]

@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, ops::Range, time::Duration};
+use std::{cmp::Ordering, ops::Range, sync::Arc, time::Duration};
 
 use collections::HashSet;
 use gpui::{App, AppContext as _, Context, Task, Window};
@@ -39,6 +39,7 @@ impl Editor {
             if let Some(buffer) = self.buffer().read(cx).as_singleton() {
                 language_settings(
                     buffer.read(cx).language().map(|l| l.name()),
+                    buffer.read(cx).modeline().map(Arc::as_ref),
                     buffer.read(cx).file(),
                     cx,
                 )

@@ -3,6 +3,7 @@ use collections::HashMap;
 use gpui::{Context, Entity, Window};
 use multi_buffer::{BufferOffset, MultiBuffer, ToOffset};
 use std::ops::Range;
+use std::sync::Arc;
 use util::ResultExt as _;
 
 use language::{BufferSnapshot, JsxTagAutoCloseConfig, Node};
@@ -318,6 +319,7 @@ pub(crate) fn refresh_enabled_in_any_buffer(
 
             let buffer = buffer.read(cx);
             let snapshot = buffer.snapshot();
+            let modeline = buffer.modeline();
             for syntax_layer in snapshot.syntax_layers() {
                 let language = syntax_layer.language;
                 if language.config().jsx_tag_auto_close.is_none() {
@@ -325,6 +327,7 @@ pub(crate) fn refresh_enabled_in_any_buffer(
                 }
                 let language_settings = language::language_settings::language_settings(
                     Some(language.name()),
+                    modeline.map(Arc::as_ref),
                     snapshot.file(),
                     cx,
                 );

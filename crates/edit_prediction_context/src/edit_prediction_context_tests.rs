@@ -517,6 +517,7 @@ pub(crate) fn rust_lang() -> Arc<Language> {
                 matcher: LanguageMatcher {
                     path_suffixes: vec!["rs".to_string()],
                     first_line_pattern: None,
+                    ..LanguageMatcher::default()
                 },
                 ..Default::default()
             },
