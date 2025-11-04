@@ -11,7 +11,6 @@ use gpui::{
     Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
     WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px, uniform_list,
 };
-use heck::ToTitleCase as _;
 use project::{Project, WorktreeId};
 use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
@@ -3449,6 +3448,9 @@ where
     EnumVariantDropdown::new("dropdown", current_value, variants(), labels(), {
         let file = file.clone();
         move |value, cx| {
+            if value == current_value {
+                return;
+            }
             update_settings_file(file.clone(), field.json_path, cx, move |settings, _cx| {
                 (field.write)(settings, Some(value));
             })

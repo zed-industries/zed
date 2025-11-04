@@ -79,9 +79,6 @@ where
                         IconPosition::End,
                         None,
                         move |_, cx| {
-                            if value == current_value {
-                                return;
-                            }
                             on_change(value, cx);
                         },
                     );
