@@ -75,7 +75,7 @@ pub struct LanguageSettings {
     pub hard_tabs: bool,
     /// How to soft-wrap long lines of text.
     pub soft_wrap: settings::SoftWrap,
-    // If sytax highlighting should work.
+    // If syntax highlighting should work.
     pub syntax_highlight: bool,
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
     /// is enabled.

@@ -227,7 +227,7 @@ pub struct LanguageSettingsContent {
     /// is enabled.
     ///
     /// Default: 80
-    /// Whether to include sytnax highlighting in the editor.
+    /// Whether to include syntax highlighting in the editor.
     ///
     /// Default: true
     pub highlight_syntax: Option<bool>,
