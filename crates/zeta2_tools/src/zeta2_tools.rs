@@ -123,6 +123,7 @@ struct LastPrediction {
     context_editor: Entity<Editor>,
     prompt_editor: Entity<Editor>,
     retrieval_time: TimeDelta,
+    request_time: Option<TimeDelta>,
     buffer: WeakEntity<Buffer>,
     position: language::Anchor,
     state: LastPredictionState,
@@ -143,7 +144,7 @@ enum LastPredictionState {
         model_response_editor: Entity<Editor>,
         feedback_editor: Entity<Editor>,
         feedback: Option<Feedback>,
-        response: predict_edits_v3::PredictEditsResponse,
+        request_id: String,
     },
     Failed {
         message: String,
@@ -396,6 +397,8 @@ impl Zeta2Inspector {
                     .await
                     .log_err();
 
+                let json_language = language_registry.language_for_name("Json").await.log_err();
+
                 this.update_in(cx, |this, window, cx| {
                     let context_editor = cx.new(|cx| {
                         let mut excerpt_score_components = HashMap::default();
@@ -492,25 +495,15 @@ impl Zeta2Inspector {
 
                     let task = cx.spawn_in(window, {
                         let markdown_language = markdown_language.clone();
+                        let json_language = json_language.clone();
                         async move |this, cx| {
                             let response = response_rx.await;
 
                             this.update_in(cx, |this, window, cx| {
                                 if let Some(prediction) = this.last_prediction.as_mut() {
                                     prediction.state = match response {
-                                        Ok(Ok(response)) => {
-                                            if let Some(debug_info) = &response.debug_info {
-                                                prediction.prompt_editor.update(
-                                                    cx,
-                                                    |prompt_editor, cx| {
-                                                        prompt_editor.set_text(
-                                                            debug_info.prompt.as_str(),
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    },
-                                                );
-                                            }
+                                        Ok((Ok(response), request_time)) => {
+                                            prediction.request_time = Some(request_time);
 
                                             let feedback_editor = cx.new(|cx| {
                                                 let buffer = cx.new(|cx| {
@@ -577,16 +570,11 @@ impl Zeta2Inspector {
                                                 model_response_editor: cx.new(|cx| {
                                                     let buffer = cx.new(|cx| {
                                                         let mut buffer = Buffer::local(
-                                                            response
-                                                                .debug_info
-                                                                .as_ref()
-                                                                .map(|p| p.model_response.as_str())
-                                                                .unwrap_or(
-                                                                    "(Debug info not available)",
-                                                                ),
+                                                            serde_json::to_string_pretty(&response)
+                                                                .unwrap_or_default(),
                                                             cx,
                                                         );
-                                                        buffer.set_language(markdown_language, cx);
+                                                        buffer.set_language(json_language, cx);
                                                         buffer
                                                     });
                                                     let buffer = cx.new(|cx| {
@@ -607,10 +595,11 @@ impl Zeta2Inspector {
                                                 }),
                                                 feedback_editor,
                                                 feedback: None,
-                                                response,
+                                                request_id: response.id.clone(),
                                             }
                                         }
-                                        Ok(Err(err)) => {
+                                        Ok((Err(err), request_time)) => {
+                                            prediction.request_time = Some(request_time);
                                             LastPredictionState::Failed { message: err }
                                         }
                                         Err(oneshot::Canceled) => LastPredictionState::Failed {
@@ -644,6 +633,7 @@ impl Zeta2Inspector {
                             editor
                         }),
                         retrieval_time,
+                        request_time: None,
                         buffer,
                         position,
                         state: LastPredictionState::Requested,
@@ -700,7 +690,7 @@ impl Zeta2Inspector {
                     feedback: feedback_state,
                     feedback_editor,
                     model_response_editor,
-                    response,
+                    request_id,
                     ..
                 } = &mut last_prediction.state
                 else {
@@ -734,11 +724,10 @@ impl Zeta2Inspector {
 
                 telemetry::event!(
                     "Zeta2 Prediction Rated",
-                    id = response.request_id,
+                    id = request_id,
                     kind = kind,
                     text = text,
                     request = last_prediction.request,
-                    response = response,
                     project_snapshot = project_snapshot,
                 );
             })
@@ -976,25 +965,6 @@ impl Zeta2Inspector {
             return None;
         };
 
-        let (prompt_planning_time, inference_time, parsing_time) =
-            if let LastPredictionState::Success {
-                response:
-                    PredictEditsResponse {
-                        debug_info: Some(debug_info),
-                        ..
-                    },
-                ..
-            } = &prediction.state
-            {
-                (
-                    Some(debug_info.prompt_planning_time),
-                    Some(debug_info.inference_time),
-                    Some(debug_info.parsing_time),
-                )
-            } else {
-                (None, None, None)
-            };
-
         Some(
             v_flex()
                 .p_4()
@@ -1005,12 +975,7 @@ impl Zeta2Inspector {
                     "Context retrieval",
                     Some(prediction.retrieval_time),
                 ))
-                .child(Self::render_duration(
-                    "Prompt planning",
-                    prompt_planning_time,
-                ))
-                .child(Self::render_duration("Inference", inference_time))
-                .child(Self::render_duration("Parsing", parsing_time)),
+                .child(Self::render_duration("Request", prediction.request_time)),
         )
     }
 

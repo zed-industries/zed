@@ -44,16 +44,48 @@ pub struct EditPrediction {
 
 impl EditPrediction {
     pub async fn from_response(
-        response: predict_edits_v3::PredictEditsResponse,
+        response: open_ai::Response,
         active_buffer_old_snapshot: &TextBufferSnapshot,
         active_buffer: &Entity<Buffer>,
         project: &Entity<Project>,
         cx: &mut AsyncApp,
     ) -> Option<Self> {
-        // TODO only allow cloud to return one path
-        let Some(path) = response.edits.first().map(|e| e.path.clone()) else {
+        let Some(choice) = response.choices.pop() else {
+            log::error!("No output from completion response");
             return None;
         };
+
+        let output_text = match choice.message {
+            open_ai::RequestMessage::Assistant {
+                content: Some(open_ai::MessageContent::Plain(content)),
+                ..
+            } => content,
+            open_ai::RequestMessage::Assistant {
+                content: Some(open_ai::MessageContent::Multipart(mut content)),
+                ..
+            } => {
+                if content.is_empty() {
+                    log::error!("No output from Baseten completion response");
+                    return None;
+                }
+
+                match content.remove(0) {
+                    open_ai::MessagePart::Text { text } => text,
+                    open_ai::MessagePart::Image { .. } => {
+                        log::error!("Expected text, got an image");
+                        return None;
+                    }
+                }
+            }
+            _ => {
+                log::error!("Invalid response message: {:?}", choice.message);
+                return None;
+            }
+        };
+
+        let (edited_buffer, edits) = crate::udiff::parse_diff(&output_text, project, cx)
+            .await
+            .log_err()?;
 
         let is_same_path = active_buffer
             .read_with(cx, |buffer, cx| buffer_path_eq(buffer, &path, cx))
@@ -63,7 +95,7 @@ impl EditPrediction {
             active_buffer
                 .read_with(cx, |buffer, cx| {
                     let new_snapshot = buffer.snapshot();
-                    let edits = edits_from_response(&response.edits, &active_buffer_old_snapshot);
+                    let edits = edits_from_response(&edits, &active_buffer_old_snapshot);
                     let edits: Arc<[_]> =
                         interpolate_edits(active_buffer_old_snapshot, &new_snapshot, edits)?.into();
 
@@ -92,7 +124,7 @@ impl EditPrediction {
             buffer_handle
                 .read_with(cx, |buffer, cx| {
                     let snapshot = buffer.snapshot();
-                    let edits = edits_from_response(&response.edits, &snapshot);
+                    let edits = edits_from_response(&edits, &snapshot);
                     if edits.is_empty() {
                         return None;
                     }
@@ -109,7 +141,7 @@ impl EditPrediction {
         let edit_preview = edit_preview_task.await;
 
         Some(EditPrediction {
-            id: EditPredictionId(response.request_id),
+            id: EditPredictionId(request_id),
             path,
             edits,
             snapshot,

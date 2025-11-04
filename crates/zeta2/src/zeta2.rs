@@ -6,7 +6,7 @@ use cloud_llm_client::{
     AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
     ZED_VERSION_HEADER_NAME,
 };
-use cloud_zeta2_prompt::{DEFAULT_MAX_PROMPT_BYTES, build_prompt};
+use cloud_zeta2_prompt::DEFAULT_MAX_PROMPT_BYTES;
 use collections::HashMap;
 use edit_prediction_context::{
     DeclarationId, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
@@ -43,9 +43,11 @@ pub mod merge_excerpts;
 mod prediction;
 mod provider;
 pub mod related_excerpts;
+pub mod udiff;
 
 use crate::merge_excerpts::merge_excerpts;
 use crate::prediction::EditPrediction;
+pub use crate::prediction::EditPredictionId;
 use crate::related_excerpts::find_related_excerpts;
 pub use crate::related_excerpts::{LlmContextOptions, SearchToolQuery};
 pub use provider::ZetaEditPredictionProvider;
@@ -165,7 +167,7 @@ pub struct ZetaEditPredictionDebugInfo {
     pub buffer: WeakEntity<Buffer>,
     pub position: language::Anchor,
     pub local_prompt: Result<String, String>,
-    pub response_rx: oneshot::Receiver<Result<predict_edits_v3::PredictEditsResponse, String>>,
+    pub response_rx: oneshot::Receiver<(Result<open_ai::Response, String>, TimeDelta)>,
 }
 
 #[derive(Debug)]
@@ -725,7 +727,7 @@ impl Zeta {
                         options.max_diagnostic_bytes,
                     );
 
-                let request = match options.context {
+                let cloud_request = match options.context {
                     ContextMode::Llm(context_options) => {
                         let Some(excerpt) = EditPredictionExcerpt::select_from_buffer(
                             cursor_point,
@@ -834,21 +836,22 @@ impl Zeta {
                     }
                 };
 
+                let prompt_result = cloud_zeta2_prompt::build_prompt(&cloud_request);
+
                 let retrieval_time = chrono::Utc::now() - before_retrieval;
 
                 let debug_response_tx = if let Some(debug_tx) = &debug_tx {
                     let (response_tx, response_rx) = oneshot::channel();
 
-                    let local_prompt = build_prompt(&request)
-                        .map(|(prompt, _)| prompt)
-                        .map_err(|err| err.to_string());
-
                     debug_tx
                         .unbounded_send(ZetaDebugInfo::EditPredicted(ZetaEditPredictionDebugInfo {
-                            request: request.clone(),
+                            request: cloud_request.clone(),
                             retrieval_time,
                             buffer: buffer.downgrade(),
-                            local_prompt,
+                            local_prompt: match prompt_result.as_ref() {
+                                Ok((prompt, _)) => Ok(prompt.clone()),
+                                Err(err) => Err(err.to_string()),
+                            },
                             position,
                             response_rx,
                         }))
@@ -861,23 +864,43 @@ impl Zeta {
                 if cfg!(debug_assertions) && std::env::var("ZED_ZETA2_SKIP_REQUEST").is_ok() {
                     if let Some(debug_response_tx) = debug_response_tx {
                         debug_response_tx
-                            .send(Err("Request skipped".to_string()))
+                            .send((Err("Request skipped".to_string()), TimeDelta::zero()))
                             .ok();
                     }
                     anyhow::bail!("Skipping request because ZED_ZETA2_SKIP_REQUEST is set")
                 }
 
+                let (prompt, _) = prompt_result?;
+                let request = open_ai::Request {
+                    model: std::env::var("ZED_ZETA2_DEPLOYMENT").unwrap_or("q421xk3".to_string()),
+                    messages: vec![open_ai::RequestMessage::User {
+                        content: open_ai::MessageContent::Plain(prompt),
+                    }],
+                    stream: false,
+                    max_completion_tokens: None,
+                    stop: Default::default(),
+                    temperature: 0.7,
+                    tool_choice: None,
+                    parallel_tool_calls: None,
+                    tools: vec![],
+                    prompt_cache_key: None,
+                    reasoning_effort: None,
+                };
+
+                let before_request = chrono::Utc::now();
                 let response =
                     Self::send_prediction_request(client, llm_token, app_version, request).await;
+                let request_time = chrono::Utc::now() - before_request;
 
                 if let Some(debug_response_tx) = debug_response_tx {
                     debug_response_tx
-                        .send(
+                        .send((
                             response
                                 .as_ref()
                                 .map_err(|err| err.to_string())
                                 .map(|response| response.0.clone()),
-                        )
+                            request_time,
+                        ))
                         .ok();
                 }
 
@@ -905,17 +928,14 @@ impl Zeta {
         client: Arc<Client>,
         llm_token: LlmApiToken,
         app_version: SemanticVersion,
-        request: predict_edits_v3::PredictEditsRequest,
-    ) -> Result<(
-        predict_edits_v3::PredictEditsResponse,
-        Option<EditPredictionUsage>,
-    )> {
+        request: open_ai::Request,
+    ) -> Result<(open_ai::Response, Option<EditPredictionUsage>)> {
         let url = if let Ok(predict_edits_url) = std::env::var("ZED_PREDICT_EDITS_URL") {
             http_client::Url::parse(&predict_edits_url)?
         } else {
             client
                 .http_client()
-                .build_zed_llm_url("/predict_edits/v3", &[])?
+                .build_zed_llm_url("/predict_edits/raw", &[])?
         };
 
         Self::send_api_request(

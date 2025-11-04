@@ -21671,6 +21671,7 @@ dependencies = [
  "language_model",
  "log",
  "lsp",
+ "open_ai",
  "pretty_assertions",
  "project",
  "release_channel",

@@ -452,7 +452,7 @@ async fn zeta2_predict(
             }
             zeta2::ZetaDebugInfo::EditPredicted(request) => {
                 prediction_started_at = Some(Instant::now());
-                request.response_rx.await?.map_err(|err| anyhow!(err))?;
+                request.response_rx.await?.0.map_err(|err| anyhow!(err))?;
                 prediction_finished_at = Some(Instant::now());
 
                 for included_file in request.request.included_files {
