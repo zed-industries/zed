@@ -1812,6 +1812,13 @@ impl AcpThreadView {
         let Some(thread) = self.thread() else {
             return;
         };
+
+        telemetry::event!(
+            "Agent Tool Call Authorized",
+            agent = self.agent.telemetry_id(),
+            option = option_kind
+        );
+
         thread.update(cx, |thread, cx| {
             thread.authorize_tool_call(tool_call_id, option_id, option_kind, cx);
         });
