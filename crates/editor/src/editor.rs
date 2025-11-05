@@ -2461,10 +2461,6 @@ impl Editor {
             key_context.add("renaming");
         }
 
-        if !self.snippet_stack.is_empty() {
-            key_context.add("in_snippet");
-        }
-
         match self.context_menu.borrow().as_ref() {
             Some(CodeContextMenu::Completions(menu)) => {
                 if menu.visible() {
@@ -9973,38 +9969,6 @@ impl Editor {
             return;
         }
         self.outdent(&Outdent, window, cx);
-    }
-
-    pub fn next_snippet_tabstop(
-        &mut self,
-        _: &NextSnippetTabstop,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.mode.is_single_line() || self.snippet_stack.is_empty() {
-            return;
-        }
-
-        if self.move_to_next_snippet_tabstop(window, cx) {
-            self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
-            return;
-        }
-    }
-
-    pub fn previous_snippet_tabstop(
-        &mut self,
-        _: &PreviousSnippetTabstop,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.mode.is_single_line() || self.snippet_stack.is_empty() {
-            return;
-        }
-
-        if self.move_to_prev_snippet_tabstop(window, cx) {
-            self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
-            return;
-        }
     }
 
     pub fn tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
