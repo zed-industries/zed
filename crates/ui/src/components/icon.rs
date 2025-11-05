@@ -1,8 +1,11 @@
 mod decorated_icon;
 mod icon_decoration;
 
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
 pub use decorated_icon::*;
-use gpui::{AnimationElement, AnyElement, Hsla, IntoElement, Rems, Transformation, svg};
+use gpui::{AnimationElement, AnyElement, Hsla, IntoElement, Rems, Transformation, img, svg};
 pub use icon_decoration::*;
 pub use icons::*;
 
@@ -119,7 +122,9 @@ enum IconSource {
     /// 1. Rendering polychrome SVGs.
     ///
     /// In order to support icon themes, we render the icons as images instead.
-    External(SharedString),
+    External(Arc<Path>),
+    ///
+    ExternalSvg(SharedString),
 }
 
 impl IconSource {
@@ -128,7 +133,7 @@ impl IconSource {
         if path.starts_with("icons/") {
             Self::Embedded(path)
         } else {
-            Self::External(path)
+            Self::External(Arc::from(PathBuf::from(path.as_ref())))
         }
     }
 }
@@ -154,6 +159,15 @@ impl Icon {
     pub fn from_path(path: impl Into<SharedString>) -> Self {
         Self {
             source: IconSource::from_path(path),
+            color: Color::default(),
+            size: IconSize::default().rems(),
+            transformation: Transformation::default(),
+        }
+    }
+
+    pub fn from_external_svg(svg: SharedString) -> Self {
+        Self {
+            source: IconSource::ExternalSvg(svg),
             color: Color::default(),
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
@@ -196,8 +210,14 @@ impl RenderOnce for Icon {
                 .path(path)
                 .text_color(self.color.color(cx))
                 .into_any_element(),
-            IconSource::External(path) => svg()
+            IconSource::ExternalSvg(path) => svg()
                 .external_path(path)
+                .with_transformation(self.transformation)
+                .size(self.size)
+                .flex_none()
+                .text_color(self.color.color(cx))
+                .into_any_element(),
+            IconSource::External(path) => img(path)
                 .size(self.size)
                 .flex_none()
                 .text_color(self.color.color(cx))
