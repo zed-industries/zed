@@ -1732,6 +1732,36 @@ impl AcpThreadView {
 
         window.spawn(cx, async move |cx| {
             let mut task = login.clone();
+            if let Some(cmd) = &task.command {
+                // Have "node" command use Zed's managed Node runtime by default
+                if cmd == "node" {
+                    let resolved_node = project
+                        .update(cx, |project, cx| {
+                            let agent_server_store = project.agent_server_store().clone();
+                            agent_server_store.update(cx, |store, cx| {
+                                if let Some(node_runtime) = store.node_runtime() {
+                                    cx.background_spawn(async move {
+                                        node_runtime.binary_path().await
+                                    })
+                                } else {
+                                    cx.background_spawn(async {
+                                        Ok(std::path::PathBuf::from("node"))
+                                    })
+                                }
+                            })
+                        })?
+                        .await;
+
+                    match resolved_node {
+                        Ok(node_path) => {
+                            task.command = Some(node_path.to_string_lossy().to_string());
+                        }
+                        Err(_) => {
+                            // Failed to resolve, keep using 'node'
+                        }
+                    }
+                }
+            }
             task.shell = task::Shell::WithArguments {
                 program: task.command.take().expect("login command should be set"),
                 args: std::mem::take(&mut task.args),
