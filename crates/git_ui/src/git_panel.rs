@@ -1231,10 +1231,8 @@ impl GitPanel {
                     .read(cx)
                     .pending_ops_for_path(&status_entry.repo_path)
                     .map(|ops| ops.staging())
-                    .unwrap_or(false)
+                    .unwrap_or(status_entry.status.staging().has_staged())
                 {
-                    false
-                } else if status_entry.status.staging().is_fully_staged() {
                     if let Some(op) = self.bulk_staging.clone()
                         && op.anchor == status_entry.repo_path
                     {
@@ -2631,9 +2629,10 @@ impl GitPanel {
             let staging = entry.status.staging();
 
             if let Some(pending) = repo.pending_ops_for_path(&entry.repo_path)
-                && pending.ops.iter().any(|op| {
-                    op.git_status == pending_op::GitStatus::Reverted && op.finished_or_skipped()
-                })
+                && pending
+                    .ops
+                    .iter()
+                    .any(|op| op.git_status == pending_op::GitStatus::Reverted && op.finished())
             {
                 continue;
             }
@@ -2755,7 +2754,7 @@ impl GitPanel {
             && repo
                 .pending_ops_for_path(&entry.repo_path)
                 .map(|ops| ops.staging() || ops.staged())
-                .unwrap_or(false)
+                .unwrap_or(entry.staging.has_staged())
         {
             self.bulk_staging = bulk_staging;
         }
@@ -2804,7 +2803,7 @@ impl GitPanel {
             let is_staging_or_staged = repo
                 .pending_ops_for_path(&status_entry.repo_path)
                 .map(|ops| ops.staging() || ops.staged())
-                .unwrap_or(false);
+                .unwrap_or(status_entry.staging.has_staged());
             if repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path) {
                 self.conflicted_count += 1;
                 if is_staging_or_staged {
@@ -3661,10 +3660,13 @@ impl GitPanel {
         let ix = self.entry_by_path(&repo_path, cx)?;
         let entry = self.entries.get(ix)?;
 
-        let is_staging_or_staged = repo
-            .pending_ops_for_path(&repo_path)
-            .map(|ops| ops.staging() || ops.staged())
-            .unwrap_or(false);
+        let is_staging_or_staged = if let Some(status_entry) = entry.status_entry() {
+            repo.pending_ops_for_path(&repo_path)
+                .map(|ops| ops.staging() || ops.staged())
+                .unwrap_or(status_entry.staging.has_staged())
+        } else {
+            false
+        };
 
         let checkbox = Checkbox::new("stage-file", is_staging_or_staged.into())
             .disabled(!self.has_write_access(cx))
@@ -3967,7 +3969,7 @@ impl GitPanel {
         let is_staging_or_staged = repo
             .pending_ops_for_path(&entry.repo_path)
             .map(|ops| ops.staging() || ops.staged())
-            .unwrap_or(false);
+            .unwrap_or(entry.staging.has_staged());
         let mut is_staged: ToggleState = is_staging_or_staged.into();
         if self.show_placeholders && !self.has_staged_changes() && !entry.status.is_created() {
             is_staged = ToggleState::Selected;

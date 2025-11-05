@@ -3099,7 +3099,7 @@ impl RepositorySnapshot {
         PendingOp {
             id,
             git_status,
-            job_status: pending_op::JobStatus::Started,
+            job_status: pending_op::JobStatus::Running,
         }
     }
 
@@ -3960,10 +3960,15 @@ impl Repository {
             .filter_map(|entry| {
                 if let Some(ops) = self.pending_ops_for_path(&entry.repo_path) {
                     if ops.staging() || ops.staged() {
-                        return None;
+                        None
+                    } else {
+                        Some(entry.repo_path)
                     }
+                } else if entry.status.staging().has_staged() {
+                    None
+                } else {
+                    Some(entry.repo_path)
                 }
-                Some(entry.repo_path)
             })
             .collect();
         self.stage_entries(to_stage, cx)
@@ -3975,10 +3980,15 @@ impl Repository {
             .filter_map(|entry| {
                 if let Some(ops) = self.pending_ops_for_path(&entry.repo_path) {
                     if !ops.staging() && !ops.staged() {
-                        return None;
+                        None
+                    } else {
+                        Some(entry.repo_path)
                     }
+                } else if entry.status.staging().has_unstaged() {
+                    None
+                } else {
+                    Some(entry.repo_path)
                 }
-                Some(entry.repo_path)
             })
             .collect();
         self.unstage_entries(to_unstage, cx)
@@ -5260,10 +5270,10 @@ impl Repository {
         let ids = self.new_pending_ops_for_paths(paths, git_status);
 
         cx.spawn(async move |this, cx| {
-            let job_status = match f(this.clone(), cx).await {
-                Ok(()) => pending_op::JobStatus::Finished,
-                Err(err) if err.is::<Canceled>() => pending_op::JobStatus::Skipped,
-                Err(err) => return Err(err),
+            let (job_status, result) = match f(this.clone(), cx).await {
+                Ok(()) => (pending_op::JobStatus::Finished, Ok(())),
+                Err(err) if err.is::<Canceled>() => (pending_op::JobStatus::Skipped, Ok(())),
+                Err(err) => (pending_op::JobStatus::Error, Err(err)),
             };
 
             this.update(cx, |this, _| {
@@ -5279,7 +5289,7 @@ impl Repository {
                 this.snapshot.pending_ops_by_path.edit(edits, ());
             })?;
 
-            Ok(())
+            result
         })
     }
 
@@ -5568,7 +5578,21 @@ async fn compute_snapshot(
         MergeDetails::load(&backend, &statuses_by_path, &prev_snapshot).await?;
     log::debug!("new merge details (changed={merge_heads_changed:?}): {merge_details:?}");
 
-    let pending_ops_by_path = prev_snapshot.pending_ops_by_path.clone();
+    let pending_ops_by_path = SumTree::from_iter(
+        prev_snapshot.pending_ops_by_path.iter().filter_map(|ops| {
+            let inner_ops: Vec<PendingOp> =
+                ops.ops.iter().filter(|op| op.running()).cloned().collect();
+            if inner_ops.is_empty() {
+                None
+            } else {
+                Some(PendingOps {
+                    repo_path: ops.repo_path.clone(),
+                    ops: inner_ops,
+                })
+            }
+        }),
+        (),
+    );
 
     if merge_heads_changed {
         events.push(RepositoryEvent::MergeHeadsChanged);
