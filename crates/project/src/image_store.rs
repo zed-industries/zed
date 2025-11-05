@@ -505,7 +505,6 @@ impl RemoteImageStore {
     pub fn wait_for_remote_image(
         &mut self,
         id: ImageId,
-        image_store: WeakEntity<ImageStore>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<ImageItem>>> {
         if let Some(image) = self.loaded_images.remove(&id) {
@@ -694,7 +693,7 @@ impl ImageStoreImpl for Entity<RemoteImageStore> {
         };
         let remote_store = self.clone();
 
-        cx.spawn(async move |image_store, cx| {
+        cx.spawn(async move |_image_store, cx| {
             let response = client
                 .request(rpc::proto::OpenImageByPath {
                     project_id,
@@ -709,7 +708,7 @@ impl ImageStoreImpl for Entity<RemoteImageStore> {
 
             remote_store
                 .update(cx, |remote_store, cx| {
-                    remote_store.wait_for_remote_image(image_id, image_store, cx)
+                    remote_store.wait_for_remote_image(image_id, cx)
                 })?
                 .await
         })
