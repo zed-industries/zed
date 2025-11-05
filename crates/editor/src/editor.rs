@@ -1919,6 +1919,12 @@ impl Editor {
                             cx,
                         );
                     }
+                    project::Event::RefreshSemanticTokens {
+                        server_id: _,
+                        request_id: _,
+                    } => {
+                        editor.refresh_semantic_tokens(window, cx);
+                    }
                     project::Event::LanguageServerRemoved(..) => {
                         if editor.tasks_update_task.is_none() {
                             editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
@@ -6720,6 +6726,18 @@ impl Editor {
 
     pub fn semantic_tokens_enabled(&self) -> bool {
         self.semantic_tokens_enabled
+    }
+
+    pub(crate) fn refresh_semantic_tokens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(sema) = self.semantics_provider.as_ref() else {
+            return;
+        };
+
+        for buffer in self.buffer.read(cx).all_buffers() {
+            sema.refresh_semantic_tokens(&buffer, cx);
+        }
+
+        self.update_semantic_tokens(window, cx);
     }
 
     pub(crate) fn update_semantic_tokens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -23204,6 +23222,8 @@ pub trait SemanticsProvider {
         cx: &mut App,
     ) -> Option<HashMap<Range<BufferRow>, Task<Result<CacheInlayHints>>>>;
 
+    fn refresh_semantic_tokens(&self, buffer_handle: &Entity<Buffer>, cx: &mut App);
+
     fn semantic_tokens(
         &self,
         buffer_handle: Entity<Buffer>,
@@ -23785,6 +23805,12 @@ impl SemanticsProvider for Entity<Project> {
         Some(self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
             lsp_store.inlay_hints(invalidate, buffer, ranges, known_chunks, cx)
         }))
+    }
+
+    fn refresh_semantic_tokens(&self, buffer: &Entity<Buffer>, cx: &mut App) {
+        self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+            lsp_store.refresh_semantic_tokens(buffer, cx)
+        })
     }
 
     fn semantic_tokens(

@@ -3684,6 +3684,10 @@ pub enum LspStoreEvent {
         server_id: LanguageServerId,
         request_id: Option<usize>,
     },
+    RefreshSemanticTokens {
+        server_id: LanguageServerId,
+        request_id: Option<usize>,
+    },
     RefreshCodeLens,
     DiagnosticsUpdated {
         server_id: LanguageServerId,
@@ -3760,6 +3764,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_get_color_presentation);
         client.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
         client.add_entity_request_handler(Self::handle_refresh_inlay_hints);
+        client.add_entity_request_handler(Self::handle_refresh_semantic_tokens);
         client.add_entity_request_handler(Self::handle_refresh_code_lens);
         client.add_entity_request_handler(Self::handle_on_type_formatting);
         client.add_entity_request_handler(Self::handle_apply_additional_edits_for_completion);
@@ -7055,6 +7060,10 @@ impl LspStore {
         ))
     }
 
+    pub fn refresh_semantic_tokens(&mut self, buffer: &Entity<Buffer>, cx: &mut Context<Self>) {
+        self.latest_lsp_data(buffer, cx).semantic_tokens = None;
+    }
+
     pub fn semantic_tokens(
         &mut self,
         buffer: Entity<Buffer>,
@@ -10148,6 +10157,20 @@ impl LspStore {
     ) -> Result<proto::Ack> {
         lsp_store.update(&mut cx, |_, cx| {
             cx.emit(LspStoreEvent::RefreshInlayHints {
+                server_id: LanguageServerId::from_proto(envelope.payload.server_id),
+                request_id: envelope.payload.request_id.map(|id| id as usize),
+            });
+        })?;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_refresh_semantic_tokens(
+        lsp_store: Entity<Self>,
+        envelope: TypedEnvelope<proto::RefreshSemanticTokens>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        lsp_store.update(&mut cx, |_, cx| {
+            cx.emit(LspStoreEvent::RefreshSemanticTokens {
                 server_id: LanguageServerId::from_proto(envelope.payload.server_id),
                 request_id: envelope.payload.request_id.map(|id| id as usize),
             });
