@@ -3957,8 +3957,14 @@ impl Repository {
     pub fn stage_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
         let to_stage = self
             .cached_status()
-            .filter(|entry| entry.status.staging().has_unstaged())
-            .map(|entry| entry.repo_path)
+            .filter_map(|entry| {
+                if let Some(ops) = self.pending_ops_for_path(&entry.repo_path) {
+                    if ops.staging() || ops.staged() {
+                        return None;
+                    }
+                }
+                Some(entry.repo_path)
+            })
             .collect();
         self.stage_entries(to_stage, cx)
     }
@@ -3966,8 +3972,14 @@ impl Repository {
     pub fn unstage_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
         let to_unstage = self
             .cached_status()
-            .filter(|entry| entry.status.staging().has_staged())
-            .map(|entry| entry.repo_path)
+            .filter_map(|entry| {
+                if let Some(ops) = self.pending_ops_for_path(&entry.repo_path) {
+                    if !ops.staging() && !ops.staged() {
+                        return None;
+                    }
+                }
+                Some(entry.repo_path)
+            })
             .collect();
         self.unstage_entries(to_unstage, cx)
     }
