@@ -1013,7 +1013,7 @@ impl AgentConfiguration {
                             .child(Divider::horizontal().color(DividerColor::BorderFaded))
                             .child(self.render_agent_server(
                                 AgentIcon::Name(IconName::AiOpenAi),
-                                "Codex",
+                                "Codex CLI",
                                 false,
                             ))
                             .child(Divider::horizontal().color(DividerColor::BorderFaded))

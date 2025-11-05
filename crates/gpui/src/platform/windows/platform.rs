@@ -272,6 +272,22 @@ impl WindowsPlatform {
     }
 }
 
+fn translate_accelerator(msg: &MSG) -> Option<()> {
+    if msg.message != WM_KEYDOWN && msg.message != WM_SYSKEYDOWN {
+        return None;
+    }
+
+    let result = unsafe {
+        SendMessageW(
+            msg.hwnd,
+            WM_GPUI_KEYDOWN,
+            Some(msg.wParam),
+            Some(msg.lParam),
+        )
+    };
+    (result.0 == 0).then_some(())
+}
+
 impl Platform for WindowsPlatform {
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
@@ -312,7 +328,10 @@ impl Platform for WindowsPlatform {
         let mut msg = MSG::default();
         unsafe {
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-                DispatchMessageW(&msg);
+                if translate_accelerator(&msg).is_none() {
+                    _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
             }
         }
 

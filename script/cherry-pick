@@ -1,0 +1,33 @@
+# #!/bin/bash
+set -euxo pipefail
+
+if [ "$#" -ne 3 ]; then
+    echo "Usage: $0 <branch-name> <commit-sha> <channel>"
+    exit 1
+fi
+
+BRANCH_NAME="$1"
+COMMIT_SHA="$2"
+CHANNEL="$3"
+
+SHORT_SHA="${COMMIT_SHA:0:8}"
+NEW_BRANCH="cherry-pick-${BRANCH_NAME}-${SHORT_SHA}"
+git fetch --depth 2 origin +${COMMIT_SHA} ${BRANCH_NAME}
+git checkout --force "origin/$BRANCH_NAME" -B "$NEW_BRANCH"
+
+git cherry-pick "$COMMIT_SHA"
+
+git push origin -f "$NEW_BRANCH"
+COMMIT_TITLE=$(git log -1 --pretty=format:"%s" "$COMMIT_SHA")
+COMMIT_BODY=$(git log -1 --pretty=format:"%b" "$COMMIT_SHA")
+
+# Check if commit title ends with (#number)
+if [[ "$COMMIT_TITLE" =~ \(#([0-9]+)\)$ ]]; then
+    PR_NUMBER="${BASH_REMATCH[1]}"
+    PR_BODY="Cherry-pick of #${PR_NUMBER} to ${CHANNEL}"$'\n'$'\n'"----"$'\n'"${COMMIT_BODY}"
+else
+    PR_BODY="Cherry-pick of ${COMMIT_SHA} to ${CHANNEL}"$'\n'$'\n'"----"$'\n'"${COMMIT_BODY}"
+fi
+
+# Create a pull request
+gh pr create --base "$BRANCH_NAME" --head "$NEW_BRANCH" --title "$COMMIT_TITLE (cherry-pick to $CHANNEL)" --body "$PR_BODY"

@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, fmt::Display};
 
 #[derive(Debug, PartialEq)]
 pub enum DiffLine<'a> {
@@ -8,7 +8,7 @@ pub enum DiffLine<'a> {
     Context(&'a str),
     Deletion(&'a str),
     Addition(&'a str),
-    Garbage,
+    Garbage(&'a str),
 }
 
 #[derive(Debug, PartialEq)]
@@ -21,7 +21,7 @@ pub struct HunkLocation {
 
 impl<'a> DiffLine<'a> {
     pub fn parse(line: &'a str) -> Self {
-        Self::try_parse(line).unwrap_or(Self::Garbage)
+        Self::try_parse(line).unwrap_or(Self::Garbage(line))
     }
 
     fn try_parse(line: &'a str) -> Option<Self> {
@@ -56,6 +56,30 @@ impl<'a> DiffLine<'a> {
             Some(Self::Context(context))
         } else {
             Some(Self::Addition(line.strip_prefix("+")?))
+        }
+    }
+}
+
+impl<'a> Display for DiffLine<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DiffLine::OldPath { path } => write!(f, "--- {path}"),
+            DiffLine::NewPath { path } => write!(f, "+++ {path}"),
+            DiffLine::HunkHeader(Some(hunk_location)) => {
+                write!(
+                    f,
+                    "@@ -{},{} +{},{} @@",
+                    hunk_location.start_line_old + 1,
+                    hunk_location.count_old,
+                    hunk_location.start_line_new + 1,
+                    hunk_location.count_new
+                )
+            }
+            DiffLine::HunkHeader(None) => write!(f, "@@ ... @@"),
+            DiffLine::Context(content) => write!(f, " {content}"),
+            DiffLine::Deletion(content) => write!(f, "-{content}"),
+            DiffLine::Addition(content) => write!(f, "+{content}"),
+            DiffLine::Garbage(line) => write!(f, "{line}"),
         }
     }
 }
@@ -134,8 +158,8 @@ mod tests {
         pretty_assertions::assert_eq!(
             lines,
             &[
-                DiffLine::Garbage,
-                DiffLine::Garbage,
+                DiffLine::Garbage("diff --git a/text.txt b/text.txt"),
+                DiffLine::Garbage("index 86c770d..a1fd855 100644"),
                 DiffLine::OldPath {
                     path: "file.txt".into()
                 },
@@ -151,7 +175,7 @@ mod tests {
                 DiffLine::Context("context"),
                 DiffLine::Deletion("deleted"),
                 DiffLine::Addition("inserted"),
-                DiffLine::Garbage,
+                DiffLine::Garbage("garbage"),
                 DiffLine::Context(""),
                 DiffLine::OldPath {
                     path: "b/file.txt".into()

@@ -178,6 +178,7 @@ impl AcpConnection {
                     meta: Some(serde_json::json!({
                         // Experimental: Allow for rendering terminal output from the agents
                         "terminal_output": true,
+                        "terminal-auth": true,
                     })),
                 },
                 client_info: Some(acp::Implementation {

@@ -99,11 +99,7 @@ fn auto_release_preview(deps: &[&NamedJob; 1]) -> NamedJob {
         dependant_job(deps)
             .runs_on(runners::LINUX_SMALL)
             .cond(Expression::new(indoc::indoc!(
-                r#"
-                false
-                && startsWith(github.ref, 'refs/tags/v')
-                && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
-            "# // todo(ci-release) enable
+                r#"startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')"#
             )))
             .add_step(
                 steps::script(
