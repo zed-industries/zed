@@ -645,7 +645,7 @@ impl CollabPanel {
                 executor.clone(),
             ));
 
-            let channel_ids_of_matches_or_parents = matches
+            let channel_ids_of_matches_or_parents: HashSet<_> = matches
                 .iter()
                 .flat_map(|mat| {
                     let match_channel = channels[mat.candidate_id];
@@ -656,7 +656,7 @@ impl CollabPanel {
                         .copied()
                         .chain(Some(match_channel.id))
                 })
-                .collect::<HashSet<_>>();
+                .collect();
 
             channels.retain(|chan| channel_ids_of_matches_or_parents.contains(&chan.id));
 
