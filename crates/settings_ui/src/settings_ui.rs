@@ -891,7 +891,7 @@ impl SettingsPageItem {
                             .px_8()
                             .child(discriminant_element.when(has_sub_fields, |this| this.pb_4())),
                     )
-                    .when(!has_sub_fields, |this| {
+                    .when(!has_sub_fields && !is_last, |this| {
                         this.child(h_flex().px_8().child(Divider::horizontal()))
                     });
 
