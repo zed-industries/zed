@@ -12349,10 +12349,7 @@ impl LspStore {
             .update(cx, |buffer, _| buffer.wait_for_version(version))?
             .await?;
         lsp_store.update(cx, |lsp_store, cx| {
-            let lsp_data = lsp_store
-                .lsp_data
-                .entry(buffer_id)
-                .or_insert_with(|| BufferLspData::new(&buffer, cx));
+            let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
             let chunks_queried_for = lsp_data
                 .inlay_hints
                 .applicable_chunks(&[range])
