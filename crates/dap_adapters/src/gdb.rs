@@ -108,14 +108,14 @@ impl DebugAdapter for GdbDebugAdapter {
                                 },
                                 "gdb_path": {
                                     "type": "string",
-                                    "description": "Alternertive path to the GDB executable, if the one in standard path is not disirable"
+                                    "description": "Alternative path to the GDB executable, if the one in standard path is not desirable"
                                 },
                                 "gdb_args": {
                                     "type": "array",
                                     "items": {
                                         "type":"string"
                                     },
-                                    "description": "aditional arguments given to GDB at startup, not the program debugged",
+                                    "description": "additional arguments given to GDB at startup, not the program debugged",
                                     "default": []
                                 },
                                 "env": {
