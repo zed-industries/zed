@@ -680,7 +680,7 @@ pub struct CodeLabelBuilder {
     filter_range: Range<usize>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Deserialize, JsonSchema, Debug)]
 pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: LanguageName,
@@ -823,7 +823,7 @@ pub struct LanguageMatcher {
 }
 
 /// The configuration for JSX tag auto-closing.
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Deserialize, JsonSchema, Debug)]
 pub struct JsxTagAutoCloseConfig {
     /// The name of the node for a opening tag
     pub open_tag_node_name: String,

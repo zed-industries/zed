@@ -378,19 +378,23 @@ impl Item for Onboarding {
         false
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
         _: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>> {
-        Some(cx.new(|cx| Onboarding {
+    ) -> Task<Option<Entity<Self>>> {
+        Task::ready(Some(cx.new(|cx| Onboarding {
             workspace: self.workspace.clone(),
             user_store: self.user_store.clone(),
             scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
-        }))
+        })))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {

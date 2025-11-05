@@ -148,6 +148,7 @@ members = [
     "crates/semantic_version",
     "crates/session",
     "crates/settings",
+    "crates/settings_json",
     "crates/settings_macros",
     "crates/settings_profile_selector",
     "crates/settings_ui",
@@ -380,6 +381,7 @@ search = { path = "crates/search" }
 semantic_version = { path = "crates/semantic_version" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
+settings_json = { path = "crates/settings_json" }
 settings_macros = { path = "crates/settings_macros" }
 settings_ui = { path = "crates/settings_ui" }
 snippet = { path = "crates/snippet" }
@@ -438,7 +440,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
-agent-client-protocol = { version = "0.5.0", features = ["unstable"] }
+agent-client-protocol = { version = "0.7.0", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = "0.25.1-rc1"
 any_vec = "0.14"
@@ -506,6 +508,7 @@ fork = "0.2.0"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"
+gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "3eaa84abca0778eb54272f45a312cb24f9a0b435" }
 git2 = { version = "0.20.1", default-features = false }
 globset = "0.4"
 handlebars = "4.3"
@@ -534,7 +537,7 @@ libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
-lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "0874f8742fe55b4dc94308c1e3c0069710d8eeaf" }
+lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "b71ab4eeb27d9758be8092020a46fe33fbca4e33" }
 mach2 = "0.5"
 markup5ever_rcdom = "0.3.0"
 metal = "0.29"
@@ -677,7 +680,7 @@ tree-sitter-elixir = "0.3"
 tree-sitter-embedded-template = "0.23.0"
 tree-sitter-gitcommit = { git = "https://github.com/zed-industries/tree-sitter-git-commit", rev = "88309716a69dd13ab83443721ba6e0b491d37ee9" }
 tree-sitter-go = "0.23"
-tree-sitter-go-mod = { git = "https://github.com/camdencheek/tree-sitter-go-mod", rev = "6efb59652d30e0e9cd5f3b3a669afd6f1a926d3c", package = "tree-sitter-gomod" }
+tree-sitter-go-mod = { git = "https://github.com/camdencheek/tree-sitter-go-mod", rev = "2e886870578eeba1927a2dc4bd2e2b3f598c5f9a", package = "tree-sitter-gomod" }
 tree-sitter-gowork = { git = "https://github.com/zed-industries/tree-sitter-go-work", rev = "acb0617bf7f4fda02c6217676cc64acb89536dc7" }
 tree-sitter-heex = { git = "https://github.com/zed-industries/tree-sitter-heex", rev = "1dd45142fbb05562e35b2040c6129c9bca346592" }
 tree-sitter-html = "0.23"
@@ -775,6 +778,8 @@ windows-capture = { git = "https://github.com/zed-industries/windows-capture.git
 
 [profile.dev]
 split-debuginfo = "unpacked"
+# https://github.com/rust-lang/cargo/issues/16104
+incremental = false
 codegen-units = 16
 
 # mirror configuration for crates compiled for the build platform

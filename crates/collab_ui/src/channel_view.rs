@@ -493,13 +493,17 @@ impl Item for ChannelView {
         None
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>> {
-        Some(cx.new(|cx| {
+    ) -> Task<Option<Entity<Self>>> {
+        Task::ready(Some(cx.new(|cx| {
             Self::new(
                 self.project.clone(),
                 self.workspace.clone(),
@@ -508,7 +512,7 @@ impl Item for ChannelView {
                 window,
                 cx,
             )
-        }))
+        })))
     }
 
     fn navigate(

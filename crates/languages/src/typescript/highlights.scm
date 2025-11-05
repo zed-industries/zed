@@ -122,6 +122,15 @@
 ; Tokens
 
 [
+  ";"
+  "?."
+  "."
+  ","
+  ":"
+  "?"
+] @punctuation.delimiter
+
+[
   "..."
   "-"
   "--"
@@ -178,15 +187,6 @@
     ":"
   ] @operator
 )
-
-[
-  ";"
-  "?."
-  "."
-  ","
-  ":"
-  "?"
-] @punctuation.delimiter
 
 [
   "("

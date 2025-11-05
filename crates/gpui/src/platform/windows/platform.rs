@@ -4,7 +4,7 @@ use std::{
     mem::ManuallyDrop,
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::Arc,
+    sync::{Arc, atomic::Ordering},
 };
 
 use ::util::{ResultExt, paths::SanitizedPath};
@@ -48,6 +48,7 @@ struct WindowsPlatformInner {
     // The below members will never change throughout the entire lifecycle of the app.
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
+    dispatcher: Arc<WindowsDispatcher>,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -109,8 +110,10 @@ impl WindowsPlatform {
             inner: None,
             raw_window_handles: Arc::downgrade(&raw_window_handles),
             validation_number,
+            main_sender: Some(main_sender),
             main_receiver: Some(main_receiver),
             directx_devices: Some(directx_devices),
+            dispatcher: None,
         };
         let result = unsafe {
             CreateWindowExW(
@@ -129,12 +132,9 @@ impl WindowsPlatform {
             )
         };
         let inner = context.inner.take().unwrap()?;
+        let dispatcher = context.dispatcher.take().unwrap();
         let handle = result?;
-        let dispatcher = Arc::new(WindowsDispatcher::new(
-            main_sender,
-            handle,
-            validation_number,
-        ));
+
         let disable_direct_composition = std::env::var(DISABLE_DIRECT_COMPOSITION)
             .is_ok_and(|value| value == "true" || value == "1");
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
@@ -272,6 +272,22 @@ impl WindowsPlatform {
     }
 }
 
+fn translate_accelerator(msg: &MSG) -> Option<()> {
+    if msg.message != WM_KEYDOWN && msg.message != WM_SYSKEYDOWN {
+        return None;
+    }
+
+    let result = unsafe {
+        SendMessageW(
+            msg.hwnd,
+            WM_GPUI_KEYDOWN,
+            Some(msg.wParam),
+            Some(msg.lParam),
+        )
+    };
+    (result.0 == 0).then_some(())
+}
+
 impl Platform for WindowsPlatform {
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
@@ -312,7 +328,10 @@ impl Platform for WindowsPlatform {
         let mut msg = MSG::default();
         unsafe {
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-                DispatchMessageW(&msg);
+                if translate_accelerator(&msg).is_none() {
+                    _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
             }
         }
 
@@ -682,6 +701,7 @@ impl WindowsPlatformInner {
         Ok(Rc::new(Self {
             state,
             raw_window_handles: context.raw_window_handles.clone(),
+            dispatcher: context.dispatcher.as_ref().unwrap().clone(),
             validation_number: context.validation_number,
             main_receiver: context.main_receiver.take().unwrap(),
         }))
@@ -746,9 +766,28 @@ impl WindowsPlatformInner {
 
     #[inline]
     fn run_foreground_task(&self) -> Option<isize> {
-        for runnable in self.main_receiver.drain() {
-            runnable.run();
+        loop {
+            for runnable in self.main_receiver.drain() {
+                runnable.run();
+            }
+
+            // Someone could enqueue a Runnable here. The flag is still true, so they will not PostMessage.
+            // We need to check for those Runnables after we clear the flag.
+            let dispatcher = self.dispatcher.clone();
+
+            dispatcher.wake_posted.store(false, Ordering::Release);
+            match self.main_receiver.try_recv() {
+                Ok(runnable) => {
+                    let _ = dispatcher.wake_posted.swap(true, Ordering::AcqRel);
+                    runnable.run();
+                    continue;
+                }
+                _ => {
+                    break;
+                }
+            }
         }
+
         Some(0)
     }
 
@@ -832,8 +871,10 @@ struct PlatformWindowCreateContext {
     inner: Option<Result<Rc<WindowsPlatformInner>>>,
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     validation_number: usize,
+    main_sender: Option<flume::Sender<Runnable>>,
     main_receiver: Option<flume::Receiver<Runnable>>,
     directx_devices: Option<DirectXDevices>,
+    dispatcher: Option<Arc<WindowsDispatcher>>,
 }
 
 fn open_target(target: impl AsRef<OsStr>) -> Result<()> {
@@ -1115,6 +1156,13 @@ unsafe extern "system" fn window_procedure(
         let params = unsafe { &*params };
         let creation_context = params.lpCreateParams as *mut PlatformWindowCreateContext;
         let creation_context = unsafe { &mut *creation_context };
+
+        creation_context.dispatcher = Some(Arc::new(WindowsDispatcher::new(
+            creation_context.main_sender.take().unwrap(),
+            hwnd,
+            creation_context.validation_number,
+        )));
+
         return match WindowsPlatformInner::new(creation_context) {
             Ok(inner) => {
                 let weak = Box::new(Rc::downgrade(&inner));

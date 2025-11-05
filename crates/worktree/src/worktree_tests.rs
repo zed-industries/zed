@@ -760,6 +760,7 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
             "prettier": {
                 "package.json": "{}",
             },
+            "package.json": "//package.json"
         },
         "src": {
             ".DS_Store": "",
@@ -1053,6 +1054,92 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
             ],
             &[],
         )
+    });
+}
+
+#[gpui::test]
+async fn test_hidden_files(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let dir = TempTree::new(json!({
+        ".gitignore": "**/target\n",
+        ".hidden_file": "content",
+        ".hidden_dir": {
+            "nested.rs": "code",
+        },
+        "src": {
+            "visible.rs": "code",
+        },
+        "logs": {
+            "app.log": "logs",
+            "debug.log": "logs",
+        },
+        "visible.txt": "content",
+    }));
+
+    let tree = Worktree::local(
+        dir.path(),
+        true,
+        Arc::new(RealFs::new(None, cx.executor())),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.as_ref(), entry.is_hidden))
+                .collect::<Vec<_>>(),
+            vec![
+                (rel_path(""), false),
+                (rel_path(".gitignore"), true),
+                (rel_path(".hidden_dir"), true),
+                (rel_path(".hidden_dir/nested.rs"), true),
+                (rel_path(".hidden_file"), true),
+                (rel_path("logs"), false),
+                (rel_path("logs/app.log"), false),
+                (rel_path("logs/debug.log"), false),
+                (rel_path("src"), false),
+                (rel_path("src/visible.rs"), false),
+                (rel_path("visible.txt"), false),
+            ]
+        );
+    });
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.hidden_files = Some(vec!["**/*.log".to_string()]);
+            });
+        });
+    });
+    tree.flush_fs_events(cx).await;
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.as_ref(), entry.is_hidden))
+                .collect::<Vec<_>>(),
+            vec![
+                (rel_path(""), false),
+                (rel_path(".gitignore"), false),
+                (rel_path(".hidden_dir"), false),
+                (rel_path(".hidden_dir/nested.rs"), false),
+                (rel_path(".hidden_file"), false),
+                (rel_path("logs"), false),
+                (rel_path("logs/app.log"), true),
+                (rel_path("logs/debug.log"), true),
+                (rel_path("src"), false),
+                (rel_path("src/visible.rs"), false),
+                (rel_path("visible.txt"), false),
+            ]
+        );
     });
 }
 

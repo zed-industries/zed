@@ -11,7 +11,7 @@ The [Material Icon Theme](https://github.com/zed-extensions/material-icon-theme)
 There are two important directories for an icon theme extension:
 
 - `icon_themes`: This directory will contain one or more JSON files containing the icon theme definitions.
-- `icons`: This directory contains the icons assets that will be distributed with the extension. You can created subdirectories in this directory, if so desired.
+- `icons`: This directory contains the icon assets that will be distributed with the extension. You can created subdirectories in this directory, if so desired.
 
 Each icon theme file should adhere to the JSON schema specified at [`https://zed.dev/schema/icon_themes/v0.3.0.json`](https://zed.dev/schema/icon_themes/v0.3.0.json).
 

@@ -27,6 +27,13 @@ pub struct OpenZedUrl {
     pub url: String,
 }
 
+/// Opens the keymap to either add a keybinding or change an existing one
+#[derive(PartialEq, Clone, Default, Action, JsonSchema, Serialize, Deserialize)]
+#[action(namespace = zed, no_json, no_register)]
+pub struct ChangeKeybinding {
+    pub action: String,
+}
+
 actions!(
     zed,
     [
@@ -109,12 +116,11 @@ pub struct IncreaseBufferFontSize {
 }
 
 /// Increases the font size in the editor buffer.
-#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
 pub struct OpenSettingsAt {
     /// A path to a specific setting (e.g. `theme.mode`)
-    #[serde(default)]
     pub path: String,
 }
 
@@ -208,7 +214,9 @@ pub mod git {
             #[action(deprecated_aliases = ["branches::OpenRecent"])]
             Branch,
             /// Opens the git stash selector.
-            ViewStash
+            ViewStash,
+            /// Opens the git worktree selector.
+            Worktree
         ]
     );
 }
@@ -232,7 +240,7 @@ pub mod command_palette {
         command_palette,
         [
             /// Toggles the command palette.
-            Toggle
+            Toggle,
         ]
     );
 }
@@ -518,6 +526,12 @@ actions!(
         OpenProjectDebugTasks,
     ]
 );
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct WslConnectionOptions {
+    pub distro_name: String,
+    pub user: Option<String>,
+}
 
 #[cfg(target_os = "windows")]
 pub mod wsl_actions {

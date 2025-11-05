@@ -434,15 +434,14 @@ impl MacTextSystemState {
         let mut max_descent = 0.0f32;
 
         {
-            let mut ix_converter = StringIndexConverter::new(&text);
+            let mut text = text;
             for run in font_runs {
-                let text = &text[ix_converter.utf8_ix..][..run.len];
+                let text_run;
+                (text_run, text) = text.split_at(run.len);
 
                 let utf16_start = string.char_len(); // insert at end of string
-                ix_converter.advance_to_utf8_ix(ix_converter.utf8_ix + run.len);
-
                 // note: replace_str may silently ignore codepoints it dislikes (e.g., BOM at start of string)
-                string.replace_str(&CFString::new(text), CFRange::init(utf16_start, 0));
+                string.replace_str(&CFString::new(text_run), CFRange::init(utf16_start, 0));
                 let utf16_end = string.char_len();
 
                 let cf_range = CFRange::init(utf16_start, utf16_end - utf16_start);
@@ -535,17 +534,6 @@ impl<'a> StringIndexConverter<'a> {
             utf8_ix: 0,
             utf16_ix: 0,
         }
-    }
-
-    fn advance_to_utf8_ix(&mut self, utf8_target: usize) {
-        for (ix, c) in self.text[self.utf8_ix..].char_indices() {
-            if self.utf8_ix + ix >= utf8_target {
-                self.utf8_ix += ix;
-                return;
-            }
-            self.utf16_ix += c.len_utf16();
-        }
-        self.utf8_ix = self.text.len();
     }
 
     fn advance_to_utf16_ix(&mut self, utf16_target: usize) {

@@ -477,7 +477,7 @@ impl TextThreadEditor {
                     editor.insert(&format!("/{name}"), window, cx);
                     if command.accepts_arguments() {
                         editor.insert(" ", window, cx);
-                        editor.show_completions(&ShowCompletions::default(), window, cx);
+                        editor.show_completions(&ShowCompletions, window, cx);
                     }
                 });
             });
@@ -2591,11 +2591,12 @@ impl SearchableItem for TextThreadEditor {
         &mut self,
         index: usize,
         matches: &[Self::Match],
+        collapse: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
-            editor.activate_match(index, matches, window, cx);
+            editor.activate_match(index, matches, collapse, window, cx);
         });
     }
 

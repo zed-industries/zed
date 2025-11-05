@@ -340,6 +340,7 @@ pub struct RowInfo {
     pub multibuffer_row: Option<MultiBufferRow>,
     pub diff_status: Option<buffer_diff::DiffHunkStatus>,
     pub expand_info: Option<ExpandInfo>,
+    pub wrapped_buffer_row: Option<u32>,
 }
 
 /// A slice into a [`Buffer`] that is being edited in a [`MultiBuffer`].
@@ -1538,6 +1539,24 @@ impl MultiBuffer {
             let text_anchor = snapshot.anchor_after(point);
             Anchor::in_buffer(excerpt_id, snapshot.remote_id(), text_anchor)
         })
+    }
+
+    pub fn buffer_anchor_to_anchor(
+        &self,
+        buffer: &Entity<Buffer>,
+        anchor: text::Anchor,
+        cx: &App,
+    ) -> Option<Anchor> {
+        let snapshot = buffer.read(cx).snapshot();
+        for (excerpt_id, range) in self.excerpts_for_buffer(snapshot.remote_id(), cx) {
+            if range.context.start.cmp(&anchor, &snapshot).is_le()
+                && range.context.end.cmp(&anchor, &snapshot).is_ge()
+            {
+                return Some(Anchor::in_buffer(excerpt_id, snapshot.remote_id(), anchor));
+            }
+        }
+
+        None
     }
 
     pub fn remove_excerpts(
@@ -5451,6 +5470,8 @@ impl MultiBufferSnapshot {
                     Some(OutlineItem {
                         depth: item.depth,
                         range: self.anchor_range_in_excerpt(*excerpt_id, item.range)?,
+                        source_range_for_text: self
+                            .anchor_range_in_excerpt(*excerpt_id, item.source_range_for_text)?,
                         text: item.text,
                         highlight_ranges: item.highlight_ranges,
                         name_ranges: item.name_ranges,
@@ -5484,6 +5505,11 @@ impl MultiBufferSnapshot {
                 .flat_map(|item| {
                     Some(OutlineItem {
                         depth: item.depth,
+                        source_range_for_text: Anchor::range_in_buffer(
+                            excerpt_id,
+                            buffer_id,
+                            item.source_range_for_text,
+                        ),
                         range: Anchor::range_in_buffer(excerpt_id, buffer_id, item.range),
                         text: item.text,
                         highlight_ranges: item.highlight_ranges,
@@ -5741,17 +5767,6 @@ impl MultiBufferSnapshot {
         text::debug::GlobalDebugRanges::with_locked(|debug_ranges| {
             debug_ranges.insert(key, text_ranges, format!("{value:?}").into())
         });
-    }
-
-    // used by line_mode selections and tries to match vim behavior
-    pub fn expand_to_line(&self, range: Range<Point>) -> Range<Point> {
-        let new_start = MultiBufferPoint::new(range.start.row, 0);
-        let new_end = if range.end.column > 0 {
-            MultiBufferPoint::new(range.end.row, self.line_len(MultiBufferRow(range.end.row)))
-        } else {
-            range.end
-        };
-        new_start..new_end
     }
 }
 
@@ -6636,6 +6651,7 @@ impl Iterator for MultiBufferRows<'_> {
                 multibuffer_row: Some(MultiBufferRow(0)),
                 diff_status: None,
                 expand_info: None,
+                wrapped_buffer_row: None,
             });
         }
 
@@ -6693,6 +6709,7 @@ impl Iterator for MultiBufferRows<'_> {
                     buffer_row: Some(last_row),
                     multibuffer_row: Some(multibuffer_row),
                     diff_status: None,
+                    wrapped_buffer_row: None,
                     expand_info,
                 });
             } else {
@@ -6737,6 +6754,7 @@ impl Iterator for MultiBufferRows<'_> {
                 .diff_hunk_status
                 .filter(|_| self.point < region.range.end),
             expand_info,
+            wrapped_buffer_row: None,
         });
         self.point += Point::new(1, 0);
         result

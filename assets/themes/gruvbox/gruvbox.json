@@ -6,8 +6,8 @@
     {
       "name": "Gruvbox Dark",
       "appearance": "dark",
-      "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
       "style": {
+        "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
         "border": "#5b534dff",
         "border.variant": "#494340ff",
         "border.focused": "#303a36ff",
@@ -412,8 +412,8 @@
     {
       "name": "Gruvbox Dark Hard",
       "appearance": "dark",
-      "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
       "style": {
+        "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
         "border": "#5b534dff",
         "border.variant": "#494340ff",
         "border.focused": "#303a36ff",
@@ -818,8 +818,8 @@
     {
       "name": "Gruvbox Dark Soft",
       "appearance": "dark",
-      "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
       "style": {
+        "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
         "border": "#5b534dff",
         "border.variant": "#494340ff",
         "border.focused": "#303a36ff",
@@ -1224,8 +1224,8 @@
     {
       "name": "Gruvbox Light",
       "appearance": "light",
-      "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
       "style": {
+        "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
         "border": "#c8b899ff",
         "border.variant": "#ddcca7ff",
         "border.focused": "#adc5ccff",
@@ -1630,8 +1630,8 @@
     {
       "name": "Gruvbox Light Hard",
       "appearance": "light",
-      "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
       "style": {
+        "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
         "border": "#c8b899ff",
         "border.variant": "#ddcca7ff",
         "border.focused": "#adc5ccff",
@@ -2036,8 +2036,8 @@
     {
       "name": "Gruvbox Light Soft",
       "appearance": "light",
-      "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
       "style": {
+        "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
         "border": "#c8b899ff",
         "border.variant": "#ddcca7ff",
         "border.focused": "#adc5ccff",

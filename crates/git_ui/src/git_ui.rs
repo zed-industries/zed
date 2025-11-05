@@ -46,6 +46,7 @@ pub(crate) mod remote_output;
 pub mod repository_selector;
 pub mod stash_picker;
 pub mod text_diff_view;
+pub mod worktree_picker;
 
 actions!(
     git,
@@ -72,6 +73,7 @@ pub fn init(cx: &mut App) {
         git_panel::register(workspace);
         repository_selector::register(workspace);
         branch_picker::register(workspace);
+        worktree_picker::register(workspace);
         stash_picker::register(workspace);
 
         let project = workspace.project().read(cx);
@@ -124,7 +126,15 @@ pub fn init(cx: &mut App) {
                     return;
                 };
                 panel.update(cx, |panel, cx| {
-                    panel.pull(window, cx);
+                    panel.pull(false, window, cx);
+                });
+            });
+            workspace.register_action(|workspace, _: &git::PullRebase, window, cx| {
+                let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                    return;
+                };
+                panel.update(cx, |panel, cx| {
+                    panel.pull(true, window, cx);
                 });
             });
         }
@@ -595,6 +605,7 @@ mod remote_button {
                         .action("Fetch", git::Fetch.boxed_clone())
                         .action("Fetch From", git::FetchFrom.boxed_clone())
                         .action("Pull", git::Pull.boxed_clone())
+                        .action("Pull (Rebase)", git::PullRebase.boxed_clone())
                         .separator()
                         .action("Push", git::Push.boxed_clone())
                         .action("Push To", git::PushTo.boxed_clone())
