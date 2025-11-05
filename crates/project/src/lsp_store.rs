@@ -7064,6 +7064,11 @@ impl LspStore {
         let buffer_id = buffer.read(cx).remote_id();
         let server_ids = self.local_lsp_servers_for_buffer(&buffer, cx);
 
+        // If there are no servers yet, don't try and debounce. This makes startup quicker.
+        if server_ids.is_empty() {
+            return Task::ready(Ok(Default::default())).shared();
+        }
+
         let semantic_tokens_data = self
             .latest_lsp_data(&buffer, cx)
             .semantic_tokens

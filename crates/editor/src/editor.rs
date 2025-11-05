@@ -1925,11 +1925,13 @@ impl Editor {
                         }
                         editor.registered_buffers.clear();
                         editor.register_visible_buffers(cx);
+                        editor.update_semantic_tokens(window, cx);
                     }
                     project::Event::LanguageServerAdded(..) => {
                         if editor.tasks_update_task.is_none() {
                             editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
                         }
+                        editor.update_semantic_tokens(window, cx);
                     }
                     project::Event::SnippetEdit(id, snippet_edits) => {
                         if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
@@ -1953,13 +1955,14 @@ impl Editor {
                     }
                     project::Event::LanguageServerBufferRegistered { buffer_id, .. } => {
                         let buffer_id = *buffer_id;
-                        if editor.buffer().read(cx).buffer(buffer_id).is_some() {
+                        if let Some(buffer) = editor.buffer().read(cx).buffer(buffer_id) {
                             editor.register_buffer(buffer_id, cx);
                             editor.update_lsp_data(Some(buffer_id), window, cx);
                             editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                             refresh_linked_ranges(editor, window, cx);
                             editor.refresh_code_actions(window, cx);
                             editor.refresh_document_highlights(cx);
+                            editor.update_buffer_semantic_tokens(&buffer, window, cx);
                         }
                     }
 
@@ -17968,7 +17971,7 @@ impl Editor {
     pub fn stop_language_server(
         &mut self,
         _: &StopLanguageServer,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(project) = self.project.clone() {
@@ -17982,6 +17985,7 @@ impl Editor {
                 });
             });
             self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+            self.update_semantic_tokens(window, cx);
         }
     }
 
@@ -21443,6 +21447,7 @@ impl Editor {
             multi_buffer::Event::ExcerptsExpanded { ids } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 self.refresh_document_highlights(cx);
+                self.update_semantic_tokens(window, cx);
                 cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
             }
             multi_buffer::Event::Reparsed(buffer_id) => {
@@ -21536,6 +21541,7 @@ impl Editor {
             )),
             cx,
         );
+        self.update_semantic_tokens(window, cx);
 
         let old_cursor_shape = self.cursor_shape;
         let old_show_breadcrumbs = self.show_breadcrumbs;
