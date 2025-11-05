@@ -875,7 +875,7 @@ impl Zeta {
 
                 let (prompt, _) = prompt_result?;
                 let request = open_ai::Request {
-                    model: std::env::var("ZED_ZETA2_MODEL").unwrap_or("7qk0y8l3".to_string()),
+                    model: std::env::var("ZED_ZETA2_MODEL").unwrap_or("2327jz9q".to_string()),
                     messages: vec![open_ai::RequestMessage::User {
                         content: open_ai::MessageContent::Plain(prompt),
                     }],
