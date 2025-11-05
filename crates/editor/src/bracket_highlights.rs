@@ -9,25 +9,32 @@ enum MatchingBracketHighlight {}
 
 struct RainbowBracketHighlight;
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum BracketRefreshReason {
-    BufferEdited,
-    ScrollPositionChanged,
-    SelectionsChanged,
-}
-
 impl Editor {
     // todo! run with a debounce
-    pub(crate) fn refresh_bracket_highlights(
-        &mut self,
-        refresh_reason: BracketRefreshReason,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) {
-        const COLORS: [Hsla; 4] = [gpui::red(), gpui::yellow(), gpui::green(), gpui::blue()];
+    pub(crate) fn refresh_bracket_colors(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
+        // todo! these colors lack contrast for this/are not actually good for that?
+        // cx.theme().accents().color_for_index(depth as u32);
+        const COLORS: [Hsla; 6] = [
+            gpui::red(),
+            Hsla {
+                h: 30.0 / 360.0,
+                s: 1.0,
+                l: 0.5,
+                a: 1.0,
+            },
+            gpui::yellow(),
+            gpui::green(),
+            gpui::blue(),
+            Hsla {
+                h: 270.0 / 360.0,
+                s: 1.0,
+                l: 0.5,
+                a: 1.0,
+            },
+        ];
 
         let snapshot = self.snapshot(window, cx);
-        let multi_buffer_snapshot = &snapshot.buffer_snapshot();
+        let multi_buffer_snapshot = snapshot.buffer_snapshot();
 
         let multi_buffer_visible_start = snapshot
             .scroll_anchor
@@ -74,11 +81,7 @@ impl Editor {
 
         for (depth, bracket_highlights) in bracket_matches {
             let style = HighlightStyle {
-                color: Some({
-                    // todo! these colors lack contrast for this/are not actually good for that?
-                    // cx.theme().accents().color_for_index(depth as u32);
-                    COLORS[depth as usize % COLORS.len()]
-                }),
+                color: Some({ COLORS[depth as usize % COLORS.len()] }),
                 ..HighlightStyle::default()
             };
 
@@ -96,46 +99,6 @@ impl Editor {
                 style,
                 cx,
             );
-        }
-
-        if refresh_reason == BracketRefreshReason::ScrollPositionChanged {
-            return;
-        }
-        self.clear_background_highlights::<MatchingBracketHighlight>(cx);
-
-        let newest_selection = self.selections.newest::<usize>(&snapshot);
-        // Don't highlight brackets if the selection isn't empty
-        if !newest_selection.is_empty() {
-            return;
-        }
-
-        let head = newest_selection.head();
-        if head > snapshot.buffer_snapshot().len() {
-            log::error!("bug: cursor offset is out of range while refreshing bracket highlights");
-            return;
-        }
-
-        let mut tail = head;
-        if (self.cursor_shape == CursorShape::Block || self.cursor_shape == CursorShape::Hollow)
-            && head < snapshot.buffer_snapshot().len()
-        {
-            if let Some(tail_ch) = snapshot.buffer_snapshot().chars_at(tail).next() {
-                tail += tail_ch.len_utf8();
-            }
-        }
-
-        if let Some((opening_range, closing_range)) = snapshot
-            .buffer_snapshot()
-            .innermost_enclosing_bracket_ranges(head..tail, None)
-        {
-            self.highlight_background::<MatchingBracketHighlight>(
-                &[
-                    opening_range.to_anchors(&snapshot.buffer_snapshot()),
-                    closing_range.to_anchors(&snapshot.buffer_snapshot()),
-                ],
-                |theme| theme.colors().editor_document_highlight_bracket_background,
-                cx,
-            )
         }
     }
 }
