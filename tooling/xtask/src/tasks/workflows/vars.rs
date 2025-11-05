@@ -164,7 +164,7 @@ impl std::fmt::Display for StepOutput {
     }
 }
 
-pub(crate) struct Input {
+pub struct Input {
     pub input_type: &'static str,
     pub name: &'static str,
     pub default: Option<String>,

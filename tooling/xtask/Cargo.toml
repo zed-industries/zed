@@ -8,6 +8,9 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[lib]
+path = "src/lib.rs"
+
 [dependencies]
 anyhow.workspace = true
 backtrace.workspace = true

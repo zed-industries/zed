@@ -3,20 +3,20 @@ use clap::Parser;
 use std::fs;
 use std::path::Path;
 
-mod after_release;
-mod cherry_pick;
-mod compare_perf;
-mod danger;
-mod nix_build;
-mod release_nightly;
-mod run_bundling;
+pub mod after_release;
+pub mod cherry_pick;
+pub mod compare_perf;
+pub mod danger;
+pub mod nix_build;
+pub mod release_nightly;
+pub mod run_bundling;
 
-mod release;
-mod run_agent_evals;
-mod run_tests;
-mod runners;
-mod steps;
-mod vars;
+pub mod release;
+pub mod run_agent_evals;
+pub mod run_tests;
+pub mod runners;
+pub mod steps;
+pub mod vars;
 
 #[derive(Parser)]
 pub struct GenerateWorkflowArgs {}

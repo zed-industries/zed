@@ -94,14 +94,14 @@ pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
     }
 }
 
-pub(crate) fn clippy(platform: Platform) -> Step<Run> {
+pub fn clippy(platform: Platform) -> Step<Run> {
     match platform {
         Platform::Windows => named::pwsh("./script/clippy.ps1"),
-        _ => named::bash("./script/clippy"),
+        _ => named::bash(include_str!("../../../../../script/clippy")),
     }
 }
 
-pub(crate) fn cache_rust_dependencies_namespace() -> Step<Use> {
+pub fn cache_rust_dependencies_namespace() -> Step<Use> {
     named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("cache", "rust"))
 }
 
@@ -131,7 +131,7 @@ pub fn script(name: &str) -> Step<Run> {
     }
 }
 
-pub(crate) struct NamedJob {
+pub struct NamedJob {
     pub name: String,
     pub job: Job,
 }
@@ -223,34 +223,34 @@ pub(crate) trait FluentBuilder {
 
 // (janky) helper to generate steps with a name that corresponds
 // to the name of the calling function.
-pub(crate) mod named {
+pub mod named {
     use super::*;
 
     /// Returns a uses step with the same name as the enclosing function.
     /// (You shouldn't inline this function into the workflow definition, you must
     /// wrap it in a new function.)
-    pub(crate) fn uses(owner: &str, repo: &str, ref_: &str) -> Step<Use> {
+    pub fn uses(owner: &str, repo: &str, ref_: &str) -> Step<Use> {
         Step::new(function_name(1)).uses(owner, repo, ref_)
     }
 
     /// Returns a bash-script step with the same name as the enclosing function.
     /// (You shouldn't inline this function into the workflow definition, you must
     /// wrap it in a new function.)
-    pub(crate) fn bash(script: &str) -> Step<Run> {
+    pub fn bash(script: &str) -> Step<Run> {
         Step::new(function_name(1)).run(script).shell(BASH_SHELL)
     }
 
     /// Returns a pwsh-script step with the same name as the enclosing function.
     /// (You shouldn't inline this function into the workflow definition, you must
     /// wrap it in a new function.)
-    pub(crate) fn pwsh(script: &str) -> Step<Run> {
+    pub fn pwsh(script: &str) -> Step<Run> {
         Step::new(function_name(1)).run(script).shell(PWSH_SHELL)
     }
 
     /// Runs the command in either powershell or bash, depending on platform.
     /// (You shouldn't inline this function into the workflow definition, you must
     /// wrap it in a new function.)
-    pub(crate) fn run(platform: Platform, script: &str) -> Step<Run> {
+    pub fn run(platform: Platform, script: &str) -> Step<Run> {
         match platform {
             Platform::Windows => Step::new(function_name(1)).run(script).shell(PWSH_SHELL),
             Platform::Linux | Platform::Mac => {
@@ -260,7 +260,7 @@ pub(crate) mod named {
     }
 
     /// Returns a Workflow with the same name as the enclosing module.
-    pub(crate) fn workflow() -> Workflow {
+    pub fn workflow() -> Workflow {
         Workflow::default().name(
             named::function_name(1)
                 .split("::")
@@ -272,7 +272,7 @@ pub(crate) mod named {
 
     /// Returns a Job with the same name as the enclosing function.
     /// (note job names may not contain `::`)
-    pub(crate) fn job(job: Job) -> NamedJob {
+    pub fn job(job: Job) -> NamedJob {
         NamedJob {
             name: function_name(1).split("::").last().unwrap().to_owned(),
             job,
@@ -282,7 +282,7 @@ pub(crate) mod named {
     /// Returns the function name N callers above in the stack
     /// (typically 1).
     /// This only works because xtask always runs debug builds.
-    pub(crate) fn function_name(i: usize) -> String {
+    pub fn function_name(i: usize) -> String {
         let mut name = "<unknown>".to_string();
         let mut count = 0;
         backtrace::trace(|frame| {
@@ -297,11 +297,18 @@ pub(crate) mod named {
             });
             false
         });
-        name.split("::")
+
+        let components = name
+            .split("::")
             .skip_while(|s| s != &"workflows")
             .skip(1)
-            .collect::<Vec<_>>()
-            .join("::")
+            .collect::<Vec<_>>();
+
+        if name.starts_with("xtask[") {
+            components.join("::")
+        } else {
+            components[..components.len().saturating_sub(1)].join("::")
+        }
     }
 }
 
