@@ -990,8 +990,7 @@ impl GitPanel {
             return;
         };
 
-        self.update_visible_entries(window, cx);
-        let task = cx.spawn(async move |_, cx| {
+        let task = cx.spawn_in(window, async move |this, cx| {
             let tasks: Vec<_> = workspace.update(cx, |workspace, cx| {
                 workspace.project().update(cx, |project, cx| {
                     entries
@@ -1008,8 +1007,8 @@ impl GitPanel {
 
             let buffers = futures::future::join_all(tasks).await;
 
-            active_repository
-                .update(cx, |repo, cx| {
+            this.update_in(cx, |this, window, cx| {
+                let task = active_repository.update(cx, |repo, cx| {
                     repo.checkout_files(
                         "HEAD",
                         entries
@@ -1018,10 +1017,14 @@ impl GitPanel {
                             .collect(),
                         cx,
                     )
-                })?
-                .await?;
+                });
+                this.update_visible_entries(window, cx);
+                cx.notify();
+                task
+            })?
+            .await?;
 
-            let tasks: Vec<_> = cx.update(|cx| {
+            let tasks: Vec<_> = cx.update(|_, cx| {
                 buffers
                     .iter()
                     .filter_map(|buffer| {
