@@ -141,8 +141,8 @@ async fn process_diff<'a, T>(
     while let Some(diff_line) = diff_lines.next() {
         match diff_line {
             DiffLine::OldPath { path } => {
-                let (buffer, ranges) =
-                    get_buffer(Path::new(path.as_ref()), &mut payload).context("")?;
+                let (buffer, ranges) = get_buffer(Path::new(path.as_ref()), &mut payload)
+                    .with_context(|| format!("Failed to get buffer for {path}"))?;
                 current_file = Some((Path::new(path.as_ref()).to_path_buf(), buffer, ranges));
             }
             DiffLine::NewPath { path } => {

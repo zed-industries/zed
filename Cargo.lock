@@ -39,6 +39,7 @@ dependencies = [
  "util",
  "uuid",
  "watch",
+ "zlog",
 ]
 
 [[package]]
@@ -21687,6 +21688,7 @@ dependencies = [
  "uuid",
  "workspace",
  "worktree",
+ "zlog",
 ]
 
 [[package]]

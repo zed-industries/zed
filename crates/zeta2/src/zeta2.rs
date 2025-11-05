@@ -541,7 +541,7 @@ impl Zeta {
             prediction,
         } = project_state.current_prediction.as_ref()?;
 
-        if prediction.targets_buffer(buffer.read(cx)) {
+        if dbg!(prediction.targets_buffer(buffer.read(cx))) {
             Some(BufferEditPrediction::Local { prediction })
         } else if *requested_by_buffer_id == buffer.entity_id() {
             Some(BufferEditPrediction::Jump { prediction })
@@ -1469,6 +1469,7 @@ mod tests {
     };
     use indoc::indoc;
     use language::{LanguageServerId, OffsetRangeExt as _};
+    use open_ai::Usage;
     use pretty_assertions::{assert_eq, assert_matches};
     use project::{FakeFs, Project};
     use serde_json::json;
@@ -1485,8 +1486,8 @@ mod tests {
         fs.insert_tree(
             "/root",
             json!({
-                "1.txt": "Hello!\nHow\nBye",
-                "2.txt": "Hola!\nComo\nAdios"
+                "1.txt": "Hello!\nHow\nBye\n",
+                "2.txt": "Hola!\nComo\nAdios\n"
             }),
         )
         .await;
@@ -1512,16 +1513,17 @@ mod tests {
             zeta.refresh_prediction(&project, &buffer1, position, cx)
         });
         let (_request, respond_tx) = req_rx.next().await.unwrap();
+
         respond_tx
-            .send(predict_edits_v3::PredictEditsResponse {
-                request_id: Uuid::new_v4(),
-                edits: vec![predict_edits_v3::Edit {
-                    path: Path::new(path!("root/1.txt")).into(),
-                    range: Line(0)..Line(snapshot1.max_point().row + 1),
-                    content: "Hello!\nHow are you?\nBye".into(),
-                }],
-                debug_info: None,
-            })
+            .send(model_response(indoc! {r"
+                --- a/root/1.txt
+                +++ b/root/1.txt
+                @@ ... @@
+                 Hello!
+                -How
+                +How are you?
+                 Bye
+            "}))
             .unwrap();
         prediction_task.await.unwrap();
 
@@ -1538,15 +1540,14 @@ mod tests {
         });
         let (_request, respond_tx) = req_rx.next().await.unwrap();
         respond_tx
-            .send(predict_edits_v3::PredictEditsResponse {
-                request_id: Uuid::new_v4(),
-                edits: vec![predict_edits_v3::Edit {
-                    path: Path::new(path!("root/2.txt")).into(),
-                    range: Line(0)..Line(snapshot1.max_point().row + 1),
-                    content: "Hola!\nComo estas?\nAdios".into(),
-                }],
-                debug_info: None,
-            })
+            .send(model_response(indoc! {r#"
+                --- a/root/2.txt
+                +++ b/root/2.txt
+                 Hola!
+                -Como
+                +Como estas?
+                 Adios
+            "#}))
             .unwrap();
         prediction_task.await.unwrap();
         zeta.read_with(cx, |zeta, cx| {
@@ -1582,7 +1583,7 @@ mod tests {
         fs.insert_tree(
             "/root",
             json!({
-                "foo.md":  "Hello!\nHow\nBye"
+                "foo.md":  "Hello!\nHow\nBye\n"
             }),
         )
         .await;
@@ -1602,29 +1603,31 @@ mod tests {
             zeta.request_prediction(&project, &buffer, position, cx)
         });
 
-        let (request, respond_tx) = req_rx.next().await.unwrap();
-        assert_eq!(
-            request.excerpt_path.as_ref(),
-            Path::new(path!("root/foo.md"))
-        );
-        assert_eq!(
-            request.cursor_point,
-            Point {
-                line: Line(1),
-                column: 3
-            }
-        );
+        let (_, respond_tx) = req_rx.next().await.unwrap();
+
+        // TODO Put back when we have a structured request again
+        // assert_eq!(
+        //     request.excerpt_path.as_ref(),
+        //     Path::new(path!("root/foo.md"))
+        // );
+        // assert_eq!(
+        //     request.cursor_point,
+        //     Point {
+        //         line: Line(1),
+        //         column: 3
+        //     }
+        // );
 
         respond_tx
-            .send(predict_edits_v3::PredictEditsResponse {
-                request_id: Uuid::new_v4(),
-                edits: vec![predict_edits_v3::Edit {
-                    path: Path::new(path!("root/foo.md")).into(),
-                    range: Line(0)..Line(snapshot.max_point().row + 1),
-                    content: "Hello!\nHow are you?\nBye".into(),
-                }],
-                debug_info: None,
-            })
+            .send(model_response(indoc! { r"
+                --- a/root/foo.md
+                +++ b/root/foo.md
+                @@ ... @@
+                 Hello!
+                -How
+                +How are you?
+                 Bye
+            "}))
             .unwrap();
 
         let prediction = prediction_task.await.unwrap().unwrap();
@@ -1644,7 +1647,7 @@ mod tests {
         fs.insert_tree(
             "/root",
             json!({
-                "foo.md": "Hello!\n\nBye"
+                "foo.md": "Hello!\n\nBye\n"
             }),
         )
         .await;
@@ -1675,34 +1678,30 @@ mod tests {
 
         let (request, respond_tx) = req_rx.next().await.unwrap();
 
-        assert_eq!(request.events.len(), 1);
-        assert_eq!(
-            request.events[0],
-            predict_edits_v3::Event::BufferChange {
-                path: Some(PathBuf::from(path!("root/foo.md"))),
-                old_path: None,
-                diff: indoc! {"
-                        @@ -1,3 +1,3 @@
-                         Hello!
-                        -
-                        +How
-                         Bye
-                    "}
-                .to_string(),
-                predicted: false
-            }
+        let prompt = prompt_from_request(&request);
+        assert!(
+            prompt.contains(indoc! {"
+            --- a/root/foo.md
+            +++ b/root/foo.md
+            @@ -1,3 +1,3 @@
+             Hello!
+            -
+            +How
+             Bye
+        "}),
+            "{prompt}"
         );
 
         respond_tx
-            .send(predict_edits_v3::PredictEditsResponse {
-                request_id: Uuid::new_v4(),
-                edits: vec![predict_edits_v3::Edit {
-                    path: Path::new(path!("root/foo.md")).into(),
-                    range: Line(0)..Line(snapshot.max_point().row + 1),
-                    content: "Hello!\nHow are you?\nBye".into(),
-                }],
-                debug_info: None,
-            })
+            .send(model_response(indoc! {r#"
+                --- a/root/foo.md
+                +++ b/root/foo.md
+                @@ ... @@
+                 Hello!
+                -How
+                +How are you?
+                 Bye
+            "#}))
             .unwrap();
 
         let prediction = prediction_task.await.unwrap().unwrap();
@@ -1715,111 +1714,147 @@ mod tests {
         assert_eq!(prediction.edits[0].1.as_ref(), " are you?");
     }
 
-    #[gpui::test]
-    async fn test_request_diagnostics(cx: &mut TestAppContext) {
-        let (zeta, mut req_rx) = init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            "/root",
-            json!({
-                "foo.md": "Hello!\nBye"
-            }),
-        )
-        .await;
-        let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+    // Skipped until we start including diagnostics in prompt
+    // #[gpui::test]
+    // async fn test_request_diagnostics(cx: &mut TestAppContext) {
+    //     let (zeta, mut req_rx) = init_test(cx);
+    //     let fs = FakeFs::new(cx.executor());
+    //     fs.insert_tree(
+    //         "/root",
+    //         json!({
+    //             "foo.md": "Hello!\nBye"
+    //         }),
+    //     )
+    //     .await;
+    //     let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
 
-        let path_to_buffer_uri = lsp::Uri::from_file_path(path!("/root/foo.md")).unwrap();
-        let diagnostic = lsp::Diagnostic {
-            range: lsp::Range::new(lsp::Position::new(1, 1), lsp::Position::new(1, 5)),
-            severity: Some(lsp::DiagnosticSeverity::ERROR),
-            message: "\"Hello\" deprecated. Use \"Hi\" instead".to_string(),
-            ..Default::default()
+    //     let path_to_buffer_uri = lsp::Uri::from_file_path(path!("/root/foo.md")).unwrap();
+    //     let diagnostic = lsp::Diagnostic {
+    //         range: lsp::Range::new(lsp::Position::new(1, 1), lsp::Position::new(1, 5)),
+    //         severity: Some(lsp::DiagnosticSeverity::ERROR),
+    //         message: "\"Hello\" deprecated. Use \"Hi\" instead".to_string(),
+    //         ..Default::default()
+    //     };
+
+    //     project.update(cx, |project, cx| {
+    //         project.lsp_store().update(cx, |lsp_store, cx| {
+    //             // Create some diagnostics
+    //             lsp_store
+    //                 .update_diagnostics(
+    //                     LanguageServerId(0),
+    //                     lsp::PublishDiagnosticsParams {
+    //                         uri: path_to_buffer_uri.clone(),
+    //                         diagnostics: vec![diagnostic],
+    //                         version: None,
+    //                     },
+    //                     None,
+    //                     language::DiagnosticSourceKind::Pushed,
+    //                     &[],
+    //                     cx,
+    //                 )
+    //                 .unwrap();
+    //         });
+    //     });
+
+    //     let buffer = project
+    //         .update(cx, |project, cx| {
+    //             let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+    //             project.open_buffer(path, cx)
+    //         })
+    //         .await
+    //         .unwrap();
+
+    //     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    //     let position = snapshot.anchor_before(language::Point::new(0, 0));
+
+    //     let _prediction_task = zeta.update(cx, |zeta, cx| {
+    //         zeta.request_prediction(&project, &buffer, position, cx)
+    //     });
+
+    //     let (request, _respond_tx) = req_rx.next().await.unwrap();
+
+    //     assert_eq!(request.diagnostic_groups.len(), 1);
+    //     let value = serde_json::from_str::<serde_json::Value>(request.diagnostic_groups[0].0.get())
+    //         .unwrap();
+    //     // We probably don't need all of this. TODO define a specific diagnostic type in predict_edits_v3
+    //     assert_eq!(
+    //         value,
+    //         json!({
+    //             "entries": [{
+    //                 "range": {
+    //                     "start": 8,
+    //                     "end": 10
+    //                 },
+    //                 "diagnostic": {
+    //                     "source": null,
+    //                     "code": null,
+    //                     "code_description": null,
+    //                     "severity": 1,
+    //                     "message": "\"Hello\" deprecated. Use \"Hi\" instead",
+    //                     "markdown": null,
+    //                     "group_id": 0,
+    //                     "is_primary": true,
+    //                     "is_disk_based": false,
+    //                     "is_unnecessary": false,
+    //                     "source_kind": "Pushed",
+    //                     "data": null,
+    //                     "underline": true
+    //                 }
+    //             }],
+    //             "primary_ix": 0
+    //         })
+    //     );
+    // }
+
+    fn model_response(text: &str) -> open_ai::Response {
+        open_ai::Response {
+            id: Uuid::new_v4().to_string(),
+            object: "response".into(),
+            created: 0,
+            model: "model".into(),
+            choices: vec![open_ai::Choice {
+                index: 0,
+                message: open_ai::RequestMessage::Assistant {
+                    content: Some(open_ai::MessageContent::Plain(text.to_string())),
+                    tool_calls: vec![],
+                },
+                finish_reason: None,
+            }],
+            usage: Usage {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+            },
+        }
+    }
+
+    fn prompt_from_request(request: &open_ai::Request) -> &str {
+        assert_eq!(request.messages.len(), 1);
+        let open_ai::RequestMessage::User {
+            content: open_ai::MessageContent::Plain(content),
+            ..
+        } = &request.messages[0]
+        else {
+            panic!(
+                "Request does not have single user message of type Plain. {:#?}",
+                request
+            );
         };
-
-        project.update(cx, |project, cx| {
-            project.lsp_store().update(cx, |lsp_store, cx| {
-                // Create some diagnostics
-                lsp_store
-                    .update_diagnostics(
-                        LanguageServerId(0),
-                        lsp::PublishDiagnosticsParams {
-                            uri: path_to_buffer_uri.clone(),
-                            diagnostics: vec![diagnostic],
-                            version: None,
-                        },
-                        None,
-                        language::DiagnosticSourceKind::Pushed,
-                        &[],
-                        cx,
-                    )
-                    .unwrap();
-            });
-        });
-
-        let buffer = project
-            .update(cx, |project, cx| {
-                let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
-                project.open_buffer(path, cx)
-            })
-            .await
-            .unwrap();
-
-        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
-        let position = snapshot.anchor_before(language::Point::new(0, 0));
-
-        let _prediction_task = zeta.update(cx, |zeta, cx| {
-            zeta.request_prediction(&project, &buffer, position, cx)
-        });
-
-        let (request, _respond_tx) = req_rx.next().await.unwrap();
-
-        assert_eq!(request.diagnostic_groups.len(), 1);
-        let value = serde_json::from_str::<serde_json::Value>(request.diagnostic_groups[0].0.get())
-            .unwrap();
-        // We probably don't need all of this. TODO define a specific diagnostic type in predict_edits_v3
-        assert_eq!(
-            value,
-            json!({
-                "entries": [{
-                    "range": {
-                        "start": 8,
-                        "end": 10
-                    },
-                    "diagnostic": {
-                        "source": null,
-                        "code": null,
-                        "code_description": null,
-                        "severity": 1,
-                        "message": "\"Hello\" deprecated. Use \"Hi\" instead",
-                        "markdown": null,
-                        "group_id": 0,
-                        "is_primary": true,
-                        "is_disk_based": false,
-                        "is_unnecessary": false,
-                        "source_kind": "Pushed",
-                        "data": null,
-                        "underline": true
-                    }
-                }],
-                "primary_ix": 0
-            })
-        );
+        content
     }
 
     fn init_test(
         cx: &mut TestAppContext,
     ) -> (
         Entity<Zeta>,
-        mpsc::UnboundedReceiver<(
-            predict_edits_v3::PredictEditsRequest,
-            oneshot::Sender<predict_edits_v3::PredictEditsResponse>,
-        )>,
+        mpsc::UnboundedReceiver<(open_ai::Request, oneshot::Sender<open_ai::Response>)>,
     ) {
         cx.update(move |cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             language::init(cx);
             Project::init_settings(cx);
+            zlog::init_test();
 
             let (req_tx, req_rx) = mpsc::unbounded();
 
@@ -1834,7 +1869,7 @@ mod tests {
                                 "token": "test"
                             }))
                             .unwrap(),
-                            "/predict_edits/v3" => {
+                            "/predict_edits/raw" => {
                                 let mut buf = Vec::new();
                                 body.read_to_end(&mut buf).await.ok();
                                 let req = serde_json::from_slice(&buf).unwrap();
