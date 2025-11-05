@@ -252,17 +252,8 @@ enum MarkdownCacheKey {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CompletionsMenuSource {
-    /// Show all completions (words, snippets, LSP)
     Normal,
-    /// Show only snippets (not words or LSP)
-    ///
-    /// Used after typing a non-word character
-    SnippetsOnly,
-    /// Tab stops within a snippet that have a predefined finite set of choices
     SnippetChoices,
-    /// Show only words (not snippets or LSP)
-    ///
-    /// Used when word completions are explicitly triggered
     Words { ignore_threshold: bool },
 }
 

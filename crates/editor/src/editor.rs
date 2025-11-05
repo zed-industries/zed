@@ -2461,10 +2461,6 @@ impl Editor {
             key_context.add("renaming");
         }
 
-        if !self.snippet_stack.is_empty() {
-            key_context.add("in_snippet");
-        }
-
         match self.context_menu.borrow().as_ref() {
             Some(CodeContextMenu::Completions(menu)) => {
                 if menu.visible() {
@@ -3142,7 +3138,7 @@ impl Editor {
                 };
 
                 if continue_showing {
-                    self.open_or_update_completions_menu(None, None, false, window, cx);
+                    self.show_completions(&ShowCompletions { trigger: None }, window, cx);
                 } else {
                     self.hide_context_menu(window, cx);
                 }
@@ -4972,18 +4968,57 @@ impl Editor {
                         ignore_threshold: false,
                     }),
                     None,
-                    trigger_in_words,
                     window,
                     cx,
                 );
             }
-            _ => self.open_or_update_completions_menu(
-                None,
-                Some(text.to_owned()).filter(|x| !x.is_empty()),
-                true,
-                window,
+            Some(CompletionsMenuSource::Normal)
+            | Some(CompletionsMenuSource::SnippetChoices)
+            | None
+                if self.is_completion_trigger(
+                    text,
+                    trigger_in_words,
+                    completions_source.is_some(),
+                    cx,
+                ) =>
+            {
+                self.show_completions(
+                    &ShowCompletions {
+                        trigger: Some(text.to_owned()).filter(|x| !x.is_empty()),
+                    },
+                    window,
+                    cx,
+                )
+            }
+            _ => {
+                self.hide_context_menu(window, cx);
+            }
+        }
+    }
+
+    fn is_completion_trigger(
+        &self,
+        text: &str,
+        trigger_in_words: bool,
+        menu_is_open: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let position = self.selections.newest_anchor().head();
+        let Some(buffer) = self.buffer.read(cx).buffer_for_anchor(position, cx) else {
+            return false;
+        };
+
+        if let Some(completion_provider) = &self.completion_provider {
+            completion_provider.is_completion_trigger(
+                &buffer,
+                position.text_anchor,
+                text,
+                trigger_in_words,
+                menu_is_open,
                 cx,
-            ),
+            )
+        } else {
+            false
         }
     }
 
@@ -5261,7 +5296,6 @@ impl Editor {
                 ignore_threshold: true,
             }),
             None,
-            false,
             window,
             cx,
         );
@@ -5269,33 +5303,23 @@ impl Editor {
 
     pub fn show_completions(
         &mut self,
-        _: &ShowCompletions,
+        options: &ShowCompletions,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_or_update_completions_menu(None, None, false, window, cx);
+        self.open_or_update_completions_menu(None, options.trigger.as_deref(), window, cx);
     }
 
     fn open_or_update_completions_menu(
         &mut self,
         requested_source: Option<CompletionsMenuSource>,
-        trigger: Option<String>,
-        trigger_in_words: bool,
+        trigger: Option<&str>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.pending_rename.is_some() {
             return;
         }
-
-        let completions_source = self
-            .context_menu
-            .borrow()
-            .as_ref()
-            .and_then(|menu| match menu {
-                CodeContextMenu::Completions(completions_menu) => Some(completions_menu.source),
-                CodeContextMenu::CodeActions(_) => None,
-            });
 
         let multibuffer_snapshot = self.buffer.read(cx).read(cx);
 
@@ -5344,8 +5368,7 @@ impl Editor {
                 ignore_word_threshold = ignore_threshold;
                 None
             }
-            Some(CompletionsMenuSource::SnippetChoices)
-            | Some(CompletionsMenuSource::SnippetsOnly) => {
+            Some(CompletionsMenuSource::SnippetChoices) => {
                 log::error!("bug: SnippetChoices requested_source is not handled");
                 None
             }
@@ -5359,19 +5382,13 @@ impl Editor {
             .as_ref()
             .is_none_or(|provider| provider.filter_completions());
 
-        let was_snippets_only = matches!(
-            completions_source,
-            Some(CompletionsMenuSource::SnippetsOnly)
-        );
-
         if let Some(CodeContextMenu::Completions(menu)) = self.context_menu.borrow_mut().as_mut() {
             if filter_completions {
                 menu.filter(query.clone(), provider.clone(), window, cx);
             }
             // When `is_incomplete` is false, no need to re-query completions when the current query
             // is a suffix of the initial query.
-            let was_complete = !menu.is_incomplete;
-            if was_complete && !was_snippets_only {
+            if !menu.is_incomplete {
                 // If the new query is a suffix of the old query (typing more characters) and
                 // the previous result was complete, the existing completions can be filtered.
                 //
@@ -5393,6 +5410,23 @@ impl Editor {
                     }
                 }
             }
+        };
+
+        let trigger_kind = match trigger {
+            Some(trigger) if buffer.read(cx).completion_triggers().contains(trigger) => {
+                CompletionTriggerKind::TRIGGER_CHARACTER
+            }
+            _ => CompletionTriggerKind::INVOKED,
+        };
+        let completion_context = CompletionContext {
+            trigger_character: trigger.and_then(|trigger| {
+                if trigger_kind == CompletionTriggerKind::TRIGGER_CHARACTER {
+                    Some(String::from(trigger))
+                } else {
+                    None
+                }
+            }),
+            trigger_kind,
         };
 
         let Anchor {
@@ -5452,72 +5486,49 @@ impl Editor {
                 && match &query {
                     Some(query) => query.chars().count() < completion_settings.words_min_length,
                     None => completion_settings.words_min_length != 0,
-                })
-            || (provider.is_some() && completion_settings.words == WordsCompletionMode::Disabled);
+                });
 
-        let mut words = if omit_word_completions {
-            Task::ready(BTreeMap::default())
-        } else {
-            cx.background_spawn(async move {
-                buffer_snapshot.words_in_range(WordsQuery {
-                    fuzzy_contents: None,
-                    range: word_search_range,
-                    skip_digits,
-                })
-            })
-        };
-
-        let load_provider_completions = provider.as_ref().is_some_and(|provider| {
-            trigger.as_ref().is_none_or(|trigger| {
-                provider.is_completion_trigger(
+        let (mut words, provider_responses) = match &provider {
+            Some(provider) => {
+                let provider_responses = provider.completions(
+                    buffer_excerpt_id,
                     &buffer,
-                    position.text_anchor,
-                    trigger,
-                    trigger_in_words,
-                    completions_source.is_some(),
+                    buffer_position,
+                    completion_context,
+                    window,
                     cx,
-                )
-            })
-        });
+                );
 
-        let provider_responses = if let Some(provider) = &provider
-            && load_provider_completions
-        {
-            let trigger_character =
-                trigger.filter(|trigger| buffer.read(cx).completion_triggers().contains(trigger));
-            let completion_context = CompletionContext {
-                trigger_kind: match &trigger_character {
-                    Some(_) => CompletionTriggerKind::TRIGGER_CHARACTER,
-                    None => CompletionTriggerKind::INVOKED,
-                },
-                trigger_character,
-            };
+                let words = match (omit_word_completions, completion_settings.words) {
+                    (true, _) | (_, WordsCompletionMode::Disabled) => {
+                        Task::ready(BTreeMap::default())
+                    }
+                    (false, WordsCompletionMode::Enabled | WordsCompletionMode::Fallback) => cx
+                        .background_spawn(async move {
+                            buffer_snapshot.words_in_range(WordsQuery {
+                                fuzzy_contents: None,
+                                range: word_search_range,
+                                skip_digits,
+                            })
+                        }),
+                };
 
-            provider.completions(
-                buffer_excerpt_id,
-                &buffer,
-                buffer_position,
-                completion_context,
-                window,
-                cx,
-            )
-        } else {
-            Task::ready(Ok(Vec::new()))
-        };
-
-        let snippets = if let Some(provider) = &provider
-            && provider.show_snippets()
-            && let Some(project) = self.project()
-        {
-            project.update(cx, |project, cx| {
-                snippet_completions(project, &buffer, buffer_position, cx)
-            })
-        } else {
-            Task::ready(Ok(CompletionResponse {
-                completions: Vec::new(),
-                display_options: Default::default(),
-                is_incomplete: false,
-            }))
+                (words, provider_responses)
+            }
+            None => {
+                let words = if omit_word_completions {
+                    Task::ready(BTreeMap::default())
+                } else {
+                    cx.background_spawn(async move {
+                        buffer_snapshot.words_in_range(WordsQuery {
+                            fuzzy_contents: None,
+                            range: word_search_range,
+                            skip_digits,
+                        })
+                    })
+                };
+                (words, Task::ready(Ok(Vec::new())))
+            }
         };
 
         let snippet_sort_order = EditorSettings::get_global(cx).snippet_sort_order;
@@ -5575,13 +5586,6 @@ impl Editor {
                 confirm: None,
             }));
 
-            completions.extend(
-                snippets
-                    .await
-                    .into_iter()
-                    .flat_map(|response| response.completions),
-            );
-
             let menu = if completions.is_empty() {
                 None
             } else {
@@ -5593,11 +5597,7 @@ impl Editor {
                         .map(|workspace| workspace.read(cx).app_state().languages.clone());
                     let menu = CompletionsMenu::new(
                         id,
-                        requested_source.unwrap_or(if load_provider_completions {
-                            CompletionsMenuSource::Normal
-                        } else {
-                            CompletionsMenuSource::SnippetsOnly
-                        }),
+                        requested_source.unwrap_or(CompletionsMenuSource::Normal),
                         sort_completions,
                         show_completion_documentation,
                         position,
@@ -5927,7 +5927,7 @@ impl Editor {
             .as_ref()
             .is_some_and(|confirm| confirm(intent, window, cx));
         if show_new_completions_on_confirm {
-            self.open_or_update_completions_menu(None, None, false, window, cx);
+            self.show_completions(&ShowCompletions { trigger: None }, window, cx);
         }
 
         let provider = self.completion_provider.as_ref()?;
@@ -9975,38 +9975,6 @@ impl Editor {
         self.outdent(&Outdent, window, cx);
     }
 
-    pub fn next_snippet_tabstop(
-        &mut self,
-        _: &NextSnippetTabstop,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.mode.is_single_line() || self.snippet_stack.is_empty() {
-            return;
-        }
-
-        if self.move_to_next_snippet_tabstop(window, cx) {
-            self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
-            return;
-        }
-    }
-
-    pub fn previous_snippet_tabstop(
-        &mut self,
-        _: &PreviousSnippetTabstop,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.mode.is_single_line() || self.snippet_stack.is_empty() {
-            return;
-        }
-
-        if self.move_to_prev_snippet_tabstop(window, cx) {
-            self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
-            return;
-        }
-    }
-
     pub fn tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
         if self.mode.is_single_line() {
             cx.propagate();
@@ -12718,10 +12686,6 @@ impl Editor {
                     s.select_anchors(selection_anchors);
                 });
             }
-
-            //   🤔                 |    ..     | show_in_menu |
-            // | ..                  |   true        true
-            // | had_edit_prediction |   false       true
 
             let trigger_in_words =
                 this.show_edit_predictions_in_menu() || !had_active_edit_prediction;
@@ -22924,10 +22888,6 @@ pub trait CompletionProvider {
     fn filter_completions(&self) -> bool {
         true
     }
-
-    fn show_snippets(&self) -> bool {
-        false
-    }
 }
 
 pub trait CodeActionProvider {
@@ -23188,8 +23148,16 @@ impl CompletionProvider for Entity<Project> {
         cx: &mut Context<Editor>,
     ) -> Task<Result<Vec<CompletionResponse>>> {
         self.update(cx, |project, cx| {
-            let task = project.completions(buffer, buffer_position, options, cx);
-            cx.background_spawn(task)
+            let snippets = snippet_completions(project, buffer, buffer_position, cx);
+            let project_completions = project.completions(buffer, buffer_position, options, cx);
+            cx.background_spawn(async move {
+                let mut responses = project_completions.await?;
+                let snippets = snippets.await?;
+                if !snippets.completions.is_empty() {
+                    responses.push(snippets);
+                }
+                Ok(responses)
+            })
         })
     }
 
@@ -23260,10 +23228,6 @@ impl CompletionProvider for Entity<Project> {
         }
 
         buffer.completion_triggers().contains(text)
-    }
-
-    fn show_snippets(&self) -> bool {
-        true
     }
 }
 
