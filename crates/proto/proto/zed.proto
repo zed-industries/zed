@@ -436,7 +436,8 @@ message Envelope {
         SemanticTokensFull semantic_tokens_full = 391;
         SemanticTokensFullResponse semantic_tokens_full_response = 392;
         SemanticTokensDelta semantic_tokens_delta = 393;
-        SemanticTokensDeltaResponse semantic_tokens_delta_response = 394; // current max
+        SemanticTokensDeltaResponse semantic_tokens_delta_response = 394;
+        RefreshSemanticTokens refresh_semantic_tokens = 395; // current max
     }
 
     reserved 87 to 88;
