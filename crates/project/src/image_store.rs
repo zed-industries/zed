@@ -107,13 +107,6 @@ pub struct ImageItem {
     pub image_metadata: Option<ImageMetadata>,
 }
 
-// impl Drop for ImageItem {
-//     fn drop(&mut self) {
-//         dbg!(&self.id, &self.file, &self.image_metadata);
-//         println!("Custom backtrace: {}", std::backtrace::Backtrace::capture());
-//     }
-// }
-
 impl ImageItem {
     fn compute_metadata_from_bytes(image_bytes: &[u8]) -> Result<ImageMetadata> {
         let image_format = image::guess_format(image_bytes)?;
