@@ -59,11 +59,13 @@ pub fn new_smol_command(program: impl AsRef<OsStr>) -> smol::process::Command {
 
 #[cfg(target_os = "macos")]
 fn reset_exception_ports() {
-    use mach2::exception_types::{exception_behavior_t, exception_mask_t, EXC_MASK_ALL, EXCEPTION_DEFAULT};
-    use mach2::kern_return::{kern_return_t, KERN_SUCCESS};
+    use mach2::exception_types::{
+        EXC_MASK_ALL, EXCEPTION_DEFAULT, exception_behavior_t, exception_mask_t,
+    };
+    use mach2::kern_return::{KERN_SUCCESS, kern_return_t};
     use mach2::mach_types::task_t;
-    use mach2::port::{mach_port_t, MACH_PORT_NULL};
-    use mach2::thread_status::{thread_state_flavor_t, THREAD_STATE_NONE};
+    use mach2::port::{MACH_PORT_NULL, mach_port_t};
+    use mach2::thread_status::{THREAD_STATE_NONE, thread_state_flavor_t};
     use mach2::traps::mach_task_self;
 
     // FFI binding for task_set_exception_ports (not exposed by mach2 crate)
