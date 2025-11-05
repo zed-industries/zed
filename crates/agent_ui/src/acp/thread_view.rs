@@ -1771,44 +1771,65 @@ impl AcpThreadView {
             })?;
 
             let terminal = terminal.await?;
-            let mut exit_status = terminal
-                .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
-                .fuse();
 
-            let logged_in = cx
-                .spawn({
-                    let terminal = terminal.clone();
-                    async move |cx| {
-                        loop {
-                            cx.background_executor().timer(Duration::from_secs(1)).await;
-                            let content =
-                                terminal.update(cx, |terminal, _cx| terminal.get_content())?;
-                            if content.contains("Login successful")
-                                || content.contains("Type your message")
-                            {
-                                return anyhow::Ok(());
+            if check_exit_code {
+                // For extension-based auth: just wait for the process to exit and check exit code
+                let exit_status = terminal
+                    .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
+                    .await;
+
+                match exit_status {
+                    Some(status) if status.success() => {
+                        Ok(())
+                    }
+                    Some(status) => {
+                        Err(anyhow!("Login command failed with exit code: {:?}", status.code()))
+                    }
+                    None => {
+                        Err(anyhow!("Login command terminated without exit status"))
+                    }
+                }
+            } else {
+                // For hardcoded agents (claude-login, gemini-cli): look for specific output
+                let mut exit_status = terminal
+                    .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
+                    .fuse();
+
+                let logged_in = cx
+                    .spawn({
+                        let terminal = terminal.clone();
+                        async move |cx| {
+                            loop {
+                                cx.background_executor().timer(Duration::from_secs(1)).await;
+                                let content =
+                                    terminal.update(cx, |terminal, _cx| terminal.get_content())?;
+                                if content.contains("Login successful")
+                                    || content.contains("Type your message")
+                                {
+                                    return anyhow::Ok(());
+                                }
                             }
                         }
+                    })
+                    .fuse();
+                futures::pin_mut!(logged_in);
+                futures::select_biased! {
+                    result = logged_in => {
+                        if let Err(e) = result {
+                            log::error!("{e}");
+                            return Err(anyhow!("exited before logging in"));
+                        }
                     }
-                })
-                .fuse();
-            futures::pin_mut!(logged_in);
-            futures::select_biased! {
-                result = logged_in => {
-                    if let Err(e) = result {
-                        log::error!("{e}");
+                    _ = exit_status => {
+                        if !previous_attempt && project.read_with(cx, |project, _| project.is_via_remote_server())? && login.label.contains("gemini") {
+                            return cx.update(|window, cx| Self::spawn_external_agent_login(login, workspace, project.clone(), true, false, window, cx))?.await
+                        }
                         return Err(anyhow!("exited before logging in"));
                     }
                 }
-                _ = exit_status => {
-                    if !previous_attempt && project.read_with(cx, |project, _| project.is_via_remote_server())? && login.label.contains("gemini") {
-                        return cx.update(|window, cx| Self::spawn_external_agent_login(login, workspace, true, window, cx))?.await
-                    }
-                    return Err(anyhow!("exited before logging in"));
-                }
+                terminal.update(cx, |terminal, _| terminal.kill_active_task())?;
+                Ok(())
             }
-            terminal.update(cx, |terminal, _| terminal.kill_active_task())?;
-            Ok(())
         })
     }
 
