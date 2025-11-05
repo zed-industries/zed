@@ -7599,18 +7599,17 @@ impl Editor {
         )
     }
 
-    fn multi_cursor_modifier(invert: bool, modifiers: &Modifiers, cx: &mut Context<Self>) -> bool {
-        let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
-        if invert {
-            match multi_cursor_setting {
-                MultiCursorModifier::Alt => modifiers.alt,
-                MultiCursorModifier::CmdOrCtrl => modifiers.secondary(),
-            }
-        } else {
-            match multi_cursor_setting {
-                MultiCursorModifier::Alt => modifiers.secondary(),
-                MultiCursorModifier::CmdOrCtrl => modifiers.alt,
-            }
+    fn is_cmd_or_ctrl_pressed(modifiers: &Modifiers, cx: &mut Context<Self>) -> bool {
+        match EditorSettings::get_global(cx).multi_cursor_modifier {
+            MultiCursorModifier::Alt => modifiers.secondary(),
+            MultiCursorModifier::CmdOrCtrl => modifiers.alt,
+        }
+    }
+
+    fn is_alt_pressed(modifiers: &Modifiers, cx: &mut Context<Self>) -> bool {
+        match EditorSettings::get_global(cx).multi_cursor_modifier {
+            MultiCursorModifier::Alt => modifiers.alt,
+            MultiCursorModifier::CmdOrCtrl => modifiers.secondary(),
         }
     }
 
@@ -7619,9 +7618,9 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Option<ColumnarMode> {
         if modifiers.shift && modifiers.number_of_modifiers() == 2 {
-            if Self::multi_cursor_modifier(false, modifiers, cx) {
+            if Self::is_cmd_or_ctrl_pressed(modifiers, cx) {
                 Some(ColumnarMode::FromMouse)
-            } else if Self::multi_cursor_modifier(true, modifiers, cx) {
+            } else if Self::is_alt_pressed(modifiers, cx) {
                 Some(ColumnarMode::FromSelection)
             } else {
                 None

@@ -820,7 +820,7 @@ impl EditorElement {
             editor.select(
                 SelectPhase::Begin {
                     position,
-                    add: Editor::multi_cursor_modifier(true, &modifiers, cx),
+                    add: Editor::is_alt_pressed(&modifiers, cx),
                     click_count,
                 },
                 window,
@@ -1004,7 +1004,7 @@ impl EditorElement {
         let text_hitbox = &position_map.text_hitbox;
         let pending_nonempty_selections = editor.has_pending_nonempty_selection();
 
-        let hovered_link_modifier = Editor::multi_cursor_modifier(false, &event.modifiers(), cx);
+        let hovered_link_modifier = Editor::is_cmd_or_ctrl_pressed(&event.modifiers(), cx);
 
         if let Some(mouse_position) = event.mouse_position()
             && !pending_nonempty_selections
