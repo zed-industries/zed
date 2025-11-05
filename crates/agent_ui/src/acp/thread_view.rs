@@ -1773,7 +1773,7 @@ impl AcpThreadView {
             let terminal = terminal.await?;
 
             if check_exit_code {
-                // For extension-based auth: just wait for the process to exit and check exit code
+                // For extension-based auth, wait for the process to exit and check exit code
                 let exit_status = terminal
                     .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
                     .await;
