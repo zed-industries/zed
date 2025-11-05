@@ -12641,9 +12641,12 @@ impl Editor {
                         text.push_str(chunk);
                         len += chunk.len();
                     }
-                    if add_trailing_newline {
+                    if is_entire_line {
+                        len -= 1;
+                    }
+                    if is_entire_line && add_trailing_newline {
                         text.push('\n');
-                        len += 1;
+                        len += 2;
                     }
                     clipboard_selections.push(ClipboardSelection {
                         len,
