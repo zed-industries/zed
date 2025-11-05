@@ -1880,7 +1880,12 @@ impl AgentPanel {
                 {
                     let focus_handle = focus_handle.clone();
                     move |_window, cx| {
-                        Tooltip::for_action_in("New…", &ToggleNewThreadMenu, &focus_handle, cx)
+                        Tooltip::for_action_in(
+                            "New Thread…",
+                            &ToggleNewThreadMenu,
+                            &focus_handle,
+                            cx,
+                        )
                     }
                 },
             )
