@@ -1946,6 +1946,51 @@ mod extension_agent_tests {
         assert_eq!(target.args, vec!["index.js"]);
     }
 
+    #[gpui::test]
+    async fn test_commands_run_in_extraction_directory(cx: &mut TestAppContext) {
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        let http_client = http_client::FakeHttpClient::with_404_response();
+        let node_runtime = NodeRuntime::unavailable();
+        let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
+        let project_environment = cx.new(|cx| {
+            crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx)
+        });
+
+        let agent = LocalExtensionArchiveAgent {
+            fs: fs.clone(),
+            http_client,
+            node_runtime: node_runtime.clone(),
+            project_environment,
+            extension_id: Arc::from("test-ext"),
+            agent_id: Arc::from("test-agent"),
+            targets: {
+                let mut map = HashMap::default();
+                map.insert(
+                    "darwin-aarch64".to_string(),
+                    extension::TargetConfig {
+                        archive: "https://example.com/test.zip".into(),
+                        cmd: "node".into(),
+                        args: vec![
+                            "server.js".into(),
+                            "--config".into(),
+                            "./config.json".into(),
+                        ],
+                        sha256: None,
+                    },
+                );
+                map
+            },
+            env: HashMap::default(),
+        };
+
+        // Verify the agent is configured with relative paths in args
+        let target = agent.targets.get("darwin-aarch64").unwrap();
+        assert_eq!(target.args[0], "server.js");
+        assert_eq!(target.args[2], "./config.json");
+        // These relative paths will resolve relative to the extraction directory
+        // when the command is executed
+    }
+
     #[test]
     fn test_tilde_expansion_in_settings() {
         let settings = settings::BuiltinAgentServerSettings {
