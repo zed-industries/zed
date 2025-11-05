@@ -1573,7 +1573,6 @@ impl AcpThreadView {
             }
         }
 
-        // Keep existing hardcoded auth methods for backward compatibility
         if method.0.as_ref() == "gemini-api-key" {
             let registry = LanguageModelRegistry::global(cx);
             let provider = registry
