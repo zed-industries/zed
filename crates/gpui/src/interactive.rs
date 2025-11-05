@@ -26,10 +26,8 @@ pub struct KeyDownEvent {
     /// Whether the key is currently held down.
     pub is_held: bool,
 
-    /// Whether the modifiers are excessive for producing this character.
-    /// When false, the modifiers are essential for character input (e.g., AltGr),
-    /// and character input should be prioritized over keybindings.
-    /// When true, the modifiers are for keybindings (e.g., Ctrl+A).
+    /// Whether to prefer character input over keybindings for this keystroke.
+    /// In some cases, like AltGr on Windows, modifiers are significant for character input.
     pub prefer_character_input: bool,
 }
 
