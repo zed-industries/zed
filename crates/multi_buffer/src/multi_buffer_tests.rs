@@ -4003,16 +4003,12 @@ async fn test_diff_hunk_row_ranges(cx: &mut TestAppContext) {
              "
         ),
     );
-    let hunks = dbg!(
-        snapshot
-            .diff_hunks_in_range(Anchor::min()..Anchor::max())
-            .collect::<Vec<_>>()
-    );
-    dbg!(
-        hunks[0]
-            .multi_buffer_range()
-            .start
-            .bias_right(&snapshot)
-            .to_point(&snapshot)
-    );
+    let hunks = snapshot
+        .diff_hunks_in_range(Anchor::min()..Anchor::max())
+        .collect::<Vec<_>>();
+    hunks[0]
+        .multi_buffer_range()
+        .start
+        .bias_right(&snapshot)
+        .to_point(&snapshot);
 }

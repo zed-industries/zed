@@ -4120,8 +4120,8 @@ impl MultiBufferSnapshot {
             }
         };
 
-        result.add_assign(dbg!(&suffix));
-        dbg!(result)
+        result.add_assign(&suffix);
+        result
     }
 
     fn text_summary_for_excerpt_offset_range<D>(&self, mut range: Range<ExcerptOffset>) -> D
@@ -4148,7 +4148,6 @@ impl MultiBufferSnapshot {
             );
 
             if range.end > end_before_newline {
-                dbg!();
                 summary.add_assign(&D::from_text_summary(&TextSummary::from("\n")));
             }
 

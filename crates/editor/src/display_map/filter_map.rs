@@ -207,6 +207,7 @@ impl FilterMap {
     #[cfg(debug_assertions)]
     fn check_invariants(&self) {
         use itertools::Itertools;
+        use multi_buffer::MultiBufferRow;
 
         #[cfg(test)]
         pretty_assertions::assert_eq!(
@@ -254,70 +255,35 @@ impl FilterMap {
 
         let mut expected_summary = TextSummary::default();
         let mut expected_text = String::new();
-        let mut anchor = multi_buffer::Anchor::min();
-        dbg!(mode);
-        for hunk in self.snapshot.buffer_snapshot.diff_hunks() {
-            let prefix_range = anchor
-                ..hunk
-                    .multi_buffer_range()
-                    .start
-                    .bias_left(&self.snapshot.buffer_snapshot);
-            dbg!(prefix_range.to_offset(&self.snapshot.buffer_snapshot));
+
+        let mut row_infos = self
+            .snapshot
+            .buffer_snapshot
+            .row_infos(MultiBufferRow(0))
+            .peekable();
+        while let Some(row_info) = row_infos.next() {
+            let Some(row) = row_info.multibuffer_row else {
+                continue;
+            };
+            if let Some(status) = row_info.diff_status
+                && mode.should_remove(status.kind)
+            {
+                continue;
+            }
+
+            let row_range = Point::new(row.0, 0)
+                ..Point::new(row.0 + 1, 0).min(self.snapshot.buffer_snapshot.max_point());
             expected_summary += self
                 .snapshot
                 .buffer_snapshot
-                .text_summary_for_range::<TextSummary, _>(prefix_range.clone());
-            expected_text.push_str(dbg!(
-                &self
-                    .snapshot
-                    .buffer_snapshot
-                    .text_for_range(prefix_range)
-                    .collect::<String>()
-            ));
-            let (deletion_range, addition_range) =
-                diff_hunk_bounds(&hunk, &self.snapshot.buffer_snapshot);
-
-            match mode {
-                FilterMode::RemoveDeletions => {
-                    expected_summary += self
-                        .snapshot
-                        .buffer_snapshot
-                        .text_summary_for_range::<TextSummary, _>(addition_range.clone());
-                    expected_text.push_str(dbg!(
-                        &self
-                            .snapshot
-                            .buffer_snapshot
-                            .text_for_range(addition_range)
-                            .collect::<String>()
-                    ));
-                }
-                FilterMode::RemoveInsertions => {
-                    expected_summary += self
-                        .snapshot
-                        .buffer_snapshot
-                        .text_summary_for_range::<TextSummary, _>(deletion_range.clone());
-                    expected_text.push_str(dbg!(
-                        &self
-                            .snapshot
-                            .buffer_snapshot
-                            .text_for_range(deletion_range)
-                            .collect::<String>()
-                    ))
-                }
-            }
-            anchor = hunk.multi_buffer_range().end;
-        }
-        expected_summary += self
-            .snapshot
-            .buffer_snapshot
-            .text_summary_for_range::<TextSummary, _>(anchor..multi_buffer::Anchor::max());
-        expected_text.push_str(dbg!(
-            &self
+                .text_summary_for_range::<TextSummary, _>(row_range.clone());
+            let row_text = self
                 .snapshot
                 .buffer_snapshot
-                .text_for_range(anchor..multi_buffer::Anchor::max())
-                .collect::<String>()
-        ));
+                .text_for_range(row_range)
+                .collect::<String>();
+            expected_text += &row_text;
+        }
 
         #[cfg(test)]
         pretty_assertions::assert_eq!(
@@ -438,8 +404,6 @@ impl FilterMap {
 
             let mut edit_old_start = transform_cursor.start().1;
             let mut edit_new_start = FilterOffset(new_transforms.summary().output.0.len);
-
-            dbg!(&buffer_edit);
 
             // If the edit starts in the middle of a transform, split the transform and push the unaffected portion.
             if buffer_edit.new.start > new_transforms.summary().input.0.len {
