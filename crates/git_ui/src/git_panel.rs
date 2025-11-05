@@ -1180,7 +1180,7 @@ impl GitPanel {
             async move |this, cx| {
                 let result = this
                     .update(cx, |this, cx| {
-                        let res = active_repository.update(cx, |repo, cx| {
+                        let task = active_repository.update(cx, |repo, cx| {
                             if stage {
                                 repo.stage_all(cx)
                             } else {
@@ -1189,7 +1189,7 @@ impl GitPanel {
                         });
                         this.update_counts(active_repository.read(cx));
                         cx.notify();
-                        res
+                        task
                     })?
                     .await;
 
@@ -1273,16 +1273,11 @@ impl GitPanel {
         let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
-
-        let repository = active_repository.read(cx);
-        self.update_counts(repository);
-        cx.notify();
-
         cx.spawn({
             async move |this, cx| {
-                let result = cx
-                    .update(|cx| {
-                        active_repository.update(cx, |repo, cx| {
+                let result = this
+                    .update(cx, |this, cx| {
+                        let task = active_repository.update(cx, |repo, cx| {
                             let repo_paths = entries
                                 .iter()
                                 .map(|entry| entry.repo_path.clone())
@@ -1292,7 +1287,10 @@ impl GitPanel {
                             } else {
                                 repo.unstage_entries(repo_paths, cx)
                             }
-                        })
+                        });
+                        this.update_counts(active_repository.read(cx));
+                        cx.notify();
+                        task
                     })?
                     .await;
 
