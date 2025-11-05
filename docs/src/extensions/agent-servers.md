@@ -150,3 +150,7 @@ For optimal display, follow these guidelines:
 Note that we'll only accept monochrome icons, to preserve Zed's design consistency. (You can still use opacity in different paths of your SVG to add visual layering.)
 
 This is all you need to distribute an agent server through Zed's extension system!
+
+## Publishing
+
+Once your extension is ready, see [Publishing your extension](./developing-extensions.md#publishing-your-extension) to learn how to submit it to the Zed extension registry.
