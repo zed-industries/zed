@@ -50,12 +50,13 @@ impl Vim {
                         if kind == Some(MotionKind::Linewise) {
                             let start = selection.start.to_point(map);
                             let end = selection.end.to_point(map);
-                            if end.row < map.buffer_snapshot.max_point().row {
+                            if end.row < map.buffer_snapshot().max_point().row {
                                 selection.end = Point::new(end.row + 1, 0).to_display_point(map)
                             } else if start.row > 0 {
                                 selection.start = Point::new(
                                     start.row - 1,
-                                    map.buffer_snapshot.line_len(MultiBufferRow(start.row - 1)),
+                                    map.buffer_snapshot()
+                                        .line_len(MultiBufferRow(start.row - 1)),
                                 )
                                 .to_display_point(map)
                             }
@@ -183,7 +184,7 @@ impl Vim {
                             let mut cursor_point = cursor.to_point(map);
                             cursor_point.column = *column;
                             cursor = map
-                                .buffer_snapshot
+                                .buffer_snapshot()
                                 .clip_point(cursor_point, Bias::Left)
                                 .to_display_point(map);
                         }
@@ -203,7 +204,7 @@ fn move_selection_end_to_next_line(map: &DisplaySnapshot, selection: &mut Select
 }
 
 fn ends_at_eof(map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>) -> bool {
-    selection.end.to_point(map) == map.buffer_snapshot.max_point()
+    selection.end.to_point(map) == map.buffer_snapshot().max_point()
 }
 
 #[cfg(test)]

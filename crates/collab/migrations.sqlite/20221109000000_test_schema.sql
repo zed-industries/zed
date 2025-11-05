@@ -61,7 +61,8 @@ CREATE TABLE "projects" (
     "host_user_id" INTEGER REFERENCES users (id),
     "host_connection_id" INTEGER,
     "host_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE CASCADE,
-    "unregistered" BOOLEAN NOT NULL DEFAULT FALSE
+    "unregistered" BOOLEAN NOT NULL DEFAULT FALSE,
+    "windows_paths" BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE INDEX "index_projects_on_host_connection_server_id" ON "projects" ("host_connection_server_id");
@@ -96,6 +97,7 @@ CREATE TABLE "worktree_entries" (
     "is_external" BOOL NOT NULL,
     "is_ignored" BOOL NOT NULL,
     "is_deleted" BOOL NOT NULL,
+    "is_hidden" BOOL NOT NULL,
     "git_status" INTEGER,
     "is_fifo" BOOL NOT NULL,
     PRIMARY KEY (project_id, worktree_id, id),
@@ -465,6 +467,7 @@ CREATE TABLE extension_versions (
     provides_grammars BOOLEAN NOT NULL DEFAULT FALSE,
     provides_language_servers BOOLEAN NOT NULL DEFAULT FALSE,
     provides_context_servers BOOLEAN NOT NULL DEFAULT FALSE,
+    provides_agent_servers BOOLEAN NOT NULL DEFAULT FALSE,
     provides_slash_commands BOOLEAN NOT NULL DEFAULT FALSE,
     provides_indexed_docs_providers BOOLEAN NOT NULL DEFAULT FALSE,
     provides_snippets BOOLEAN NOT NULL DEFAULT FALSE,

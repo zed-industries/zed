@@ -16,14 +16,14 @@ use futures::{
 use gpui::{AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::{
     Buffer, LanguageRegistry, LocalFile,
-    language_settings::{Formatter, LanguageSettings, SelectedFormatter},
+    language_settings::{Formatter, LanguageSettings},
 };
 use lsp::{LanguageServer, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;
 use prettier::Prettier;
 use smol::stream::StreamExt;
-use util::{ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt, rel_path::RelPath};
 
 use crate::{
     File, PathChange, ProjectEntryId, Worktree, lsp_store::WorktreeId,
@@ -442,12 +442,12 @@ impl PrettierStore {
     pub fn update_prettier_settings(
         &self,
         worktree: &Entity<Worktree>,
-        changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
+        changes: &[(Arc<RelPath>, ProjectEntryId, PathChange)],
         cx: &mut Context<Self>,
     ) {
         let prettier_config_files = Prettier::CONFIG_FILE_NAMES
             .iter()
-            .map(Path::new)
+            .map(|name| RelPath::unix(name).unwrap())
             .collect::<HashSet<_>>();
 
         let prettier_config_file_changed = changes
@@ -456,7 +456,7 @@ impl PrettierStore {
             .filter(|(path, _, _)| {
                 !path
                     .components()
-                    .any(|component| component.as_os_str().to_string_lossy() == "node_modules")
+                    .any(|component| component == "node_modules")
             })
             .find(|(path, _, _)| prettier_config_files.contains(path.as_ref()));
         let current_worktree_id = worktree.read(cx).id();
@@ -700,14 +700,11 @@ impl PrettierStore {
 pub fn prettier_plugins_for_language(
     language_settings: &LanguageSettings,
 ) -> Option<&HashSet<String>> {
-    match &language_settings.formatter {
-        SelectedFormatter::Auto => Some(&language_settings.prettier.plugins),
-
-        SelectedFormatter::List(list) => list
-            .as_ref()
-            .contains(&Formatter::Prettier)
-            .then_some(&language_settings.prettier.plugins),
+    let formatters = language_settings.formatter.as_ref();
+    if formatters.contains(&Formatter::Prettier) || formatters.contains(&Formatter::Auto) {
+        return Some(&language_settings.prettier.plugins);
     }
+    None
 }
 
 pub(super) async fn format_with_prettier(

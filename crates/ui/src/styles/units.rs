@@ -10,8 +10,8 @@ pub const BASE_REM_SIZE_IN_PX: f32 = 16.;
 ///
 /// For instance, instead of writing `rems(0.875)` you can write `rems_from_px(14.)`
 #[inline(always)]
-pub fn rems_from_px(px: f32) -> Rems {
-    rems(px / BASE_REM_SIZE_IN_PX)
+pub fn rems_from_px(px: impl Into<f32>) -> Rems {
+    rems(px.into() / BASE_REM_SIZE_IN_PX)
 }
 
 /// Returns a [`Length`] corresponding to the specified percentage of the viewport's width.

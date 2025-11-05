@@ -7,6 +7,9 @@ use parking_lot::RwLock;
 use rand::prelude::*;
 use settings::SettingsStore;
 use std::env;
+use std::time::{Duration, Instant};
+use util::RandomCharIter;
+use util::rel_path::rel_path;
 use util::test::sample_text;
 
 #[ctor::ctor]
@@ -29,6 +32,7 @@ fn test_empty_singleton(cx: &mut App) {
             multibuffer_row: Some(MultiBufferRow(0)),
             diff_status: None,
             expand_info: None,
+            wrapped_buffer_row: None,
         }]
     );
 }
@@ -76,7 +80,9 @@ fn test_remote(cx: &mut App) {
         let ops = cx
             .background_executor()
             .block(host_buffer.read(cx).serialize_ops(None, cx));
-        let mut buffer = Buffer::from_proto(1, Capability::ReadWrite, state, None).unwrap();
+        let mut buffer =
+            Buffer::from_proto(ReplicaId::REMOTE_SERVER, Capability::ReadWrite, state, None)
+                .unwrap();
         buffer.apply_ops(
             ops.into_iter()
                 .map(|op| language::proto::deserialize_operation(op).unwrap()),
@@ -155,15 +161,12 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
         events.read().as_slice(),
         &[
             Event::Edited {
-                singleton_buffer_edited: false,
                 edited_buffer: None,
             },
             Event::Edited {
-                singleton_buffer_edited: false,
                 edited_buffer: None,
             },
             Event::Edited {
-                singleton_buffer_edited: false,
                 edited_buffer: None,
             }
         ]
@@ -798,7 +801,13 @@ async fn test_set_anchored_excerpts_for_path(cx: &mut TestAppContext) {
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     let anchor_ranges_1 = multibuffer
         .update(cx, |multibuffer, cx| {
-            multibuffer.set_anchored_excerpts_for_path(buffer_1.clone(), ranges_1, 2, cx)
+            multibuffer.set_anchored_excerpts_for_path(
+                PathKey::for_buffer(&buffer_1, cx),
+                buffer_1.clone(),
+                ranges_1,
+                2,
+                cx,
+            )
         })
         .await;
     let snapshot_1 = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
@@ -815,7 +824,13 @@ async fn test_set_anchored_excerpts_for_path(cx: &mut TestAppContext) {
     );
     let anchor_ranges_2 = multibuffer
         .update(cx, |multibuffer, cx| {
-            multibuffer.set_anchored_excerpts_for_path(buffer_2.clone(), ranges_2, 2, cx)
+            multibuffer.set_anchored_excerpts_for_path(
+                PathKey::for_buffer(&buffer_2, cx),
+                buffer_2.clone(),
+                ranges_2,
+                2,
+                cx,
+            )
         })
         .await;
     let snapshot_2 = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
@@ -1523,7 +1538,7 @@ fn test_set_excerpts_for_buffer_ordering(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path1: PathKey = PathKey::namespaced(0, Path::new("/").into());
+    let path1: PathKey = PathKey::with_sort_prefix(0, rel_path("root").into_arc());
 
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |multibuffer, cx| {
@@ -1618,7 +1633,7 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path1: PathKey = PathKey::namespaced(0, Path::new("/").into());
+    let path1: PathKey = PathKey::with_sort_prefix(0, rel_path("root").into_arc());
     let buf2 = cx.new(|cx| {
         Buffer::local(
             indoc! {
@@ -1637,7 +1652,7 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path2 = PathKey::namespaced(1, Path::new("/").into());
+    let path2 = PathKey::with_sort_prefix(1, rel_path("root").into_arc());
 
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |multibuffer, cx| {
@@ -1814,7 +1829,7 @@ fn test_set_excerpts_for_buffer_rename(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path: PathKey = PathKey::namespaced(0, Path::new("/").into());
+    let path: PathKey = PathKey::with_sort_prefix(0, rel_path("root").into_arc());
     let buf2 = cx.new(|cx| {
         Buffer::local(
             indoc! {
@@ -2418,6 +2433,8 @@ impl ReferenceMultibuffer {
                             buffer_id: region.buffer_id,
                             diff_status: region.status,
                             buffer_row,
+                            wrapped_buffer_row: None,
+
                             multibuffer_row: Some(MultiBufferRow(
                                 text[..ix].matches('\n').count() as u32
                             )),
@@ -2971,7 +2988,7 @@ fn test_history(cx: &mut App) {
     });
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |this, _| {
-        this.history.group_interval = group_interval;
+        this.set_group_interval(group_interval);
     });
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.push_excerpts(
@@ -3625,7 +3642,7 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
 fn assert_line_indents(snapshot: &MultiBufferSnapshot) {
     let max_row = snapshot.max_point().row;
     let buffer_id = snapshot.excerpts().next().unwrap().1.remote_id();
-    let text = text::Buffer::new(0, buffer_id, snapshot.text());
+    let text = text::Buffer::new(ReplicaId::LOCAL, buffer_id, snapshot.text());
     let mut line_indents = text
         .line_indents_in_row_range(0..max_row + 1)
         .collect::<Vec<_>>();
@@ -3715,4 +3732,236 @@ fn test_new_empty_buffers_title_can_be_set(cx: &mut App) {
         multibuffer.set_title("Hey".into(), cx)
     });
     assert_eq!(multibuffer.read(cx).title(cx), "Hey");
+}
+
+#[gpui::test(iterations = 100)]
+fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
+    let multibuffer = if rng.random() {
+        let len = rng.random_range(0..10000);
+        let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+        let buffer = cx.new(|cx| Buffer::local(text, cx));
+        cx.new(|cx| MultiBuffer::singleton(buffer, cx))
+    } else {
+        MultiBuffer::build_random(&mut rng, cx)
+    };
+
+    let snapshot = multibuffer.read(cx).snapshot(cx);
+
+    let chunks = snapshot.chunks(0..snapshot.len(), false);
+
+    for chunk in chunks {
+        let chunk_text = chunk.text;
+        let chars_bitmap = chunk.chars;
+        let tabs_bitmap = chunk.tabs;
+
+        if chunk_text.is_empty() {
+            assert_eq!(
+                chars_bitmap, 0,
+                "Empty chunk should have empty chars bitmap"
+            );
+            assert_eq!(tabs_bitmap, 0, "Empty chunk should have empty tabs bitmap");
+            continue;
+        }
+
+        assert!(
+            chunk_text.len() <= 128,
+            "Chunk text length {} exceeds 128 bytes",
+            chunk_text.len()
+        );
+
+        // Verify chars bitmap
+        let char_indices = chunk_text
+            .char_indices()
+            .map(|(i, _)| i)
+            .collect::<Vec<_>>();
+
+        for byte_idx in 0..chunk_text.len() {
+            let should_have_bit = char_indices.contains(&byte_idx);
+            let has_bit = chars_bitmap & (1 << byte_idx) != 0;
+
+            if has_bit != should_have_bit {
+                eprintln!("Chunk text bytes: {:?}", chunk_text.as_bytes());
+                eprintln!("Char indices: {:?}", char_indices);
+                eprintln!("Chars bitmap: {:#b}", chars_bitmap);
+            }
+
+            assert_eq!(
+                has_bit, should_have_bit,
+                "Chars bitmap mismatch at byte index {} in chunk {:?}. Expected bit: {}, Got bit: {}",
+                byte_idx, chunk_text, should_have_bit, has_bit
+            );
+        }
+
+        for (byte_idx, byte) in chunk_text.bytes().enumerate() {
+            let is_tab = byte == b'\t';
+            let has_bit = tabs_bitmap & (1 << byte_idx) != 0;
+
+            if has_bit != is_tab {
+                eprintln!("Chunk text bytes: {:?}", chunk_text.as_bytes());
+                eprintln!("Tabs bitmap: {:#b}", tabs_bitmap);
+                assert_eq!(
+                    has_bit, is_tab,
+                    "Tabs bitmap mismatch at byte index {} in chunk {:?}. Byte: {:?}, Expected bit: {}, Got bit: {}",
+                    byte_idx, chunk_text, byte as char, is_tab, has_bit
+                );
+            }
+        }
+    }
+}
+
+#[gpui::test(iterations = 100)]
+fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
+    use buffer_diff::BufferDiff;
+    use util::RandomCharIter;
+
+    let multibuffer = if rng.random() {
+        let len = rng.random_range(100..10000);
+        let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+        let buffer = cx.new(|cx| Buffer::local(text, cx));
+        cx.new(|cx| MultiBuffer::singleton(buffer, cx))
+    } else {
+        MultiBuffer::build_random(&mut rng, cx)
+    };
+
+    let _diff_count = rng.random_range(1..5);
+    let mut diffs = Vec::new();
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        for buffer_id in multibuffer.excerpt_buffer_ids() {
+            if rng.random_bool(0.7) {
+                if let Some(buffer_handle) = multibuffer.buffer(buffer_id) {
+                    let buffer_text = buffer_handle.read(cx).text();
+                    let mut base_text = String::new();
+
+                    for line in buffer_text.lines() {
+                        if rng.random_bool(0.3) {
+                            continue;
+                        } else if rng.random_bool(0.3) {
+                            let line_len = rng.random_range(0..50);
+                            let modified_line = RandomCharIter::new(&mut rng)
+                                .take(line_len)
+                                .collect::<String>();
+                            base_text.push_str(&modified_line);
+                            base_text.push('\n');
+                        } else {
+                            base_text.push_str(line);
+                            base_text.push('\n');
+                        }
+                    }
+
+                    if rng.random_bool(0.5) {
+                        let extra_lines = rng.random_range(1..5);
+                        for _ in 0..extra_lines {
+                            let line_len = rng.random_range(0..50);
+                            let extra_line = RandomCharIter::new(&mut rng)
+                                .take(line_len)
+                                .collect::<String>();
+                            base_text.push_str(&extra_line);
+                            base_text.push('\n');
+                        }
+                    }
+
+                    let diff =
+                        cx.new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer_handle, cx));
+                    diffs.push(diff.clone());
+                    multibuffer.add_diff(diff, cx);
+                }
+            }
+        }
+    });
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        if rng.random_bool(0.5) {
+            multibuffer.set_all_diff_hunks_expanded(cx);
+        } else {
+            let snapshot = multibuffer.snapshot(cx);
+            let text = snapshot.text();
+
+            let mut ranges = Vec::new();
+            for _ in 0..rng.random_range(1..5) {
+                if snapshot.len() == 0 {
+                    break;
+                }
+
+                let diff_size = rng.random_range(5..1000);
+                let mut start = rng.random_range(0..snapshot.len());
+
+                while !text.is_char_boundary(start) {
+                    start = start.saturating_sub(1);
+                }
+
+                let mut end = rng.random_range(start..snapshot.len().min(start + diff_size));
+
+                while !text.is_char_boundary(end) {
+                    end = end.saturating_add(1);
+                }
+                let start_anchor = snapshot.anchor_after(start);
+                let end_anchor = snapshot.anchor_before(end);
+                ranges.push(start_anchor..end_anchor);
+            }
+            multibuffer.expand_diff_hunks(ranges, cx);
+        }
+    });
+
+    let snapshot = multibuffer.read(cx).snapshot(cx);
+
+    let chunks = snapshot.chunks(0..snapshot.len(), false);
+
+    for chunk in chunks {
+        let chunk_text = chunk.text;
+        let chars_bitmap = chunk.chars;
+        let tabs_bitmap = chunk.tabs;
+
+        if chunk_text.is_empty() {
+            assert_eq!(
+                chars_bitmap, 0,
+                "Empty chunk should have empty chars bitmap"
+            );
+            assert_eq!(tabs_bitmap, 0, "Empty chunk should have empty tabs bitmap");
+            continue;
+        }
+
+        assert!(
+            chunk_text.len() <= 128,
+            "Chunk text length {} exceeds 128 bytes",
+            chunk_text.len()
+        );
+
+        let char_indices = chunk_text
+            .char_indices()
+            .map(|(i, _)| i)
+            .collect::<Vec<_>>();
+
+        for byte_idx in 0..chunk_text.len() {
+            let should_have_bit = char_indices.contains(&byte_idx);
+            let has_bit = chars_bitmap & (1 << byte_idx) != 0;
+
+            if has_bit != should_have_bit {
+                eprintln!("Chunk text bytes: {:?}", chunk_text.as_bytes());
+                eprintln!("Char indices: {:?}", char_indices);
+                eprintln!("Chars bitmap: {:#b}", chars_bitmap);
+            }
+
+            assert_eq!(
+                has_bit, should_have_bit,
+                "Chars bitmap mismatch at byte index {} in chunk {:?}. Expected bit: {}, Got bit: {}",
+                byte_idx, chunk_text, should_have_bit, has_bit
+            );
+        }
+
+        for (byte_idx, byte) in chunk_text.bytes().enumerate() {
+            let is_tab = byte == b'\t';
+            let has_bit = tabs_bitmap & (1 << byte_idx) != 0;
+
+            if has_bit != is_tab {
+                eprintln!("Chunk text bytes: {:?}", chunk_text.as_bytes());
+                eprintln!("Tabs bitmap: {:#b}", tabs_bitmap);
+                assert_eq!(
+                    has_bit, is_tab,
+                    "Tabs bitmap mismatch at byte index {} in chunk {:?}. Byte: {:?}, Expected bit: {}, Got bit: {}",
+                    byte_idx, chunk_text, byte as char, is_tab, has_bit
+                );
+            }
+        }
+    }
 }

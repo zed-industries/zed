@@ -6,7 +6,7 @@ use editor::{
     hover_popover::diagnostics_markdown_style,
 };
 use gpui::{AppContext, Entity, Focusable, WeakEntity};
-use language::{BufferId, Diagnostic, DiagnosticEntry};
+use language::{BufferId, Diagnostic, DiagnosticEntryRef};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownElement};
 use settings::Settings;
@@ -18,15 +18,15 @@ use ui::{
 };
 use util::maybe;
 
-use crate::ProjectDiagnosticsEditor;
+use crate::toolbar_controls::DiagnosticsToolbarEditor;
 
 pub struct DiagnosticRenderer;
 
 impl DiagnosticRenderer {
     pub fn diagnostic_blocks_for_group(
-        diagnostic_group: Vec<DiagnosticEntry<Point>>,
+        diagnostic_group: Vec<DiagnosticEntryRef<'_, Point>>,
         buffer_id: BufferId,
-        diagnostics_editor: Option<WeakEntity<ProjectDiagnosticsEditor>>,
+        diagnostics_editor: Option<Arc<dyn DiagnosticsToolbarEditor>>,
         cx: &mut App,
     ) -> Vec<DiagnosticBlock> {
         let Some(primary_ix) = diagnostic_group
@@ -35,7 +35,7 @@ impl DiagnosticRenderer {
         else {
             return Vec::new();
         };
-        let primary = diagnostic_group[primary_ix].clone();
+        let primary = &diagnostic_group[primary_ix];
         let group_id = primary.diagnostic.group_id;
         let mut results = vec![];
         for entry in diagnostic_group.iter() {
@@ -123,13 +123,14 @@ impl DiagnosticRenderer {
 impl editor::DiagnosticRenderer for DiagnosticRenderer {
     fn render_group(
         &self,
-        diagnostic_group: Vec<DiagnosticEntry<Point>>,
+        diagnostic_group: Vec<DiagnosticEntryRef<'_, Point>>,
         buffer_id: BufferId,
         snapshot: EditorSnapshot,
         editor: WeakEntity<Editor>,
         cx: &mut App,
     ) -> Vec<BlockProperties<Anchor>> {
         let blocks = Self::diagnostic_blocks_for_group(diagnostic_group, buffer_id, None, cx);
+
         blocks
             .into_iter()
             .map(|block| {
@@ -137,7 +138,7 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
                 BlockProperties {
                     placement: BlockPlacement::Near(
                         snapshot
-                            .buffer_snapshot
+                            .buffer_snapshot()
                             .anchor_after(block.initial_range.start),
                     ),
                     height: Some(1),
@@ -151,19 +152,15 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
 
     fn render_hover(
         &self,
-        diagnostic_group: Vec<DiagnosticEntry<Point>>,
+        diagnostic_group: Vec<DiagnosticEntryRef<'_, Point>>,
         range: Range<Point>,
         buffer_id: BufferId,
         cx: &mut App,
     ) -> Option<Entity<Markdown>> {
         let blocks = Self::diagnostic_blocks_for_group(diagnostic_group, buffer_id, None, cx);
-        blocks.into_iter().find_map(|block| {
-            if block.initial_range == range {
-                Some(block.markdown)
-            } else {
-                None
-            }
-        })
+        blocks
+            .into_iter()
+            .find_map(|block| (block.initial_range == range).then(|| block.markdown))
     }
 
     fn open_link(
@@ -182,13 +179,13 @@ pub(crate) struct DiagnosticBlock {
     pub(crate) initial_range: Range<Point>,
     pub(crate) severity: DiagnosticSeverity,
     pub(crate) markdown: Entity<Markdown>,
-    pub(crate) diagnostics_editor: Option<WeakEntity<ProjectDiagnosticsEditor>>,
+    pub(crate) diagnostics_editor: Option<Arc<dyn DiagnosticsToolbarEditor>>,
 }
 
 impl DiagnosticBlock {
     pub fn render_block(&self, editor: WeakEntity<Editor>, bcx: &BlockContext) -> AnyElement {
         let cx = &bcx.app;
-        let status_colors = bcx.app.theme().status();
+        let status_colors = cx.theme().status();
 
         let max_width = bcx.em_width * 120.;
 
@@ -233,7 +230,7 @@ impl DiagnosticBlock {
 
     pub fn open_link(
         editor: &mut Editor,
-        diagnostics_editor: &Option<WeakEntity<ProjectDiagnosticsEditor>>,
+        diagnostics_editor: &Option<Arc<dyn DiagnosticsToolbarEditor>>,
         link: SharedString,
         window: &mut Window,
         cx: &mut Context<Editor>,
@@ -254,18 +251,10 @@ impl DiagnosticBlock {
 
         if let Some(diagnostics_editor) = diagnostics_editor {
             if let Some(diagnostic) = diagnostics_editor
-                .read_with(cx, |diagnostics, _| {
-                    diagnostics
-                        .diagnostics
-                        .get(&buffer_id)
-                        .cloned()
-                        .unwrap_or_default()
-                        .into_iter()
-                        .filter(|d| d.diagnostic.group_id == group_id)
-                        .nth(ix)
-                })
-                .ok()
-                .flatten()
+                .get_diagnostics_for_buffer(buffer_id, cx)
+                .into_iter()
+                .filter(|d| d.diagnostic.group_id == group_id)
+                .nth(ix)
             {
                 let multibuffer = editor.buffer().read(cx);
                 let Some(snapshot) = multibuffer
@@ -289,7 +278,7 @@ impl DiagnosticBlock {
             }
         } else if let Some(diagnostic) = editor
             .snapshot(window, cx)
-            .buffer_snapshot
+            .buffer_snapshot()
             .diagnostic_group(buffer_id, group_id)
             .nth(ix)
         {
@@ -297,9 +286,9 @@ impl DiagnosticBlock {
         };
     }
 
-    fn jump_to<T: ToOffset>(
+    fn jump_to<I: ToOffset>(
         editor: &mut Editor,
-        range: Range<T>,
+        range: Range<I>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {

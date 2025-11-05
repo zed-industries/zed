@@ -344,13 +344,9 @@ impl SystemWindowTabController {
         let tab_group = self
             .tab_groups
             .iter()
-            .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| *group));
+            .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| *group))?;
 
-        if let Some(tab_group) = tab_group {
-            self.tab_groups.get(&tab_group)
-        } else {
-            None
-        }
+        self.tab_groups.get(&tab_group)
     }
 
     /// Initialize the visibility of the system window tab controller.
@@ -415,7 +411,8 @@ impl SystemWindowTabController {
         for windows in controller.tab_groups.values_mut() {
             for tab in windows.iter_mut() {
                 if tab.id == id {
-                    tab.title = title.clone();
+                    tab.title = title;
+                    return;
                 }
             }
         }
@@ -556,7 +553,7 @@ pub struct App {
     pub(crate) entities: EntityMap,
     pub(crate) window_update_stack: Vec<WindowId>,
     pub(crate) new_entity_observers: SubscriberSet<TypeId, NewEntityListener>,
-    pub(crate) windows: SlotMap<WindowId, Option<Window>>,
+    pub(crate) windows: SlotMap<WindowId, Option<Box<Window>>>,
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
     pub(crate) focus_handles: Arc<FocusMap>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
@@ -958,8 +955,16 @@ impl App {
                     cx.window_update_stack.pop();
                     window.root.replace(root_view.into());
                     window.defer(cx, |window: &mut Window, cx| window.appearance_changed(cx));
+
+                    // allow a window to draw at least once before returning
+                    // this didn't cause any issues on non windows platforms as it seems we always won the race to on_request_frame
+                    // on windows we quite frequently lose the race and return a window that has never rendered, which leads to a crash
+                    // where DispatchTree::root_node_id asserts on empty nodes
+                    let clear = window.draw(cx);
+                    clear.clear();
+
                     cx.window_handles.insert(id, window.handle);
-                    cx.windows.get_mut(id).unwrap().replace(window);
+                    cx.windows.get_mut(id).unwrap().replace(Box::new(window));
                     Ok(handle)
                 }
                 Err(e) => {
@@ -1234,7 +1239,7 @@ impl App {
                     .windows
                     .values()
                     .filter_map(|window| {
-                        let window = window.as_ref()?;
+                        let window = window.as_deref()?;
                         window.invalidator.is_dirty().then_some(window.handle)
                     })
                     .collect::<Vec<_>>()
@@ -1315,7 +1320,7 @@ impl App {
 
     fn apply_refresh_effect(&mut self) {
         for window in self.windows.values_mut() {
-            if let Some(window) = window.as_mut() {
+            if let Some(window) = window.as_deref_mut() {
                 window.refreshing = true;
                 window.invalidator.set_dirty(true);
             }
@@ -1358,12 +1363,7 @@ impl App {
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
         self.update(|cx| {
-            let mut window = cx
-                .windows
-                .get_mut(id)
-                .context("window not found")?
-                .take()
-                .context("window not found")?;
+            let mut window = cx.windows.get_mut(id)?.take()?;
 
             let root_view = window.root.clone().unwrap();
 
@@ -1380,15 +1380,14 @@ impl App {
                     true
                 });
             } else {
-                cx.windows
-                    .get_mut(id)
-                    .context("window not found")?
-                    .replace(window);
+                cx.windows.get_mut(id)?.replace(window);
             }
 
-            Ok(result)
+            Some(result)
         })
+        .context("window not found")
     }
+
     /// Creates an `AsyncApp`, which can be cloned and has a static lifetime
     /// so it can be held across `await` points.
     pub fn to_async(&self) -> AsyncApp {
@@ -2200,7 +2199,7 @@ impl AppContext for App {
             .windows
             .get(window.id)
             .context("window not found")?
-            .as_ref()
+            .as_deref()
             .expect("attempted to read a window that is already on the stack");
 
         let root_view = window.root.clone().unwrap();
@@ -2396,6 +2395,20 @@ impl<'a, T: 'static> std::borrow::Borrow<T> for GpuiBorrow<'a, T> {
 impl<'a, T: 'static> std::borrow::BorrowMut<T> for GpuiBorrow<'a, T> {
     fn borrow_mut(&mut self) -> &mut T {
         self.inner.as_mut().unwrap().borrow_mut()
+    }
+}
+
+impl<'a, T: 'static> std::ops::Deref for GpuiBorrow<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner.as_ref().unwrap()
+    }
+}
+
+impl<'a, T: 'static> std::ops::DerefMut for GpuiBorrow<'a, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.inner.as_mut().unwrap()
     }
 }
 

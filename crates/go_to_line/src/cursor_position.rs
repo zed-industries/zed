@@ -1,8 +1,6 @@
-use editor::{Editor, EditorSettings, MultiBufferSnapshot};
-use gpui::{App, Entity, FocusHandle, Focusable, Subscription, Task, WeakEntity};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+use editor::{Editor, EditorEvent, MultiBufferSnapshot};
+use gpui::{App, Entity, FocusHandle, Focusable, Styled, Subscription, Task, WeakEntity};
+use settings::Settings;
 use std::{fmt::Write, num::NonZeroU32, time::Duration};
 use text::{Point, Selection};
 use ui::{
@@ -10,7 +8,7 @@ use ui::{
     Render, Tooltip, Window, div,
 };
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
-use workspace::{StatusItemView, Workspace, item::ItemHandle};
+use workspace::{StatusBarSettings, StatusItemView, Workspace, item::ItemHandle};
 
 #[derive(Copy, Clone, Debug, Default, PartialOrd, PartialEq)]
 pub(crate) struct SelectionStats {
@@ -83,7 +81,7 @@ impl CursorPosition {
 
     fn update_position(
         &mut self,
-        editor: Entity<Editor>,
+        editor: &Entity<Editor>,
         debounce: Option<Duration>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -113,13 +111,14 @@ impl CursorPosition {
                             }
                             editor::EditorMode::Full { .. } => {
                                 let mut last_selection = None::<Selection<Point>>;
-                                let snapshot = editor.buffer().read(cx).snapshot(cx);
-                                if snapshot.excerpts().count() > 0 {
-                                    for selection in editor.selections.all_adjusted(cx) {
+                                let snapshot = editor.display_snapshot(cx);
+                                if snapshot.buffer_snapshot().excerpts().count() > 0 {
+                                    for selection in editor.selections.all_adjusted(&snapshot) {
                                         let selection_summary = snapshot
+                                            .buffer_snapshot()
                                             .text_summary_for_range::<text::TextSummary, _>(
-                                                selection.start..selection.end,
-                                            );
+                                            selection.start..selection.end,
+                                        );
                                         cursor_position.selected_count.characters +=
                                             selection_summary.chars;
                                         if selection.end != selection.start {
@@ -136,8 +135,12 @@ impl CursorPosition {
                                         }
                                     }
                                 }
-                                cursor_position.position = last_selection
-                                    .map(|s| UserCaretPosition::at_selection_end(&s, &snapshot));
+                                cursor_position.position = last_selection.map(|s| {
+                                    UserCaretPosition::at_selection_end(
+                                        &s,
+                                        snapshot.buffer_snapshot(),
+                                    )
+                                });
                                 cursor_position.context = Some(editor.focus_handle(cx));
                             }
                         }
@@ -207,11 +210,8 @@ impl CursorPosition {
 
 impl Render for CursorPosition {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !EditorSettings::get_global(cx)
-            .status_bar
-            .cursor_position_button
-        {
-            return div();
+        if !StatusBarSettings::get_global(cx).cursor_position_button {
+            return div().hidden();
         }
 
         div().when_some(self.position, |el, position| {
@@ -241,18 +241,16 @@ impl Render for CursorPosition {
                             });
                         }
                     }))
-                    .tooltip(move |window, cx| match context.as_ref() {
+                    .tooltip(move |_window, cx| match context.as_ref() {
                         Some(context) => Tooltip::for_action_in(
                             "Go to Line/Column",
                             &editor::actions::ToggleGoToLine,
                             context,
-                            window,
                             cx,
                         ),
                         None => Tooltip::for_action(
                             "Go to Line/Column",
                             &editor::actions::ToggleGoToLine,
-                            window,
                             cx,
                         ),
                     }),
@@ -271,19 +269,21 @@ impl StatusItemView for CursorPosition {
         cx: &mut Context<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
-            self._observe_active_editor =
-                Some(
-                    cx.observe_in(&editor, window, |cursor_position, editor, window, cx| {
-                        Self::update_position(
-                            cursor_position,
-                            editor,
-                            Some(UPDATE_DEBOUNCE),
-                            window,
-                            cx,
-                        )
-                    }),
-                );
-            self.update_position(editor, None, window, cx);
+            self._observe_active_editor = Some(cx.subscribe_in(
+                &editor,
+                window,
+                |cursor_position, editor, event, window, cx| match event {
+                    EditorEvent::SelectionsChanged { .. } => Self::update_position(
+                        cursor_position,
+                        editor,
+                        Some(UPDATE_DEBOUNCE),
+                        window,
+                        cx,
+                    ),
+                    _ => {}
+                },
+            ));
+            self.update_position(&editor, None, window, cx);
         } else {
             self.position = None;
             self._observe_active_editor = None;
@@ -293,34 +293,23 @@ impl StatusItemView for CursorPosition {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, JsonSchema, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum LineIndicatorFormat {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum LineIndicatorFormat {
     Short,
-    #[default]
     Long,
 }
 
-#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize, SettingsUi, SettingsKey)]
-#[serde(transparent)]
-#[settings_key(key = "line_indicator_format")]
-pub(crate) struct LineIndicatorFormatContent(LineIndicatorFormat);
+impl From<settings::LineIndicatorFormat> for LineIndicatorFormat {
+    fn from(format: settings::LineIndicatorFormat) -> Self {
+        match format {
+            settings::LineIndicatorFormat::Short => LineIndicatorFormat::Short,
+            settings::LineIndicatorFormat::Long => LineIndicatorFormat::Long,
+        }
+    }
+}
 
 impl Settings for LineIndicatorFormat {
-    type FileContent = LineIndicatorFormatContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
-        let format = [
-            sources.release_channel,
-            sources.operating_system,
-            sources.user,
-        ]
-        .into_iter()
-        .find_map(|value| value.copied())
-        .unwrap_or(*sources.default);
-
-        Ok(format.0)
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        content.line_indicator_format.unwrap().into()
     }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }

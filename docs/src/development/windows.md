@@ -18,7 +18,7 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
 If you can't compile Zed, make sure that you have at least the following components installed in case of a Visual Studio installation:
 
-```json
+```json [settings]
 {
   "version": "1.0",
   "components": [
@@ -36,7 +36,7 @@ If you can't compile Zed, make sure that you have at least the following compone
 
 Or if in case of just Build Tools, the following components:
 
-```json
+```json [settings]
 {
   "version": "1.0",
   "components": [
@@ -68,7 +68,7 @@ The list can be obtained as follows:
 
 ### Backend Dependencies (optional) {#backend-dependencies}
 
-If you are looking to develop Zed collaboration features using a local collabortation server, please see: [Local Collaboration](./local-collaboration.md) docs.
+If you are looking to develop Zed collaboration features using a local collaboration server, please see: [Local Collaboration](./local-collaboration.md) docs.
 
 ### Notes
 

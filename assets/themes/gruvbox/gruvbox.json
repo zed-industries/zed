@@ -6,8 +6,8 @@
     {
       "name": "Gruvbox Dark",
       "appearance": "dark",
-      "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
       "style": {
+        "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
         "border": "#5b534dff",
         "border.variant": "#494340ff",
         "border.focused": "#303a36ff",
@@ -49,8 +49,9 @@
         "panel.background": "#3a3735ff",
         "panel.focused_border": "#83a598ff",
         "pane.focused_border": null,
-        "scrollbar.thumb.background": "#fbf1c74c",
-        "scrollbar.thumb.hover_background": "#494340ff",
+        "scrollbar.thumb.active_background": "#83a598ac",
+        "scrollbar.thumb.hover_background": "#fbf1c74c",
+        "scrollbar.thumb.background": "#a899844c",
         "scrollbar.thumb.border": "#494340ff",
         "scrollbar.track.background": "#00000000",
         "scrollbar.track.border": "#373432ff",
@@ -248,7 +249,7 @@
           "hint": {
             "color": "#8c957dff",
             "font_style": null,
-            "font_weight": 700
+            "font_weight": null
           },
           "keyword": {
             "color": "#fb4833ff",
@@ -322,6 +323,11 @@
           },
           "punctuation.list_marker": {
             "color": "#ebdbb2ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "punctuation.markup": {
+            "color": "#83a598ff",
             "font_style": null,
             "font_weight": null
           },
@@ -406,8 +412,8 @@
     {
       "name": "Gruvbox Dark Hard",
       "appearance": "dark",
-      "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
       "style": {
+        "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
         "border": "#5b534dff",
         "border.variant": "#494340ff",
         "border.focused": "#303a36ff",
@@ -449,8 +455,9 @@
         "panel.background": "#393634ff",
         "panel.focused_border": "#83a598ff",
         "pane.focused_border": null,
-        "scrollbar.thumb.background": "#fbf1c74c",
-        "scrollbar.thumb.hover_background": "#494340ff",
+        "scrollbar.thumb.active_background": "#83a598ac",
+        "scrollbar.thumb.hover_background": "#fbf1c74c",
+        "scrollbar.thumb.background": "#a899844c",
         "scrollbar.thumb.border": "#494340ff",
         "scrollbar.track.background": "#00000000",
         "scrollbar.track.border": "#343130ff",
@@ -648,7 +655,7 @@
           "hint": {
             "color": "#8c957dff",
             "font_style": null,
-            "font_weight": 700
+            "font_weight": null
           },
           "keyword": {
             "color": "#fb4833ff",
@@ -722,6 +729,11 @@
           },
           "punctuation.list_marker": {
             "color": "#ebdbb2ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "punctuation.markup": {
+            "color": "#83a598ff",
             "font_style": null,
             "font_weight": null
           },
@@ -806,8 +818,8 @@
     {
       "name": "Gruvbox Dark Soft",
       "appearance": "dark",
-      "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
       "style": {
+        "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
         "border": "#5b534dff",
         "border.variant": "#494340ff",
         "border.focused": "#303a36ff",
@@ -849,8 +861,9 @@
         "panel.background": "#3b3735ff",
         "panel.focused_border": null,
         "pane.focused_border": null,
-        "scrollbar.thumb.background": "#fbf1c74c",
-        "scrollbar.thumb.hover_background": "#494340ff",
+        "scrollbar.thumb.active_background": "#83a598ac",
+        "scrollbar.thumb.hover_background": "#fbf1c74c",
+        "scrollbar.thumb.background": "#a899844c",
         "scrollbar.thumb.border": "#494340ff",
         "scrollbar.track.background": "#00000000",
         "scrollbar.track.border": "#393634ff",
@@ -1048,7 +1061,7 @@
           "hint": {
             "color": "#8c957dff",
             "font_style": null,
-            "font_weight": 700
+            "font_weight": null
           },
           "keyword": {
             "color": "#fb4833ff",
@@ -1122,6 +1135,11 @@
           },
           "punctuation.list_marker": {
             "color": "#ebdbb2ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "punctuation.markup": {
+            "color": "#83a598ff",
             "font_style": null,
             "font_weight": null
           },
@@ -1206,8 +1224,8 @@
     {
       "name": "Gruvbox Light",
       "appearance": "light",
-      "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
       "style": {
+        "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
         "border": "#c8b899ff",
         "border.variant": "#ddcca7ff",
         "border.focused": "#adc5ccff",
@@ -1249,8 +1267,9 @@
         "panel.background": "#ecddb4ff",
         "panel.focused_border": null,
         "pane.focused_border": null,
-        "scrollbar.thumb.background": "#2828284c",
-        "scrollbar.thumb.hover_background": "#ddcca7ff",
+        "scrollbar.thumb.active_background": "#458588ac",
+        "scrollbar.thumb.hover_background": "#2828284c",
+        "scrollbar.thumb.background": "#7c6f644c",
         "scrollbar.thumb.border": "#ddcca7ff",
         "scrollbar.track.background": "#00000000",
         "scrollbar.track.border": "#eee0b7ff",
@@ -1448,7 +1467,7 @@
           "hint": {
             "color": "#677562ff",
             "font_style": null,
-            "font_weight": 700
+            "font_weight": null
           },
           "keyword": {
             "color": "#9d0006ff",
@@ -1522,6 +1541,11 @@
           },
           "punctuation.list_marker": {
             "color": "#282828ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "punctuation.markup": {
+            "color": "#066578ff",
             "font_style": null,
             "font_weight": null
           },
@@ -1606,8 +1630,8 @@
     {
       "name": "Gruvbox Light Hard",
       "appearance": "light",
-      "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
       "style": {
+        "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
         "border": "#c8b899ff",
         "border.variant": "#ddcca7ff",
         "border.focused": "#adc5ccff",
@@ -1649,8 +1673,9 @@
         "panel.background": "#ecddb5ff",
         "panel.focused_border": null,
         "pane.focused_border": null,
-        "scrollbar.thumb.background": "#2828284c",
-        "scrollbar.thumb.hover_background": "#ddcca7ff",
+        "scrollbar.thumb.active_background": "#458588ac",
+        "scrollbar.thumb.hover_background": "#2828284c",
+        "scrollbar.thumb.background": "#7c6f644c",
         "scrollbar.thumb.border": "#ddcca7ff",
         "scrollbar.track.background": "#00000000",
         "scrollbar.track.border": "#eee1bbff",
@@ -1848,7 +1873,7 @@
           "hint": {
             "color": "#677562ff",
             "font_style": null,
-            "font_weight": 700
+            "font_weight": null
           },
           "keyword": {
             "color": "#9d0006ff",
@@ -1922,6 +1947,11 @@
           },
           "punctuation.list_marker": {
             "color": "#282828ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "punctuation.markup": {
+            "color": "#066578ff",
             "font_style": null,
             "font_weight": null
           },
@@ -2006,8 +2036,8 @@
     {
       "name": "Gruvbox Light Soft",
       "appearance": "light",
-      "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
       "style": {
+        "accents": ["#cc241dff", "#98971aff", "#d79921ff", "#458588ff", "#b16286ff", "#689d6aff", "#d65d0eff"],
         "border": "#c8b899ff",
         "border.variant": "#ddcca7ff",
         "border.focused": "#adc5ccff",
@@ -2049,8 +2079,9 @@
         "panel.background": "#ecdcb3ff",
         "panel.focused_border": null,
         "pane.focused_border": null,
-        "scrollbar.thumb.background": "#2828284c",
-        "scrollbar.thumb.hover_background": "#ddcca7ff",
+        "scrollbar.thumb.active_background": "#458588ac",
+        "scrollbar.thumb.hover_background": "#2828284c",
+        "scrollbar.thumb.background": "#7c6f644c",
         "scrollbar.thumb.border": "#ddcca7ff",
         "scrollbar.track.background": "#00000000",
         "scrollbar.track.border": "#eddeb5ff",
@@ -2248,7 +2279,7 @@
           "hint": {
             "color": "#677562ff",
             "font_style": null,
-            "font_weight": 700
+            "font_weight": null
           },
           "keyword": {
             "color": "#9d0006ff",
@@ -2322,6 +2353,11 @@
           },
           "punctuation.list_marker": {
             "color": "#282828ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "punctuation.markup": {
+            "color": "#066578ff",
             "font_style": null,
             "font_weight": null
           },

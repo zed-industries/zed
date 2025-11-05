@@ -26,7 +26,6 @@ use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use std::ops::RangeInclusive;
 use std::{
-    fmt::Write as _,
     future::Future,
     marker::PhantomData,
     ops::{Deref, DerefMut},
@@ -35,6 +34,7 @@ use std::{
 };
 use time::PrimitiveDateTime;
 use tokio::sync::{Mutex, OwnedMutexGuard};
+use util::paths::PathStyle;
 use worktree_settings_file::LocalSettingsKind;
 
 #[cfg(test)]
@@ -486,9 +486,7 @@ pub struct ChannelsForUser {
     pub invited_channels: Vec<Channel>,
 
     pub observed_buffer_versions: Vec<proto::ChannelBufferVersion>,
-    pub observed_channel_messages: Vec<proto::ChannelMessageId>,
     pub latest_buffer_versions: Vec<proto::ChannelBufferVersion>,
-    pub latest_channel_messages: Vec<proto::ChannelMessageId>,
 }
 
 #[derive(Debug)]
@@ -601,6 +599,7 @@ pub struct Project {
     pub worktrees: BTreeMap<u64, Worktree>,
     pub repositories: Vec<proto::UpdateRepository>,
     pub language_servers: Vec<LanguageServer>,
+    pub path_style: PathStyle,
 }
 
 pub struct ProjectCollaborator {

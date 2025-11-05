@@ -1,6 +1,7 @@
 use anyhow::{Context as _, anyhow};
 use gpui::{App, DivInspectorState, Inspector, InspectorElementId, IntoElement, Window};
 use std::{cell::OnceCell, path::Path, sync::Arc};
+use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{Label, Tooltip, prelude::*};
 use util::{ResultExt as _, command::new_smol_command};
 use workspace::AppState;
@@ -56,6 +57,8 @@ fn render_inspector(
     let ui_font = theme::setup_ui_font(window, cx);
     let colors = cx.theme().colors();
     let inspector_id = inspector.active_element_id();
+    let toolbar_height = PlatformTitleBar::height(window);
+
     v_flex()
         .size_full()
         .bg(colors.panel_background)
@@ -65,7 +68,11 @@ fn render_inspector(
         .border_color(colors.border)
         .child(
             h_flex()
-                .p_2()
+                .justify_between()
+                .pr_2()
+                .pl_1()
+                .mt_px()
+                .h(toolbar_height)
                 .border_b_1()
                 .border_color(colors.border_variant)
                 .child(
@@ -78,18 +85,14 @@ fn render_inspector(
                             window.refresh();
                         })),
                 )
-                .child(
-                    h_flex()
-                        .w_full()
-                        .justify_end()
-                        .child(Label::new("GPUI Inspector").size(LabelSize::Large)),
-                ),
+                .child(h_flex().justify_end().child(Label::new("GPUI Inspector"))),
         )
         .child(
             v_flex()
                 .id("gpui-inspector-content")
                 .overflow_y_scroll()
-                .p_2()
+                .px_2()
+                .py_0p5()
                 .gap_2()
                 .when_some(inspector_id, |this, inspector_id| {
                     this.child(render_inspector_id(inspector_id, cx))
@@ -110,15 +113,19 @@ fn render_inspector_id(inspector_id: &InspectorElementId, cx: &App) -> Div {
         .unwrap_or(source_location_string);
 
     v_flex()
-        .child(Label::new("Element ID").size(LabelSize::Large))
         .child(
-            div()
-                .id("instance-id")
-                .text_ui(cx)
-                .tooltip(Tooltip::text(
-                    "Disambiguates elements from the same source location",
-                ))
-                .child(format!("Instance {}", inspector_id.instance_id)),
+            h_flex()
+                .justify_between()
+                .child(Label::new("Element ID").size(LabelSize::Large))
+                .child(
+                    div()
+                        .id("instance-id")
+                        .text_ui(cx)
+                        .tooltip(Tooltip::text(
+                            "Disambiguates elements from the same source location",
+                        ))
+                        .child(format!("Instance {}", inspector_id.instance_id)),
+                ),
         )
         .child(
             div()
@@ -126,8 +133,10 @@ fn render_inspector_id(inspector_id: &InspectorElementId, cx: &App) -> Div {
                 .text_ui(cx)
                 .bg(cx.theme().colors().editor_foreground.opacity(0.025))
                 .underline()
+                .font_buffer(cx)
+                .text_xs()
                 .child(source_location_string)
-                .tooltip(Tooltip::text("Click to open by running zed cli"))
+                .tooltip(Tooltip::text("Click to open by running Zed CLI"))
                 .on_click(move |_, _window, cx| {
                     cx.background_spawn(open_zed_source_location(source_location))
                         .detach_and_log_err(cx);

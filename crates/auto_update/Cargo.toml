@@ -21,14 +21,16 @@ http_client.workspace = true
 log.workspace = true
 paths.workspace = true
 release_channel.workspace = true
-schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
 tempfile.workspace = true
+util.workspace = true
 workspace.workspace = true
-workspace-hack.workspace = true
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 which.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, "features" = ["test-support"] }

@@ -3,7 +3,7 @@ use copilot::Copilot;
 use editor::{Editor, EditorEvent, actions::MoveToEnd, scroll::Autoscroll};
 use gpui::{
     AnyView, App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ParentElement, Render, Styled, Subscription, WeakEntity, Window, actions, div,
+    ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window, actions, div,
 };
 use itertools::Itertools;
 use language::{LanguageServerId, language_settings::SoftWrap};
@@ -229,8 +229,11 @@ impl LspLogView {
                         log_view.editor.update(cx, |editor, cx| {
                             editor.set_read_only(false);
                             let last_offset = editor.buffer().read(cx).len(cx);
-                            let newest_cursor_is_at_end =
-                                editor.selections.newest::<usize>(cx).start >= last_offset;
+                            let newest_cursor_is_at_end = editor
+                                .selections
+                                .newest::<usize>(&editor.display_snapshot(cx))
+                                .start
+                                >= last_offset;
                             editor.edit(
                                 vec![
                                     (last_offset..last_offset, text.as_str()),
@@ -325,7 +328,7 @@ impl LspLogView {
         let server_info = format!(
             "* Server: {NAME} (id {ID})
 
-* Binary: {BINARY:#?}
+* Binary: {BINARY}
 
 * Registered workspace folders:
 {WORKSPACE_FOLDERS}
@@ -335,10 +338,10 @@ impl LspLogView {
 * Configuration: {CONFIGURATION}",
             NAME = info.name,
             ID = info.id,
-            BINARY = info.binary.as_ref().map_or_else(
-                || "Unknown".to_string(),
-                |bin| bin.path.as_path().to_string_lossy().to_string()
-            ),
+            BINARY = info
+                .binary
+                .as_ref()
+                .map_or_else(|| "Unknown".to_string(), |binary| format!("{binary:#?}")),
             WORKSPACE_FOLDERS = info.workspace_folders.join(", "),
             CAPABILITIES = serde_json::to_string_pretty(&info.capabilities)
                 .unwrap_or_else(|e| format!("Failed to serialize capabilities: {e}")),
@@ -376,7 +379,7 @@ impl LspLogView {
                     let worktree_root_name = state
                         .worktree_id
                         .and_then(|id| self.project.read(cx).worktree_for_id(id, cx))
-                        .map(|worktree| worktree.read(cx).root_name().to_string())
+                        .map(|worktree| worktree.read(cx).root_name_str().to_string())
                         .unwrap_or_else(|| "Unknown worktree".to_string());
 
                     LogMenuItem {
@@ -606,7 +609,7 @@ impl LspLogView {
             });
 
             server
-                .notify::<SetTrace>(&SetTraceParams { value: level })
+                .notify::<SetTrace>(SetTraceParams { value: level })
                 .ok();
         }
     }
@@ -755,16 +758,20 @@ impl Item for LspLogView {
         }
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| {
+        Task::ready(Some(cx.new(|cx| {
             let mut new_view = Self::new(self.project.clone(), self.log_store.clone(), window, cx);
             if let Some(server_id) = self.current_server_id {
                 match self.active_entry_kind {
@@ -775,7 +782,7 @@ impl Item for LspLogView {
                 }
             }
             new_view
-        }))
+        })))
     }
 }
 
@@ -805,11 +812,13 @@ impl SearchableItem for LspLogView {
         &mut self,
         index: usize,
         matches: &[Self::Match],
+        collapse: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor
-            .update(cx, |e, cx| e.activate_match(index, matches, window, cx))
+        self.editor.update(cx, |e, cx| {
+            e.activate_match(index, matches, collapse, window, cx)
+        })
     }
 
     fn select_matches(
@@ -990,10 +999,16 @@ impl Render for LspLogToolbarItemView {
             let server_id = server.server_id;
             let rpc_trace_enabled = server.rpc_trace_enabled;
             let log_view = log_view.clone();
+            let label = match server.selected_entry {
+                LogKind::Rpc => RPC_MESSAGES,
+                LogKind::Trace => SERVER_TRACE,
+                LogKind::Logs => SERVER_LOGS,
+                LogKind::ServerInfo => SERVER_INFO,
+            };
             PopoverMenu::new("LspViewSelector")
                 .anchor(Corner::TopLeft)
                 .trigger(
-                    Button::new("language_server_menu_header", server.selected_entry.label())
+                    Button::new("language_server_menu_header", label)
                         .icon(IconName::ChevronDown)
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Muted),

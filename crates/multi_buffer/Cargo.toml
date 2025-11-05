@@ -43,7 +43,6 @@ text.workspace = true
 theme.workspace = true
 tree-sitter.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 buffer_diff = { workspace = true, features = ["test-support"] }

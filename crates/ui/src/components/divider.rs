@@ -36,6 +36,7 @@ enum DividerDirection {
 #[derive(Default)]
 pub enum DividerColor {
     Border,
+    BorderFaded,
     #[default]
     BorderVariant,
 }
@@ -44,6 +45,7 @@ impl DividerColor {
     pub fn hsla(self, cx: &mut App) -> Hsla {
         match self {
             DividerColor::Border => cx.theme().colors().border,
+            DividerColor::BorderFaded => cx.theme().colors().border.opacity(0.6),
             DividerColor::BorderVariant => cx.theme().colors().border_variant,
         }
     }

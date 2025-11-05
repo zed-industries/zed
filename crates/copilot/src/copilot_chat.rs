@@ -10,10 +10,13 @@ use fs::Fs;
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use gpui::WeakEntity;
 use gpui::{App, AsyncApp, Global, prelude::*};
+use http_client::HttpRequestExt;
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use itertools::Itertools;
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
+
+use crate::copilot_responses as responses;
 use settings::watch_config_dir;
 
 pub const COPILOT_OAUTH_ENV_VAR: &str = "GH_COPILOT_TOKEN";
@@ -41,8 +44,12 @@ impl CopilotChatConfiguration {
         }
     }
 
-    pub fn api_url_from_endpoint(&self, endpoint: &str) -> String {
+    pub fn chat_completions_url_from_endpoint(&self, endpoint: &str) -> String {
         format!("{}/chat/completions", endpoint)
+    }
+
+    pub fn responses_url_from_endpoint(&self, endpoint: &str) -> String {
+        format!("{}/responses", endpoint)
     }
 
     pub fn models_url_from_endpoint(&self, endpoint: &str) -> String {
@@ -68,6 +75,14 @@ pub enum Role {
     User,
     Assistant,
     System,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
+pub enum ModelSupportedEndpoint {
+    #[serde(rename = "/chat/completions")]
+    ChatCompletions,
+    #[serde(rename = "/responses")]
+    Responses,
 }
 
 #[derive(Deserialize)]
@@ -108,6 +123,8 @@ pub struct Model {
     // reached. Zed does not currently implement this behaviour
     is_chat_fallback: bool,
     model_picker_enabled: bool,
+    #[serde(default)]
+    supported_endpoints: Vec<ModelSupportedEndpoint>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
@@ -128,6 +145,8 @@ struct ModelCapabilities {
     supports: ModelSupportedFeatures,
     #[serde(rename = "type")]
     model_type: String,
+    #[serde(default)]
+    tokenizer: Option<String>,
 }
 
 #[derive(Default, Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -166,6 +185,9 @@ pub enum ModelVendor {
     Anthropic,
     #[serde(rename = "xAI")]
     XAI,
+    /// Unknown vendor that we don't explicitly support yet
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
@@ -214,6 +236,20 @@ impl Model {
     pub fn supports_parallel_tool_calls(&self) -> bool {
         self.capabilities.supports.parallel_tool_calls
     }
+
+    pub fn tokenizer(&self) -> Option<&str> {
+        self.capabilities.tokenizer.as_deref()
+    }
+
+    pub fn supports_response(&self) -> bool {
+        self.supported_endpoints.len() > 0
+            && !self
+                .supported_endpoints
+                .contains(&ModelSupportedEndpoint::ChatCompletions)
+            && self
+                .supported_endpoints
+                .contains(&ModelSupportedEndpoint::Responses)
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -243,7 +279,7 @@ pub enum Tool {
     Function { function: Function },
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum ToolChoice {
     Auto,
@@ -336,7 +372,7 @@ pub struct Usage {
 
 #[derive(Debug, Deserialize)]
 pub struct ResponseChoice {
-    pub index: usize,
+    pub index: Option<usize>,
     pub finish_reason: Option<String>,
     pub delta: Option<ResponseDelta>,
     pub message: Option<ResponseDelta>,
@@ -349,10 +385,9 @@ pub struct ResponseDelta {
     #[serde(default)]
     pub tool_calls: Vec<ToolCallChunk>,
 }
-
 #[derive(Deserialize, Debug, Eq, PartialEq)]
 pub struct ToolCallChunk {
-    pub index: usize,
+    pub index: Option<usize>,
     pub id: Option<String>,
     pub function: Option<FunctionChunk>,
 }
@@ -544,13 +579,47 @@ impl CopilotChat {
         is_user_initiated: bool,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
+        let (client, token, configuration) = Self::get_auth_details(&mut cx).await?;
+
+        let api_url = configuration.chat_completions_url_from_endpoint(&token.api_endpoint);
+        stream_completion(
+            client.clone(),
+            token.api_key,
+            api_url.into(),
+            request,
+            is_user_initiated,
+        )
+        .await
+    }
+
+    pub async fn stream_response(
+        request: responses::Request,
+        is_user_initiated: bool,
+        mut cx: AsyncApp,
+    ) -> Result<BoxStream<'static, Result<responses::StreamEvent>>> {
+        let (client, token, configuration) = Self::get_auth_details(&mut cx).await?;
+
+        let api_url = configuration.responses_url_from_endpoint(&token.api_endpoint);
+        responses::stream_response(
+            client.clone(),
+            token.api_key,
+            api_url,
+            request,
+            is_user_initiated,
+        )
+        .await
+    }
+
+    async fn get_auth_details(
+        cx: &mut AsyncApp,
+    ) -> Result<(Arc<dyn HttpClient>, ApiToken, CopilotChatConfiguration)> {
         let this = cx
             .update(|cx| Self::global(cx))
             .ok()
             .flatten()
             .context("Copilot chat is not enabled")?;
 
-        let (oauth_token, api_token, client, configuration) = this.read_with(&cx, |this, _| {
+        let (oauth_token, api_token, client, configuration) = this.read_with(cx, |this, _| {
             (
                 this.oauth_token.clone(),
                 this.api_token.clone(),
@@ -562,12 +631,12 @@ impl CopilotChat {
         let oauth_token = oauth_token.context("No OAuth token available")?;
 
         let token = match api_token {
-            Some(api_token) if api_token.remaining_seconds() > 5 * 60 => api_token.clone(),
+            Some(api_token) if api_token.remaining_seconds() > 5 * 60 => api_token,
             _ => {
                 let token_url = configuration.token_url();
                 let token =
                     request_api_token(&oauth_token, token_url.into(), client.clone()).await?;
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.api_token = Some(token.clone());
                     cx.notify();
                 })?;
@@ -575,15 +644,7 @@ impl CopilotChat {
             }
         };
 
-        let api_url = configuration.api_url_from_endpoint(&token.api_endpoint);
-        stream_completion(
-            client.clone(),
-            token.api_key,
-            api_url.into(),
-            request,
-            is_user_initiated,
-        )
-        .await
+        Ok((client, token, configuration))
     }
 
     pub fn set_configuration(
@@ -732,7 +793,7 @@ async fn stream_completion(
 
     let request_initiator = if is_user_initiated { "user" } else { "agent" };
 
-    let mut request_builder = HttpRequest::builder()
+    let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(completion_url.as_ref())
         .header(
@@ -745,12 +806,10 @@ async fn stream_completion(
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
         .header("Copilot-Integration-Id", "vscode-chat")
-        .header("X-Initiator", request_initiator);
-
-    if is_vision_request {
-        request_builder =
-            request_builder.header("Copilot-Vision-Request", is_vision_request.to_string());
-    }
+        .header("X-Initiator", request_initiator)
+        .when(is_vision_request, |builder| {
+            builder.header("Copilot-Vision-Request", is_vision_request.to_string())
+        });
 
     let is_streaming = request.stream;
 
@@ -900,5 +959,46 @@ mod tests {
         assert_eq!(schema.data.len(), 2);
         assert_eq!(schema.data[0].id, "gpt-4");
         assert_eq!(schema.data[1].id, "claude-3.7-sonnet");
+    }
+
+    #[test]
+    fn test_unknown_vendor_resilience() {
+        let json = r#"{
+              "data": [
+                {
+                  "billing": {
+                    "is_premium": false,
+                    "multiplier": 1
+                  },
+                  "capabilities": {
+                    "family": "future-model",
+                    "limits": {
+                      "max_context_window_tokens": 128000,
+                      "max_output_tokens": 8192,
+                      "max_prompt_tokens": 120000
+                    },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "future-model-v1",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "Future Model v1",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "SomeNewVendor",
+                  "version": "v1.0"
+                }
+              ],
+              "object": "list"
+            }"#;
+
+        let schema: ModelSchema = serde_json::from_str(json).unwrap();
+
+        assert_eq!(schema.data.len(), 1);
+        assert_eq!(schema.data[0].id, "future-model-v1");
+        assert_eq!(schema.data[0].vendor, ModelVendor::Unknown);
     }
 }

@@ -1,12 +1,12 @@
 # Snippets
 
-Use the {#action snippets::ConfigureSnippets} action to create a new snippets file or edit a existing snippets file for a specified [scope](#scopes).
+Use the {#action snippets::ConfigureSnippets} action to create a new snippets file or edit an existing snippets file for a specified [scope](#scopes).
 
 The snippets are located in `~/.config/zed/snippets` directory to which you can navigate to with the {#action snippets::OpenFolder} action.
 
 ## Example configuration
 
-```json
+```json [settings]
 {
   // Each snippet must have a name and body, but the prefix and description are optional.
   // The prefix is used to trigger the snippet, but when omitted then the name is used.
@@ -31,7 +31,7 @@ The scope is determined by the language name in lowercase e.g. `python.json` for
 | JSX        | javascript.json |
 | Plain Text | plaintext.json  |
 
-To create JSX snippets you have to use `javascript.json` snippets file, instead of `jsx.json`, but this does not apply to TSX and Typescript which follow the above rule.
+To create JSX snippets you have to use `javascript.json` snippets file, instead of `jsx.json`, but this does not apply to TSX and TypeScript which follow the above rule.
 
 ## Known Limitations
 
@@ -44,7 +44,7 @@ The `feature_paths` option in `simple-completion-language-server` is disabled by
 
 If you want to enable it you can add the following to your `settings.json`:
 
-```json
+```json [settings]
 {
   "lsp": {
     "snippet-completion-server": {

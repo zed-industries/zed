@@ -11,6 +11,7 @@ use gpui::{Context, DismissEvent, Entity, Focusable as _, Pixels, Point, Subscri
 use std::ops::Range;
 use text::PointUtf16;
 use workspace::OpenInTerminal;
+use zed_actions::agent::AddSelectionToThread;
 
 #[derive(Debug)]
 pub enum MenuPosition {
@@ -54,7 +55,7 @@ impl MouseContextMenu {
         let content_origin = editor.last_bounds?.origin
             + Point {
                 x: editor.gutter_dimensions.width,
-                y: Pixels(0.0),
+                y: Pixels::ZERO,
             };
         let source_position = editor.to_pixel_point(source, &editor_snapshot, window)?;
         let menu_position = MenuPosition::PinnedToEditor {
@@ -130,12 +131,9 @@ fn display_ranges<'a>(
     display_map: &'a DisplaySnapshot,
     selections: &'a SelectionsCollection,
 ) -> impl Iterator<Item = Range<DisplayPoint>> + 'a {
-    let pending = selections
-        .pending
-        .as_ref()
-        .map(|pending| &pending.selection);
+    let pending = selections.pending_anchor();
     selections
-        .disjoint
+        .disjoint_anchors()
         .iter()
         .chain(pending)
         .map(move |s| s.start.to_display_point(display_map)..s.end.to_display_point(display_map))
@@ -157,7 +155,7 @@ pub fn deploy_context_menu(
         return;
     }
 
-    let display_map = editor.selections.display_map(cx);
+    let display_map = editor.display_snapshot(cx);
     let source_anchor = display_map.display_point_to_anchor(point, text::Bias::Right);
     let context_menu = if let Some(custom) = editor.custom_context_menu.take() {
         let menu = custom(editor, point, window, cx);
@@ -172,8 +170,9 @@ pub fn deploy_context_menu(
             return;
         };
 
-        let display_map = editor.selections.display_map(cx);
-        let buffer = &editor.snapshot(window, cx).buffer_snapshot;
+        let snapshot = editor.snapshot(window, cx);
+        let display_map = editor.display_snapshot(cx);
+        let buffer = snapshot.buffer_snapshot();
         let anchor = buffer.anchor_before(point.to_point(&display_map));
         if !display_ranges(&display_map, &editor.selections).any(|r| r.contains(&point)) {
             // Move the cursor to the clicked location so that dispatched actions make sense
@@ -187,7 +186,7 @@ pub fn deploy_context_menu(
         let has_reveal_target = editor.target_file(cx).is_some();
         let has_selections = editor
             .selections
-            .all::<PointUtf16>(cx)
+            .all::<PointUtf16>(&display_map)
             .into_iter()
             .any(|s| !s.is_empty());
         let has_git_repo = buffer
@@ -235,6 +234,7 @@ pub fn deploy_context_menu(
                         quick_launch: false,
                     }),
                 )
+                .action("Add to Agent Thread", Box::new(AddSelectionToThread))
                 .separator()
                 .action("Cut", Box::new(Cut))
                 .action("Copy", Box::new(Copy))

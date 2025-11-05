@@ -119,11 +119,12 @@ pub fn cancel_flycheck(
             lsp_store
                 .read_with(cx, |lsp_store, _| {
                     if let Some(server) = lsp_store.language_server_for_id(rust_analyzer_server) {
-                        server.notify::<lsp_store::lsp_ext_command::LspExtCancelFlycheck>(&())?;
+                        server.notify::<lsp_store::lsp_ext_command::LspExtCancelFlycheck>(())
+                    } else {
+                        Ok(())
                     }
-                    anyhow::Ok(())
-                })?
-                .context("lsp ext cancel flycheck")?;
+                })
+                .context("lsp ext cancel flycheck")??;
         };
         anyhow::Ok(())
     })
@@ -173,14 +174,15 @@ pub fn run_flycheck(
                 .read_with(cx, |lsp_store, _| {
                     if let Some(server) = lsp_store.language_server_for_id(rust_analyzer_server) {
                         server.notify::<lsp_store::lsp_ext_command::LspExtRunFlycheck>(
-                            &lsp_store::lsp_ext_command::RunFlycheckParams {
+                            lsp_store::lsp_ext_command::RunFlycheckParams {
                                 text_document: None,
                             },
-                        )?;
+                        )
+                    } else {
+                        Ok(())
                     }
-                    anyhow::Ok(())
-                })?
-                .context("lsp ext run flycheck")?;
+                })
+                .context("lsp ext run flycheck")??;
         };
         anyhow::Ok(())
     })
@@ -224,11 +226,12 @@ pub fn clear_flycheck(
             lsp_store
                 .read_with(cx, |lsp_store, _| {
                     if let Some(server) = lsp_store.language_server_for_id(rust_analyzer_server) {
-                        server.notify::<lsp_store::lsp_ext_command::LspExtClearFlycheck>(&())?;
+                        server.notify::<lsp_store::lsp_ext_command::LspExtClearFlycheck>(())
+                    } else {
+                        Ok(())
                     }
-                    anyhow::Ok(())
-                })?
-                .context("lsp ext clear flycheck")?;
+                })
+                .context("lsp ext clear flycheck")??;
         };
         anyhow::Ok(())
     })

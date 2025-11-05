@@ -19,8 +19,8 @@ use http_client::{StatusCode, http};
 use icons::IconName;
 use open_router::OpenRouterError;
 use parking_lot::Mutex;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
+pub use settings::LanguageModelCacheConfiguration;
 use std::ops::{Add, Sub};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -49,6 +49,9 @@ pub const OPEN_AI_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId
 pub const OPEN_AI_PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("OpenAI");
 
+pub const X_AI_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("x_ai");
+pub const X_AI_PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("xAI");
+
 pub const ZED_CLOUD_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("zed.dev");
 pub const ZED_CLOUD_PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("Zed");
@@ -60,14 +63,6 @@ pub fn init(client: Arc<Client>, cx: &mut App) {
 
 pub fn init_settings(cx: &mut App) {
     registry::init(cx);
-}
-
-/// Configuration for caching language model messages.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct LanguageModelCacheConfiguration {
-    pub max_cache_anchors: usize,
-    pub should_speculate: bool,
-    pub min_total_token: u64,
 }
 
 /// A completion event from a language model.
@@ -673,14 +668,11 @@ pub trait LanguageModelExt: LanguageModel {
 }
 impl LanguageModelExt for dyn LanguageModel {}
 
-pub trait LanguageModelTool: 'static + DeserializeOwned + JsonSchema {
-    fn name() -> String;
-    fn description() -> String;
-}
-
 /// An error that occurred when trying to authenticate the language model provider.
 #[derive(Debug, Error)]
 pub enum AuthenticateError {
+    #[error("connection refused")]
+    ConnectionRefused,
     #[error("credentials not found")]
     CredentialsNotFound,
     #[error(transparent)]

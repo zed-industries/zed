@@ -8,18 +8,20 @@ use dap::{
 use editor::Editor;
 use gpui::{
     Action, AnyElement, ClickEvent, ClipboardItem, Context, DismissEvent, Empty, Entity,
-    FocusHandle, Focusable, Hsla, MouseButton, MouseDownEvent, Point, Stateful, Subscription,
-    TextStyleRefinement, UniformListScrollHandle, WeakEntity, actions, anchored, deferred,
-    uniform_list,
+    FocusHandle, Focusable, Hsla, MouseDownEvent, Point, Subscription, TextStyleRefinement,
+    UniformListScrollHandle, WeakEntity, actions, anchored, deferred, uniform_list,
 };
+use itertools::Itertools;
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::debugger::{
     dap_command::DataBreakpointContext,
     session::{Session, SessionEvent, Watcher},
 };
 use std::{collections::HashMap, ops::Range, sync::Arc};
-use ui::{ContextMenu, ListItem, ScrollableHandle, Scrollbar, ScrollbarState, Tooltip, prelude::*};
+use ui::{ContextMenu, ListItem, ScrollAxes, ScrollableHandle, Tooltip, WithScrollbar, prelude::*};
 use util::{debug_panic, maybe};
+
+static INDENT_STEP_SIZE: Pixels = px(10.0);
 
 actions!(
     variable_list,
@@ -186,10 +188,10 @@ struct VariableColor {
 
 pub struct VariableList {
     entries: Vec<ListEntry>,
+    max_width_index: Option<usize>,
     entry_states: HashMap<EntryPath, EntryState>,
     selected_stack_frame_id: Option<StackFrameId>,
     list_handle: UniformListScrollHandle,
-    scrollbar_state: ScrollbarState,
     session: Entity<Session>,
     selection: Option<EntryPath>,
     open_context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
@@ -235,7 +237,6 @@ impl VariableList {
         let list_state = UniformListScrollHandle::default();
 
         Self {
-            scrollbar_state: ScrollbarState::new(list_state.clone()),
             list_handle: list_state,
             session,
             focus_handle,
@@ -246,6 +247,7 @@ impl VariableList {
             disabled: false,
             edited_path: None,
             entries: Default::default(),
+            max_width_index: None,
             entry_states: Default::default(),
             weak_running,
             memory_view,
@@ -371,6 +373,26 @@ impl VariableList {
         }
 
         self.entries = entries;
+
+        let text_pixels = ui::TextSize::Default.pixels(cx).to_f64() as f32;
+        let indent_size = INDENT_STEP_SIZE.to_f64() as f32;
+
+        self.max_width_index = self
+            .entries
+            .iter()
+            .map(|entry| match &entry.entry {
+                DapEntry::Scope(scope) => scope.name.len() as f32 * text_pixels,
+                DapEntry::Variable(variable) => {
+                    (variable.value.len() + variable.name.len()) as f32 * text_pixels
+                        + (entry.path.indices.len() as f32 * indent_size)
+                }
+                DapEntry::Watcher(watcher) => {
+                    (watcher.value.len() + watcher.expression.len()) as f32 * text_pixels
+                        + (entry.path.indices.len() as f32 * indent_size)
+                }
+            })
+            .position_max_by(|left, right| left.total_cmp(right));
+
         cx.notify();
     }
 
@@ -1132,6 +1154,7 @@ impl VariableList {
                                         this.color(Color::from(color))
                                     }),
                             )
+                            .tooltip(Tooltip::text(value))
                     }
                 })
                 .into_any_element()
@@ -1216,7 +1239,7 @@ impl VariableList {
 
         let weak = cx.weak_entity();
         let focus_handle = self.focus_handle.clone();
-        let watcher_len = (self.list_handle.content_size().width.0 / 12.0).floor() - 3.0;
+        let watcher_len = (f32::from(self.list_handle.content_size().width / 12.0).floor()) - 3.0;
         let watcher_len = watcher_len as usize;
 
         div()
@@ -1246,7 +1269,7 @@ impl VariableList {
                 .disabled(self.disabled)
                 .selectable(false)
                 .indent_level(state.depth)
-                .indent_step_size(px(10.))
+                .indent_step_size(INDENT_STEP_SIZE)
                 .always_show_disclosure_icon(true)
                 .when(var_ref > 0, |list_item| {
                     list_item.toggle(state.is_expanded).on_toggle(cx.listener({
@@ -1309,14 +1332,8 @@ impl VariableList {
                             .ok();
                         }
                     })
-                    .tooltip(move |window, cx| {
-                        Tooltip::for_action_in(
-                            "Remove Watch",
-                            &RemoveWatch,
-                            &focus_handle,
-                            window,
-                            cx,
-                        )
+                    .tooltip(move |_window, cx| {
+                        Tooltip::for_action_in("Remove Watch", &RemoveWatch, &focus_handle, cx)
                     })
                     .icon_size(ui::IconSize::Indicator),
                 ),
@@ -1453,7 +1470,7 @@ impl VariableList {
                 .disabled(self.disabled)
                 .selectable(false)
                 .indent_level(state.depth)
-                .indent_step_size(px(10.))
+                .indent_step_size(INDENT_STEP_SIZE)
                 .always_show_disclosure_icon(true)
                 .when(var_ref > 0, |list_item| {
                     list_item.toggle(state.is_expanded).on_toggle(cx.listener({
@@ -1500,39 +1517,6 @@ impl VariableList {
             )
             .into_any()
     }
-
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .occlude()
-            .id("variable-list-vertical-scrollbar")
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
-    }
 }
 
 impl Focusable for VariableList {
@@ -1542,13 +1526,12 @@ impl Focusable for VariableList {
 }
 
 impl Render for VariableList {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .track_focus(&self.focus_handle)
             .key_context("VariableList")
             .id("variable-list")
             .group("variable-list")
-            .overflow_y_scroll()
             .size_full()
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
@@ -1574,6 +1557,9 @@ impl Render for VariableList {
                     }),
                 )
                 .track_scroll(self.list_handle.clone())
+                .with_width_from_item(self.max_width_index)
+                .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
+                .with_horizontal_sizing_behavior(gpui::ListHorizontalSizingBehavior::Unconstrained)
                 .gap_1_5()
                 .size_full()
                 .flex_grow(),
@@ -1587,7 +1573,15 @@ impl Render for VariableList {
                 )
                 .with_priority(1)
             }))
-            .child(self.render_vertical_scrollbar(cx))
+            // .vertical_scrollbar_for(self.list_handle.clone(), window, cx)
+            .custom_scrollbars(
+                ui::Scrollbars::new(ScrollAxes::Both)
+                    .tracked_scroll_handle(self.list_handle.clone())
+                    .with_track_along(ScrollAxes::Both, cx.theme().colors().panel_background)
+                    .tracked_entity(cx.entity_id()),
+                window,
+                cx,
+            )
     }
 }
 

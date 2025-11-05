@@ -1,7 +1,5 @@
-use crate::inline_prompt_editor::CodegenStatus;
-use agent::{
-    ContextStore,
-    context::{ContextLoadResult, load_context},
+use crate::{
+    context::load_context, context_store::ContextStore, inline_prompt_editor::CodegenStatus,
 };
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
@@ -434,16 +432,16 @@ impl CodegenAlternative {
             .generate_inline_transformation_prompt(user_prompt, language_name, buffer, range)
             .context("generating content prompt")?;
 
-        let context_task = self.context_store.as_ref().map(|context_store| {
+        let context_task = self.context_store.as_ref().and_then(|context_store| {
             if let Some(project) = self.project.upgrade() {
                 let context = context_store
                     .read(cx)
                     .context()
                     .cloned()
                     .collect::<Vec<_>>();
-                load_context(context, &project, &self.prompt_store, cx)
+                Some(load_context(context, &project, &self.prompt_store, cx))
             } else {
-                Task::ready(ContextLoadResult::default())
+                None
             }
         });
 
@@ -459,7 +457,6 @@ impl CodegenAlternative {
             if let Some(context_task) = context_task {
                 context_task
                     .await
-                    .loaded_context
                     .add_to_request_message(&mut request_message);
             }
 

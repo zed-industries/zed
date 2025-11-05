@@ -7,7 +7,7 @@ use picker::{Picker, PickerDelegate};
 use project::{DirectoryItem, DirectoryLister};
 use settings::Settings;
 use std::{
-    path::{self, MAIN_SEPARATOR_STR, Path, PathBuf},
+    path::{self, Path, PathBuf},
     sync::{
         Arc,
         atomic::{self, AtomicBool},
@@ -23,7 +23,6 @@ use workspace::Workspace;
 
 pub(crate) struct OpenPathPrompt;
 
-#[derive(Debug)]
 pub struct OpenPathDelegate {
     tx: Option<oneshot::Sender<Option<Vec<PathBuf>>>>,
     lister: DirectoryLister,
@@ -35,6 +34,9 @@ pub struct OpenPathDelegate {
     prompt_root: String,
     path_style: PathStyle,
     replace_prompt: Task<()>,
+    render_footer:
+        Arc<dyn Fn(&mut Window, &mut Context<Picker<Self>>) -> Option<AnyElement> + 'static>,
+    hidden_entries: bool,
 }
 
 impl OpenPathDelegate {
@@ -60,9 +62,25 @@ impl OpenPathDelegate {
             },
             path_style,
             replace_prompt: Task::ready(()),
+            render_footer: Arc::new(|_, _| None),
+            hidden_entries: false,
         }
     }
 
+    pub fn with_footer(
+        mut self,
+        footer: Arc<
+            dyn Fn(&mut Window, &mut Context<Picker<Self>>) -> Option<AnyElement> + 'static,
+        >,
+    ) -> Self {
+        self.render_footer = footer;
+        self
+    }
+
+    pub fn show_hidden(mut self) -> Self {
+        self.hidden_entries = true;
+        self
+    }
     fn get_entry(&self, selected_match_index: usize) -> Option<CandidateInfo> {
         match &self.directory_state {
             DirectoryState::List { entries, .. } => {
@@ -199,7 +217,7 @@ impl OpenPathPrompt {
     ) {
         workspace.toggle_modal(window, cx, |window, cx| {
             let delegate =
-                OpenPathDelegate::new(tx, lister.clone(), creating_path, PathStyle::current());
+                OpenPathDelegate::new(tx, lister.clone(), creating_path, PathStyle::local());
             let picker = Picker::uniform_list(delegate, window, cx).width(rems(34.));
             let query = lister.default_query(cx);
             picker.set_query(query, window, cx);
@@ -269,7 +287,7 @@ impl PickerDelegate for OpenPathDelegate {
         self.cancel_flag.store(true, atomic::Ordering::Release);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
-
+        let hidden_entries = self.hidden_entries;
         let parent_path_is_root = self.prompt_root == dir;
         let current_dir = self.current_dir();
         cx.spawn_in(window, async move |this, cx| {
@@ -363,7 +381,7 @@ impl PickerDelegate for OpenPathDelegate {
             };
 
             let mut max_id = 0;
-            if !suffix.starts_with('.') {
+            if !suffix.starts_with('.') && !hidden_entries {
                 new_entries.retain(|entry| {
                     max_id = max_id.max(entry.path.id);
                     !entry.path.string.starts_with('.')
@@ -374,10 +392,11 @@ impl PickerDelegate for OpenPathDelegate {
                 let should_prepend_with_current_dir = this
                     .read_with(cx, |picker, _| {
                         !input_is_empty
-                            && !matches!(
-                                picker.delegate.directory_state,
-                                DirectoryState::Create { .. }
-                            )
+                            && match &picker.delegate.directory_state {
+                                DirectoryState::List { error, .. } => error.is_none(),
+                                DirectoryState::Create { .. } => false,
+                                DirectoryState::None { .. } => false,
+                            }
                     })
                     .unwrap_or(false);
                 if should_prepend_with_current_dir {
@@ -650,7 +669,7 @@ impl PickerDelegate for OpenPathDelegate {
     ) -> Option<Self::ListItem> {
         let settings = FileFinderSettings::get_global(cx);
         let candidate = self.get_entry(ix)?;
-        let match_positions = match &self.directory_state {
+        let mut match_positions = match &self.directory_state {
             DirectoryState::List { .. } => self.string_matches.get(ix)?.positions.clone(),
             DirectoryState::Create { user_input, .. } => {
                 if let Some(user_input) = user_input {
@@ -676,43 +695,53 @@ impl PickerDelegate for OpenPathDelegate {
             if !settings.file_icons {
                 return None;
             }
+
+            let path = path::Path::new(&candidate.path.string);
             let icon = if candidate.is_dir {
                 if is_current_dir_candidate {
                     return Some(Icon::new(IconName::ReplyArrowRight).color(Color::Muted));
                 } else {
-                    FileIcons::get_folder_icon(false, cx)?
+                    FileIcons::get_folder_icon(false, path, cx)?
                 }
             } else {
-                let path = path::Path::new(&candidate.path.string);
                 FileIcons::get_icon(path, cx)?
             };
             Some(Icon::from_path(icon).color(Color::Muted))
         });
 
         match &self.directory_state {
-            DirectoryState::List { parent_path, .. } => Some(
-                ListItem::new(ix)
-                    .spacing(ListItemSpacing::Sparse)
-                    .start_slot::<Icon>(file_icon)
-                    .inset(true)
-                    .toggle_state(selected)
-                    .child(HighlightedLabel::new(
-                        if parent_path == &self.prompt_root {
-                            format!("{}{}", self.prompt_root, candidate.path.string)
-                        } else if is_current_dir_candidate {
-                            "open this directory".to_string()
-                        } else {
-                            candidate.path.string
-                        },
+            DirectoryState::List { parent_path, .. } => {
+                let (label, indices) = if is_current_dir_candidate {
+                    ("open this directory".to_string(), vec![])
+                } else if *parent_path == self.prompt_root {
+                    match_positions.iter_mut().for_each(|position| {
+                        *position += self.prompt_root.len();
+                    });
+                    (
+                        format!("{}{}", self.prompt_root, candidate.path.string),
                         match_positions,
-                    )),
-            ),
+                    )
+                } else {
+                    (candidate.path.string, match_positions)
+                };
+                Some(
+                    ListItem::new(ix)
+                        .spacing(ListItemSpacing::Sparse)
+                        .start_slot::<Icon>(file_icon)
+                        .inset(true)
+                        .toggle_state(selected)
+                        .child(HighlightedLabel::new(label, indices)),
+                )
+            }
             DirectoryState::Create {
                 parent_path,
                 user_input,
                 ..
             } => {
-                let (label, delta) = if parent_path == &self.prompt_root {
+                let (label, delta) = if *parent_path == self.prompt_root {
+                    match_positions.iter_mut().for_each(|position| {
+                        *position += self.prompt_root.len();
+                    });
                     (
                         format!("{}{}", self.prompt_root, candidate.path.string),
                         self.prompt_root.len(),
@@ -720,10 +749,10 @@ impl PickerDelegate for OpenPathDelegate {
                 } else {
                     (candidate.path.string.clone(), 0)
                 };
-                let label_len = label.len();
 
                 let label_with_highlights = match user_input {
                     Some(user_input) => {
+                        let label_len = label.len();
                         if user_input.file.string == candidate.path.string {
                             if user_input.exists {
                                 let label = if user_input.is_dir {
@@ -735,7 +764,7 @@ impl PickerDelegate for OpenPathDelegate {
                                     .with_default_highlights(
                                         &window.text_style(),
                                         vec![(
-                                            delta..delta + label_len,
+                                            delta..label_len,
                                             HighlightStyle::color(Color::Conflict.color(cx)),
                                         )],
                                     )
@@ -745,27 +774,17 @@ impl PickerDelegate for OpenPathDelegate {
                                     .with_default_highlights(
                                         &window.text_style(),
                                         vec![(
-                                            delta..delta + label_len,
+                                            delta..label_len,
                                             HighlightStyle::color(Color::Created.color(cx)),
                                         )],
                                     )
                                     .into_any_element()
                             }
                         } else {
-                            let mut highlight_positions = match_positions;
-                            highlight_positions.iter_mut().for_each(|position| {
-                                *position += delta;
-                            });
-                            HighlightedLabel::new(label, highlight_positions).into_any_element()
+                            HighlightedLabel::new(label, match_positions).into_any_element()
                         }
                     }
-                    None => {
-                        let mut highlight_positions = match_positions;
-                        highlight_positions.iter_mut().for_each(|position| {
-                            *position += delta;
-                        });
-                        HighlightedLabel::new(label, highlight_positions).into_any_element()
-                    }
+                    None => HighlightedLabel::new(label, match_positions).into_any_element(),
                 };
 
                 Some(
@@ -781,6 +800,14 @@ impl PickerDelegate for OpenPathDelegate {
         }
     }
 
+    fn render_footer(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        (self.render_footer)(window, cx)
+    }
+
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
         Some(match &self.directory_state {
             DirectoryState::Create { .. } => SharedString::from("Type a path…"),
@@ -794,7 +821,7 @@ impl PickerDelegate for OpenPathDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        Arc::from(format!("[directory{MAIN_SEPARATOR_STR}]filename.ext"))
+        Arc::from(format!("[directory{}]filename.ext", self.path_style.separator()).as_str())
     }
 
     fn separators_after_indices(&self) -> Vec<usize> {

@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use collections::HashMap;
-use gpui::{Entity, WeakEntity};
+use gpui::{Corner, Entity, WeakEntity};
 use project::debugger::session::{ThreadId, ThreadStatus};
 use ui::{CommonAnimationExt, ContextMenu, DropdownMenu, DropdownStyle, Indicator, prelude::*};
 use util::{maybe, truncate_and_trailoff};
@@ -113,23 +113,6 @@ impl DebugPanel {
                 }
             };
             session_entries.push(root_entry);
-
-            session_entries.extend(
-                sessions_with_children
-                    .by_ref()
-                    .take_while(|(session, _)| {
-                        session
-                            .read(cx)
-                            .session(cx)
-                            .read(cx)
-                            .parent_id(cx)
-                            .is_some()
-                    })
-                    .map(|(session, _)| SessionListEntry {
-                        leaf: session.clone(),
-                        ancestors: vec![],
-                    }),
-            );
         }
 
         let weak = cx.weak_entity();
@@ -228,6 +211,7 @@ impl DebugPanel {
                 this
             }),
         )
+        .attach(Corner::BottomLeft)
         .style(DropdownStyle::Ghost)
         .handle(self.session_picker_menu_handle.clone());
 
@@ -339,6 +323,7 @@ impl DebugPanel {
                         this
                     }),
                 )
+                .attach(Corner::BottomLeft)
                 .disabled(session_terminated)
                 .style(DropdownStyle::Ghost)
                 .handle(self.thread_picker_menu_handle.clone()),

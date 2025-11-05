@@ -1,7 +1,7 @@
 [
   {
     "bindings": {
-      "ctrl-alt-s": "zed::OpenSettings",
+      "ctrl-alt-s": "zed::OpenSettingsFile",
       "ctrl-{": "pane::ActivatePreviousItem",
       "ctrl-}": "pane::ActivateNextItem",
       "shift-escape": null, // Unmap workspace::zoom
@@ -91,7 +91,7 @@
   {
     "context": "Workspace",
     "bindings": {
-      "ctrl-shift-f12": "workspace::CloseAllDocks",
+      "ctrl-shift-f12": "workspace::ToggleAllDocks",
       "ctrl-shift-r": ["pane::DeploySearch", { "replace_enabled": true }],
       "alt-shift-f10": "task::Spawn",
       "ctrl-e": "file_finder::Toggle",
@@ -125,7 +125,7 @@
   {
     "context": "Workspace || Editor",
     "bindings": {
-      "alt-f12": "terminal_panel::ToggleFocus",
+      "alt-f12": "terminal_panel::Toggle",
       "ctrl-shift-k": "git::Push"
     }
   },

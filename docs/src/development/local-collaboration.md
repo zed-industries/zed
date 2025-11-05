@@ -48,17 +48,17 @@ You can install these dependencies natively or run them under Docker.
 
 - Follow the steps in the [collab README](https://github.com/zed-industries/zed/blob/main/crates/collab/README.md) to configure the Postgres database for integration tests
 
-Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose:
+Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose.
 
 ### Linux
 
 1. Install [Postgres](https://www.postgresql.org/download/linux/)
 
    ```sh
-   sudo apt-get install postgresql postgresql        # Ubuntu/Debian
-   sudo pacman -S postgresql                         # Arch Linux
-   sudo dnf install postgresql postgresql-server     # RHEL/Fedora
-   sudo zypper install postgresql postgresql-server  # OpenSUSE
+   sudo apt-get install postgresql                    # Ubuntu/Debian
+   sudo pacman -S postgresql                          # Arch Linux
+   sudo dnf install postgresql postgresql-server      # RHEL/Fedora
+   sudo zypper install postgresql postgresql-server   # OpenSUSE
    ```
 
 2. Install [Livekit](https://github.com/livekit/livekit-cli)
@@ -106,7 +106,7 @@ cat crates/collab/seed.default.json
 
 To use a different set of admin users, you can create your own version of that json file and export the `SEED_PATH` environment variable. Note that the usernames listed in the admins list currently must correspond to valid GitHub users.
 
-```json
+```json [settings]
 {
   "admins": ["admin1", "admin2"],
   "channels": ["zed"]
@@ -196,7 +196,7 @@ By default Zed assumes that the DATABASE_URL is a Postgres database, but you can
 
 To authenticate you must first configure the server by creating a seed.json file that contains at a minimum your github handle. This will be used to create the user on demand.
 
-```json
+```json [settings]
 {
   "admins": ["nathansobo"]
 }

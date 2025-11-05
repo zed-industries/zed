@@ -1,16 +1,12 @@
 use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    InteractiveElement, IntoElement, ParentElement, PromptButton, PromptHandle, PromptLevel,
-    PromptResponse, Refineable, Render, RenderablePromptHandle, SharedString, Styled,
-    TextStyleRefinement, Window, div,
+    App, Entity, EventEmitter, FocusHandle, Focusable, PromptButton, PromptHandle, PromptLevel,
+    PromptResponse, RenderablePromptHandle, SharedString, TextStyleRefinement, Window, div,
+    prelude::*,
 };
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use settings::{Settings, SettingsStore};
 use theme::ThemeSettings;
-use ui::{
-    ActiveTheme, ButtonCommon, ButtonStyle, Clickable, ElevationIndex, FluentBuilder, LabelSize,
-    StyledExt, TintColor, h_flex, v_flex,
-};
+use ui::{FluentBuilder, TintColor, prelude::*};
 use workspace::WorkspaceSettings;
 
 pub fn init(cx: &mut App) {
@@ -92,11 +88,7 @@ impl ZedPromptRenderer {
     }
 
     fn select_next(&mut self, _: &menu::SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.active_action_id > 0 {
-            self.active_action_id -= 1;
-        } else {
-            self.active_action_id = self.actions.len().saturating_sub(1);
-        }
+        self.active_action_id = (self.active_action_id + 1) % self.actions.len();
         cx.notify();
     }
 
@@ -106,7 +98,11 @@ impl ZedPromptRenderer {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.active_action_id = (self.active_action_id + 1) % self.actions.len();
+        if self.active_action_id > 0 {
+            self.active_action_id -= 1;
+        } else {
+            self.active_action_id = self.actions.len().saturating_sub(1);
+        }
         cx.notify();
     }
 }
@@ -114,8 +110,8 @@ impl ZedPromptRenderer {
 impl Render for ZedPromptRenderer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
-        let font_size = settings.ui_font_size(cx).into();
-        let prompt = v_flex()
+
+        let dialog = v_flex()
             .key_context("Prompt")
             .cursor_default()
             .track_focus(&self.focus)
@@ -125,93 +121,78 @@ impl Render for ZedPromptRenderer {
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
-            .elevation_3(cx)
-            .w_72()
-            .overflow_hidden()
+            .w_80()
             .p_4()
             .gap_4()
+            .elevation_3(cx)
+            .overflow_hidden()
             .font_family(settings.ui_font.family.clone())
-            .child(
-                div()
-                    .w_full()
-                    .child(MarkdownElement::new(self.message.clone(), {
-                        let mut base_text_style = window.text_style();
-                        base_text_style.refine(&TextStyleRefinement {
-                            font_family: Some(settings.ui_font.family.clone()),
-                            font_size: Some(font_size),
-                            font_weight: Some(FontWeight::BOLD),
-                            color: Some(ui::Color::Default.color(cx)),
-                            ..Default::default()
-                        });
-                        MarkdownStyle {
-                            base_text_style,
-                            selection_background_color: cx
-                                .theme()
-                                .colors()
-                                .element_selection_background,
-                            ..Default::default()
-                        }
-                    })),
-            )
+            .child(div().w_full().child(MarkdownElement::new(
+                self.message.clone(),
+                markdown_style(true, window, cx),
+            )))
             .children(self.detail.clone().map(|detail| {
-                div()
-                    .w_full()
-                    .text_xs()
-                    .child(MarkdownElement::new(detail, {
-                        let mut base_text_style = window.text_style();
-                        base_text_style.refine(&TextStyleRefinement {
-                            font_family: Some(settings.ui_font.family.clone()),
-                            font_size: Some(font_size),
-                            color: Some(ui::Color::Muted.color(cx)),
-                            ..Default::default()
-                        });
-                        MarkdownStyle {
-                            base_text_style,
-                            selection_background_color: cx
-                                .theme()
-                                .colors()
-                                .element_selection_background,
-                            ..Default::default()
-                        }
-                    }))
+                div().w_full().text_xs().child(MarkdownElement::new(
+                    detail,
+                    markdown_style(false, window, cx),
+                ))
             }))
-            .child(h_flex().justify_end().gap_2().children(
-                self.actions.iter().enumerate().rev().map(|(ix, action)| {
-                    ui::Button::new(ix, action.clone())
-                        .label_size(LabelSize::Large)
-                        .style(ButtonStyle::Filled)
-                        .when(ix == self.active_action_id, |el| {
-                            el.style(ButtonStyle::Tinted(TintColor::Accent))
-                        })
-                        .layer(ElevationIndex::ModalSurface)
-                        .on_click(cx.listener(move |_, _, _window, cx| {
-                            cx.emit(PromptResponse(ix));
-                        }))
-                }),
-            ));
+            .child(
+                v_flex()
+                    .gap_1()
+                    .children(self.actions.iter().enumerate().map(|(ix, action)| {
+                        Button::new(ix, action.clone())
+                            .full_width()
+                            .style(ButtonStyle::Outlined)
+                            .when(ix == self.active_action_id, |s| {
+                                s.style(ButtonStyle::Tinted(TintColor::Accent))
+                            })
+                            .tab_index(ix as isize)
+                            .on_click(cx.listener(move |_, _, _window, cx| {
+                                cx.emit(PromptResponse(ix));
+                            }))
+                    })),
+            );
 
         div()
             .size_full()
             .occlude()
             .bg(gpui::black().opacity(0.2))
             .child(
-                div()
+                v_flex()
                     .size_full()
                     .absolute()
                     .top_0()
                     .left_0()
-                    .flex()
-                    .flex_col()
-                    .justify_around()
-                    .child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .flex_row()
-                            .justify_around()
-                            .child(prompt),
-                    ),
+                    .items_center()
+                    .justify_center()
+                    .child(dialog),
             )
+    }
+}
+
+fn markdown_style(main_message: bool, window: &Window, cx: &App) -> MarkdownStyle {
+    let mut base_text_style = window.text_style();
+    let settings = ThemeSettings::get_global(cx);
+    let font_size = settings.ui_font_size(cx).into();
+
+    let color = if main_message {
+        Color::Default.color(cx)
+    } else {
+        Color::Muted.color(cx)
+    };
+
+    base_text_style.refine(&TextStyleRefinement {
+        font_family: Some(settings.ui_font.family.clone()),
+        font_size: Some(font_size),
+        color: Some(color),
+        ..Default::default()
+    });
+
+    MarkdownStyle {
+        base_text_style,
+        selection_background_color: cx.theme().colors().element_selection_background,
+        ..Default::default()
     }
 }
 

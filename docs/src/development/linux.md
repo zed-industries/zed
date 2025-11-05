@@ -18,7 +18,34 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
 ### Backend Dependencies (optional) {#backend-dependencies}
 
-If you are looking to develop Zed collaboration features using a local collabortation server, please see: [Local Collaboration](./local-collaboration.md) docs.
+If you are looking to develop Zed collaboration features using a local collaboration server, please see: [Local Collaboration](./local-collaboration.md) docs.
+
+### Linkers {#linker}
+
+On Linux, Rust's default linker is [LLVM's `lld`](https://blog.rust-lang.org/2025/09/18/Rust-1.90.0/). Alternative linkers, especially [Wild](https://github.com/davidlattimore/wild) and [Mold](https://github.com/rui314/mold) can significantly improve clean and incremental build time.
+
+At present Zed uses Mold in CI because it's more mature. For local development Wild is recommended because it's 5-20% faster than Mold.
+
+These linkers can be installed with `script/install-mold` and `script/install-wild`.
+
+To use Wild as your default, add these lines to your `~/.cargo/config.toml`:
+
+```toml
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=--ld-path=wild"]
+
+[target.aarch64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=--ld-path=wild"]
+```
+
+To use Mold as your default:
+
+```toml
+[target.'cfg(target_os = "linux")']
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+```
 
 ## Building from source
 
@@ -137,6 +164,58 @@ $ cargo heaptrack -b zed
 ```
 
 When this zed instance is exited, terminal output will include a command to run `heaptrack_interpret` to convert the `*.raw.zst` profile to a `*.zst` file which can be passed to `heaptrack_gui` for viewing.
+
+## Perf recording
+
+How to get a flamegraph with resolved symbols from a running zed instance. Use
+when zed is using a lot of CPU. Not useful for hangs.
+
+### During the incident
+
+- Find the PID (process ID) using:
+  `ps -eo size,pid,comm | grep zed | sort | head -n 1 | cut -d ' ' -f 2`
+  Or find the pid of the command zed-editor with the most ram usage in something
+  like htop/btop/top.
+
+- Install perf:
+  On Ubuntu (derivatives) run `sudo apt install linux-tools`.
+
+- Perf Record:
+  run `sudo perf record -p <pid you just found>`, wait a few seconds to gather data then press Ctrl+C. You should now have a perf.data file
+
+- Make the output file user owned:
+  run `sudo chown $USER:$USER perf.data`
+
+- Get build info:
+  Run zed again and type `zed: about` in the command pallet to get the exact commit.
+
+The `data.perf` file can be send to zed together with the exact commit.
+
+### Later
+
+This can be done by Zed staff.
+
+- Build Zed with symbols:
+  Check out the commit found previously and modify `Cargo.toml`.
+  Apply the following diff then make a release build.
+
+```diff
+[profile.release]
+-debug = "limited"
++debug = "full"
+```
+
+- Add the symbols to perf database:
+  `pref buildid-cache -v -a <path to release zed binary>`
+
+- Resolve the symbols from the db:
+  `perf inject -i perf.data -o perf_with_symbols.data`
+
+- Install flamegraph:
+  `cargo install cargo-flamegraph`
+
+- Render the flamegraph:
+  `flamegraph --perfdata perf_with_symbols.data`
 
 ## Troubleshooting
 

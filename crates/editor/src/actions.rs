@@ -253,6 +253,15 @@ pub struct DeleteToPreviousWordStart {
     pub ignore_brackets: bool,
 }
 
+/// Cuts from cursor to end of line.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct CutToEndOfLine {
+    #[serde(default)]
+    pub stop_at_newlines: bool,
+}
+
 /// Folds all code blocks at the specified indentation level.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
@@ -309,6 +318,24 @@ pub struct GoToPreviousDiagnostic {
     pub severity: GoToDiagnosticSeverityFilter,
 }
 
+/// Adds a cursor above the current selection.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct AddSelectionAbove {
+    #[serde(default = "default_true")]
+    pub skip_soft_wrap: bool,
+}
+
+/// Adds a cursor below the current selection.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct AddSelectionBelow {
+    #[serde(default = "default_true")]
+    pub skip_soft_wrap: bool,
+}
+
 actions!(
     debugger,
     [
@@ -336,10 +363,6 @@ actions!(
         /// Accepts a partial edit prediction.
         #[action(deprecated_aliases = ["editor::AcceptPartialCopilotSuggestion"])]
         AcceptPartialEditPrediction,
-        /// Adds a cursor above the current selection.
-        AddSelectionAbove,
-        /// Adds a cursor below the current selection.
-        AddSelectionBelow,
         /// Applies all diff hunks in the editor.
         ApplyAllDiffHunks,
         /// Applies the diff hunk at the current position.
@@ -412,8 +435,6 @@ actions!(
         CopyPermalinkToLine,
         /// Cuts selected text to the clipboard.
         Cut,
-        /// Cuts from cursor to end of line.
-        CutToEndOfLine,
         /// Deletes the character after the cursor.
         Delete,
         /// Deletes the current line.
@@ -437,6 +458,8 @@ actions!(
         /// Expands all diff hunks in the editor.
         #[action(deprecated_aliases = ["editor::ExpandAllHunkDiffs"])]
         ExpandAllDiffHunks,
+        /// Collapses all diff hunks in the editor.
+        CollapseAllDiffHunks,
         /// Expands macros recursively at cursor position.
         ExpandMacroRecursively,
         /// Finds all references to the symbol at cursor.
@@ -449,6 +472,33 @@ actions!(
         Fold,
         /// Folds all foldable regions in the editor.
         FoldAll,
+        /// Folds all code blocks at indentation level 1.
+        #[action(name = "FoldAtLevel_1")]
+        FoldAtLevel1,
+        /// Folds all code blocks at indentation level 2.
+        #[action(name = "FoldAtLevel_2")]
+        FoldAtLevel2,
+        /// Folds all code blocks at indentation level 3.
+        #[action(name = "FoldAtLevel_3")]
+        FoldAtLevel3,
+        /// Folds all code blocks at indentation level 4.
+        #[action(name = "FoldAtLevel_4")]
+        FoldAtLevel4,
+        /// Folds all code blocks at indentation level 5.
+        #[action(name = "FoldAtLevel_5")]
+        FoldAtLevel5,
+        /// Folds all code blocks at indentation level 6.
+        #[action(name = "FoldAtLevel_6")]
+        FoldAtLevel6,
+        /// Folds all code blocks at indentation level 7.
+        #[action(name = "FoldAtLevel_7")]
+        FoldAtLevel7,
+        /// Folds all code blocks at indentation level 8.
+        #[action(name = "FoldAtLevel_8")]
+        FoldAtLevel8,
+        /// Folds all code blocks at indentation level 9.
+        #[action(name = "FoldAtLevel_9")]
+        FoldAtLevel9,
         /// Folds all function bodies in the editor.
         FoldFunctionBodies,
         /// Folds the current code block and all its children.
@@ -489,10 +539,18 @@ actions!(
         GoToParentModule,
         /// Goes to the previous change in the file.
         GoToPreviousChange,
+        /// Goes to the next reference to the symbol under the cursor.
+        GoToNextReference,
+        /// Goes to the previous reference to the symbol under the cursor.
+        GoToPreviousReference,
         /// Goes to the type definition of the symbol at cursor.
         GoToTypeDefinition,
         /// Goes to type definition in a split pane.
         GoToTypeDefinitionSplit,
+        /// Goes to the next document highlight.
+        GoToNextDocumentHighlight,
+        /// Goes to the previous document highlight.
+        GoToPreviousDocumentHighlight,
         /// Scrolls down by half a page.
         HalfPageDown,
         /// Scrolls up by half a page.
@@ -640,6 +698,10 @@ actions!(
         SelectEnclosingSymbol,
         /// Selects the next larger syntax node.
         SelectLargerSyntaxNode,
+        /// Selects the next syntax node sibling.
+        SelectNextSyntaxNode,
+        /// Selects the previous syntax node sibling.
+        SelectPreviousSyntaxNode,
         /// Extends selection left.
         SelectLeft,
         /// Selects the current line.
@@ -761,6 +823,8 @@ actions!(
         UniqueLinesCaseInsensitive,
         /// Removes duplicate lines (case-sensitive).
         UniqueLinesCaseSensitive,
+        /// Removes the surrounding syntax node (for example brackets, or closures)
+        /// from the current selections.
         UnwrapSyntaxNode,
         /// Wraps selections in tag specified by language.
         WrapSelectionsInTag

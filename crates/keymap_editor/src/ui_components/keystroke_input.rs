@@ -461,7 +461,7 @@ impl Render for KeystrokeInput {
         let is_focused = self.outer_focus_handle.contains_focused(window, cx);
         let is_recording = self.is_recording(window);
 
-        let horizontal_padding = rems_from_px(64.);
+        let width = rems_from_px(64.);
 
         let recording_bg_color = colors
             .editor_background
@@ -528,6 +528,9 @@ impl Render for KeystrokeInput {
         h_flex()
             .id("keystroke-input")
             .track_focus(&self.outer_focus_handle)
+            .key_context(Self::key_context())
+            .on_action(cx.listener(Self::start_recording))
+            .on_action(cx.listener(Self::clear_keystrokes))
             .py_2()
             .px_3()
             .gap_2()
@@ -535,7 +538,7 @@ impl Render for KeystrokeInput {
             .w_full()
             .flex_1()
             .justify_between()
-            .rounded_sm()
+            .rounded_md()
             .overflow_hidden()
             .map(|this| {
                 if is_recording {
@@ -545,16 +548,16 @@ impl Render for KeystrokeInput {
                 }
             })
             .border_1()
-            .border_color(colors.border_variant)
-            .when(is_focused, |parent| {
-                parent.border_color(colors.border_focused)
+            .map(|this| {
+                if is_focused {
+                    this.border_color(colors.border_focused)
+                } else {
+                    this.border_color(colors.border_variant)
+                }
             })
-            .key_context(Self::key_context())
-            .on_action(cx.listener(Self::start_recording))
-            .on_action(cx.listener(Self::clear_keystrokes))
             .child(
                 h_flex()
-                    .w(horizontal_padding)
+                    .w(width)
                     .gap_0p5()
                     .justify_start()
                     .flex_none()
@@ -573,14 +576,13 @@ impl Render for KeystrokeInput {
                     .id("keystroke-input-inner")
                     .track_focus(&self.inner_focus_handle)
                     .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
-                    .size_full()
                     .when(!self.search, |this| {
                         this.focus(|mut style| {
                             style.border_color = Some(colors.border_focused);
                             style
                         })
                     })
-                    .w_full()
+                    .size_full()
                     .min_w_0()
                     .justify_center()
                     .flex_wrap()
@@ -589,7 +591,7 @@ impl Render for KeystrokeInput {
             )
             .child(
                 h_flex()
-                    .w(horizontal_padding)
+                    .w(width)
                     .gap_0p5()
                     .justify_end()
                     .flex_none()
@@ -641,9 +643,7 @@ impl Render for KeystrokeInput {
                                 "Clear Keystrokes",
                                 &ClearKeystrokes,
                             ))
-                            .when(!is_recording || !is_focused, |this| {
-                                this.icon_color(Color::Muted)
-                            })
+                            .when(!is_focused, |this| this.icon_color(Color::Muted))
                             .on_click(cx.listener(|this, _event, window, cx| {
                                 this.clear_keystrokes(&ClearKeystrokes, window, cx);
                             })),

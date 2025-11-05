@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods, reason = "tooling is exempt")]
 use std::process::Command;
 
 use anyhow::{Context as _, Result, bail};

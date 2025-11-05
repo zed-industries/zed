@@ -1,19 +1,19 @@
 use crate::acp::AcpThreadView;
 use crate::{AgentPanel, RemoveSelectedThread};
-use agent2::{HistoryEntry, HistoryStore};
+use agent::{HistoryEntry, HistoryStore};
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta};
 use editor::{Editor, EditorEvent};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    App, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy, Stateful, Task,
+    App, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy, Task,
     UniformListScrollHandle, WeakEntity, Window, uniform_list,
 };
 use std::{fmt::Display, ops::Range};
 use text::Bias;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
-    HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Scrollbar, ScrollbarState,
-    Tooltip, prelude::*,
+    HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Tooltip, WithScrollbar,
+    prelude::*,
 };
 
 pub struct AcpThreadHistory {
@@ -23,13 +23,8 @@ pub struct AcpThreadHistory {
     hovered_index: Option<usize>,
     search_editor: Entity<Editor>,
     search_query: SharedString,
-
     visible_items: Vec<ListItemType>,
-
-    scrollbar_visibility: bool,
-    scrollbar_state: ScrollbarState,
     local_timezone: UtcOffset,
-
     _update_task: Task<()>,
     _subscriptions: Vec<gpui::Subscription>,
 }
@@ -64,13 +59,13 @@ impl EventEmitter<ThreadHistoryEvent> for AcpThreadHistory {}
 
 impl AcpThreadHistory {
     pub(crate) fn new(
-        history_store: Entity<agent2::HistoryStore>,
+        history_store: Entity<agent::HistoryStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let search_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Search threads...", cx);
+            editor.set_placeholder_text("Search threads...", window, cx);
             editor
         });
 
@@ -90,7 +85,6 @@ impl AcpThreadHistory {
         });
 
         let scroll_handle = UniformListScrollHandle::default();
-        let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
 
         let mut this = Self {
             history_store,
@@ -99,8 +93,6 @@ impl AcpThreadHistory {
             hovered_index: None,
             visible_items: Default::default(),
             search_editor,
-            scrollbar_visibility: true,
-            scrollbar_state,
             local_timezone: UtcOffset::from_whole_seconds(
                 chrono::Local::now().offset().local_minus_utc(),
             )
@@ -332,48 +324,11 @@ impl AcpThreadHistory {
             HistoryEntry::AcpThread(thread) => self
                 .history_store
                 .update(cx, |this, cx| this.delete_thread(thread.id.clone(), cx)),
-            HistoryEntry::TextThread(context) => self.history_store.update(cx, |this, cx| {
-                this.delete_text_thread(context.path.clone(), cx)
+            HistoryEntry::TextThread(text_thread) => self.history_store.update(cx, |this, cx| {
+                this.delete_text_thread(text_thread.path.clone(), cx)
             }),
         };
         task.detach_and_log_err(cx);
-    }
-
-    fn render_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        if !(self.scrollbar_visibility || self.scrollbar_state.is_dragging()) {
-            return None;
-        }
-
-        Some(
-            div()
-                .occlude()
-                .id("thread-history-scroll")
-                .h_full()
-                .bg(cx.theme().colors().panel_background.opacity(0.8))
-                .border_l_1()
-                .border_color(cx.theme().colors().border_variant)
-                .absolute()
-                .right_1()
-                .top_0()
-                .bottom_0()
-                .w_4()
-                .pl_1()
-                .cursor_default()
-                .on_mouse_move(cx.listener(|_, _, _window, cx| {
-                    cx.notify();
-                    cx.stop_propagation()
-                }))
-                .on_hover(|_, _window, cx| {
-                    cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _window, cx| {
-                    cx.stop_propagation();
-                })
-                .on_scroll_wheel(cx.listener(|_, _, _window, cx| {
-                    cx.notify();
-                }))
-                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
-        )
     }
 
     fn render_list_items(
@@ -468,8 +423,8 @@ impl AcpThreadHistory {
                                 .shape(IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Muted)
-                                .tooltip(move |window, cx| {
-                                    Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
+                                .tooltip(move |_window, cx| {
+                                    Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
                                 })
                                 .on_click(
                                     cx.listener(move |this, _, _, cx| this.remove_thread(ix, cx)),
@@ -491,10 +446,11 @@ impl Focusable for AcpThreadHistory {
 }
 
 impl Render for AcpThreadHistory {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("ThreadHistory")
             .size_full()
+            .bg(cx.theme().colors().panel_background)
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_first))
@@ -542,22 +498,24 @@ impl Render for AcpThreadHistory {
                         ),
                     )
                 } else {
-                    view.pr_5()
-                        .child(
-                            uniform_list(
-                                "thread-history",
-                                self.visible_items.len(),
-                                cx.processor(|this, range: Range<usize>, window, cx| {
-                                    this.render_list_items(range, window, cx)
-                                }),
-                            )
-                            .p_1()
-                            .track_scroll(self.scroll_handle.clone())
-                            .flex_grow(),
+                    view.child(
+                        uniform_list(
+                            "thread-history",
+                            self.visible_items.len(),
+                            cx.processor(|this, range: Range<usize>, window, cx| {
+                                this.render_list_items(range, window, cx)
+                            }),
                         )
-                        .when_some(self.render_scrollbar(cx), |div, scrollbar| {
-                            div.child(scrollbar)
-                        })
+                        .p_1()
+                        .pr_4()
+                        .track_scroll(self.scroll_handle.clone())
+                        .flex_grow(),
+                    )
+                    .vertical_scrollbar_for(
+                        self.scroll_handle.clone(),
+                        window,
+                        cx,
+                    )
                 }
             })
     }
@@ -638,8 +596,8 @@ impl RenderOnce for AcpHistoryEntryElement {
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
-                        .tooltip(move |window, cx| {
-                            Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
+                        .tooltip(move |_window, cx| {
+                            Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
                         })
                         .on_click({
                             let thread_view = self.thread_view.clone();
@@ -678,12 +636,12 @@ impl RenderOnce for AcpHistoryEntryElement {
                                     });
                                 }
                             }
-                            HistoryEntry::TextThread(context) => {
+                            HistoryEntry::TextThread(text_thread) => {
                                 if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
                                     panel.update(cx, |panel, cx| {
                                         panel
-                                            .open_saved_prompt_editor(
-                                                context.path.clone(),
+                                            .open_saved_text_thread(
+                                                text_thread.path.clone(),
                                                 window,
                                                 cx,
                                             )

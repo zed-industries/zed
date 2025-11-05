@@ -19,6 +19,7 @@ pub fn derive_dynamic_spacing(input: TokenStream) -> TokenStream {
 /// # Example
 ///
 /// ```
+/// use ui::Component;
 /// use ui_macros::RegisterComponent;
 ///
 /// #[derive(RegisterComponent)]

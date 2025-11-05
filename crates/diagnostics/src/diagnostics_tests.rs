@@ -1,9 +1,9 @@
 use super::*;
 use collections::{HashMap, HashSet};
 use editor::{
-    DisplayPoint, EditorSettings,
+    DisplayPoint, EditorSettings, Inlay,
     actions::{GoToDiagnostic, GoToPreviousDiagnostic, Hover, MoveToBeginning},
-    display_map::{DisplayRow, Inlay},
+    display_map::DisplayRow,
     test::{
         editor_content_with_blocks, editor_lsp_test_context::EditorLspTestContext,
         editor_test_context::EditorTestContext,
@@ -27,7 +27,7 @@ use std::{
     str::FromStr,
 };
 use unindent::Unindent as _;
-use util::{RandomCharIter, path, post_inc};
+use util::{RandomCharIter, path, post_inc, rel_path::rel_path};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -119,7 +119,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
     diagnostics
-        .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
         .await;
 
     pretty_assertions::assert_eq!(
@@ -190,7 +190,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     });
 
     diagnostics
-        .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
         .await;
 
     pretty_assertions::assert_eq!(
@@ -277,7 +277,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     });
 
     diagnostics
-        .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
         .await;
 
     pretty_assertions::assert_eq!(
@@ -391,7 +391,7 @@ async fn test_diagnostics_with_folds(cx: &mut TestAppContext) {
 
     // Only the first language server's diagnostics are shown.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
     editor.update_in(cx, |editor, window, cx| {
         editor.fold_ranges(vec![Point::new(0, 0)..Point::new(3, 0)], false, window, cx);
@@ -490,7 +490,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Only the first language server's diagnostics are shown.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
 
     pretty_assertions::assert_eq!(
@@ -530,7 +530,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Both language server's diagnostics are shown.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
 
     pretty_assertions::assert_eq!(
@@ -587,7 +587,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Only the first language server's diagnostics are updated.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
 
     pretty_assertions::assert_eq!(
@@ -629,7 +629,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Both language servers' diagnostics are updated.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
 
     pretty_assertions::assert_eq!(
@@ -760,7 +760,7 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
                         .unwrap()
                 });
                 cx.executor()
-                    .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+                    .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
 
                 cx.run_until_parked();
             }
@@ -769,7 +769,7 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
 
     log::info!("updating mutated diagnostics view");
     mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
-        diagnostics.update_stale_excerpts(window, cx)
+        diagnostics.update_stale_excerpts(RetainExcerpts::No, window, cx)
     });
 
     log::info!("constructing reference diagnostics view");
@@ -777,7 +777,7 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
         ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
     });
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.run_until_parked();
 
     let mutated_excerpts =
@@ -789,7 +789,12 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
 
     // The mutated view may contain more than the reference view as
     // we don't currently shrink excerpts when diagnostics were removed.
-    let mut ref_iter = reference_excerpts.lines().filter(|line| *line != "§ -----");
+    let mut ref_iter = reference_excerpts.lines().filter(|line| {
+        // ignore $ ---- and $ <file>.rs
+        !line.starts_with('§')
+            || line.starts_with("§ diagnostic")
+            || line.starts_with("§ related info")
+    });
     let mut next_ref_line = ref_iter.next();
     let mut skipped_block = false;
 
@@ -797,7 +802,12 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
         if let Some(ref_line) = next_ref_line {
             if mut_line == ref_line {
                 next_ref_line = ref_iter.next();
-            } else if mut_line.contains('§') && mut_line != "§ -----" {
+            } else if mut_line.contains('§')
+                // ignore $ ---- and $ <file>.rs
+                && (!mut_line.starts_with('§')
+                    || mut_line.starts_with("§ diagnostic")
+                    || mut_line.starts_with("§ related info"))
+            {
                 skipped_block = true;
             }
         }
@@ -863,20 +873,20 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
             21..=50 => mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
                 diagnostics.editor.update(cx, |editor, cx| {
                     let snapshot = editor.snapshot(window, cx);
-                    if !snapshot.buffer_snapshot.is_empty() {
-                        let position = rng.random_range(0..snapshot.buffer_snapshot.len());
-                        let position = snapshot.buffer_snapshot.clip_offset(position, Bias::Left);
+                    if !snapshot.buffer_snapshot().is_empty() {
+                        let position = rng.random_range(0..snapshot.buffer_snapshot().len());
+                        let position = snapshot.buffer_snapshot().clip_offset(position, Bias::Left);
                         log::info!(
                             "adding inlay at {position}/{}: {:?}",
-                            snapshot.buffer_snapshot.len(),
-                            snapshot.buffer_snapshot.text(),
+                            snapshot.buffer_snapshot().len(),
+                            snapshot.buffer_snapshot().text(),
                         );
 
                         editor.splice_inlays(
                             &[],
                             vec![Inlay::edit_prediction(
                                 post_inc(&mut next_inlay_id),
-                                snapshot.buffer_snapshot.anchor_before(position),
+                                snapshot.buffer_snapshot().anchor_before(position),
                                 Rope::from_iter(["Test inlay ", "next_inlay_id"]),
                             )],
                             cx,
@@ -949,7 +959,7 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
                         .unwrap()
                 });
                 cx.executor()
-                    .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+                    .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
 
                 cx.run_until_parked();
             }
@@ -958,11 +968,11 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
 
     log::info!("updating mutated diagnostics view");
     mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
-        diagnostics.update_stale_excerpts(window, cx)
+        diagnostics.update_stale_excerpts(RetainExcerpts::No, window, cx)
     });
 
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.run_until_parked();
 }
 
@@ -1341,7 +1351,7 @@ async fn test_hover_diagnostic_and_info_popovers(cx: &mut gpui::TestAppContext) 
             range: Some(range),
         }))
     });
-    let delay = cx.update(|_, cx| EditorSettings::get_global(cx).hover_popover_delay + 1);
+    let delay = cx.update(|_, cx| EditorSettings::get_global(cx).hover_popover_delay.0 + 1);
     cx.background_executor
         .advance_clock(Duration::from_millis(delay));
 
@@ -1427,7 +1437,7 @@ async fn test_diagnostics_with_code(cx: &mut TestAppContext) {
     let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
     diagnostics
-        .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
         .await;
 
     // Verify that the diagnostic codes are displayed correctly
@@ -1565,6 +1575,440 @@ async fn go_to_diagnostic_with_severity(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"error warning ˇinfo hint"});
     go!(warning_info);
     cx.assert_editor_state(indoc! {"error ˇwarning info hint"});
+}
+
+#[gpui::test]
+async fn test_buffer_diagnostics(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    // We'll be creating two different files, both with diagnostics, so we can
+    // later verify that, since the `BufferDiagnosticsEditor` only shows
+    // diagnostics for the provided path, the diagnostics for the other file
+    // will not be shown, contrary to what happens with
+    // `ProjectDiagnosticsEditor`.
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/test"),
+        json!({
+            "main.rs": "
+                fn main() {
+                    let x = vec![];
+                    let y = vec![];
+                    a(x);
+                    b(y);
+                    c(y);
+                    d(x);
+                }
+            "
+            .unindent(),
+            "other.rs": "
+                fn other() {
+                    let unused = 42;
+                    undefined_function();
+                }
+            "
+            .unindent(),
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let project_path = project::ProjectPath {
+        worktree_id: project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        }),
+        path: rel_path("main.rs").into(),
+    };
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer(project_path.clone(), cx)
+        })
+        .await
+        .ok();
+
+    // Create the diagnostics for `main.rs`.
+    let language_server_id = LanguageServerId(0);
+    let uri = lsp::Uri::from_file_path(path!("/test/main.rs")).unwrap();
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store.update_diagnostics(language_server_id, lsp::PublishDiagnosticsParams {
+            uri: uri.clone(),
+            diagnostics: vec![
+                lsp::Diagnostic{
+                    range: lsp::Range::new(lsp::Position::new(5, 6), lsp::Position::new(5, 7)),
+                    severity: Some(lsp::DiagnosticSeverity::WARNING),
+                    message: "use of moved value\nvalue used here after move".to_string(),
+                    related_information: Some(vec![
+                        lsp::DiagnosticRelatedInformation {
+                            location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(2, 8), lsp::Position::new(2, 9))),
+                            message: "move occurs because `y` has type `Vec<char>`, which does not implement the `Copy` trait".to_string()
+                        },
+                        lsp::DiagnosticRelatedInformation {
+                            location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(4, 6), lsp::Position::new(4, 7))),
+                            message: "value moved here".to_string()
+                        },
+                    ]),
+                    ..Default::default()
+                },
+                lsp::Diagnostic{
+                    range: lsp::Range::new(lsp::Position::new(6, 6), lsp::Position::new(6, 7)),
+                    severity: Some(lsp::DiagnosticSeverity::ERROR),
+                    message: "use of moved value\nvalue used here after move".to_string(),
+                    related_information: Some(vec![
+                        lsp::DiagnosticRelatedInformation {
+                            location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9))),
+                            message: "move occurs because `x` has type `Vec<char>`, which does not implement the `Copy` trait".to_string()
+                        },
+                        lsp::DiagnosticRelatedInformation {
+                            location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(3, 6), lsp::Position::new(3, 7))),
+                            message: "value moved here".to_string()
+                        },
+                    ]),
+                    ..Default::default()
+                }
+            ],
+            version: None
+        }, None, DiagnosticSourceKind::Pushed, &[], cx).unwrap();
+
+        // Create diagnostics for other.rs to ensure that the file and
+        // diagnostics are not included in `BufferDiagnosticsEditor` when it is
+        // deployed for main.rs.
+        lsp_store.update_diagnostics(language_server_id, lsp::PublishDiagnosticsParams {
+            uri: lsp::Uri::from_file_path(path!("/test/other.rs")).unwrap(),
+            diagnostics: vec![
+                lsp::Diagnostic{
+                    range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 14)),
+                    severity: Some(lsp::DiagnosticSeverity::WARNING),
+                    message: "unused variable: `unused`".to_string(),
+                    ..Default::default()
+                },
+                lsp::Diagnostic{
+                    range: lsp::Range::new(lsp::Position::new(2, 4), lsp::Position::new(2, 22)),
+                    severity: Some(lsp::DiagnosticSeverity::ERROR),
+                    message: "cannot find function `undefined_function` in this scope".to_string(),
+                    ..Default::default()
+                }
+            ],
+            version: None
+        }, None, DiagnosticSourceKind::Pushed, &[], cx).unwrap();
+    });
+
+    let buffer_diagnostics = window.build_entity(cx, |window, cx| {
+        BufferDiagnosticsEditor::new(
+            project_path.clone(),
+            project.clone(),
+            buffer,
+            true,
+            window,
+            cx,
+        )
+    });
+    let editor = buffer_diagnostics.update(cx, |buffer_diagnostics, _| {
+        buffer_diagnostics.editor().clone()
+    });
+
+    // Since the excerpt updates is handled by a background task, we need to
+    // wait a little bit to ensure that the buffer diagnostic's editor content
+    // is rendered.
+    cx.executor()
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
+
+    pretty_assertions::assert_eq!(
+        editor_content_with_blocks(&editor, cx),
+        indoc::indoc! {
+            "§ main.rs
+             § -----
+             fn main() {
+                 let x = vec![];
+             § move occurs because `x` has type `Vec<char>`, which does not implement
+             § the `Copy` trait (back)
+                 let y = vec![];
+             § move occurs because `y` has type `Vec<char>`, which does not implement
+             § the `Copy` trait
+                 a(x); § value moved here
+                 b(y); § value moved here
+                 c(y);
+             § use of moved value
+             § value used here after move
+                 d(x);
+             § use of moved value
+             § value used here after move
+             § hint: move occurs because `x` has type `Vec<char>`, which does not
+             § implement the `Copy` trait
+             }"
+        }
+    );
+}
+
+#[gpui::test]
+async fn test_buffer_diagnostics_without_warnings(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/test"),
+        json!({
+            "main.rs": "
+                fn main() {
+                    let x = vec![];
+                    let y = vec![];
+                    a(x);
+                    b(y);
+                    c(y);
+                    d(x);
+                }
+            "
+            .unindent(),
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let project_path = project::ProjectPath {
+        worktree_id: project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        }),
+        path: rel_path("main.rs").into(),
+    };
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer(project_path.clone(), cx)
+        })
+        .await
+        .ok();
+
+    let language_server_id = LanguageServerId(0);
+    let uri = lsp::Uri::from_file_path(path!("/test/main.rs")).unwrap();
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store.update_diagnostics(language_server_id, lsp::PublishDiagnosticsParams {
+            uri: uri.clone(),
+            diagnostics: vec![
+                lsp::Diagnostic{
+                    range: lsp::Range::new(lsp::Position::new(5, 6), lsp::Position::new(5, 7)),
+                    severity: Some(lsp::DiagnosticSeverity::WARNING),
+                    message: "use of moved value\nvalue used here after move".to_string(),
+                    related_information: Some(vec![
+                        lsp::DiagnosticRelatedInformation {
+                            location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(2, 8), lsp::Position::new(2, 9))),
+                            message: "move occurs because `y` has type `Vec<char>`, which does not implement the `Copy` trait".to_string()
+                        },
+                        lsp::DiagnosticRelatedInformation {
+                            location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(4, 6), lsp::Position::new(4, 7))),
+                            message: "value moved here".to_string()
+                        },
+                    ]),
+                    ..Default::default()
+                },
+                lsp::Diagnostic{
+                    range: lsp::Range::new(lsp::Position::new(6, 6), lsp::Position::new(6, 7)),
+                    severity: Some(lsp::DiagnosticSeverity::ERROR),
+                    message: "use of moved value\nvalue used here after move".to_string(),
+                    related_information: Some(vec![
+                        lsp::DiagnosticRelatedInformation {
+                            location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9))),
+                            message: "move occurs because `x` has type `Vec<char>`, which does not implement the `Copy` trait".to_string()
+                        },
+                        lsp::DiagnosticRelatedInformation {
+                            location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(3, 6), lsp::Position::new(3, 7))),
+                            message: "value moved here".to_string()
+                        },
+                    ]),
+                    ..Default::default()
+                }
+            ],
+            version: None
+        }, None, DiagnosticSourceKind::Pushed, &[], cx).unwrap();
+    });
+
+    let include_warnings = false;
+    let buffer_diagnostics = window.build_entity(cx, |window, cx| {
+        BufferDiagnosticsEditor::new(
+            project_path.clone(),
+            project.clone(),
+            buffer,
+            include_warnings,
+            window,
+            cx,
+        )
+    });
+
+    let editor = buffer_diagnostics.update(cx, |buffer_diagnostics, _cx| {
+        buffer_diagnostics.editor().clone()
+    });
+
+    // Since the excerpt updates is handled by a background task, we need to
+    // wait a little bit to ensure that the buffer diagnostic's editor content
+    // is rendered.
+    cx.executor()
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
+
+    pretty_assertions::assert_eq!(
+        editor_content_with_blocks(&editor, cx),
+        indoc::indoc! {
+            "§ main.rs
+             § -----
+             fn main() {
+                 let x = vec![];
+             § move occurs because `x` has type `Vec<char>`, which does not implement
+             § the `Copy` trait (back)
+                 let y = vec![];
+                 a(x); § value moved here
+                 b(y);
+                 c(y);
+                 d(x);
+             § use of moved value
+             § value used here after move
+             § hint: move occurs because `x` has type `Vec<char>`, which does not
+             § implement the `Copy` trait
+             }"
+        }
+    );
+}
+
+#[gpui::test]
+async fn test_buffer_diagnostics_multiple_servers(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/test"),
+        json!({
+            "main.rs": "
+                fn main() {
+                    let x = vec![];
+                    let y = vec![];
+                    a(x);
+                    b(y);
+                    c(y);
+                    d(x);
+                }
+            "
+            .unindent(),
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let project_path = project::ProjectPath {
+        worktree_id: project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        }),
+        path: rel_path("main.rs").into(),
+    };
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer(project_path.clone(), cx)
+        })
+        .await
+        .ok();
+
+    // Create the diagnostics for `main.rs`.
+    // Two warnings are being created, one for each language server, in order to
+    // assert that both warnings are rendered in the editor.
+    let language_server_id_a = LanguageServerId(0);
+    let language_server_id_b = LanguageServerId(1);
+    let uri = lsp::Uri::from_file_path(path!("/test/main.rs")).unwrap();
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store
+            .update_diagnostics(
+                language_server_id_a,
+                lsp::PublishDiagnosticsParams {
+                    uri: uri.clone(),
+                    diagnostics: vec![lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(5, 6), lsp::Position::new(5, 7)),
+                        severity: Some(lsp::DiagnosticSeverity::WARNING),
+                        message: "use of moved value\nvalue used here after move".to_string(),
+                        related_information: None,
+                        ..Default::default()
+                    }],
+                    version: None,
+                },
+                None,
+                DiagnosticSourceKind::Pushed,
+                &[],
+                cx,
+            )
+            .unwrap();
+
+        lsp_store
+            .update_diagnostics(
+                language_server_id_b,
+                lsp::PublishDiagnosticsParams {
+                    uri: uri.clone(),
+                    diagnostics: vec![lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(6, 6), lsp::Position::new(6, 7)),
+                        severity: Some(lsp::DiagnosticSeverity::WARNING),
+                        message: "use of moved value\nvalue used here after move".to_string(),
+                        related_information: None,
+                        ..Default::default()
+                    }],
+                    version: None,
+                },
+                None,
+                DiagnosticSourceKind::Pushed,
+                &[],
+                cx,
+            )
+            .unwrap();
+    });
+
+    let buffer_diagnostics = window.build_entity(cx, |window, cx| {
+        BufferDiagnosticsEditor::new(
+            project_path.clone(),
+            project.clone(),
+            buffer,
+            true,
+            window,
+            cx,
+        )
+    });
+    let editor = buffer_diagnostics.update(cx, |buffer_diagnostics, _| {
+        buffer_diagnostics.editor().clone()
+    });
+
+    // Since the excerpt updates is handled by a background task, we need to
+    // wait a little bit to ensure that the buffer diagnostic's editor content
+    // is rendered.
+    cx.executor()
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
+
+    pretty_assertions::assert_eq!(
+        editor_content_with_blocks(&editor, cx),
+        indoc::indoc! {
+            "§ main.rs
+             § -----
+                 a(x);
+                 b(y);
+                 c(y);
+             § use of moved value
+             § value used here after move
+                 d(x);
+             § use of moved value
+             § value used here after move
+             }"
+        }
+    );
+
+    buffer_diagnostics.update(cx, |buffer_diagnostics, _cx| {
+        assert_eq!(
+            *buffer_diagnostics.summary(),
+            DiagnosticSummary {
+                warning_count: 2,
+                error_count: 0
+            }
+        );
+    })
 }
 
 fn init_test(cx: &mut TestAppContext) {

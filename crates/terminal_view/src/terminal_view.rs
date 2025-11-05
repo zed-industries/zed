@@ -7,12 +7,11 @@ mod terminal_slash_command;
 pub mod terminal_tab_tooltip;
 
 use assistant_slash_command::SlashCommandRegistry;
-use editor::{EditorSettings, actions::SelectAll, scroll::ScrollbarAutoHide};
+use editor::{EditorSettings, actions::SelectAll};
 use gpui::{
     Action, AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render,
-    ScrollWheelEvent, Stateful, Styled, Subscription, Task, WeakEntity, actions, anchored,
-    deferred, div,
+    ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, actions, anchored, deferred, div,
 };
 use persistence::TERMINAL_DB;
 use project::{Project, search::SearchQuery};
@@ -26,7 +25,7 @@ use terminal::{
         index::Point,
         term::{TermMode, point_to_viewport, search::RegexSearch},
     },
-    terminal_settings::{self, CursorShape, TerminalBlink, TerminalSettings, WorkingDirectory},
+    terminal_settings::{CursorShape, TerminalSettings},
 };
 use terminal_element::TerminalElement;
 use terminal_panel::TerminalPanel;
@@ -35,7 +34,9 @@ use terminal_scrollbar::TerminalScrollHandle;
 use terminal_slash_command::TerminalSlashCommand;
 use terminal_tab_tooltip::TerminalTooltip;
 use ui::{
-    ContextMenu, Icon, IconName, Label, Scrollbar, ScrollbarState, Tooltip, h_flex, prelude::*,
+    ContextMenu, Icon, IconName, Label, ScrollAxes, Scrollbars, Tooltip, WithScrollbar, h_flex,
+    prelude::*,
+    scrollbars::{self, GlobalSetting, ScrollbarVisibility},
 };
 use util::ResultExt;
 use workspace::{
@@ -49,7 +50,7 @@ use workspace::{
 };
 
 use serde::Deserialize;
-use settings::{Settings, SettingsStore};
+use settings::{Settings, SettingsStore, TerminalBlink, WorkingDirectory};
 use smol::Timer;
 use zed_actions::assistant::InlineAssist;
 
@@ -62,8 +63,12 @@ use std::{
     time::Duration,
 };
 
+struct ImeState {
+    marked_text: String,
+    marked_range_utf16: Option<Range<usize>>,
+}
+
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
-const TERMINAL_SCROLLBAR_WIDTH: Pixels = px(12.);
 
 /// Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
@@ -134,12 +139,8 @@ pub struct TerminalView {
     show_breadcrumbs: bool,
     block_below_cursor: Option<Rc<BlockProperties>>,
     scroll_top: Pixels,
-    scrollbar_state: ScrollbarState,
     scroll_handle: TerminalScrollHandle,
-    show_scrollbar: bool,
-    hide_scrollbar_task: Option<Task<()>>,
-    marked_text: Option<String>,
-    marked_range_utf16: Option<Range<usize>>,
+    ime_state: Option<ImeState>,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
 }
@@ -233,9 +234,7 @@ impl TerminalView {
                 terminal_view.focus_out(window, cx);
             },
         );
-        let cursor_shape = TerminalSettings::get_global(cx)
-            .cursor_shape
-            .unwrap_or_default();
+        let cursor_shape = TerminalSettings::get_global(cx).cursor_shape;
 
         let scroll_handle = TerminalScrollHandle::new(terminal.read(cx));
 
@@ -258,13 +257,9 @@ impl TerminalView {
             show_breadcrumbs: TerminalSettings::get_global(cx).toolbar.breadcrumbs,
             block_below_cursor: None,
             scroll_top: Pixels::ZERO,
-            scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
             scroll_handle,
-            show_scrollbar: !Self::should_autohide_scrollbar(cx),
-            hide_scrollbar_task: None,
             cwd_serialized: false,
-            marked_text: None,
-            marked_range_utf16: None,
+            ime_state: None,
             _subscriptions: vec![
                 focus_in,
                 focus_out,
@@ -323,24 +318,27 @@ impl TerminalView {
     pub(crate) fn set_marked_text(
         &mut self,
         text: String,
-        range: Range<usize>,
+        range: Option<Range<usize>>,
         cx: &mut Context<Self>,
     ) {
-        self.marked_text = Some(text);
-        self.marked_range_utf16 = Some(range);
+        self.ime_state = Some(ImeState {
+            marked_text: text,
+            marked_range_utf16: range,
+        });
         cx.notify();
     }
 
     /// Gets the current marked range (UTF-16).
     pub(crate) fn marked_text_range(&self) -> Option<Range<usize>> {
-        self.marked_range_utf16.clone()
+        self.ime_state
+            .as_ref()
+            .and_then(|state| state.marked_range_utf16.clone())
     }
 
     /// Clears the marked (pre-edit) text state.
     pub(crate) fn clear_marked_text(&mut self, cx: &mut Context<Self>) {
-        if self.marked_text.is_some() {
-            self.marked_text = None;
-            self.marked_range_utf16 = None;
+        if self.ime_state.is_some() {
+            self.ime_state = None;
             cx.notify();
         }
     }
@@ -427,7 +425,7 @@ impl TerminalView {
         let breadcrumb_visibility_changed = self.show_breadcrumbs != settings.toolbar.breadcrumbs;
         self.show_breadcrumbs = settings.toolbar.breadcrumbs;
 
-        let new_cursor_shape = settings.cursor_shape.unwrap_or_default();
+        let new_cursor_shape = settings.cursor_shape;
         let old_cursor_shape = self.cursor_shape;
         if old_cursor_shape != new_cursor_shape {
             self.cursor_shape = new_cursor_shape;
@@ -476,7 +474,7 @@ impl TerminalView {
             .terminal
             .read(cx)
             .task()
-            .map(|task| terminal_rerun_override(&task.id))
+            .map(|task| terminal_rerun_override(&task.spawned_task.id))
             .unwrap_or_default();
         window.dispatch_action(Box::new(task), cx);
     }
@@ -830,151 +828,19 @@ impl TerminalView {
         self.terminal = terminal;
     }
 
-    // Hack: Using editor in terminal causes cyclic dependency i.e. editor -> terminal -> project -> editor.
-    fn map_show_scrollbar_from_editor_to_terminal(
-        show_scrollbar: editor::ShowScrollbar,
-    ) -> terminal_settings::ShowScrollbar {
-        match show_scrollbar {
-            editor::ShowScrollbar::Auto => terminal_settings::ShowScrollbar::Auto,
-            editor::ShowScrollbar::System => terminal_settings::ShowScrollbar::System,
-            editor::ShowScrollbar::Always => terminal_settings::ShowScrollbar::Always,
-            editor::ShowScrollbar::Never => terminal_settings::ShowScrollbar::Never,
-        }
-    }
-
-    fn should_show_scrollbar(cx: &App) -> bool {
-        let show = TerminalSettings::get_global(cx)
-            .scrollbar
-            .show
-            .unwrap_or_else(|| {
-                Self::map_show_scrollbar_from_editor_to_terminal(
-                    EditorSettings::get_global(cx).scrollbar.show,
-                )
-            });
-        match show {
-            terminal_settings::ShowScrollbar::Auto => true,
-            terminal_settings::ShowScrollbar::System => true,
-            terminal_settings::ShowScrollbar::Always => true,
-            terminal_settings::ShowScrollbar::Never => false,
-        }
-    }
-
-    fn should_autohide_scrollbar(cx: &App) -> bool {
-        let show = TerminalSettings::get_global(cx)
-            .scrollbar
-            .show
-            .unwrap_or_else(|| {
-                Self::map_show_scrollbar_from_editor_to_terminal(
-                    EditorSettings::get_global(cx).scrollbar.show,
-                )
-            });
-        match show {
-            terminal_settings::ShowScrollbar::Auto => true,
-            terminal_settings::ShowScrollbar::System => cx
-                .try_global::<ScrollbarAutoHide>()
-                .map_or_else(|| cx.should_auto_hide_scrollbars(), |autohide| autohide.0),
-            terminal_settings::ShowScrollbar::Always => false,
-            terminal_settings::ShowScrollbar::Never => true,
-        }
-    }
-
-    fn hide_scrollbar(&mut self, cx: &mut Context<Self>) {
-        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
-        if !Self::should_autohide_scrollbar(cx) {
-            return;
-        }
-        self.hide_scrollbar_task = Some(cx.spawn(async move |panel, cx| {
-            cx.background_executor()
-                .timer(SCROLLBAR_SHOW_INTERVAL)
-                .await;
-            panel
-                .update(cx, |panel, cx| {
-                    panel.show_scrollbar = false;
-                    cx.notify();
-                })
-                .log_err();
-        }))
-    }
-
-    fn render_scrollbar(&self, window: &Window, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        if !Self::should_show_scrollbar(cx)
-            || !(self.show_scrollbar || self.scrollbar_state.is_dragging())
-            || !self.content_mode(window, cx).is_scrollable()
-        {
-            return None;
-        }
-
-        if self.terminal.read(cx).total_lines() == self.terminal.read(cx).viewport_lines() {
-            return None;
-        }
-
-        self.scroll_handle.update(self.terminal.read(cx));
-
-        if let Some(new_display_offset) = self.scroll_handle.future_display_offset.take() {
-            self.terminal.update(cx, |term, _| {
-                let delta = new_display_offset as i32 - term.last_content.display_offset as i32;
-                match delta.cmp(&0) {
-                    std::cmp::Ordering::Greater => term.scroll_up_by(delta as usize),
-                    std::cmp::Ordering::Less => term.scroll_down_by(-delta as usize),
-                    std::cmp::Ordering::Equal => {}
-                }
-            });
-        }
-
-        Some(
-            div()
-                .occlude()
-                .id("terminal-view-scroll")
-                .on_mouse_move(cx.listener(|_, _, _window, cx| {
-                    cx.notify();
-                    cx.stop_propagation()
-                }))
-                .on_hover(|_, _window, cx| {
-                    cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _window, cx| {
-                    cx.stop_propagation();
-                })
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|terminal_view, _, window, cx| {
-                        if !terminal_view.scrollbar_state.is_dragging()
-                            && !terminal_view.focus_handle.contains_focused(window, cx)
-                        {
-                            terminal_view.hide_scrollbar(cx);
-                            cx.notify();
-                        }
-                        cx.stop_propagation();
-                    }),
-                )
-                .on_scroll_wheel(cx.listener(|_, _, _window, cx| {
-                    cx.notify();
-                }))
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .right_0()
-                .h_full()
-                .w(TERMINAL_SCROLLBAR_WIDTH)
-                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
-        )
-    }
-
     fn rerun_button(task: &TaskState) -> Option<IconButton> {
-        if !task.show_rerun {
+        if !task.spawned_task.show_rerun {
             return None;
         }
 
-        let task_id = task.id.clone();
+        let task_id = task.spawned_task.id.clone();
         Some(
             IconButton::new("rerun-icon", IconName::Rerun)
                 .icon_size(IconSize::Small)
                 .size(ButtonSize::Compact)
                 .icon_color(Color::Default)
                 .shape(ui::IconButtonShape::Square)
-                .tooltip(move |window, cx| {
-                    Tooltip::for_action("Rerun task", &RerunTask, window, cx)
-                })
+                .tooltip(move |_window, cx| Tooltip::for_action("Rerun task", &RerunTask, cx))
                 .on_click(move |_, window, cx| {
                     window.dispatch_action(Box::new(terminal_rerun_override(&task_id)), cx);
                 }),
@@ -1114,6 +980,24 @@ fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<RegexS
     }
 }
 
+struct TerminalScrollbarSettingsWrapper;
+
+impl GlobalSetting for TerminalScrollbarSettingsWrapper {
+    fn get_value(_cx: &App) -> &Self {
+        &Self
+    }
+}
+
+impl ScrollbarVisibility for TerminalScrollbarSettingsWrapper {
+    fn visibility(&self, cx: &App) -> scrollbars::ShowScrollbar {
+        TerminalSettings::get_global(cx)
+            .scrollbar
+            .show
+            .map(Into::into)
+            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
+    }
+}
+
 impl TerminalView {
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_bell(cx);
@@ -1145,27 +1029,30 @@ impl TerminalView {
             terminal.focus_out();
             terminal.set_cursor_shape(CursorShape::Hollow);
         });
-        self.hide_scrollbar(cx);
         cx.notify();
     }
 }
 
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // TODO: this should be moved out of render
+        self.scroll_handle.update(self.terminal.read(cx));
+
+        if let Some(new_display_offset) = self.scroll_handle.future_display_offset.take() {
+            self.terminal.update(cx, |term, _| {
+                let delta = new_display_offset as i32 - term.last_content.display_offset as i32;
+                match delta.cmp(&0) {
+                    std::cmp::Ordering::Greater => term.scroll_up_by(delta as usize),
+                    std::cmp::Ordering::Less => term.scroll_down_by(-delta as usize),
+                    std::cmp::Ordering::Equal => {}
+                }
+            });
+        }
+
         let terminal_handle = self.terminal.clone();
         let terminal_view_handle = cx.entity();
 
         let focused = self.focus_handle.is_focused(window);
-
-        // Always calculate scrollbar width to prevent layout shift
-        let scrollbar_width = if Self::should_show_scrollbar(cx)
-            && self.content_mode(window, cx).is_scrollable()
-            && self.terminal.read(cx).total_lines() > self.terminal.read(cx).viewport_lines()
-        {
-            TERMINAL_SCROLLBAR_WIDTH
-        } else {
-            px(0.)
-        };
 
         div()
             .id("terminal-view")
@@ -1203,21 +1090,12 @@ impl Render for TerminalView {
                     }
                 }),
             )
-            .on_hover(cx.listener(|this, hovered, window, cx| {
-                if *hovered {
-                    this.show_scrollbar = true;
-                    this.hide_scrollbar_task.take();
-                    cx.notify();
-                } else if !this.focus_handle.contains_focused(window, cx) {
-                    this.hide_scrollbar(cx);
-                }
-            }))
             .child(
                 // TODO: Oddly this wrapper div is needed for TerminalElement to not steal events from the context menu
                 div()
+                    .id("terminal-view-container")
                     .size_full()
                     .bg(cx.theme().colors().editor_background)
-                    .when(scrollbar_width > px(0.), |div| div.pr(scrollbar_width))
                     .child(TerminalElement::new(
                         terminal_handle,
                         terminal_view_handle,
@@ -1228,8 +1106,18 @@ impl Render for TerminalView {
                         self.block_below_cursor.clone(),
                         self.mode.clone(),
                     ))
-                    .when_some(self.render_scrollbar(window, cx), |div, scrollbar| {
-                        div.child(scrollbar)
+                    .when(self.content_mode(window, cx).is_scrollable(), |div| {
+                        div.custom_scrollbars(
+                            Scrollbars::for_settings::<TerminalScrollbarSettingsWrapper>()
+                                .show_along(ScrollAxes::Vertical)
+                                .with_track_along(
+                                    ScrollAxes::Vertical,
+                                    cx.theme().colors().editor_background,
+                                )
+                                .tracked_scroll_handle(self.scroll_handle.clone()),
+                            window,
+                            cx,
+                        )
                     }),
             )
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
@@ -1250,10 +1138,11 @@ impl Item for TerminalView {
     fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent> {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(false);
-        let pid = terminal.pty_info.pid_getter().fallback_pid();
+        let pid = terminal.pid_getter()?.fallback_pid();
 
         Some(TabTooltipContent::Custom(Box::new(move |_window, cx| {
-            cx.new(|_| TerminalTooltip::new(title.clone(), pid)).into()
+            cx.new(|_| TerminalTooltip::new(title.clone(), pid.as_u32()))
+                .into()
         })))
     }
 
@@ -1321,33 +1210,44 @@ impl Item for TerminalView {
         None
     }
 
+    fn buffer_kind(&self, _: &App) -> workspace::item::ItemBufferKind {
+        workspace::item::ItemBufferKind::Singleton
+    }
+
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>> {
-        let terminal = self
-            .project
-            .update(cx, |project, cx| {
-                let cwd = project
-                    .active_project_directory(cx)
-                    .map(|it| it.to_path_buf());
-                project.clone_terminal(self.terminal(), cx, || cwd)
+    ) -> Task<Option<Entity<Self>>> {
+        let Ok(terminal) = self.project.update(cx, |project, cx| {
+            let cwd = project
+                .active_project_directory(cx)
+                .map(|it| it.to_path_buf());
+            project.clone_terminal(self.terminal(), cx, cwd)
+        }) else {
+            return Task::ready(None);
+        };
+        cx.spawn_in(window, async move |this, cx| {
+            let terminal = terminal.await.log_err()?;
+            this.update_in(cx, |this, window, cx| {
+                cx.new(|cx| {
+                    TerminalView::new(
+                        terminal,
+                        this.workspace.clone(),
+                        workspace_id,
+                        this.project.clone(),
+                        window,
+                        cx,
+                    )
+                })
             })
-            .ok()?
-            .log_err()?;
-
-        Some(cx.new(|cx| {
-            TerminalView::new(
-                terminal,
-                self.workspace.clone(),
-                workspace_id,
-                self.project.clone(),
-                window,
-                cx,
-            )
-        }))
+            .ok()
+        })
     }
 
     fn is_dirty(&self, cx: &gpui::App) -> bool {
@@ -1363,10 +1263,6 @@ impl Item for TerminalView {
 
     fn can_save_as(&self, _cx: &App) -> bool {
         false
-    }
-
-    fn is_singleton(&self, _cx: &App) -> bool {
-        true
     }
 
     fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
@@ -1552,6 +1448,7 @@ impl SearchableItem for TerminalView {
         &mut self,
         index: usize,
         _: &[Self::Match],
+        _collapse: bool,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1682,6 +1579,7 @@ mod tests {
     use gpui::TestAppContext;
     use project::{Entry, Project, ProjectPath, Worktree};
     use std::path::Path;
+    use util::rel_path::RelPath;
     use workspace::AppState;
 
     // Working directory calculation tests
@@ -1843,7 +1741,7 @@ mod tests {
         let entry = cx
             .update(|cx| {
                 wt.update(cx, |wt, cx| {
-                    wt.create_entry(Path::new(""), is_dir, None, cx)
+                    wt.create_entry(RelPath::empty().into(), is_dir, None, cx)
                 })
             })
             .await

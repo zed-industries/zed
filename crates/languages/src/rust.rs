@@ -5,9 +5,9 @@ use futures::StreamExt;
 use gpui::{App, AppContext, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
+use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary};
-use project::Fs;
 use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
 use project::project_settings::ProjectSettings;
 use regex::Regex;
@@ -17,7 +17,6 @@ use smol::fs::{self};
 use std::fmt::Display;
 use std::ops::Range;
 use std::{
-    any::Any,
     borrow::Cow,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
@@ -25,9 +24,9 @@ use std::{
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::fs::{make_file_executable, remove_matching};
 use util::merge_json_value_into;
+use util::rel_path::RelPath;
 use util::{ResultExt, maybe};
 
-use crate::github_download::{GithubBinaryMetadata, download_server_binary};
 use crate::language_settings::language_settings;
 
 pub struct RustLspAdapter;
@@ -41,7 +40,7 @@ impl RustLspAdapter {
 #[cfg(target_os = "linux")]
 impl RustLspAdapter {
     const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
-    const ARCH_SERVER_NAME: &str = "unknown-linux-gnu";
+    const ARCH_SERVER_NAME: &str = "unknown-linux";
 }
 
 #[cfg(target_os = "freebsd")]
@@ -58,19 +57,89 @@ impl RustLspAdapter {
 
 const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("rust-analyzer");
 
+#[cfg(target_os = "linux")]
+enum LibcType {
+    Gnu,
+    Musl,
+}
+
 impl RustLspAdapter {
-    fn build_asset_name() -> String {
+    #[cfg(target_os = "linux")]
+    async fn determine_libc_type() -> LibcType {
+        use futures::pin_mut;
+        use smol::process::Command;
+
+        async fn from_ldd_version() -> Option<LibcType> {
+            let ldd_output = Command::new("ldd").arg("--version").output().await.ok()?;
+            let ldd_version = String::from_utf8_lossy(&ldd_output.stdout);
+
+            if ldd_version.contains("GNU libc") || ldd_version.contains("GLIBC") {
+                Some(LibcType::Gnu)
+            } else if ldd_version.contains("musl") {
+                Some(LibcType::Musl)
+            } else {
+                None
+            }
+        }
+
+        if let Some(libc_type) = from_ldd_version().await {
+            return libc_type;
+        }
+
+        let Ok(dir_entries) = smol::fs::read_dir("/lib").await else {
+            // defaulting to gnu because nix doesn't have /lib files due to not following FHS
+            return LibcType::Gnu;
+        };
+        let dir_entries = dir_entries.filter_map(async move |e| e.ok());
+        pin_mut!(dir_entries);
+
+        let mut has_musl = false;
+        let mut has_gnu = false;
+
+        while let Some(entry) = dir_entries.next().await {
+            let file_name = entry.file_name();
+            let file_name = file_name.to_string_lossy();
+            if file_name.starts_with("ld-musl-") {
+                has_musl = true;
+            } else if file_name.starts_with("ld-linux-") {
+                has_gnu = true;
+            }
+        }
+
+        match (has_musl, has_gnu) {
+            (true, _) => LibcType::Musl,
+            (_, true) => LibcType::Gnu,
+            _ => LibcType::Gnu,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn build_arch_server_name_linux() -> String {
+        let libc = match Self::determine_libc_type().await {
+            LibcType::Musl => "musl",
+            LibcType::Gnu => "gnu",
+        };
+
+        format!("{}-{}", Self::ARCH_SERVER_NAME, libc)
+    }
+
+    async fn build_asset_name() -> String {
         let extension = match Self::GITHUB_ASSET_KIND {
             AssetKind::TarGz => "tar.gz",
             AssetKind::Gz => "gz",
             AssetKind::Zip => "zip",
         };
 
+        #[cfg(target_os = "linux")]
+        let arch_server_name = Self::build_arch_server_name_linux().await;
+        #[cfg(not(target_os = "linux"))]
+        let arch_server_name = Self::ARCH_SERVER_NAME.to_string();
+
         format!(
             "{}-{}-{}.{}",
             SERVER_NAME,
             std::env::consts::ARCH,
-            Self::ARCH_SERVER_NAME,
+            &arch_server_name,
             extension
         )
     }
@@ -90,10 +159,10 @@ impl ManifestProvider for CargoManifestProvider {
             depth,
             delegate,
         }: ManifestQuery,
-    ) -> Option<Arc<Path>> {
+    ) -> Option<Arc<RelPath>> {
         let mut outermost_cargo_toml = None;
         for path in path.ancestors().take(depth) {
-            let p = path.join("Cargo.toml");
+            let p = path.join(RelPath::unix("Cargo.toml").unwrap());
             if delegate.exists(&p, Some(false)) {
                 outermost_cargo_toml = Some(Arc::from(path));
             }
@@ -107,161 +176,6 @@ impl ManifestProvider for CargoManifestProvider {
 impl LspAdapter for RustLspAdapter {
     fn name(&self) -> LanguageServerName {
         SERVER_NAME
-    }
-
-    async fn check_if_user_installed(
-        &self,
-        delegate: &dyn LspAdapterDelegate,
-        _: Option<Toolchain>,
-        _: &AsyncApp,
-    ) -> Option<LanguageServerBinary> {
-        let path = delegate.which("rust-analyzer".as_ref()).await?;
-        let env = delegate.shell_env().await;
-
-        // It is surprisingly common for ~/.cargo/bin/rust-analyzer to be a symlink to
-        // /usr/bin/rust-analyzer that fails when you run it; so we need to test it.
-        log::info!("found rust-analyzer in PATH. trying to run `rust-analyzer --help`");
-        let result = delegate
-            .try_exec(LanguageServerBinary {
-                path: path.clone(),
-                arguments: vec!["--help".into()],
-                env: Some(env.clone()),
-            })
-            .await;
-        if let Err(err) = result {
-            log::debug!(
-                "failed to run rust-analyzer after detecting it in PATH: binary: {:?}: {}",
-                path,
-                err
-            );
-            return None;
-        }
-
-        Some(LanguageServerBinary {
-            path,
-            env: Some(env),
-            arguments: vec![],
-        })
-    }
-
-    async fn fetch_latest_server_version(
-        &self,
-        delegate: &dyn LspAdapterDelegate,
-        cx: &AsyncApp,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release(
-            "rust-lang/rust-analyzer",
-            true,
-            ProjectSettings::try_read_global(cx, |s| {
-                s.lsp.get(&SERVER_NAME)?.fetch.as_ref()?.pre_release
-            })
-            .flatten()
-            .unwrap_or(false),
-            delegate.http_client(),
-        )
-        .await?;
-        let asset_name = Self::build_asset_name();
-        let asset = release
-            .assets
-            .into_iter()
-            .find(|asset| asset.name == asset_name)
-            .with_context(|| format!("no asset found matching `{asset_name:?}`"))?;
-        Ok(Box::new(GitHubLspBinaryVersion {
-            name: release.tag_name,
-            url: asset.browser_download_url,
-            digest: asset.digest,
-        }))
-    }
-
-    async fn fetch_server_binary(
-        &self,
-        version: Box<dyn 'static + Send + Any>,
-        container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let GitHubLspBinaryVersion {
-            name,
-            url,
-            digest: expected_digest,
-        } = *version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        let destination_path = container_dir.join(format!("rust-analyzer-{name}"));
-        let server_path = match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
-            AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
-        };
-
-        let binary = LanguageServerBinary {
-            path: server_path.clone(),
-            env: None,
-            arguments: Default::default(),
-        };
-
-        let metadata_path = destination_path.with_extension("metadata");
-        let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
-            .await
-            .ok();
-        if let Some(metadata) = metadata {
-            let validity_check = async || {
-                delegate
-                    .try_exec(LanguageServerBinary {
-                        path: server_path.clone(),
-                        arguments: vec!["--version".into()],
-                        env: None,
-                    })
-                    .await
-                    .inspect_err(|err| {
-                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err}",)
-                    })
-            };
-            if let (Some(actual_digest), Some(expected_digest)) =
-                (&metadata.digest, &expected_digest)
-            {
-                if actual_digest == expected_digest {
-                    if validity_check().await.is_ok() {
-                        return Ok(binary);
-                    }
-                } else {
-                    log::info!(
-                        "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
-                    );
-                }
-            } else if validity_check().await.is_ok() {
-                return Ok(binary);
-            }
-        }
-
-        download_server_binary(
-            delegate,
-            &url,
-            expected_digest.as_deref(),
-            &destination_path,
-            Self::GITHUB_ASSET_KIND,
-        )
-        .await?;
-        make_file_executable(&server_path).await?;
-        remove_matching(&container_dir, |path| path != destination_path).await;
-        GithubBinaryMetadata::write_to_file(
-            &GithubBinaryMetadata {
-                metadata_version: 1,
-                digest: expected_digest,
-            },
-            &metadata_path,
-        )
-        .await?;
-
-        Ok(LanguageServerBinary {
-            path: server_path,
-            env: None,
-            arguments: Default::default(),
-        })
-    }
-
-    async fn cached_server_binary(
-        &self,
-        container_dir: PathBuf,
-        _: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir).await
     }
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {
@@ -331,11 +245,7 @@ impl LspAdapter for RustLspAdapter {
                 })
                 .unwrap_or_else(filter_range);
 
-            CodeLabel {
-                text,
-                runs,
-                filter_range,
-            }
+            CodeLabel::new(text, filter_range, runs)
         };
         let mut label = match (detail_right, completion.kind) {
             (Some(signature), Some(lsp::CompletionItemKind::FIELD)) => {
@@ -486,11 +396,11 @@ impl LspAdapter for RustLspAdapter {
 
         let filter_range = prefix.len()..prefix.len() + name.len();
         let display_range = 0..filter_range.end;
-        Some(CodeLabel {
-            runs: language.highlight_text(&Rope::from_iter([prefix, name, suffix]), display_range),
-            text: format!("{prefix}{name}"),
+        Some(CodeLabel::new(
+            format!("{prefix}{name}"),
             filter_range,
-        })
+            language.highlight_text(&Rope::from_iter([prefix, name, suffix]), display_range),
+        ))
     }
 
     fn prepare_initialize_params(
@@ -516,6 +426,161 @@ impl LspAdapter for RustLspAdapter {
         }
 
         Ok(original)
+    }
+}
+
+impl LspInstaller for RustLspAdapter {
+    type BinaryVersion = GitHubLspBinaryVersion;
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: Option<Toolchain>,
+        _: &AsyncApp,
+    ) -> Option<LanguageServerBinary> {
+        let path = delegate.which("rust-analyzer".as_ref()).await?;
+        let env = delegate.shell_env().await;
+
+        // It is surprisingly common for ~/.cargo/bin/rust-analyzer to be a symlink to
+        // /usr/bin/rust-analyzer that fails when you run it; so we need to test it.
+        log::info!("found rust-analyzer in PATH. trying to run `rust-analyzer --help`");
+        let result = delegate
+            .try_exec(LanguageServerBinary {
+                path: path.clone(),
+                arguments: vec!["--help".into()],
+                env: Some(env.clone()),
+            })
+            .await;
+        if let Err(err) = result {
+            log::debug!(
+                "failed to run rust-analyzer after detecting it in PATH: binary: {:?}: {}",
+                path,
+                err
+            );
+            return None;
+        }
+
+        Some(LanguageServerBinary {
+            path,
+            env: Some(env),
+            arguments: vec![],
+        })
+    }
+
+    async fn fetch_latest_server_version(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        pre_release: bool,
+        _: &mut AsyncApp,
+    ) -> Result<GitHubLspBinaryVersion> {
+        let release = latest_github_release(
+            "rust-lang/rust-analyzer",
+            true,
+            pre_release,
+            delegate.http_client(),
+        )
+        .await?;
+        let asset_name = Self::build_asset_name().await;
+        let asset = release
+            .assets
+            .into_iter()
+            .find(|asset| asset.name == asset_name)
+            .with_context(|| format!("no asset found matching `{asset_name:?}`"))?;
+        Ok(GitHubLspBinaryVersion {
+            name: release.tag_name,
+            url: asset.browser_download_url,
+            digest: asset.digest,
+        })
+    }
+
+    async fn fetch_server_binary(
+        &self,
+        version: GitHubLspBinaryVersion,
+        container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Result<LanguageServerBinary> {
+        let GitHubLspBinaryVersion {
+            name,
+            url,
+            digest: expected_digest,
+        } = version;
+        let destination_path = container_dir.join(format!("rust-analyzer-{name}"));
+        let server_path = match Self::GITHUB_ASSET_KIND {
+            AssetKind::TarGz | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
+            AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
+        };
+
+        let binary = LanguageServerBinary {
+            path: server_path.clone(),
+            env: None,
+            arguments: Default::default(),
+        };
+
+        let metadata_path = destination_path.with_extension("metadata");
+        let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
+            .await
+            .ok();
+        if let Some(metadata) = metadata {
+            let validity_check = async || {
+                delegate
+                    .try_exec(LanguageServerBinary {
+                        path: server_path.clone(),
+                        arguments: vec!["--version".into()],
+                        env: None,
+                    })
+                    .await
+                    .inspect_err(|err| {
+                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err}",)
+                    })
+            };
+            if let (Some(actual_digest), Some(expected_digest)) =
+                (&metadata.digest, &expected_digest)
+            {
+                if actual_digest == expected_digest {
+                    if validity_check().await.is_ok() {
+                        return Ok(binary);
+                    }
+                } else {
+                    log::info!(
+                        "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
+                    );
+                }
+            } else if validity_check().await.is_ok() {
+                return Ok(binary);
+            }
+        }
+
+        download_server_binary(
+            &*delegate.http_client(),
+            &url,
+            expected_digest.as_deref(),
+            &destination_path,
+            Self::GITHUB_ASSET_KIND,
+        )
+        .await?;
+        make_file_executable(&server_path).await?;
+        remove_matching(&container_dir, |path| path != destination_path).await;
+        GithubBinaryMetadata::write_to_file(
+            &GithubBinaryMetadata {
+                metadata_version: 1,
+                digest: expected_digest,
+            },
+            &metadata_path,
+        )
+        .await?;
+
+        Ok(LanguageServerBinary {
+            path: server_path,
+            env: None,
+            arguments: Default::default(),
+        })
+    }
+
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        get_cached_server_binary(container_dir).await
     }
 }
 
@@ -632,7 +697,6 @@ impl ContextProvider for RustContextProvider {
 
     fn associated_tasks(
         &self,
-        _: Arc<dyn Fs>,
         file: Option<Arc<dyn language::File>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
@@ -1031,7 +1095,7 @@ fn test_fragment(variables: &TaskVariables, path: &Path, stem: &str) -> String {
         // filter out just that module.
         Some("--lib".to_owned())
     } else if stem == "mod" {
-        maybe!({ Some(path.parent()?.file_name()?.to_string_lossy().to_string()) })
+        maybe!({ Some(path.parent()?.file_name()?.to_string_lossy().into_owned()) })
     } else if stem == "main" {
         if let (Some(bin_name), Some(bin_kind)) = (
             variables.get(&RUST_BIN_NAME_TASK_VARIABLE),
@@ -1054,7 +1118,6 @@ mod tests {
     use super::*;
     use crate::language;
     use gpui::{BorrowAppContext, Hsla, TestAppContext};
-    use language::language_settings::AllLanguageSettings;
     use lsp::CompletionItemLabelDetails;
     use settings::SettingsStore;
     use theme::SyntaxTheme;
@@ -1135,10 +1198,10 @@ mod tests {
                     &language
                 )
                 .await,
-            Some(CodeLabel {
-                text: "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
-                filter_range: 0..5,
-                runs: vec![
+            Some(CodeLabel::new(
+                "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
+                0..5,
+                vec![
                     (0..5, highlight_function),
                     (7..10, highlight_keyword),
                     (11..17, highlight_type),
@@ -1146,7 +1209,7 @@ mod tests {
                     (25..28, highlight_type),
                     (29..30, highlight_type),
                 ],
-            })
+            ))
         );
         assert_eq!(
             adapter
@@ -1163,10 +1226,10 @@ mod tests {
                     &language
                 )
                 .await,
-            Some(CodeLabel {
-                text: "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
-                filter_range: 0..5,
-                runs: vec![
+            Some(CodeLabel::new(
+                "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
+                0..5,
+                vec![
                     (0..5, highlight_function),
                     (7..10, highlight_keyword),
                     (11..17, highlight_type),
@@ -1174,7 +1237,7 @@ mod tests {
                     (25..28, highlight_type),
                     (29..30, highlight_type),
                 ],
-            })
+            ))
         );
         assert_eq!(
             adapter
@@ -1188,11 +1251,11 @@ mod tests {
                     &language
                 )
                 .await,
-            Some(CodeLabel {
-                text: "len: usize".to_string(),
-                filter_range: 0..3,
-                runs: vec![(0..3, highlight_field), (5..10, highlight_type),],
-            })
+            Some(CodeLabel::new(
+                "len: usize".to_string(),
+                0..3,
+                vec![(0..3, highlight_field), (5..10, highlight_type),],
+            ))
         );
 
         assert_eq!(
@@ -1211,10 +1274,10 @@ mod tests {
                     &language
                 )
                 .await,
-            Some(CodeLabel {
-                text: "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
-                filter_range: 0..5,
-                runs: vec![
+            Some(CodeLabel::new(
+                "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
+                0..5,
+                vec![
                     (0..5, highlight_function),
                     (7..10, highlight_keyword),
                     (11..17, highlight_type),
@@ -1222,7 +1285,7 @@ mod tests {
                     (25..28, highlight_type),
                     (29..30, highlight_type),
                 ],
-            })
+            ))
         );
 
         assert_eq!(
@@ -1240,10 +1303,10 @@ mod tests {
                     &language
                 )
                 .await,
-            Some(CodeLabel {
-                text: "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
-                filter_range: 0..5,
-                runs: vec![
+            Some(CodeLabel::new(
+                "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
+                0..5,
+                vec![
                     (0..5, highlight_function),
                     (7..10, highlight_keyword),
                     (11..17, highlight_type),
@@ -1251,7 +1314,7 @@ mod tests {
                     (25..28, highlight_type),
                     (29..30, highlight_type),
                 ],
-            })
+            ))
         );
 
         assert_eq!(
@@ -1270,16 +1333,16 @@ mod tests {
                     &language
                 )
                 .await,
-            Some(CodeLabel {
-                text: "await.as_deref_mut(&mut self) -> IterMut<'_, T>".to_string(),
-                filter_range: 6..18,
-                runs: vec![
+            Some(CodeLabel::new(
+                "await.as_deref_mut(&mut self) -> IterMut<'_, T>".to_string(),
+                6..18,
+                vec![
                     (6..18, HighlightId(2)),
                     (20..23, HighlightId(1)),
                     (33..40, HighlightId(0)),
                     (45..46, HighlightId(0))
                 ],
-            })
+            ))
         );
 
         assert_eq!(
@@ -1300,10 +1363,10 @@ mod tests {
                     &language
                 )
                 .await,
-            Some(CodeLabel {
-                text: "pub fn as_deref_mut(&mut self) -> IterMut<'_, T>".to_string(),
-                filter_range: 7..19,
-                runs: vec![
+            Some(CodeLabel::new(
+                "pub fn as_deref_mut(&mut self) -> IterMut<'_, T>".to_string(),
+                7..19,
+                vec![
                     (0..3, HighlightId(1)),
                     (4..6, HighlightId(1)),
                     (7..19, HighlightId(2)),
@@ -1311,7 +1374,7 @@ mod tests {
                     (34..41, HighlightId(0)),
                     (46..47, HighlightId(0))
                 ],
-            })
+            ))
         );
 
         assert_eq!(
@@ -1327,11 +1390,11 @@ mod tests {
                     &language,
                 )
                 .await,
-            Some(CodeLabel {
-                text: "inner_value: String".to_string(),
-                filter_range: 6..11,
-                runs: vec![(0..11, HighlightId(3)), (13..19, HighlightId(0))],
-            })
+            Some(CodeLabel::new(
+                "inner_value: String".to_string(),
+                6..11,
+                vec![(0..11, HighlightId(3)), (13..19, HighlightId(0))],
+            ))
         );
     }
 
@@ -1357,22 +1420,22 @@ mod tests {
             adapter
                 .label_for_symbol("hello", lsp::SymbolKind::FUNCTION, &language)
                 .await,
-            Some(CodeLabel {
-                text: "fn hello".to_string(),
-                filter_range: 3..8,
-                runs: vec![(0..2, highlight_keyword), (3..8, highlight_function)],
-            })
+            Some(CodeLabel::new(
+                "fn hello".to_string(),
+                3..8,
+                vec![(0..2, highlight_keyword), (3..8, highlight_function)],
+            ))
         );
 
         assert_eq!(
             adapter
                 .label_for_symbol("World", lsp::SymbolKind::TYPE_PARAMETER, &language)
                 .await,
-            Some(CodeLabel {
-                text: "type World".to_string(),
-                filter_range: 5..10,
-                runs: vec![(0..4, highlight_keyword), (5..10, highlight_type)],
-            })
+            Some(CodeLabel::new(
+                "type World".to_string(),
+                5..10,
+                vec![(0..4, highlight_keyword), (5..10, highlight_type)],
+            ))
         );
     }
 
@@ -1384,8 +1447,8 @@ mod tests {
             cx.set_global(test_settings);
             language::init(cx);
             cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings::<AllLanguageSettings>(cx, |s| {
-                    s.defaults.tab_size = NonZeroU32::new(2);
+                store.update_user_settings(cx, |s| {
+                    s.project.all_languages.defaults.tab_size = NonZeroU32::new(2);
                 });
             });
         });

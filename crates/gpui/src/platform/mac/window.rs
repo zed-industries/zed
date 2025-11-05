@@ -4,10 +4,9 @@ use crate::{
     ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformInput, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    ScaledPixels, SharedString, Size, SystemWindowTab, Timer, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind, WindowParams,
-    dispatch_get_main_queue, dispatch_sys::dispatch_async_f, platform::PlatformInputHandler, point,
-    px, size,
+    SharedString, Size, SystemWindowTab, Timer, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowKind, WindowParams, dispatch_get_main_queue,
+    dispatch_sys::dispatch_async_f, platform::PlatformInputHandler, point, px, size,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -419,6 +418,7 @@ struct MacWindowState {
     select_next_tab_callback: Option<Box<dyn FnMut()>>,
     select_previous_tab_callback: Option<Box<dyn FnMut()>>,
     toggle_tab_bar_callback: Option<Box<dyn FnMut()>>,
+    activated_least_once: bool,
 }
 
 impl MacWindowState {
@@ -514,10 +514,11 @@ impl MacWindowState {
 
     fn bounds(&self) -> Bounds<Pixels> {
         let mut window_frame = unsafe { NSWindow::frame(self.native_window) };
-        let screen_frame = unsafe {
-            let screen = NSWindow::screen(self.native_window);
-            NSScreen::frame(screen)
-        };
+        let screen = unsafe { NSWindow::screen(self.native_window) };
+        if screen == nil {
+            return Bounds::new(point(px(0.), px(0.)), crate::DEFAULT_WINDOW_SIZE);
+        }
+        let screen_frame = unsafe { NSScreen::frame(screen) };
 
         // Flip the y coordinate to be top-left origin
         window_frame.origin.y =
@@ -617,7 +618,7 @@ impl MacWindow {
             }
 
             let native_window: id = match kind {
-                WindowKind::Normal => msg_send![WINDOW_CLASS, alloc],
+                WindowKind::Normal | WindowKind::Floating => msg_send![WINDOW_CLASS, alloc],
                 WindowKind::PopUp => {
                     style_mask |= NSWindowStyleMaskNonactivatingPanel;
                     msg_send![PANEL_CLASS, alloc]
@@ -723,6 +724,7 @@ impl MacWindow {
                 select_next_tab_callback: None,
                 select_previous_tab_callback: None,
                 toggle_tab_bar_callback: None,
+                activated_least_once: false,
             })));
 
             (*native_window).set_ivar(
@@ -774,7 +776,7 @@ impl MacWindow {
             native_window.makeFirstResponder_(native_view);
 
             match kind {
-                WindowKind::Normal => {
+                WindowKind::Normal | WindowKind::Floating => {
                     native_window.setLevel_(NSNormalWindowLevel);
                     native_window.setAcceptsMouseMovedEvents_(YES);
 
@@ -1480,7 +1482,7 @@ impl PlatformWindow for MacWindow {
         None
     }
 
-    fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
         let executor = self.0.lock().executor.clone();
         executor
             .spawn(async move {
@@ -1520,6 +1522,9 @@ impl PlatformWindow for MacWindow {
                     };
 
                     match action_str.as_ref() {
+                        "None" => {
+                            // "Do Nothing" selected, so do no action
+                        }
                         "Minimize" => {
                             window.miniaturize_(nil);
                         }
@@ -1566,7 +1571,7 @@ fn get_scale_factor(native_window: id) -> f32 {
     let factor = unsafe {
         let screen: id = msg_send![native_window, screen];
         if screen.is_null() {
-            return 1.0;
+            return 2.0;
         }
         NSScreen::backingScaleFactor(screen) as f32
     };
@@ -1992,23 +1997,32 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     let executor = lock.executor.clone();
     drop(lock);
 
-    // If window is becoming active, trigger immediate synchronous frame request.
+    // When a window becomes active, trigger an immediate synchronous frame request to prevent
+    // tab flicker when switching between windows in native tabs mode.
+    //
+    // This is only done on subsequent activations (not the first) to ensure the initial focus
+    // path is properly established. Without this guard, the focus state would remain unset until
+    // the first mouse click, causing keybindings to be non-functional.
     if selector == sel!(windowDidBecomeKey:) && is_active {
         let window_state = unsafe { get_window_state(this) };
         let mut lock = window_state.lock();
 
-        if let Some(mut callback) = lock.request_frame_callback.take() {
-            #[cfg(not(feature = "macos-blade"))]
-            lock.renderer.set_presents_with_transaction(true);
-            lock.stop_display_link();
-            drop(lock);
-            callback(Default::default());
+        if lock.activated_least_once {
+            if let Some(mut callback) = lock.request_frame_callback.take() {
+                #[cfg(not(feature = "macos-blade"))]
+                lock.renderer.set_presents_with_transaction(true);
+                lock.stop_display_link();
+                drop(lock);
+                callback(Default::default());
 
-            let mut lock = window_state.lock();
-            lock.request_frame_callback = Some(callback);
-            #[cfg(not(feature = "macos-blade"))]
-            lock.renderer.set_presents_with_transaction(false);
-            lock.start_display_link();
+                let mut lock = window_state.lock();
+                lock.request_frame_callback = Some(callback);
+                #[cfg(not(feature = "macos-blade"))]
+                lock.renderer.set_presents_with_transaction(false);
+                lock.start_display_link();
+            }
+        } else {
+            lock.activated_least_once = true;
         }
     }
 
@@ -2304,6 +2318,7 @@ extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
         let handled = (callback)(PlatformInput::KeyDown(KeyDownEvent {
             keystroke,
             is_held: false,
+            prefer_character_input: false,
         }));
         state.as_ref().lock().do_command_handled = Some(!handled.propagate);
     }

@@ -30,6 +30,7 @@ test-support = [
 anyhow.workspace = true
 auto_update.workspace = true
 call.workspace = true
+channel.workspace = true
 chrono.workspace = true
 client.workspace = true
 cloud_llm_client.workspace = true
@@ -42,7 +43,6 @@ rpc.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
-keymap_editor.workspace = true
 smallvec.workspace = true
 story = { workspace = true, optional = true }
 telemetry.workspace = true
@@ -51,7 +51,6 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-workspace-hack.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

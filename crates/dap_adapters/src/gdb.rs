@@ -180,6 +180,7 @@ impl DebugAdapter for GdbDebugAdapter {
         config: &DebugTaskDefinition,
         user_installed_path: Option<std::path::PathBuf>,
         user_args: Option<Vec<String>>,
+        user_env: Option<HashMap<String, String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         // Try to get gdb_path from config
@@ -221,7 +222,7 @@ impl DebugAdapter for GdbDebugAdapter {
                         .filter_map(|v| v.as_str().map(|s| s.to_string()))
                         .collect::<Vec<_>>()
                 })
-                .or(user_args)
+                .or(user_args.clone())
                 .unwrap_or_else(|| vec!["-i=dap".into()]);
             ensure_dap_interface(args)
         };
@@ -234,6 +235,8 @@ impl DebugAdapter for GdbDebugAdapter {
         }
 
         // Extract env from config if present, ensuring type matches HashMap<String, String, FxBuildHasher>
+        let mut user_env = user_env.unwrap_or_default();
+
         let envs: HashMap<String, String> = config
             .config
             .get("env")
@@ -245,10 +248,12 @@ impl DebugAdapter for GdbDebugAdapter {
             })
             .unwrap_or_else(HashMap::default);
 
+        user_env.extend(envs);
+
         Ok(DebugAdapterBinary {
             command: Some(gdb_path),
             arguments: gdb_args,
-            envs,
+            envs: user_env,
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
             connection: None,
             request_args: StartDebuggingRequestArguments {

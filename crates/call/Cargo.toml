@@ -29,20 +29,18 @@ client.workspace = true
 collections.workspace = true
 fs.workspace = true
 futures.workspace = true
+feature_flags.workspace = true
 gpui = { workspace = true, features = ["screen-capture"] }
 language.workspace = true
 log.workspace = true
 postage.workspace = true
 project.workspace = true
-schemars.workspace = true
 serde.workspace = true
-serde_derive.workspace = true
 settings.workspace = true
 telemetry.workspace = true
 util.workspace = true
 gpui_tokio.workspace = true
 livekit_client.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

@@ -22,6 +22,7 @@ default = []
 
 [dependencies]
 anyhow.workspace = true
+askpass.workspace = true
 clap.workspace = true
 collections.workspace = true
 ipc-channel = "0.19"
@@ -31,7 +32,7 @@ release_channel.workspace = true
 serde.workspace = true
 util.workspace = true
 tempfile.workspace = true
-workspace-hack.workspace = true
+rayon.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 exec.workspace = true

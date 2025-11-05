@@ -6,7 +6,7 @@ use crate::{ToggleMarksView, ToggleRegistersView, UseSystemClipboard, Vim, VimAd
 use crate::{motion::Motion, object::Object};
 use anyhow::Result;
 use collections::HashMap;
-use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
+use command_palette_hooks::{CommandPaletteFilter, GlobalCommandPaletteInterceptor};
 use db::{
     sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
     sqlez_macros::sql,
@@ -34,6 +34,7 @@ use ui::{
     StyledTypography, Window, h_flex, rems,
 };
 use util::ResultExt;
+use util::rel_path::RelPath;
 use workspace::searchable::Direction;
 use workspace::{Workspace, WorkspaceDb, WorkspaceId};
 
@@ -46,6 +47,7 @@ pub enum Mode {
     VisualLine,
     VisualBlock,
     HelixNormal,
+    HelixSelect,
 }
 
 impl Display for Mode {
@@ -57,17 +59,22 @@ impl Display for Mode {
             Mode::Visual => write!(f, "VISUAL"),
             Mode::VisualLine => write!(f, "VISUAL LINE"),
             Mode::VisualBlock => write!(f, "VISUAL BLOCK"),
-            Mode::HelixNormal => write!(f, "HELIX NORMAL"),
+            Mode::HelixNormal => write!(f, "NORMAL"),
+            Mode::HelixSelect => write!(f, "SELECT"),
         }
     }
 }
 
 impl Mode {
-    pub fn is_visual(&self) -> bool {
+    pub fn is_visual(self) -> bool {
         match self {
-            Self::Visual | Self::VisualLine | Self::VisualBlock => true,
+            Self::Visual | Self::VisualLine | Self::VisualBlock | Self::HelixSelect => true,
             Self::Normal | Self::Insert | Self::Replace | Self::HelixNormal => false,
         }
+    }
+
+    pub fn is_helix(self) -> bool {
+        matches!(self, Mode::HelixNormal | Mode::HelixSelect)
     }
 }
 
@@ -106,6 +113,9 @@ pub enum Operator {
     },
     ChangeSurrounds {
         target: Option<Object>,
+        /// Represents whether the opening bracket was used for the target
+        /// object.
+        opening: bool,
     },
     DeleteSurrounds,
     Mark,
@@ -134,6 +144,13 @@ pub enum Operator {
     ToggleComments,
     ReplaceWithRegister,
     Exchange,
+    HelixMatch,
+    HelixNext {
+        around: bool,
+    },
+    HelixPrevious {
+        around: bool,
+    },
 }
 
 #[derive(Default, Clone, Debug)]
@@ -334,9 +351,10 @@ impl MarksState {
                 .worktrees(cx)
                 .filter_map(|worktree| {
                     let relative = path.strip_prefix(worktree.read(cx).abs_path()).ok()?;
+                    let path = RelPath::new(relative, worktree.read(cx).path_style()).log_err()?;
                     Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path: relative.into(),
+                        path: path.into_arc(),
                     })
                 })
                 .next();
@@ -704,9 +722,7 @@ impl VimGlobals {
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.show_namespace(Vim::NAMESPACE);
                 });
-                CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
-                    interceptor.set(Box::new(command_interceptor));
-                });
+                GlobalCommandPaletteInterceptor::set(cx, command_interceptor);
                 for window in cx.windows() {
                     if let Some(workspace) = window.downcast::<Workspace>() {
                         workspace
@@ -721,9 +737,7 @@ impl VimGlobals {
             } else {
                 KeyBinding::set_vim_mode(cx, false);
                 *Vim::globals(cx) = VimGlobals::default();
-                CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
-                    interceptor.clear();
-                });
+                GlobalCommandPaletteInterceptor::clear(cx);
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.hide_namespace(Vim::NAMESPACE);
                 });
@@ -796,11 +810,10 @@ impl VimGlobals {
                 self.last_yank.replace(content.text.clone());
                 cx.write_to_clipboard(content.clone().into());
             } else {
-                self.last_yank = cx
-                    .read_from_clipboard()
-                    .and_then(|item| item.text().map(|string| string.into()));
+                if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
+                    self.last_yank.replace(text.into());
+                }
             }
-
             self.registers.insert('"', content.clone());
             if is_yank {
                 self.registers.insert('0', content);
@@ -854,7 +867,9 @@ impl VimGlobals {
                 }
             }
             '%' => editor.and_then(|editor| {
-                let selection = editor.selections.newest::<Point>(cx);
+                let selection = editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx));
                 if let Some((_, buffer, _)) = editor
                     .buffer()
                     .read(cx)
@@ -863,7 +878,7 @@ impl VimGlobals {
                     buffer
                         .read(cx)
                         .file()
-                        .map(|file| file.path().to_string_lossy().to_string().into())
+                        .map(|file| file.path().display(file.path_style(cx)).into_owned().into())
                 } else {
                     None
                 }
@@ -874,10 +889,10 @@ impl VimGlobals {
 
     fn system_clipboard_is_newer(&self, cx: &App) -> bool {
         cx.read_from_clipboard().is_some_and(|item| {
-            if let Some(last_state) = &self.last_yank {
-                Some(last_state.as_ref()) != item.text().as_deref()
-            } else {
-                true
+            match (item.text().as_deref(), &self.last_yank) {
+                (Some(new), Some(last)) => last.as_ref() != new,
+                (Some(_), None) => true,
+                (None, _) => false,
             }
         })
     }
@@ -979,6 +994,7 @@ pub struct SearchState {
     pub prior_selections: Vec<Range<Anchor>>,
     pub prior_operator: Option<Operator>,
     pub prior_mode: Mode,
+    pub is_helix_regex_search: bool,
 }
 
 impl Operator {
@@ -1020,6 +1036,9 @@ impl Operator {
             Operator::RecordRegister => "q",
             Operator::ReplayRegister => "@",
             Operator::ToggleComments => "gc",
+            Operator::HelixMatch => "helix_m",
+            Operator::HelixNext { .. } => "helix_next",
+            Operator::HelixPrevious { .. } => "helix_previous",
         }
     }
 
@@ -1041,6 +1060,9 @@ impl Operator {
             } => format!("^V{}", make_visible(prefix)),
             Operator::AutoIndent => "=".to_string(),
             Operator::ShellCommand => "=".to_string(),
+            Operator::HelixMatch => "m".to_string(),
+            Operator::HelixNext { .. } => "]".to_string(),
+            Operator::HelixPrevious { .. } => "[".to_string(),
             _ => self.id().to_string(),
         }
     }
@@ -1060,7 +1082,9 @@ impl Operator {
             | Operator::Replace
             | Operator::Digraph { .. }
             | Operator::Literal { .. }
-            | Operator::ChangeSurrounds { target: Some(_) }
+            | Operator::ChangeSurrounds {
+                target: Some(_), ..
+            }
             | Operator::DeleteSurrounds => true,
             Operator::Change
             | Operator::Delete
@@ -1077,9 +1101,12 @@ impl Operator {
             | Operator::ReplaceWithRegister
             | Operator::Exchange
             | Operator::Object { .. }
-            | Operator::ChangeSurrounds { target: None }
+            | Operator::ChangeSurrounds { target: None, .. }
             | Operator::OppositeCase
-            | Operator::ToggleComments => false,
+            | Operator::ToggleComments
+            | Operator::HelixMatch
+            | Operator::HelixNext { .. }
+            | Operator::HelixPrevious { .. } => false,
         }
     }
 
@@ -1101,9 +1128,11 @@ impl Operator {
             | Operator::Rewrap
             | Operator::ShellCommand
             | Operator::AddSurrounds { target: None }
-            | Operator::ChangeSurrounds { target: None }
+            | Operator::ChangeSurrounds { target: None, .. }
             | Operator::DeleteSurrounds
-            | Operator::Exchange => true,
+            | Operator::Exchange
+            | Operator::HelixNext { .. }
+            | Operator::HelixPrevious { .. } => true,
             Operator::Yank
             | Operator::Object { .. }
             | Operator::FindForward { .. }
@@ -1118,7 +1147,8 @@ impl Operator {
             | Operator::Jump { .. }
             | Operator::Register
             | Operator::RecordRegister
-            | Operator::ReplayRegister => false,
+            | Operator::ReplayRegister
+            | Operator::HelixMatch => false,
         }
     }
 }
@@ -1173,10 +1203,7 @@ impl PickerDelegate for RegistersViewDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let register_match = self
-            .matches
-            .get(ix)
-            .expect("Invalid matches state: no element for index {ix}");
+        let register_match = self.matches.get(ix)?;
 
         let mut output = String::new();
         let mut runs = Vec::new();
@@ -1565,10 +1592,7 @@ impl PickerDelegate for MarksViewDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let mark_match = self
-            .matches
-            .get(ix)
-            .expect("Invalid matches state: no element for index {ix}");
+        let mark_match = self.matches.get(ix)?;
 
         let mut left_output = String::new();
         let mut left_runs = Vec::new();
@@ -1592,7 +1616,7 @@ impl PickerDelegate for MarksViewDelegate {
 
         let (right_output, right_runs): (String, Vec<_>) = match &mark_match.info {
             MarksMatchInfo::Path(path) => {
-                let s = path.to_string_lossy().to_string();
+                let s = path.to_string_lossy().into_owned();
                 (
                     s.clone(),
                     vec![(0..s.len(), HighlightStyle::color(cx.theme().colors().text))],

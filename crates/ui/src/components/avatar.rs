@@ -8,10 +8,9 @@ use gpui::{AnyElement, Hsla, ImageSource, Img, IntoElement, Styled, img};
 /// # Examples
 ///
 /// ```
-/// use ui::{Avatar, AvatarShape};
+/// use ui::Avatar;
 ///
 /// Avatar::new("path/to/image.png")
-///     .shape(AvatarShape::Circle)
 ///     .grayscale(true)
 ///     .border_color(gpui::red());
 /// ```
@@ -39,7 +38,7 @@ impl Avatar {
     /// # Examples
     ///
     /// ```
-    /// use ui::{Avatar, AvatarShape};
+    /// use ui::Avatar;
     ///
     /// let avatar = Avatar::new("path/to/image.png").grayscale(true);
     /// ```

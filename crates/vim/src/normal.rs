@@ -74,6 +74,8 @@ actions!(
         Yank,
         /// Yanks the entire line.
         YankLine,
+        /// Yanks from cursor to end of line.
+        YankToEndOfLine,
         /// Toggles the case of selected text.
         ChangeCase,
         /// Converts selected text to uppercase.
@@ -94,6 +96,14 @@ actions!(
         Redo,
         /// Undoes all changes to the most recently changed line.
         UndoLastLine,
+        /// Go to tab page (with count support).
+        GoToTab,
+        /// Go to previous tab page (with count support).
+        GoToPreviousTab,
+        /// Go to tab page (with count support).
+        GoToPreviousReference,
+        /// Go to previous tab page (with count support).
+        GoToNextReference,
     ]
 );
 
@@ -113,6 +123,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::convert_to_rot13);
     Vim::action(editor, cx, Vim::convert_to_rot47);
     Vim::action(editor, cx, Vim::yank_line);
+    Vim::action(editor, cx, Vim::yank_to_end_of_line);
     Vim::action(editor, cx, Vim::toggle_comments);
     Vim::action(editor, cx, Vim::paste);
     Vim::action(editor, cx, Vim::show_location);
@@ -193,6 +204,36 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
     Vim::action(editor, cx, |vim, _: &JoinLinesNoWhitespace, window, cx| {
         vim.join_lines_impl(false, window, cx);
+    });
+
+    Vim::action(editor, cx, |vim, _: &GoToPreviousReference, window, cx| {
+        let count = Vim::take_count(cx);
+        vim.update_editor(cx, |_, editor, cx| {
+            let task = editor.go_to_reference_before_or_after_position(
+                editor::Direction::Prev,
+                count.unwrap_or(1),
+                window,
+                cx,
+            );
+            if let Some(task) = task {
+                task.detach_and_log_err(cx);
+            };
+        });
+    });
+
+    Vim::action(editor, cx, |vim, _: &GoToNextReference, window, cx| {
+        let count = Vim::take_count(cx);
+        vim.update_editor(cx, |_, editor, cx| {
+            let task = editor.go_to_reference_before_or_after_position(
+                editor::Direction::Next,
+                count.unwrap_or(1),
+                window,
+                cx,
+            );
+            if let Some(task) = task {
+                task.detach_and_log_err(cx);
+            };
+        });
     });
 
     Vim::action(editor, cx, |vim, _: &Undo, window, cx| {
@@ -441,6 +482,7 @@ impl Vim {
         &mut self,
         object: Object,
         times: Option<usize>,
+        opening: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -495,17 +537,27 @@ impl Vim {
                     self.replace_with_register_object(object, around, window, cx)
                 }
                 Some(Operator::Exchange) => self.exchange_object(object, around, window, cx),
+                Some(Operator::HelixMatch) => {
+                    self.select_current_object(object, around, window, cx)
+                }
                 _ => {
                     // Can't do anything for namespace operators. Ignoring
                 }
             },
+            Some(Operator::HelixNext { around }) => {
+                self.select_next_object(object, around, window, cx);
+            }
+            Some(Operator::HelixPrevious { around }) => {
+                self.select_previous_object(object, around, window, cx);
+            }
             Some(Operator::DeleteSurrounds) => {
                 waiting_operator = Some(Operator::DeleteSurrounds);
             }
-            Some(Operator::ChangeSurrounds { target: None }) => {
+            Some(Operator::ChangeSurrounds { target: None, .. }) => {
                 if self.check_and_move_to_valid_bracket_pair(object, window, cx) {
                     waiting_operator = Some(Operator::ChangeSurrounds {
                         target: Some(object),
+                        opening,
                     });
                 }
             }
@@ -639,7 +691,7 @@ impl Vim {
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                let selections = editor.selections.all::<Point>(cx);
+                let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
 
                 let selection_start_rows: BTreeSet<u32> = selections
@@ -661,7 +713,7 @@ impl Vim {
                 editor.edit_with_autoindent(edits, cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_cursors_with(|map, cursor, _| {
-                        let previous_line = motion::start_of_relative_buffer_row(map, cursor, -1);
+                        let previous_line = map.start_of_relative_buffer_row(cursor, -1);
                         let insert_point = motion::end_of_line(map, false, previous_line, 1);
                         (insert_point, SelectionGoal::None)
                     });
@@ -681,7 +733,7 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
-                let selections = editor.selections.all::<Point>(cx);
+                let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
 
                 let selection_end_rows: BTreeSet<u32> = selections
@@ -727,7 +779,7 @@ impl Vim {
         Vim::take_forced_motion(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, _, cx| {
-                let selections = editor.selections.all::<Point>(cx);
+                let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
 
                 let selection_start_rows: BTreeSet<u32> = selections
                     .into_iter()
@@ -756,9 +808,10 @@ impl Vim {
         Vim::take_forced_motion(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                let selections = editor.selections.all::<Point>(cx);
+                let display_map = editor.display_snapshot(cx);
+                let selections = editor.selections.all::<Point>(&display_map);
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
-                let (_map, display_selections) = editor.selections.all_display(cx);
+                let display_selections = editor.selections.all_display(&display_map);
                 let original_positions = display_selections
                     .iter()
                     .map(|s| (s.id, s.head()))
@@ -828,6 +881,25 @@ impl Vim {
         )
     }
 
+    fn yank_to_end_of_line(
+        &mut self,
+        _: &YankToEndOfLine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = Vim::take_count(cx);
+        let forced_motion = Vim::take_forced_motion(cx);
+        self.yank_motion(
+            motion::Motion::EndOfLine {
+                display_lines: false,
+            },
+            count,
+            forced_motion,
+            window,
+            cx,
+        )
+    }
+
     fn show_location(&mut self, _: &ShowLocation, _: &mut Window, cx: &mut Context<Self>) {
         let count = Vim::take_count(cx);
         Vim::take_forced_motion(cx);
@@ -843,12 +915,12 @@ impl Vim {
             let filename = if let Some(file) = buffer.read(cx).file() {
                 if count.is_some() {
                     if let Some(local) = file.as_local() {
-                        local.abs_path(cx).to_string_lossy().to_string()
+                        local.abs_path(cx).to_string_lossy().into_owned()
                     } else {
-                        file.full_path(cx).to_string_lossy().to_string()
+                        file.full_path(cx).to_string_lossy().into_owned()
                     }
                 } else {
-                    file.path().to_string_lossy().to_string()
+                    file.path().display(file.path_style(cx)).into_owned()
                 }
             } else {
                 "[No Name]".into()
@@ -893,20 +965,30 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // We need to use `text.chars().count()` instead of `text.len()` here as
+        // `len()` counts bytes, not characters.
+        let char_count = text.chars().count();
+        let count = Vim::take_count(cx).unwrap_or(char_count);
         let is_return_char = text == "\n".into() || text == "\r".into();
-        let count = Vim::take_count(cx).unwrap_or(1);
+        let repeat_count = match (is_return_char, char_count) {
+            (true, _) => 0,
+            (_, 1) => count,
+            (_, _) => 1,
+        };
+
         Vim::take_forced_motion(cx);
         self.stop_recording(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
-                let (map, display_selections) = editor.selections.all_display(cx);
+                let display_map = editor.display_snapshot(cx);
+                let display_selections = editor.selections.all_display(&display_map);
 
-                let mut edits = Vec::new();
+                let mut edits = Vec::with_capacity(display_selections.len());
                 for selection in &display_selections {
                     let mut range = selection.range();
                     for _ in 0..count {
-                        let new_point = movement::saturating_right(&map, range.end);
+                        let new_point = movement::saturating_right(&display_map, range.end);
                         if range.end == new_point {
                             return;
                         }
@@ -914,9 +996,9 @@ impl Vim {
                     }
 
                     edits.push((
-                        range.start.to_offset(&map, Bias::Left)
-                            ..range.end.to_offset(&map, Bias::Left),
-                        text.repeat(if is_return_char { 0 } else { count }),
+                        range.start.to_offset(&display_map, Bias::Left)
+                            ..range.end.to_offset(&display_map, Bias::Left),
+                        text.repeat(repeat_count),
                     ));
                 }
 
@@ -939,16 +1021,16 @@ impl Vim {
     pub fn save_selection_starts(
         &self,
         editor: &Editor,
-
         cx: &mut Context<Editor>,
     ) -> HashMap<usize, Anchor> {
-        let (map, selections) = editor.selections.all_display(cx);
+        let display_map = editor.display_snapshot(cx);
+        let selections = editor.selections.all_display(&display_map);
         selections
             .iter()
             .map(|selection| {
                 (
                     selection.id,
-                    map.display_point_to_anchor(selection.start, Bias::Right),
+                    display_map.display_point_to_anchor(selection.start, Bias::Right),
                 )
             })
             .collect::<HashMap<_, _>>()
@@ -976,15 +1058,15 @@ impl Vim {
         }
     }
 }
+
 #[cfg(test)]
 mod test {
     use gpui::{KeyBinding, TestAppContext, UpdateGlobal};
     use indoc::indoc;
-    use language::language_settings::AllLanguageSettings;
     use settings::SettingsStore;
 
     use crate::{
-        VimSettings, motion,
+        motion,
         state::Mode::{self},
         test::{NeovimBackedTestContext, VimTestContext},
     };
@@ -1715,8 +1797,8 @@ mod test {
     async fn test_f_and_t_smartcase(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_smartcase_find = Some(true);
+            store.update_user_settings(cx, |s| {
+                s.vim.get_or_insert_default().use_smartcase_find = Some(true);
             });
         });
 
@@ -1882,8 +1964,12 @@ mod test {
 
         cx.update(|_, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
-                settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                    settings.defaults.preferred_line_length = Some(5);
+                settings.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .preferred_line_length = Some(5);
                 });
             })
         });
@@ -2106,5 +2192,81 @@ mod test {
         "},
             Mode::Normal,
         );
+    }
+
+    #[gpui::test]
+    async fn test_go_to_tab_with_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Open 4 tabs.
+        cx.simulate_keystrokes(": tabnew");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes(": tabnew");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes(": tabnew");
+        cx.simulate_keystrokes("enter");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.items(cx).count(), 4);
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 3);
+        });
+
+        cx.simulate_keystrokes("1 g t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 0);
+        });
+
+        cx.simulate_keystrokes("3 g t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 2);
+        });
+
+        cx.simulate_keystrokes("4 g t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 3);
+        });
+
+        cx.simulate_keystrokes("1 g t");
+        cx.simulate_keystrokes("g t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_go_to_previous_tab_with_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Open 4 tabs.
+        cx.simulate_keystrokes(": tabnew");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes(": tabnew");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes(": tabnew");
+        cx.simulate_keystrokes("enter");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.items(cx).count(), 4);
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 3);
+        });
+
+        cx.simulate_keystrokes("2 g shift-t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 1);
+        });
+
+        cx.simulate_keystrokes("g shift-t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 0);
+        });
+
+        // Wraparound: gT from first tab should go to last.
+        cx.simulate_keystrokes("g shift-t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 3);
+        });
+
+        cx.simulate_keystrokes("6 g shift-t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 1);
+        });
     }
 }

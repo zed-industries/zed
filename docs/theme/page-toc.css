@@ -19,9 +19,7 @@
     top: 64px;
     width: 220px;
     height: calc(100vh - var(--menu-bar-height) - 0.67em * 4);
-    padding-top: 80px;
-    margin-right: 16px;
-    padding-bottom: 40px;
+    padding: 80px 16px 40px 0;
     overflow: auto;
   }
   .pagetoc > :last-child {

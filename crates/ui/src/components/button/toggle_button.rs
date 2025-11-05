@@ -6,15 +6,41 @@ use crate::{ButtonLike, ButtonLikeRounding, ElevationIndex, TintColor, Tooltip, 
 
 /// The position of a [`ToggleButton`] within a group of buttons.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum ToggleButtonPosition {
-    /// The toggle button is first in the group.
-    First,
+pub struct ToggleButtonPosition {
+    /// The toggle button is one of the leftmost of the group.
+    leftmost: bool,
+    /// The toggle button is one of the rightmost of the group.
+    rightmost: bool,
+    /// The toggle button is one of the topmost of the group.
+    topmost: bool,
+    /// The toggle button is one of the bottommost of the group.
+    bottommost: bool,
+}
 
-    /// The toggle button is in the middle of the group (i.e., it is not the first or last toggle button).
-    Middle,
+impl ToggleButtonPosition {
+    pub const HORIZONTAL_FIRST: Self = Self {
+        leftmost: true,
+        ..Self::HORIZONTAL_MIDDLE
+    };
+    pub const HORIZONTAL_MIDDLE: Self = Self {
+        leftmost: false,
+        rightmost: false,
+        topmost: true,
+        bottommost: true,
+    };
+    pub const HORIZONTAL_LAST: Self = Self {
+        rightmost: true,
+        ..Self::HORIZONTAL_MIDDLE
+    };
 
-    /// The toggle button is last in the group.
-    Last,
+    pub(crate) fn to_rounding(self) -> ButtonLikeRounding {
+        ButtonLikeRounding {
+            top_left: self.topmost && self.leftmost,
+            top_right: self.topmost && self.rightmost,
+            bottom_right: self.bottommost && self.rightmost,
+            bottom_left: self.bottommost && self.leftmost,
+        }
+    }
 }
 
 #[derive(IntoElement, RegisterComponent)]
@@ -46,15 +72,15 @@ impl ToggleButton {
     }
 
     pub fn first(self) -> Self {
-        self.position_in_group(ToggleButtonPosition::First)
+        self.position_in_group(ToggleButtonPosition::HORIZONTAL_FIRST)
     }
 
     pub fn middle(self) -> Self {
-        self.position_in_group(ToggleButtonPosition::Middle)
+        self.position_in_group(ToggleButtonPosition::HORIZONTAL_MIDDLE)
     }
 
     pub fn last(self) -> Self {
-        self.position_in_group(ToggleButtonPosition::Last)
+        self.position_in_group(ToggleButtonPosition::HORIZONTAL_LAST)
     }
 }
 
@@ -132,6 +158,11 @@ impl ButtonCommon for ToggleButton {
         self.base = self.base.layer(elevation);
         self
     }
+
+    fn track_focus(mut self, focus_handle: &gpui::FocusHandle) -> Self {
+        self.base = self.base.track_focus(focus_handle);
+        self
+    }
 }
 
 impl RenderOnce for ToggleButton {
@@ -148,10 +179,8 @@ impl RenderOnce for ToggleButton {
         };
 
         self.base
-            .when_some(self.position_in_group, |this, position| match position {
-                ToggleButtonPosition::First => this.rounding(ButtonLikeRounding::Left),
-                ToggleButtonPosition::Middle => this.rounding(None),
-                ToggleButtonPosition::Last => this.rounding(ButtonLikeRounding::Right),
+            .when_some(self.position_in_group, |this, position| {
+                this.rounding(position.to_rounding())
             })
             .child(
                 Label::new(self.label)
@@ -425,7 +454,7 @@ pub struct ToggleButtonGroup<T, const COLS: usize = 3, const ROWS: usize = 1>
 where
     T: ButtonBuilder,
 {
-    group_name: &'static str,
+    group_name: SharedString,
     rows: [[T; COLS]; ROWS],
     style: ToggleButtonGroupStyle,
     size: ToggleButtonGroupSize,
@@ -435,9 +464,9 @@ where
 }
 
 impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS> {
-    pub fn single_row(group_name: &'static str, buttons: [T; COLS]) -> Self {
+    pub fn single_row(group_name: impl Into<SharedString>, buttons: [T; COLS]) -> Self {
         Self {
-            group_name,
+            group_name: group_name.into(),
             rows: [buttons],
             style: ToggleButtonGroupStyle::Transparent,
             size: ToggleButtonGroupSize::Default,
@@ -449,9 +478,13 @@ impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS> {
 }
 
 impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS, 2> {
-    pub fn two_rows(group_name: &'static str, first_row: [T; COLS], second_row: [T; COLS]) -> Self {
+    pub fn two_rows(
+        group_name: impl Into<SharedString>,
+        first_row: [T; COLS],
+        second_row: [T; COLS],
+    ) -> Self {
         Self {
-            group_name,
+            group_name: group_name.into(),
             rows: [first_row, second_row],
             style: ToggleButtonGroupStyle::Transparent,
             size: ToggleButtonGroupSize::Default,
@@ -512,6 +545,7 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let entries =
             self.rows.into_iter().enumerate().map(|(row_index, row)| {
+                let group_name = self.group_name.clone();
                 row.into_iter().enumerate().map(move |(col_index, button)| {
                     let ButtonConfiguration {
                         label,
@@ -523,9 +557,17 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
 
                     let entry_index = row_index * COLS + col_index;
 
-                    ButtonLike::new((self.group_name, entry_index))
+                    ButtonLike::new((group_name.clone(), entry_index))
                         .full_width()
-                        .rounding(None)
+                        .rounding(Some(
+                            ToggleButtonPosition {
+                                leftmost: col_index == 0,
+                                rightmost: col_index == COLS - 1,
+                                topmost: row_index == 0,
+                                bottommost: row_index == ROWS - 1,
+                            }
+                            .to_rounding(),
+                        ))
                         .when_some(self.tab_index, |this, tab_index| {
                             this.tab_index(tab_index + entry_index as isize)
                         })

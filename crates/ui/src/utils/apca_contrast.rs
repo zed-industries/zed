@@ -394,6 +394,13 @@ mod tests {
     }
 
     #[test]
+    fn test_srgb_to_y_nan_issue() {
+        let dark_red = hsla_from_hex(0x5f0000);
+        let y_dark_red = srgb_to_y(dark_red, &APCAConstants::default());
+        assert!(!y_dark_red.is_nan());
+    }
+
+    #[test]
     fn test_ensure_minimum_contrast() {
         let white_bg = hsla(0.0, 0.0, 1.0, 1.0);
         let light_gray = hsla(0.0, 0.0, 0.9, 1.0);

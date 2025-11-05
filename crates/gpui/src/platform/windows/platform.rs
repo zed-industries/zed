@@ -4,7 +4,7 @@ use std::{
     mem::ManuallyDrop,
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::Arc,
+    sync::{Arc, atomic::Ordering},
 };
 
 use ::util::{ResultExt, paths::SanitizedPath};
@@ -48,6 +48,7 @@ struct WindowsPlatformInner {
     // The below members will never change throughout the entire lifecycle of the app.
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
+    dispatcher: Arc<WindowsDispatcher>,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -109,8 +110,10 @@ impl WindowsPlatform {
             inner: None,
             raw_window_handles: Arc::downgrade(&raw_window_handles),
             validation_number,
+            main_sender: Some(main_sender),
             main_receiver: Some(main_receiver),
             directx_devices: Some(directx_devices),
+            dispatcher: None,
         };
         let result = unsafe {
             CreateWindowExW(
@@ -129,12 +132,9 @@ impl WindowsPlatform {
             )
         };
         let inner = context.inner.take().unwrap()?;
+        let dispatcher = context.dispatcher.take().unwrap();
         let handle = result?;
-        let dispatcher = Arc::new(WindowsDispatcher::new(
-            main_sender,
-            handle,
-            validation_number,
-        ));
+
         let disable_direct_composition = std::env::var(DISABLE_DIRECT_COMPOSITION)
             .is_ok_and(|value| value == "true" || value == "1");
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
@@ -243,30 +243,49 @@ impl WindowsPlatform {
         let validation_number = self.inner.validation_number;
         let all_windows = Arc::downgrade(&self.raw_window_handles);
         let text_system = Arc::downgrade(&self.text_system);
-        std::thread::spawn(move || {
-            let vsync_provider = VSyncProvider::new();
-            loop {
-                vsync_provider.wait_for_vsync();
-                if check_device_lost(&directx_device.device) {
-                    handle_gpu_device_lost(
-                        &mut directx_device,
-                        platform_window.as_raw(),
-                        validation_number,
-                        &all_windows,
-                        &text_system,
-                    );
-                }
-                let Some(all_windows) = all_windows.upgrade() else {
-                    break;
-                };
-                for hwnd in all_windows.read().iter() {
-                    unsafe {
-                        let _ = RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE);
+        std::thread::Builder::new()
+            .name("VSyncProvider".to_owned())
+            .spawn(move || {
+                let vsync_provider = VSyncProvider::new();
+                loop {
+                    vsync_provider.wait_for_vsync();
+                    if check_device_lost(&directx_device.device) {
+                        handle_gpu_device_lost(
+                            &mut directx_device,
+                            platform_window.as_raw(),
+                            validation_number,
+                            &all_windows,
+                            &text_system,
+                        );
+                    }
+                    let Some(all_windows) = all_windows.upgrade() else {
+                        break;
+                    };
+                    for hwnd in all_windows.read().iter() {
+                        unsafe {
+                            let _ = RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE);
+                        }
                     }
                 }
-            }
-        });
+            })
+            .unwrap();
     }
+}
+
+fn translate_accelerator(msg: &MSG) -> Option<()> {
+    if msg.message != WM_KEYDOWN && msg.message != WM_SYSKEYDOWN {
+        return None;
+    }
+
+    let result = unsafe {
+        SendMessageW(
+            msg.hwnd,
+            WM_GPUI_KEYDOWN,
+            Some(msg.wParam),
+            Some(msg.lParam),
+        )
+    };
+    (result.0 == 0).then_some(())
 }
 
 impl Platform for WindowsPlatform {
@@ -309,7 +328,10 @@ impl Platform for WindowsPlatform {
         let mut msg = MSG::default();
         unsafe {
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-                DispatchMessageW(&msg);
+                if translate_accelerator(&msg).is_none() {
+                    _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
             }
         }
 
@@ -346,6 +368,11 @@ impl Platform for WindowsPlatform {
             pid,
             app_path.display(),
         );
+
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "We are restarting ourselves, using std command thus is fine"
+        )]
         let restart_process = util::command::new_std_command("powershell.exe")
             .arg("-command")
             .arg(script)
@@ -674,6 +701,7 @@ impl WindowsPlatformInner {
         Ok(Rc::new(Self {
             state,
             raw_window_handles: context.raw_window_handles.clone(),
+            dispatcher: context.dispatcher.as_ref().unwrap().clone(),
             validation_number: context.validation_number,
             main_receiver: context.main_receiver.take().unwrap(),
         }))
@@ -738,9 +766,28 @@ impl WindowsPlatformInner {
 
     #[inline]
     fn run_foreground_task(&self) -> Option<isize> {
-        for runnable in self.main_receiver.drain() {
-            runnable.run();
+        loop {
+            for runnable in self.main_receiver.drain() {
+                runnable.run();
+            }
+
+            // Someone could enqueue a Runnable here. The flag is still true, so they will not PostMessage.
+            // We need to check for those Runnables after we clear the flag.
+            let dispatcher = self.dispatcher.clone();
+
+            dispatcher.wake_posted.store(false, Ordering::Release);
+            match self.main_receiver.try_recv() {
+                Ok(runnable) => {
+                    let _ = dispatcher.wake_posted.swap(true, Ordering::AcqRel);
+                    runnable.run();
+                    continue;
+                }
+                _ => {
+                    break;
+                }
+            }
         }
+
         Some(0)
     }
 
@@ -824,8 +871,10 @@ struct PlatformWindowCreateContext {
     inner: Option<Result<Rc<WindowsPlatformInner>>>,
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     validation_number: usize,
+    main_sender: Option<flume::Sender<Runnable>>,
     main_receiver: Option<flume::Receiver<Runnable>>,
     directx_devices: Option<DirectXDevices>,
+    dispatcher: Option<Arc<WindowsDispatcher>>,
 }
 
 fn open_target(target: impl AsRef<OsStr>) -> Result<()> {
@@ -943,17 +992,30 @@ fn file_save_dialog(
 ) -> Result<Option<PathBuf>> {
     let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
     if !directory.to_string_lossy().is_empty()
-        && let Some(full_path) = directory.canonicalize().log_err()
+        && let Some(full_path) = directory
+            .canonicalize()
+            .context("failed to canonicalize directory")
+            .log_err()
     {
         let full_path = SanitizedPath::new(&full_path);
         let full_path_string = full_path.to_string();
         let path_item: IShellItem =
             unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_string), None)? };
-        unsafe { dialog.SetFolder(&path_item).log_err() };
+        unsafe {
+            dialog
+                .SetFolder(&path_item)
+                .context("failed to set dialog folder")
+                .log_err()
+        };
     }
 
     if let Some(suggested_name) = suggested_name {
-        unsafe { dialog.SetFileName(&HSTRING::from(suggested_name)).log_err() };
+        unsafe {
+            dialog
+                .SetFileName(&HSTRING::from(suggested_name))
+                .context("failed to set file name")
+                .log_err()
+        };
     }
 
     unsafe {
@@ -1016,7 +1078,7 @@ fn handle_gpu_device_lost(
     all_windows: &std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     text_system: &std::sync::Weak<DirectWriteTextSystem>,
 ) {
-    // Here we wait a bit to ensure the the system has time to recover from the device lost state.
+    // Here we wait a bit to ensure the system has time to recover from the device lost state.
     // If we don't wait, the final drawing result will be blank.
     std::thread::sleep(std::time::Duration::from_millis(350));
 
@@ -1094,6 +1156,13 @@ unsafe extern "system" fn window_procedure(
         let params = unsafe { &*params };
         let creation_context = params.lpCreateParams as *mut PlatformWindowCreateContext;
         let creation_context = unsafe { &mut *creation_context };
+
+        creation_context.dispatcher = Some(Arc::new(WindowsDispatcher::new(
+            creation_context.main_sender.take().unwrap(),
+            hwnd,
+            creation_context.validation_number,
+        )));
+
         return match WindowsPlatformInner::new(creation_context) {
             Ok(inner) => {
                 let weak = Box::new(Rc::downgrade(&inner));

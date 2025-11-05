@@ -58,7 +58,6 @@ lsp.workspace = true
 markdown.workspace = true
 node_runtime.workspace = true
 parking_lot.workspace = true
-pathdiff.workspace = true
 paths.workspace = true
 postage.workspace = true
 prettier.workspace = true
@@ -67,12 +66,12 @@ regex.workspace = true
 remote.workspace = true
 rpc.workspace = true
 schemars.workspace = true
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 sha2.workspace = true
 shellexpand.workspace = true
-shlex.workspace = true
 smallvec.workspace = true
 smol.workspace = true
 snippet.workspace = true
@@ -85,10 +84,11 @@ text.workspace = true
 toml.workspace = true
 url.workspace = true
 util.workspace = true
+watch.workspace = true
 which.workspace = true
 worktree.workspace = true
+zeroize.workspace = true
 zlog.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

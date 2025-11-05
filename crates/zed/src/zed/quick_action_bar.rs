@@ -15,15 +15,15 @@ use gpui::{
     FocusHandle, Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription,
     WeakEntity, Window, anchored, deferred, point,
 };
-use project::DisableAiSettings;
 use project::project_settings::DiagnosticSeverity;
 use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, SettingsStore};
 use ui::{
-    ButtonStyle, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconName, IconSize,
-    PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
+    ButtonStyle, ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, IconButton,
+    IconName, IconSize, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
-use vim_mode_setting::VimModeSetting;
+use vim_mode_setting::{HelixModeSetting, VimModeSetting};
+use workspace::item::ItemBufferKind;
 use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, item::ItemHandle,
 };
@@ -48,20 +48,15 @@ impl QuickActionBar {
         workspace: &Workspace,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut was_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
-        let mut was_agent_enabled = AgentSettings::get_global(cx).enabled;
+        let mut was_agent_enabled = AgentSettings::get_global(cx).enabled(cx);
         let mut was_agent_button = AgentSettings::get_global(cx).button;
 
         let ai_settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
-            let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
             let agent_settings = AgentSettings::get_global(cx);
+            let is_agent_enabled = agent_settings.enabled(cx);
 
-            if was_ai_disabled != is_ai_disabled
-                || was_agent_enabled != agent_settings.enabled
-                || was_agent_button != agent_settings.button
-            {
-                was_ai_disabled = is_ai_disabled;
-                was_agent_enabled = agent_settings.enabled;
+            if was_agent_enabled != is_agent_enabled || was_agent_button != agent_settings.button {
+                was_agent_enabled = is_agent_enabled;
                 was_agent_button = agent_settings.button;
                 cx.notify();
             }
@@ -137,7 +132,7 @@ impl Render for QuickActionBar {
         let code_action_enabled = editor_value.code_actions_enabled_for_toolbar(cx);
         let focus_handle = editor_value.focus_handle(cx);
 
-        let search_button = editor.is_singleton(cx).then(|| {
+        let search_button = (editor.buffer_kind(cx) == ItemBufferKind::Singleton).then(|| {
             QuickActionBarButton::new(
                 "toggle buffer search",
                 search::SEARCH_ICON,
@@ -271,8 +266,18 @@ impl Render for QuickActionBar {
                             )
                             .action("Expand Selection", Box::new(SelectLargerSyntaxNode))
                             .action("Shrink Selection", Box::new(SelectSmallerSyntaxNode))
-                            .action("Add Cursor Above", Box::new(AddSelectionAbove))
-                            .action("Add Cursor Below", Box::new(AddSelectionBelow))
+                            .action(
+                                "Add Cursor Above",
+                                Box::new(AddSelectionAbove {
+                                    skip_soft_wrap: true,
+                                }),
+                            )
+                            .action(
+                                "Add Cursor Below",
+                                Box::new(AddSelectionBelow {
+                                    skip_soft_wrap: true,
+                                }),
+                            )
                             .separator()
                             .action("Go to Symbol", Box::new(ToggleOutline))
                             .action("Go to Line/Column", Box::new(ToggleGoToLine))
@@ -302,6 +307,7 @@ impl Render for QuickActionBar {
         let editor = editor.downgrade();
         let editor_settings_dropdown = {
             let vim_mode_enabled = VimModeSetting::get_global(cx).0;
+            let helix_mode_enabled = HelixModeSetting::get_global(cx).0;
 
             PopoverMenu::new("editor-settings")
                 .trigger_with_tooltip(
@@ -401,7 +407,7 @@ impl Render for QuickActionBar {
                                         }
                                     });
                                 if !edit_predictions_enabled_at_cursor {
-                                    edit_prediction_entry = edit_prediction_entry.documentation_aside(DocumentationSide::Left, |_| {
+                                    edit_prediction_entry = edit_prediction_entry.documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, |_| {
                                         Label::new("You can't toggle edit predictions for this file as it is within the excluded files list.").into_any_element()
                                     });
                                 }
@@ -452,7 +458,7 @@ impl Render for QuickActionBar {
                                             }
                                         });
                                     if !diagnostics_enabled {
-                                        inline_diagnostics_item = inline_diagnostics_item.disabled(true).documentation_aside(DocumentationSide::Left, |_|  Label::new("Inline diagnostics are not available until regular diagnostics are enabled.").into_any_element());
+                                        inline_diagnostics_item = inline_diagnostics_item.disabled(true).documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, |_|  Label::new("Inline diagnostics are not available until regular diagnostics are enabled.").into_any_element());
                                     }
                                     menu = menu.item(inline_diagnostics_item)
                                 }
@@ -578,9 +584,24 @@ impl Render for QuickActionBar {
                                     move |window, cx| {
                                         let new_value = !vim_mode_enabled;
                                         VimModeSetting::override_global(VimModeSetting(new_value), cx);
+                                        HelixModeSetting::override_global(HelixModeSetting(false), cx);
                                         window.refresh();
                                     }
                                 },
+                            );
+                            menu = menu.toggleable_entry(
+                                "Helix Mode",
+                                helix_mode_enabled,
+                                IconPosition::Start,
+                                None,
+                                {
+                                    move |window, cx| {
+                                        let new_value = !helix_mode_enabled;
+                                        HelixModeSetting::override_global(HelixModeSetting(new_value), cx);
+                                        VimModeSetting::override_global(VimModeSetting(false), cx);
+                                        window.refresh();
+                                    }
+                                }
                             );
 
                             menu
@@ -597,9 +618,7 @@ impl Render for QuickActionBar {
             .children(self.render_preview_button(self.workspace.clone(), cx))
             .children(search_button)
             .when(
-                AgentSettings::get_global(cx).enabled
-                    && AgentSettings::get_global(cx).button
-                    && !DisableAiSettings::get_global(cx).disable_ai,
+                AgentSettings::get_global(cx).enabled(cx) && AgentSettings::get_global(cx).button,
                 |bar| bar.child(assistant_button),
             )
             .children(code_actions_dropdown)
@@ -652,8 +671,8 @@ impl RenderOnce for QuickActionBarButton {
             .icon_size(IconSize::Small)
             .style(ButtonStyle::Subtle)
             .toggle_state(self.toggled)
-            .tooltip(move |window, cx| {
-                Tooltip::for_action_in(tooltip.clone(), &*action, &self.focus_handle, window, cx)
+            .tooltip(move |_window, cx| {
+                Tooltip::for_action_in(tooltip.clone(), &*action, &self.focus_handle, cx)
             })
             .on_click(move |event, window, cx| (self.on_click)(event, window, cx))
     }

@@ -14,10 +14,7 @@ use gpui::{
 use http_client::BlockedHttpClient;
 use language::{
     FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
-    language_settings::{
-        AllLanguageSettings, Formatter, FormatterList, PrettierSettings, SelectedFormatter,
-        language_settings,
-    },
+    language_settings::{Formatter, FormatterList, language_settings},
     tree_sitter_typescript,
 };
 use node_runtime::NodeRuntime;
@@ -30,13 +27,13 @@ use remote::RemoteClient;
 use remote_server::{HeadlessAppState, HeadlessProject};
 use rpc::proto;
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{LanguageServerFormatterSpecifier, PrettierSettingsContent, SettingsStore};
 use std::{
     path::Path,
     sync::{Arc, atomic::AtomicUsize},
 };
 use task::TcpArgumentsTemplate;
-use util::path;
+use util::{path, rel_path::rel_path};
 
 #[gpui::test(iterations = 10)]
 async fn test_sharing_an_ssh_remote_project(
@@ -127,26 +124,26 @@ async fn test_sharing_an_ssh_remote_project(
 
     worktree_a.update(cx_a, |worktree, _cx| {
         assert_eq!(
-            worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
+            worktree.paths().collect::<Vec<_>>(),
             vec![
-                Path::new(".zed"),
-                Path::new(".zed/settings.json"),
-                Path::new("README.md"),
-                Path::new("src"),
-                Path::new("src/lib.rs"),
+                rel_path(".zed"),
+                rel_path(".zed/settings.json"),
+                rel_path("README.md"),
+                rel_path("src"),
+                rel_path("src/lib.rs"),
             ]
         );
     });
 
     worktree_b.update(cx_b, |worktree, _cx| {
         assert_eq!(
-            worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
+            worktree.paths().collect::<Vec<_>>(),
             vec![
-                Path::new(".zed"),
-                Path::new(".zed/settings.json"),
-                Path::new("README.md"),
-                Path::new("src"),
-                Path::new("src/lib.rs"),
+                rel_path(".zed"),
+                rel_path(".zed/settings.json"),
+                rel_path("README.md"),
+                rel_path("src"),
+                rel_path("src/lib.rs"),
             ]
         );
     });
@@ -154,7 +151,7 @@ async fn test_sharing_an_ssh_remote_project(
     // User B can open buffers in the remote project.
     let buffer_b = project_b
         .update(cx_b, |project, cx| {
-            project.open_buffer((worktree_id, "src/lib.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("src/lib.rs")), cx)
         })
         .await
         .unwrap();
@@ -180,7 +177,7 @@ async fn test_sharing_an_ssh_remote_project(
                 buffer_b.clone(),
                 ProjectPath {
                     worktree_id: worktree_id.to_owned(),
-                    path: Arc::from(Path::new("src/renamed.rs")),
+                    path: rel_path("src/renamed.rs").into(),
                 },
                 cx,
             )
@@ -197,14 +194,8 @@ async fn test_sharing_an_ssh_remote_project(
     cx_b.run_until_parked();
     cx_b.update(|cx| {
         assert_eq!(
-            buffer_b
-                .read(cx)
-                .file()
-                .unwrap()
-                .path()
-                .to_string_lossy()
-                .to_string(),
-            path!("src/renamed.rs").to_string()
+            buffer_b.read(cx).file().unwrap().path().as_ref(),
+            rel_path("src/renamed.rs")
         );
     });
 }
@@ -492,31 +483,31 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     // Opens the buffer and formats it
     let (buffer_b, _handle) = project_b
         .update(cx_b, |p, cx| {
-            p.open_buffer_with_lsp((worktree_id, "a.ts"), cx)
+            p.open_buffer_with_lsp((worktree_id, rel_path("a.ts")), cx)
         })
         .await
         .expect("user B opens buffer for formatting");
 
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(SelectedFormatter::Auto);
-                file.defaults.prettier = Some(PrettierSettings {
-                    allowed: true,
-                    ..PrettierSettings::default()
+            store.update_user_settings(cx, |file| {
+                file.project.all_languages.defaults.formatter = Some(FormatterList::default());
+                file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
+                    allowed: Some(true),
+                    ..Default::default()
                 });
             });
         });
     });
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
-                    Formatter::LanguageServer { name: None },
-                )));
-                file.defaults.prettier = Some(PrettierSettings {
-                    allowed: true,
-                    ..PrettierSettings::default()
+            store.update_user_settings(cx, |file| {
+                file.project.all_languages.defaults.formatter = Some(FormatterList::Single(
+                    Formatter::LanguageServer(LanguageServerFormatterSpecifier::Current),
+                ));
+                file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
+                    allowed: Some(true),
+                    ..Default::default()
                 });
             });
         });
@@ -550,17 +541,19 @@ async fn test_ssh_collaboration_formatting_with_prettier(
 
     // User A opens and formats the same buffer too
     let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.ts"), cx))
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("a.ts")), cx)
+        })
         .await
         .expect("user A opens buffer for formatting");
 
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(SelectedFormatter::Auto);
-                file.defaults.prettier = Some(PrettierSettings {
-                    allowed: true,
-                    ..PrettierSettings::default()
+            store.update_user_settings(cx, |file| {
+                file.project.all_languages.defaults.formatter = Some(FormatterList::default());
+                file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
+                    allowed: Some(true),
+                    ..Default::default()
                 });
             });
         });

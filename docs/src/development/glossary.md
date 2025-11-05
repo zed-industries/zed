@@ -23,7 +23,7 @@ here. An example would be `AnyElement` and `LspStore`.
 
 ## GPUI
 
-### State menagement
+### State management
 
 - `App`: A singleton which holds the full application state including all the entities. Crucially: `App` is not `Send`, which means that `App` only exists on the thread that created it (which is the main/UI thread, usually). Thus, if you see a `&mut App`, know that you're on UI thread.
 - `Context`: A wrapper around the `App` struct with specialized behavior for a specific `Entity`. Think of it as `(&mut App, Entity<V>)`. The specialized behavior is surfaced in the API surface of `Context`. E.g., `App::spawn` takes an `AsyncFnOnce(AsyncApp) -> Ret`, whereas `Context::spawn` takes an `AsyncFnOnce(WeakEntity<V>, AsyncApp) -> Ret`.
@@ -67,7 +67,7 @@ h_flex()
 - `Component`: A builder which can be rendered turning it into an `Element`.
 - `Dispatch tree`: TODO
 - `Focus`: The place where keystrokes are handled first
-- `Focus tree`: Path from the place thats the current focus to the UI Root. Example <img> TODO
+- `Focus tree`: Path from the place that has the current focus to the UI Root. Example <img> TODO
 
 ## Zed UI
 
@@ -79,15 +79,17 @@ h_flex()
 - `Pane`: An area in the `Center` where we can place items, such as an editor, multi-buffer or terminal (see image below).
 - `Panel`: An `Entity` implementing the `Panel` trait. These can be placed in a `Dock`. In the image below we see the: `ProjectPanel` in the left dock, the `DebugPanel` in the bottom dock, and `AgentPanel` in the right dock. Note `Editor` does not implement `Panel` and hence is not a `Panel`.
 - `Dock`: A UI element similar to a `Pane` which can be opened and hidden. There can be up to 3 docks open at a time, left right and below the center. A dock contains one or more `Panel`s not `Pane`s. (see image).
-  <img width="1921" height="1080" alt="image" src="https://github.com/user-attachments/assets/2cb1170e-2850-450d-89bb-73622b5d07b2" />
+
+<img width="1921" height="1080" alt="Screenshot for the Pane and Dock features" src="https://github.com/user-attachments/assets/2cb1170e-2850-450d-89bb-73622b5d07b2" />
 
 - `Project`: One or more `Worktree`s
 - `Worktree`: Represents either local or remote files.
-  <img width="552" height="1118" alt="image" src="https://github.com/user-attachments/assets/da5c58e4-b02e-4038-9736-27e3509fdbfa" />
+
+<img width="552" height="1118" alt="Screenshot for the Worktree feature" src="https://github.com/user-attachments/assets/da5c58e4-b02e-4038-9736-27e3509fdbfa" />
 
 - [Multibuffer](https://zed.dev/docs/multibuffers): A list of Editors, a multi-buffer allows editing multiple files simultaneously. A multi-buffer opens when an operation in Zed returns multiple locations, examples: _search_ or _go to definition_. See project search in the image below.
 
-<img width="800" height="886" alt="image" src="https://github.com/user-attachments/assets/d59dcecd-8ab6-4172-8fb6-b1fc3c3eaf9d" />
+<img width="800" height="886" alt="Screenshot for the MultiBuffer feature" src="https://github.com/user-attachments/assets/d59dcecd-8ab6-4172-8fb6-b1fc3c3eaf9d" />
 
 ## Editor
 
@@ -109,7 +111,7 @@ h_flex()
 - `debugger::Session`: Is an entity that manages the lifecycle of a debug session and communication with DAPS
 - `BreakpointStore`: Is an entity that manages breakpoints states in local and remote instances of Zed
 - `DebugSession`: Manages a debug session's UI and running state
-- `RunningState`: Directily manages all the views of a debug session
+- `RunningState`: Directly manages all the views of a debug session
 - `VariableList`: The variable and watch list view of a debug session
 - `Console`: TODO
 - `Terminal`: TODO

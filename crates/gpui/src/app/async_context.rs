@@ -176,7 +176,7 @@ impl AsyncApp {
         lock.open_window(options, build_root_view)
     }
 
-    /// Schedule a future to be polled in the background.
+    /// Schedule a future to be polled in the foreground.
     #[track_caller]
     pub fn spawn<AsyncFn, R>(&self, f: AsyncFn) -> Task<R>
     where
@@ -216,6 +216,23 @@ impl AsyncApp {
         let app = self.app.upgrade()?;
         let app = app.borrow_mut();
         Some(read(app.try_global()?, &app))
+    }
+
+    /// Reads the global state of the specified type, passing it to the given callback.
+    /// A default value is assigned if a global of this type has not yet been assigned.
+    ///
+    /// # Errors
+    /// If the app has ben dropped this returns an error.
+    pub fn try_read_default_global<G: Global + Default, R>(
+        &self,
+        read: impl FnOnce(&G, &App) -> R,
+    ) -> Result<R> {
+        let app = self.app.upgrade().context("app was released")?;
+        let mut app = app.borrow_mut();
+        app.update(|cx| {
+            cx.default_global::<G>();
+        });
+        Ok(read(app.try_global().context("app was released")?, &app))
     }
 
     /// A convenience method for [`App::update_global`](BorrowAppContext::update_global)

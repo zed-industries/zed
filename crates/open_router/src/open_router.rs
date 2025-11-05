@@ -3,6 +3,10 @@ use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::B
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+pub use settings::DataCollection;
+pub use settings::ModelMode;
+pub use settings::OpenRouterAvailableModel as AvailableModel;
+pub use settings::OpenRouterProvider as Provider;
 use std::{convert::TryFrom, io, time::Duration};
 use strum::EnumString;
 use thiserror::Error;
@@ -74,16 +78,7 @@ pub struct Model {
     pub supports_images: Option<bool>,
     #[serde(default)]
     pub mode: ModelMode,
-}
-
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-pub enum ModelMode {
-    #[default]
-    Default,
-    Thinking {
-        budget_tokens: Option<u32>,
-    },
+    pub provider: Option<Provider>,
 }
 
 impl Model {
@@ -95,6 +90,7 @@ impl Model {
             Some(true),
             Some(false),
             Some(ModelMode::Default),
+            None,
         )
     }
 
@@ -109,6 +105,7 @@ impl Model {
         supports_tools: Option<bool>,
         supports_images: Option<bool>,
         mode: Option<ModelMode>,
+        provider: Option<Provider>,
     ) -> Self {
         Self {
             name: name.to_owned(),
@@ -117,6 +114,7 @@ impl Model {
             supports_tools,
             supports_images,
             mode: mode.unwrap_or(ModelMode::Default),
+            provider,
         }
     }
 
@@ -164,6 +162,7 @@ pub struct Request {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<Reasoning>,
     pub usage: RequestUsage,
+    pub provider: Option<Provider>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -529,12 +528,16 @@ pub async fn stream_completion(
 pub async fn list_models(
     client: &dyn HttpClient,
     api_url: &str,
+    api_key: &str,
 ) -> Result<Vec<Model>, OpenRouterError> {
-    let uri = format!("{api_url}/models");
+    let uri = format!("{api_url}/models/user");
     let request_builder = HttpRequest::builder()
         .method(Method::GET)
         .uri(uri)
-        .header("Accept", "application/json");
+        .header("Accept", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("HTTP-Referer", "https://zed.dev")
+        .header("X-Title", "Zed Editor");
 
     let request = request_builder
         .body(AsyncBody::default())
@@ -593,6 +596,7 @@ pub async fn list_models(
                 } else {
                     ModelMode::Default
                 },
+                provider: None,
             })
             .collect();
 

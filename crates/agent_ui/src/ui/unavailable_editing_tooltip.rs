@@ -12,8 +12,8 @@ impl UnavailableEditingTooltip {
 }
 
 impl Render for UnavailableEditingTooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        tooltip_container(window, cx, |this, _, _| {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        tooltip_container(cx, |this, _| {
             this.child(Label::new("Unavailable Editing")).child(
                 div().max_w_64().child(
                     Label::new(format!(
