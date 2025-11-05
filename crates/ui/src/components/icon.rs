@@ -118,12 +118,11 @@ enum IconSource {
     Embedded(SharedString),
     /// An image file located at the specified path.
     ///
-    /// Currently our SVG renderer is missing support for the following features:
-    /// 1. Rendering polychrome SVGs.
+    /// Currently our SVG renderer is missing support for rendering polychrome SVGs.
     ///
     /// In order to support icon themes, we render the icons as images instead.
     External(Arc<Path>),
-    ///
+    /// An SVG not embedded in the Zed binary.
     ExternalSvg(SharedString),
 }
 
