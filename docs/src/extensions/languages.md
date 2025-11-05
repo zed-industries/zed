@@ -394,6 +394,62 @@ impl zed::Extension for MyExtension {
 
 You can customize the handling of the language server using several optional methods in the `Extension` trait. For example, you can control how completions are styled using the `label_for_completion` method. For a complete list of methods, see the [API docs for the Zed extension API](https://docs.rs/zed_extension_api).
 
+### Syntax Highlighting with Semantic Tokens
+
+Zed supports syntax highlighting using semantic tokens from the attached language servers. This is currently disabled by default, but can be enabled in your settings file:
+
+```json [settings]
+{
+  // Enable semantic tokens globally:
+  "semantic_tokens": true
+  // Or, specify per-language:
+  "languages": {
+    "Rust": {
+      "semantic_tokens": true,
+    }
+  }
+}
+```
+
+When enabled, Zed will use semantic tokens from the language server to enhance syntax highlighting. This can provide more accurate and context-aware highlighting compared to traditional syntax-based highlighting. Semantic tokens are applied on top of the existing syntax highlighting provided by Tree-sitter.
+
+#### Customizing Semantic Token Styles
+
+Zed supports customizing the styles used for semantic tokens. You can define overrides in your settings file, which customize how semantic tokens get mapped to styles in your theme.
+
+```json [settings]
+{
+  "global_lsp_settings": {
+    "semantic_token_rules": [
+      {
+        // Higlight macros as keywords.
+        "token_type": "macro",
+        "style": "syntax.keyword"
+      },
+      {
+        // Highlight unresolved references in bold red.
+        "token_type": "unresolvedReference",
+        "foreground_color": "#c93f3f",
+        "font_weight": "bold",
+      },
+    ]
+  }
+}
+```
+
+Rules are matched in order. The first rule that has the correct `token_type` and matches all `token_modifiers` is applied. If no rules match, the token is not highlighted. User-defined rules are matched before the default rules. So, you can disable a default rule by adding a rule that matches the same `token_type` and `token_modifiers`, but does not specify any styles.
+
+Each rule in the `semantic_token_rules` array is defined as follows:
+- `token_type` (required): The semantic token type as defined by the [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_semanticTokens).
+- `token_modifiers`: A list of semantic token modifiers to match. All modifiers must be present to match.
+- `style`: A list of styles from the current syntax theme to use. The first style found is used. Any settings below override that style.
+- `foreground_color`: The foreground color to use for the token type, in hex format (e.g., `"#ff0000"`).
+- `background_color`: The background color to use for the token type, in hex format (e.g., `"#ff0000"`).
+- `underline`: A color to underline the token with, in hex format (e.g., `"#ff0000"`).
+- `strikethrough`: A color to strikethrough the token with, in hex format (e.g., `"#ff0000"`).
+- `font_weight`: One of `"normal"`, `"bold"`.
+- `font_style`: One of `"normal"`, `"italic"`.
+
 ### Multi-Language Support
 
 If your language server supports additional languages, you can use `language_ids` to map Zed `languages` to the desired [LSP-specific `languageId`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocumentItem) identifiers:
