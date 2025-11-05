@@ -865,8 +865,8 @@ impl ActionLog {
 
 #[derive(Default)]
 struct ActionLogTelemetry {
-    added_lines: u32,
-    removed_lines: u32,
+    lines_added: u32,
+    lines_removed: u32,
 }
 
 impl ActionLogTelemetry {
@@ -883,16 +883,16 @@ impl ActionLogTelemetry {
     }
 
     fn add_edit(&mut self, edit: &Edit<u32>) {
-        self.added_lines += edit.new_len();
-        self.removed_lines += edit.old_len();
+        self.lines_added += edit.new_len();
+        self.lines_removed += edit.old_len();
     }
 
     fn report_accepted(self, agent: &str) {
         telemetry::event!(
             "Agent Edits Accepted",
             agent,
-            added_lines = self.added_lines,
-            removed_lines = self.removed_lines
+            lines_added = self.lines_added,
+            lines_removed = self.lines_removed
         );
     }
 
@@ -900,8 +900,8 @@ impl ActionLogTelemetry {
         telemetry::event!(
             "Agent Edits Rejected",
             agent,
-            added_lines = self.added_lines,
-            removed_lines = self.removed_lines
+            lines_added = self.lines_added,
+            lines_removed = self.lines_removed
         );
     }
 }
