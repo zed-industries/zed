@@ -151,7 +151,7 @@ impl LineWrapper {
             let char_width = self.width_for_char(c);
             width += char_width;
 
-            if width.floor() > truncate_width {
+            if width > truncate_width {
                 let result =
                     SharedString::from(format!("{}{}", &line[..truncate_ix], truncation_suffix));
                 let mut runs = runs.to_vec();
