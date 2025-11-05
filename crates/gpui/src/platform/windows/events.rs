@@ -1387,6 +1387,8 @@ fn should_prefer_character_input(vkey: VIRTUAL_KEY, scan_code: u16) -> bool {
         return false;
     }
 
+    // Workaround for some bug that makes the compiler think keyboard_state is still zeroed out
+    let keyboard_state = std::hint::black_box(keyboard_state);
     let ctrl_down = (keyboard_state[VK_CONTROL.0 as usize] & 0x80) != 0;
     let alt_down = (keyboard_state[VK_MENU.0 as usize] & 0x80) != 0;
     let win_down = (keyboard_state[VK_LWIN.0 as usize] & 0x80) != 0
