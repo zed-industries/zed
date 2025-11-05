@@ -1,7 +1,6 @@
 use std::{
     borrow::Cow,
     cell::RefCell,
-    env,
     fmt::{self, Display},
     fs,
     io::Write,
@@ -24,6 +23,8 @@ use project::{Project, ProjectPath};
 use pulldown_cmark::CowStr;
 use serde::{Deserialize, Serialize};
 use util::{paths::PathStyle, rel_path::RelPath};
+
+use crate::paths::{REPOS_DIR, WORKTREES_DIR};
 
 const UNCOMMITTED_DIFF_HEADING: &str = "Uncommitted Diff";
 const EDIT_HISTORY_HEADING: &str = "Edit History";
@@ -216,12 +217,10 @@ impl NamedExample {
         let (repo_owner, repo_name) = self.repo_name()?;
         let file_name = self.file_name();
 
-        let worktrees_dir = env::current_dir()?.join("target").join("zeta-worktrees");
-        let repos_dir = env::current_dir()?.join("target").join("zeta-repos");
-        fs::create_dir_all(&repos_dir)?;
-        fs::create_dir_all(&worktrees_dir)?;
+        fs::create_dir_all(&*REPOS_DIR)?;
+        fs::create_dir_all(&*WORKTREES_DIR)?;
 
-        let repo_dir = repos_dir.join(repo_owner.as_ref()).join(repo_name.as_ref());
+        let repo_dir = REPOS_DIR.join(repo_owner.as_ref()).join(repo_name.as_ref());
         let repo_lock = lock_repo(&repo_dir).await;
 
         if !repo_dir.is_dir() {
@@ -252,7 +251,7 @@ impl NamedExample {
         };
 
         // Create the worktree for this example if needed.
-        let worktree_path = worktrees_dir.join(&file_name);
+        let worktree_path = WORKTREES_DIR.join(&file_name);
         if worktree_path.is_dir() {
             run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
             run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
@@ -310,7 +309,6 @@ impl NamedExample {
             .collect()
     }
 
-    #[allow(unused)]
     fn repo_name(&self) -> Result<(Cow<'_, str>, Cow<'_, str>)> {
         // git@github.com:owner/repo.git
         if self.example.repository_url.contains('@') {

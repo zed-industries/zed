@@ -1,6 +1,7 @@
 mod evaluate;
 mod example;
 mod headless;
+mod paths;
 mod predict;
 mod source_location;
 mod syntax_retrieval_stats;

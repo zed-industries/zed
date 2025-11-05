@@ -14,6 +14,7 @@ use gpui::AsyncApp;
 use crate::{
     example::{Example, NamedExample},
     headless::ZetaCliAppState,
+    paths::CACHE_DIR,
     predict::{PredictionDetails, zeta2_predict},
 };
 
@@ -54,10 +55,8 @@ pub async fn run_evaluate_one(
     app_state: Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) -> Result<EvaluationResult> {
-    let cache_dir = Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default())
-        .join("../../target/zeta-prediction-cache");
     let example = NamedExample::load(&example_path).unwrap();
-    let example_cache_path = cache_dir.join(&example_path.file_name().unwrap());
+    let example_cache_path = CACHE_DIR.join(&example_path.file_name().unwrap());
 
     let predictions = if !re_run && example_cache_path.exists() {
         let file_contents = fs::read_to_string(&example_cache_path)?;
@@ -74,7 +73,7 @@ pub async fn run_evaluate_one(
     };
 
     if !example_cache_path.exists() {
-        fs::create_dir_all(&cache_dir).unwrap();
+        fs::create_dir_all(&*CACHE_DIR).unwrap();
         fs::write(
             example_cache_path,
             serde_json::to_string(&predictions).unwrap(),
