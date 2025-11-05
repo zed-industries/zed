@@ -6,6 +6,7 @@ mod modal_layer;
 pub mod notifications;
 pub mod pane;
 pub mod pane_group;
+mod panelet;
 mod path_list;
 mod persistence;
 pub mod searchable;
@@ -126,11 +127,14 @@ pub use workspace_settings::{
 };
 use zed_actions::{Spawn, feedback::FileBugReport};
 
-use crate::persistence::{
-    SerializedAxis,
-    model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
-};
 use crate::{item::ItemBufferKind, notifications::NotificationId};
+use crate::{
+    panelet::Panelet,
+    persistence::{
+        SerializedAxis,
+        model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
+    },
+};
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
 
@@ -1180,6 +1184,7 @@ pub struct Workspace {
     scheduled_tasks: Vec<Task<()>>,
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
+    panelet: bool,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1524,6 +1529,7 @@ impl Workspace {
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
             removing: false,
+            panelet: false,
         }
     }
 
@@ -6698,14 +6704,11 @@ impl Render for Workspace {
                                                         window,
                                                         cx,
                                                     ))
-                                                    // .child(
-                                                        // TODO!
-                                                        // Render "aside pane" child
-                                                        // div()
-                                                        //     .h_full()
-                                                        //     .w_3()
-                                                        //     .bg(gpui::red())
-                                                    // )
+                                                    .when(self.panelet, |this| {
+                                                        this.child(
+                                                            Panelet::new(cx)
+                                                        )
+                                                    })
                                                     .child(
                                                         div()
                                                             .flex()

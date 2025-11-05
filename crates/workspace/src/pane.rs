@@ -3040,20 +3040,16 @@ impl Pane {
                 move |_window, cx| Tooltip::for_action_in("Go Back", &GoBack, &focus_handle, cx)
             });
 
-        let open_aside = IconButton::new("open_aside", IconName::Thread).icon_size(IconSize::Small);
-        // .on_click({
-        //     let entity = cx.entity();
-        //     move |_, window, cx| {
-        //         entity.update(cx, |pane, cx| {
-        //             pane.navigate_backward(&Default::default(), window, cx)
-        //         })
-        //     }
-        // })
-        // .disabled(!self.can_navigate_backward())
-        // .tooltip({
-        //     let focus_handle = focus_handle.clone();
-        //     move |_window, cx| Tooltip::for_action_in("Go Back", &GoBack, &focus_handle, cx)
-        // });
+        let open_aside = IconButton::new("open_aside", IconName::Thread)
+            .icon_size(IconSize::Small)
+            .on_click({
+                let workspace = self.workspace.clone();
+                move |_, window, cx| {
+                    workspace
+                        .update(cx, |workspace, cx| workspace.toggle_panelet(window, cx))
+                        .ok();
+                }
+            });
 
         let navigate_forward = IconButton::new("navigate_forward", IconName::ArrowRight)
             .icon_size(IconSize::Small)
@@ -3096,7 +3092,12 @@ impl Pane {
         let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
         let pinned_tabs = tab_items;
 
-        let render_aside_toggle = true;
+        let render_aside_toggle = self
+            .workspace
+            .upgrade()
+            .map(|entity| !entity.read(cx).panelet)
+            .unwrap_or(false);
+
         TabBar::new("tab_bar")
             .when(render_aside_toggle, |tab_bar| {
                 tab_bar.start_child(open_aside)

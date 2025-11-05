@@ -10,6 +10,7 @@ pub struct TabBar {
     start_children: SmallVec<[AnyElement; 2]>,
     children: SmallVec<[AnyElement; 2]>,
     end_children: SmallVec<[AnyElement; 2]>,
+    pre_end_children: SmallVec<[AnyElement; 2]>,
     scroll_handle: Option<ScrollHandle>,
 }
 
@@ -20,6 +21,7 @@ impl TabBar {
             start_children: SmallVec::new(),
             children: SmallVec::new(),
             end_children: SmallVec::new(),
+            pre_end_children: SmallVec::new(),
             scroll_handle: None,
         }
     }
