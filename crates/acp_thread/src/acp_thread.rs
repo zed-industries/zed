@@ -1346,6 +1346,16 @@ impl AcpThread {
         let path_style = self.project.read(cx).path_style(cx);
         let id = update.id.clone();
 
+        let agent = self.connection().telemetry_id();
+        if let ToolCallStatus::Completed | ToolCallStatus::Failed = status {
+            let status = if matches!(status, ToolCallStatus::Completed) {
+                "completed"
+            } else {
+                "failed"
+            };
+            telemetry::event!("Agent Tool Call Completed", agent, status);
+        }
+
         if let Some(ix) = self.index_for_tool_call(&id) {
             let AgentThreadEntry::ToolCall(call) = &mut self.entries[ix] else {
                 unreachable!()

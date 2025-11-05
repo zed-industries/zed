@@ -1189,12 +1189,13 @@ impl AcpThreadView {
             })?;
             let res = send.await;
             let turn_time_ms = turn_start_time.elapsed().as_millis();
+            let status = if res.is_ok() { "success" } else { "failure" };
             telemetry::event!(
                 "Agent Turn Ended",
                 agent = agent_telemetry_id,
-                failed = res.is_err(),
-                turn_time_ms,
                 model = model_id,
+                status,
+                turn_time_ms,
             );
             res
         });
