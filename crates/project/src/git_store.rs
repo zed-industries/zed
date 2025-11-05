@@ -344,7 +344,7 @@ pub struct GitJob {
 
 #[derive(PartialEq, Eq)]
 enum GitJobKey {
-    WriteIndex(RepoPath),
+    WriteIndex(Vec<RepoPath>),
     ReloadBufferDiffBases,
     RefreshStatuses,
     ReloadGitState,
@@ -3846,10 +3846,7 @@ impl Repository {
             .collect::<Vec<_>>()
             .join(" ");
         let status = format!("git add {paths}");
-        let job_key = match entries.len() {
-            1 => Some(GitJobKey::WriteIndex(entries[0].clone())),
-            _ => None,
-        };
+        let job_key = GitJobKey::WriteIndex(entries.clone());
 
         self.spawn_job_with_tracking(
             entries.clone(),
@@ -3862,7 +3859,7 @@ impl Repository {
 
                 this.update(cx, |this, _| {
                     this.send_keyed_job(
-                        job_key,
+                        Some(job_key),
                         Some(status.into()),
                         move |git_repo, _cx| async move {
                             match git_repo {
@@ -3911,10 +3908,7 @@ impl Repository {
             .collect::<Vec<_>>()
             .join(" ");
         let status = format!("git reset {paths}");
-        let job_key = match entries.len() {
-            1 => Some(GitJobKey::WriteIndex(entries[0].clone())),
-            _ => None,
-        };
+        let job_key = GitJobKey::WriteIndex(entries.clone());
 
         self.spawn_job_with_tracking(
             entries.clone(),
@@ -3927,7 +3921,7 @@ impl Repository {
 
                 this.update(cx, |this, _| {
                     this.send_keyed_job(
-                        job_key,
+                        Some(job_key),
                         Some(status.into()),
                         move |git_repo, _cx| async move {
                             match git_repo {
@@ -4409,7 +4403,7 @@ impl Repository {
         let this = cx.weak_entity();
         let git_store = self.git_store.clone();
         self.send_keyed_job(
-            Some(GitJobKey::WriteIndex(path.clone())),
+            Some(GitJobKey::WriteIndex(vec![path.clone()])),
             None,
             move |git_repo, mut cx| async move {
                 log::debug!(
