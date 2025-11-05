@@ -114,7 +114,9 @@ impl Render for QuickActionBar {
         let selection_menu_enabled = editor_value.selection_menu_enabled(cx);
         let inlay_hints_enabled = editor_value.inlay_hints_enabled();
         let inline_values_enabled = editor_value.inline_values_enabled();
-        let supports_diagnostics = editor_value.mode().is_full();
+        let is_full = editor_value.mode().is_full();
+        let semantic_tokens_enabled = editor_value.semantic_tokens_enabled();
+        let semantic_tokens_available = editor_value.semantic_tokens_available(cx);
         let diagnostics_enabled = editor_value.diagnostics_max_severity != DiagnosticSeverity::Off;
         let supports_inline_diagnostics = editor_value.inline_diagnostics_enabled();
         let inline_diagnostics_enabled = editor_value.show_inline_diagnostics();
@@ -430,7 +432,7 @@ impl Render for QuickActionBar {
 
                             menu = menu.separator();
 
-                            if supports_diagnostics {
+                            if is_full {
                                 menu = menu.toggleable_entry(
                                     "Diagnostics",
                                     diagnostics_enabled,
@@ -475,6 +477,24 @@ impl Render for QuickActionBar {
                                     }
                                     menu = menu.item(inline_diagnostics_item)
                                 }
+
+                                let mut semantic_tokens_item = ContextMenuEntry::new("Semantic Tokens")
+                                    .toggleable(IconPosition::Start, semantic_tokens_available && semantic_tokens_enabled)
+                                    .action(ToggleInlineDiagnostics.boxed_clone())
+                                    .handler({
+                                        let editor = editor.clone();
+                                        move |window, cx| {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.toggle_semantic_tokens(window, cx);
+                                                })
+                                                .ok();
+                                        }
+                                    });
+                                if !semantic_tokens_available {
+                                    semantic_tokens_item = semantic_tokens_item.disabled(true).documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, |_|  Label::new("No LSP servers that provide semantic tokens are enabled.").into_any_element());
+                                }
+                                menu = menu.item(semantic_tokens_item);
 
                                 menu = menu.separator();
                             }

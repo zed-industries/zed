@@ -1196,6 +1196,7 @@ pub struct Editor {
     folding_newlines: Task<()>,
     select_next_is_case_sensitive: Option<bool>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
+    semantic_tokens_enabled: bool,
     pub(crate) update_semantic_tokens_task: Task<()>,
 }
 
@@ -2335,6 +2336,7 @@ impl Editor {
             folding_newlines: Task::ready(()),
             lookup_key: None,
             select_next_is_case_sensitive: None,
+            semantic_tokens_enabled: true,
             update_semantic_tokens_task: Task::ready(()),
         };
 
@@ -6696,6 +6698,27 @@ impl Editor {
         }));
     }
 
+    pub fn toggle_semantic_tokens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.semantic_tokens_enabled = !self.semantic_tokens_enabled;
+
+        for buffer in self.buffer.read(cx).all_buffers() {
+            self.update_buffer_semantic_tokens(&buffer, window, cx);
+        }
+    }
+
+    pub fn semantic_tokens_available(&self, cx: &App) -> bool {
+        self.buffer.read(cx).all_buffers().iter().any(|buffer| {
+            let buffer = buffer.read(cx);
+            let file = buffer.file();
+
+            language_settings(buffer.language().map(|l| l.name()), file, cx).semantic_tokens
+        })
+    }
+
+    pub fn semantic_tokens_enabled(&self) -> bool {
+        self.semantic_tokens_enabled
+    }
+
     pub(crate) fn update_semantic_tokens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         for buffer in self.buffer.read(cx).all_buffers() {
             self.update_buffer_semantic_tokens(&buffer, window, cx);
@@ -6708,7 +6731,23 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode.is_full() {
+        if !self.mode.is_full() || !self.semantic_tokens_enabled {
+            self.display_map.update(cx, |display_map, _| {
+                display_map.semantic_tokens.clear();
+            });
+            return;
+        }
+
+        let buffer_entity = buffer.clone();
+        let buffer = buffer.read(cx);
+        let buffer_id = buffer.remote_id();
+        let file = buffer.file();
+
+        let settings = language_settings(buffer.language().map(|l| l.name()), file, cx);
+        if !settings.semantic_tokens {
+            self.display_map.update(cx, |display_map, _| {
+                display_map.semantic_tokens.remove(&buffer_id);
+            });
             return;
         }
 
@@ -6716,9 +6755,8 @@ impl Editor {
             return;
         };
 
-        let buffer_id = buffer.read(cx).remote_id();
         // `semantic_tokens` gets debounced, so we can call this frequently.
-        let task = sema.semantic_tokens(buffer.clone(), cx);
+        let task = sema.semantic_tokens(buffer_entity, cx);
 
         self.update_semantic_tokens_task = cx.spawn_in(window, async move |this, cx| {
             let tokens = task.await;

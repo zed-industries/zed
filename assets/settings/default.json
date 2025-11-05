@@ -1017,6 +1017,8 @@
   //
   // This is typically customized on a per-language basis.
   "language_servers": ["..."],
+  // Whether to use semantic tokens from the language server for syntax highlighting.
+  "semantic_tokens": false,
 
   // When to automatically save edited buffers. This setting can
   // take four values.

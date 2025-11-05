@@ -105,6 +105,8 @@ pub struct LanguageSettings {
     /// - `"!<language_server_id>"` - A language server ID prefixed with a `!` will be disabled.
     /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
     pub language_servers: Vec<String>,
+    /// Whether to use semantic tokens from the language server for syntax highlighting.
+    pub semantic_tokens: bool,
     /// Controls where the `editor::Rewrap` action is allowed for this language.
     ///
     /// Note: This setting has no effect in Vim mode, as rewrap is already
@@ -547,6 +549,7 @@ impl settings::Settings for AllLanguageSettings {
                 jsx_tag_auto_close: settings.jsx_tag_auto_close.unwrap().enabled.unwrap(),
                 enable_language_server: settings.enable_language_server.unwrap(),
                 language_servers: settings.language_servers.unwrap(),
+                semantic_tokens: settings.semantic_tokens.unwrap(),
                 allow_rewrap: settings.allow_rewrap.unwrap(),
                 show_edit_predictions: settings.show_edit_predictions.unwrap(),
                 edit_predictions_disabled_in: settings.edit_predictions_disabled_in.unwrap(),
