@@ -280,7 +280,7 @@ async fn deserialize_pane_group(
                     }
                 }
             })
-            .detach();
+            .await;
             Some((Member::Pane(pane.clone()), active.then_some(pane)))
         }
     }

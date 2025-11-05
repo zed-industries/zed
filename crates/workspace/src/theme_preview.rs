@@ -97,6 +97,10 @@ impl Item for ThemePreview {
         None
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<crate::WorkspaceId>,
@@ -319,13 +323,7 @@ impl ThemePreview {
                                 .style(ButtonStyle::Transparent)
                                 .tooltip(move |window, cx| {
                                     let name = name.clone();
-                                    Tooltip::with_meta(
-                                        name,
-                                        None,
-                                        format!("{:?}", color),
-                                        window,
-                                        cx,
-                                    )
+                                    Tooltip::with_meta(name, None, format!("{:?}", color), cx)
                                 }),
                         )
                     })),

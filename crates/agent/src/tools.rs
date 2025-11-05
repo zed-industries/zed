@@ -40,13 +40,19 @@ pub use web_search_tool::*;
 macro_rules! tools {
     ($($tool:ty),* $(,)?) => {
         /// A list of all built-in tool names
-        pub fn built_in_tool_names() -> impl Iterator<Item = String> {
+        pub fn supported_built_in_tool_names(provider: Option<language_model::LanguageModelProviderId>) -> impl Iterator<Item = String> {
             [
                 $(
-                    <$tool>::name().to_string(),
+                    (if let Some(provider) = provider.as_ref() {
+                        <$tool>::supports_provider(provider)
+                    } else {
+                        true
+                    })
+                    .then(|| <$tool>::name().to_string()),
                 )*
             ]
             .into_iter()
+            .flatten()
         }
 
         /// A list of all built-in tools

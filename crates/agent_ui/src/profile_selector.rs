@@ -162,12 +162,11 @@ impl Render for ProfileSelector {
         PickerPopoverMenu::new(
             picker,
             trigger_button,
-            move |window, cx| {
+            move |_window, cx| {
                 Tooltip::for_action_in(
                     "Toggle Profile Menu",
                     &ToggleProfileSelector,
                     &focus_handle,
-                    window,
                     cx,
                 )
             },

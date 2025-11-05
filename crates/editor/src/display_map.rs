@@ -17,6 +17,9 @@
 //! [Editor]: crate::Editor
 //! [EditorElement]: crate::element::EditorElement
 
+#[macro_use]
+mod dimensions;
+
 mod block_map;
 mod crease_map;
 mod custom_highlights;
@@ -27,7 +30,7 @@ mod tab_map;
 mod wrap_map;
 
 use crate::{
-    EditorStyle, InlayId, RowExt, hover_links::InlayHighlight, movement::TextLayoutDetails,
+    EditorStyle, RowExt, hover_links::InlayHighlight, inlays::Inlay, movement::TextLayoutDetails,
 };
 pub use block_map::{
     Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
@@ -42,7 +45,6 @@ pub use fold_map::{
     ChunkRenderer, ChunkRendererContext, ChunkRendererId, Fold, FoldId, FoldPlaceholder, FoldPoint,
 };
 use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
-pub use inlay_map::Inlay;
 use inlay_map::InlaySnapshot;
 pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
@@ -50,9 +52,10 @@ use language::{
     OffsetUtf16, Point, Subscription as BufferSubscription, language_settings::language_settings,
 };
 use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferPoint, MultiBufferRow,
-    MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
+    RowInfo, ToOffset, ToPoint,
 };
+use project::InlayId;
 use project::project_settings::DiagnosticSeverity;
 use serde::Deserialize;
 
@@ -167,11 +170,12 @@ impl DisplayMap {
     }
 
     pub fn snapshot(&mut self, cx: &mut Context<Self>) -> DisplaySnapshot {
+        let tab_size = Self::tab_size(&self.buffer, cx);
+
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let (inlay_snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
         let (fold_snapshot, edits) = self.fold_map.read(inlay_snapshot, edits);
-        let tab_size = Self::tab_size(&self.buffer, cx);
         let (tab_snapshot, edits) = self.tab_map.sync(fold_snapshot, edits, tab_size);
         let (wrap_snapshot, edits) = self
             .wrap_map
@@ -594,25 +598,6 @@ impl DisplayMap {
         self.block_map.read(snapshot, edits);
     }
 
-    pub fn remove_inlays_for_excerpts(
-        &mut self,
-        excerpts_removed: &[ExcerptId],
-        cx: &mut Context<Self>,
-    ) {
-        let to_remove = self
-            .inlay_map
-            .current_inlays()
-            .filter_map(|inlay| {
-                if excerpts_removed.contains(&inlay.position.excerpt_id) {
-                    Some(inlay.id)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-        self.splice_inlays(&to_remove, Vec::new(), cx);
-    }
-
     fn tab_size(buffer: &Entity<MultiBuffer>, cx: &App) -> NonZeroU32 {
         let buffer = buffer.read(cx).as_singleton().map(|buffer| buffer.read(cx));
         let language = buffer
@@ -770,6 +755,7 @@ pub struct DisplaySnapshot {
     diagnostics_max_severity: DiagnosticSeverity,
     pub(crate) fold_placeholder: FoldPlaceholder,
 }
+
 impl DisplaySnapshot {
     pub fn wrap_snapshot(&self) -> &WrapSnapshot {
         &self.block_snapshot.wrap_snapshot
@@ -933,7 +919,7 @@ impl DisplaySnapshot {
     pub fn text_chunks(&self, display_row: DisplayRow) -> impl Iterator<Item = &str> {
         self.block_snapshot
             .chunks(
-                display_row.0..self.max_point().row().next_row().0,
+                BlockRow(display_row.0)..BlockRow(self.max_point().row().next_row().0),
                 false,
                 self.masked,
                 Highlights::default(),
@@ -945,7 +931,12 @@ impl DisplaySnapshot {
     pub fn reverse_text_chunks(&self, display_row: DisplayRow) -> impl Iterator<Item = &str> {
         (0..=display_row.0).rev().flat_map(move |row| {
             self.block_snapshot
-                .chunks(row..row + 1, false, self.masked, Highlights::default())
+                .chunks(
+                    BlockRow(row)..BlockRow(row + 1),
+                    false,
+                    self.masked,
+                    Highlights::default(),
+                )
                 .map(|h| h.text)
                 .collect::<Vec<_>>()
                 .into_iter()
@@ -960,7 +951,7 @@ impl DisplaySnapshot {
         highlight_styles: HighlightStyles,
     ) -> DisplayChunks<'_> {
         self.block_snapshot.chunks(
-            display_rows.start.0..display_rows.end.0,
+            BlockRow(display_rows.start.0)..BlockRow(display_rows.end.0),
             language_aware,
             self.masked,
             Highlights {
@@ -1196,8 +1187,8 @@ impl DisplaySnapshot {
         rows: Range<DisplayRow>,
     ) -> impl Iterator<Item = (DisplayRow, &Block)> {
         self.block_snapshot
-            .blocks_in_range(rows.start.0..rows.end.0)
-            .map(|(row, block)| (DisplayRow(row), block))
+            .blocks_in_range(BlockRow(rows.start.0)..BlockRow(rows.end.0))
+            .map(|(row, block)| (DisplayRow(row.0), block))
     }
 
     pub fn sticky_header_excerpt(&self, row: f64) -> Option<StickyHeaderExcerpt<'_>> {
@@ -1229,7 +1220,7 @@ impl DisplaySnapshot {
     pub fn soft_wrap_indent(&self, display_row: DisplayRow) -> Option<u32> {
         let wrap_row = self
             .block_snapshot
-            .to_wrap_point(BlockPoint::new(display_row.0, 0), Bias::Left)
+            .to_wrap_point(BlockPoint::new(BlockRow(display_row.0), 0), Bias::Left)
             .row();
         self.wrap_snapshot().soft_wrap_indent(wrap_row)
     }
@@ -1260,7 +1251,7 @@ impl DisplaySnapshot {
     }
 
     pub fn longest_row(&self) -> DisplayRow {
-        DisplayRow(self.block_snapshot.longest_row())
+        DisplayRow(self.block_snapshot.longest_row().0)
     }
 
     pub fn longest_row_in_range(&self, range: Range<DisplayRow>) -> DisplayRow {
@@ -1427,6 +1418,15 @@ impl DisplaySnapshot {
     }
 }
 
+impl std::ops::Deref for DisplaySnapshot {
+    type Target = BlockSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.block_snapshot
+    }
+}
+
+/// A zero-indexed point in a text buffer consisting of a row and column adjusted for inserted blocks.
 #[derive(Copy, Clone, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct DisplayPoint(BlockPoint);
 

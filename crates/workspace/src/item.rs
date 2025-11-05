@@ -1,7 +1,7 @@
 use crate::{
     CollaboratorId, DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory,
     SerializableItemRegistry, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
-    invalid_buffer_view::InvalidBufferView,
+    invalid_item_view::InvalidItemView,
     pane::{self, Pane},
     persistence::model::ItemId,
     searchable::SearchableItemHandle,
@@ -213,16 +213,21 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         ItemBufferKind::None
     }
     fn set_nav_history(&mut self, _: ItemNavHistory, _window: &mut Window, _: &mut Context<Self>) {}
+
+    fn can_split(&self) -> bool {
+        false
+    }
     fn clone_on_split(
         &self,
-        _workspace_id: Option<WorkspaceId>,
-        _window: &mut Window,
-        _: &mut Context<Self>,
+        workspace_id: Option<WorkspaceId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Task::ready(None)
+        _ = (workspace_id, window, cx);
+        unimplemented!("clone_on_split() must be implemented if can_split() returns true")
     }
     fn is_dirty(&self, _: &App) -> bool {
         false
@@ -288,6 +293,15 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     }
 
     fn breadcrumbs(&self, _theme: &Theme, _cx: &App) -> Option<Vec<BreadcrumbText>> {
+        None
+    }
+
+    /// Returns optional elements to render to the left of the breadcrumb.
+    fn breadcrumb_prefix(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
         None
     }
 
@@ -418,6 +432,7 @@ pub trait ItemHandle: 'static + Send {
     );
     fn buffer_kind(&self, cx: &App) -> ItemBufferKind;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
+    fn can_split(&self, cx: &App) -> bool;
     fn clone_on_split(
         &self,
         workspace_id: Option<WorkspaceId>,
@@ -473,6 +488,7 @@ pub trait ItemHandle: 'static + Send {
     fn to_searchable_item_handle(&self, cx: &App) -> Option<Box<dyn SearchableItemHandle>>;
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation;
     fn breadcrumbs(&self, theme: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>>;
+    fn breadcrumb_prefix(&self, window: &mut Window, cx: &mut App) -> Option<gpui::AnyElement>;
     fn show_toolbar(&self, cx: &App) -> bool;
     fn pixel_position_of_cursor(&self, cx: &App) -> Option<Point<Pixels>>;
     fn downgrade_item(&self) -> Box<dyn WeakItemHandle>;
@@ -629,6 +645,10 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn boxed_clone(&self) -> Box<dyn ItemHandle> {
         Box::new(self.clone())
+    }
+
+    fn can_split(&self, cx: &App) -> bool {
+        self.read(cx).can_split()
     }
 
     fn clone_on_split(
@@ -969,6 +989,10 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.read(cx).breadcrumbs(theme, cx)
     }
 
+    fn breadcrumb_prefix(&self, window: &mut Window, cx: &mut App) -> Option<gpui::AnyElement> {
+        self.update(cx, |item, cx| item.breadcrumb_prefix(window, cx))
+    }
+
     fn show_toolbar(&self, cx: &App) -> bool {
         self.read(cx).show_toolbar()
     }
@@ -1062,7 +1086,7 @@ pub trait ProjectItem: Item {
         _e: &anyhow::Error,
         _window: &mut Window,
         _cx: &mut App,
-    ) -> Option<InvalidBufferView>
+    ) -> Option<InvalidItemView>
     where
         Self: Sized,
     {
@@ -1501,6 +1525,10 @@ pub mod test {
 
         fn deactivated(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
             self.push_to_nav_history(cx);
+        }
+
+        fn can_split(&self) -> bool {
+            true
         }
 
         fn clone_on_split(

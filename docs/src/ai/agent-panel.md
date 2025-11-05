@@ -1,10 +1,10 @@
 # Agent Panel
 
-The Agent Panel allows you to interact with many LLMs and coding agents that can help with in various types of tasks, such as generating code, codebase understanding, and other general inquiries like writing emails, documentation, and more.
+The Agent Panel allows you to interact with many LLMs and coding agents that can help with various types of tasks, such as generating code, codebase understanding, and other general inquiries like writing emails, documentation, and more.
 
 To open it, use the `agent: new thread` action in [the Command Palette](../getting-started.md#command-palette) or click the ✨ (sparkles) icon in the status bar.
 
-## Getting Started
+## Getting Started {#getting-started}
 
 If you're using the Agent Panel for the first time, you need to have at least one LLM provider or external agent configured.
 You can do that by:
@@ -28,7 +28,7 @@ From this point on, you can interact with the many supported features outlined b
 By default, the Agent Panel uses Zed's first-party agent.
 
 To change that, go to the plus button in the top-right of the Agent Panel and choose another option.
-You choose to create a new [Text Thread](./text-threads.md) or, if you have [external agents](./external-agents.md) connected, you can create new threads with them.
+You can choose to create a new [Text Thread](./text-threads.md) or, if you have [external agents](./external-agents.md) connected, you can create new threads with them.
 
 ### Editing Messages {#editing-messages}
 
@@ -37,7 +37,7 @@ You can click on the card that contains your message and re-submit it with an ad
 
 ### Checkpoints {#checkpoints}
 
-Every time the AI performs an edit, you should see a "Restore Checkpoint" button to the top of your message, allowing you to return your code base to the state it was in prior to that message.
+Every time the AI performs an edit, you should see a "Restore Checkpoint" button at the top of your message, allowing you to return your code base to the state it was in prior to that message.
 
 The checkpoint button appears even if you interrupt the thread midway through an edit attempt, as this is likely a moment when you've identified that the agent is not heading in the right direction and you want to revert back.
 
@@ -78,15 +78,18 @@ Edit diffs also appear in individual buffers. If your active tab had edits made 
 
 ## Adding Context {#adding-context}
 
-Although Zed's agent is very efficient at reading through your code base to autonomously pick up relevant files, directories, and other context, manually adding context is still encouraged as a way to speed up and improve the AI's response quality.
+Although Zed's agent is very efficient at reading through your code base to autonomously pick up relevant context, manually adding whatever would be useful to fulfill your prompt is still very encouraged as a way to not only improve the AI's response quality but also to speed up its response time.
 
-To add any file, directory, symbol, previous threads, rules files, or even web pages as context, type `@` to mention them in the editor.
+In Zed's Agent Panel, all pieces of context are added as mentions in the panel's message editor.
+You can type `@` to mention files, directories, symbols, previous threads, and rules files.
 
-Pasting images as context is also supported by the Agent Panel.
+Additionally, you can also select text in a buffer and add it as context by using the {#kb agent::AddSelectionToThread} keybinding, running the {#action agent::AddSelectionToThread} action, or choosing the "Selection" item in the `@` menu.
+
+Copying images and pasting them in the panel's message editor is also supported.
 
 ### Token Usage {#token-usage}
 
-Zed surfaces how many tokens you are consuming for your currently active thread nearby the profile selector in the panel's message editor. Depending on how many pieces of context you add, your token consumption can grow rapidly.
+Zed surfaces how many tokens you are consuming for your currently active thread near the profile selector in the panel's message editor. Depending on how many pieces of context you add, your token consumption can grow rapidly.
 
 Once you approach the model's context window, a banner appears below the message editor suggesting to start a new thread with the current one summarized and added as context.
 You can also do this at any time with an ongoing thread via the "Agent Options" menu on the top right.
@@ -144,7 +147,7 @@ All [Zed's hosted models](./models.md) support tool calling out-of-the-box.
 
 ### MCP Servers {#mcp-servers}
 
-Similarly to the built-in tools, some models may not support all tools included in a given MCP Server. Zed's UI will inform about this via a warning icon that appears close to the model selector.
+Similarly to the built-in tools, some models may not support all tools included in a given MCP Server. Zed's UI will inform you about this via a warning icon that appears close to the model selector.
 
 ## Text Threads {#text-threads}
 

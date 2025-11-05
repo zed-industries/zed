@@ -1,6 +1,8 @@
 mod image_info;
 mod image_viewer_settings;
 
+use std::path::Path;
+
 use anyhow::Context as _;
 use editor::{EditorSettings, items::entry_git_aware_label_color};
 use file_icons::FileIcons;
@@ -18,6 +20,7 @@ use ui::prelude::*;
 use util::paths::PathExt;
 use workspace::{
     ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
+    invalid_item_view::InvalidItemView,
     item::{BreadcrumbText, Item, ProjectItem, SerializableItem, TabContentParams},
 };
 
@@ -169,6 +172,10 @@ impl Item for ImageView {
             highlights: None,
             font: Some(settings.buffer_font.clone()),
         }])
+    }
+
+    fn can_split(&self) -> bool {
+        true
     }
 
     fn clone_on_split(
@@ -388,6 +395,19 @@ impl ProjectItem for ImageView {
         Self: Sized,
     {
         Self::new(item, project, window, cx)
+    }
+
+    fn for_broken_project_item(
+        abs_path: &Path,
+        is_local: bool,
+        e: &anyhow::Error,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<InvalidItemView>
+    where
+        Self: Sized,
+    {
+        Some(InvalidItemView::new(abs_path, is_local, e, window, cx))
     }
 }
 

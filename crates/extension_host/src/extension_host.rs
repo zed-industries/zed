@@ -360,7 +360,7 @@ impl ExtensionStore {
                         }
                         extension_id = reload_rx.next() => {
                             let Some(extension_id) = extension_id else { break; };
-                            this.update( cx, |this, _| {
+                            this.update(cx, |this, _| {
                                 this.modified_extensions.extend(extension_id);
                             })?;
                             index_changed = true;
@@ -608,7 +608,7 @@ impl ExtensionStore {
                     .extension_index
                     .extensions
                     .contains_key(extension_id.as_ref());
-                !is_already_installed
+                !is_already_installed && !SUPPRESSED_EXTENSIONS.contains(&extension_id.as_ref())
             })
             .cloned()
             .collect::<Vec<_>>();

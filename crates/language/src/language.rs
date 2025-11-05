@@ -680,7 +680,7 @@ pub struct CodeLabelBuilder {
     filter_range: Range<usize>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Deserialize, JsonSchema, Debug)]
 pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: LanguageName,
@@ -823,7 +823,7 @@ pub struct LanguageMatcher {
 }
 
 /// The configuration for JSX tag auto-closing.
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Deserialize, JsonSchema, Debug)]
 pub struct JsxTagAutoCloseConfig {
     /// The name of the node for a opening tag
     pub open_tag_node_name: String,
@@ -2598,6 +2598,65 @@ pub fn range_from_lsp(range: lsp::Range) -> Range<Unclipped<PointUtf16>> {
         mem::swap(&mut start, &mut end);
     }
     start..end
+}
+
+#[doc(hidden)]
+#[cfg(any(test, feature = "test-support"))]
+pub fn rust_lang() -> Arc<Language> {
+    use std::borrow::Cow;
+
+    let language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            line_comments: vec!["// ".into(), "/// ".into(), "//! ".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    )
+    .with_queries(LanguageQueries {
+        indents: Some(Cow::from(
+            r#"
+[
+    ((where_clause) _ @end)
+    (field_expression)
+    (call_expression)
+    (assignment_expression)
+    (let_declaration)
+    (let_chain)
+    (await_expression)
+] @indent
+
+(_ "[" "]" @end) @indent
+(_ "<" ">" @end) @indent
+(_ "{" "}" @end) @indent
+(_ "(" ")" @end) @indent"#,
+        )),
+        brackets: Some(Cow::from(
+            r#"
+("(" @open ")" @close)
+("[" @open "]" @close)
+("{" @open "}" @close)
+("<" @open ">" @close)
+("\"" @open "\"" @close)
+(closure_parameters "|" @open "|" @close)"#,
+        )),
+        text_objects: Some(Cow::from(
+            r#"
+(function_item
+    body: (_
+        "{"
+        (_)* @function.inside
+        "}" )) @function.around
+        "#,
+        )),
+        ..LanguageQueries::default()
+    })
+    .expect("Could not parse queries");
+    Arc::new(language)
 }
 
 #[cfg(test)]
