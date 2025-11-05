@@ -1560,7 +1560,7 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
                 env: Some(env),
             };
 
-            Ok((command, root_dir.to_string_lossy().into_owned(), None))
+            Ok((command, version_dir.to_string_lossy().into_owned(), None))
         })
     }
 
