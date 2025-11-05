@@ -1,6 +1,6 @@
 use crate::{
-    ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
-    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
+    CheckpointManager, ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel,
+    DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, WebSearchTool,
 };
@@ -606,6 +606,9 @@ pub struct Thread {
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
     pub(crate) action_log: Entity<ActionLog>,
+    /// Checkpoint manager for rollback functionality
+    #[allow(dead_code)]
+    checkpoint_manager: CheckpointManager,
 }
 
 impl Thread {
@@ -664,6 +667,7 @@ impl Thread {
             prompt_capabilities_rx,
             project,
             action_log,
+            checkpoint_manager: CheckpointManager::new(),
         }
     }
 
@@ -848,6 +852,7 @@ impl Thread {
             updated_at: db_thread.updated_at,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
+            checkpoint_manager: CheckpointManager::new(),
         }
     }
 

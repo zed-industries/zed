@@ -8,7 +8,7 @@ use action_log::ActionLog;
 use agent::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
 use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
-use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
+use agent_settings::{AgentProfileId, AgentQuickAction, AgentSettings, CompletionMode};
 use anyhow::{Result, anyhow, bail};
 use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
@@ -874,6 +874,24 @@ impl AcpThreadView {
 
         if let Some(thread) = self.thread() {
             self._cancel_task = Some(thread.update(cx, |thread, cx| thread.cancel(cx)));
+        }
+    }
+
+    pub fn apply_quick_action(
+        &mut self,
+        quick_action: &AgentQuickAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.message_editor.update(cx, |message_editor, cx| {
+            message_editor.replace_text(quick_action.prompt.as_ref(), window, cx);
+        });
+
+        if quick_action.auto_send {
+            self.message_editor
+                .update(cx, |message_editor, cx| message_editor.send(cx));
+        } else {
+            self.message_editor.focus_handle(cx).focus(window);
         }
     }
 

@@ -220,7 +220,7 @@ members = [
     #
 
     "tooling/perf",
-    "tooling/xtask",
+    "tooling/xtask", "crates/tts",
 ]
 default-members = ["crates/zed"]
 

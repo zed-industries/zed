@@ -256,7 +256,11 @@ pub mod feedback {
             /// Opens the bug report form.
             FileBugReport,
             /// Opens the feature request form.
-            RequestFeature
+            RequestFeature,
+            /// Opens the TTS feature repository for collaboration.
+            OpenTtsRepo,
+            /// Opens the TTS bug report form.
+            FileTtsBugReport
         ]
     );
 }
@@ -328,6 +332,8 @@ pub mod agent {
             /// Add the current selection as context for threads in the agent panel.
             #[action(deprecated_aliases = ["assistant::QuoteSelection", "agent::QuoteSelection"])]
             AddSelectionToThread,
+            /// Opens the AI quick actions picker.
+            OpenQuickActions,
             /// Resets the agent panel zoom levels (agent UI and buffer font sizes).
             ResetAgentZoom,
         ]

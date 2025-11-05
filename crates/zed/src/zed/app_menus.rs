@@ -301,6 +301,8 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::action("Request Feature...", zed_actions::feedback::RequestFeature),
                 MenuItem::action("Email Us...", zed_actions::feedback::EmailZed),
                 MenuItem::separator(),
+                MenuItem::action("Report TTS Bug...", zed_actions::feedback::FileTtsBugReport),
+                MenuItem::separator(),
                 MenuItem::action(
                     "Documentation",
                     super::OpenBrowser {
@@ -308,6 +310,10 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                     },
                 ),
                 MenuItem::action("Zed Repository", feedback::OpenZedRepo),
+                MenuItem::action(
+                    "TTS Feature Repository - Contribute!",
+                    zed_actions::feedback::OpenTtsRepo,
+                ),
                 MenuItem::action(
                     "Zed Twitter",
                     super::OpenBrowser {

@@ -17,8 +17,10 @@ use settings::{
     DefaultAgentView as DefaultView, LanguageModelProviderSetting, LanguageModelSelection,
 };
 use zed_actions::OpenBrowser;
-use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
+use zed_actions::agent::{OpenClaudeCodeOnboardingModal, OpenQuickActions, ReauthenticateAgent};
 
+use crate::composer_panel::ComposerPanel;
+use crate::quick_actions::AgentQuickActionsModal;
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
     AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, Follow, InlineAssistant,
@@ -39,7 +41,7 @@ use crate::{
     ExternalAgent, NewExternalAgentThread, NewNativeAgentThreadFromSummary, placeholder_command,
 };
 use crate::{ManageProfiles, context_store::ContextStore};
-use agent_settings::AgentSettings;
+use agent_settings::{AgentQuickAction, AgentSettings};
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Result, anyhow};
 use assistant_slash_command::SlashCommandWorkingSet;
@@ -120,6 +122,9 @@ pub fn init(cx: &mut App) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.open_history(window, cx));
                     }
+                })
+                .register_action(|workspace, _: &OpenQuickActions, window, cx| {
+                    AgentQuickActionsModal::toggle(workspace, window, cx);
                 })
                 .register_action(|workspace, _: &OpenSettings, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
@@ -472,6 +477,32 @@ impl AgentPanel {
         }));
     }
 
+    fn sync_composer_action_log(&self, cx: &mut Context<Self>) {
+        let action_log = match &self.active_view {
+            ActiveView::ExternalAgentThread { thread_view, .. } => {
+                thread_view.read(cx).as_native_thread(cx).map(|thread| {
+                    thread.read(cx).action_log().clone()
+                })
+            }
+            _ => None,
+        };
+
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let action_log_clone = action_log.clone();
+        workspace
+            .update(cx, |workspace, cx| {
+                if let Some(panel) = workspace.panel::<ComposerPanel>(cx) {
+                    panel.update(cx, |composer, _| {
+                        composer.set_action_log(action_log_clone.clone());
+                    });
+                }
+            })
+            .ok();
+    }
+
     pub fn load(
         workspace: WeakEntity<Workspace>,
         prompt_builder: Arc<PromptBuilder>,
@@ -705,6 +736,7 @@ impl AgentPanel {
 
         // Initial sync of agent servers from extensions
         panel.sync_agent_servers_from_extensions(cx);
+        panel.sync_composer_action_log(cx);
         panel
     }
 
@@ -1325,6 +1357,7 @@ impl AgentPanel {
         }
 
         self.focus_handle(cx).focus(window);
+        self.sync_composer_action_log(cx);
     }
 
     fn populate_recently_opened_menu_section(
@@ -1482,6 +1515,28 @@ impl AgentPanel {
             window,
             cx,
         );
+    }
+
+    pub fn run_quick_action(
+        &mut self,
+        quick_action: &AgentQuickAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let thread_view = match &self.active_view {
+            ActiveView::ExternalAgentThread { thread_view, .. } => thread_view.clone(),
+            _ => {
+                return Err(anyhow!(
+                    "Quick actions require an active native agent thread"
+                ));
+            }
+        };
+
+        thread_view.update(cx, |thread_view, cx| {
+            thread_view.apply_quick_action(quick_action, window, cx);
+        });
+
+        Ok(())
     }
 }
 

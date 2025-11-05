@@ -1,0 +1,15 @@
+[extension]
+id = "context-commands"
+name = "Enhanced Context Commands"
+description = "Rich context gathering slash commands inspired by NeuroNexus IDE"
+version = "0.1.0"
+schema_version = 1
+authors = ["cloudraLabs"]
+repository = "https://github.com/zed-industries/zed"
+
+[extension.slash_commands]
+context-file = { description = "Include a specific file's content" }
+context-folder = { description = "Include folder contents recursively" }
+context-symbol = { description = "Include a specific symbol definition" }
+context-terminal = { description = "Include recent terminal output" }
+context-git = { description = "Include git diff or status" }

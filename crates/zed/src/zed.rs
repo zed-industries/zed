@@ -9,7 +9,7 @@ mod quick_action_bar;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
-use agent_ui::{AgentDiffToolbar, AgentPanelDelegate};
+use agent_ui::{AgentDiffToolbar, AgentPanel, AgentPanelDelegate, ComposerPanel};
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
@@ -583,6 +583,7 @@ fn initialize_panels(
         let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
         let git_panel = GitPanel::load(workspace_handle.clone(), cx.clone());
+        let composer_panel = ComposerPanel::load(workspace_handle.clone(), cx.clone());
         let channels_panel =
             collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
         let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
@@ -598,6 +599,7 @@ fn initialize_panels(
             git_panel,
             channels_panel,
             notification_panel,
+            composer_panel,
             debug_panel,
         ) = futures::try_join!(
             project_panel,
@@ -606,6 +608,7 @@ fn initialize_panels(
             terminal_panel,
             channels_panel,
             notification_panel,
+            composer_panel,
             debug_panel,
         )?;
 
@@ -616,6 +619,7 @@ fn initialize_panels(
             workspace.add_panel(git_panel, window, cx);
             workspace.add_panel(channels_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
+            workspace.add_panel(composer_panel, window, cx);
             workspace.add_panel(debug_panel, window, cx);
         })?;
 
@@ -629,24 +633,24 @@ fn initialize_panels(
                 .get::<DisableAiSettings>(None)
                 .disable_ai
                 || cfg!(test);
-            let existing_panel = workspace.panel::<agent_ui::AgentPanel>(cx);
+            let existing_panel = workspace.panel::<AgentPanel>(cx);
             match (disable_ai, existing_panel) {
                 (false, None) => cx.spawn_in(window, async move |workspace, cx| {
                     let panel =
-                        agent_ui::AgentPanel::load(workspace.clone(), prompt_builder, cx.clone())
+                        AgentPanel::load(workspace.clone(), prompt_builder, cx.clone())
                             .await?;
                     workspace.update_in(cx, |workspace, window, cx| {
                         let disable_ai = SettingsStore::global(cx)
                             .get::<DisableAiSettings>(None)
                             .disable_ai;
-                        let have_panel = workspace.panel::<agent_ui::AgentPanel>(cx).is_some();
+                        let have_panel = workspace.panel::<AgentPanel>(cx).is_some();
                         if !disable_ai && !have_panel {
                             workspace.add_panel(panel, window, cx);
                         }
                     })
                 }),
                 (true, Some(existing_panel)) => {
-                    workspace.remove_panel::<agent_ui::AgentPanel>(&existing_panel, window, cx);
+                    workspace.remove_panel::<AgentPanel>(&existing_panel, window, cx);
                     Task::ready(Ok(()))
                 }
                 _ => Task::ready(Ok(())),
@@ -682,7 +686,7 @@ fn initialize_panels(
                 );
 
                 workspace
-                    .register_action(agent_ui::AgentPanel::toggle_focus)
+            .register_action(AgentPanel::toggle_focus)
                     .register_action(agent_ui::InlineAssistant::inline_assist);
             }
         })?;
