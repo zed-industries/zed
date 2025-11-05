@@ -124,7 +124,10 @@ impl Forgejo {
             .follow_redirects(http_client::RedirectPolicy::FollowAll);
 
         // TODO: not renamed yet for compatibility reasons, may require a refactor later
-        if let Ok(codeberg_token) = std::env::var("CODEBERG_TOKEN") {
+        // see https://github.com/zed-industries/zed/issues/11043#issuecomment-3480446231
+        if host == "codeberg.org"
+            && let Ok(codeberg_token) = std::env::var("CODEBERG_TOKEN")
+        {
             request = request.header("Authorization", format!("Bearer {}", codeberg_token));
         }
 
