@@ -2051,6 +2051,15 @@ impl AcpThreadView {
             .into_any(),
         };
 
+        let needs_confirmation = if let AgentThreadEntry::ToolCall(tool_call) = entry {
+            matches!(
+                tool_call.status,
+                ToolCallStatus::WaitingForConfirmation { .. }
+            )
+        } else {
+            false
+        };
+
         let Some(thread) = self.thread() else {
             return primary;
         };
@@ -2059,7 +2068,13 @@ impl AcpThreadView {
             v_flex()
                 .w_full()
                 .child(primary)
-                .child(self.render_thread_controls(&thread, cx))
+                .map(|this| {
+                    if needs_confirmation {
+                        this.child(self.render_generating(true))
+                    } else {
+                        this.child(self.render_thread_controls(&thread, cx))
+                    }
+                })
                 .when_some(
                     self.thread_feedback.comments_editor.clone(),
                     |this, editor| this.child(Self::render_feedback_feedback_editor(editor, cx)),
@@ -4829,6 +4844,31 @@ impl AcpThreadView {
         }
     }
 
+    fn render_generating(&self, confirmation: bool) -> impl IntoElement {
+        h_flex()
+            .id("generating-spinner")
+            .py_2()
+            .px(rems_from_px(22.))
+            .map(|this| {
+                if confirmation {
+                    this.gap_2()
+                        .child(
+                            h_flex()
+                                .w_2()
+                                .child(SpinnerLabel::sand().size(LabelSize::Small)),
+                        )
+                        .child(
+                            LoadingLabel::new("Waiting Confirmation")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                } else {
+                    this.child(SpinnerLabel::new().size(LabelSize::Small))
+                }
+            })
+            .into_any_element()
+    }
+
     fn render_thread_controls(
         &self,
         thread: &Entity<AcpThread>,
@@ -4836,12 +4876,7 @@ impl AcpThreadView {
     ) -> impl IntoElement {
         let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
         if is_generating {
-            return h_flex().id("thread-controls-container").child(
-                div()
-                    .py_2()
-                    .px(rems_from_px(22.))
-                    .child(SpinnerLabel::new().size(LabelSize::Small)),
-            );
+            return self.render_generating(false).into_any_element();
         }
 
         let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileMarkdown)
@@ -4929,7 +4964,10 @@ impl AcpThreadView {
                 );
         }
 
-        container.child(open_as_markdown).child(scroll_to_top)
+        container
+            .child(open_as_markdown)
+            .child(scroll_to_top)
+            .into_any_element()
     }
 
     fn render_feedback_feedback_editor(editor: Entity<Editor>, cx: &Context<Self>) -> Div {
