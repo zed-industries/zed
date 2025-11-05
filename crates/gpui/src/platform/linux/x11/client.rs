@@ -590,6 +590,9 @@ impl X11Client {
                     Ok(None) => {
                         break;
                     }
+                    Err(err @ ConnectionError::IoError(..)) => {
+                        return Err(EventHandlerError::from(err));
+                    }
                     Err(err) => {
                         let err = handle_connection_error(err);
                         log::warn!("error while polling for X11 events: {err:?}");
