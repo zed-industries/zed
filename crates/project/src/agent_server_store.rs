@@ -1966,7 +1966,7 @@ mod extension_agent_tests {
         let agent = LocalExtensionArchiveAgent {
             fs: fs.clone(),
             http_client,
-            node_runtime: node_runtime.clone(),
+            node_runtime,
             project_environment,
             extension_id: Arc::from("test-ext"),
             agent_id: Arc::from("test-agent"),
