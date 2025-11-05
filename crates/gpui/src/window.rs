@@ -3084,6 +3084,7 @@ impl Window {
         &mut self,
         bounds: Bounds<Pixels>,
         path: SharedString,
+        mut data: Option<&[u8]>,
         transformation: TransformationMatrix,
         color: Hsla,
         cx: &App,
@@ -3104,7 +3105,8 @@ impl Window {
         let Some(tile) =
             self.sprite_atlas
                 .get_or_insert_with(&params.clone().into(), &mut || {
-                    let Some((size, bytes)) = cx.svg_renderer.render_alpha_mask(&params)? else {
+                    let Some((size, bytes)) = cx.svg_renderer.render_alpha_mask(&params, data)?
+                    else {
                         return Ok(None);
                     };
                     Ok(Some((size, Cow::Owned(bytes))))

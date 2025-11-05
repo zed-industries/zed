@@ -2150,7 +2150,7 @@ impl AgentPanel {
             .when_some(selected_agent_custom_icon, |this, icon_path| {
                 let label = selected_agent_label.clone();
                 this.px(DynamicSpacing::Base02.rems(cx))
-                    .child(Icon::from_path(icon_path).color(Color::Muted))
+                    .child(Icon::from_external_svg(icon_path).color(Color::Muted))
                     .tooltip(move |_window, cx| {
                         Tooltip::with_meta(label.clone(), None, "Selected Agent", cx)
                     })
