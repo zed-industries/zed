@@ -173,6 +173,9 @@ pub struct AgentServerManifestEntry {
     /// cmd = "node"
     /// args = ["index.js", "--port", "3000"]
     /// ```
+    ///
+    /// Note: All commands are executed with the archive extraction directory as the
+    /// working directory.
     pub targets: HashMap<String, TargetConfig>,
 }
 
