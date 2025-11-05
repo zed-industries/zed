@@ -278,9 +278,9 @@ struct RemoteImageStore {
     upstream_client: AnyProtoClient,
     project_id: u64,
     loading_remote_images_by_id: HashMap<ImageId, LoadingRemoteImage>,
-    // opened_images: HashMap<ImageId, Entity<ImageItem>>,
     remote_image_listeners:
         HashMap<ImageId, Vec<oneshot::Sender<anyhow::Result<Entity<ImageItem>>>>>,
+    loaded_images: HashMap<ImageId, Entity<ImageItem>>,
 }
 
 struct LoadingRemoteImage {
@@ -346,6 +346,7 @@ impl ImageStore {
                 project_id,
                 loading_remote_images_by_id: Default::default(),
                 remote_image_listeners: Default::default(),
+                loaded_images: Default::default(),
             })),
             opened_images: Default::default(),
             loading_images_by_path: Default::default(),
@@ -483,10 +484,15 @@ impl ImageStore {
         if let Some(remote) = self.state.as_remote() {
             let worktree_store = self.worktree_store.clone();
             let image = remote.update(cx, |remote, cx| {
-                dbg!(remote.handle_create_image_for_peer(envelope, &worktree_store, cx))
+                remote.handle_create_image_for_peer(envelope, &worktree_store, cx)
             })?;
-
             if let Some(image) = image {
+                remote.update(cx, |this, cx| {
+                    let image = image.clone();
+                    let image_id = image.read(cx).id;
+                    this.loaded_images.insert(image_id, image)
+                });
+
                 self.add_image(image, cx)?;
             }
         }
@@ -502,10 +508,8 @@ impl RemoteImageStore {
         image_store: WeakEntity<ImageStore>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<ImageItem>>> {
-        if let Some(store) = image_store.upgrade() {
-            if let Some(image) = store.read(cx).get(id) {
-                return Task::ready(Ok(image));
-            }
+        if let Some(image) = self.loaded_images.remove(&id) {
+            return Task::ready(Ok(image));
         }
 
         let (tx, rx) = oneshot::channel();
@@ -523,8 +527,9 @@ impl RemoteImageStore {
         worktree_store: &Entity<WorktreeStore>,
         cx: &mut Context<Self>,
     ) -> Result<Option<Entity<ImageItem>>> {
+        use proto::create_image_for_peer::Variant;
         match envelope.payload.variant {
-            Some(proto::create_image_for_peer::Variant::State(state)) => {
+            Some(Variant::State(state)) => {
                 let image_id =
                     ImageId::from(NonZeroU64::new(state.id).context("invalid image id")?);
 
@@ -538,7 +543,7 @@ impl RemoteImageStore {
                 );
                 Ok(None)
             }
-            Some(proto::create_image_for_peer::Variant::Chunk(chunk)) => {
+            Some(Variant::Chunk(chunk)) => {
                 let image_id =
                     ImageId::from(NonZeroU64::new(chunk.image_id).context("invalid image id")?);
 
@@ -553,19 +558,14 @@ impl RemoteImageStore {
                 if chunk.is_last {
                     let loading = self.loading_remote_images_by_id.remove(&image_id).unwrap();
 
-                    // Assemble all chunks into a single buffer
                     let mut content = Vec::with_capacity(loading.received_size as usize);
                     for chunk_data in loading.chunks {
                         content.extend_from_slice(&chunk_data);
                     }
 
-                    // Compute metadata from the bytes we received
                     let image_metadata = ImageItem::compute_metadata_from_bytes(&content).log_err();
-
-                    // Create the gpui::Image from the content
                     let image = create_gpui_image(content)?;
 
-                    // Get the file from the state
                     let proto_file = loading.state.file.context("missing file in image state")?;
                     let worktree_id = WorktreeId::from_proto(proto_file.worktree_id);
                     let worktree = worktree_store
@@ -586,7 +586,6 @@ impl RemoteImageStore {
                         reload_task: None,
                     });
 
-                    // Notify any listeners
                     if let Some(listeners) = self.remote_image_listeners.remove(&image_id) {
                         for listener in listeners {
                             listener.send(Ok(entity.clone())).ok();
