@@ -24194,6 +24194,10 @@ impl EntityInputHandler for Editor {
         let utf16_offset = anchor.to_offset_utf16(&position_map.snapshot.buffer_snapshot());
         Some(utf16_offset.0)
     }
+
+    fn accepts_text_input(&self, _window: &mut Window, _cx: &mut Context<Self>) -> bool {
+        self.input_enabled
+    }
 }
 
 trait SelectionExt {

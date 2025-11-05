@@ -25,6 +25,12 @@ pub struct KeyDownEvent {
 
     /// Whether the key is currently held down.
     pub is_held: bool,
+
+    /// Whether the modifiers are excessive for producing this character.
+    /// When false, the modifiers are essential for character input (e.g., AltGr),
+    /// and character input should be prioritized over keybindings.
+    /// When true, the modifiers are for keybindings (e.g., Ctrl+A).
+    pub prefer_character_input: bool,
 }
 
 impl Sealed for KeyDownEvent {}
