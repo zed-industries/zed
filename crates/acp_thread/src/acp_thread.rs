@@ -1877,8 +1877,9 @@ impl AcpThread {
                     this.entries.truncate(ix);
                     cx.emit(AcpThreadEvent::EntriesRemoved(range));
                 }
-                this.action_log()
-                    .update(cx, |action_log, cx| action_log.reject_all_edits(cx))
+                this.action_log().update(cx, |action_log, cx| {
+                    action_log.reject_all_edits(Some(this.connection().telemetry_id()), cx)
+                })
             })?
             .await;
             Ok(())
@@ -3614,6 +3615,10 @@ mod tests {
     }
 
     impl AgentConnection for FakeAgentConnection {
+        fn telemetry_id(&self) -> &'static str {
+            "fake"
+        }
+
         fn auth_methods(&self) -> &[acp::AuthMethod] {
             &self.auth_methods
         }

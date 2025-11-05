@@ -565,6 +565,7 @@ impl ActionLog {
         &mut self,
         buffer: Entity<Buffer>,
         buffer_range: Range<impl language::ToPoint>,
+        agent_telemetry_id: Option<&str>,
         cx: &mut Context<Self>,
     ) {
         let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
@@ -573,9 +574,11 @@ impl ActionLog {
 
         match tracked_buffer.status {
             TrackedBufferStatus::Deleted => {
-                if let Some(buffer) = self.tracked_buffers.remove(&buffer) {
+                if let Some((buffer, agent)) =
+                    self.tracked_buffers.remove(&buffer).zip(agent_telemetry_id)
+                {
                     ActionLogTelemetry::from_edits(buffer.unreviewed_edits.edits())
-                        .report_accepted();
+                        .report_accepted(agent);
                 }
                 cx.notify();
             }
@@ -627,7 +630,9 @@ impl ActionLog {
                     tracked_buffer.status = TrackedBufferStatus::Modified;
                 }
                 tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
-                telemetry.report_accepted();
+                if let Some(agent_telemetry_id) = agent_telemetry_id {
+                    telemetry.report_accepted(agent_telemetry_id);
+                }
             }
         }
     }
@@ -636,6 +641,7 @@ impl ActionLog {
         &mut self,
         buffer: Entity<Buffer>,
         buffer_ranges: Vec<Range<impl language::ToPoint>>,
+        agent_telemetry_id: Option<&str>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
@@ -692,9 +698,11 @@ impl ActionLog {
                     }
                 };
 
-                if let Some(tracked_buffer) = self.tracked_buffers.remove(&buffer) {
+                if let Some((tracked_buffer, agent)) =
+                    self.tracked_buffers.remove(&buffer).zip(agent_telemetry_id)
+                {
                     ActionLogTelemetry::from_edits(tracked_buffer.unreviewed_edits.edits())
-                        .report_rejected();
+                        .report_rejected(agent);
                 }
                 cx.notify();
                 task
@@ -708,9 +716,11 @@ impl ActionLog {
                     .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx));
 
                 // Clear all tracked edits for this buffer and start over as if we just read it.
-                if let Some(tracked_buffer) = self.tracked_buffers.remove(&buffer) {
+                if let Some((tracked_buffer, agent)) =
+                    self.tracked_buffers.remove(&buffer).zip(agent_telemetry_id)
+                {
                     ActionLogTelemetry::from_edits(tracked_buffer.unreviewed_edits.edits())
-                        .report_rejected();
+                        .report_rejected(agent);
                 }
                 self.buffer_read(buffer.clone(), cx);
                 cx.notify();
@@ -767,7 +777,9 @@ impl ActionLog {
                         }
                     }
 
-                    telemetry.report_rejected();
+                    if let Some(agent) = agent_telemetry_id {
+                        telemetry.report_rejected(agent);
+                    }
                     buffer.edit(edits_to_revert, None, cx);
                 });
                 self.project
@@ -776,7 +788,7 @@ impl ActionLog {
         }
     }
 
-    pub fn keep_all_edits(&mut self, cx: &mut Context<Self>) {
+    pub fn keep_all_edits(&mut self, agent_telemetry_id: Option<&str>, cx: &mut Context<Self>) {
         let mut telemetry = ActionLogTelemetry::default();
         self.tracked_buffers
             .retain(|_buffer, tracked_buffer| match tracked_buffer.status {
@@ -795,13 +807,24 @@ impl ActionLog {
                     true
                 }
             });
-        telemetry.report_accepted();
+        if let Some(agent) = agent_telemetry_id {
+            telemetry.report_accepted(agent);
+        }
         cx.notify();
     }
 
-    pub fn reject_all_edits(&mut self, cx: &mut Context<Self>) -> Task<()> {
+    pub fn reject_all_edits(
+        &mut self,
+        agent_telemetry_id: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
         let futures = self.changed_buffers(cx).into_keys().map(|buffer| {
-            let reject = self.reject_edits_in_ranges(buffer, vec![Anchor::MIN..Anchor::MAX], cx);
+            let reject = self.reject_edits_in_ranges(
+                buffer,
+                vec![Anchor::MIN..Anchor::MAX],
+                agent_telemetry_id,
+                cx,
+            );
 
             async move {
                 reject.await.log_err();
@@ -864,17 +887,19 @@ impl ActionLogTelemetry {
         self.removed_lines += edit.old_len();
     }
 
-    fn report_accepted(self) {
+    fn report_accepted(self, agent: &str) {
         telemetry::event!(
             "Agent Edits Accepted",
+            agent,
             added_lines = self.added_lines,
             removed_lines = self.removed_lines
         );
     }
 
-    fn report_rejected(self) {
+    fn report_rejected(self, agent: &str) {
         telemetry::event!(
             "Agent Edits Rejected",
+            agent,
             added_lines = self.added_lines,
             removed_lines = self.removed_lines
         );
@@ -1128,7 +1153,7 @@ mod tests {
         );
 
         action_log.update(cx, |log, cx| {
-            log.keep_edits_in_range(buffer.clone(), Point::new(3, 0)..Point::new(4, 3), cx)
+            log.keep_edits_in_range(buffer.clone(), Point::new(3, 0)..Point::new(4, 3), None, cx)
         });
         cx.run_until_parked();
         assert_eq!(
@@ -1144,7 +1169,7 @@ mod tests {
         );
 
         action_log.update(cx, |log, cx| {
-            log.keep_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(4, 3), cx)
+            log.keep_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(4, 3), None, cx)
         });
         cx.run_until_parked();
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
@@ -1229,7 +1254,7 @@ mod tests {
         );
 
         action_log.update(cx, |log, cx| {
-            log.keep_edits_in_range(buffer.clone(), Point::new(1, 0)..Point::new(1, 0), cx)
+            log.keep_edits_in_range(buffer.clone(), Point::new(1, 0)..Point::new(1, 0), None, cx)
         });
         cx.run_until_parked();
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
@@ -1326,7 +1351,7 @@ mod tests {
         );
 
         action_log.update(cx, |log, cx| {
-            log.keep_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(1, 0), cx)
+            log.keep_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(1, 0), None, cx)
         });
         cx.run_until_parked();
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
@@ -1430,7 +1455,7 @@ mod tests {
         );
 
         action_log.update(cx, |log, cx| {
-            log.keep_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(1, 0), cx)
+            log.keep_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(1, 0), None, cx)
         });
         cx.run_until_parked();
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
@@ -1489,7 +1514,7 @@ mod tests {
         );
 
         action_log.update(cx, |log, cx| {
-            log.keep_edits_in_range(buffer.clone(), 0..5, cx)
+            log.keep_edits_in_range(buffer.clone(), 0..5, None, cx)
         });
         cx.run_until_parked();
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
@@ -1541,7 +1566,7 @@ mod tests {
 
         action_log
             .update(cx, |log, cx| {
-                log.reject_edits_in_ranges(buffer.clone(), vec![2..5], cx)
+                log.reject_edits_in_ranges(buffer.clone(), vec![2..5], None, cx)
             })
             .await
             .unwrap();
@@ -1621,7 +1646,7 @@ mod tests {
 
         action_log
             .update(cx, |log, cx| {
-                log.reject_edits_in_ranges(buffer.clone(), vec![2..5], cx)
+                log.reject_edits_in_ranges(buffer.clone(), vec![2..5], None, cx)
             })
             .await
             .unwrap();
@@ -1804,6 +1829,7 @@ mod tests {
                 log.reject_edits_in_ranges(
                     buffer.clone(),
                     vec![Point::new(4, 0)..Point::new(4, 0)],
+                    None,
                     cx,
                 )
             })
@@ -1838,6 +1864,7 @@ mod tests {
                 log.reject_edits_in_ranges(
                     buffer.clone(),
                     vec![Point::new(0, 0)..Point::new(1, 0)],
+                    None,
                     cx,
                 )
             })
@@ -1865,6 +1892,7 @@ mod tests {
                 log.reject_edits_in_ranges(
                     buffer.clone(),
                     vec![Point::new(4, 0)..Point::new(4, 0)],
+                    None,
                     cx,
                 )
             })
@@ -1939,7 +1967,7 @@ mod tests {
             let range_2 = buffer.read(cx).anchor_before(Point::new(5, 0))
                 ..buffer.read(cx).anchor_before(Point::new(5, 3));
 
-            log.reject_edits_in_ranges(buffer.clone(), vec![range_1, range_2], cx)
+            log.reject_edits_in_ranges(buffer.clone(), vec![range_1, range_2], None, cx)
                 .detach();
             assert_eq!(
                 buffer.read_with(cx, |buffer, _| buffer.text()),
@@ -2000,6 +2028,7 @@ mod tests {
                 log.reject_edits_in_ranges(
                     buffer.clone(),
                     vec![Point::new(0, 0)..Point::new(0, 0)],
+                    None,
                     cx,
                 )
             })
@@ -2055,6 +2084,7 @@ mod tests {
                 log.reject_edits_in_ranges(
                     buffer.clone(),
                     vec![Point::new(0, 0)..Point::new(0, 11)],
+                    None,
                     cx,
                 )
             })
@@ -2117,6 +2147,7 @@ mod tests {
                 log.reject_edits_in_ranges(
                     buffer.clone(),
                     vec![Point::new(0, 0)..Point::new(100, 0)],
+                    None,
                     cx,
                 )
             })
@@ -2164,7 +2195,7 @@ mod tests {
 
         // User accepts the single hunk
         action_log.update(cx, |log, cx| {
-            log.keep_edits_in_range(buffer.clone(), Anchor::MIN..Anchor::MAX, cx)
+            log.keep_edits_in_range(buffer.clone(), Anchor::MIN..Anchor::MAX, None, cx)
         });
         cx.run_until_parked();
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
@@ -2185,7 +2216,7 @@ mod tests {
         // User rejects the hunk
         action_log
             .update(cx, |log, cx| {
-                log.reject_edits_in_ranges(buffer.clone(), vec![Anchor::MIN..Anchor::MAX], cx)
+                log.reject_edits_in_ranges(buffer.clone(), vec![Anchor::MIN..Anchor::MAX], None, cx)
             })
             .await
             .unwrap();
@@ -2229,7 +2260,7 @@ mod tests {
         cx.run_until_parked();
 
         // User clicks "Accept All"
-        action_log.update(cx, |log, cx| log.keep_all_edits(cx));
+        action_log.update(cx, |log, cx| log.keep_all_edits(None, cx));
         cx.run_until_parked();
         assert!(fs.is_file(path!("/dir/new_file").as_ref()).await);
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]); // Hunks are cleared
@@ -2248,7 +2279,7 @@ mod tests {
 
         // User clicks "Reject All"
         action_log
-            .update(cx, |log, cx| log.reject_all_edits(cx))
+            .update(cx, |log, cx| log.reject_all_edits(None, cx))
             .await;
         cx.run_until_parked();
         assert!(fs.is_file(path!("/dir/new_file").as_ref()).await);
@@ -2288,7 +2319,7 @@ mod tests {
                     action_log.update(cx, |log, cx| {
                         let range = buffer.read(cx).random_byte_range(0, &mut rng);
                         log::info!("keeping edits in range {:?}", range);
-                        log.keep_edits_in_range(buffer.clone(), range, cx)
+                        log.keep_edits_in_range(buffer.clone(), range, None, cx)
                     });
                 }
                 25..50 => {
@@ -2296,7 +2327,7 @@ mod tests {
                         .update(cx, |log, cx| {
                             let range = buffer.read(cx).random_byte_range(0, &mut rng);
                             log::info!("rejecting edits in range {:?}", range);
-                            log.reject_edits_in_ranges(buffer.clone(), vec![range], cx)
+                            log.reject_edits_in_ranges(buffer.clone(), vec![range], None, cx)
                         })
                         .await
                         .unwrap();

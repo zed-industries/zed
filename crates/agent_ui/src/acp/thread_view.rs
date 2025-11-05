@@ -169,7 +169,7 @@ impl ThreadFeedbackState {
             }
         }
         let session_id = thread.read(cx).session_id().clone();
-        let agent_name = telemetry.agent_name();
+        let agent = thread.read(cx).connection().telemetry_id();
         let task = telemetry.thread_data(&session_id, cx);
         let rating = match feedback {
             ThreadFeedback::Positive => "positive",
@@ -179,9 +179,9 @@ impl ThreadFeedbackState {
             let thread = task.await?;
             telemetry::event!(
                 "Agent Thread Rated",
+                agent = agent,
                 session_id = session_id,
                 rating = rating,
-                agent = agent_name,
                 thread = thread
             );
             anyhow::Ok(())
@@ -206,15 +206,15 @@ impl ThreadFeedbackState {
         self.comments_editor.take();
 
         let session_id = thread.read(cx).session_id().clone();
-        let agent_name = telemetry.agent_name();
+        let agent = thread.read(cx).connection().telemetry_id();
         let task = telemetry.thread_data(&session_id, cx);
         cx.background_spawn(async move {
             let thread = task.await?;
             telemetry::event!(
                 "Agent Thread Feedback Comments",
+                agent = agent,
                 session_id = session_id,
                 comments = comments,
-                agent = agent_name,
                 thread = thread
             );
             anyhow::Ok(())
@@ -3982,12 +3982,14 @@ impl AcpThreadView {
                                     .on_click({
                                         let buffer = buffer.clone();
                                         let action_log = action_log.clone();
+                                        let agent_telemetry_id = self.agent.telemetry_id();
                                         move |_, _, cx| {
                                             action_log.update(cx, |action_log, cx| {
                                                 action_log
                                                     .reject_edits_in_ranges(
                                                         buffer.clone(),
                                                         vec![Anchor::MIN..Anchor::MAX],
+                                                        Some(agent_telemetry_id),
                                                         cx,
                                                     )
                                                     .detach_and_log_err(cx);
@@ -4002,11 +4004,13 @@ impl AcpThreadView {
                                     .on_click({
                                         let buffer = buffer.clone();
                                         let action_log = action_log.clone();
+                                        let agent_telemetry_id = self.agent.telemetry_id();
                                         move |_, _, cx| {
                                             action_log.update(cx, |action_log, cx| {
                                                 action_log.keep_edits_in_range(
                                                     buffer.clone(),
                                                     Anchor::MIN..Anchor::MAX,
+                                                    Some(agent_telemetry_id),
                                                     cx,
                                                 );
                                             })
@@ -4223,7 +4227,9 @@ impl AcpThreadView {
             return;
         };
         let action_log = thread.read(cx).action_log().clone();
-        action_log.update(cx, |action_log, cx| action_log.keep_all_edits(cx));
+        action_log.update(cx, |action_log, cx| {
+            action_log.keep_all_edits(Some(self.agent.telemetry_id()), cx)
+        });
     }
 
     fn reject_all(&mut self, _: &RejectAll, _window: &mut Window, cx: &mut Context<Self>) {
@@ -4232,7 +4238,9 @@ impl AcpThreadView {
         };
         let action_log = thread.read(cx).action_log().clone();
         action_log
-            .update(cx, |action_log, cx| action_log.reject_all_edits(cx))
+            .update(cx, |action_log, cx| {
+                action_log.reject_all_edits(Some(self.agent.telemetry_id()), cx)
+            })
             .detach();
     }
 
@@ -6281,6 +6289,10 @@ pub(crate) mod tests {
     struct SaboteurAgentConnection;
 
     impl AgentConnection for SaboteurAgentConnection {
+        fn telemetry_id(&self) -> &'static str {
+            "saboteur"
+        }
+
         fn new_thread(
             self: Rc<Self>,
             project: Entity<Project>,
@@ -6341,6 +6353,10 @@ pub(crate) mod tests {
     struct RefusalAgentConnection;
 
     impl AgentConnection for RefusalAgentConnection {
+        fn telemetry_id(&self) -> &'static str {
+            "refusal"
+        }
+
         fn new_thread(
             self: Rc<Self>,
             project: Entity<Project>,

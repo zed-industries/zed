@@ -967,6 +967,10 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
 }
 
 impl acp_thread::AgentConnection for NativeAgentConnection {
+    fn telemetry_id(&self) -> &'static str {
+        "zed"
+    }
+
     fn new_thread(
         self: Rc<Self>,
         project: Entity<Project>,
@@ -1107,10 +1111,6 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 }
 
 impl acp_thread::AgentTelemetry for NativeAgentConnection {
-    fn agent_name(&self) -> String {
-        "Zed".into()
-    }
-
     fn thread_data(
         &self,
         session_id: &acp::SessionId,
