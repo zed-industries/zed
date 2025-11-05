@@ -52,6 +52,7 @@
 # AI
 
 - [Overview](./ai/overview.md)
+- [Competitor Feature Survey](./ai/competitor-learnings.md)
 - [Agent Panel](./ai/agent-panel.md)
   - [Tools](./ai/tools.md)
   - [External Agents](./ai/external-agents.md)

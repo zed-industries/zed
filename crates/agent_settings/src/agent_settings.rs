@@ -24,6 +24,66 @@ pub fn init(cx: &mut App) {
 }
 
 #[derive(Clone, Debug)]
+pub struct AgentQuickAction {
+    pub id: Arc<str>,
+    pub title: Arc<str>,
+    pub prompt: Arc<str>,
+    pub description: Option<Arc<str>>,
+    pub auto_send: bool,
+}
+
+impl AgentQuickAction {
+    pub fn new(
+        id: impl Into<Arc<str>>,
+        title: impl Into<Arc<str>>,
+        prompt: impl Into<Arc<str>>,
+        description: Option<Arc<str>>,
+        auto_send: bool,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            title: title.into(),
+            prompt: prompt.into(),
+            description,
+            auto_send,
+        }
+    }
+}
+
+fn default_quick_actions() -> Vec<AgentQuickAction> {
+    vec![
+        AgentQuickAction::new(
+            "explain_selection",
+            "Explain Selection",
+            "Explain what the selected code does.",
+            Some("Describe the highlighted code in plain language.".into()),
+            true,
+        ),
+        AgentQuickAction::new(
+            "write_tests",
+            "Write Tests",
+            "Generate unit tests for the selected code. Prefer idiomatic libraries and keep them concise.",
+            Some("Produce focused unit tests for the current selection.".into()),
+            true,
+        ),
+        AgentQuickAction::new(
+            "improve_performance",
+            "Improve Performance",
+            "Suggest performance improvements for the selected code. Explain the trade-offs.",
+            Some("Look for faster or more efficient alternatives.".into()),
+            true,
+        ),
+        AgentQuickAction::new(
+            "summarize_file",
+            "Summarize File",
+            "Summarize the main responsibilities and key flows of this file.",
+            Some("Capture the high-level purpose of the current file.".into()),
+            false,
+        ),
+    ]
+}
+
+#[derive(Clone, Debug)]
 pub struct AgentSettings {
     pub enabled: bool,
     pub button: bool,
@@ -49,6 +109,7 @@ pub struct AgentSettings {
     pub expand_terminal_card: bool,
     pub use_modifier_to_send: bool,
     pub message_editor_min_lines: usize,
+    pub quick_actions: Vec<AgentQuickAction>,
 }
 
 impl AgentSettings {
@@ -97,6 +158,12 @@ impl AgentSettings {
 
     pub fn set_message_editor_max_lines(&self) -> usize {
         self.message_editor_min_lines * 2
+    }
+
+    pub fn quick_action(&self, id: &str) -> Option<&AgentQuickAction> {
+        self.quick_actions
+            .iter()
+            .find(|action| action.id.as_ref() == id)
     }
 }
 
@@ -181,6 +248,7 @@ impl Settings for AgentSettings {
             expand_terminal_card: agent.expand_terminal_card.unwrap(),
             use_modifier_to_send: agent.use_modifier_to_send.unwrap(),
             message_editor_min_lines: agent.message_editor_min_lines.unwrap(),
+            quick_actions: default_quick_actions(),
         }
     }
 }

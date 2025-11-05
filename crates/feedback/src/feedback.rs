@@ -2,7 +2,9 @@ use gpui::{App, ClipboardItem, PromptLevel, actions};
 use system_specs::{CopySystemSpecsIntoClipboard, SystemSpecs};
 use util::ResultExt;
 use workspace::Workspace;
-use zed_actions::feedback::{EmailZed, FileBugReport, RequestFeature};
+use zed_actions::feedback::{
+    EmailZed, FileBugReport, FileTtsBugReport, OpenTtsRepo, RequestFeature,
+};
 
 actions!(
     zed,
@@ -13,6 +15,11 @@ actions!(
 );
 
 const ZED_REPO_URL: &str = "https://github.com/zed-industries/zed";
+
+const TTS_REPO_URL: &str = "https://github.com/clouraLabs/cyberpunkreadaloudttsreader";
+
+const TTS_BUG_REPORT_URL: &str =
+    "https://github.com/clouraLabs/cyberpunkreadaloudttsreader/issues/new";
 
 const REQUEST_FEATURE_URL: &str = "https://github.com/zed-industries/zed/discussions/new/choose";
 
@@ -92,6 +99,12 @@ pub fn init(cx: &mut App) {
             })
             .register_action(move |_, _: &OpenZedRepo, _, cx| {
                 cx.open_url(ZED_REPO_URL);
+            })
+            .register_action(move |_, _: &OpenTtsRepo, _, cx| {
+                cx.open_url(TTS_REPO_URL);
+            })
+            .register_action(move |_, _: &FileTtsBugReport, _, cx| {
+                cx.open_url(TTS_BUG_REPORT_URL);
             });
     })
     .detach();

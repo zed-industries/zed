@@ -1,3 +1,4 @@
+mod checkpoint;
 mod db;
 mod edit_agent;
 mod history_store;
@@ -12,6 +13,7 @@ mod tools;
 #[cfg(test)]
 mod tests;
 
+pub use checkpoint::*;
 pub use db::*;
 pub use history_store::*;
 pub use native_agent_server::NativeAgentServer;

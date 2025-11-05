@@ -814,6 +814,12 @@ impl MessageEditor {
         });
     }
 
+    pub fn replace_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.clear(window, cx);
+        self.editor
+            .update(cx, |editor, cx| editor.insert(text, window, cx));
+    }
+
     pub fn send(&mut self, cx: &mut Context<Self>) {
         if self.is_empty(cx) {
             return;

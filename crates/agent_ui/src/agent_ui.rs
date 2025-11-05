@@ -4,6 +4,7 @@ mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod buffer_codegen;
+mod composer_panel;
 mod context;
 mod context_picker;
 mod context_server_configuration;
@@ -14,6 +15,7 @@ mod inline_prompt_editor;
 mod language_model_selector;
 mod message_editor;
 mod profile_selector;
+mod quick_actions;
 mod slash_command;
 mod slash_command_picker;
 mod terminal_codegen;
@@ -45,6 +47,7 @@ use std::any::TypeId;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
 pub use crate::agent_panel::{AgentPanel, ConcreteAssistantPanelDelegate};
+pub use crate::composer_panel::ComposerPanel;
 pub use crate::inline_assistant::InlineAssistant;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use text_thread_editor::{AgentPanelDelegate, TextThreadEditor};
@@ -259,6 +262,7 @@ pub fn init(
     }
     assistant_slash_command::init(cx);
     agent_panel::init(cx);
+    composer_panel::init(cx);
     context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
     TextThreadEditor::init(cx);
 
