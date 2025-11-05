@@ -989,7 +989,7 @@ impl RunningState {
                         (task, None)
                     }
                 };
-                let Some(mut task) = task_template.resolve_task("debug-build-task", &task_context) else {
+                let Some(mut task) = task_template.resolve_task("debug-build-task",&|| remote_shell.clone(), &task_context) else {
                     anyhow::bail!("Could not resolve task variables within a debug scenario");
                 };
 
@@ -1026,7 +1026,7 @@ impl RunningState {
                     None
                 };
 
-                if let Some(remote_shell) = remote_shell && task.resolved.shell == Shell::System {
+                if task.resolved.shell == Shell::System && let Some(remote_shell) = remote_shell.clone() {
                     task.resolved.shell = Shell::Program(remote_shell);
                 }
 

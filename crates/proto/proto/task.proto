@@ -13,6 +13,7 @@ message TaskContext {
     optional string cwd = 1;
     map<string, string> task_variables = 2;
     map<string, string> project_env = 3;
+    bool is_windows = 4;
 }
 
 message Shell {

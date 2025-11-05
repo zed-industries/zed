@@ -155,6 +155,7 @@ impl TaskStore {
                 .into_iter()
                 .map(|(variable_name, variable_value)| (variable_name.to_string(), variable_value))
                 .collect(),
+            is_windows: cfg!(windows),
         })
     }
 
@@ -345,6 +346,7 @@ fn local_task_context_for_location(
             project_env: project_env.unwrap_or_default(),
             cwd: worktree_abs_path.map(|p| p.to_path_buf()),
             task_variables,
+            is_windows: cfg!(windows),
         })
     })
 }
@@ -414,6 +416,7 @@ fn remote_task_context_for_location(
                 )
                 .collect(),
             project_env: task_context.project_env.into_iter().collect(),
+            is_windows: task_context.is_windows,
         })
     })
 }
