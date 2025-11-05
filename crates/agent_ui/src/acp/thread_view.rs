@@ -1735,7 +1735,7 @@ impl AcpThreadView {
             if let Some(cmd) = &task.command {
                 // Have "node" command use Zed's managed Node runtime by default
                 if cmd == "node" {
-                    let resolved_node = project
+                    let resolved_node_runtime = project
                         .update(cx, |project, cx| {
                             let agent_server_store = project.agent_server_store().clone();
                             agent_server_store.update(cx, |store, cx| {
@@ -1745,9 +1745,9 @@ impl AcpThreadView {
                                     })
                                 })
                             })
-                        })?;
+                        });
 
-                    if let Some(resolve_task) = resolved_node {
+                    if let Ok(Some(resolve_task)) = resolved_node_runtime {
                         if let Ok(node_path) = resolve_task.await {
                             task.command = Some(node_path.to_string_lossy().to_string());
                         }
