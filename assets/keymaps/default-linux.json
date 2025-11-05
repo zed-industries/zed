@@ -735,14 +735,6 @@
       "tab": "editor::ComposeCompletion"
     }
   },
-  {
-    "context": "Editor && in_snippet",
-    "use_key_equivalents": true,
-    "bindings": {
-      "alt-right": "editor::NextSnippetTabstop",
-      "alt-left": "editor::PreviousSnippetTabstop"
-    }
-  },
   // Bindings for accepting edit predictions
   //
   // alt-l is provided as an alternative to tab/alt-tab. and will be displayed in the UI. This is

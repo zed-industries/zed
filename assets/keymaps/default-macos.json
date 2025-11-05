@@ -806,14 +806,6 @@
     }
   },
   {
-    "context": "Editor && in_snippet",
-    "use_key_equivalents": true,
-    "bindings": {
-      "alt-right": "editor::NextSnippetTabstop",
-      "alt-left": "editor::PreviousSnippetTabstop"
-    }
-  },
-  {
     "context": "Editor && edit_prediction",
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
