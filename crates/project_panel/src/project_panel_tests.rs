@@ -2197,8 +2197,6 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         ],
         "File list should be unchanged after failed rename confirmation"
     );
-    panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
-    cx.executor().run_until_parked();
 }
 
 // NOTE: This test is skipped on Windows, because on Windows,
