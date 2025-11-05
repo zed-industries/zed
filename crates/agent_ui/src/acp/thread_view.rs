@@ -1473,7 +1473,7 @@ impl AcpThreadView {
             return;
         };
 
-        // Check if this auth method has terminal-auth metadata
+        // Check for the experimental "terminal-auth" _meta field
         let auth_method = connection.auth_methods().iter().find(|m| m.id == method);
 
         if let Some(auth_method) = auth_method {
