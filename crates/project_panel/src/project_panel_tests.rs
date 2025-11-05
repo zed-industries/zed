@@ -2007,7 +2007,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         "/src",
         json!({
             "test": {
-                "first.rs": "// First Rust file",
+                "first.txt": "// First Txt file",
                 "second.rs": "// Second Rust file",
                 "third.rs": "// Third Rust file",
             }
@@ -2106,7 +2106,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             "v src",
             "    v test",
             "          [EDITOR: '']  <== selected",
-            "          first.rs",
+            "          first.txt",
             "          second.rs",
             "          third.rs"
         ]
@@ -2114,7 +2114,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel
             .filename_editor
-            .update(cx, |editor, cx| editor.set_text("first.rs", window, cx));
+            .update(cx, |editor, cx| editor.set_text("first.txt", window, cx));
         assert!(
             panel.confirm_edit(true, window, cx).is_none(),
             "Should not allow to confirm on conflicting new file name"
@@ -2135,14 +2135,14 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         &[
             "v src",
             "    v test  <== selected",
-            "          first.rs",
+            "          first.txt",
             "          second.rs",
             "          third.rs"
         ],
         "File list should be unchanged after failed file create confirmation"
     );
 
-    select_path(&panel, "src/test/first.rs", cx);
+    select_path(&panel, "src/test/first.txt", cx);
     panel.update_in(cx, |panel, window, cx| panel.confirm(&Confirm, window, cx));
     cx.executor().run_until_parked();
     assert_eq!(
@@ -2150,7 +2150,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         &[
             "v src",
             "    v test",
-            "          first.rs  <== selected",
+            "          first.txt  <== selected",
             "          second.rs",
             "          third.rs"
         ],
@@ -2164,7 +2164,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         &[
             "v src",
             "    v test",
-            "          [EDITOR: 'first.rs']  <== selected",
+            "          [EDITOR: 'first.txt']  <== selected",
             "          second.rs",
             "          third.rs"
         ]
@@ -2191,7 +2191,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         &[
             "v src",
             "    v test",
-            "          first.rs  <== selected",
+            "          first.txt  <== selected",
             "          second.rs",
             "          third.rs"
         ],
@@ -2210,8 +2210,8 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         &[
             "v src",
             "    v test",
-            "          first.rs",
-            "          [EDITOR: 'first copy.rs']  <== selected  <== marked",
+            "          first.txt",
+            "          [EDITOR: 'first copy.txt']  <== selected  <== marked",
             "          second.rs",
             "          third.rs"
         ],
@@ -2220,7 +2220,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
     let confirm = panel.update_in(cx, |panel, window, cx| {
         panel
             .filename_editor
-            .update(cx, |editor, cx| editor.set_text("fourth.rs", window, cx));
+            .update(cx, |editor, cx| editor.set_text("fourth.txt", window, cx));
         panel.confirm_edit(true, window, cx).unwrap()
     });
     confirm.await.unwrap();
@@ -2231,8 +2231,8 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         &[
             "v src",
             "    v test",
-            "          first.rs",
-            "          fourth.rs  <== selected",
+            "          first.txt",
+            "          fourth.txt  <== selected",
             "          second.rs",
             "          third.rs"
         ],
@@ -2244,7 +2244,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
     });
     cx.executor().run_until_parked();
 
-    select_path(&panel, "src/test/first.rs", cx);
+    select_path(&panel, "src/test/first.txt", cx);
     panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
     cx.executor().run_until_parked();
 
@@ -2253,8 +2253,8 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             assert!(
                 this.recent_navigation_history_iter(cx)
                     .any(|(project_path, abs_path)| {
-                        project_path.path == Arc::from(rel_path("test/fourth.rs"))
-                            && abs_path == Some(PathBuf::from(path!("/src/test/fourth.rs")))
+                        project_path.path == Arc::from(rel_path("test/fourth.txt"))
+                            && abs_path == Some(PathBuf::from(path!("/src/test/fourth.txt")))
                     })
             );
         })
