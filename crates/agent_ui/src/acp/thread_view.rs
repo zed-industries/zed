@@ -1739,25 +1739,17 @@ impl AcpThreadView {
                         .update(cx, |project, cx| {
                             let agent_server_store = project.agent_server_store().clone();
                             agent_server_store.update(cx, |store, cx| {
-                                if let Some(node_runtime) = store.node_runtime() {
+                                store.node_runtime().map(|node_runtime| {
                                     cx.background_spawn(async move {
                                         node_runtime.binary_path().await
                                     })
-                                } else {
-                                    cx.background_spawn(async {
-                                        Ok(std::path::PathBuf::from("node"))
-                                    })
-                                }
+                                })
                             })
-                        })?
-                        .await;
+                        })?;
 
-                    match resolved_node {
-                        Ok(node_path) => {
+                    if let Some(resolve_task) = resolved_node {
+                        if let Ok(node_path) = resolve_task.await {
                             task.command = Some(node_path.to_string_lossy().to_string());
-                        }
-                        Err(_) => {
-                            // Failed to resolve, keep using 'node'
                         }
                     }
                 }
