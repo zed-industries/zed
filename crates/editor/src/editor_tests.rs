@@ -11138,129 +11138,6 @@ async fn test_snippet_placeholder_choices(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_snippet_tabstop_navigation_with_placeholders(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    fn assert_state(editor: &mut Editor, cx: &mut Context<Editor>, marked_text: &str) {
-        let (expected_text, selection_ranges) = marked_text_ranges(marked_text, false);
-        assert_eq!(editor.text(cx), expected_text);
-        assert_eq!(
-            editor
-                .selections
-                .ranges::<usize>(&editor.display_snapshot(cx)),
-            selection_ranges
-        );
-    }
-
-    let (text, insertion_ranges) = marked_text_ranges(
-        indoc! {"
-            ˇ
-        "},
-        false,
-    );
-
-    let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
-
-    _ = editor.update_in(cx, |editor, window, cx| {
-        let snippet = Snippet::parse("type ${1|,i32,u32|} = $2; $3").unwrap();
-
-        editor
-            .insert_snippet(&insertion_ranges, snippet, window, cx)
-            .unwrap();
-
-        assert_state(
-            editor,
-            cx,
-            indoc! {"
-            type «» = ;•
-            "},
-        );
-
-        assert!(
-            editor.context_menu_visible(),
-            "Context menu should be visible for placeholder choices"
-        );
-
-        editor.next_snippet_tabstop(&NextSnippetTabstop, window, cx);
-
-        assert_state(
-            editor,
-            cx,
-            indoc! {"
-            type  = «»;•
-            "},
-        );
-
-        assert!(
-            !editor.context_menu_visible(),
-            "Context menu should be hidden after moving to next tabstop"
-        );
-
-        editor.next_snippet_tabstop(&NextSnippetTabstop, window, cx);
-
-        assert_state(
-            editor,
-            cx,
-            indoc! {"
-            type  = ; ˇ
-            "},
-        );
-
-        editor.next_snippet_tabstop(&NextSnippetTabstop, window, cx);
-
-        assert_state(
-            editor,
-            cx,
-            indoc! {"
-            type  = ; ˇ
-            "},
-        );
-    });
-
-    _ = editor.update_in(cx, |editor, window, cx| {
-        editor.select_all(&SelectAll, window, cx);
-        editor.backspace(&Backspace, window, cx);
-
-        let snippet = Snippet::parse("fn ${1|,foo,bar|} = ${2:value}; $3").unwrap();
-        let insertion_ranges = editor
-            .selections
-            .all(&editor.display_snapshot(cx))
-            .iter()
-            .map(|s| s.range())
-            .collect::<Vec<_>>();
-
-        editor
-            .insert_snippet(&insertion_ranges, snippet, window, cx)
-            .unwrap();
-
-        assert_state(editor, cx, "fn «» = value;•");
-
-        assert!(
-            editor.context_menu_visible(),
-            "Context menu should be visible for placeholder choices"
-        );
-
-        editor.next_snippet_tabstop(&NextSnippetTabstop, window, cx);
-
-        assert_state(editor, cx, "fn  = «valueˇ»;•");
-
-        editor.previous_snippet_tabstop(&PreviousSnippetTabstop, window, cx);
-
-        assert_state(editor, cx, "fn «» = value;•");
-
-        assert!(
-            editor.context_menu_visible(),
-            "Context menu should be visible again after returning to first tabstop"
-        );
-
-        editor.previous_snippet_tabstop(&PreviousSnippetTabstop, window, cx);
-
-        assert_state(editor, cx, "fn «» = value;•");
-    });
-}
-
-#[gpui::test]
 async fn test_snippets(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -13883,7 +13760,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
 
             cx.set_state(&run.initial_state);
             cx.update_editor(|editor, window, cx| {
-                editor.show_completions(&ShowCompletions, window, cx);
+                editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
             });
 
             let counter = Arc::new(AtomicUsize::new(0));
@@ -13943,7 +13820,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
 
     cx.set_state(initial_state);
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions, window, cx);
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
     });
 
     let counter = Arc::new(AtomicUsize::new(0));
@@ -13979,7 +13856,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
 
     cx.set_state(initial_state);
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions, window, cx);
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
     });
     handle_completion_request_with_insert_and_replace(
         &mut cx,
@@ -14066,7 +13943,7 @@ async fn test_completion_replacing_surrounding_text_with_multicursors(cx: &mut T
     "};
     cx.set_state(initial_state);
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions, window, cx);
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
     });
     handle_completion_request_with_insert_and_replace(
         &mut cx,
@@ -14120,7 +13997,7 @@ async fn test_completion_replacing_surrounding_text_with_multicursors(cx: &mut T
     "};
     cx.set_state(initial_state);
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions, window, cx);
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
     });
     handle_completion_request_with_insert_and_replace(
         &mut cx,
@@ -14169,7 +14046,7 @@ async fn test_completion_replacing_surrounding_text_with_multicursors(cx: &mut T
     "};
     cx.set_state(initial_state);
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions, window, cx);
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
     });
     handle_completion_request_with_insert_and_replace(
         &mut cx,
@@ -14320,7 +14197,7 @@ async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppConte
     });
 
     editor.update_in(cx, |editor, window, cx| {
-        editor.show_completions(&ShowCompletions, window, cx);
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
     });
 
     fake_server
@@ -14559,7 +14436,7 @@ async fn test_completion(cx: &mut TestAppContext) {
     cx.assert_editor_state("editor.cloˇ");
     assert!(cx.editor(|e, _, _| e.context_menu.borrow_mut().is_none()));
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions, window, cx);
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
     });
     handle_completion_request(
         "editor.<clo|>",
@@ -14958,7 +14835,7 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
         4.5f32
     "});
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions, window, cx);
+        editor.show_completions(&ShowCompletions::default(), window, cx);
     });
     cx.executor().run_until_parked();
     cx.condition(|editor, _| editor.context_menu_visible())
@@ -14984,7 +14861,7 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
         33.35f32
     "});
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions, window, cx);
+        editor.show_completions(&ShowCompletions::default(), window, cx);
     });
     cx.executor().run_until_parked();
     cx.condition(|editor, _| editor.context_menu_visible())
@@ -15408,7 +15285,13 @@ async fn test_as_is_completions(cx: &mut TestAppContext) {
     cx.set_state("fn a() {}\n  nˇ");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, window, cx| {
-        editor.trigger_completion_on_input("n", true, window, cx)
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: Some("\n".into()),
+            },
+            window,
+            cx,
+        );
     });
     cx.executor().run_until_parked();
 
@@ -15506,7 +15389,7 @@ int fn_branch(bool do_branch1, bool do_branch2);
             })))
         });
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions, window, cx);
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
     });
     cx.executor().run_until_parked();
     cx.update_editor(|editor, window, cx| {
@@ -15555,7 +15438,7 @@ int fn_branch(bool do_branch1, bool do_branch2);
             })))
         });
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions, window, cx);
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
     });
     cx.executor().run_until_parked();
     cx.update_editor(|editor, window, cx| {
@@ -18045,7 +17928,7 @@ async fn test_context_menus_hide_hover_popover(cx: &mut gpui::TestAppContext) {
             }
         });
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions, window, cx);
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
     });
     completion_requests.next().await;
     cx.condition(|editor, _| editor.context_menu_visible())
@@ -24441,7 +24324,7 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
             ])))
         });
     editor.update_in(cx, |editor, window, cx| {
-        editor.show_completions(&ShowCompletions, window, cx);
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
     });
     cx.run_until_parked();
     completion_handle.next().await.unwrap();

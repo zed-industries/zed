@@ -18622,6 +18622,7 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "log",
+ "mach2 0.5.0",
  "nix 0.29.0",
  "pretty_assertions",
  "rand 0.9.2",
@@ -21139,7 +21140,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.212.0"
+version = "0.213.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",
