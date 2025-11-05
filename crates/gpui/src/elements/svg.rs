@@ -134,8 +134,7 @@ impl Element for Svg {
                 {
                     let Some(bytes) = window
                         .use_asset::<SvgAsset>(path, cx)
-                        .map(|asset| asset.log_err())
-                        .flatten()
+                        .and_then(|asset| asset.log_err())
                     else {
                         return;
                     };
