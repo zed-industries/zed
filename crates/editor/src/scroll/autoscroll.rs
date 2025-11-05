@@ -153,7 +153,7 @@ impl Editor {
         ) {
             let newest_selection_top = self
                 .selections
-                .newest::<Point>(cx)
+                .newest::<Point>(&display_map)
                 .head()
                 .to_display_point(&display_map)
                 .row()
