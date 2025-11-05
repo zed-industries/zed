@@ -1,22 +1,19 @@
 use crate::example::{ActualExcerpt, NamedExample};
-
 use crate::headless::ZetaCliAppState;
 use ::serde::Serialize;
-use ::util::paths::PathStyle;
 use anyhow::{Context as _, Result, anyhow};
 use clap::Args;
 use cloud_zeta2_prompt::{CURSOR_MARKER, write_codeblock};
 use futures::StreamExt as _;
 use gpui::AsyncApp;
 use language_model::LanguageModelRegistry;
-use project::{Project, ProjectPath};
+use project::Project;
 use serde::Deserialize;
 use std::cell::Cell;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use util::rel_path::RelPath;
 
 #[derive(Debug, Args)]
 pub struct PredictArguments {
@@ -83,6 +80,8 @@ pub async fn zeta2_predict(
         )
     })?;
 
+    let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone())?;
+
     let worktree = project
         .update(cx, |project, cx| {
             project.create_worktree(&worktree_path, true, cx)
@@ -94,58 +93,30 @@ pub async fn zeta2_predict(
         })?
         .await;
 
-    let _edited_buffers = example.apply_edit_history(&project, cx).await?;
-
-    let cursor_path = RelPath::new(&example.example.cursor_path, PathStyle::Posix)?.into_arc();
-
-    let cursor_buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer(
-                ProjectPath {
-                    worktree_id: worktree.read(cx).id(),
-                    path: cursor_path,
-                },
-                cx,
-            )
-        })?
-        .await?;
-
-    let cursor_offset_within_excerpt = example
-        .example
-        .cursor_position
-        .find(CURSOR_MARKER)
-        .ok_or_else(|| anyhow!("missing cursor marker"))?;
-    let mut cursor_excerpt = example.example.cursor_position.clone();
-    cursor_excerpt.replace_range(
-        cursor_offset_within_excerpt..(cursor_offset_within_excerpt + CURSOR_MARKER.len()),
-        "",
-    );
-    let excerpt_offset = cursor_buffer.read_with(cx, |buffer, _cx| {
-        let text = buffer.text();
-
-        let mut matches = text.match_indices(&cursor_excerpt);
-        let Some((excerpt_offset, _)) = matches.next() else {
-            anyhow::bail!(
-                "Cursor excerpt did not exist in buffer.\nExcerpt:\n\n{cursor_excerpt}\nBuffer text:\n{text}\n"
-            );
-        };
-        assert!(matches.next().is_none());
-
-        Ok(excerpt_offset)
-    })??;
-
-    let cursor_offset = excerpt_offset + cursor_offset_within_excerpt;
-    let cursor_anchor =
-        cursor_buffer.read_with(cx, |buffer, _| buffer.anchor_after(cursor_offset))?;
-
     let zeta = cx.update(|cx| zeta2::Zeta::global(&app_state.client, &app_state.user_store, cx))?;
 
+    cx.subscribe(&buffer_store, {
+        let project = project.clone();
+        move |_, event, cx| match event {
+            project::buffer_store::BufferStoreEvent::BufferAdded(buffer) => {
+                zeta2::Zeta::try_global(cx)
+                    .unwrap()
+                    .update(cx, |zeta, cx| zeta.register_buffer(&buffer, &project, cx));
+            }
+            _ => {}
+        }
+    })?
+    .detach();
+
+    let _edited_buffers = example.apply_edit_history(&project, cx).await?;
+    let (cursor_buffer, cursor_anchor) = example.cursor_position(&project, cx).await?;
+
+    let mut debug_rx = zeta.update(cx, |zeta, _| zeta.debug_info())?;
+
     let refresh_task = zeta.update(cx, |zeta, cx| {
-        zeta.register_buffer(&cursor_buffer, &project, cx);
         zeta.refresh_context(project.clone(), cursor_buffer.clone(), cursor_anchor, cx)
     })?;
 
-    let mut debug_rx = zeta.update(cx, |zeta, _| zeta.debug_info())?;
     let mut context_retrieval_started_at = None;
     let mut context_retrieval_finished_at = None;
     let mut search_queries_generated_at = None;

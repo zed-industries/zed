@@ -10,18 +10,20 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use clap::ValueEnum;
+use cloud_zeta2_prompt::CURSOR_MARKER;
 use collections::HashMap;
 use futures::{
     AsyncWriteExt as _,
     lock::{Mutex, OwnedMutexGuard},
 };
 use gpui::{AsyncApp, Entity, http_client::Url};
-use language::{Buffer, BufferId};
-use project::Project;
+use language::{Anchor, Buffer, BufferId};
+use project::{Project, ProjectPath};
 use pulldown_cmark::CowStr;
 use serde::{Deserialize, Serialize};
+use util::{paths::PathStyle, rel_path::RelPath};
 
 const UNCOMMITTED_DIFF_HEADING: &str = "Uncommitted Diff";
 const EDIT_HISTORY_HEADING: &str = "Edit History";
@@ -341,6 +343,56 @@ impl NamedExample {
 
             Ok((owner.into(), repo.into()))
         }
+    }
+
+    pub async fn cursor_position(
+        &self,
+        project: &Entity<Project>,
+        cx: &mut AsyncApp,
+    ) -> Result<(Entity<Buffer>, Anchor)> {
+        let worktree = project.read_with(cx, |project, cx| {
+            project.visible_worktrees(cx).next().unwrap()
+        })?;
+        let cursor_path = RelPath::new(&self.example.cursor_path, PathStyle::Posix)?.into_arc();
+        let cursor_buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer(
+                    ProjectPath {
+                        worktree_id: worktree.read(cx).id(),
+                        path: cursor_path,
+                    },
+                    cx,
+                )
+            })?
+            .await?;
+        let cursor_offset_within_excerpt = self
+            .example
+            .cursor_position
+            .find(CURSOR_MARKER)
+            .ok_or_else(|| anyhow!("missing cursor marker"))?;
+        let mut cursor_excerpt = self.example.cursor_position.clone();
+        cursor_excerpt.replace_range(
+            cursor_offset_within_excerpt..(cursor_offset_within_excerpt + CURSOR_MARKER.len()),
+            "",
+        );
+        let excerpt_offset = cursor_buffer.read_with(cx, |buffer, _cx| {
+            let text = buffer.text();
+
+            let mut matches = text.match_indices(&cursor_excerpt);
+            let Some((excerpt_offset, _)) = matches.next() else {
+                anyhow::bail!(
+                    "Cursor excerpt did not exist in buffer.\nExcerpt:\n\n{cursor_excerpt}\nBuffer text:\n{text}\n"
+                );
+            };
+            assert!(matches.next().is_none());
+
+            Ok(excerpt_offset)
+        })??;
+
+        let cursor_offset = excerpt_offset + cursor_offset_within_excerpt;
+        let cursor_anchor =
+            cursor_buffer.read_with(cx, |buffer, _| buffer.anchor_after(cursor_offset))?;
+        Ok((cursor_buffer, cursor_anchor))
     }
 
     #[must_use]
