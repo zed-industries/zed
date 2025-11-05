@@ -2008,8 +2008,8 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         json!({
             "test": {
                 "first.txt": "// First Txt file",
-                "second.rs": "// Second Rust file",
-                "third.rs": "// Third Rust file",
+                "second.txt": "// Second Txt file",
+                "third.txt": "// Third Txt file",
             }
         }),
     )
@@ -2107,8 +2107,8 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             "    v test",
             "          [EDITOR: '']  <== selected",
             "          first.txt",
-            "          second.rs",
-            "          third.rs"
+            "          second.txt",
+            "          third.txt"
         ]
     );
     panel.update_in(cx, |panel, window, cx| {
@@ -2136,8 +2136,8 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             "v src",
             "    v test  <== selected",
             "          first.txt",
-            "          second.rs",
-            "          third.rs"
+            "          second.txt",
+            "          third.txt"
         ],
         "File list should be unchanged after failed file create confirmation"
     );
@@ -2151,8 +2151,8 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             "v src",
             "    v test",
             "          first.txt  <== selected",
-            "          second.rs",
-            "          third.rs"
+            "          second.txt",
+            "          third.txt"
         ],
     );
     panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
@@ -2165,14 +2165,14 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             "v src",
             "    v test",
             "          [EDITOR: 'first.txt']  <== selected",
-            "          second.rs",
-            "          third.rs"
+            "          second.txt",
+            "          third.txt"
         ]
     );
     panel.update_in(cx, |panel, window, cx| {
         panel
             .filename_editor
-            .update(cx, |editor, cx| editor.set_text("second.rs", window, cx));
+            .update(cx, |editor, cx| editor.set_text("second.txt", window, cx));
         assert!(
             panel.confirm_edit(true, window, cx).is_none(),
             "Should not allow to confirm on conflicting file rename"
@@ -2192,8 +2192,8 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             "v src",
             "    v test",
             "          first.txt  <== selected",
-            "          second.rs",
-            "          third.rs"
+            "          second.txt",
+            "          third.txt"
         ],
         "File list should be unchanged after failed rename confirmation"
     );
@@ -2212,8 +2212,8 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             "    v test",
             "          first.txt",
             "          [EDITOR: 'first copy.txt']  <== selected  <== marked",
-            "          second.rs",
-            "          third.rs"
+            "          second.txt",
+            "          third.txt"
         ],
     );
 
@@ -2233,8 +2233,8 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             "    v test",
             "          first.txt",
             "          fourth.txt  <== selected",
-            "          second.rs",
-            "          third.rs"
+            "          second.txt",
+            "          third.txt"
         ],
         "File list should be different after rename confirmation"
     );
