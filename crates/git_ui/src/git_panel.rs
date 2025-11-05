@@ -3966,9 +3966,21 @@ impl GitPanel {
             .active_repository(cx)
             .expect("active repository must be set");
         let repo = active_repo.read(cx);
+        // Checking for current staged/unstaged file status is a chained operation:
+        // 1. first, we check for any pending operation recorded in repository
+        // 2. if there are no pending ops either running or finished, we then ask the repository
+        //    for the most up-to-date file status read from disk - we do this since `entry` arg to this function `render_entry`
+        //    is likely to be staled, and may lead to weird artifacts in the form of subsecond auto-uncheck/check on
+        //    the checkbox's state (or flickering) which is undesirable.
+        // 3. finally, if there is no info about this `entry` in the repo, we fall back to whatever status is encoded
+        //    in `entry` arg.
         let is_staging_or_staged = repo
             .pending_ops_for_path(&entry.repo_path)
             .map(|ops| ops.staging() || ops.staged())
+            .or_else(|| {
+                repo.status_for_path(&entry.repo_path)
+                    .map(|status| status.status.staging().has_staged())
+            })
             .unwrap_or(entry.staging.has_staged());
         let mut is_staged: ToggleState = is_staging_or_staged.into();
         if self.show_placeholders && !self.has_staged_changes() && !entry.status.is_created() {
