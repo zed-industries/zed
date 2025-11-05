@@ -3076,15 +3076,13 @@ async fn test_preview_edits(cx: &mut TestAppContext) {
                 .map(|(range, text)| {
                     (
                         buffer.anchor_before(range.start)..buffer.anchor_after(range.end),
-                        text.to_string(),
+                        text.into(),
                     )
                 })
-                .collect::<Vec<_>>()
+                .collect::<Arc<[_]>>()
         });
         let edit_preview = buffer
-            .read_with(cx, |buffer, cx| {
-                buffer.preview_edits(edits.clone().into(), cx)
-            })
+            .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))
             .await;
         let highlighted_edits = cx.read(|cx| {
             edit_preview.highlight_edits(&buffer.read(cx).snapshot(), &edits, include_deletions, cx)

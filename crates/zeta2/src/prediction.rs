@@ -29,7 +29,7 @@ impl std::fmt::Display for EditPredictionId {
 #[derive(Clone)]
 pub struct EditPrediction {
     pub id: EditPredictionId,
-    pub edits: Arc<[(Range<Anchor>, String)]>,
+    pub edits: Arc<[(Range<Anchor>, Arc<str>)]>,
     pub snapshot: BufferSnapshot,
     pub edit_preview: EditPreview,
     // We keep a reference to the buffer so that we do not need to reload it from disk when applying the prediction.
@@ -103,17 +103,12 @@ impl EditPrediction {
             }
         })?;
 
-        // todo! use Arc<str> later too
-        let edits = edits
-            .into_iter()
-            .map(|(r, e)| (r, e.to_string()))
-            .collect::<Vec<_>>();
-
         let (buffer, edits, snapshot, edit_preview_task) = edited_buffer
             .read_with(cx, |buffer, cx| {
                 let new_snapshot = buffer.snapshot();
                 let edits: Arc<[_]> =
                     interpolate_edits(&edited_buffer_snapshot, &new_snapshot, edits.into())?.into();
+
                 Some((
                     active_buffer.clone(),
                     edits.clone(),
@@ -138,7 +133,7 @@ impl EditPrediction {
     pub fn interpolate(
         &self,
         new_snapshot: &TextBufferSnapshot,
-    ) -> Option<Vec<(Range<Anchor>, String)>> {
+    ) -> Option<Vec<(Range<Anchor>, Arc<str>)>> {
         interpolate_edits(&self.snapshot, new_snapshot, self.edits.clone())
     }
 
@@ -159,8 +154,8 @@ impl std::fmt::Debug for EditPrediction {
 pub fn interpolate_edits(
     old_snapshot: &TextBufferSnapshot,
     new_snapshot: &TextBufferSnapshot,
-    current_edits: Arc<[(Range<Anchor>, String)]>,
-) -> Option<Vec<(Range<Anchor>, String)>> {
+    current_edits: Arc<[(Range<Anchor>, Arc<str>)]>,
+) -> Option<Vec<(Range<Anchor>, Arc<str>)>> {
     let mut edits = Vec::new();
 
     let mut model_edits = current_edits.iter().peekable();
@@ -169,7 +164,7 @@ pub fn interpolate_edits(
             let model_old_range = model_old_range.to_offset(old_snapshot);
             if model_old_range.end < user_edit.old.start {
                 let (model_old_range, model_new_text) = model_edits.next().unwrap();
-                edits.push((model_old_range.clone(), model_new_text.to_string()));
+                edits.push((model_old_range.clone(), model_new_text.clone()));
             } else {
                 break;
             }
@@ -185,7 +180,7 @@ pub fn interpolate_edits(
                 if let Some(model_suffix) = model_new_text.strip_prefix(&user_new_text) {
                     if !model_suffix.is_empty() {
                         let anchor = old_snapshot.anchor_after(user_edit.old.end);
-                        edits.push((anchor..anchor, model_suffix.to_string()));
+                        edits.push((anchor..anchor, model_suffix.into()));
                     }
 
                     model_edits.next();
@@ -211,13 +206,8 @@ mod tests {
     #[gpui::test]
     async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         let buffer = cx.new(|cx| Buffer::local("Lorem ipsum dolor", cx));
-        let edits: Arc<[(Range<Anchor>, String)]> = cx.update(|cx| {
-            to_prediction_edits(
-                [(2..5, "REM".to_string()), (9..11, "".to_string())],
-                &buffer,
-                cx,
-            )
-            .into()
+        let edits: Arc<[(Range<Anchor>, Arc<str>)]> = cx.update(|cx| {
+            to_prediction_edits([(2..5, "REM".into()), (9..11, "".into())], &buffer, cx).into()
         });
 
         let edit_preview = cx
@@ -239,7 +229,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
+                vec![(2..5, "REM".into()), (9..11, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "")], None, cx));
@@ -249,7 +239,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(2..2, "REM".to_string()), (6..8, "".to_string())]
+                vec![(2..2, "REM".into()), (6..8, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.undo(cx));
@@ -259,7 +249,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
+                vec![(2..5, "REM".into()), (9..11, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "R")], None, cx));
@@ -269,7 +259,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(3..3, "EM".to_string()), (7..9, "".to_string())]
+                vec![(3..3, "EM".into()), (7..9, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(3..3, "E")], None, cx));
@@ -279,7 +269,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(4..4, "M".to_string()), (8..10, "".to_string())]
+                vec![(4..4, "M".into()), (8..10, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "M")], None, cx));
@@ -289,7 +279,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(9..11, "".to_string())]
+                vec![(9..11, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "")], None, cx));
@@ -299,7 +289,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(4..4, "M".to_string()), (8..10, "".to_string())]
+                vec![(4..4, "M".into()), (8..10, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(8..10, "")], None, cx));
@@ -309,7 +299,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(4..4, "M".to_string())]
+                vec![(4..4, "M".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(4..6, "")], None, cx));
@@ -318,10 +308,10 @@ mod tests {
     }
 
     fn to_prediction_edits(
-        iterator: impl IntoIterator<Item = (Range<usize>, String)>,
+        iterator: impl IntoIterator<Item = (Range<usize>, Arc<str>)>,
         buffer: &Entity<Buffer>,
         cx: &App,
-    ) -> Vec<(Range<Anchor>, String)> {
+    ) -> Vec<(Range<Anchor>, Arc<str>)> {
         let buffer = buffer.read(cx);
         iterator
             .into_iter()
@@ -335,10 +325,10 @@ mod tests {
     }
 
     fn from_prediction_edits(
-        editor_edits: &[(Range<Anchor>, String)],
+        editor_edits: &[(Range<Anchor>, Arc<str>)],
         buffer: &Entity<Buffer>,
         cx: &App,
-    ) -> Vec<(Range<usize>, String)> {
+    ) -> Vec<(Range<usize>, Arc<str>)> {
         let buffer = buffer.read(cx);
         editor_edits
             .iter()

@@ -22909,7 +22909,7 @@ async fn assert_highlighted_edits(
     let text_anchor_edits = edits
         .clone()
         .into_iter()
-        .map(|(range, edit)| (range.start.text_anchor..range.end.text_anchor, edit))
+        .map(|(range, edit)| (range.start.text_anchor..range.end.text_anchor, edit.into()))
         .collect::<Vec<_>>();
 
     let edit_preview = window

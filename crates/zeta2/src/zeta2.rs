@@ -226,7 +226,7 @@ impl CurrentEditPrediction {
         {
             let (old_range, old_text) = &old_edits[0];
             let (new_range, new_text) = &new_edits[0];
-            new_range == old_range && new_text.starts_with(old_text)
+            new_range == old_range && new_text.starts_with(old_text.as_ref())
         } else {
             true
         }
@@ -1634,7 +1634,7 @@ mod tests {
             prediction.edits[0].0.to_point(&snapshot).start,
             language::Point::new(1, 3)
         );
-        assert_eq!(prediction.edits[0].1, " are you?");
+        assert_eq!(prediction.edits[0].1.as_ref(), " are you?");
     }
 
     #[gpui::test]
@@ -1712,7 +1712,7 @@ mod tests {
             prediction.edits[0].0.to_point(&snapshot).start,
             language::Point::new(1, 3)
         );
-        assert_eq!(prediction.edits[0].1, " are you?");
+        assert_eq!(prediction.edits[0].1.as_ref(), " are you?");
     }
 
     #[gpui::test]
