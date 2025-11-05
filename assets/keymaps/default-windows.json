@@ -41,7 +41,8 @@
       "shift-f11": "debugger::StepOut",
       "f11": "zed::ToggleFullScreen",
       "ctrl-shift-i": "edit_prediction::ToggleMenu",
-      "shift-alt-l": "lsp_tool::ToggleMenu"
+      "shift-alt-l": "lsp_tool::ToggleMenu",
+      "ctrl-alt-.": "project_panel::ToggleHideHidden"
     }
   },
   {
@@ -738,14 +739,6 @@
       "tab": "editor::ComposeCompletion"
     }
   },
-  {
-    "context": "Editor && in_snippet",
-    "use_key_equivalents": true,
-    "bindings": {
-      "alt-right": "editor::NextSnippetTabstop",
-      "alt-left": "editor::PreviousSnippetTabstop"
-    }
-  },
   // Bindings for accepting edit predictions
   //
   // alt-l is provided as an alternative to tab/alt-tab. and will be displayed in the UI. This is
@@ -953,6 +946,7 @@
       "ctrl-g ctrl-g": "git::Fetch",
       "ctrl-g up": "git::Push",
       "ctrl-g down": "git::Pull",
+      "ctrl-g shift-down": "git::PullRebase",
       "ctrl-g shift-up": "git::ForcePush",
       "ctrl-g d": "git::Diff",
       "ctrl-g backspace": "git::RestoreTrackedFiles",

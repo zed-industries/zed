@@ -3366,7 +3366,19 @@ impl BufferSnapshot {
     pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayer<'_>> {
         let offset = position.to_offset(self);
         self.syntax_layers_for_range(offset..offset, false)
-            .filter(|l| l.node().end_byte() > offset)
+            .filter(|l| {
+                if let Some(ranges) = l.included_sub_ranges {
+                    ranges.iter().any(|range| {
+                        let start = range.start.to_offset(self);
+                        start <= offset && {
+                            let end = range.end.to_offset(self);
+                            offset < end
+                        }
+                    })
+                } else {
+                    l.node().start_byte() <= offset && l.node().end_byte() > offset
+                }
+            })
             .last()
     }
 

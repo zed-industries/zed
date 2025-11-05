@@ -93,7 +93,7 @@ async fn capture_unix(
 
     // Parse the JSON output from zed --printenv
     let env_map: collections::HashMap<String, String> = serde_json::from_str(&env_output)
-        .with_context(|| "Failed to deserialize environment variables from json")?;
+        .with_context(|| "Failed to deserialize environment variables from json: {env_output}")?;
     Ok(env_map)
 }
 
@@ -172,12 +172,37 @@ async fn capture_windows(
             );
             output
         }
+        ShellKind::Elvish => {
+            let output = crate::command::new_smol_command(shell_path)
+                .args([
+                    "-c",
+                    &format!(
+                        "cd '{}'; {} --printenv",
+                        directory.display(),
+                        zed_path.display()
+                    ),
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .await?;
+
+            anyhow::ensure!(
+                output.status.success(),
+                "Elvish command failed with {}. stdout: {:?}, stderr: {:?}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            output
+        }
         ShellKind::Nushell => {
             let output = crate::command::new_smol_command(shell_path)
                 .args([
                     "-c",
                     &format!(
-                        "cd '{}'; {}{} --printenv",
+                        "cd '{}'; {}'{}' --printenv",
                         directory.display(),
                         shell_kind
                             .command_prefix()
@@ -206,7 +231,7 @@ async fn capture_windows(
                 .args([
                     "/c",
                     &format!(
-                        "cd '{}'; {} --printenv",
+                        "cd '{}'; '{}' --printenv",
                         directory.display(),
                         zed_path.display()
                     ),
@@ -232,5 +257,5 @@ async fn capture_windows(
 
     // Parse the JSON output from zed --printenv
     serde_json::from_str(&env_output)
-        .with_context(|| "Failed to deserialize environment variables from json")
+        .with_context(|| "Failed to deserialize environment variables from json: {env_output}")
 }

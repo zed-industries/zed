@@ -163,7 +163,10 @@ use rpc::{ErrorCode, ErrorExt, proto::PeerId};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager};
 use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
-use settings::{GitGutterSetting, Settings, SettingsLocation, SettingsStore, update_settings_file};
+use settings::{
+    GitGutterSetting, RelativeLineNumbers, Settings, SettingsLocation, SettingsStore,
+    update_settings_file,
+};
 use smallvec::{SmallVec, smallvec};
 use snippet::Snippet;
 use std::{
@@ -2456,10 +2459,6 @@ impl Editor {
         key_context.set("mode", mode);
         if self.pending_rename.is_some() {
             key_context.add("renaming");
-        }
-
-        if !self.snippet_stack.is_empty() {
-            key_context.add("in_snippet");
         }
 
         match self.context_menu.borrow().as_ref() {
@@ -7573,7 +7572,14 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.show_edit_predictions_in_menu() {
+        // Ensure that the edit prediction preview is updated, even when not
+        // enabled, if there's an active edit prediction preview.
+        if self.show_edit_predictions_in_menu()
+            || matches!(
+                self.edit_prediction_preview,
+                EditPredictionPreview::Active { .. }
+            )
+        {
             self.update_edit_prediction_preview(&modifiers, window, cx);
         }
 
@@ -7593,18 +7599,17 @@ impl Editor {
         )
     }
 
-    fn multi_cursor_modifier(invert: bool, modifiers: &Modifiers, cx: &mut Context<Self>) -> bool {
-        let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
-        if invert {
-            match multi_cursor_setting {
-                MultiCursorModifier::Alt => modifiers.alt,
-                MultiCursorModifier::CmdOrCtrl => modifiers.secondary(),
-            }
-        } else {
-            match multi_cursor_setting {
-                MultiCursorModifier::Alt => modifiers.secondary(),
-                MultiCursorModifier::CmdOrCtrl => modifiers.alt,
-            }
+    fn is_cmd_or_ctrl_pressed(modifiers: &Modifiers, cx: &mut Context<Self>) -> bool {
+        match EditorSettings::get_global(cx).multi_cursor_modifier {
+            MultiCursorModifier::Alt => modifiers.secondary(),
+            MultiCursorModifier::CmdOrCtrl => modifiers.alt,
+        }
+    }
+
+    fn is_alt_pressed(modifiers: &Modifiers, cx: &mut Context<Self>) -> bool {
+        match EditorSettings::get_global(cx).multi_cursor_modifier {
+            MultiCursorModifier::Alt => modifiers.alt,
+            MultiCursorModifier::CmdOrCtrl => modifiers.secondary(),
         }
     }
 
@@ -7613,9 +7618,9 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Option<ColumnarMode> {
         if modifiers.shift && modifiers.number_of_modifiers() == 2 {
-            if Self::multi_cursor_modifier(false, modifiers, cx) {
+            if Self::is_cmd_or_ctrl_pressed(modifiers, cx) {
                 Some(ColumnarMode::FromMouse)
-            } else if Self::multi_cursor_modifier(true, modifiers, cx) {
+            } else if Self::is_alt_pressed(modifiers, cx) {
                 Some(ColumnarMode::FromSelection)
             } else {
                 None
@@ -9968,38 +9973,6 @@ impl Editor {
             return;
         }
         self.outdent(&Outdent, window, cx);
-    }
-
-    pub fn next_snippet_tabstop(
-        &mut self,
-        _: &NextSnippetTabstop,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.mode.is_single_line() || self.snippet_stack.is_empty() {
-            return;
-        }
-
-        if self.move_to_next_snippet_tabstop(window, cx) {
-            self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
-            return;
-        }
-    }
-
-    pub fn previous_snippet_tabstop(
-        &mut self,
-        _: &PreviousSnippetTabstop,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.mode.is_single_line() || self.snippet_stack.is_empty() {
-            return;
-        }
-
-        if self.move_to_prev_snippet_tabstop(window, cx) {
-            self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
-            return;
-        }
     }
 
     pub fn tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
@@ -16015,7 +15988,6 @@ impl Editor {
         }
 
         fn filtered<'a>(
-            snapshot: EditorSnapshot,
             severity: GoToDiagnosticSeverityFilter,
             diagnostics: impl Iterator<Item = DiagnosticEntryRef<'a, usize>>,
         ) -> impl Iterator<Item = DiagnosticEntryRef<'a, usize>> {
@@ -16023,19 +15995,15 @@ impl Editor {
                 .filter(move |entry| severity.matches(entry.diagnostic.severity))
                 .filter(|entry| entry.range.start != entry.range.end)
                 .filter(|entry| !entry.diagnostic.is_unnecessary)
-                .filter(move |entry| !snapshot.intersects_fold(entry.range.start))
         }
 
-        let snapshot = self.snapshot(window, cx);
         let before = filtered(
-            snapshot.clone(),
             severity,
             buffer
                 .diagnostics_in_range(0..selection.start)
                 .filter(|entry| entry.range.start <= selection.start),
         );
         let after = filtered(
-            snapshot,
             severity,
             buffer
                 .diagnostics_in_range(selection.start..buffer.len())
@@ -16074,6 +16042,15 @@ impl Editor {
         let Some(buffer_id) = buffer.buffer_id_for_anchor(next_diagnostic_start) else {
             return;
         };
+        let snapshot = self.snapshot(window, cx);
+        if snapshot.intersects_fold(next_diagnostic.range.start) {
+            self.unfold_ranges(
+                std::slice::from_ref(&next_diagnostic.range),
+                true,
+                false,
+                cx,
+            );
+        }
         self.change_selections(Default::default(), window, cx, |s| {
             s.select_ranges(vec![
                 next_diagnostic.range.start..next_diagnostic.range.start,
@@ -19542,9 +19519,16 @@ impl Editor {
         EditorSettings::get_global(cx).gutter.line_numbers
     }
 
-    pub fn should_use_relative_line_numbers(&self, cx: &mut App) -> bool {
-        self.use_relative_line_numbers
-            .unwrap_or(EditorSettings::get_global(cx).relative_line_numbers)
+    pub fn relative_line_numbers(&self, cx: &mut App) -> RelativeLineNumbers {
+        match (
+            self.use_relative_line_numbers,
+            EditorSettings::get_global(cx).relative_line_numbers,
+        ) {
+            (None, setting) => setting,
+            (Some(false), _) => RelativeLineNumbers::Disabled,
+            (Some(true), RelativeLineNumbers::Wrapped) => RelativeLineNumbers::Wrapped,
+            (Some(true), _) => RelativeLineNumbers::Enabled,
+        }
     }
 
     pub fn toggle_relative_line_numbers(
@@ -19553,8 +19537,8 @@ impl Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let is_relative = self.should_use_relative_line_numbers(cx);
-        self.set_relative_line_number(Some(!is_relative), cx)
+        let is_relative = self.relative_line_numbers(cx);
+        self.set_relative_line_number(Some(!is_relative.enabled()), cx)
     }
 
     pub fn set_relative_line_number(&mut self, is_relative: Option<bool>, cx: &mut Context<Self>) {
@@ -24172,6 +24156,10 @@ impl EntityInputHandler for Editor {
             .display_point_to_anchor(display_point, Bias::Left);
         let utf16_offset = anchor.to_offset_utf16(&position_map.snapshot.buffer_snapshot());
         Some(utf16_offset.0)
+    }
+
+    fn accepts_text_input(&self, _window: &mut Window, _cx: &mut Context<Self>) -> bool {
+        self.input_enabled
     }
 }
 

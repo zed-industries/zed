@@ -3084,6 +3084,7 @@ impl Window {
         &mut self,
         bounds: Bounds<Pixels>,
         path: SharedString,
+        mut data: Option<&[u8]>,
         transformation: TransformationMatrix,
         color: Hsla,
         cx: &App,
@@ -3104,7 +3105,8 @@ impl Window {
         let Some(tile) =
             self.sprite_atlas
                 .get_or_insert_with(&params.clone().into(), &mut || {
-                    let Some((size, bytes)) = cx.svg_renderer.render_alpha_mask(&params)? else {
+                    let Some((size, bytes)) = cx.svg_renderer.render_alpha_mask(&params, data)?
+                    else {
                         return Ok(None);
                     };
                     Ok(Some((size, Cow::Owned(bytes))))
@@ -3558,6 +3560,7 @@ impl Window {
             PlatformInput::KeyDown(KeyDownEvent {
                 keystroke: keystroke.clone(),
                 is_held: false,
+                prefer_character_input: false,
             }),
             cx,
         );
@@ -3856,17 +3859,35 @@ impl Window {
             return;
         }
 
-        for binding in match_result.bindings {
-            self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
-            if !cx.propagate_event {
-                self.dispatch_keystroke_observers(
-                    event,
-                    Some(binding.action),
-                    match_result.context_stack,
-                    cx,
-                );
-                self.pending_input_changed(cx);
-                return;
+        let skip_bindings = event
+            .downcast_ref::<KeyDownEvent>()
+            .filter(|key_down_event| key_down_event.prefer_character_input)
+            .map(|_| {
+                self.platform_window
+                    .take_input_handler()
+                    .map_or(false, |mut input_handler| {
+                        let accepts = input_handler.accepts_text_input(self, cx);
+                        self.platform_window.set_input_handler(input_handler);
+                        // If modifiers are not excessive (e.g. AltGr), and the input handler is accepting text input,
+                        // we prefer the text input over bindings.
+                        accepts
+                    })
+            })
+            .unwrap_or(false);
+
+        if !skip_bindings {
+            for binding in match_result.bindings {
+                self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
+                if !cx.propagate_event {
+                    self.dispatch_keystroke_observers(
+                        event,
+                        Some(binding.action),
+                        match_result.context_stack,
+                        cx,
+                    );
+                    self.pending_input_changed(cx);
+                    return;
+                }
             }
         }
 
@@ -3975,6 +3996,7 @@ impl Window {
             let event = KeyDownEvent {
                 keystroke: replay.keystroke.clone(),
                 is_held: false,
+                prefer_character_input: true,
             };
 
             cx.propagate_event = true;

@@ -95,7 +95,7 @@ impl HeadlessProject {
         });
 
         let environment =
-            cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, cx));
+            cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx));
         let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
         let toolchain_store = cx.new(|cx| {
             ToolchainStore::local(

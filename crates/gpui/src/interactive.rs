@@ -25,6 +25,10 @@ pub struct KeyDownEvent {
 
     /// Whether the key is currently held down.
     pub is_held: bool,
+
+    /// Whether to prefer character input over keybindings for this keystroke.
+    /// In some cases, like AltGr on Windows, modifiers are significant for character input.
+    pub prefer_character_input: bool,
 }
 
 impl Sealed for KeyDownEvent {}

@@ -496,21 +496,25 @@ pub struct Edit<D> {
     pub old: Range<D>,
     pub new: Range<D>,
 }
-
 impl<D> Edit<D>
 where
-    D: Sub<D, Output = D> + PartialEq + Copy,
+    D: PartialEq,
 {
-    pub fn old_len(&self) -> D {
+    pub fn is_empty(&self) -> bool {
+        self.old.start == self.old.end && self.new.start == self.new.end
+    }
+}
+
+impl<D, DDelta> Edit<D>
+where
+    D: Sub<D, Output = DDelta> + Copy,
+{
+    pub fn old_len(&self) -> DDelta {
         self.old.end - self.old.start
     }
 
-    pub fn new_len(&self) -> D {
+    pub fn new_len(&self) -> DDelta {
         self.new.end - self.new.start
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.old.start == self.old.end && self.new.start == self.new.end
     }
 }
 

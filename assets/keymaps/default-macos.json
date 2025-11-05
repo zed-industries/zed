@@ -49,7 +49,8 @@
       "ctrl-cmd-f": "zed::ToggleFullScreen",
       "ctrl-cmd-z": "edit_prediction::RateCompletions",
       "ctrl-cmd-i": "edit_prediction::ToggleMenu",
-      "ctrl-cmd-l": "lsp_tool::ToggleMenu"
+      "ctrl-cmd-l": "lsp_tool::ToggleMenu",
+      "cmd-alt-.": "project_panel::ToggleHideHidden"
     }
   },
   {
@@ -805,14 +806,6 @@
     }
   },
   {
-    "context": "Editor && in_snippet",
-    "use_key_equivalents": true,
-    "bindings": {
-      "alt-right": "editor::NextSnippetTabstop",
-      "alt-left": "editor::PreviousSnippetTabstop"
-    }
-  },
-  {
     "context": "Editor && edit_prediction",
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
@@ -1037,6 +1030,7 @@
       "ctrl-g ctrl-g": "git::Fetch",
       "ctrl-g up": "git::Push",
       "ctrl-g down": "git::Pull",
+      "ctrl-g shift-down": "git::PullRebase",
       "ctrl-g shift-up": "git::ForcePush",
       "ctrl-g d": "git::Diff",
       "ctrl-g backspace": "git::RestoreTrackedFiles",

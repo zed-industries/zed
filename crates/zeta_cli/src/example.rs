@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    cell::RefCell,
     env,
     fmt::{self, Display},
     fs,
@@ -7,12 +8,16 @@ use std::{
     mem,
     ops::Range,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use anyhow::{Context as _, Result};
 use clap::ValueEnum;
-use collections::HashSet;
-use futures::AsyncWriteExt as _;
+use collections::{HashMap, HashSet};
+use futures::{
+    AsyncWriteExt as _,
+    lock::{Mutex, OwnedMutexGuard},
+};
 use gpui::{AsyncApp, Entity, http_client::Url};
 use language::Buffer;
 use project::{Project, ProjectPath};
@@ -27,13 +32,13 @@ const EXPECTED_EXCERPTS_HEADING: &str = "Expected Excerpts";
 const REPOSITORY_URL_FIELD: &str = "repository_url";
 const REVISION_FIELD: &str = "revision";
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NamedExample {
     pub name: String,
     pub example: Example,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Example {
     pub repository_url: String,
     pub revision: String,
@@ -45,10 +50,13 @@ pub struct Example {
     pub expected_excerpts: Vec<ExpectedExcerpt>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ExpectedExcerpt {
-    path: PathBuf,
-    text: String,
+pub type ExpectedExcerpt = Excerpt;
+pub type ActualExcerpt = Excerpt;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Excerpt {
+    pub path: PathBuf,
+    pub text: String,
 }
 
 #[derive(ValueEnum, Debug, Clone)]
@@ -171,6 +179,7 @@ impl NamedExample {
                     } else if current_section.eq_ignore_ascii_case(EXPECTED_PATCH_HEADING) {
                         named.example.expected_patch = mem::take(&mut text);
                     } else if current_section.eq_ignore_ascii_case(EXPECTED_EXCERPTS_HEADING) {
+                        // TODO: "…" should not be a part of the excerpt
                         named.example.expected_excerpts.push(ExpectedExcerpt {
                             path: block_info.into(),
                             text: mem::take(&mut text),
@@ -202,7 +211,6 @@ impl NamedExample {
         }
     }
 
-    #[allow(unused)]
     pub async fn setup_worktree(&self) -> Result<PathBuf> {
         let (repo_owner, repo_name) = self.repo_name()?;
         let file_name = self.file_name();
@@ -213,6 +221,8 @@ impl NamedExample {
         fs::create_dir_all(&worktrees_dir)?;
 
         let repo_dir = repos_dir.join(repo_owner.as_ref()).join(repo_name.as_ref());
+        let repo_lock = lock_repo(&repo_dir).await;
+
         if !repo_dir.is_dir() {
             fs::create_dir_all(&repo_dir)?;
             run_git(&repo_dir, &["init"]).await?;
@@ -255,6 +265,7 @@ impl NamedExample {
             )
             .await?;
         }
+        drop(repo_lock);
 
         // Apply the uncommitted diff for this example.
         if !self.example.uncommitted_diff.is_empty() {
@@ -419,6 +430,23 @@ impl Display for NamedExample {
     }
 }
 
+thread_local! {
+    static REPO_LOCKS: RefCell<HashMap<PathBuf, Arc<Mutex<()>>>> = RefCell::new(HashMap::default());
+}
+
+#[must_use]
+pub async fn lock_repo(path: impl AsRef<Path>) -> OwnedMutexGuard<()> {
+    REPO_LOCKS
+        .with(|cell| {
+            cell.borrow_mut()
+                .entry(path.as_ref().to_path_buf())
+                .or_default()
+                .clone()
+        })
+        .lock_owned()
+        .await
+}
+
 #[must_use]
 pub async fn apply_diff(
     diff: &str,
@@ -487,7 +515,7 @@ pub async fn apply_diff(
                     });
                 }
             }
-            DiffLine::HunkHeader(_) | DiffLine::Garbage => {}
+            DiffLine::HunkHeader(_) | DiffLine::Garbage(_) => {}
         }
 
         let at_hunk_end = match diff_lines.peek() {

@@ -543,6 +543,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         _branch: String,
         _remote: String,
+        _rebase: bool,
         _askpass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
         _cx: AsyncApp,

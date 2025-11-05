@@ -8,107 +8,110 @@
 ; to other areas too.
 
 <all>
-  = @ConradIrwin
-  = @maxdeviant
-  = @SomeoneToIgnore
-  = @probably-neb
-  = @danilo-leal
-  = @Veykril
-  = @kubkon
-  = @p1n3appl3
-  = @dinocosta
-  = @smitbarmase
   = @cole-miller
+  = @ConradIrwin
+  = @danilo-leal
+  = @dinocosta
   = @HactarCE
-
-vim
-  = @ConradIrwin
-  = @probably-neb
+  = @kubkon
+  = @maxdeviant
   = @p1n3appl3
-  = @dinocosta
-
-gpui
-  = @mikayla-maki
-
-git
-  = @cole-miller
-  = @danilo-leal
-
-linux
-  = @dvdsk
+  = @probably-neb
   = @smitbarmase
-  = @p1n3appl3
-  = @cole-miller
-  = @probably-neb
-
-windows
-  = @reflectronic
-  = @localcc
-
-pickers
-  = @p1n3appl3
-  = @dvdsk
   = @SomeoneToIgnore
+  = @Veykril
+
+ai
+  = @benbrandt
+  = @bennetbo
+  = @danilo-leal
+  = @rtfeldman
 
 audio
   = @dvdsk
-
-helix
-  = @kubkon
-
-terminal
-  = @kubkon
-  = @Veykril
-
-debugger
-  = @kubkon
-  = @osiewicz
-  = @Anthony-Eid
-
-extension
-  = @kubkon
-
-settings_ui
-  = @probably-neb
-  = @danilo-leal
-  = @Anthony-Eid
 
 crashes
   = @p1n3appl3
   = @Veykril
 
-ai
-  = @rtfeldman
-  = @danilo-leal
-  = @benbrandt
-  = @bennetbo
+debugger
+  = @Anthony-Eid
+  = @kubkon
+  = @osiewicz
 
 design
   = @danilo-leal
+
+docs
+  = @probably-neb
+
+extension
+  = @kubkon
+
+git
+  = @cole-miller
+  = @danilo-leal
+
+gpui
+  = @Anthony-Eid
+  = @cameron1024
+  = @mikayla-maki
+  = @probably-neb
+
+helix
+  = @kubkon
+
+languages
+  = @osiewicz
+  = @probably-neb
+  = @smitbarmase
+  = @SomeoneToIgnore
+  = @Veykril
+
+linux
+  = @cole-miller
+  = @dvdsk
+  = @p1n3appl3
+  = @probably-neb
+  = @smitbarmase
+
+lsp
+  = @osiewicz
+  = @smitbarmase
+  = @SomeoneToIgnore
+  = @Veykril
 
 multi_buffer
   = @Veykril
   = @SomeoneToIgnore
 
-lsp
-  = @osiewicz
-  = @Veykril
-  = @smitbarmase
+pickers
+  = @dvdsk
+  = @p1n3appl3
   = @SomeoneToIgnore
-
-languages
-  = @osiewicz
-  = @Veykril
-  = @smitbarmase
-  = @SomeoneToIgnore
-  = @probably-neb
 
 project_panel
   = @smitbarmase
+
+settings_ui
+  = @Anthony-Eid
+  = @danilo-leal
+  = @probably-neb
 
 tasks
   = @SomeoneToIgnore
   = @Veykril
 
-docs
+terminal
+  = @kubkon
+  = @Veykril
+
+vim
+  = @ConradIrwin
+  = @dinocosta
+  = @p1n3appl3
   = @probably-neb
+
+windows
+  = @localcc
+  = @reflectronic

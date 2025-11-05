@@ -331,6 +331,16 @@ impl AutoUpdater {
 
     pub fn start_polling(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         cx.spawn(async move |this, cx| {
+            #[cfg(target_os = "windows")]
+            {
+                use util::ResultExt;
+
+                cleanup_windows()
+                    .await
+                    .context("failed to cleanup old directories")
+                    .log_err();
+            }
+
             loop {
                 this.update(cx, |this, cx| this.poll(UpdateCheckType::Automatic, cx))?;
                 cx.background_executor().timer(POLL_INTERVAL).await;
@@ -921,6 +931,32 @@ async fn install_release_macos(
     );
 
     Ok(None)
+}
+
+#[cfg(target_os = "windows")]
+async fn cleanup_windows() -> Result<()> {
+    use util::ResultExt;
+
+    let parent = std::env::current_exe()?
+        .parent()
+        .context("No parent dir for Zed.exe")?
+        .to_owned();
+
+    // keep in sync with crates/auto_update_helper/src/updater.rs
+    smol::fs::remove_dir(parent.join("updates"))
+        .await
+        .context("failed to remove updates dir")
+        .log_err();
+    smol::fs::remove_dir(parent.join("install"))
+        .await
+        .context("failed to remove install dir")
+        .log_err();
+    smol::fs::remove_dir(parent.join("old"))
+        .await
+        .context("failed to remove old version dir")
+        .log_err();
+
+    Ok(())
 }
 
 async fn install_release_windows(downloaded_installer: PathBuf) -> Result<Option<PathBuf>> {

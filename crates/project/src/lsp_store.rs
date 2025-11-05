@@ -238,7 +238,7 @@ pub struct DocumentDiagnostics {
     version: Option<i32>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct DynamicRegistrations {
     did_change_watched_files: HashMap<String, Vec<FileSystemWatcher>>,
     diagnostics: HashMap<Option<String>, DiagnosticServerCapabilities>,
@@ -12062,14 +12062,11 @@ impl LspStore {
                             .context("Could not obtain Language Servers state")?;
                         local
                             .language_server_dynamic_registrations
-                            .get_mut(&server_id)
-                            .and_then(|registrations| {
-                                registrations
-                                    .diagnostics
-                                    .insert(Some(reg.id.clone()), caps.clone())
-                            });
+                            .entry(server_id)
+                            .or_default()
+                            .diagnostics
+                            .insert(Some(reg.id.clone()), caps.clone());
 
-                        let mut can_now_provide_diagnostics = false;
                         if let LanguageServerState::Running {
                             workspace_diagnostics_refresh_tasks,
                             ..
@@ -12082,20 +12079,42 @@ impl LspStore {
                             )
                         {
                             workspace_diagnostics_refresh_tasks.insert(Some(reg.id), task);
-                            can_now_provide_diagnostics = true;
                         }
 
-                        // We don't actually care about capabilities.diagnostic_provider, but it IS relevant for the remote peer
-                        // to know that there's at least one provider. Otherwise, it will never ask us to issue documentdiagnostic calls on their behalf,
-                        // as it'll think that they're not supported.
-                        if can_now_provide_diagnostics {
-                            server.update_capabilities(|capabilities| {
-                                debug_assert!(capabilities.diagnostic_provider.is_none());
+                        let mut did_update_caps = false;
+                        server.update_capabilities(|capabilities| {
+                            if capabilities.diagnostic_provider.as_ref().is_none_or(
+                                |current_caps| {
+                                    let supports_workspace_diagnostics =
+                                        |capabilities: &DiagnosticServerCapabilities| {
+                                            match capabilities {
+                                            DiagnosticServerCapabilities::Options(
+                                                diagnostic_options,
+                                            ) => diagnostic_options.workspace_diagnostics,
+                                            DiagnosticServerCapabilities::RegistrationOptions(
+                                                diagnostic_registration_options,
+                                            ) => {
+                                                diagnostic_registration_options
+                                                    .diagnostic_options
+                                                    .workspace_diagnostics
+                                            }
+                                        }
+                                        };
+                                    // We don't actually care about capabilities.diagnostic_provider, but it IS relevant for the remote peer
+                                    // to know that there's at least one provider. Otherwise, it will never ask us to issue documentdiagnostic calls on their behalf,
+                                    // as it'll think that they're not supported.
+                                    // If we did not support any workspace diagnostics up to this point but now do, let's update.
+                                    !supports_workspace_diagnostics(current_caps)
+                                        & supports_workspace_diagnostics(&caps)
+                                },
+                            ) {
+                                did_update_caps = true;
                                 capabilities.diagnostic_provider = Some(caps);
-                            });
+                            }
+                        });
+                        if did_update_caps {
+                            notify_server_capabilities_updated(&server, cx);
                         }
-
-                        notify_server_capabilities_updated(&server, cx);
                     }
                 }
                 "textDocument/documentColor" => {
@@ -12330,10 +12349,7 @@ impl LspStore {
             .update(cx, |buffer, _| buffer.wait_for_version(version))?
             .await?;
         lsp_store.update(cx, |lsp_store, cx| {
-            let lsp_data = lsp_store
-                .lsp_data
-                .entry(buffer_id)
-                .or_insert_with(|| BufferLspData::new(&buffer, cx));
+            let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
             let chunks_queried_for = lsp_data
                 .inlay_hints
                 .applicable_chunks(&[range])
