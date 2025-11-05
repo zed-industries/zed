@@ -1571,22 +1571,25 @@
       // surrounding symbols or quotes
       [
         "(?x)",
-        "# optionally starts with prefix symbols or quotes not part of `path`",
-        "(?<paren>[(])?(?<brace>[{])?(?<bracket>[\\[])?(?<angle>[<])?(?<quote>[\"'`])?",
-        "(?<path>[^ ]+? # `path` is the shortest sequence of any non-space character",
+        "# optionally starts with 0-2 opening prefix symbols",
+        "[({\\[<]{0,2}",
+        "# which may be followed by an opening quote",
+        "(?<quote>[\"'`])?",
+        "# `path` is the shortest sequence of any non-space character",
+        "(?<path>[^ ]+?",
         "    # which may end with a line and optionally a column,",
         "    (?<line_column>:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))?",
         ")",
-        "# which must be followed by,",
-        "# matching closing symbols if any corresponding open symbols were found, then",
-        "(?(<quote>)\\k<quote>)(?(<paren>)[)]?)(?(<brace>)[}]?)(?(<bracket>)[\\]]?)(?(<angle>)[>]?)",
-        "(?(<line_column>)",
-        "    # if line/column matched, may include a description followed by trailing punctuation",
-        "    (:[^ 0-9][^ ]*|[.,:)}\\]>]*)?|",
-        "    # otherwise, may include trailing punctuation",
-        "    (?<![.,:)}\\]>])[.,:)}\\]>]*",
-        ")",
-        "([ ]+|$) # and always includes trailing whitespace or end of line"
+        "# which must be followed by a matching quote",
+        "(?(<quote>)\\k<quote>)",
+        "# and optionally a single closing symbol",
+        "[)}\\]>]?",
+        "# if line/column matched, may be followed by a description",
+        "(?(<line_column>):[^ 0-9][^ ]*)?",
+        "# which may be followed by trailing punctuation",
+        "[.,:)}\\]>]*",
+        "# and always includes trailing whitespace or end of line",
+        "([ ]+|$)"
       ]
     ],
     // Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
