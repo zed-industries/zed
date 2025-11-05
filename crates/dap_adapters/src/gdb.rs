@@ -234,10 +234,10 @@ impl DebugAdapter for GdbDebugAdapter {
                 .or_insert_with(|| delegate.worktree_root_path().to_string_lossy().into());
         }
 
-        // Extract env from config if present, ensuring type matches HashMap<String, String, FxBuildHasher>
-        let mut user_env = user_env.unwrap_or_default();
+        let mut base_env = delegate.shell_env().await;
+        base_env.extend(user_env.unwrap_or_default());
 
-        let envs: HashMap<String, String> = config
+        let config_env: HashMap<String, String> = config
             .config
             .get("env")
             .and_then(|v| v.as_object())
@@ -248,12 +248,12 @@ impl DebugAdapter for GdbDebugAdapter {
             })
             .unwrap_or_else(HashMap::default);
 
-        user_env.extend(envs);
+        base_env.extend(config_env);
 
         Ok(DebugAdapterBinary {
             command: Some(gdb_path),
             arguments: gdb_args,
-            envs: user_env,
+            envs: base_env,
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
             connection: None,
             request_args: StartDebuggingRequestArguments {
