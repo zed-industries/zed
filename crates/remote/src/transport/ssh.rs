@@ -1070,14 +1070,21 @@ impl SshSocket {
     }
 
     async fn shell(&self) -> String {
+        let default_shell = "sh";
         match self
             .run_command(ShellKind::Posix, "sh", &["-c", "echo $SHELL"])
             .await
         {
-            Ok(shell) => shell.trim().to_owned(),
+            Ok(shell) => match shell.trim() {
+                "" => {
+                    log::error!("$SHELL is not set, falling back to {default_shell}");
+                    default_shell.to_owned()
+                }
+                shell => shell.to_owned(),
+            },
             Err(e) => {
                 log::error!("Failed to get shell: {e}");
-                "sh".to_owned()
+                default_shell.to_owned()
             }
         }
     }
