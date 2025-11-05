@@ -982,50 +982,22 @@ impl GitRepository for RealGitRepository {
     ) -> BoxFuture<'_, anyhow::Result<()>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
+        let repository = self.repository.clone();
         self.executor
             .spawn(async move {
                 let working_directory = working_directory?;
-
+                let mut mode = String::from("100644");
+                {
+                    if let Ok(entry) = repository
+                        .lock()
+                        .head()
+                        .and_then(|h| h.peel_to_tree())
+                        .and_then(|t| t.get_path(path.as_std_path()))
+                    {
+                        mode = format!("{:06o}", entry.filemode());
+                    }
+                }
                 if let Some(content) = content {
-                    let output = new_smol_command(&git_binary_path)
-                        .current_dir(&working_directory)
-                        .envs(env.iter())
-                        .args(["ls-files", "-s", "--"])
-                        .arg(path.as_unix_str())
-                        .output()
-                        .await?;
-
-                    let mut mode: String = String::new();
-                    if output.status.success() {
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        if let Some(first) = stdout.lines().next() {
-                            if let Some(m) = first.split_whitespace().next() {
-                                mode = m.to_string();
-                            }
-                        }
-                    }
-
-                    if mode.is_empty() {
-                        let output = new_smol_command(&git_binary_path)
-                            .current_dir(&working_directory)
-                            .envs(env.iter())
-                            .args(["ls-tree", "HEAD", "--"])
-                            .arg(path.as_unix_str())
-                            .output()
-                            .await?;
-
-                        if output.status.success() {
-                            let stdout = String::from_utf8_lossy(&output.stdout);
-                            if let Some(first) = stdout.lines().next() {
-                                if let Some(m) = first.split_whitespace().next() {
-                                    mode = m.to_string();
-                                }
-                            }
-                        }
-                    }
-                    if mode.is_empty() {
-                        mode = "100644".to_string();
-                    }
                     let mut child = new_smol_command(&git_binary_path)
                         .current_dir(&working_directory)
                         .envs(env.iter())
