@@ -1,19 +1,19 @@
 use command_palette_hooks::CommandPaletteFilter;
 use editor::{Anchor, Editor, ExcerptId, SelectionEffects, scroll::Autoscroll};
 use gpui::{
-    App, AppContext as _, Context, Div, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
-    ParentElement, Render, ScrollStrategy, SharedString, Styled, Task, UniformListScrollHandle,
-    WeakEntity, Window, actions, div, rems, uniform_list,
+    Action, App, AppContext as _, Context, Corner, Div, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
+    MouseMoveEvent, ParentElement, Render, ScrollStrategy, SharedString, Styled, Task,
+    UniformListScrollHandle, WeakEntity, Window, actions, div, rems, uniform_list,
 };
 use language::{Buffer, OwnedSyntaxLayer};
 use std::{any::TypeId, mem, ops::Range};
 use theme::ActiveTheme;
 use tree_sitter::{Node, TreeCursor};
 use ui::{
-    ButtonCommon, ButtonLike, Clickable, Color, ContextMenu, FluentBuilder as _, IconButton,
-    IconName, Label, LabelCommon, LabelSize, PopoverMenu, StyledExt, Tooltip, WithScrollbar,
-    h_flex, v_flex,
+    ButtonCommon, ButtonLike, ButtonStyle, Clickable, Color, ContextMenu, FluentBuilder as _,
+    IconButton, IconName, IconPosition, IconSize, Label, LabelCommon, LabelSize, PopoverMenu,
+    PopoverMenuHandle, StyledExt, Toggleable, Tooltip, WithScrollbar, h_flex, v_flex,
 };
 use workspace::{
     Event as WorkspaceEvent, SplitDirection, ToolbarItemEvent, ToolbarItemLocation,
@@ -33,7 +33,9 @@ actions!(
     syntax_tree_view,
     [
         /// Update the syntax tree view to show the last focused file.
-        UseActiveEditor
+        UseActiveEditor,
+        /// Toggles showing semantic tokens.
+        ToggleSemanticTokens,
     ]
 );
 
@@ -98,11 +100,13 @@ pub struct SyntaxTreeView {
     selected_descendant_ix: Option<usize>,
     hovered_descendant_ix: Option<usize>,
     focus_handle: FocusHandle,
+    semantic_tokens: bool,
 }
 
 pub struct SyntaxTreeToolbarItemView {
     tree_view: Option<Entity<SyntaxTreeView>>,
     subscription: Option<gpui::Subscription>,
+    toggle_settings_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 struct EditorState {
@@ -141,6 +145,7 @@ impl SyntaxTreeView {
             hovered_descendant_ix: None,
             selected_descendant_ix: None,
             focus_handle: cx.focus_handle(),
+            semantic_tokens: true,
         };
 
         this.handle_item_updated(active_item, window, cx);
@@ -602,6 +607,7 @@ impl SyntaxTreeToolbarItemView {
         Self {
             tree_view: None,
             subscription: None,
+            toggle_settings_handle: Default::default(),
         }
     }
 
@@ -685,6 +691,52 @@ impl SyntaxTreeToolbarItemView {
             })
         })
     }
+
+    fn render_settings_button(&self, cx: &Context<Self>) -> PopoverMenu<ContextMenu> {
+        let semantic_tokens_enabled = self
+            .tree_view
+            .as_ref()
+            .map_or(false, |view| view.read(cx).semantic_tokens);
+        let tree_view = self.tree_view.as_ref().map(|v| v.downgrade());
+
+        PopoverMenu::new("syntax-tree-settings")
+            .trigger_with_tooltip(
+                IconButton::new("toggle-syntax-tree-settings-icon", IconName::Sliders)
+                    .icon_size(IconSize::Small)
+                    .style(ButtonStyle::Subtle)
+                    .toggle_state(self.toggle_settings_handle.is_deployed()),
+                Tooltip::text("Syntax Tree Settings"),
+            )
+            .anchor(Corner::TopRight)
+            .menu(move |window, cx| {
+                let menu = ContextMenu::build(window, cx, {
+                    |mut menu, _, _| {
+                        menu = menu.toggleable_entry(
+                            "Semantic Tokens",
+                            semantic_tokens_enabled,
+                            IconPosition::Start,
+                            Some(ToggleSemanticTokens.boxed_clone()),
+                            {
+                                let tree_view = tree_view.clone();
+                                move |_, cx| {
+                                    if let Some(view) = tree_view.as_ref() {
+                                        view.update(cx, |view, cx| {
+                                            view.semantic_tokens = !view.semantic_tokens;
+                                            cx.notify();
+                                        })
+                                        .ok();
+                                    }
+                                }
+                            },
+                        );
+
+                        menu
+                    }
+                });
+
+                Some(menu)
+            })
+    }
 }
 
 fn format_node_range(node: Node) -> String {
@@ -703,8 +755,15 @@ impl Render for SyntaxTreeToolbarItemView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .gap_1()
-            .children(self.render_menu(cx))
-            .children(self.render_update_button(cx))
+            .size_full()
+            .justify_between()
+            .child(
+                h_flex()
+                    .gap_1()
+                    .children(self.render_menu(cx))
+                    .children(self.render_update_button(cx)),
+            )
+            .child(self.render_settings_button(cx))
     }
 }
 
