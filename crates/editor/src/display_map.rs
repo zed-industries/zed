@@ -970,7 +970,6 @@ impl DisplaySnapshot {
         language_aware: bool,
         editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
-        // ??
         self.chunks(
             display_rows,
             language_aware,
