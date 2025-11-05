@@ -1,11 +1,8 @@
 mod decorated_icon;
 mod icon_decoration;
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-
 pub use decorated_icon::*;
-use gpui::{AnimationElement, AnyElement, Hsla, IntoElement, Rems, Transformation, img, svg};
+use gpui::{AnimationElement, AnyElement, Hsla, IntoElement, Rems, Transformation, svg};
 pub use icon_decoration::*;
 pub use icons::*;
 
@@ -115,24 +112,23 @@ impl From<IconName> for Icon {
 /// The source of an icon.
 enum IconSource {
     /// An SVG embedded in the Zed binary.
-    Svg(SharedString),
+    Embedded(SharedString),
     /// An image file located at the specified path.
     ///
     /// Currently our SVG renderer is missing support for the following features:
-    /// 1. Loading SVGs from external files.
-    /// 2. Rendering polychrome SVGs.
+    /// 1. Rendering polychrome SVGs.
     ///
     /// In order to support icon themes, we render the icons as images instead.
-    Image(Arc<Path>),
+    External(SharedString),
 }
 
 impl IconSource {
     fn from_path(path: impl Into<SharedString>) -> Self {
         let path = path.into();
         if path.starts_with("icons/") {
-            Self::Svg(path)
+            Self::Embedded(path)
         } else {
-            Self::Image(Arc::from(PathBuf::from(path.as_ref())))
+            Self::External(path)
         }
     }
 }
@@ -148,7 +144,7 @@ pub struct Icon {
 impl Icon {
     pub fn new(icon: IconName) -> Self {
         Self {
-            source: IconSource::Svg(icon.path().into()),
+            source: IconSource::Embedded(icon.path().into()),
             color: Color::default(),
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
@@ -193,14 +189,15 @@ impl Transformable for Icon {
 impl RenderOnce for Icon {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         match self.source {
-            IconSource::Svg(path) => svg()
+            IconSource::Embedded(path) => svg()
                 .with_transformation(self.transformation)
                 .size(self.size)
                 .flex_none()
                 .path(path)
                 .text_color(self.color.color(cx))
                 .into_any_element(),
-            IconSource::Image(path) => img(path)
+            IconSource::External(path) => svg()
+                .external_path(path)
                 .size(self.size)
                 .flex_none()
                 .text_color(self.color.color(cx))
