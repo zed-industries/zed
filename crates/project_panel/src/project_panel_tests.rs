@@ -2254,7 +2254,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
                 this.recent_navigation_history_iter(cx)
                     .any(|(project_path, abs_path)| {
                         project_path.path == Arc::from(rel_path("test/fourth.rs"))
-                            && abs_path == Some(PathBuf::from("/src/test/fourth.rs"))
+                            && abs_path == Some(PathBuf::from(path!("/src/test/fourth.rs")))
                     })
             );
         })
