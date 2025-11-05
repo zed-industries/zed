@@ -3618,43 +3618,43 @@ impl GitPanel {
                 .border_t_1()
                 .border_color(cx.theme().colors().border.opacity(0.8))
                 .child(
-                    div().overflow_hidden().line_clamp(1).child(
-                        div()
-                            .cursor_pointer()
-                            .id("commit-msg-hover")
-                            .on_click({
-                                let commit = commit.clone();
-                                let repo = active_repository.downgrade();
-                                move |_, window, cx| {
-                                    CommitView::open(
-                                        commit.sha.to_string(),
-                                        repo.clone(),
-                                        workspace.clone(),
-                                        None,
-                                        window,
-                                        cx,
-                                    );
-                                }
-                            })
-                            .hoverable_tooltip({
-                                let repo = active_repository.clone();
-                                move |window, cx| {
-                                    GitPanelMessageTooltip::new(
-                                        this.clone(),
-                                        commit.sha.clone(),
-                                        repo.clone(),
-                                        window,
-                                        cx,
-                                    )
-                                    .into()
-                                }
-                            })
-                            .child(
-                                Label::new(commit.subject.clone())
-                                    .size(LabelSize::Small)
-                                    .truncate(),
-                            ),
-                    ),
+                    div()
+                        .cursor_pointer()
+                        .overflow_hidden()
+                        .line_clamp(1)
+                        .child(
+                            Label::new(commit.subject.clone())
+                                .size(LabelSize::Small)
+                                .truncate(),
+                        )
+                        .id("commit-msg-hover")
+                        .on_click({
+                            let commit = commit.clone();
+                            let repo = active_repository.downgrade();
+                            move |_, window, cx| {
+                                CommitView::open(
+                                    commit.sha.to_string(),
+                                    repo.clone(),
+                                    workspace.clone(),
+                                    None,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        })
+                        .hoverable_tooltip({
+                            let repo = active_repository.clone();
+                            move |window, cx| {
+                                GitPanelMessageTooltip::new(
+                                    this.clone(),
+                                    commit.sha.clone(),
+                                    repo.clone(),
+                                    window,
+                                    cx,
+                                )
+                                .into()
+                            }
+                        }),
                 )
                 .when(commit.has_parent, |this| {
                     let has_unstaged = self.has_unstaged_changes();
