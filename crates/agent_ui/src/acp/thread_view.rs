@@ -1473,6 +1473,106 @@ impl AcpThreadView {
             return;
         };
 
+        // Check for the experimental "terminal-auth" _meta field
+        let auth_method = connection.auth_methods().iter().find(|m| m.id == method);
+
+        if let Some(auth_method) = auth_method {
+            if let Some(meta) = &auth_method.meta {
+                if let Some(terminal_auth) = meta.get("terminal-auth") {
+                    // Extract terminal auth details from meta
+                    if let (Some(command), Some(label)) = (
+                        terminal_auth.get("command").and_then(|v| v.as_str()),
+                        terminal_auth.get("label").and_then(|v| v.as_str()),
+                    ) {
+                        let args = terminal_auth
+                            .get("args")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+
+                        let env = terminal_auth
+                            .get("env")
+                            .and_then(|v| v.as_object())
+                            .map(|obj| {
+                                obj.iter()
+                                    .filter_map(|(k, v)| {
+                                        v.as_str().map(|val| (k.clone(), val.to_string()))
+                                    })
+                                    .collect::<HashMap<String, String>>()
+                            })
+                            .unwrap_or_default();
+
+                        // Build SpawnInTerminal from _meta
+                        let login = task::SpawnInTerminal {
+                            id: task::TaskId(format!("external-agent-{}-login", label)),
+                            full_label: label.to_string(),
+                            label: label.to_string(),
+                            command: Some(command.to_string()),
+                            args,
+                            command_label: label.to_string(),
+                            env,
+                            use_new_terminal: true,
+                            allow_concurrent_runs: true,
+                            hide: task::HideStrategy::Always,
+                            ..Default::default()
+                        };
+
+                        self.thread_error.take();
+                        configuration_view.take();
+                        pending_auth_method.replace(method.clone());
+
+                        if let Some(workspace) = self.workspace.upgrade() {
+                            let authenticate = Self::spawn_external_agent_login(
+                                login, workspace, false, window, cx,
+                            );
+                            cx.notify();
+                            self.auth_task = Some(cx.spawn_in(window, {
+                                let agent = self.agent.clone();
+                                async move |this, cx| {
+                                    let result = authenticate.await;
+
+                                    match &result {
+                                        Ok(_) => telemetry::event!(
+                                            "Authenticate Agent Succeeded",
+                                            agent = agent.telemetry_id()
+                                        ),
+                                        Err(_) => {
+                                            telemetry::event!(
+                                                "Authenticate Agent Failed",
+                                                agent = agent.telemetry_id(),
+                                            )
+                                        }
+                                    }
+
+                                    this.update_in(cx, |this, window, cx| {
+                                        if let Err(err) = result {
+                                            if let ThreadState::Unauthenticated {
+                                                pending_auth_method,
+                                                ..
+                                            } = &mut this.thread_state
+                                            {
+                                                pending_auth_method.take();
+                                            }
+                                            this.handle_thread_error(err, cx);
+                                        } else {
+                                            this.reset(window, cx);
+                                        }
+                                        this.auth_task.take()
+                                    })
+                                    .ok();
+                                }
+                            }));
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+
         if method.0.as_ref() == "gemini-api-key" {
             let registry = LanguageModelRegistry::global(cx);
             let provider = registry
