@@ -1,4 +1,4 @@
-use crate::{PlatformDispatcher, TaskLabel};
+use crate::{PlatformDispatcher, TaskLabel, TestRng};
 use async_task::Runnable;
 use backtrace::Backtrace;
 use collections::{HashMap, HashSet, VecDeque};
@@ -25,7 +25,7 @@ pub struct TestDispatcher {
 }
 
 struct TestDispatcherState {
-    random: StdRng,
+    random: TestRng,
     foreground: HashMap<TestDispatcherId, VecDeque<Runnable>>,
     background: Vec<Runnable>,
     deprioritized_background: Vec<Runnable>,
@@ -43,7 +43,7 @@ struct TestDispatcherState {
 }
 
 impl TestDispatcher {
-    pub fn new(random: StdRng) -> Self {
+    pub fn new(random: TestRng) -> Self {
         let state = TestDispatcherState {
             random,
             foreground: HashMap::default(),
@@ -227,7 +227,7 @@ impl TestDispatcher {
         })
     }
 
-    pub fn rng(&self) -> StdRng {
+    pub fn rng(&self) -> impl Rng {
         self.state.lock().random.clone()
     }
 

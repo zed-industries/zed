@@ -140,7 +140,7 @@ fn generate_test_function(
                 if let Type::Path(ty) = &*arg.ty {
                     let last_segment = ty.path.segments.last();
                     match last_segment.map(|s| s.ident.to_string()).as_deref() {
-                        Some("StdRng") => {
+                        Some("TestRng") => {
                             inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(_seed),));
                             continue;
                         }

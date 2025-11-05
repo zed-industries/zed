@@ -54,7 +54,7 @@ pub fn run_test(
                 eprintln!("seed = {seed}");
             }
             let result = panic::catch_unwind(|| {
-                let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(seed));
+                let dispatcher = TestDispatcher::new(TestRng::seed_from_u64(seed));
                 test_fn(dispatcher, seed);
             });
 
@@ -158,4 +158,54 @@ pub fn observe<T: 'static>(entity: &Entity<T>, cx: &mut TestAppContext) -> Obser
     let rx = Box::pin(rx);
 
     Observation { rx, _subscription }
+}
+
+pub use test_rng::TestRng;
+mod test_rng {
+    type Inner = rand_chacha::ChaCha20Rng;
+
+    /// A [portable][0] RNG, suitable for use in tests.
+    ///
+    /// Given the same seed, it is guaranteed to produce the same output on all platforms. The
+    /// values may change in minor version bumps.
+    ///
+    /// [0]: https://rust-random.github.io/book/crate-reprod.html#portable-items
+    #[derive(Debug, Clone)]
+    pub struct TestRng(Inner);
+
+    impl rand::RngCore for TestRng {
+        fn next_u32(&mut self) -> u32 {
+            self.0.next_u32()
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            self.0.next_u64()
+        }
+
+        fn fill_bytes(&mut self, dst: &mut [u8]) {
+            self.0.fill_bytes(dst);
+        }
+    }
+
+    impl rand::SeedableRng for TestRng {
+        type Seed = <Inner as rand::SeedableRng>::Seed;
+        fn from_seed(seed: Self::Seed) -> Self {
+            Self(Inner::from_seed(seed))
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::TestRng;
+        use rand::{RngCore, SeedableRng};
+
+        #[test]
+        fn test_rng_produces_reproducible_values_for_known_seeds() {
+            let mut rng = TestRng::seed_from_u64(0);
+            let mut buf = [0; 10];
+            rng.fill_bytes(&mut buf);
+
+            assert_eq!(buf, [178, 247, 245, 129, 214, 222, 60, 6, 168, 34]);
+        }
+    }
 }

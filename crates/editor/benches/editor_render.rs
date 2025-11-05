@@ -3,7 +3,7 @@ use editor::{
     Editor, EditorMode, MultiBuffer,
     actions::{DeleteToPreviousWordStart, SelectAll, SplitSelectionIntoLines},
 };
-use gpui::{AppContext, Focusable as _, TestAppContext, TestDispatcher};
+use gpui::{AppContext, Focusable as _, TestAppContext, TestDispatcher, TestRng};
 use project::Project;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use settings::SettingsStore;
@@ -117,7 +117,7 @@ fn editor_render(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
 }
 
 pub fn benches() {
-    let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(1));
+    let dispatcher = TestDispatcher::new(TestRng::seed_from_u64(1));
     let cx = gpui::TestAppContext::build(dispatcher, None);
     cx.update(|cx| {
         let store = SettingsStore::test(cx);

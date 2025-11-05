@@ -22,7 +22,7 @@ use util::TryFutureExt;
 use waker_fn::waker_fn;
 
 #[cfg(any(test, feature = "test-support"))]
-use rand::rngs::StdRng;
+use rand::Rng;
 
 /// A pointer to the executor that is currently running,
 /// for spawning background tasks.
@@ -443,7 +443,7 @@ impl BackgroundExecutor {
 
     /// in tests, returns the rng used by the dispatcher and seeded by the `SEED` environment variable
     #[cfg(any(test, feature = "test-support"))]
-    pub fn rng(&self) -> StdRng {
+    pub fn rng(&self) -> impl Rng {
         self.dispatcher.as_test().unwrap().rng()
     }
 

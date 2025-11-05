@@ -8,10 +8,10 @@ use extension::{
 };
 use extension_host::wasm_host::WasmHost;
 use fs::RealFs;
-use gpui::{SemanticVersion, TestAppContext, TestDispatcher};
+use gpui::{SemanticVersion, TestAppContext, TestDispatcher, TestRng};
 use http_client::{FakeHttpClient, Response};
 use node_runtime::NodeRuntime;
-use rand::{SeedableRng, rngs::StdRng};
+use rand::SeedableRng;
 use reqwest_client::ReqwestClient;
 use serde_json::json;
 use settings::SettingsStore;
@@ -27,9 +27,9 @@ fn extension_benchmarks(c: &mut Criterion) {
     let wasm_bytes = wasm_bytes(&cx, &mut manifest);
     let manifest = Arc::new(manifest);
     let extensions_dir = TempTree::new(json!({
-        "installed": {},
-        "work": {}
-    }));
+  "installed": {},
+  "work": {}
+}));
     let wasm_host = wasm_host(&cx, &extensions_dir);
 
     group.bench_function(BenchmarkId::from_parameter(1), |b| {
@@ -48,7 +48,7 @@ fn extension_benchmarks(c: &mut Criterion) {
 
 fn init() -> TestAppContext {
     const SEED: u64 = 9999;
-    let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(SEED));
+    let dispatcher = TestDispatcher::new(TestRng::seed_from_u64(SEED));
     let cx = TestAppContext::build(dispatcher, None);
     cx.executor().allow_parking();
     cx.update(|cx| {

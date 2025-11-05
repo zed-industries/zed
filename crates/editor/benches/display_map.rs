@@ -1,19 +1,19 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use editor::MultiBuffer;
-use gpui::TestDispatcher;
+use gpui::{TestDispatcher, TestRng};
 use itertools::Itertools;
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{Rng, SeedableRng};
 use std::num::NonZeroU32;
 use text::Bias;
 use util::RandomCharIter;
 
 fn to_tab_point_benchmark(c: &mut Criterion) {
-    let rng = StdRng::seed_from_u64(1);
+    let rng = TestRng::seed_from_u64(1);
     let dispatcher = TestDispatcher::new(rng);
     let cx = gpui::TestAppContext::build(dispatcher, None);
 
     let create_tab_map = |length: usize| {
-        let mut rng = StdRng::seed_from_u64(1);
+        let mut rng = TestRng::seed_from_u64(1);
         let text = RandomCharIter::new(&mut rng)
             .take(length)
             .collect::<String>();
@@ -52,12 +52,12 @@ fn to_tab_point_benchmark(c: &mut Criterion) {
 }
 
 fn to_fold_point_benchmark(c: &mut Criterion) {
-    let rng = StdRng::seed_from_u64(1);
+    let rng = TestRng::seed_from_u64(1);
     let dispatcher = TestDispatcher::new(rng);
     let cx = gpui::TestAppContext::build(dispatcher, None);
 
     let create_tab_map = |length: usize| {
-        let mut rng = StdRng::seed_from_u64(1);
+        let mut rng = TestRng::seed_from_u64(1);
         let text = RandomCharIter::new(&mut rng)
             .take(length)
             .collect::<String>();
