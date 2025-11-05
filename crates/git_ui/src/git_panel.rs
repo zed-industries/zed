@@ -34,6 +34,8 @@ use gpui::{
     UniformListScrollHandle, WeakEntity, actions, anchored, deferred, uniform_list,
 };
 use itertools::Itertools;
+use agent_client_protocol as acp;
+use agent_servers::{AgentServer, AgentServerDelegate, ClaudeCode, Codex, Gemini};
 use language::{Buffer, File};
 use language_model::{
     ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
@@ -53,8 +55,8 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle};
 use std::future::Future;
 use std::ops::Range;
-use std::path::Path;
-use std::{collections::HashSet, sync::Arc, time::Duration, usize};
+use std::path::{Path, PathBuf};
+use std::{collections::HashSet, rc::Rc, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
@@ -1824,15 +1826,17 @@ impl GitPanel {
 
     /// Generates a commit message using an LLM.
     pub fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
-        if !self.can_commit() || !AgentSettings::get_global(cx).enabled(cx) {
+        if !self.can_commit() {
             return;
         }
 
-        let Some(ConfiguredModel { provider, model }) =
-            LanguageModelRegistry::read_global(cx).commit_message_model()
-        else {
+        let configured = LanguageModelRegistry::read_global(cx).commit_message_model();
+        if configured.is_none() || !AgentSettings::get_global(cx).enabled(cx) {
+            // Fallback to external agents via ACP if available
+            self.generate_commit_message_via_external_agent(cx);
             return;
-        };
+        }
+        let ConfiguredModel { provider, model } = configured.unwrap();
 
         let Some(repo) = self.active_repository.as_ref() else {
             return;
@@ -1953,6 +1957,235 @@ impl GitPanel {
                 anyhow::Ok(())
             }
             .log_err().await
+        }));
+    }
+
+    fn has_available_external_agent(&self, cx: &App) -> bool {
+        self.project
+            .read(cx)
+            .agent_server_store()
+            .read(cx)
+            .external_agents()
+            .any(|name| {
+                let name_str = name.0.as_ref();
+                name_str == project::agent_server_store::CODEX_NAME
+                    || name_str == project::agent_server_store::CLAUDE_CODE_NAME
+                    || name_str == project::agent_server_store::GEMINI_NAME
+            })
+    }
+
+    fn generate_commit_message_via_external_agent(&mut self, cx: &mut Context<Self>) {
+        let agent_store = self.project.read(cx).agent_server_store().read(cx);
+        let available_agents: Vec<_> = agent_store
+            .external_agents()
+            .filter_map(|name| {
+                let name_str = name.0.as_ref();
+                match name_str {
+                    project::agent_server_store::CODEX_NAME => Some(0),
+                    project::agent_server_store::CLAUDE_CODE_NAME => Some(1),
+                    project::agent_server_store::GEMINI_NAME => Some(2),
+                    _ => None,
+                }
+            })
+            .collect();
+
+        if available_agents.is_empty() {
+            return;
+        }
+
+        let Some(&priority) = available_agents.iter().min() else {
+            return;
+        };
+
+        match priority {
+            0 => self.generate_commit_message_via_agent_internal(Codex, cx),
+            1 => self.generate_commit_message_via_agent_internal(ClaudeCode, cx),
+            2 => self.generate_commit_message_via_agent_internal(Gemini, cx),
+            _ => {}
+        }
+    }
+
+    fn generate_commit_message_via_codex(&mut self, cx: &mut Context<Self>) {
+        self.generate_commit_message_via_agent_internal(Codex, cx);
+    }
+
+    fn generate_commit_message_via_agent_internal<S>(&mut self, server: S, cx: &mut Context<Self>)
+    where
+        S: AgentServer + 'static,
+    {
+        let Some(repo) = self.active_repository.as_ref() else {
+            return;
+        };
+
+        telemetry::event!("Git Commit Message Generated");
+
+        let diff = repo.update(cx, |repo, cx| {
+            if self.has_staged_changes() {
+                repo.diff(DiffType::HeadToIndex, cx)
+            } else {
+                repo.diff(DiffType::HeadToWorktree, cx)
+            }
+        });
+
+        // Prepare subject and content now to avoid borrowing 'self' in async
+        let subject = self
+            .commit_editor
+            .read(cx)
+            .text(cx)
+            .lines()
+            .next()
+            .map(ToOwned::to_owned)
+            .unwrap_or_default();
+
+        let project = self.project.clone();
+        let server_name = server.name().to_string();
+
+        self.generate_commit_message_task = Some(cx.spawn(async move |this, cx| {
+            async move {
+                let _defer = cx.on_drop(&this, |this, _cx| {
+                    this.generate_commit_message_task.take();
+                });
+
+                let mut diff_text = match diff.await {
+                    Ok(result) => match result {
+                        Ok(text) => text,
+                        Err(e) => {
+                            Self::show_commit_message_error(&this, &e, cx);
+                            return anyhow::Ok(());
+                        }
+                    },
+                    Err(e) => {
+                        Self::show_commit_message_error(&this, &e, cx);
+                        return anyhow::Ok(());
+                    }
+                };
+
+                const ONE_MB: usize = 1_000_000;
+                if diff_text.len() > ONE_MB {
+                    diff_text = diff_text.chars().take(ONE_MB).collect()
+                }
+
+                let text_empty = subject.trim().is_empty();
+                let content = if text_empty {
+                    format!(
+                        "{PROMPT}\nHere are the changes in this commit:\n{diff_text}"
+                    )
+                } else {
+                    format!(
+                        "{PROMPT}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n"
+                    )
+                };
+                const PROMPT: &str = include_str!("commit_message_prompt.txt");
+
+                // Build agent connection via ACP
+                let server = Rc::new(server);
+                let cwd: PathBuf = cx.update(|cx| {
+                    project
+                        .read(cx)
+                        .visible_worktrees(cx)
+                        .next()
+                        .map(|wt| wt.read(cx).abs_path().to_path_buf())
+                        .unwrap_or_else(|| PathBuf::from("/"))
+                })?;
+                let delegate = cx.update(|cx| {
+                    AgentServerDelegate::new(
+                        project.read(cx).agent_server_store().clone(),
+                        project.clone(),
+                        None,
+                        None,
+                    )
+                })?;
+                let connect_task = cx.update(|cx| server.connect(Some(&cwd), delegate, cx))?;
+                let (connection, _login) = match connect_task.await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        Self::show_commit_message_error(&this, &e, cx);
+                        return anyhow::Ok(());
+                    }
+                };
+
+                // New ACP thread and prompt
+                let thread_task = cx.update(|cx| connection.new_thread(project.clone(), &cwd, cx))?;
+                let thread = match thread_task.await {
+                    Ok(t) => t,
+                    Err(e) => {
+                        Self::show_commit_message_error(&this, &e, cx);
+                        return anyhow::Ok(());
+                    }
+                };
+
+                // Send the prompt content and wait for completion
+                let send_res = thread.update(cx, |thread, cx| {
+                    thread.send(
+                        vec![acp::ContentBlock::Text(acp::TextContent {
+                            text: content.clone(),
+                            annotations: None,
+                            meta: None,
+                        })],
+                        cx,
+                    )
+                });
+                if let Ok(task) = send_res {
+                    if let Err(e) = task.await {
+                        Self::show_commit_message_error(&this, &e, cx);
+                        return anyhow::Ok(());
+                    }
+                } else if let Err(e) = send_res {
+                    Self::show_commit_message_error(&this, &e, cx);
+                    return anyhow::Ok(());
+                }
+
+                // Extract the last assistant message's text as markdown
+                let generated: Option<String> = cx.update(|cx| {
+                    thread
+                        .read(cx)
+                        .entries()
+                        .iter()
+                        .rev()
+                        .find_map(|entry| match entry {
+                            acp_thread::AgentThreadEntry::AssistantMessage(m) => {
+                                let text = m
+                                    .chunks
+                                    .iter()
+                                    .map(|chunk| match chunk {
+                                        acp_thread::AssistantMessageChunk::Message { block }
+                                        | acp_thread::AssistantMessageChunk::Thought { block } => {
+                                            block.to_markdown(cx).to_string()
+                                        }
+                                    })
+                                    .join("\n\n");
+                                Some(text)
+                            }
+                            _ => None,
+                        })
+                })?;
+
+                if let Some(text) = generated {
+                    this.update(cx, |this, cx| {
+                        if !text_empty {
+                            this.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                                let insert_position = buffer.anchor_before(buffer.len());
+                                buffer.edit([(insert_position..insert_position, "\n")], None, cx)
+                            });
+                        }
+                        this.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                            let insert_position = buffer.anchor_before(buffer.len());
+                            buffer.edit([(insert_position..insert_position, text)], None, cx);
+                        });
+                    })?;
+                } else {
+                    // No assistant content produced
+                    Self::show_commit_message_error(
+                        &this,
+                        &anyhow::anyhow!("No content generated by {}", server_name),
+                        cx,
+                    );
+                }
+
+                anyhow::Ok(())
+            }
+            .log_err()
+            .await
         }));
     }
 
@@ -3076,11 +3309,19 @@ impl GitPanel {
         &self,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        if !agent_settings::AgentSettings::get_global(cx).enabled(cx)
-            || LanguageModelRegistry::read_global(cx)
-                .commit_message_model()
-                .is_none()
-        {
+        let has_llm_model = LanguageModelRegistry::read_global(cx)
+            .commit_message_model()
+            .is_some();
+
+        let has_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
+        let has_external_agent = self.has_available_external_agent(cx);
+
+        // Show button if LLM model is configured and AI is enabled, or if any external agent is available
+        if !has_llm_model && !has_external_agent {
+            return None;
+        }
+
+        if has_llm_model && !has_ai_enabled && !has_external_agent {
             return None;
         }
 
