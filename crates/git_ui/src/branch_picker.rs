@@ -446,7 +446,8 @@ impl PickerDelegate for BranchListDelegate {
                 let subject = commit.subject.clone();
                 let commit_time = OffsetDateTime::from_unix_timestamp(commit.commit_timestamp)
                     .unwrap_or_else(|_| OffsetDateTime::now_utc());
-                let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
+                let local_offset =
+                    time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
                 let formatted_time = time_format::format_localized_timestamp(
                     commit_time,
                     OffsetDateTime::now_utc(),
