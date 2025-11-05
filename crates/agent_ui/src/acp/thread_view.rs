@@ -1506,6 +1506,12 @@ impl AcpThreadView {
                             })
                             .unwrap_or_default();
 
+                        // Run SpawnInTerminal in the same dir as the ACP server
+                        let cwd = connection
+                            .clone()
+                            .downcast::<agent_servers::AcpConnection>()
+                            .map(|acp_conn| acp_conn.root_dir().to_path_buf());
+
                         // Build SpawnInTerminal from _meta
                         let login = task::SpawnInTerminal {
                             id: task::TaskId(format!("external-agent-{}-login", label)),
@@ -1514,6 +1520,7 @@ impl AcpThreadView {
                             command: Some(command.to_string()),
                             args,
                             command_label: label.to_string(),
+                            cwd,
                             env,
                             use_new_terminal: true,
                             allow_concurrent_runs: true,
@@ -1526,8 +1533,9 @@ impl AcpThreadView {
                         pending_auth_method.replace(method.clone());
 
                         if let Some(workspace) = self.workspace.upgrade() {
+                            let project = self.project.clone();
                             let authenticate = Self::spawn_external_agent_login(
-                                login, workspace, false, window, cx,
+                                login, workspace, project, false, true, window, cx,
                             );
                             cx.notify();
                             self.auth_task = Some(cx.spawn_in(window, {
