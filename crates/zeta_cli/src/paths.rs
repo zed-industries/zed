@@ -5,3 +5,4 @@ pub static CACHE_DIR: LazyLock<PathBuf> =
     LazyLock::new(|| TARGET_DIR.join("zeta-prediction-cache"));
 pub static REPOS_DIR: LazyLock<PathBuf> = LazyLock::new(|| TARGET_DIR.join("zeta-repos"));
 pub static WORKTREES_DIR: LazyLock<PathBuf> = LazyLock::new(|| TARGET_DIR.join("zeta-worktrees"));
+pub static LOGS_DIR: LazyLock<PathBuf> = LazyLock::new(|| TARGET_DIR.join("zeta-logs"));

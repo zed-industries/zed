@@ -1,5 +1,6 @@
 use crate::example::{ActualExcerpt, NamedExample};
 use crate::headless::ZetaCliAppState;
+use crate::paths::LOGS_DIR;
 use ::serde::Serialize;
 use anyhow::{Context as _, Result, anyhow};
 use clap::Args;
@@ -10,6 +11,7 @@ use language_model::LanguageModelRegistry;
 use project::Project;
 use serde::Deserialize;
 use std::cell::Cell;
+use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -47,6 +49,7 @@ pub async fn zeta2_predict(
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) -> Result<PredictionDetails> {
+    fs::create_dir_all(&*LOGS_DIR)?;
     let worktree_path = example.setup_worktree().await?;
 
     if !AUTHENTICATED.get() {
@@ -130,9 +133,14 @@ pub async fn zeta2_predict(
         match event {
             zeta2::ZetaDebugInfo::ContextRetrievalStarted(info) => {
                 context_retrieval_started_at = Some(info.timestamp);
+                fs::write(LOGS_DIR.join("search_prompt.md"), &info.search_prompt)?;
             }
             zeta2::ZetaDebugInfo::SearchQueriesGenerated(info) => {
                 search_queries_generated_at = Some(info.timestamp);
+                fs::write(
+                    LOGS_DIR.join("search_queries.json"),
+                    serde_json::to_string_pretty(&info.queries).unwrap(),
+                )?;
             }
             zeta2::ZetaDebugInfo::SearchQueriesExecuted(info) => {
                 search_queries_executed_at = Some(info.timestamp);
@@ -146,8 +154,18 @@ pub async fn zeta2_predict(
             }
             zeta2::ZetaDebugInfo::EditPredicted(request) => {
                 prediction_started_at = Some(Instant::now());
-                request.response_rx.await?.0.map_err(|err| anyhow!(err))?;
+                fs::write(
+                    LOGS_DIR.join("prediction_prompt.md"),
+                    &request.local_prompt.unwrap_or_default(),
+                )?;
+
+                let response = request.response_rx.await?.0.map_err(|err| anyhow!(err))?;
                 prediction_finished_at = Some(Instant::now());
+
+                fs::write(
+                    LOGS_DIR.join("prediction_response.json"),
+                    &serde_json::to_string_pretty(&response).unwrap(),
+                )?;
 
                 for included_file in request.request.included_files {
                     let insertions = vec![(request.request.cursor_point, CURSOR_MARKER)];
