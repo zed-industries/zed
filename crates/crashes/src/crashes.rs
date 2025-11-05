@@ -268,7 +268,7 @@ impl minidumper::ServerHandler for CrashServer {
                 // we ignore the case where it was already set because this message is sent
                 // on each new window. in theory all zed windows should be using the same
                 // GPU so this is fine.
-                self.active_gpu.set(gpu_specs).ok()
+                self.active_gpu.set(gpu_specs).ok();
             }
             _ => {
                 panic!("invalid message kind");
