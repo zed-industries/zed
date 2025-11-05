@@ -1,38 +1,35 @@
 use crate::{Editor, RangeToAnchorExt};
 use gpui::{Context, HighlightStyle, Hsla, Window};
 use itertools::Itertools;
-use language::CursorShape;
 use multi_buffer::ToPoint;
 use text::{Bias, Point};
 
-enum MatchingBracketHighlight {}
-
 struct RainbowBracketHighlight;
 
-impl Editor {
-    // todo! run with a debounce
-    pub(crate) fn refresh_bracket_colors(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
-        // todo! these colors lack contrast for this/are not actually good for that?
-        // cx.theme().accents().color_for_index(depth as u32);
-        const COLORS: [Hsla; 6] = [
-            gpui::red(),
-            Hsla {
-                h: 30.0 / 360.0,
-                s: 1.0,
-                l: 0.5,
-                a: 1.0,
-            },
-            gpui::yellow(),
-            gpui::green(),
-            gpui::blue(),
-            Hsla {
-                h: 270.0 / 360.0,
-                s: 1.0,
-                l: 0.5,
-                a: 1.0,
-            },
-        ];
+// todo! these colors lack contrast for this/are not actually good for that?
+// cx.theme().accents().color_for_index(depth as u32);
+const COLORS: [Hsla; 6] = [
+    gpui::red(),
+    Hsla {
+        h: 30.0 / 360.0,
+        s: 1.0,
+        l: 0.5,
+        a: 1.0,
+    },
+    gpui::yellow(),
+    gpui::green(),
+    gpui::blue(),
+    Hsla {
+        h: 270.0 / 360.0,
+        s: 1.0,
+        l: 0.5,
+        a: 1.0,
+    },
+];
 
+impl Editor {
+    // todo! settings for enabling/disabling this, anything else to configure?
+    pub(crate) fn refresh_bracket_colors(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
         let snapshot = self.snapshot(window, cx);
         let multi_buffer_snapshot = snapshot.buffer_snapshot();
 
@@ -81,7 +78,7 @@ impl Editor {
 
         for (depth, bracket_highlights) in bracket_matches {
             let style = HighlightStyle {
-                color: Some({ COLORS[depth as usize % COLORS.len()] }),
+                color: Some(COLORS[depth as usize % COLORS.len()]),
                 ..HighlightStyle::default()
             };
 
@@ -105,115 +102,13 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::{editor_tests::init_test, test::editor_lsp_test_context::EditorLspTestContext};
     use indoc::indoc;
     use language::{BracketPair, BracketPairConfig, Language, LanguageConfig, LanguageMatcher};
     use multi_buffer::AnchorRangeExt as _;
-
-    #[gpui::test]
-    async fn test_matching_bracket_highlights(cx: &mut gpui::TestAppContext) {
-        init_test(cx, |_| {});
-
-        let mut cx = EditorLspTestContext::new(
-            Language::new(
-                LanguageConfig {
-                    name: "Rust".into(),
-                    matcher: LanguageMatcher {
-                        path_suffixes: vec!["rs".to_string()],
-                        ..Default::default()
-                    },
-                    brackets: BracketPairConfig {
-                        pairs: vec![
-                            BracketPair {
-                                start: "{".to_string(),
-                                end: "}".to_string(),
-                                close: false,
-                                surround: false,
-                                newline: true,
-                            },
-                            BracketPair {
-                                start: "(".to_string(),
-                                end: ")".to_string(),
-                                close: false,
-                                surround: false,
-                                newline: true,
-                            },
-                        ],
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
-                Some(tree_sitter_rust::LANGUAGE.into()),
-            )
-            .with_brackets_query(indoc! {r#"
-                ("{" @open "}" @close)
-                ("(" @open ")" @close)
-                "#})
-            .unwrap(),
-            Default::default(),
-            cx,
-        )
-        .await;
-
-        // positioning cursor inside bracket highlights both
-        cx.set_state(indoc! {r#"
-            pub fn test("Test ˇargument") {
-                another_test(1, 2, 3);
-            }
-        "#});
-        cx.assert_editor_background_highlights::<MatchingBracketHighlight>(indoc! {r#"
-            pub fn test«(»"Test argument"«)» {
-                another_test(1, 2, 3);
-            }
-        "#});
-
-        cx.set_state(indoc! {r#"
-            pub fn test("Test argument") {
-                another_test(1, ˇ2, 3);
-            }
-        "#});
-        cx.assert_editor_background_highlights::<MatchingBracketHighlight>(indoc! {r#"
-            pub fn test("Test argument") {
-                another_test«(»1, 2, 3«)»;
-            }
-        "#});
-
-        cx.set_state(indoc! {r#"
-            pub fn test("Test argument") {
-                anotherˇ_test(1, 2, 3);
-            }
-        "#});
-        cx.assert_editor_background_highlights::<MatchingBracketHighlight>(indoc! {r#"
-            pub fn test("Test argument") «{»
-                another_test(1, 2, 3);
-            «}»
-        "#});
-
-        // positioning outside of brackets removes highlight
-        cx.set_state(indoc! {r#"
-            pub fˇn test("Test argument") {
-                another_test(1, 2, 3);
-            }
-        "#});
-        cx.assert_editor_background_highlights::<MatchingBracketHighlight>(indoc! {r#"
-            pub fn test("Test argument") {
-                another_test(1, 2, 3);
-            }
-        "#});
-
-        // non empty selection dismisses highlight
-        cx.set_state(indoc! {r#"
-            pub fn test("Te«st argˇ»ument") {
-                another_test(1, 2, 3);
-            }
-        "#});
-        cx.assert_editor_background_highlights::<MatchingBracketHighlight>(indoc! {r#"
-            pub fn test«("Test argument") {
-                another_test(1, 2, 3);
-            }
-        "#});
-    }
 
     #[gpui::test]
     async fn test_rainbow_bracket_highlights(cx: &mut gpui::TestAppContext) {
@@ -225,7 +120,7 @@ mod tests {
                     name: "Rust".into(),
                     matcher: LanguageMatcher {
                         path_suffixes: vec!["rs".to_string()],
-                        ..Default::default()
+                        ..LanguageMatcher::default()
                     },
                     brackets: BracketPairConfig {
                         pairs: vec![
@@ -244,9 +139,9 @@ mod tests {
                                 newline: true,
                             },
                         ],
-                        ..Default::default()
+                        ..BracketPairConfig::default()
                     },
-                    ..Default::default()
+                    ..LanguageConfig::default()
                 },
                 Some(tree_sitter_rust::LANGUAGE.into()),
             )
@@ -255,7 +150,7 @@ mod tests {
                 ("(" @open ")" @close)
                 "#})
             .unwrap(),
-            Default::default(),
+            lsp::ServerCapabilities::default(),
             cx,
         )
         .await;
@@ -480,18 +375,22 @@ mod tests {
                 };
             }
         "#});
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
 
-        let snapshot = cx.update_editor(|editor, window, cx| editor.snapshot(window, cx));
-        let actual_ranges = snapshot
-            .all_text_highlight_ranges::<RainbowBracketHighlight>()
-            .iter()
-            .flat_map(|ranges| {
-                ranges
-                    .1
-                    .iter()
-                    .map(|range| (ranges.0.color, range.to_point(&snapshot.buffer_snapshot())))
-            })
-            .collect::<Vec<_>>();
+        let actual_ranges = cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            snapshot
+                .all_text_highlight_ranges::<RainbowBracketHighlight>()
+                .iter()
+                .flat_map(|ranges| {
+                    ranges
+                        .1
+                        .iter()
+                        .map(|range| (ranges.0.color, range.to_point(&snapshot.buffer_snapshot())))
+                })
+                .collect::<Vec<_>>()
+        });
         let last_bracket = actual_ranges
             .iter()
             .max_by_key(|(_, p)| p.end.row)
@@ -506,26 +405,28 @@ mod tests {
             );
             assert!(was_scrolled.0);
         });
+        cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
-        let snapshot = cx.update_editor(|editor, window, cx| editor.snapshot(window, cx));
 
-        let actual_ranges = snapshot
-            .all_text_highlight_ranges::<RainbowBracketHighlight>()
-            .iter()
-            .flat_map(|ranges| {
-                ranges
-                    .1
-                    .iter()
-                    .map(|range| (ranges.0.color, range.to_point(&snapshot.buffer_snapshot())))
-            })
-            .collect::<Vec<_>>();
-        let new_last_bracket = actual_ranges
+        let ranges_after_scrolling = cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            snapshot
+                .all_text_highlight_ranges::<RainbowBracketHighlight>()
+                .iter()
+                .flat_map(|ranges| {
+                    ranges
+                        .1
+                        .iter()
+                        .map(|range| (ranges.0.color, range.to_point(&snapshot.buffer_snapshot())))
+                })
+                .collect::<Vec<_>>()
+        });
+        let new_last_bracket = ranges_after_scrolling
             .iter()
             .max_by_key(|(_, p)| p.end.row)
             .unwrap()
             .clone();
-        // todo! we do scroll down and get new brackets matched by tree-sitter,
-        // but something still prevents the `text_key_highlight_ranges` to return the right, newest visible bracket on the lower row we scrolled to
+        // todo! more tests, check consistency of the colors picked also
         assert_ne!(
             last_bracket, new_last_bracket,
             "After scrolling down, we should have highlighted more brackets"

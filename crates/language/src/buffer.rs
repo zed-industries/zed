@@ -29,7 +29,7 @@ use gpui::{
 };
 
 use lsp::{LanguageServerId, NumberOrString};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::WorktreeId;
@@ -126,7 +126,7 @@ pub struct Buffer {
     has_unsaved_edits: Cell<(clock::Global, bool)>,
     change_bits: Vec<rc::Weak<Cell<bool>>>,
     _subscriptions: Vec<gpui::Subscription>,
-    tree_sitter_data: Arc<RwLock<TreeSitterData>>,
+    tree_sitter_data: Arc<Mutex<TreeSitterData>>,
 }
 
 #[derive(Debug)]
@@ -146,6 +146,10 @@ pub struct BufferChunk {
 }
 
 impl TreeSitterData {
+    fn clear(&mut self) {
+        self.brackets_by_chunks = vec![None; self.chunks.len()];
+    }
+
     fn from_buffer_range(buffer_point_range: Range<Point>, version: Global) -> Self {
         let buffer_row_range = buffer_point_range.start.row..=buffer_point_range.end.row;
         let chunks = buffer_row_range
@@ -192,7 +196,7 @@ pub struct BufferSnapshot {
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     language: Option<Arc<Language>>,
     non_text_state_update_count: usize,
-    tree_sitter_data: Arc<RwLock<TreeSitterData>>,
+    tree_sitter_data: Arc<Mutex<TreeSitterData>>,
 }
 
 /// The kind and amount of indentation in a particular line. For now,
@@ -1032,7 +1036,7 @@ impl Buffer {
         );
         Self {
             saved_mtime,
-            tree_sitter_data: Arc::new(RwLock::new(tree_sitter_data)),
+            tree_sitter_data: Arc::new(Mutex::new(tree_sitter_data)),
             saved_version: buffer.version(),
             preview_version: buffer.version(),
             reload_task: None,
@@ -1092,7 +1096,7 @@ impl Buffer {
                 file: None,
                 diagnostics: Default::default(),
                 remote_selections: Default::default(),
-                tree_sitter_data: Arc::new(RwLock::new(tree_sitter_data)),
+                tree_sitter_data: Arc::new(Mutex::new(tree_sitter_data)),
                 language,
                 non_text_state_update_count: 0,
             }
@@ -1117,7 +1121,7 @@ impl Buffer {
         BufferSnapshot {
             text,
             syntax,
-            tree_sitter_data: Arc::new(RwLock::new(tree_sitter_data)),
+            tree_sitter_data: Arc::new(Mutex::new(tree_sitter_data)),
             file: None,
             diagnostics: Default::default(),
             remote_selections: Default::default(),
@@ -1149,7 +1153,7 @@ impl Buffer {
         BufferSnapshot {
             text,
             syntax,
-            tree_sitter_data: Arc::new(RwLock::new(tree_sitter_data)),
+            tree_sitter_data: Arc::new(Mutex::new(tree_sitter_data)),
             file: None,
             diagnostics: Default::default(),
             remote_selections: Default::default(),
@@ -1685,6 +1689,7 @@ impl Buffer {
         self.syntax_map.lock().did_parse(syntax_snapshot);
         self.request_autoindent(cx);
         self.parse_status.0.send(ParseStatus::Idle).unwrap();
+        self.tree_sitter_data.lock().clear();
         cx.emit(BufferEvent::Reparsed);
         cx.notify();
     }
@@ -4168,9 +4173,9 @@ impl BufferSnapshot {
         self.syntax.matches(range, self, query)
     }
 
-    /// TODO kb docs: this is an unordered collection of matches
+    /// todo! docs: this is an unordered collection of matches
     fn fetch_bracket_ranges(&self, range: Range<usize>) -> Vec<BracketMatch> {
-        let mut tree_sitter_data = self.tree_sitter_data.write();
+        let mut tree_sitter_data = self.tree_sitter_data.lock();
         if self
             .version
             .changed_since(&tree_sitter_data.data_for_version)

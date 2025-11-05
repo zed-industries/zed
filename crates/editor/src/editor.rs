@@ -2276,8 +2276,20 @@ impl Editor {
                         editor.hide_signature_help(cx, SignatureHelpHiddenBy::Escape);
                         editor.inline_blame_popover.take();
                     }
-                    // todo! keep this here?
-                    editor.refresh_bracket_colors(window, cx);
+                    editor.post_scroll_update = cx.spawn_in(window, async move |editor, cx| {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(50))
+                            .await;
+                        editor
+                            .update_in(cx, |editor, window, cx| {
+                                editor.register_visible_buffers(cx);
+                                editor.refresh_colors_for_visible_range(None, window, cx);
+                                editor
+                                    .refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                                editor.refresh_bracket_colors(window, cx);
+                            })
+                            .ok();
+                    });
                 }
                 EditorEvent::Edited { .. } => {
                     if vim_flavor(cx).is_none() {
@@ -2358,9 +2370,6 @@ impl Editor {
                 editor.create_minimap(EditorSettings::get_global(cx).minimap, window, cx);
             editor.colors = Some(LspColorData::new(cx));
             editor.inlay_hints = Some(LspInlayHintData::new(inlay_hint_settings));
-
-            // todo!
-            editor.refresh_bracket_colors(window, cx);
 
             if let Some(buffer) = multi_buffer.read(cx).as_singleton() {
                 editor.register_buffer(buffer.read(cx).remote_id(), cx);
@@ -21006,6 +21015,7 @@ impl Editor {
                 }
                 self.update_lsp_data(Some(buffer_id), window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                self.refresh_bracket_colors(window, cx);
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,
@@ -21043,10 +21053,12 @@ impl Editor {
             multi_buffer::Event::ExcerptsExpanded { ids } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 self.refresh_document_highlights(cx);
+                self.refresh_bracket_colors(window, cx);
                 cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
             }
             multi_buffer::Event::Reparsed(buffer_id) => {
                 self.tasks_update_task = Some(self.refresh_runnables(window, cx));
+                self.refresh_bracket_colors(window, cx);
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
 
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
