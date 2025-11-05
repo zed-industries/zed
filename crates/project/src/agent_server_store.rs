@@ -438,6 +438,13 @@ impl AgentServerStore {
         cx.emit(AgentServersUpdated);
     }
 
+    pub fn node_runtime(&self) -> Option<NodeRuntime> {
+        match &self.state {
+            AgentServerStoreState::Local { node_runtime, .. } => Some(node_runtime.clone()),
+            _ => None,
+        }
+    }
+
     pub fn local(
         node_runtime: NodeRuntime,
         fs: Arc<dyn Fs>,

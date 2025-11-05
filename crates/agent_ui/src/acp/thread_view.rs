@@ -1679,7 +1679,10 @@ impl AcpThreadView {
             && let Some(login) = self.login.clone()
         {
             if let Some(workspace) = self.workspace.upgrade() {
-                Self::spawn_external_agent_login(login, workspace, false, window, cx)
+                let project = self.project.clone();
+                Self::spawn_external_agent_login(
+                    login, workspace, project, false, false, window, cx,
+                )
             } else {
                 Task::ready(Ok(()))
             }
@@ -1729,14 +1732,15 @@ impl AcpThreadView {
     fn spawn_external_agent_login(
         login: task::SpawnInTerminal,
         workspace: Entity<Workspace>,
+        project: Entity<Project>,
         previous_attempt: bool,
+        check_exit_code: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
         let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
             return Task::ready(Ok(()));
         };
-        let project = workspace.read(cx).project().clone();
 
         window.spawn(cx, async move |cx| {
             let mut task = login.clone();
