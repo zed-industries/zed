@@ -2281,16 +2281,32 @@ impl Editor {
             |editor, _, e: &EditorEvent, window, cx| match e {
                 EditorEvent::ScrollPositionChanged { local, .. } => {
                     if *local {
-                        let new_anchor = editor.scroll_manager.anchor();
-                        let snapshot = editor.snapshot(window, cx);
-                        editor.update_restoration_data(cx, move |data| {
-                            data.scroll_position = (
-                                new_anchor.top_row(snapshot.buffer_snapshot()),
-                                new_anchor.offset,
-                            );
-                        });
                         editor.hide_signature_help(cx, SignatureHelpHiddenBy::Escape);
                         editor.inline_blame_popover.take();
+                        editor.post_scroll_update = cx.spawn_in(window, async move |editor, cx| {
+                            cx.background_executor()
+                                .timer(Duration::from_millis(50))
+                                .await;
+                            editor
+                                .update_in(cx, |editor, window, cx| {
+                                    editor.register_visible_buffers(cx);
+                                    editor.refresh_colors_for_visible_range(None, window, cx);
+                                    editor.refresh_inlay_hints(
+                                        InlayHintRefreshReason::NewLinesShown,
+                                        cx,
+                                    );
+
+                                    let new_anchor = editor.scroll_manager.anchor();
+                                    let snapshot = editor.snapshot(window, cx);
+                                    editor.update_restoration_data(cx, move |data| {
+                                        data.scroll_position = (
+                                            new_anchor.top_row(snapshot.buffer_snapshot()),
+                                            new_anchor.offset,
+                                        );
+                                    });
+                                })
+                                .ok();
+                        });
                     }
                 }
                 EditorEvent::Edited { .. } => {
