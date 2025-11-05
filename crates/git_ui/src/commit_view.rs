@@ -1,6 +1,5 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use chrono;
 use editor::{Editor, EditorEvent, MultiBuffer, SelectionEffects, multibuffer_context_lines};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use gpui::{
@@ -416,14 +415,14 @@ fn format_commit(commit: &CommitDetails, is_stash: bool) -> String {
         commit.author_name, commit.author_email
     )
     .unwrap();
-    let local = chrono::Local::now().offset().local_minus_utc();
+    let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
     writeln!(
         &mut result,
         "Date:   {}",
         time_format::format_localized_timestamp(
             time::OffsetDateTime::from_unix_timestamp(commit.commit_timestamp).unwrap(),
             time::OffsetDateTime::now_utc(),
-            time::UtcOffset::from_whole_seconds(local).unwrap(),
+            local_offset,
             time_format::TimestampFormat::MediumAbsolute,
         ),
     )

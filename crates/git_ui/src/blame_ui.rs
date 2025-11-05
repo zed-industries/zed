@@ -2,7 +2,6 @@ use crate::{
     commit_tooltip::{CommitAvatar, CommitTooltip},
     commit_view::CommitView,
 };
-use chrono;
 use editor::{BlameRenderer, Editor, hover_markdown_style};
 use git::{
     blame::{BlameEntry, ParsedCommitMessage},
@@ -188,11 +187,11 @@ impl BlameRenderer for GitBlameRenderer {
             .get(..8)
             .map(|sha| sha.to_string().into())
             .unwrap_or_else(|| sha.clone());
-        let local = chrono::Local::now().offset().local_minus_utc();
+        let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
         let absolute_timestamp = time_format::format_localized_timestamp(
             commit_time,
             OffsetDateTime::now_utc(),
-            time::UtcOffset::from_whole_seconds(local).unwrap(),
+            local_offset,
             time_format::TimestampFormat::MediumAbsolute,
         );
         let link_color = cx.theme().colors().text_accent;
@@ -405,11 +404,11 @@ fn deploy_blame_entry_context_menu(
 fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
     match blame_entry.author_offset_date_time() {
         Ok(timestamp) => {
-            let local = chrono::Local::now().offset().local_minus_utc();
+            let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
             time_format::format_localized_timestamp(
                 timestamp,
                 time::OffsetDateTime::now_utc(),
-                time::UtcOffset::from_whole_seconds(local).unwrap(),
+                local_offset,
                 time_format::TimestampFormat::Relative,
             )
         }
