@@ -79,6 +79,7 @@ dependencies = [
  "rand 0.9.2",
  "serde_json",
  "settings",
+ "telemetry",
  "text",
  "util",
  "watch",

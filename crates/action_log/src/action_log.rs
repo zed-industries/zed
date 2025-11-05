@@ -573,7 +573,10 @@ impl ActionLog {
 
         match tracked_buffer.status {
             TrackedBufferStatus::Deleted => {
-                self.tracked_buffers.remove(&buffer);
+                if let Some(buffer) = self.tracked_buffers.remove(&buffer) {
+                    ActionLogTelemetry::from_edits(buffer.unreviewed_edits.edits())
+                        .report_accepted();
+                }
                 cx.notify();
             }
             _ => {
@@ -581,6 +584,7 @@ impl ActionLog {
                 let buffer_range =
                     buffer_range.start.to_point(buffer)..buffer_range.end.to_point(buffer);
                 let mut delta = 0i32;
+                let mut telemetry = ActionLogTelemetry::default();
 
                 tracked_buffer.unreviewed_edits.retain_mut(|edit| {
                     edit.old.start = (edit.old.start as i32 + delta) as u32;
@@ -613,6 +617,7 @@ impl ActionLog {
                                 .collect::<String>(),
                         );
                         delta += edit.new_len() as i32 - edit.old_len() as i32;
+                        telemetry.add_edit(edit);
                         false
                     }
                 });
@@ -622,6 +627,7 @@ impl ActionLog {
                     tracked_buffer.status = TrackedBufferStatus::Modified;
                 }
                 tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
+                telemetry.report_accepted();
             }
         }
     }
@@ -686,7 +692,10 @@ impl ActionLog {
                     }
                 };
 
-                self.tracked_buffers.remove(&buffer);
+                if let Some(tracked_buffer) = self.tracked_buffers.remove(&buffer) {
+                    ActionLogTelemetry::from_edits(tracked_buffer.unreviewed_edits.edits())
+                        .report_rejected();
+                }
                 cx.notify();
                 task
             }
@@ -699,7 +708,10 @@ impl ActionLog {
                     .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx));
 
                 // Clear all tracked edits for this buffer and start over as if we just read it.
-                self.tracked_buffers.remove(&buffer);
+                if let Some(tracked_buffer) = self.tracked_buffers.remove(&buffer) {
+                    ActionLogTelemetry::from_edits(tracked_buffer.unreviewed_edits.edits())
+                        .report_rejected();
+                }
                 self.buffer_read(buffer.clone(), cx);
                 cx.notify();
                 save
@@ -714,6 +726,7 @@ impl ActionLog {
                         .peekable();
 
                     let mut edits_to_revert = Vec::new();
+                    let mut telemetry = ActionLogTelemetry::default();
                     for edit in tracked_buffer.unreviewed_edits.edits() {
                         let new_range = tracked_buffer
                             .snapshot
@@ -738,6 +751,7 @@ impl ActionLog {
                         }
 
                         if revert {
+                            telemetry.add_edit(edit);
                             let old_range = tracked_buffer
                                 .diff_base
                                 .point_to_offset(Point::new(edit.old.start, 0))
@@ -753,6 +767,7 @@ impl ActionLog {
                         }
                     }
 
+                    telemetry.report_rejected();
                     buffer.edit(edits_to_revert, None, cx);
                 });
                 self.project
@@ -762,19 +777,25 @@ impl ActionLog {
     }
 
     pub fn keep_all_edits(&mut self, cx: &mut Context<Self>) {
+        let mut telemetry = ActionLogTelemetry::default();
         self.tracked_buffers
             .retain(|_buffer, tracked_buffer| match tracked_buffer.status {
-                TrackedBufferStatus::Deleted => false,
+                TrackedBufferStatus::Deleted => {
+                    telemetry.add_edits(tracked_buffer.unreviewed_edits.edits());
+                    false
+                }
                 _ => {
                     if let TrackedBufferStatus::Created { .. } = &mut tracked_buffer.status {
                         tracked_buffer.status = TrackedBufferStatus::Modified;
                     }
+                    telemetry.add_edits(tracked_buffer.unreviewed_edits.edits());
                     tracked_buffer.unreviewed_edits.clear();
                     tracked_buffer.diff_base = tracked_buffer.snapshot.as_rope().clone();
                     tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
                     true
                 }
             });
+        telemetry.report_accepted();
         cx.notify();
     }
 
@@ -816,6 +837,47 @@ impl ActionLog {
                         .is_some_and(|file| file.disk_state() != DiskState::Deleted)
             })
             .map(|(buffer, _)| buffer)
+    }
+}
+
+#[derive(Default)]
+struct ActionLogTelemetry {
+    added_lines: u32,
+    removed_lines: u32,
+}
+
+impl ActionLogTelemetry {
+    fn from_edits(edits: &[Edit<u32>]) -> Self {
+        let mut telemetry = Self::default();
+        telemetry.add_edits(edits);
+        telemetry
+    }
+
+    fn add_edits(&mut self, edits: &[Edit<u32>]) {
+        for edit in edits {
+            self.add_edit(edit);
+        }
+    }
+
+    fn add_edit(&mut self, edit: &Edit<u32>) {
+        self.added_lines += edit.new_len();
+        self.removed_lines += edit.old_len();
+    }
+
+    fn report_accepted(self) {
+        telemetry::event!(
+            "Agent Edits Accepted",
+            added_lines = self.added_lines,
+            removed_lines = self.removed_lines
+        );
+    }
+
+    fn report_rejected(self) {
+        telemetry::event!(
+            "Agent Edits Rejected",
+            added_lines = self.added_lines,
+            removed_lines = self.removed_lines
+        );
     }
 }
 
