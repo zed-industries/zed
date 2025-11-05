@@ -1592,7 +1592,7 @@ impl PositionedSemanticTokens {
         cx: &App,
     ) -> Self {
         let stylizers = legends
-            .map(|(id, legend)| (id, SemanticTokenStylizer::new(legend)))
+            .map(|(id, legend)| (id, SemanticTokenStylizer::new(legend, cx)))
             .collect::<HashMap<_, _>>();
 
         let mut tokens = lsp
