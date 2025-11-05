@@ -7,7 +7,7 @@ Rego language support in Zed is provided by the community-maintained [Rego exten
 
 ## Installation
 
-The extensions is largely based on the [Regal](https://docs.styra.com/regal/language-server) language server which should be installed to make use of the extension. Read the [getting started](https://docs.styra.com/regal#getting-started) instructions for more information.
+The extension is largely based on the [Regal](https://docs.styra.com/regal/language-server) language server which should be installed to make use of the extension. Read the [getting started](https://docs.styra.com/regal#getting-started) instructions for more information.
 
 ## Configuration
 

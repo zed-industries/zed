@@ -2,11 +2,12 @@ mod profile_modal_header;
 
 use std::sync::Arc;
 
+use agent::ContextServerRegistry;
 use agent_settings::{AgentProfile, AgentProfileId, AgentSettings, builtin_profiles};
-use assistant_tool::ToolWorkingSet;
 use editor::Editor;
 use fs::Fs;
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription, prelude::*};
+use language_model::LanguageModel;
 use settings::Settings as _;
 use ui::{
     KeyBinding, ListItem, ListItemSpacing, ListSeparator, Navigable, NavigableEntry, prelude::*,
@@ -16,8 +17,6 @@ use workspace::{ModalView, Workspace};
 use crate::agent_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
 use crate::agent_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
 use crate::{AgentPanel, ManageProfiles};
-
-use super::tool_picker::ToolPickerMode;
 
 enum Mode {
     ChooseProfile(ChooseProfileMode),
@@ -97,7 +96,8 @@ pub struct NewProfileMode {
 
 pub struct ManageProfilesModal {
     fs: Arc<dyn Fs>,
-    tools: Entity<ToolWorkingSet>,
+    context_server_registry: Entity<ContextServerRegistry>,
+    active_model: Option<Arc<dyn LanguageModel>>,
     focus_handle: FocusHandle,
     mode: Mode,
 }
@@ -111,10 +111,14 @@ impl ManageProfilesModal {
         workspace.register_action(|workspace, action: &ManageProfiles, window, cx| {
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 let fs = workspace.app_state().fs.clone();
-                let thread_store = panel.read(cx).thread_store();
-                let tools = thread_store.read(cx).tools();
+                let active_model = panel
+                    .read(cx)
+                    .active_native_agent_thread(cx)
+                    .and_then(|thread| thread.read(cx).model().cloned());
+
+                let context_server_registry = panel.read(cx).context_server_registry().clone();
                 workspace.toggle_modal(window, cx, |window, cx| {
-                    let mut this = Self::new(fs, tools, window, cx);
+                    let mut this = Self::new(fs, active_model, context_server_registry, window, cx);
 
                     if let Some(profile_id) = action.customize_tools.clone() {
                         this.configure_builtin_tools(profile_id, window, cx);
@@ -128,7 +132,8 @@ impl ManageProfilesModal {
 
     pub fn new(
         fs: Arc<dyn Fs>,
-        tools: Entity<ToolWorkingSet>,
+        active_model: Option<Arc<dyn LanguageModel>>,
+        context_server_registry: Entity<ContextServerRegistry>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -136,7 +141,8 @@ impl ManageProfilesModal {
 
         Self {
             fs,
-            tools,
+            active_model,
+            context_server_registry,
             focus_handle,
             mode: Mode::choose_profile(window, cx),
         }
@@ -193,10 +199,9 @@ impl ManageProfilesModal {
         };
 
         let tool_picker = cx.new(|cx| {
-            let delegate = ToolPickerDelegate::new(
-                ToolPickerMode::McpTools,
+            let delegate = ToolPickerDelegate::mcp_tools(
+                &self.context_server_registry,
                 self.fs.clone(),
-                self.tools.clone(),
                 profile_id.clone(),
                 profile,
                 cx,
@@ -230,10 +235,14 @@ impl ManageProfilesModal {
         };
 
         let tool_picker = cx.new(|cx| {
-            let delegate = ToolPickerDelegate::new(
-                ToolPickerMode::BuiltinTools,
+            let delegate = ToolPickerDelegate::builtin_tools(
+                //todo: This causes the web search tool to show up even it only works when using zed hosted models
+                agent::supported_built_in_tool_names(
+                    self.active_model.as_ref().map(|model| model.provider_id()),
+                )
+                .map(|s| s.into())
+                .collect::<Vec<_>>(),
                 self.fs.clone(),
-                self.tools.clone(),
                 profile_id.clone(),
                 profile,
                 cx,
@@ -343,10 +352,9 @@ impl ManageProfilesModal {
                                         .size(LabelSize::Small)
                                         .color(Color::Muted),
                                 )
-                                .children(KeyBinding::for_action_in(
+                                .child(KeyBinding::for_action_in(
                                     &menu::Confirm,
                                     &self.focus_handle,
-                                    window,
                                     cx,
                                 )),
                         )
@@ -640,14 +648,13 @@ impl ManageProfilesModal {
                                         )
                                         .child(Label::new("Go Back"))
                                         .end_slot(
-                                            div().children(
+                                            div().child(
                                                 KeyBinding::for_action_in(
                                                     &menu::Cancel,
                                                     &self.focus_handle,
-                                                    window,
                                                     cx,
                                                 )
-                                                .map(|kb| kb.size(rems_from_px(12.))),
+                                                .size(rems_from_px(12.)),
                                             ),
                                         )
                                         .on_click({
@@ -691,14 +698,9 @@ impl Render for ManageProfilesModal {
                     )
                     .child(Label::new("Go Back"))
                     .end_slot(
-                        div().children(
-                            KeyBinding::for_action_in(
-                                &menu::Cancel,
-                                &self.focus_handle,
-                                window,
-                                cx,
-                            )
-                            .map(|kb| kb.size(rems_from_px(12.))),
+                        div().child(
+                            KeyBinding::for_action_in(&menu::Cancel, &self.focus_handle, cx)
+                                .size(rems_from_px(12.)),
                         ),
                     )
                     .on_click({

@@ -62,9 +62,9 @@ impl Database {
                 .iter()
                 .map(|c| c.replica_id)
                 .collect::<HashSet<_>>();
-            let mut replica_id = ReplicaId(0);
+            let mut replica_id = ReplicaId(clock::ReplicaId::FIRST_COLLAB_ID.as_u16() as i32);
             while replica_ids.contains(&replica_id) {
-                replica_id.0 += 1;
+                replica_id = ReplicaId(replica_id.0 + 1);
             }
             let collaborator = channel_buffer_collaborator::ActiveModel {
                 channel_id: ActiveValue::Set(channel_id),
@@ -203,7 +203,7 @@ impl Database {
                 while let Some(row) = rows.next().await {
                     let row = row?;
                     let timestamp = clock::Lamport {
-                        replica_id: row.replica_id as u16,
+                        replica_id: clock::ReplicaId::new(row.replica_id as u16),
                         value: row.lamport_timestamp as u32,
                     };
                     server_version.observe(timestamp);
@@ -701,7 +701,11 @@ impl Database {
             return Ok(());
         }
 
-        let mut text_buffer = text::Buffer::new(0, text::BufferId::new(1).unwrap(), base_text);
+        let mut text_buffer = text::Buffer::new(
+            clock::ReplicaId::LOCAL,
+            text::BufferId::new(1).unwrap(),
+            base_text,
+        );
         text_buffer.apply_ops(operations.into_iter().filter_map(operation_from_wire));
 
         let base_text = text_buffer.text();
@@ -934,7 +938,7 @@ pub fn operation_from_wire(operation: proto::Operation) -> Option<text::Operatio
     match operation.variant? {
         proto::operation::Variant::Edit(edit) => Some(text::Operation::Edit(EditOperation {
             timestamp: clock::Lamport {
-                replica_id: edit.replica_id as text::ReplicaId,
+                replica_id: clock::ReplicaId::new(edit.replica_id as u16),
                 value: edit.lamport_timestamp,
             },
             version: version_from_wire(&edit.version),
@@ -949,7 +953,7 @@ pub fn operation_from_wire(operation: proto::Operation) -> Option<text::Operatio
         })),
         proto::operation::Variant::Undo(undo) => Some(text::Operation::Undo(UndoOperation {
             timestamp: clock::Lamport {
-                replica_id: undo.replica_id as text::ReplicaId,
+                replica_id: clock::ReplicaId::new(undo.replica_id as u16),
                 value: undo.lamport_timestamp,
             },
             version: version_from_wire(&undo.version),
@@ -959,7 +963,7 @@ pub fn operation_from_wire(operation: proto::Operation) -> Option<text::Operatio
                 .map(|c| {
                     (
                         clock::Lamport {
-                            replica_id: c.replica_id as text::ReplicaId,
+                            replica_id: clock::ReplicaId::new(c.replica_id as u16),
                             value: c.lamport_timestamp,
                         },
                         c.count,
@@ -975,7 +979,7 @@ fn version_from_wire(message: &[proto::VectorClockEntry]) -> clock::Global {
     let mut version = clock::Global::new();
     for entry in message {
         version.observe(clock::Lamport {
-            replica_id: entry.replica_id as text::ReplicaId,
+            replica_id: clock::ReplicaId::new(entry.replica_id as u16),
             value: entry.timestamp,
         });
     }
@@ -986,7 +990,7 @@ fn version_to_wire(version: &clock::Global) -> Vec<proto::VectorClockEntry> {
     let mut message = Vec::new();
     for entry in version.iter() {
         message.push(proto::VectorClockEntry {
-            replica_id: entry.replica_id as u32,
+            replica_id: entry.replica_id.as_u16() as u32,
             timestamp: entry.value,
         });
     }

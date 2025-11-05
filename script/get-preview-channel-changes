@@ -1,7 +1,7 @@
 #!/usr/bin/env node --redirect-warnings=/dev/null
 
 const { execFileSync } = require("child_process");
-const { GITHUB_ACCESS_TOKEN } = process.env;
+let { GITHUB_ACCESS_TOKEN } = process.env;
 const GITHUB_URL = "https://github.com";
 const SKIPPABLE_NOTE_REGEX = /^\s*-?\s*n\/?a\s*/ims;
 const PULL_REQUEST_WEB_URL = "https://github.com/zed-industries/zed/pull";

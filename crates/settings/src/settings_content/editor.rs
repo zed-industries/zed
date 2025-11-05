@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 
-use crate::{DiagnosticSeverityContent, ShowScrollbar};
+use crate::{
+    DelayMs, DiagnosticSeverityContent, ShowScrollbar, serialize_f32_with_two_decimal_places,
+};
 
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -45,7 +47,7 @@ pub struct EditorSettingsContent {
     /// server based on the current cursor location.
     ///
     /// Default: 75
-    pub lsp_highlight_debounce: Option<u64>,
+    pub lsp_highlight_debounce: Option<DelayMs>,
     /// Whether to show the informational hover box when moving the mouse
     /// over symbols in the editor.
     ///
@@ -54,7 +56,7 @@ pub struct EditorSettingsContent {
     /// Time to wait in milliseconds before showing the informational hover box.
     ///
     /// Default: 300
-    pub hover_popover_delay: Option<u64>,
+    pub hover_popover_delay: Option<DelayMs>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings
@@ -70,6 +72,7 @@ pub struct EditorSettingsContent {
     /// The number of lines to keep above/below the cursor when auto-scrolling.
     ///
     /// Default: 3.
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub vertical_scroll_margin: Option<f32>,
     /// Whether to scroll when clicking near the edge of the visible text area.
     ///
@@ -78,22 +81,27 @@ pub struct EditorSettingsContent {
     /// The number of characters to keep on either side when scrolling with the mouse.
     ///
     /// Default: 5.
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub horizontal_scroll_margin: Option<f32>,
     /// Scroll sensitivity multiplier. This multiplier is applied
     /// to both the horizontal and vertical delta values while scrolling.
     ///
     /// Default: 1.0
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub scroll_sensitivity: Option<f32>,
     /// Scroll sensitivity multiplier for fast scrolling. This multiplier is applied
     /// to both the horizontal and vertical delta values while scrolling. Fast scrolling
     /// happens when a user holds the alt or option key while scrolling.
     ///
     /// Default: 4.0
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub fast_scroll_sensitivity: Option<f32>,
     /// Whether the line numbers on editors gutter are relative or not.
+    /// When "enabled" shows relative number of buffer lines, when "wrapped" shows
+    /// relative number of display lines.
     ///
-    /// Default: false
-    pub relative_line_numbers: Option<bool>,
+    /// Default: "disabled"
+    pub relative_line_numbers: Option<RelativeLineNumbers>,
     /// When to populate a new search's query based on the text under the cursor.
     ///
     /// Default: always
@@ -191,6 +199,54 @@ pub struct EditorSettingsContent {
     ///
     /// Default: [`DocumentColorsRenderMode::Inlay`]
     pub lsp_document_colors: Option<DocumentColorsRenderMode>,
+    /// When to show the scrollbar in the completion menu.
+    /// This setting can take four values:
+    ///
+    /// 1. Show the scrollbar if there's important information or
+    ///    follow the system's configured behavior
+    ///   "auto"
+    /// 2. Match the system's configured behavior:
+    ///    "system"
+    /// 3. Always show the scrollbar:
+    ///    "always"
+    /// 4. Never show the scrollbar:
+    ///    "never" (default)
+    pub completion_menu_scrollbar: Option<ShowScrollbar>,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum RelativeLineNumbers {
+    Disabled,
+    Enabled,
+    Wrapped,
+}
+
+impl RelativeLineNumbers {
+    pub fn enabled(&self) -> bool {
+        match self {
+            RelativeLineNumbers::Enabled | RelativeLineNumbers::Wrapped => true,
+            RelativeLineNumbers::Disabled => false,
+        }
+    }
+    pub fn wrapped(&self) -> bool {
+        match self {
+            RelativeLineNumbers::Enabled | RelativeLineNumbers::Disabled => false,
+            RelativeLineNumbers::Wrapped => true,
+        }
+    }
 }
 
 // Toolbar related settings
@@ -334,7 +390,18 @@ pub struct GutterContent {
 
 /// How to render LSP `textDocument/documentColor` colors in the editor.
 #[derive(
-    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentColorsRenderMode {
@@ -682,6 +749,8 @@ pub struct SearchSettingsContent {
     pub case_sensitive: Option<bool>,
     pub include_ignored: Option<bool>,
     pub regex: Option<bool>,
+    /// Whether to center the cursor on each search match when navigating.
+    pub center_on_match: Option<bool>,
 }
 
 #[skip_serializing_none]
@@ -711,7 +780,7 @@ pub struct DragAndDropSelectionContent {
     /// The delay in milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
     ///
     /// Default: 300
-    pub delay: Option<u64>,
+    pub delay: Option<DelayMs>,
 }
 
 /// When to show the minimap in the editor.
@@ -785,10 +854,113 @@ pub enum DisplayIn {
     derive_more::FromStr,
 )]
 #[serde(transparent)]
-pub struct MinimumContrast(pub f32);
+pub struct MinimumContrast(
+    #[serde(serialize_with = "crate::serialize_f32_with_two_decimal_places")] pub f32,
+);
 
 impl Display for MinimumContrast {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:.1}", self.0)
+    }
+}
+
+impl From<f32> for MinimumContrast {
+    fn from(x: f32) -> Self {
+        Self(x)
+    }
+}
+
+/// Opacity of the inactive panes. 0 means transparent, 1 means opaque.
+///
+/// Valid range: 0.0 to 1.0
+/// Default: 1.0
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    PartialOrd,
+    derive_more::FromStr,
+)]
+#[serde(transparent)]
+pub struct InactiveOpacity(
+    #[serde(serialize_with = "serialize_f32_with_two_decimal_places")] pub f32,
+);
+
+impl Display for InactiveOpacity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:.1}", self.0)
+    }
+}
+
+impl From<f32> for InactiveOpacity {
+    fn from(x: f32) -> Self {
+        Self(x)
+    }
+}
+
+/// Centered layout related setting (left/right).
+///
+/// Valid range: 0.0 to 0.4
+/// Default: 2.0
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    MergeFrom,
+    PartialEq,
+    PartialOrd,
+    derive_more::FromStr,
+)]
+#[serde(transparent)]
+pub struct CenteredPaddingSettings(
+    #[serde(serialize_with = "serialize_f32_with_two_decimal_places")] pub f32,
+);
+
+impl CenteredPaddingSettings {
+    pub const MIN_PADDING: f32 = 0.0;
+    // This is an f64 so serde_json can give a type hint without random numbers in the back
+    pub const DEFAULT_PADDING: f64 = 0.2;
+    pub const MAX_PADDING: f32 = 0.4;
+}
+
+impl Display for CenteredPaddingSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:.2}", self.0)
+    }
+}
+
+impl From<f32> for CenteredPaddingSettings {
+    fn from(x: f32) -> Self {
+        Self(x)
+    }
+}
+
+impl Default for CenteredPaddingSettings {
+    fn default() -> Self {
+        Self(Self::DEFAULT_PADDING as f32)
+    }
+}
+
+impl schemars::JsonSchema for CenteredPaddingSettings {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "CenteredPaddingSettings".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        use schemars::json_schema;
+        json_schema!({
+            "type": "number",
+            "minimum": Self::MIN_PADDING,
+            "maximum": Self::MAX_PADDING,
+            "default": Self::DEFAULT_PADDING,
+            "description": "Centered layout related setting (left/right)."
+        })
     }
 }

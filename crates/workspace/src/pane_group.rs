@@ -79,6 +79,56 @@ impl PaneGroup {
         }
     }
 
+    /// Moves active pane to span the entire border in the given direction,
+    /// similar to Vim ctrl+w shift-[hjkl] motion.
+    ///
+    /// Returns:
+    /// - Ok(true) if it found and moved a pane
+    /// - Ok(false) if it found but did not move the pane
+    /// - Err(_) if it did not find the pane
+    pub fn move_to_border(
+        &mut self,
+        active_pane: &Entity<Pane>,
+        direction: SplitDirection,
+    ) -> Result<bool> {
+        if let Some(pane) = self.find_pane_at_border(direction)
+            && pane == active_pane
+        {
+            return Ok(false);
+        }
+
+        if !self.remove(active_pane)? {
+            return Ok(false);
+        }
+
+        if let Member::Axis(root) = &mut self.root
+            && direction.axis() == root.axis
+        {
+            let idx = if direction.increasing() {
+                root.members.len()
+            } else {
+                0
+            };
+            root.insert_pane(idx, active_pane);
+            return Ok(true);
+        }
+
+        let members = if direction.increasing() {
+            vec![self.root.clone(), Member::Pane(active_pane.clone())]
+        } else {
+            vec![Member::Pane(active_pane.clone()), self.root.clone()]
+        };
+        self.root = Member::Axis(PaneAxis::new(direction.axis(), members));
+        Ok(true)
+    }
+
+    fn find_pane_at_border(&self, direction: SplitDirection) -> Option<&Entity<Pane>> {
+        match &self.root {
+            Member::Pane(pane) => Some(pane),
+            Member::Axis(axis) => axis.find_pane_at_border(direction),
+        }
+    }
+
     /// Returns:
     /// - Ok(true) if it found and removed a pane
     /// - Ok(false) if it found but did not remove the pane
@@ -526,9 +576,7 @@ impl PaneAxis {
                             if direction.increasing() {
                                 idx += 1;
                             }
-
-                            self.members.insert(idx, Member::Pane(new_pane.clone()));
-                            *self.flexes.lock() = vec![1.; self.members.len()];
+                            self.insert_pane(idx, new_pane);
                         } else {
                             *member =
                                 Member::new_axis(old_pane.clone(), new_pane.clone(), direction);
@@ -539,6 +587,26 @@ impl PaneAxis {
             }
         }
         anyhow::bail!("Pane not found");
+    }
+
+    fn insert_pane(&mut self, idx: usize, new_pane: &Entity<Pane>) {
+        self.members.insert(idx, Member::Pane(new_pane.clone()));
+        *self.flexes.lock() = vec![1.; self.members.len()];
+    }
+
+    fn find_pane_at_border(&self, direction: SplitDirection) -> Option<&Entity<Pane>> {
+        if self.axis != direction.axis() {
+            return None;
+        }
+        let member = if direction.increasing() {
+            self.members.last()
+        } else {
+            self.members.first()
+        };
+        member.and_then(|e| match e {
+            Member::Pane(pane) => Some(pane),
+            Member::Axis(_) => None,
+        })
     }
 
     fn remove(&mut self, pane_to_remove: &Entity<Pane>) -> Result<Option<Member>> {
@@ -1238,7 +1306,7 @@ mod element {
             let overlay_opacity = WorkspaceSettings::get(None, cx)
                 .active_pane_modifiers
                 .inactive_opacity
-                .map(|val| val.clamp(0.0, 1.0))
+                .map(|val| val.0.clamp(0.0, 1.0))
                 .and_then(|val| (val <= 1.).then_some(val));
 
             let mut overlay_background = cx.theme().colors().editor_background;

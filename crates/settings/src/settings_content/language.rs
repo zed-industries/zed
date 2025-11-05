@@ -1,12 +1,9 @@
-use std::{borrow::Cow, num::NonZeroU32};
+use std::num::NonZeroU32;
 
 use collections::{HashMap, HashSet};
 use gpui::{Modifiers, SharedString};
-use schemars::{JsonSchema, json_schema};
-use serde::{
-    Deserialize, Deserializer, Serialize,
-    de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor},
-};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 use std::sync::Arc;
@@ -30,8 +27,7 @@ pub struct AllLanguageSettingsContent {
     pub languages: LanguageToSettingsMap,
     /// Settings for associating file extensions and filenames
     /// with languages.
-    #[serde(default)]
-    pub file_types: HashMap<Arc<str>, ExtendingVec<String>>,
+    pub file_types: Option<HashMap<Arc<str>, ExtendingVec<String>>>,
 }
 
 impl merge_from::MergeFrom for AllLanguageSettingsContent {
@@ -146,11 +142,27 @@ pub struct CodestralSettingsContent {
     /// Default: 150
     #[serde(default)]
     pub max_tokens: Option<u32>,
+    /// Api URL to use for completions.
+    ///
+    /// Default: "https://codestral.mistral.ai"
+    #[serde(default)]
+    pub api_url: Option<String>,
 }
 
 /// The mode in which edit predictions should be displayed.
 #[derive(
-    Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum EditPredictionsMode {
@@ -246,7 +258,7 @@ pub struct LanguageSettingsContent {
     /// How to perform a buffer format.
     ///
     /// Default: auto
-    pub formatter: Option<SelectedFormatter>,
+    pub formatter: Option<FormatterList>,
     /// Zed's Prettier integration settings.
     /// Allows to enable/disable formatting with Prettier
     /// and configure default Prettier, used when no project-level Prettier installation is found.
@@ -300,12 +312,12 @@ pub struct LanguageSettingsContent {
     /// Inlay hint related settings.
     pub inlay_hints: Option<InlayHintSettingsContent>,
     /// Whether to automatically type closing characters for you. For example,
-    /// when you type (, Zed will automatically add a closing ) at the correct position.
+    /// when you type '(', Zed will automatically add a closing ')' at the correct position.
     ///
     /// Default: true
     pub use_autoclose: Option<bool>,
     /// Whether to automatically surround text with characters for you. For example,
-    /// when you select text and type (, Zed will automatically surround text with ().
+    /// when you select text and type '(', Zed will automatically surround text with ().
     ///
     /// Default: true
     pub use_auto_surround: Option<bool>,
@@ -644,102 +656,6 @@ pub enum FormatOnSave {
     Off,
 }
 
-/// Controls which formatter should be used when formatting code.
-#[derive(Clone, Debug, Default, PartialEq, Eq, MergeFrom)]
-pub enum SelectedFormatter {
-    /// Format files using Zed's Prettier integration (if applicable),
-    /// or falling back to formatting via language server.
-    #[default]
-    Auto,
-    List(FormatterList),
-}
-
-impl JsonSchema for SelectedFormatter {
-    fn schema_name() -> Cow<'static, str> {
-        "Formatter".into()
-    }
-
-    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        let formatter_schema = Formatter::json_schema(generator);
-
-        json_schema!({
-            "oneOf": [
-                {
-                    "type": "array",
-                    "items": formatter_schema
-                },
-                {
-                    "type": "string",
-                    "enum": ["auto", "language_server"]
-                },
-                formatter_schema
-            ]
-        })
-    }
-}
-
-impl Serialize for SelectedFormatter {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            SelectedFormatter::Auto => serializer.serialize_str("auto"),
-            SelectedFormatter::List(list) => list.serialize(serializer),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for SelectedFormatter {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct FormatDeserializer;
-
-        impl<'d> Visitor<'d> for FormatDeserializer {
-            type Value = SelectedFormatter;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a valid formatter kind")
-            }
-            fn visit_str<E>(self, v: &str) -> std::result::Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                if v == "auto" {
-                    Ok(Self::Value::Auto)
-                } else if v == "language_server" {
-                    Ok(Self::Value::List(FormatterList::Single(
-                        Formatter::LanguageServer { name: None },
-                    )))
-                } else {
-                    let ret: Result<FormatterList, _> =
-                        Deserialize::deserialize(v.into_deserializer());
-                    ret.map(SelectedFormatter::List)
-                }
-            }
-            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
-            where
-                A: MapAccess<'d>,
-            {
-                let ret: Result<FormatterList, _> =
-                    Deserialize::deserialize(de::value::MapAccessDeserializer::new(map));
-                ret.map(SelectedFormatter::List)
-            }
-            fn visit_seq<A>(self, map: A) -> Result<Self::Value, A::Error>
-            where
-                A: SeqAccess<'d>,
-            {
-                let ret: Result<FormatterList, _> =
-                    Deserialize::deserialize(de::value::SeqAccessDeserializer::new(map));
-                ret.map(SelectedFormatter::List)
-            }
-        }
-        deserializer.deserialize_any(FormatDeserializer)
-    }
-}
-
 /// Controls which formatters should be used when formatting code.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(untagged)]
@@ -767,10 +683,11 @@ impl AsRef<[Formatter]> for FormatterList {
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum Formatter {
-    /// Format code using the current language server.
-    LanguageServer { name: Option<String> },
-    /// Format code using Zed's Prettier integration.
+    /// Format files using Zed's Prettier integration (if applicable),
+    /// or falling back to formatting via language server.
     #[default]
+    Auto,
+    /// Format code using Zed's Prettier integration.
     Prettier,
     /// Format code using an external command.
     External {
@@ -781,6 +698,73 @@ pub enum Formatter {
     },
     /// Files should be formatted using a code action executed by language servers.
     CodeAction(String),
+    /// Format code using a language server.
+    #[serde(untagged)]
+    LanguageServer(LanguageServerFormatterSpecifier),
+}
+
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[serde(
+    rename_all = "snake_case",
+    // allow specifying language servers as "language_server" or {"language_server": {"name": ...}}
+    from = "LanguageServerVariantContent",
+    into = "LanguageServerVariantContent"
+)]
+pub enum LanguageServerFormatterSpecifier {
+    Specific {
+        name: String,
+    },
+    #[default]
+    Current,
+}
+
+impl From<LanguageServerVariantContent> for LanguageServerFormatterSpecifier {
+    fn from(value: LanguageServerVariantContent) -> Self {
+        match value {
+            LanguageServerVariantContent::Specific {
+                language_server: LanguageServerSpecifierContent { name: Some(name) },
+            } => Self::Specific { name },
+            _ => Self::Current,
+        }
+    }
+}
+
+impl From<LanguageServerFormatterSpecifier> for LanguageServerVariantContent {
+    fn from(value: LanguageServerFormatterSpecifier) -> Self {
+        match value {
+            LanguageServerFormatterSpecifier::Specific { name } => Self::Specific {
+                language_server: LanguageServerSpecifierContent { name: Some(name) },
+            },
+            LanguageServerFormatterSpecifier::Current => {
+                Self::Current(CurrentLanguageServerContent::LanguageServer)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case", untagged)]
+enum LanguageServerVariantContent {
+    /// Format code using a specific language server.
+    Specific {
+        language_server: LanguageServerSpecifierContent,
+    },
+    /// Format code using the current language server.
+    Current(CurrentLanguageServerContent),
+}
+
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+enum CurrentLanguageServerContent {
+    #[default]
+    LanguageServer,
+}
+
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+struct LanguageServerSpecifierContent {
+    /// The name of the language server to format with
+    name: Option<String>,
 }
 
 /// The settings for indent guides.
@@ -889,31 +873,53 @@ mod test {
     fn test_formatter_deserialization() {
         let raw_auto = "{\"formatter\": \"auto\"}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw_auto).unwrap();
-        assert_eq!(settings.formatter, Some(SelectedFormatter::Auto));
+        assert_eq!(
+            settings.formatter,
+            Some(FormatterList::Single(Formatter::Auto))
+        );
         let raw = "{\"formatter\": \"language_server\"}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
-            Some(SelectedFormatter::List(FormatterList::Single(
-                Formatter::LanguageServer { name: None }
+            Some(FormatterList::Single(Formatter::LanguageServer(
+                LanguageServerFormatterSpecifier::Current
             )))
         );
+
         let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}]}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
-            Some(SelectedFormatter::List(FormatterList::Vec(vec![
-                Formatter::LanguageServer { name: None }
-            ])))
+            Some(FormatterList::Vec(vec![Formatter::LanguageServer(
+                LanguageServerFormatterSpecifier::Current
+            )]))
         );
-        let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}, \"prettier\"]}";
+        let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}, \"language_server\", \"prettier\"]}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
-            Some(SelectedFormatter::List(FormatterList::Vec(vec![
-                Formatter::LanguageServer { name: None },
+            Some(FormatterList::Vec(vec![
+                Formatter::LanguageServer(LanguageServerFormatterSpecifier::Current),
+                Formatter::LanguageServer(LanguageServerFormatterSpecifier::Current),
                 Formatter::Prettier
-            ])))
+            ]))
+        );
+
+        let raw = "{\"formatter\": [{\"language_server\": {\"name\": \"ruff\"}}, \"prettier\"]}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            settings.formatter,
+            Some(FormatterList::Vec(vec![
+                Formatter::LanguageServer(LanguageServerFormatterSpecifier::Specific {
+                    name: "ruff".to_string()
+                }),
+                Formatter::Prettier
+            ]))
+        );
+
+        assert_eq!(
+            serde_json::to_string(&LanguageServerFormatterSpecifier::Current).unwrap(),
+            "\"language_server\"",
         );
     }
 

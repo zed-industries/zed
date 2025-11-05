@@ -670,7 +670,17 @@ pub struct CodeLabel {
     pub filter_range: Range<usize>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CodeLabelBuilder {
+    /// The text to display.
+    text: String,
+    /// Syntax highlighting runs.
+    runs: Vec<(Range<usize>, HighlightId)>,
+    /// The portion of the text that should be used in fuzzy filtering.
+    filter_range: Range<usize>,
+}
+
+#[derive(Clone, Deserialize, JsonSchema, Debug)]
 pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: LanguageName,
@@ -813,7 +823,7 @@ pub struct LanguageMatcher {
 }
 
 /// The configuration for JSX tag auto-closing.
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Deserialize, JsonSchema, Debug)]
 pub struct JsxTagAutoCloseConfig {
     /// The name of the node for a opening tag
     pub open_tag_node_name: String,
@@ -2223,6 +2233,34 @@ impl Grammar {
     }
 }
 
+impl CodeLabelBuilder {
+    pub fn respan_filter_range(&mut self, filter_text: Option<&str>) {
+        self.filter_range = filter_text
+            .and_then(|filter| self.text.find(filter).map(|ix| ix..ix + filter.len()))
+            .unwrap_or(0..self.text.len());
+    }
+
+    pub fn push_str(&mut self, text: &str, highlight: Option<HighlightId>) {
+        let start_ix = self.text.len();
+        self.text.push_str(text);
+        if let Some(highlight) = highlight {
+            let end_ix = self.text.len();
+            self.runs.push((start_ix..end_ix, highlight));
+        }
+    }
+
+    pub fn build(mut self) -> CodeLabel {
+        if self.filter_range.end == 0 {
+            self.respan_filter_range(None);
+        }
+        CodeLabel {
+            text: self.text,
+            runs: self.runs,
+            filter_range: self.filter_range,
+        }
+    }
+}
+
 impl CodeLabel {
     pub fn fallback_for_completion(
         item: &lsp::CompletionItem,
@@ -2286,22 +2324,36 @@ impl CodeLabel {
     }
 
     pub fn plain(text: String, filter_text: Option<&str>) -> Self {
+        Self::filtered(text, filter_text, Vec::new())
+    }
+
+    pub fn filtered(
+        text: String,
+        filter_text: Option<&str>,
+        runs: Vec<(Range<usize>, HighlightId)>,
+    ) -> Self {
         let filter_range = filter_text
             .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
             .unwrap_or(0..text.len());
-        Self {
-            runs: Vec::new(),
-            filter_range,
-            text,
-        }
+        Self::new(text, filter_range, runs)
     }
 
-    pub fn push_str(&mut self, text: &str, highlight: Option<HighlightId>) {
-        let start_ix = self.text.len();
-        self.text.push_str(text);
-        let end_ix = self.text.len();
-        if let Some(highlight) = highlight {
-            self.runs.push((start_ix..end_ix, highlight));
+    pub fn new(
+        text: String,
+        filter_range: Range<usize>,
+        runs: Vec<(Range<usize>, HighlightId)>,
+    ) -> Self {
+        assert!(
+            text.get(filter_range.clone()).is_some(),
+            "invalid filter range"
+        );
+        runs.iter().for_each(|(range, _)| {
+            assert!(text.get(range.clone()).is_some(), "invalid run range");
+        });
+        Self {
+            runs,
+            filter_range,
+            text,
         }
     }
 
@@ -2537,10 +2589,74 @@ pub fn range_from_lsp(range: lsp::Range) -> Range<Unclipped<PointUtf16>> {
     let mut start = point_from_lsp(range.start);
     let mut end = point_from_lsp(range.end);
     if start > end {
-        log::warn!("range_from_lsp called with inverted range {start:?}-{end:?}");
+        // We debug instead of warn so that this is not logged by default unless explicitly requested.
+        // Using warn would write to the log file, and since we receive an enormous amount of
+        // range_from_lsp calls (especially during completions), that can hang the main thread.
+        //
+        // See issue #36223.
+        zlog::debug!("range_from_lsp called with inverted range {start:?}-{end:?}");
         mem::swap(&mut start, &mut end);
     }
     start..end
+}
+
+#[doc(hidden)]
+#[cfg(any(test, feature = "test-support"))]
+pub fn rust_lang() -> Arc<Language> {
+    use std::borrow::Cow;
+
+    let language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            line_comments: vec!["// ".into(), "/// ".into(), "//! ".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    )
+    .with_queries(LanguageQueries {
+        indents: Some(Cow::from(
+            r#"
+[
+    ((where_clause) _ @end)
+    (field_expression)
+    (call_expression)
+    (assignment_expression)
+    (let_declaration)
+    (let_chain)
+    (await_expression)
+] @indent
+
+(_ "[" "]" @end) @indent
+(_ "<" ">" @end) @indent
+(_ "{" "}" @end) @indent
+(_ "(" ")" @end) @indent"#,
+        )),
+        brackets: Some(Cow::from(
+            r#"
+("(" @open ")" @close)
+("[" @open "]" @close)
+("{" @open "}" @close)
+("<" @open ">" @close)
+("\"" @open "\"" @close)
+(closure_parameters "|" @open "|" @close)"#,
+        )),
+        text_objects: Some(Cow::from(
+            r#"
+(function_item
+    body: (_
+        "{"
+        (_)* @function.inside
+        "}" )) @function.around
+        "#,
+        )),
+        ..LanguageQueries::default()
+    })
+    .expect("Could not parse queries");
+    Arc::new(language)
 }
 
 #[cfg(test)]

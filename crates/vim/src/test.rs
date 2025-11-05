@@ -2,18 +2,21 @@ mod neovim_backed_test_context;
 mod neovim_connection;
 mod vim_test_context;
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::{
-    AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer, actions::DeleteLine,
-    code_context_menus::CodeContextMenu, display_map::DisplayRow,
+    AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer,
+    actions::{DeleteLine, WrapSelectionsInTag},
+    code_context_menus::CodeContextMenu,
+    display_map::DisplayRow,
     test::editor_test_context::EditorTestContext,
 };
 use futures::StreamExt;
 use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext, px};
-use language::Point;
+use itertools::Itertools;
+use language::{Language, LanguageConfig, Point};
 pub use neovim_backed_test_context::*;
 use settings::SettingsStore;
 use ui::Pixels;
@@ -972,6 +975,21 @@ async fn test_jk_delay(cx: &mut gpui::TestAppContext) {
     cx.assert_state("jˇhello", Mode::Insert);
     cx.simulate_keystrokes("k j k");
     cx.assert_state("jˇkhello", Mode::Normal);
+}
+
+#[perf]
+#[gpui::test]
+async fn test_jk_max_count(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state("1\nˇ2\n3").await;
+    cx.simulate_shared_keystrokes("9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 j")
+        .await;
+    cx.shared_state().await.assert_eq("1\n2\nˇ3");
+
+    let number: String = usize::MAX.to_string().split("").join(" ");
+    cx.simulate_shared_keystrokes(&format!("{number} k")).await;
+    cx.shared_state().await.assert_eq("ˇ1\n2\n3");
 }
 
 #[perf]
@@ -2279,7 +2297,10 @@ async fn test_clipping_on_mode_change(cx: &mut gpui::TestAppContext) {
 
     let mut pixel_position = cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
-        let current_head = editor.selections.newest_display(cx).end;
+        let current_head = editor
+            .selections
+            .newest_display(&snapshot.display_snapshot)
+            .end;
         editor.last_bounds().unwrap().origin
             + editor
                 .display_to_pixel_point(current_head, &snapshot, window)
@@ -2298,5 +2319,49 @@ async fn test_clipping_on_mode_change(cx: &mut gpui::TestAppContext) {
         "
         },
         Mode::Normal,
+    );
+}
+
+#[gpui::test]
+async fn test_wrap_selections_in_tag_line_mode(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    let js_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "JavaScript".into(),
+            wrap_characters: Some(language::WrapCharactersConfig {
+                start_prefix: "<".into(),
+                start_suffix: ">".into(),
+                end_prefix: "</".into(),
+                end_suffix: ">".into(),
+            }),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(js_language), cx));
+
+    cx.set_state(
+        indoc! {
+        "
+        ˇaaaaa
+        bbbbb
+        "
+        },
+        Mode::Normal,
+    );
+
+    cx.simulate_keystrokes("shift-v j");
+    cx.dispatch_action(WrapSelectionsInTag);
+
+    cx.assert_state(
+        indoc! {
+            "
+            <ˇ>aaaaa
+            bbbbb</ˇ>
+            "
+        },
+        Mode::VisualLine,
     );
 }

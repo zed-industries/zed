@@ -4,22 +4,26 @@ use std::{
     fmt::Display,
     rc::{Rc, Weak},
     sync::Arc,
+    time::Duration,
 };
 
 use agent_client_protocol as acp;
 use collections::HashMap;
 use gpui::{
-    App, Empty, Entity, EventEmitter, FocusHandle, Focusable, Global, ListAlignment, ListState,
-    StyleRefinement, Subscription, Task, TextStyleRefinement, Window, actions, list, prelude::*,
+    App, ClipboardItem, Empty, Entity, EventEmitter, FocusHandle, Focusable, Global, ListAlignment,
+    ListState, StyleRefinement, Subscription, Task, TextStyleRefinement, Window, actions, list,
+    prelude::*,
 };
 use language::LanguageRegistry;
 use markdown::{CodeBlockRenderer, Markdown, MarkdownElement, MarkdownStyle};
 use project::Project;
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{Tooltip, WithScrollbar, prelude::*};
 use util::ResultExt as _;
-use workspace::{Item, Workspace};
+use workspace::{
+    Item, ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+};
 
 actions!(dev, [OpenAcpLogs]);
 
@@ -89,8 +93,8 @@ struct WatchedConnection {
     messages: Vec<WatchedConnectionMessage>,
     list_state: ListState,
     connection: Weak<acp::ClientSideConnection>,
-    incoming_request_methods: HashMap<i32, Arc<str>>,
-    outgoing_request_methods: HashMap<i32, Arc<str>>,
+    incoming_request_methods: HashMap<acp::RequestId, Arc<str>>,
+    outgoing_request_methods: HashMap<acp::RequestId, Arc<str>>,
     _task: Task<()>,
 }
 
@@ -171,7 +175,7 @@ impl AcpTools {
                     }
                 };
 
-                method_map.insert(id, method.clone());
+                method_map.insert(id.clone(), method.clone());
                 (Some(id), method.into(), MessageType::Request, Ok(params))
             }
             acp::StreamMessageContent::Response { id, result } => {
@@ -227,6 +231,43 @@ impl AcpTools {
         cx.notify();
     }
 
+    fn serialize_observed_messages(&self) -> Option<String> {
+        let connection = self.watched_connection.as_ref()?;
+
+        let messages: Vec<serde_json::Value> = connection
+            .messages
+            .iter()
+            .filter_map(|message| {
+                let params = match &message.params {
+                    Ok(Some(params)) => params.clone(),
+                    Ok(None) => serde_json::Value::Null,
+                    Err(err) => serde_json::to_value(err).ok()?,
+                };
+                Some(serde_json::json!({
+                    "_direction": match message.direction {
+                        acp::StreamMessageDirection::Incoming => "incoming",
+                        acp::StreamMessageDirection::Outgoing => "outgoing",
+                    },
+                    "_type": message.message_type.to_string().to_lowercase(),
+                    "id": message.request_id,
+                    "method": message.name.to_string(),
+                    "params": params,
+                }))
+            })
+            .collect();
+
+        serde_json::to_string_pretty(&messages).ok()
+    }
+
+    fn clear_messages(&mut self, cx: &mut Context<Self>) {
+        if let Some(connection) = self.watched_connection.as_mut() {
+            connection.messages.clear();
+            connection.list_state.reset(0);
+            self.expanded.clear();
+            cx.notify();
+        }
+    }
+
     fn render_message(
         &mut self,
         index: usize,
@@ -250,17 +291,19 @@ impl AcpTools {
         let expanded = self.expanded.contains(&index);
 
         v_flex()
-            .w_full()
-            .px_4()
-            .py_3()
-            .border_color(colors.border)
-            .border_b_1()
-            .gap_2()
-            .items_start()
-            .font_buffer(cx)
-            .text_size(base_size)
             .id(index)
             .group("message")
+            .cursor_pointer()
+            .font_buffer(cx)
+            .w_full()
+            .py_3()
+            .pl_4()
+            .pr_5()
+            .gap_2()
+            .items_start()
+            .text_size(base_size)
+            .border_color(colors.border)
+            .border_b_1()
             .hover(|this| this.bg(colors.element_background.opacity(0.5)))
             .on_click(cx.listener(move |this, _, _, cx| {
                 if this.expanded.contains(&index) {
@@ -282,15 +325,14 @@ impl AcpTools {
                 h_flex()
                     .w_full()
                     .gap_2()
-                    .items_center()
                     .flex_shrink_0()
                     .child(match message.direction {
-                        acp::StreamMessageDirection::Incoming => {
-                            ui::Icon::new(ui::IconName::ArrowDown).color(Color::Error)
-                        }
-                        acp::StreamMessageDirection::Outgoing => {
-                            ui::Icon::new(ui::IconName::ArrowUp).color(Color::Success)
-                        }
+                        acp::StreamMessageDirection::Incoming => Icon::new(IconName::ArrowDown)
+                            .color(Color::Error)
+                            .size(IconSize::Small),
+                        acp::StreamMessageDirection::Outgoing => Icon::new(IconName::ArrowUp)
+                            .color(Color::Success)
+                            .size(IconSize::Small),
                     })
                     .child(
                         Label::new(message.name.clone())
@@ -306,6 +348,7 @@ impl AcpTools {
                     .children(
                         message
                             .request_id
+                            .as_ref()
                             .map(|req_id| div().child(ui::Chip::new(req_id.to_string()))),
                     ),
             )
@@ -357,7 +400,7 @@ impl AcpTools {
 
 struct WatchedConnectionMessage {
     name: SharedString,
-    request_id: Option<i32>,
+    request_id: Option<acp::RequestId>,
     direction: acp::StreamMessageDirection,
     message_type: MessageType,
     params: Result<Option<serde_json::Value>, acp::Error>,
@@ -459,7 +502,7 @@ impl Focusable for AcpTools {
 }
 
 impl Render for AcpTools {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .track_focus(&self.focus_handle)
             .size_full()
@@ -474,13 +517,19 @@ impl Render for AcpTools {
                             .child("No messages recorded yet")
                             .into_any()
                     } else {
-                        list(
-                            connection.list_state.clone(),
-                            cx.processor(Self::render_message),
-                        )
-                        .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
-                        .flex_grow()
-                        .into_any()
+                        div()
+                            .size_full()
+                            .flex_grow()
+                            .child(
+                                list(
+                                    connection.list_state.clone(),
+                                    cx.processor(Self::render_message),
+                                )
+                                .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
+                                .size_full(),
+                            )
+                            .vertical_scrollbar_for(connection.list_state.clone(), window, cx)
+                            .into_any()
                     }
                 }
                 None => h_flex()
@@ -490,5 +539,105 @@ impl Render for AcpTools {
                     .child("No active connection")
                     .into_any(),
             })
+    }
+}
+
+pub struct AcpToolsToolbarItemView {
+    acp_tools: Option<Entity<AcpTools>>,
+    just_copied: bool,
+}
+
+impl AcpToolsToolbarItemView {
+    pub fn new() -> Self {
+        Self {
+            acp_tools: None,
+            just_copied: false,
+        }
+    }
+}
+
+impl Render for AcpToolsToolbarItemView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(acp_tools) = self.acp_tools.as_ref() else {
+            return Empty.into_any_element();
+        };
+
+        let acp_tools = acp_tools.clone();
+        let has_messages = acp_tools
+            .read(cx)
+            .watched_connection
+            .as_ref()
+            .is_some_and(|connection| !connection.messages.is_empty());
+
+        h_flex()
+            .gap_2()
+            .child({
+                let acp_tools = acp_tools.clone();
+                IconButton::new(
+                    "copy_all_messages",
+                    if self.just_copied {
+                        IconName::Check
+                    } else {
+                        IconName::Copy
+                    },
+                )
+                .icon_size(IconSize::Small)
+                .tooltip(Tooltip::text(if self.just_copied {
+                    "Copied!"
+                } else {
+                    "Copy All Messages"
+                }))
+                .disabled(!has_messages)
+                .on_click(cx.listener(move |this, _, _window, cx| {
+                    if let Some(content) = acp_tools.read(cx).serialize_observed_messages() {
+                        cx.write_to_clipboard(ClipboardItem::new_string(content));
+
+                        this.just_copied = true;
+                        cx.spawn(async move |this, cx| {
+                            cx.background_executor().timer(Duration::from_secs(2)).await;
+                            this.update(cx, |this, cx| {
+                                this.just_copied = false;
+                                cx.notify();
+                            })
+                        })
+                        .detach();
+                    }
+                }))
+            })
+            .child(
+                IconButton::new("clear_messages", IconName::Trash)
+                    .icon_size(IconSize::Small)
+                    .tooltip(Tooltip::text("Clear Messages"))
+                    .disabled(!has_messages)
+                    .on_click(cx.listener(move |_this, _, _window, cx| {
+                        acp_tools.update(cx, |acp_tools, cx| {
+                            acp_tools.clear_messages(cx);
+                        });
+                    })),
+            )
+            .into_any()
+    }
+}
+
+impl EventEmitter<ToolbarItemEvent> for AcpToolsToolbarItemView {}
+
+impl ToolbarItemView for AcpToolsToolbarItemView {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn ItemHandle>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ToolbarItemLocation {
+        if let Some(item) = active_pane_item
+            && let Some(acp_tools) = item.downcast::<AcpTools>()
+        {
+            self.acp_tools = Some(acp_tools);
+            cx.notify();
+            return ToolbarItemLocation::PrimaryRight;
+        }
+        if self.acp_tools.take().is_some() {
+            cx.notify();
+        }
+        ToolbarItemLocation::Hidden
     }
 }

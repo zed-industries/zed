@@ -31,7 +31,6 @@ settings.workspace = true
 text.workspace = true
 time.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }

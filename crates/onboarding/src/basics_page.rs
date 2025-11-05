@@ -9,7 +9,7 @@ use theme::{
     ThemeSettings,
 };
 use ui::{
-    ButtonLike, ParentElement as _, StatefulInteractiveElement, SwitchField, TintColor,
+    Divider, ParentElement as _, StatefulInteractiveElement, SwitchField, TintColor,
     ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonSimple, ToggleButtonWithIcon, prelude::*,
     rems_from_px,
 };
@@ -221,10 +221,7 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
     let fs = <dyn Fs>::global(cx);
 
     v_flex()
-        .pt_6()
         .gap_4()
-        .border_t_1()
-        .border_color(cx.theme().colors().border_variant.opacity(0.5))
         .child(
             SwitchField::new(
                 "onboarding-telemetry-metrics",
@@ -410,27 +407,23 @@ fn render_setting_import_button(
     imported: bool,
 ) -> impl IntoElement + 'static {
     let action = action.boxed_clone();
-    h_flex().w_full().child(
-        ButtonLike::new(label.clone())
-            .style(ButtonStyle::OutlinedTransparent)
-            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-            .toggle_state(imported)
-            .size(ButtonSize::Medium)
-            .tab_index(tab_index)
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_between()
-                    .when(imported, |this| {
-                        this.child(Icon::new(IconName::Check).color(Color::Success))
-                    })
-                    .child(Label::new(label.clone()).mx_2().size(LabelSize::Small)),
-            )
-            .on_click(move |_, window, cx| {
-                telemetry::event!("Welcome Import Settings", import_source = label,);
-                window.dispatch_action(action.boxed_clone(), cx);
-            }),
-    )
+
+    Button::new(label.clone(), label.clone())
+        .style(ButtonStyle::OutlinedGhost)
+        .size(ButtonSize::Medium)
+        .label_size(LabelSize::Small)
+        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+        .toggle_state(imported)
+        .tab_index(tab_index)
+        .when(imported, |this| {
+            this.icon(IconName::Check)
+                .icon_size(IconSize::Small)
+                .color(Color::Success)
+        })
+        .on_click(move |_, window, cx| {
+            telemetry::event!("Welcome Import Settings", import_source = label,);
+            window.dispatch_action(action.boxed_clone(), cx);
+        })
 }
 
 fn render_import_settings_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement {
@@ -454,6 +447,9 @@ fn render_import_settings_section(tab_index: &mut isize, cx: &mut App) -> impl I
     });
 
     h_flex()
+        .gap_2()
+        .flex_wrap()
+        .justify_between()
         .child(
             v_flex()
                 .gap_0p5()
@@ -464,7 +460,6 @@ fn render_import_settings_section(tab_index: &mut isize, cx: &mut App) -> impl I
                         .color(Color::Muted),
                 ),
         )
-        .child(div().w_full())
         .child(h_flex().gap_1().child(vscode).child(cursor))
 }
 
@@ -477,5 +472,6 @@ pub(crate) fn render_basics_page(cx: &mut App) -> impl IntoElement {
         .child(render_base_keymap_section(&mut tab_index, cx))
         .child(render_import_settings_section(&mut tab_index, cx))
         .child(render_vim_mode_switch(&mut tab_index, cx))
+        .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
         .child(render_telemetry_section(&mut tab_index, cx))
 }

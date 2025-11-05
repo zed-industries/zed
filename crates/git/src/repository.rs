@@ -1,6 +1,6 @@
 use crate::commit::parse_git_diff_name_status;
 use crate::stash::GitStash;
-use crate::status::{GitStatus, StatusCode};
+use crate::status::{DiffTreeType, GitStatus, StatusCode, TreeDiff};
 use crate::{Oid, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
@@ -70,6 +70,50 @@ impl Branch {
                 .map(|commit| commit.commit_timestamp),
         )
     }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct Worktree {
+    pub path: PathBuf,
+    pub ref_name: SharedString,
+    pub sha: SharedString,
+}
+
+impl Worktree {
+    pub fn branch(&self) -> &str {
+        self.ref_name
+            .as_ref()
+            .strip_prefix("refs/heads/")
+            .or_else(|| self.ref_name.as_ref().strip_prefix("refs/remotes/"))
+            .unwrap_or(self.ref_name.as_ref())
+    }
+}
+
+pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree> {
+    let mut worktrees = Vec::new();
+    let entries = raw_worktrees.as_ref().split("\n\n");
+    for entry in entries {
+        let mut parts = entry.splitn(3, '\n');
+        let path = parts
+            .next()
+            .and_then(|p| p.split_once(' ').map(|(_, path)| path.to_string()));
+        let sha = parts
+            .next()
+            .and_then(|p| p.split_once(' ').map(|(_, sha)| sha.to_string()));
+        let ref_name = parts
+            .next()
+            .and_then(|p| p.split_once(' ').map(|(_, ref_name)| ref_name.to_string()));
+
+        if let (Some(path), Some(sha), Some(ref_name)) = (path, sha, ref_name) {
+            worktrees.push(Worktree {
+                path: PathBuf::from(path),
+                ref_name: ref_name.into(),
+                sha: sha.into(),
+            })
+        }
+    }
+
+    worktrees
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -350,6 +394,7 @@ pub trait GitRepository: Send + Sync {
     ///
     /// Also returns `None` for symlinks.
     fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>>;
+    fn load_blob_content(&self, oid: Oid) -> BoxFuture<'_, Result<String>>;
 
     fn set_index_text(
         &self,
@@ -379,6 +424,7 @@ pub trait GitRepository: Send + Sync {
     fn merge_message(&self) -> BoxFuture<'_, Option<String>>;
 
     fn status(&self, path_prefixes: &[RepoPath]) -> Task<Result<GitStatus>>;
+    fn diff_tree(&self, request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>>;
 
     fn stash_entries(&self) -> BoxFuture<'_, Result<GitStash>>;
 
@@ -387,6 +433,15 @@ pub trait GitRepository: Send + Sync {
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
     fn create_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
     fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>>;
+
+    fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>>;
+
+    fn create_worktree(
+        &self,
+        name: String,
+        directory: PathBuf,
+        from_commit: Option<String>,
+    ) -> BoxFuture<'_, Result<()>>;
 
     fn reset(
         &self,
@@ -478,6 +533,7 @@ pub trait GitRepository: Send + Sync {
         &self,
         branch_name: String,
         upstream_name: String,
+        rebase: bool,
         askpass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
@@ -693,10 +749,11 @@ impl GitRepository for RealGitRepository {
                 .args([
                     "--no-optional-locks",
                     "show",
-                    "--format=%P",
+                    "--format=",
                     "-z",
                     "--no-renames",
                     "--name-status",
+                    "--first-parent",
                 ])
                 .arg(&commit)
                 .stdin(Stdio::null())
@@ -707,9 +764,8 @@ impl GitRepository for RealGitRepository {
                 .context("starting git show process")?;
 
             let show_stdout = String::from_utf8_lossy(&show_output.stdout);
-            let mut lines = show_stdout.split('\n');
-            let parent_sha = lines.next().unwrap().trim().trim_end_matches('\0');
-            let changes = parse_git_diff_name_status(lines.next().unwrap_or(""));
+            let changes = parse_git_diff_name_status(&show_stdout);
+            let parent_sha = format!("{}^", commit);
 
             let mut cat_file_process = util::command::new_smol_command(&git_binary_path)
                 .current_dir(&working_directory)
@@ -908,6 +964,17 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
+    fn load_blob_content(&self, oid: Oid) -> BoxFuture<'_, Result<String>> {
+        let repo = self.repository.clone();
+        self.executor
+            .spawn(async move {
+                let repo = repo.lock();
+                let content = repo.find_blob(oid.0)?.content().to_owned();
+                Ok(String::from_utf8(content)?)
+            })
+            .boxed()
+    }
+
     fn set_index_text(
         &self,
         path: RepoPath,
@@ -1060,6 +1127,50 @@ impl GitRepository for RealGitRepository {
         })
     }
 
+    fn diff_tree(&self, request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = match self.working_directory() {
+            Ok(working_directory) => working_directory,
+            Err(e) => return Task::ready(Err(e)).boxed(),
+        };
+
+        let mut args = vec![
+            OsString::from("--no-optional-locks"),
+            OsString::from("diff-tree"),
+            OsString::from("-r"),
+            OsString::from("-z"),
+            OsString::from("--no-renames"),
+        ];
+        match request {
+            DiffTreeType::MergeBase { base, head } => {
+                args.push("--merge-base".into());
+                args.push(OsString::from(base.as_str()));
+                args.push(OsString::from(head.as_str()));
+            }
+            DiffTreeType::Since { base, head } => {
+                args.push(OsString::from(base.as_str()));
+                args.push(OsString::from(head.as_str()));
+            }
+        }
+
+        self.executor
+            .spawn(async move {
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(working_directory)
+                    .args(args)
+                    .output()
+                    .await?;
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    stdout.parse()
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    anyhow::bail!("git status failed: {stderr}");
+                }
+            })
+            .boxed()
+    }
+
     fn stash_entries(&self) -> BoxFuture<'_, Result<GitStash>> {
         let git_binary_path = self.any_git_binary_path.clone();
         let working_directory = self.working_directory();
@@ -1149,6 +1260,66 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
+    fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = self.working_directory();
+        self.executor
+            .spawn(async move {
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(working_directory?)
+                    .args(&["--no-optional-locks", "worktree", "list", "--porcelain"])
+                    .output()
+                    .await?;
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    Ok(parse_worktrees_from_str(&stdout))
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    anyhow::bail!("git worktree list failed: {stderr}");
+                }
+            })
+            .boxed()
+    }
+
+    fn create_worktree(
+        &self,
+        name: String,
+        directory: PathBuf,
+        from_commit: Option<String>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = self.working_directory();
+        let final_path = directory.join(&name);
+        let mut args = vec![
+            OsString::from("--no-optional-locks"),
+            OsString::from("worktree"),
+            OsString::from("add"),
+            OsString::from(final_path.as_os_str()),
+        ];
+        if let Some(from_commit) = from_commit {
+            args.extend([
+                OsString::from("-b"),
+                OsString::from(name.as_str()),
+                OsString::from(from_commit),
+            ]);
+        }
+        self.executor
+            .spawn(async move {
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(working_directory?)
+                    .args(args)
+                    .output()
+                    .await?;
+                if output.status.success() {
+                    Ok(())
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    anyhow::bail!("git worktree list failed: {stderr}");
+                }
+            })
+            .boxed()
+    }
+
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
         let repo = self.repository.clone();
         let working_directory = self.working_directory();
@@ -1222,18 +1393,17 @@ impl GitRepository for RealGitRepository {
             .remote_url("upstream")
             .or_else(|| self.remote_url("origin"));
 
-        self.executor
-            .spawn(async move {
-                crate::blame::Blame::for_path(
-                    &git_binary_path,
-                    &working_directory?,
-                    &path,
-                    &content,
-                    remote_url,
-                )
-                .await
-            })
-            .boxed()
+        async move {
+            crate::blame::Blame::for_path(
+                &git_binary_path,
+                &working_directory?,
+                &path,
+                &content,
+                remote_url,
+            )
+            .await
+        }
+        .boxed()
     }
 
     fn diff(&self, diff: DiffType) -> BoxFuture<'_, Result<String>> {
@@ -1521,6 +1691,7 @@ impl GitRepository for RealGitRepository {
         &self,
         branch_name: String,
         remote_name: String,
+        rebase: bool,
         ask_pass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
@@ -1534,7 +1705,13 @@ impl GitRepository for RealGitRepository {
             command
                 .envs(env.iter())
                 .current_dir(&working_directory?)
-                .args(["pull"])
+                .arg("pull");
+
+            if rebase {
+                command.arg("--rebase");
+            }
+
+            command
                 .arg(remote_name)
                 .arg(branch_name)
                 .stdout(smol::process::Stdio::piped())
@@ -1827,13 +2004,23 @@ impl GitRepository for RealGitRepository {
                     return Ok(output);
                 }
 
-                let output = git
-                    .run(&["symbolic-ref", "refs/remotes/origin/HEAD"])
-                    .await?;
+                if let Ok(output) = git.run(&["symbolic-ref", "refs/remotes/origin/HEAD"]).await {
+                    return Ok(output
+                        .strip_prefix("refs/remotes/origin/")
+                        .map(|s| SharedString::from(s.to_owned())));
+                }
 
-                Ok(output
-                    .strip_prefix("refs/remotes/origin/")
-                    .map(|s| SharedString::from(s.to_owned())))
+                if let Ok(default_branch) = git.run(&["config", "init.defaultBranch"]).await {
+                    if git.run(&["rev-parse", &default_branch]).await.is_ok() {
+                        return Ok(Some(default_branch.into()));
+                    }
+                }
+
+                if git.run(&["rev-parse", "master"]).await.is_ok() {
+                    return Ok(Some("master".into()));
+                }
+
+                Ok(None)
             })
             .boxed()
     }

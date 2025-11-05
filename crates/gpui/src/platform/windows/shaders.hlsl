@@ -390,7 +390,7 @@ float4 gradient_color(Background background,
             float pattern_period = pattern_height * sin(stripe_angle);
             float2x2 rotation = rotate2d(stripe_angle);
             float2 relative_position = position - bounds.origin;
-            float2 rotated_point = mul(rotation, relative_position);
+            float2 rotated_point = mul(relative_position, rotation);
             float pattern = fmod(rotated_point.x, pattern_period);
             float distance = min(pattern, pattern_period - pattern) - pattern_period * (pattern_width / pattern_height) /  2.0f;
             color = solid_color;

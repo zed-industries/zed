@@ -166,13 +166,24 @@ impl super::LspAdapter for CLspAdapter {
             None => "",
         };
 
-        let label = completion
+        let mut label = completion
             .label
             .strip_prefix('•')
             .unwrap_or(&completion.label)
             .trim()
-            .to_owned()
-            + label_detail;
+            .to_owned();
+
+        if !label_detail.is_empty() {
+            let should_add_space = match completion.kind {
+                Some(lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD) => false,
+                _ => true,
+            };
+
+            if should_add_space && !label.ends_with(' ') && !label_detail.starts_with(' ') {
+                label.push(' ');
+            }
+            label.push_str(label_detail);
+        }
 
         match completion.kind {
             Some(lsp::CompletionItemKind::FIELD) if completion.detail.is_some() => {
@@ -188,11 +199,7 @@ impl super::LspAdapter for CLspAdapter {
                             .map(|start| start..start + filter_text.len())
                     })
                     .unwrap_or(detail.len() + 1..text.len());
-                return Some(CodeLabel {
-                    filter_range,
-                    text,
-                    runs,
-                });
+                return Some(CodeLabel::new(text, filter_range, runs));
             }
             Some(lsp::CompletionItemKind::CONSTANT | lsp::CompletionItemKind::VARIABLE)
                 if completion.detail.is_some() =>
@@ -208,11 +215,7 @@ impl super::LspAdapter for CLspAdapter {
                             .map(|start| start..start + filter_text.len())
                     })
                     .unwrap_or(detail.len() + 1..text.len());
-                return Some(CodeLabel {
-                    filter_range,
-                    text,
-                    runs,
-                });
+                return Some(CodeLabel::new(text, filter_range, runs));
             }
             Some(lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD)
                 if completion.detail.is_some() =>
@@ -236,11 +239,7 @@ impl super::LspAdapter for CLspAdapter {
                         filter_start..filter_end
                     });
 
-                return Some(CodeLabel {
-                    filter_range,
-                    text,
-                    runs,
-                });
+                return Some(CodeLabel::new(text, filter_range, runs));
             }
             Some(kind) => {
                 let highlight_name = match kind {
@@ -324,11 +323,11 @@ impl super::LspAdapter for CLspAdapter {
             _ => return None,
         };
 
-        Some(CodeLabel {
-            runs: language.highlight_text(&text.as_str().into(), display_range.clone()),
-            text: text[display_range].to_string(),
+        Some(CodeLabel::new(
+            text[display_range.clone()].to_string(),
             filter_range,
-        })
+            language.highlight_text(&text.as_str().into(), display_range),
+        ))
     }
 
     fn prepare_initialize_params(

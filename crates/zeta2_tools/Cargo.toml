@@ -12,12 +12,14 @@ workspace = true
 path = "src/zeta2_tools.rs"
 
 [dependencies]
+anyhow.workspace = true
 chrono.workspace = true
 client.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 edit_prediction_context.workspace = true
 editor.workspace = true
+feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language.workspace = true
@@ -26,11 +28,12 @@ multi_buffer.workspace = true
 ordered-float.workspace = true
 project.workspace = true
 serde.workspace = true
+telemetry.workspace = true
 text.workspace = true
+regex-syntax = "0.8.8"
 ui.workspace = true
 ui_input.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 workspace.workspace = true
 zeta2.workspace = true
 

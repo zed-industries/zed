@@ -40,7 +40,7 @@ impl RustLspAdapter {
 #[cfg(target_os = "linux")]
 impl RustLspAdapter {
     const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
-    const ARCH_SERVER_NAME: &str = "unknown-linux-gnu";
+    const ARCH_SERVER_NAME: &str = "unknown-linux";
 }
 
 #[cfg(target_os = "freebsd")]
@@ -57,19 +57,89 @@ impl RustLspAdapter {
 
 const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("rust-analyzer");
 
+#[cfg(target_os = "linux")]
+enum LibcType {
+    Gnu,
+    Musl,
+}
+
 impl RustLspAdapter {
-    fn build_asset_name() -> String {
+    #[cfg(target_os = "linux")]
+    async fn determine_libc_type() -> LibcType {
+        use futures::pin_mut;
+        use smol::process::Command;
+
+        async fn from_ldd_version() -> Option<LibcType> {
+            let ldd_output = Command::new("ldd").arg("--version").output().await.ok()?;
+            let ldd_version = String::from_utf8_lossy(&ldd_output.stdout);
+
+            if ldd_version.contains("GNU libc") || ldd_version.contains("GLIBC") {
+                Some(LibcType::Gnu)
+            } else if ldd_version.contains("musl") {
+                Some(LibcType::Musl)
+            } else {
+                None
+            }
+        }
+
+        if let Some(libc_type) = from_ldd_version().await {
+            return libc_type;
+        }
+
+        let Ok(dir_entries) = smol::fs::read_dir("/lib").await else {
+            // defaulting to gnu because nix doesn't have /lib files due to not following FHS
+            return LibcType::Gnu;
+        };
+        let dir_entries = dir_entries.filter_map(async move |e| e.ok());
+        pin_mut!(dir_entries);
+
+        let mut has_musl = false;
+        let mut has_gnu = false;
+
+        while let Some(entry) = dir_entries.next().await {
+            let file_name = entry.file_name();
+            let file_name = file_name.to_string_lossy();
+            if file_name.starts_with("ld-musl-") {
+                has_musl = true;
+            } else if file_name.starts_with("ld-linux-") {
+                has_gnu = true;
+            }
+        }
+
+        match (has_musl, has_gnu) {
+            (true, _) => LibcType::Musl,
+            (_, true) => LibcType::Gnu,
+            _ => LibcType::Gnu,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn build_arch_server_name_linux() -> String {
+        let libc = match Self::determine_libc_type().await {
+            LibcType::Musl => "musl",
+            LibcType::Gnu => "gnu",
+        };
+
+        format!("{}-{}", Self::ARCH_SERVER_NAME, libc)
+    }
+
+    async fn build_asset_name() -> String {
         let extension = match Self::GITHUB_ASSET_KIND {
             AssetKind::TarGz => "tar.gz",
             AssetKind::Gz => "gz",
             AssetKind::Zip => "zip",
         };
 
+        #[cfg(target_os = "linux")]
+        let arch_server_name = Self::build_arch_server_name_linux().await;
+        #[cfg(not(target_os = "linux"))]
+        let arch_server_name = Self::ARCH_SERVER_NAME.to_string();
+
         format!(
             "{}-{}-{}.{}",
             SERVER_NAME,
             std::env::consts::ARCH,
-            Self::ARCH_SERVER_NAME,
+            &arch_server_name,
             extension
         )
     }
@@ -175,11 +245,7 @@ impl LspAdapter for RustLspAdapter {
                 })
                 .unwrap_or_else(filter_range);
 
-            CodeLabel {
-                text,
-                runs,
-                filter_range,
-            }
+            CodeLabel::new(text, filter_range, runs)
         };
         let mut label = match (detail_right, completion.kind) {
             (Some(signature), Some(lsp::CompletionItemKind::FIELD)) => {
@@ -330,11 +396,11 @@ impl LspAdapter for RustLspAdapter {
 
         let filter_range = prefix.len()..prefix.len() + name.len();
         let display_range = 0..filter_range.end;
-        Some(CodeLabel {
-            runs: language.highlight_text(&Rope::from_iter([prefix, name, suffix]), display_range),
-            text: format!("{prefix}{name}"),
+        Some(CodeLabel::new(
+            format!("{prefix}{name}"),
             filter_range,
-        })
+            language.highlight_text(&Rope::from_iter([prefix, name, suffix]), display_range),
+        ))
     }
 
     fn prepare_initialize_params(
@@ -413,7 +479,7 @@ impl LspInstaller for RustLspAdapter {
             delegate.http_client(),
         )
         .await?;
-        let asset_name = Self::build_asset_name();
+        let asset_name = Self::build_asset_name().await;
         let asset = release
             .assets
             .into_iter()
@@ -1132,10 +1198,10 @@ mod tests {
                     &language
                 )
                 .await,
-            Some(CodeLabel {
-                text: "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
-                filter_range: 0..5,
-                runs: vec![
+            Some(CodeLabel::new(
+                "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
+                0..5,
+                vec![
                     (0..5, highlight_function),
                     (7..10, highlight_keyword),
                     (11..17, highlight_type),
@@ -1143,7 +1209,7 @@ mod tests {
                     (25..28, highlight_type),
                     (29..30, highlight_type),
                 ],
-            })
+            ))
         );
         assert_eq!(
             adapter
@@ -1160,10 +1226,10 @@ mod tests {
                     &language
                 )
                 .await,
-            Some(CodeLabel {
-                text: "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
-                filter_range: 0..5,
-                runs: vec![
+            Some(CodeLabel::new(
+                "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
+                0..5,
+                vec![
                     (0..5, highlight_function),
                     (7..10, highlight_keyword),
                     (11..17, highlight_type),
@@ -1171,7 +1237,7 @@ mod tests {
                     (25..28, highlight_type),
                     (29..30, highlight_type),
                 ],
-            })
+            ))
         );
         assert_eq!(
             adapter
@@ -1185,11 +1251,11 @@ mod tests {
                     &language
                 )
                 .await,
-            Some(CodeLabel {
-                text: "len: usize".to_string(),
-                filter_range: 0..3,
-                runs: vec![(0..3, highlight_field), (5..10, highlight_type),],
-            })
+            Some(CodeLabel::new(
+                "len: usize".to_string(),
+                0..3,
+                vec![(0..3, highlight_field), (5..10, highlight_type),],
+            ))
         );
 
         assert_eq!(
@@ -1208,10 +1274,10 @@ mod tests {
                     &language
                 )
                 .await,
-            Some(CodeLabel {
-                text: "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
-                filter_range: 0..5,
-                runs: vec![
+            Some(CodeLabel::new(
+                "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
+                0..5,
+                vec![
                     (0..5, highlight_function),
                     (7..10, highlight_keyword),
                     (11..17, highlight_type),
@@ -1219,7 +1285,7 @@ mod tests {
                     (25..28, highlight_type),
                     (29..30, highlight_type),
                 ],
-            })
+            ))
         );
 
         assert_eq!(
@@ -1237,10 +1303,10 @@ mod tests {
                     &language
                 )
                 .await,
-            Some(CodeLabel {
-                text: "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
-                filter_range: 0..5,
-                runs: vec![
+            Some(CodeLabel::new(
+                "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
+                0..5,
+                vec![
                     (0..5, highlight_function),
                     (7..10, highlight_keyword),
                     (11..17, highlight_type),
@@ -1248,7 +1314,7 @@ mod tests {
                     (25..28, highlight_type),
                     (29..30, highlight_type),
                 ],
-            })
+            ))
         );
 
         assert_eq!(
@@ -1267,16 +1333,16 @@ mod tests {
                     &language
                 )
                 .await,
-            Some(CodeLabel {
-                text: "await.as_deref_mut(&mut self) -> IterMut<'_, T>".to_string(),
-                filter_range: 6..18,
-                runs: vec![
+            Some(CodeLabel::new(
+                "await.as_deref_mut(&mut self) -> IterMut<'_, T>".to_string(),
+                6..18,
+                vec![
                     (6..18, HighlightId(2)),
                     (20..23, HighlightId(1)),
                     (33..40, HighlightId(0)),
                     (45..46, HighlightId(0))
                 ],
-            })
+            ))
         );
 
         assert_eq!(
@@ -1297,10 +1363,10 @@ mod tests {
                     &language
                 )
                 .await,
-            Some(CodeLabel {
-                text: "pub fn as_deref_mut(&mut self) -> IterMut<'_, T>".to_string(),
-                filter_range: 7..19,
-                runs: vec![
+            Some(CodeLabel::new(
+                "pub fn as_deref_mut(&mut self) -> IterMut<'_, T>".to_string(),
+                7..19,
+                vec![
                     (0..3, HighlightId(1)),
                     (4..6, HighlightId(1)),
                     (7..19, HighlightId(2)),
@@ -1308,7 +1374,7 @@ mod tests {
                     (34..41, HighlightId(0)),
                     (46..47, HighlightId(0))
                 ],
-            })
+            ))
         );
 
         assert_eq!(
@@ -1324,11 +1390,11 @@ mod tests {
                     &language,
                 )
                 .await,
-            Some(CodeLabel {
-                text: "inner_value: String".to_string(),
-                filter_range: 6..11,
-                runs: vec![(0..11, HighlightId(3)), (13..19, HighlightId(0))],
-            })
+            Some(CodeLabel::new(
+                "inner_value: String".to_string(),
+                6..11,
+                vec![(0..11, HighlightId(3)), (13..19, HighlightId(0))],
+            ))
         );
     }
 
@@ -1354,22 +1420,22 @@ mod tests {
             adapter
                 .label_for_symbol("hello", lsp::SymbolKind::FUNCTION, &language)
                 .await,
-            Some(CodeLabel {
-                text: "fn hello".to_string(),
-                filter_range: 3..8,
-                runs: vec![(0..2, highlight_keyword), (3..8, highlight_function)],
-            })
+            Some(CodeLabel::new(
+                "fn hello".to_string(),
+                3..8,
+                vec![(0..2, highlight_keyword), (3..8, highlight_function)],
+            ))
         );
 
         assert_eq!(
             adapter
                 .label_for_symbol("World", lsp::SymbolKind::TYPE_PARAMETER, &language)
                 .await,
-            Some(CodeLabel {
-                text: "type World".to_string(),
-                filter_range: 5..10,
-                runs: vec![(0..4, highlight_keyword), (5..10, highlight_type)],
-            })
+            Some(CodeLabel::new(
+                "type World".to_string(),
+                5..10,
+                vec![(0..4, highlight_keyword), (5..10, highlight_type)],
+            ))
         );
     }
 

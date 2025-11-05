@@ -4,7 +4,14 @@ Zed is designed to be configured: we want to fit your workflow and preferences e
 
 In addition to the settings described here, you may also want to change your [theme](./themes.md), configure your [key bindings](./key-bindings.md), set up [tasks](./tasks.md) or install [extensions](https://github.com/zed-industries/extensions).
 
-## Settings files
+## Settings Editor
+
+You can browse through many of the supported settings via the Settings Editor, which can be opened with the {#kb zed::OpenSettings} keybinding, or through the `zed: open settings` action in the command palette. Through it, you can customize your local, user settings as well as project settings.
+
+> Note that not all settings that Zed supports are available through the Settings Editor yet.
+> Some more intricate ones, such as language formatters, can only be changed through the JSON settings file {#kb zed::OpenSettingsFile}.
+
+## User Settings File
 
 <!--
 TBD: Settings files. Rewrite with "remote settings" in mind (e.g. `local settings` on the remote host).
@@ -13,21 +20,56 @@ Consider renaming `zed: Open Local Settings` to `zed: Open Project Settings`.
 TBD: Add settings documentation about how settings are merged as overlays. E.g. project>local>default. Note how settings that are maps are merged, but settings that are arrays are replaced and must include the defaults.
 -->
 
-Your settings file can be opened with {#kb zed::OpenSettings}. By default it is located at `~/.config/zed/settings.json`, though if you have XDG_CONFIG_HOME in your environment on Linux it will be at `$XDG_CONFIG_HOME/zed/settings.json` instead.
+Your settings JSON file can be opened with {#kb zed::OpenSettingsFile}.
+By default it is located at `~/.config/zed/settings.json`, though if you have `XDG_CONFIG_HOME` in your environment on Linux it will be at `$XDG_CONFIG_HOME/zed/settings.json` instead.
 
-This configuration is merged with any local configuration inside your projects. You can open the project settings by running {#action zed::OpenProjectSettings} from the command palette. This will create a `.zed` directory containing`.zed/settings.json`.
+Whatever you have added to your user settings file gets merged with any local configuration inside your projects.
 
-Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed. Not all settings can be set in local files, just those that impact the behavior of the editor and language tooling. For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
+### Default Settings
 
-The syntax for configuration files is a super-set of JSON that allows `//` comments.
-
-## Default settings
-
-You can find the default settings for your current Zed by running {#action zed::OpenDefaultSettings} from the command palette.
+In the Settings Editor, the values you see set are the default ones.
+You can also verify them in JSON by running {#action zed::OpenDefaultSettings} from the command palette.
 
 Extensions that provide language servers may also provide default settings for those language servers.
 
+## Project Settings File
+
+Similarly to user files, you can open your project settings file by running {#action zed::OpenProjectSettings} from the command palette.
+This will create a `.zed` directory containing`.zed/settings.json`.
+
+Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed.
+Not all settings can be set in local files, just those that impact the behavior of the editor and language tooling.
+For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
+
+The syntax for configuration files is a super-set of JSON that allows `//` comments.
+
+## Per-release Channel Overrides
+
+Zed reads the same `settings.json` across all release channels (Stable, Preview or Nightly).
+However, you can scope overrides to a specific channel by adding top-level `stable`, `preview`, `nightly` or `dev` objects.
+They are merged into the base configuration with settings from these keys taking precedence upon launching the specified build. For example:
+
+```json [settings]
+{
+  "theme": "sunset",
+  "vim_mode": false,
+  "nightly": {
+    "theme": "cave-light",
+    "vim_mode": true
+  },
+  "preview": {
+    "theme": "zed-dark"
+  }
+}
+```
+
+With this configuration, Stable keeps all base preferences, Preview switches to `zed-dark`, and Nightly enables Vim mode with a different theme.
+
+Changing settings in the Settings Editorwill always apply the change across all channels.
+
 # Settings
+
+Find below an extensive run-through of many supported settings by Zed.
 
 ## Active Pane Modifiers
 
@@ -35,7 +77,7 @@ Extensions that provide language servers may also provide default settings for t
 - Setting: `active_pane_modifiers`
 - Default:
 
-```json
+```json [settings]
 {
   "active_pane_modifiers": {
     "border_size": 0.0,
@@ -74,7 +116,7 @@ Non-negative `float` values
 
 1. Contain the bottom dock, giving the full height of the window to the left and right docks.
 
-```json
+```json [settings]
 {
   "bottom_dock_layout": "contained"
 }
@@ -82,7 +124,7 @@ Non-negative `float` values
 
 2. Give the bottom dock the full width of the window, truncating the left and right docks.
 
-```json
+```json [settings]
 {
   "bottom_dock_layout": "full"
 }
@@ -90,7 +132,7 @@ Non-negative `float` values
 
 3. Left align the bottom dock, truncating the left dock and giving the right dock the full height of the window.
 
-```json
+```json [settings]
 {
   "bottom_dock_layout": "left_aligned"
 }
@@ -98,7 +140,7 @@ Non-negative `float` values
 
 4. Right align the bottom dock, giving the left dock the full height of the window and truncating the right dock.
 
-```json
+```json [settings]
 {
   "bottom_dock_layout": "right_aligned"
 }
@@ -124,25 +166,25 @@ Non-negative `float` values
 
 1. Allow rewrap in comments only:
 
-```json
+```json [settings]
 {
   "allow_rewrap": "in_comments"
 }
 ```
 
-2. Allow rewrap everywhere:
+2. Allow rewrap in selections only:
 
-```json
+```json [settings]
 {
-  "allow_rewrap": "everywhere"
+  "allow_rewrap": "in_selections"
 }
 ```
 
-3. Never allow rewrap:
+3. Allow rewrap anywhere:
 
-```json
+```json [settings]
 {
-  "allow_rewrap": "never"
+  "allow_rewrap": "anywhere"
 }
 ```
 
@@ -192,7 +234,7 @@ ls ~/.local/share/zed/extensions/installed
 
 Define extensions which should be installed (`true`) or never installed (`false`).
 
-```json
+```json [settings]
 {
   "auto_install_extensions": {
     "html": true,
@@ -212,7 +254,7 @@ Define extensions which should be installed (`true`) or never installed (`false`
 
 1. To disable autosave, set it to `off`:
 
-```json
+```json [settings]
 {
   "autosave": "off"
 }
@@ -220,7 +262,7 @@ Define extensions which should be installed (`true`) or never installed (`false`
 
 2. To autosave when focus changes, use `on_focus_change`:
 
-```json
+```json [settings]
 {
   "autosave": "on_focus_change"
 }
@@ -228,7 +270,7 @@ Define extensions which should be installed (`true`) or never installed (`false`
 
 3. To autosave when the active window changes, use `on_window_change`:
 
-```json
+```json [settings]
 {
   "autosave": "on_window_change"
 }
@@ -236,7 +278,7 @@ Define extensions which should be installed (`true`) or never installed (`false`
 
 4. To autosave after an inactivity period, use `after_delay`:
 
-```json
+```json [settings]
 {
   "autosave": {
     "after_delay": {
@@ -298,7 +340,7 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 
 1. VS Code
 
-```json
+```json [settings]
 {
   "base_keymap": "VSCode"
 }
@@ -306,7 +348,7 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 
 2. Atom
 
-```json
+```json [settings]
 {
   "base_keymap": "Atom"
 }
@@ -314,7 +356,7 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 
 3. JetBrains
 
-```json
+```json [settings]
 {
   "base_keymap": "JetBrains"
 }
@@ -322,7 +364,7 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 
 4. None
 
-```json
+```json [settings]
 {
   "base_keymap": "None"
 }
@@ -330,7 +372,7 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 
 5. Sublime Text
 
-```json
+```json [settings]
 {
   "base_keymap": "SublimeText"
 }
@@ -338,7 +380,7 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 
 6. TextMate
 
-```json
+```json [settings]
 {
   "base_keymap": "TextMate"
 }
@@ -367,7 +409,7 @@ Zed supports all OpenType features that can be enabled or disabled for a given b
 
 For example, to disable font ligatures, add the following to your settings:
 
-```json
+```json [settings]
 {
   "buffer_font_features": {
     "calt": false
@@ -377,7 +419,7 @@ For example, to disable font ligatures, add the following to your settings:
 
 You can also set other OpenType features, like setting `cv01` to `7`:
 
-```json
+```json [settings]
 {
   "buffer_font_features": {
     "cv01": 7
@@ -396,7 +438,7 @@ You can also set other OpenType features, like setting `cv01` to `7`:
 
 For example, to use `Nerd Font` as a fallback, add the following to your settings:
 
-```json
+```json [settings]
 {
   "buffer_font_fallbacks": ["Nerd Font"]
 }
@@ -438,7 +480,7 @@ A font size from `6` to `100` pixels (inclusive)
 - Setting: `centered_layout`
 - Default:
 
-```json
+```json [settings]
 "centered_layout": {
   "left_padding": 0.2,
   "right_padding": 0.2,
@@ -484,15 +526,15 @@ Note: Dirty files (files with unsaved changes) will not be automatically closed 
 
 1. Allow all diagnostics (default):
 
-```json
+```json [settings]
 {
-  "diagnostics_max_severity": null
+  "diagnostics_max_severity": "all"
 }
 ```
 
 2. Show only errors:
 
-```json
+```json [settings]
 {
   "diagnostics_max_severity": "error"
 }
@@ -500,7 +542,7 @@ Note: Dirty files (files with unsaved changes) will not be automatically closed 
 
 3. Show errors and warnings:
 
-```json
+```json [settings]
 {
   "diagnostics_max_severity": "warning"
 }
@@ -508,15 +550,15 @@ Note: Dirty files (files with unsaved changes) will not be automatically closed 
 
 4. Show errors, warnings, and information:
 
-```json
+```json [settings]
 {
-  "diagnostics_max_severity": "information"
+  "diagnostics_max_severity": "info"
 }
 ```
 
 5. Show all including hints:
 
-```json
+```json [settings]
 {
   "diagnostics_max_severity": "hint"
 }
@@ -557,7 +599,7 @@ There are two options to choose from:
 
 1. Behave as a regular buffer and select the whole word (default):
 
-```json
+```json [settings]
 {
   "double_click_in_multibuffer": "select"
 }
@@ -565,7 +607,7 @@ There are two options to choose from:
 
 2. Open the excerpt clicked as a new buffer in the new tab:
 
-```json
+```json [settings]
 {
   "double_click_in_multibuffer": "open"
 }
@@ -589,7 +631,7 @@ For the case of "open", regular selection behavior can be achieved by holding `a
 - Setting: `edit_predictions`
 - Default:
 
-```json
+```json [settings]
   "edit_predictions": {
     "disabled_globs": [
       "**/.env*",
@@ -627,19 +669,19 @@ List of `string` values
 
 1. Don't show edit predictions in comments:
 
-```json
+```json [settings]
 "disabled_in": ["comment"]
 ```
 
 2. Don't show edit predictions in strings and comments:
 
-```json
+```json [settings]
 "disabled_in": ["comment", "string"]
 ```
 
 3. Only in Go, don't show edit predictions in strings and comments:
 
-```json
+```json [settings]
 {
   "languages": {
     "Go": {
@@ -659,25 +701,25 @@ List of `string` values
 
 1. Don't highlight the current line:
 
-```json
+```json [settings]
 "current_line_highlight": "none"
 ```
 
 2. Highlight the gutter area:
 
-```json
+```json [settings]
 "current_line_highlight": "gutter"
 ```
 
 3. Highlight the editor area:
 
-```json
+```json [settings]
 "current_line_highlight": "line"
 ```
 
 4. Highlight the full line:
 
-```json
+```json [settings]
 "current_line_highlight": "all"
 ```
 
@@ -713,25 +755,25 @@ List of `string` values
 
 1. A vertical bar:
 
-```json
+```json [settings]
 "cursor_shape": "bar"
 ```
 
 2. A block that surrounds the following character:
 
-```json
+```json [settings]
 "cursor_shape": "block"
 ```
 
 3. An underline / underscore that runs along the following character:
 
-```json
+```json [settings]
 "cursor_shape": "underline"
 ```
 
 4. An box drawn around the following character:
 
-```json
+```json [settings]
 "cursor_shape": "hollow"
 ```
 
@@ -741,7 +783,7 @@ List of `string` values
 - Setting: `gutter`
 - Default:
 
-```json
+```json [settings]
 {
   "gutter": {
     "line_numbers": true,
@@ -771,19 +813,19 @@ List of `string` values
 
 1. Never hide the mouse cursor:
 
-```json
+```json [settings]
 "hide_mouse": "never"
 ```
 
 2. Hide only when typing:
 
-```json
+```json [settings]
 "hide_mouse": "on_typing"
 ```
 
 3. Hide on both typing and cursor movement:
 
-```json
+```json [settings]
 "hide_mouse": "on_typing_and_movement"
 ```
 
@@ -797,25 +839,25 @@ List of `string` values
 
 1. Place snippets at the top of the completion list:
 
-```json
+```json [settings]
 "snippet_sort_order": "top"
 ```
 
 2. Place snippets normally without any preference:
 
-```json
+```json [settings]
 "snippet_sort_order": "inline"
 ```
 
 3. Place snippets at the bottom of the completion list:
 
-```json
+```json [settings]
 "snippet_sort_order": "bottom"
 ```
 
 4. Do not show snippets in the completion list at all:
 
-```json
+```json [settings]
 "snippet_sort_order": "none"
 ```
 
@@ -825,7 +867,7 @@ List of `string` values
 - Setting: `scrollbar`
 - Default:
 
-```json
+```json [settings]
 "scrollbar": {
   "show": "auto",
   "cursors": true,
@@ -851,7 +893,7 @@ List of `string` values
 
 1. Show the scrollbar if there's important information or follow the system's configured behavior:
 
-```json
+```json [settings]
 "scrollbar": {
   "show": "auto"
 }
@@ -859,7 +901,7 @@ List of `string` values
 
 2. Match the system's configured behavior:
 
-```json
+```json [settings]
 "scrollbar": {
   "show": "system"
 }
@@ -867,7 +909,7 @@ List of `string` values
 
 3. Always show the scrollbar:
 
-```json
+```json [settings]
 "scrollbar": {
   "show": "always"
 }
@@ -875,7 +917,7 @@ List of `string` values
 
 4. Never show the scrollbar:
 
-```json
+```json [settings]
 "scrollbar": {
   "show": "never"
 }
@@ -941,41 +983,41 @@ List of `string` values
 
 1. Show all diagnostics:
 
-```json
+```json [settings]
 {
-  "diagnostics": "all"
+  "show_diagnostics": "all"
 }
 ```
 
 2. Do not show any diagnostics:
 
-```json
+```json [settings]
 {
-  "diagnostics": "none"
+  "show_diagnostics": "off"
 }
 ```
 
 3. Show only errors:
 
-```json
+```json [settings]
 {
-  "diagnostics": "error"
+  "show_diagnostics": "error"
 }
 ```
 
 4. Show only errors and warnings:
 
-```json
+```json [settings]
 {
-  "diagnostics": "warning"
+  "show_diagnostics": "warning"
 }
 ```
 
 5. Show only errors, warnings, and information:
 
-```json
+```json [settings]
 {
-  "diagnostics": "information"
+  "show_diagnostics": "info"
 }
 ```
 
@@ -985,7 +1027,7 @@ List of `string` values
 - Setting: `axes`
 - Default:
 
-```json
+```json [settings]
 "scrollbar": {
   "axes": {
     "horizontal": true,
@@ -1020,7 +1062,7 @@ List of `string` values
 - Setting: `minimap`
 - Default:
 
-```json
+```json [settings]
 {
   "minimap": {
     "show": "never",
@@ -1041,7 +1083,7 @@ List of `string` values
 
 1. Always show the minimap:
 
-```json
+```json [settings]
 {
   "show": "always"
 }
@@ -1049,7 +1091,7 @@ List of `string` values
 
 2. Show the minimap if the editor's scrollbars are visible:
 
-```json
+```json [settings]
 {
   "show": "auto"
 }
@@ -1057,7 +1099,7 @@ List of `string` values
 
 3. Never show the minimap:
 
-```json
+```json [settings]
 {
   "show": "never"
 }
@@ -1073,7 +1115,7 @@ List of `string` values
 
 1. Show the minimap thumb when hovering over the minimap:
 
-```json
+```json [settings]
 {
   "thumb": "hover"
 }
@@ -1081,7 +1123,7 @@ List of `string` values
 
 2. Always show the minimap thumb:
 
-```json
+```json [settings]
 {
   "thumb": "always"
 }
@@ -1097,7 +1139,7 @@ List of `string` values
 
 1. Display a border on all sides of the thumb:
 
-```json
+```json [settings]
 {
   "thumb_border": "full"
 }
@@ -1105,7 +1147,7 @@ List of `string` values
 
 2. Display a border on all sides except the left side:
 
-```json
+```json [settings]
 {
   "thumb_border": "left_open"
 }
@@ -1113,7 +1155,7 @@ List of `string` values
 
 3. Display a border on all sides except the right side:
 
-```json
+```json [settings]
 {
   "thumb_border": "right_open"
 }
@@ -1121,7 +1163,7 @@ List of `string` values
 
 4. Display a border only on the left side:
 
-```json
+```json [settings]
 {
   "thumb_border": "left_only"
 }
@@ -1129,7 +1171,7 @@ List of `string` values
 
 5. Display the thumb without any border:
 
-```json
+```json [settings]
 {
   "thumb_border": "none"
 }
@@ -1145,7 +1187,7 @@ List of `string` values
 
 1. Inherit the editor's current line highlight setting:
 
-```json
+```json [settings]
 {
   "minimap": {
     "current_line_highlight": null
@@ -1155,7 +1197,7 @@ List of `string` values
 
 2. Highlight the current line in the minimap:
 
-```json
+```json [settings]
 {
   "minimap": {
     "current_line_highlight": "line"
@@ -1165,7 +1207,7 @@ List of `string` values
 
 or
 
-```json
+```json [settings]
 {
   "minimap": {
     "current_line_highlight": "all"
@@ -1175,7 +1217,7 @@ or
 
 3. Do not highlight the current line in the minimap:
 
-```json
+```json [settings]
 {
   "minimap": {
     "current_line_highlight": "gutter"
@@ -1185,7 +1227,7 @@ or
 
 or
 
-```json
+```json [settings]
 {
   "minimap": {
     "current_line_highlight": "none"
@@ -1199,7 +1241,7 @@ or
 - Settings: `tab_bar`
 - Default:
 
-```json
+```json [settings]
 "tab_bar": {
   "show": true,
   "show_nav_history_buttons": true,
@@ -1243,7 +1285,7 @@ or
 - Setting: `tabs`
 - Default:
 
-```json
+```json [settings]
 "tabs": {
   "close_position": "right",
   "file_icons": false,
@@ -1264,7 +1306,7 @@ or
 
 1. Display the close button on the right:
 
-```json
+```json [settings]
 {
   "close_position": "right"
 }
@@ -1272,7 +1314,7 @@ or
 
 2. Display the close button on the left:
 
-```json
+```json [settings]
 {
   "close_position": "left"
 }
@@ -1300,7 +1342,7 @@ or
 
 1.  Activate the tab that was open previously:
 
-```json
+```json [settings]
 {
   "activate_on_close": "history"
 }
@@ -1308,7 +1350,7 @@ or
 
 2. Activate the right neighbour tab if present:
 
-```json
+```json [settings]
 {
   "activate_on_close": "neighbour"
 }
@@ -1316,7 +1358,7 @@ or
 
 3. Activate the left neighbour tab if present:
 
-```json
+```json [settings]
 {
   "activate_on_close": "left_neighbour"
 }
@@ -1332,7 +1374,7 @@ or
 
 1.  Show it just upon hovering the tab:
 
-```json
+```json [settings]
 {
   "show_close_button": "hover"
 }
@@ -1340,7 +1382,7 @@ or
 
 2. Show it persistently:
 
-```json
+```json [settings]
 {
   "show_close_button": "always"
 }
@@ -1348,7 +1390,7 @@ or
 
 3. Never show it, even if hovering it:
 
-```json
+```json [settings]
 {
   "show_close_button": "hidden"
 }
@@ -1364,7 +1406,7 @@ or
 
 1. Do not mark any files:
 
-```json
+```json [settings]
 {
   "show_diagnostics": "off"
 }
@@ -1372,7 +1414,7 @@ or
 
 2. Only mark files with errors:
 
-```json
+```json [settings]
 {
   "show_diagnostics": "errors"
 }
@@ -1380,7 +1422,7 @@ or
 
 3. Mark files with errors and warnings:
 
-```json
+```json [settings]
 {
   "show_diagnostics": "all"
 }
@@ -1402,7 +1444,7 @@ or
 - Setting: `drag_and_drop_selection`
 - Default:
 
-```json
+```json [settings]
 "drag_and_drop_selection": {
   "enabled": true,
   "delay": 300
@@ -1415,7 +1457,7 @@ or
 - Setting: `toolbar`
 - Default:
 
-```json
+```json [settings]
 "toolbar": {
   "breadcrumbs": true,
   "quick_actions": true,
@@ -1495,10 +1537,11 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 - Setting: `status_bar`
 - Default:
 
-```json
+```json [settings]
 "status_bar": {
   "active_language_button": true,
-  "cursor_position_button": true
+  "cursor_position_button": true,
+  "line_endings_button": false
 },
 ```
 
@@ -1529,7 +1572,7 @@ Some options are passed via `initialization_options` to the language server. The
 
 For example to pass the `check` option to `rust-analyzer`, use the following configuration:
 
-```json
+```json [settings]
 "lsp": {
   "rust-analyzer": {
     "initialization_options": {
@@ -1543,7 +1586,7 @@ For example to pass the `check` option to `rust-analyzer`, use the following con
 
 While other options may be changed at a runtime and should be placed under `settings`:
 
-```json
+```json [settings]
 "lsp": {
   "yaml-language-server": {
     "settings": {
@@ -1561,7 +1604,7 @@ While other options may be changed at a runtime and should be placed under `sett
 - Setting: `global_lsp_settings`
 - Default:
 
-```json
+```json [settings]
 {
   "global_lsp_settings": {
     "button": true
@@ -1589,7 +1632,7 @@ While other options may be changed at a runtime and should be placed under `sett
 - Setting: `features`
 - Default:
 
-```json
+```json [settings]
 {
   "features": {
     "edit_prediction_provider": "zed"
@@ -1607,7 +1650,7 @@ While other options may be changed at a runtime and should be placed under `sett
 
 1. Use Zeta as the edit prediction provider:
 
-```json
+```json [settings]
 {
   "features": {
     "edit_prediction_provider": "zed"
@@ -1617,7 +1660,7 @@ While other options may be changed at a runtime and should be placed under `sett
 
 2. Use Copilot as the edit prediction provider:
 
-```json
+```json [settings]
 {
   "features": {
     "edit_prediction_provider": "copilot"
@@ -1627,7 +1670,7 @@ While other options may be changed at a runtime and should be placed under `sett
 
 3. Use Supermaven as the edit prediction provider:
 
-```json
+```json [settings]
 {
   "features": {
     "edit_prediction_provider": "supermaven"
@@ -1637,7 +1680,7 @@ While other options may be changed at a runtime and should be placed under `sett
 
 4. Turn off edit predictions across all providers
 
-```json
+```json [settings]
 {
   "features": {
     "edit_prediction_provider": "none"
@@ -1655,7 +1698,7 @@ While other options may be changed at a runtime and should be placed under `sett
 
 1. `on`, enables format on save obeying `formatter` setting:
 
-```json
+```json [settings]
 {
   "format_on_save": "on"
 }
@@ -1663,7 +1706,7 @@ While other options may be changed at a runtime and should be placed under `sett
 
 2. `off`, disables format on save:
 
-```json
+```json [settings]
 {
   "format_on_save": "off"
 }
@@ -1679,7 +1722,7 @@ While other options may be changed at a runtime and should be placed under `sett
 
 1. To use the current language server, use `"language_server"`:
 
-```json
+```json [settings]
 {
   "formatter": "language_server"
 }
@@ -1687,7 +1730,7 @@ While other options may be changed at a runtime and should be placed under `sett
 
 2. Or to use an external command, use `"external"`. Specify the name of the formatting program to run, and an array of arguments to pass to the program. The buffer's text will be passed to the program on stdin, and the formatted output should be written to stdout. For example, the following command would strip trailing spaces using [`sed(1)`](https://linux.die.net/man/1/sed):
 
-```json
+```json [settings]
 {
   "formatter": {
     "external": {
@@ -1702,7 +1745,7 @@ While other options may be changed at a runtime and should be placed under `sett
 
 WARNING: `{buffer_path}` should not be used to direct your formatter to read from a filename. Your formatter should only read from standard input and should not read or write files directly.
 
-```json
+```json [settings]
   "formatter": {
     "external": {
       "command": "prettier",
@@ -1713,22 +1756,20 @@ WARNING: `{buffer_path}` should not be used to direct your formatter to read fro
 
 4. Or to use code actions provided by the connected language servers, use `"code_actions"`:
 
-```json
+```json [settings]
 {
-  "formatter": {
-    "code_actions": {
-      // Use ESLint's --fix:
-      "source.fixAll.eslint": true,
-      // Organize imports on save:
-      "source.organizeImports": true
-    }
-  }
+  "formatter": [
+    // Use ESLint's --fix:
+    { "code_action": "source.fixAll.eslint" },
+    // Organize imports on save:
+    { "code_action": "source.organizeImports" }
+  ]
 }
 ```
 
 5. Or to use multiple formatters consecutively, use an array of formatters:
 
-```json
+```json [settings]
 {
   "formatter": [
     { "language_server": { "name": "rust-analyzer" } },
@@ -1744,74 +1785,6 @@ WARNING: `{buffer_path}` should not be used to direct your formatter to read fro
 
 Here `rust-analyzer` will be used first to format the code, followed by a call of sed.
 If any of the formatters fails, the subsequent ones will still be executed.
-
-## Code Actions On Format
-
-- Description: The code actions to perform with the primary language server when formatting the buffer.
-- Setting: `code_actions_on_format`
-- Default: `{}`, except for Go it's `{ "source.organizeImports": true }`
-
-**Examples**
-
-<!--
-TBD: Add Python Ruff source.organizeImports example
--->
-
-1. Organize imports on format in TypeScript and TSX buffers:
-
-```json
-{
-  "languages": {
-    "TypeScript": {
-      "code_actions_on_format": {
-        "source.organizeImports": true
-      }
-    },
-    "TSX": {
-      "code_actions_on_format": {
-        "source.organizeImports": true
-      }
-    }
-  }
-}
-```
-
-2. Run ESLint `fixAll` code action when formatting:
-
-```json
-{
-  "languages": {
-    "JavaScript": {
-      "code_actions_on_format": {
-        "source.fixAll.eslint": true
-      }
-    }
-  }
-}
-```
-
-3. Run only a single ESLint rule when using `fixAll`:
-
-```json
-{
-  "languages": {
-    "JavaScript": {
-      "code_actions_on_format": {
-        "source.fixAll.eslint": true
-      }
-    }
-  },
-  "lsp": {
-    "eslint": {
-      "settings": {
-        "codeActionOnSave": {
-          "rules": ["import/order"]
-        }
-      }
-    }
-  }
-}
-```
 
 ## Auto close
 
@@ -1849,7 +1822,7 @@ The result is still `)))` and not `))))))`, which is what it would be by default
 - Description: Files or globs of files that will be excluded by Zed entirely. They will be skipped during file scans, file searches, and not be displayed in the project file tree. Overrides `file_scan_inclusions`.
 - Default:
 
-```json
+```json [settings]
 "file_scan_exclusions": [
   "**/.git",
   "**/.svn",
@@ -1871,7 +1844,7 @@ Note, specifying `file_scan_exclusions` in settings.json will override the defau
 - Description: Files or globs of files that will be included by Zed, even when ignored by git. This is useful for files that are not tracked by git, but are still important to your project. Note that globs that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes precedence over these inclusions.
 - Default:
 
-```json
+```json [settings]
 "file_scan_inclusions": [".env*"],
 ```
 
@@ -1881,7 +1854,7 @@ Note, specifying `file_scan_exclusions` in settings.json will override the defau
 - Description: Configure how Zed selects a language for a file based on its filename or extension. Supports glob entries.
 - Default:
 
-```json
+```json [settings]
 "file_types": {
   "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json"],
   "Shell Script": [".env.*"]
@@ -1892,7 +1865,7 @@ Note, specifying `file_scan_exclusions` in settings.json will override the defau
 
 To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files starting with `Dockerfile` as Dockerfile:
 
-```json
+```json [settings]
 {
   "file_types": {
     "C++": ["c"],
@@ -1908,7 +1881,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 - Setting: `diagnostics`
 - Default:
 
-```json
+```json [settings]
 {
   "diagnostics": {
     "include_warnings": true,
@@ -1928,7 +1901,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 - Setting: `inline`
 - Default:
 
-```json
+```json [settings]
 {
   "diagnostics": {
     "inline": {
@@ -1946,7 +1919,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 
 1. Enable inline diagnostics.
 
-```json
+```json [settings]
 {
   "diagnostics": {
     "inline": {
@@ -1958,7 +1931,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 
 2. Delay diagnostic updates until some time after the last diagnostic update.
 
-```json
+```json [settings]
 {
   "diagnostics": {
     "inline": {
@@ -1971,7 +1944,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 
 3. Set padding between the end of the source line and the start of the diagnostic.
 
-```json
+```json [settings]
 {
   "diagnostics": {
     "inline": {
@@ -1984,7 +1957,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 
 4. Horizontally align inline diagnostics at the given column.
 
-```json
+```json [settings]
 {
   "diagnostics": {
     "inline": {
@@ -1997,7 +1970,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 
 5. Show only warning and error diagnostics.
 
-```json
+```json [settings]
 {
   "diagnostics": {
     "inline": {
@@ -2014,7 +1987,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 - Setting: `git`
 - Default:
 
-```json
+```json [settings]
 {
   "git": {
     "git_gutter": "tracked_files",
@@ -2039,7 +2012,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 
 1. Show git gutter in tracked files
 
-```json
+```json [settings]
 {
   "git": {
     "git_gutter": "tracked_files"
@@ -2049,7 +2022,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 
 2. Hide git gutter
 
-```json
+```json [settings]
 {
   "git": {
     "git_gutter": "hide"
@@ -2069,7 +2042,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 
 Example:
 
-```json
+```json [settings]
 {
   "git": {
     "gutter_debounce": 100
@@ -2083,7 +2056,7 @@ Example:
 - Setting: `inline_blame`
 - Default:
 
-```json
+```json [settings]
 {
   "git": {
     "inline_blame": {
@@ -2097,7 +2070,7 @@ Example:
 
 1. Disable inline git blame:
 
-```json
+```json [settings]
 {
   "git": {
     "inline_blame": {
@@ -2109,7 +2082,7 @@ Example:
 
 2. Only show inline git blame after a delay (that starts after cursor stops moving):
 
-```json
+```json [settings]
 {
   "git": {
     "inline_blame": {
@@ -2121,7 +2094,7 @@ Example:
 
 3. Show a commit summary next to the commit date and author:
 
-```json
+```json [settings]
 {
   "git": {
     "inline_blame": {
@@ -2133,7 +2106,7 @@ Example:
 
 4. Use this as the minimum column at which to display inline blame information:
 
-```json
+```json [settings]
 {
   "git": {
     "inline_blame": {
@@ -2145,7 +2118,7 @@ Example:
 
 5. Set the padding between the end of the line and the inline blame hint, in ems:
 
-```json
+```json [settings]
 {
   "git": {
     "inline_blame": {
@@ -2161,7 +2134,7 @@ Example:
 - Setting: `branch_picker`
 - Default:
 
-```json
+```json [settings]
 {
   "git": {
     "branch_picker": {
@@ -2175,7 +2148,7 @@ Example:
 
 1. Show the author name in the branch picker:
 
-```json
+```json [settings]
 {
   "git": {
     "branch_picker": {
@@ -2191,7 +2164,7 @@ Example:
 - Setting: `hunk_style`
 - Default:
 
-```json
+```json [settings]
 {
   "git": {
     "hunk_style": "staged_hollow"
@@ -2203,7 +2176,7 @@ Example:
 
 1. Show the staged hunks faded out and with a border:
 
-```json
+```json [settings]
 {
   "git": {
     "hunk_style": "staged_hollow"
@@ -2213,7 +2186,7 @@ Example:
 
 2. Show unstaged hunks faded out and with a border:
 
-```json
+```json [settings]
 {
   "git": {
     "hunk_style": "unstaged_hollow"
@@ -2231,7 +2204,7 @@ Example:
 
 1. Do nothing:
 
-```json
+```json [settings]
 {
   "go_to_definition_fallback": "none"
 }
@@ -2239,7 +2212,7 @@ Example:
 
 2. Find references for the same symbol (default):
 
-```json
+```json [settings]
 {
   "go_to_definition_fallback": "find_all_references"
 }
@@ -2271,7 +2244,7 @@ Example:
 - Setting: `indent_guides`
 - Default:
 
-```json
+```json [settings]
 {
   "indent_guides": {
     "enabled": true,
@@ -2287,7 +2260,7 @@ Example:
 
 1. Disable indent guides
 
-```json
+```json [settings]
 {
   "indent_guides": {
     "enabled": false
@@ -2297,7 +2270,7 @@ Example:
 
 2. Enable indent guides for a specific language.
 
-```json
+```json [settings]
 {
   "languages": {
     "Python": {
@@ -2312,7 +2285,7 @@ Example:
 3. Enable indent aware coloring ("rainbow indentation").
    The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
 
-```json
+```json [settings]
 {
   "indent_guides": {
     "enabled": true,
@@ -2324,7 +2297,7 @@ Example:
 4. Enable indent aware background coloring ("rainbow indentation").
    The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
 
-```json
+```json [settings]
 {
   "indent_guides": {
     "enabled": true,
@@ -2366,7 +2339,7 @@ Example:
 - Setting: `icon_theme`
 - Default:
 
-```json
+```json [settings]
 "icon_theme": {
   "mode": "system",
   "dark": "Zed (Default)",
@@ -2384,7 +2357,7 @@ Example:
 
 1. Set the icon theme to dark mode
 
-```json
+```json [settings]
 {
   "mode": "dark"
 }
@@ -2392,7 +2365,7 @@ Example:
 
 2. Set the icon theme to light mode
 
-```json
+```json [settings]
 {
   "mode": "light"
 }
@@ -2400,7 +2373,7 @@ Example:
 
 3. Set the icon theme to system mode
 
-```json
+```json [settings]
 {
   "mode": "system"
 }
@@ -2432,7 +2405,7 @@ Run the {#action icon_theme_selector::Toggle} action in the command palette to s
 - Setting: `image_viewer`
 - Default:
 
-```json
+```json [settings]
 {
   "image_viewer": {
     "unit": "binary"
@@ -2452,7 +2425,7 @@ Run the {#action icon_theme_selector::Toggle} action in the command palette to s
 
 1. Use binary units (KiB, MiB):
 
-```json
+```json [settings]
 {
   "image_viewer": {
     "unit": "binary"
@@ -2462,7 +2435,7 @@ Run the {#action icon_theme_selector::Toggle} action in the command palette to s
 
 2. Use decimal units (KB, MB):
 
-```json
+```json [settings]
 {
   "image_viewer": {
     "unit": "decimal"
@@ -2476,7 +2449,7 @@ Run the {#action icon_theme_selector::Toggle} action in the command palette to s
 - Setting: `inlay_hints`
 - Default:
 
-```json
+```json [settings]
 "inlay_hints": {
   "enabled": false,
   "show_type_hints": true,
@@ -2509,7 +2482,7 @@ Settings-related hint updates are not debounced.
 
 All possible config values for `toggle_on_modifiers_press` are:
 
-```json
+```json [settings]
 "inlay_hints": {
   "toggle_on_modifiers_press": {
     "control": true,
@@ -2529,7 +2502,7 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
 - Setting: `journal`
 - Default:
 
-```json
+```json [settings]
 "journal": {
   "path": "~",
   "hour_format": "hour12"
@@ -2556,7 +2529,7 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
 
 1. 12-hour format:
 
-```json
+```json [settings]
 {
   "hour_format": "hour12"
 }
@@ -2564,7 +2537,7 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
 
 2. 24-hour format:
 
-```json
+```json [settings]
 {
   "hour_format": "hour24"
 }
@@ -2576,7 +2549,7 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
 - Setting: `jsx_tag_auto_close`
 - Default:
 
-```json
+```json [settings]
 {
   "jsx_tag_auto_close": {
     "enabled": true
@@ -2598,7 +2571,7 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
 
 To override settings for a language, add an entry for that languages name to the `languages` value. Example:
 
-```json
+```json [settings]
 "languages": {
   "C": {
     "format_on_save": "off",
@@ -2636,7 +2609,7 @@ These values take in the same options as the root-level settings with the same n
 - Setting: `language_models`
 - Default:
 
-```json
+```json [settings]
 {
   "language_models": {
     "anthropic": {
@@ -2669,7 +2642,7 @@ Configuration for various AI model providers including API URLs and authenticati
 
 1. Short format:
 
-```json
+```json [settings]
 {
   "line_indicator_format": "short"
 }
@@ -2677,7 +2650,7 @@ Configuration for various AI model providers including API URLs and authenticati
 
 2. Long format:
 
-```json
+```json [settings]
 {
   "line_indicator_format": "long"
 }
@@ -2733,7 +2706,7 @@ Positive `integer` values or `null` for unlimited tabs
 
 1. Maps to `Alt` on Linux and Windows and to `Option` on macOS:
 
-```json
+```json [settings]
 {
   "multi_cursor_modifier": "alt"
 }
@@ -2741,7 +2714,7 @@ Positive `integer` values or `null` for unlimited tabs
 
 2. Maps `Control` on Linux and Windows and to `Command` on macOS:
 
-```json
+```json [settings]
 {
   "multi_cursor_modifier": "cmd_or_ctrl" // alias: "cmd", "ctrl"
 }
@@ -2753,7 +2726,7 @@ Positive `integer` values or `null` for unlimited tabs
 - Setting: `node`
 - Default:
 
-```json
+```json [settings]
 {
   "node": {
     "ignore_system_version": false,
@@ -2794,7 +2767,7 @@ By default no proxy will be used, or Zed will attempt to retrieve proxy settings
 
 For example, to set an `http` proxy, add the following to your settings:
 
-```json
+```json [settings]
 {
   "proxy": "http://127.0.0.1:10809"
 }
@@ -2802,7 +2775,7 @@ For example, to set an `http` proxy, add the following to your settings:
 
 Or to set a `socks5` proxy:
 
-```json
+```json [settings]
 {
   "proxy": "socks5h://localhost:10808"
 }
@@ -2820,7 +2793,7 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 
 1. Use platform default behavior:
 
-```json
+```json [settings]
 {
   "on_last_window_closed": "platform_default"
 }
@@ -2828,7 +2801,7 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 
 2. Always quit the application:
 
-```json
+```json [settings]
 {
   "on_last_window_closed": "quit_app"
 }
@@ -2844,7 +2817,7 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 
 Configuration object for defining settings profiles. Example:
 
-```json
+```json [settings]
 {
   "profiles": {
     "presentation": {
@@ -2871,7 +2844,7 @@ Configuration object for defining settings profiles. Example:
 - Setting: `preview_tabs`
 - Default:
 
-```json
+```json [settings]
 "preview_tabs": {
   "enabled": true,
   "enable_preview_from_file_finder": false,
@@ -2929,7 +2902,7 @@ Configuration object for defining settings profiles. Example:
 
 1. Split upward:
 
-```json
+```json [settings]
 {
   "pane_split_direction_horizontal": "up"
 }
@@ -2937,7 +2910,7 @@ Configuration object for defining settings profiles. Example:
 
 2. Split downward:
 
-```json
+```json [settings]
 {
   "pane_split_direction_horizontal": "down"
 }
@@ -2953,7 +2926,7 @@ Configuration object for defining settings profiles. Example:
 
 1. Split to the left:
 
-```json
+```json [settings]
 {
   "pane_split_direction_vertical": "left"
 }
@@ -2961,7 +2934,7 @@ Configuration object for defining settings profiles. Example:
 
 2. Split to the right:
 
-```json
+```json [settings]
 {
   "pane_split_direction_vertical": "right"
 }
@@ -3021,11 +2994,33 @@ List of `string` glob patterns
 
 - Description: Whether to show relative line numbers in the gutter
 - Setting: `relative_line_numbers`
-- Default: `false`
+- Default: `"disabled"`
 
 **Options**
 
-`boolean` values
+1. Show relative line numbers in the gutter whilst counting wrapped lines as one line:
+
+```json [settings]
+{
+  "relative_line_numbers": "enabled"
+}
+```
+
+2. Show relative line numbers in the gutter, including wrapped lines in the counting:
+
+```json [settings]
+{
+  "relative_line_numbers": "wrapped"
+}
+```
+
+2. Do not use relative line numbers:
+
+```json [settings]
+{
+  "relative_line_numbers": "disabled"
+}
+```
 
 ## Remove Trailing Whitespace On Save
 
@@ -3071,7 +3066,7 @@ List of strings containing any combination of:
 
 1. Restore all workspaces that were open when quitting Zed:
 
-```json
+```json [settings]
 {
   "restore_on_startup": "last_session"
 }
@@ -3079,7 +3074,7 @@ List of strings containing any combination of:
 
 2. Restore the workspace that was closed last:
 
-```json
+```json [settings]
 {
   "restore_on_startup": "last_workspace"
 }
@@ -3087,7 +3082,7 @@ List of strings containing any combination of:
 
 3. Always start with an empty editor:
 
-```json
+```json [settings]
 {
   "restore_on_startup": "none"
 }
@@ -3103,7 +3098,7 @@ List of strings containing any combination of:
 
 1. Scroll one page beyond the last line by one page:
 
-```json
+```json [settings]
 {
   "scroll_beyond_last_line": "one_page"
 }
@@ -3111,7 +3106,7 @@ List of strings containing any combination of:
 
 2. The editor will scroll beyond the last line by the same amount of lines as `vertical_scroll_margin`:
 
-```json
+```json [settings]
 {
   "scroll_beyond_last_line": "vertical_scroll_margin"
 }
@@ -3119,7 +3114,7 @@ List of strings containing any combination of:
 
 3. The editor will not scroll beyond the last line:
 
-```json
+```json [settings]
 {
   "scroll_beyond_last_line": "off"
 }
@@ -3175,7 +3170,7 @@ Non-negative `integer` values
 - Setting: `search`
 - Default:
 
-```json
+```json [settings]
 "search": {
   "whole_word": false,
   "case_sensitive": false,
@@ -3189,6 +3184,12 @@ Non-negative `integer` values
 - Description: If `search_wrap` is disabled, search result do not wrap around the end of the file
 - Setting: `search_wrap`
 - Default: `true`
+
+## Center on Match
+
+- Description: If `center_on_match` is enabled, the editor will center the cursor on the current match when searching.
+- Setting: `center_on_match`
+- Default: `false`
 
 ## Seed Search Query From Cursor
 
@@ -3234,7 +3235,7 @@ Examples:
 - Setting: `completions`
 - Default:
 
-```json
+```json [settings]
 {
   "completions": {
     "words": "fallback",
@@ -3351,12 +3352,13 @@ Positive integer values
 - Setting: `whitespace_map`
 - Default:
 
-```json
+```json [settings]
 {
   "whitespace_map": {
     "space": "•",
     "tab": "→"
-  },
+  }
+}
 ```
 
 ## Soft Wrap
@@ -3395,7 +3397,7 @@ Positive integer values
 
 ## Use Auto Surround
 
-- Description: Whether to automatically surround selected text when typing opening parenthesis, bracket, brace, single or double quote characters. For example, when you select text and type (, Zed will surround the text with ().
+- Description: Whether to automatically surround selected text when typing opening parenthesis, bracket, brace, single or double quote characters. For example, when you select text and type '(', Zed will surround the text with ().
 - Setting: `use_auto_surround`
 - Default: `true`
 
@@ -3449,7 +3451,7 @@ List of `integer` column numbers
 - Setting: `tasks`
 - Default:
 
-```json
+```json [settings]
 {
   "tasks": {
     "variables": {},
@@ -3471,7 +3473,7 @@ List of `integer` column numbers
 - Setting: `telemetry`
 - Default:
 
-```json
+```json [settings]
 "telemetry": {
   "diagnostics": true,
   "metrics": true
@@ -3506,7 +3508,7 @@ List of `integer` column numbers
 - Setting: `terminal`
 - Default:
 
-```json
+```json [settings]
 {
   "terminal": {
     "alternate_scroll": "off",
@@ -3562,7 +3564,7 @@ List of `integer` column numbers
 
 1. Default alternate scroll mode to off
 
-```json
+```json [settings]
 {
   "terminal": {
     "alternate_scroll": "off"
@@ -3572,7 +3574,7 @@ List of `integer` column numbers
 
 2. Default alternate scroll mode to on
 
-```json
+```json [settings]
 {
   "terminal": {
     "alternate_scroll": "on"
@@ -3590,7 +3592,7 @@ List of `integer` column numbers
 
 1. Never blink the cursor, ignore the terminal mode
 
-```json
+```json [settings]
 {
   "terminal": {
     "blinking": "off"
@@ -3600,7 +3602,7 @@ List of `integer` column numbers
 
 2. Default the cursor blink to off, but allow the terminal to turn blinking on
 
-```json
+```json [settings]
 {
   "terminal": {
     "blinking": "terminal_controlled"
@@ -3610,7 +3612,7 @@ List of `integer` column numbers
 
 3. Always blink the cursor, ignore the terminal mode
 
-```json
+```json [settings]
 {
   "terminal": {
     "blinking": "on"
@@ -3630,7 +3632,7 @@ List of `integer` column numbers
 
 **Example**
 
-```json
+```json [settings]
 {
   "terminal": {
     "copy_on_select": true
@@ -3648,7 +3650,7 @@ List of `integer` column numbers
 
 1. A block that surrounds the following character
 
-```json
+```json [settings]
 {
   "terminal": {
     "cursor_shape": "block"
@@ -3658,7 +3660,7 @@ List of `integer` column numbers
 
 2. A vertical bar
 
-```json
+```json [settings]
 {
   "terminal": {
     "cursor_shape": "bar"
@@ -3668,7 +3670,7 @@ List of `integer` column numbers
 
 3. An underline / underscore that runs along the following character
 
-```json
+```json [settings]
 {
   "terminal": {
     "cursor_shape": "underline"
@@ -3678,7 +3680,7 @@ List of `integer` column numbers
 
 4. A box drawn around the following character
 
-```json
+```json [settings]
 {
   "terminal": {
     "cursor_shape": "hollow"
@@ -3698,7 +3700,7 @@ List of `integer` column numbers
 
 **Example**
 
-```json
+```json [settings]
 {
   "terminal": {
     "keep_selection_on_copy": false
@@ -3714,7 +3716,7 @@ List of `integer` column numbers
 
 **Example**
 
-```json
+```json [settings]
 {
   "terminal": {
     "env": {
@@ -3735,7 +3737,7 @@ List of `integer` column numbers
 
 `integer` values
 
-```json
+```json [settings]
 {
   "terminal": {
     "font_size": 15
@@ -3753,7 +3755,7 @@ List of `integer` column numbers
 
 The name of any font family installed on the user's system
 
-```json
+```json [settings]
 {
   "terminal": {
     "font_family": "Berkeley Mono"
@@ -3772,7 +3774,7 @@ The name of any font family installed on the user's system
 
 See Buffer Font Features
 
-```json
+```json [settings]
 {
   "terminal": {
     "font_features": {
@@ -3793,7 +3795,7 @@ See Buffer Font Features
 
 1. Use a line height that's `comfortable` for reading, 1.618.
 
-```json
+```json [settings]
 {
   "terminal": {
     "line_height": "comfortable"
@@ -3803,7 +3805,7 @@ See Buffer Font Features
 
 2. Use a `standard` line height, 1.3. This option is useful for TUIs, particularly if they use box characters. (default)
 
-```json
+```json [settings]
 {
   "terminal": {
     "line_height": "standard"
@@ -3813,7 +3815,7 @@ See Buffer Font Features
 
 3.  Use a custom line height.
 
-```json
+```json [settings]
 {
   "terminal": {
     "line_height": {
@@ -3839,7 +3841,7 @@ See Buffer Font Features
 - `75`: Minimum for body text
 - `90`: Preferred for body text
 
-```json
+```json [settings]
 {
   "terminal": {
     "minimum_contrast": 45
@@ -3857,7 +3859,7 @@ See Buffer Font Features
 
 `boolean` values
 
-```json
+```json [settings]
 {
   "terminal": {
     "option_as_meta": true
@@ -3875,7 +3877,7 @@ See Buffer Font Features
 
 1. Use the system's default terminal configuration (usually the `/etc/passwd` file).
 
-```json
+```json [settings]
 {
   "terminal": {
     "shell": "system"
@@ -3885,7 +3887,7 @@ See Buffer Font Features
 
 2. A program to launch:
 
-```json
+```json [settings]
 {
   "terminal": {
     "shell": {
@@ -3897,7 +3899,7 @@ See Buffer Font Features
 
 3. A program with arguments:
 
-```json
+```json [settings]
 {
   "terminal": {
     "shell": {
@@ -3916,7 +3918,7 @@ See Buffer Font Features
 - Setting: `detect_venv`
 - Default:
 
-```json
+```json [settings]
 {
   "terminal": {
     "detect_venv": {
@@ -3935,7 +3937,7 @@ See Buffer Font Features
 
 Disable with:
 
-```json
+```json [settings]
 {
   "terminal": {
     "detect_venv": "off"
@@ -3949,7 +3951,7 @@ Disable with:
 - Setting: `toolbar`
 - Default:
 
-```json
+```json [settings]
 {
   "terminal": {
     "toolbar": {
@@ -3979,7 +3981,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 `boolean` values
 
-```json
+```json [settings]
 {
   "terminal": {
     "button": false
@@ -3997,7 +3999,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 1. Use the current file's project directory. Will Fallback to the first project directory strategy if unsuccessful
 
-```json
+```json [settings]
 {
   "terminal": {
     "working_directory": "current_project_directory"
@@ -4007,7 +4009,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 2. Use the first project in this workspace's directory. Will fallback to using this platform's home directory.
 
-```json
+```json [settings]
 {
   "terminal": {
     "working_directory": "first_project_directory"
@@ -4017,7 +4019,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 3. Always use this platform's home directory (if we can find it)
 
-```json
+```json [settings]
 {
   "terminal": {
     "working_directory": "always_home"
@@ -4027,7 +4029,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 4. Always use a specific directory. This value will be shell expanded. If this path is not a valid directory the terminal will default to this platform's home directory.
 
-```json
+```json [settings]
 {
   "terminal": {
     "working_directory": {
@@ -4045,7 +4047,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 - Setting: `repl`
 - Default:
 
-```json
+```json [settings]
 "repl": {
   // Maximum number of columns to keep in REPL's scrollback buffer.
   // Clamped with [20, 512] range.
@@ -4068,7 +4070,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 - Setting: `theme`
 - Default:
 
-```json
+```json [settings]
 "theme": {
   "mode": "system",
   "dark": "One Dark",
@@ -4086,7 +4088,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 1. Set the theme to dark mode
 
-```json
+```json [settings]
 {
   "mode": "dark"
 }
@@ -4094,7 +4096,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 2. Set the theme to light mode
 
-```json
+```json [settings]
 {
   "mode": "light"
 }
@@ -4102,7 +4104,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 3. Set the theme to system mode
 
-```json
+```json [settings]
 {
   "mode": "system"
 }
@@ -4134,7 +4136,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - Setting: `title_bar`
 - Default:
 
-```json
+```json [settings]
 "title_bar": {
   "show_branch_icon": false,
   "show_branch_name": true,
@@ -4172,7 +4174,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 1. Use platform default behavior:
 
-```json
+```json [settings]
 {
   "when_closing_with_no_tabs": "platform_default"
 }
@@ -4180,7 +4182,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 2. Always close the window:
 
-```json
+```json [settings]
 {
   "when_closing_with_no_tabs": "close_window"
 }
@@ -4188,7 +4190,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 3. Never close the window:
 
-```json
+```json [settings]
 {
   "when_closing_with_no_tabs": "keep_window_open"
 }
@@ -4200,7 +4202,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - Setting: `project_panel`
 - Default:
 
-```json
+```json [settings]
 {
   "project_panel": {
     "button": true,
@@ -4223,7 +4225,9 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
       "show": "always"
     },
     "hide_root": false,
-    "starts_open": true
+    "hide_hidden": false,
+    "starts_open": true,
+    "open_file_on_paste": true
   }
 }
 ```
@@ -4238,7 +4242,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 1. Default dock position to left
 
-```json
+```json [settings]
 {
   "dock": "left"
 }
@@ -4246,7 +4250,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 2. Default dock position to right
 
-```json
+```json [settings]
 {
   "dock": "right"
 }
@@ -4262,7 +4266,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 1. Comfortable entry spacing
 
-```json
+```json [settings]
 {
   "entry_spacing": "comfortable"
 }
@@ -4270,7 +4274,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 2. Standard entry spacing
 
-```json
+```json [settings]
 {
   "entry_spacing": "standard"
 }
@@ -4286,7 +4290,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 1. Default enable git status
 
-```json
+```json [settings]
 {
   "git_status": true
 }
@@ -4294,7 +4298,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 2. Default disable git status
 
-```json
+```json [settings]
 {
   "git_status": false
 }
@@ -4320,7 +4324,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 1. Enable auto reveal entries
 
-```json
+```json [settings]
 {
   "auto_reveal_entries": true
 }
@@ -4328,7 +4332,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 2. Disable auto reveal entries
 
-```json
+```json [settings]
 {
   "auto_reveal_entries": false
 }
@@ -4344,7 +4348,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 1. Enable auto fold dirs
 
-```json
+```json [settings]
 {
   "auto_fold_dirs": true
 }
@@ -4352,7 +4356,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 2. Disable auto fold dirs
 
-```json
+```json [settings]
 {
   "auto_fold_dirs": false
 }
@@ -4370,7 +4374,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - Setting: `indent_guides`
 - Default:
 
-```json
+```json [settings]
 "indent_guides": {
   "show": "always"
 }
@@ -4380,7 +4384,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 1. Show indent guides in the project panel
 
-```json
+```json [settings]
 {
   "indent_guides": {
     "show": "always"
@@ -4390,7 +4394,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 2. Hide indent guides in the project panel
 
-```json
+```json [settings]
 {
   "indent_guides": {
     "show": "never"
@@ -4404,7 +4408,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - Setting: `scrollbar`
 - Default:
 
-```json
+```json [settings]
 "scrollbar": {
   "show": null
 }
@@ -4414,7 +4418,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 1. Show scrollbar in the project panel
 
-```json
+```json [settings]
 {
   "scrollbar": {
     "show": "always"
@@ -4424,7 +4428,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 2. Hide scrollbar in the project panel
 
-```json
+```json [settings]
 {
   "scrollbar": {
     "show": "never"
@@ -4442,7 +4446,7 @@ Visit [the Configuration page](./ai/configuration.md) under the AI section to le
 - Setting: `collaboration_panel`
 - Default:
 
-```json
+```json [settings]
 {
   "collaboration_panel": {
     "button": true,
@@ -4464,7 +4468,7 @@ Visit [the Configuration page](./ai/configuration.md) under the AI section to le
 - Setting: `debugger`
 - Default:
 
-```json
+```json [settings]
 {
   "debugger": {
     "stepping_granularity": "line",
@@ -4483,7 +4487,7 @@ See the [debugger page](./debugger.md) for more information about debugging supp
 - Setting: `git_panel`
 - Default:
 
-```json
+```json [settings]
 {
   "git_panel": {
     "button": true,
@@ -4517,7 +4521,7 @@ See the [debugger page](./debugger.md) for more information about debugging supp
 - Setting: `outline_panel`
 - Default:
 
-```json
+```json [settings]
 "outline_panel": {
   "button": true,
   "default_width": 300,
@@ -4543,7 +4547,7 @@ See the [debugger page](./debugger.md) for more information about debugging supp
 - Setting: `calls`
 - Default:
 
-```json
+```json [settings]
 "calls": {
   // Join calls with the microphone live by default
   "mute_on_join": false,
@@ -4567,7 +4571,7 @@ Float values between `0.0` and `0.9`, where:
 
 **Example**
 
-```json
+```json [settings]
 {
   "unnecessary_code_fade": 0.5
 }
@@ -4589,7 +4593,7 @@ The name of any font family installed on the system, `".ZedSans"` to use the Zed
 - Setting: `ui_font_features`
 - Default:
 
-```json
+```json [settings]
 "ui_font_features": {
   "calt": false
 }
@@ -4603,7 +4607,7 @@ Zed supports all OpenType features that can be enabled or disabled for a given U
 
 For example, to disable font ligatures, add the following to your settings:
 
-```json
+```json [settings]
 {
   "ui_font_features": {
     "calt": false
@@ -4613,7 +4617,7 @@ For example, to disable font ligatures, add the following to your settings:
 
 You can also set other OpenType features, like setting `cv01` to `7`:
 
-```json
+```json [settings]
 {
   "ui_font_features": {
     "cv01": 7
@@ -4632,7 +4636,7 @@ You can also set other OpenType features, like setting `cv01` to `7`:
 
 For example, to use `Nerd Font` as a fallback, add the following to your settings:
 
-```json
+```json [settings]
 {
   "ui_font_fallbacks": ["Nerd Font"]
 }
@@ -4658,9 +4662,47 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 `integer` values between `100` and `900`
 
+## Settings Profiles
+
+- Description: Configure any number of settings profiles that are temporarily applied on top of your existing user settings when selected from `settings profile selector: toggle`.
+- Setting: `profiles`
+- Default: `{}`
+
+In your `settings.json` file, add the `profiles` object.
+Each key within this object is the name of a settings profile, and each value is an object that can include any of Zed's settings.
+
+Example:
+
+```json [settings]
+"profiles": {
+  "Presenting (Dark)": {
+    "agent_buffer_font_size": 18.0,
+    "buffer_font_size": 18.0,
+    "theme": "One Dark",
+    "ui_font_size": 18.0
+  },
+  "Presenting (Light)": {
+    "agent_buffer_font_size": 18.0,
+    "buffer_font_size": 18.0,
+    "theme": "One Light",
+    "ui_font_size": 18.0
+  },
+  "Writing": {
+    "agent_buffer_font_size": 15.0,
+    "buffer_font_size": 15.0,
+    "theme": "Catppuccin Frappé - No Italics",
+    "ui_font_size": 15.0,
+    "tab_bar": { "show": false },
+    "toolbar": { "breadcrumbs": false }
+  }
+}
+```
+
+To preview and enable a settings profile, open the command palette via {#kb command_palette::Toggle} and search for `settings profile selector: toggle`.
+
 ## An example configuration:
 
-```json
+```json [settings]
 // ~/.config/zed/settings.json
 {
   "theme": "cave-light",
@@ -4681,7 +4723,8 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
   },
   "languages": {
     "C": {
-      "format_on_save": "language_server",
+      "format_on_save": "on",
+      "formatter": "language_server",
       "preferred_line_length": 64,
       "soft_wrap": "preferred_line_length"
     }

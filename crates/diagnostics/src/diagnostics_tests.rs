@@ -1,9 +1,9 @@
 use super::*;
 use collections::{HashMap, HashSet};
 use editor::{
-    DisplayPoint, EditorSettings,
+    DisplayPoint, EditorSettings, Inlay,
     actions::{GoToDiagnostic, GoToPreviousDiagnostic, Hover, MoveToBeginning},
-    display_map::{DisplayRow, Inlay},
+    display_map::DisplayRow,
     test::{
         editor_content_with_blocks, editor_lsp_test_context::EditorLspTestContext,
         editor_test_context::EditorTestContext,
@@ -119,7 +119,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
     diagnostics
-        .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
         .await;
 
     pretty_assertions::assert_eq!(
@@ -190,7 +190,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     });
 
     diagnostics
-        .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
         .await;
 
     pretty_assertions::assert_eq!(
@@ -277,7 +277,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     });
 
     diagnostics
-        .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
         .await;
 
     pretty_assertions::assert_eq!(
@@ -391,7 +391,7 @@ async fn test_diagnostics_with_folds(cx: &mut TestAppContext) {
 
     // Only the first language server's diagnostics are shown.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
     editor.update_in(cx, |editor, window, cx| {
         editor.fold_ranges(vec![Point::new(0, 0)..Point::new(3, 0)], false, window, cx);
@@ -490,7 +490,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Only the first language server's diagnostics are shown.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
 
     pretty_assertions::assert_eq!(
@@ -530,7 +530,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Both language server's diagnostics are shown.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
 
     pretty_assertions::assert_eq!(
@@ -587,7 +587,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Only the first language server's diagnostics are updated.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
 
     pretty_assertions::assert_eq!(
@@ -629,7 +629,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Both language servers' diagnostics are updated.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
 
     pretty_assertions::assert_eq!(
@@ -760,7 +760,7 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
                         .unwrap()
                 });
                 cx.executor()
-                    .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+                    .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
 
                 cx.run_until_parked();
             }
@@ -769,7 +769,7 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
 
     log::info!("updating mutated diagnostics view");
     mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
-        diagnostics.update_stale_excerpts(window, cx)
+        diagnostics.update_stale_excerpts(RetainExcerpts::No, window, cx)
     });
 
     log::info!("constructing reference diagnostics view");
@@ -777,7 +777,7 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
         ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
     });
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.run_until_parked();
 
     let mutated_excerpts =
@@ -789,7 +789,12 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
 
     // The mutated view may contain more than the reference view as
     // we don't currently shrink excerpts when diagnostics were removed.
-    let mut ref_iter = reference_excerpts.lines().filter(|line| *line != "§ -----");
+    let mut ref_iter = reference_excerpts.lines().filter(|line| {
+        // ignore $ ---- and $ <file>.rs
+        !line.starts_with('§')
+            || line.starts_with("§ diagnostic")
+            || line.starts_with("§ related info")
+    });
     let mut next_ref_line = ref_iter.next();
     let mut skipped_block = false;
 
@@ -797,7 +802,12 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
         if let Some(ref_line) = next_ref_line {
             if mut_line == ref_line {
                 next_ref_line = ref_iter.next();
-            } else if mut_line.contains('§') && mut_line != "§ -----" {
+            } else if mut_line.contains('§')
+                // ignore $ ---- and $ <file>.rs
+                && (!mut_line.starts_with('§')
+                    || mut_line.starts_with("§ diagnostic")
+                    || mut_line.starts_with("§ related info"))
+            {
                 skipped_block = true;
             }
         }
@@ -949,7 +959,7 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
                         .unwrap()
                 });
                 cx.executor()
-                    .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+                    .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
 
                 cx.run_until_parked();
             }
@@ -958,11 +968,11 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
 
     log::info!("updating mutated diagnostics view");
     mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
-        diagnostics.update_stale_excerpts(window, cx)
+        diagnostics.update_stale_excerpts(RetainExcerpts::No, window, cx)
     });
 
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.run_until_parked();
 }
 
@@ -1341,7 +1351,7 @@ async fn test_hover_diagnostic_and_info_popovers(cx: &mut gpui::TestAppContext) 
             range: Some(range),
         }))
     });
-    let delay = cx.update(|_, cx| EditorSettings::get_global(cx).hover_popover_delay + 1);
+    let delay = cx.update(|_, cx| EditorSettings::get_global(cx).hover_popover_delay.0 + 1);
     cx.background_executor
         .advance_clock(Duration::from_millis(delay));
 
@@ -1427,7 +1437,7 @@ async fn test_diagnostics_with_code(cx: &mut TestAppContext) {
     let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
     diagnostics
-        .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
         .await;
 
     // Verify that the diagnostic codes are displayed correctly
@@ -1704,7 +1714,7 @@ async fn test_buffer_diagnostics(cx: &mut TestAppContext) {
     // wait a little bit to ensure that the buffer diagnostic's editor content
     // is rendered.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
 
     pretty_assertions::assert_eq!(
         editor_content_with_blocks(&editor, cx),
@@ -1837,7 +1847,7 @@ async fn test_buffer_diagnostics_without_warnings(cx: &mut TestAppContext) {
     // wait a little bit to ensure that the buffer diagnostic's editor content
     // is rendered.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
 
     pretty_assertions::assert_eq!(
         editor_content_with_blocks(&editor, cx),
@@ -1971,7 +1981,7 @@ async fn test_buffer_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     // wait a little bit to ensure that the buffer diagnostic's editor content
     // is rendered.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
 
     pretty_assertions::assert_eq!(
         editor_content_with_blocks(&editor, cx),
