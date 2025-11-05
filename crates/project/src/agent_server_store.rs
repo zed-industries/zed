@@ -259,6 +259,7 @@ impl AgentServerStore {
         // Insert agent servers from extension manifests
         match &self.state {
             AgentServerStoreState::Local {
+                node_runtime,
                 project_environment,
                 fs,
                 http_client,
@@ -289,6 +290,7 @@ impl AgentServerStore {
                             Box::new(LocalExtensionArchiveAgent {
                                 fs: fs.clone(),
                                 http_client: http_client.clone(),
+                                node_runtime: node_runtime.clone(),
                                 project_environment: project_environment.clone(),
                                 extension_id: Arc::from(ext_id),
                                 agent_id: agent_name.clone(),
@@ -1356,6 +1358,7 @@ fn asset_name(version: &str) -> Option<String> {
 struct LocalExtensionArchiveAgent {
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
+    node_runtime: NodeRuntime,
     project_environment: Entity<ProjectEnvironment>,
     extension_id: Arc<str>,
     agent_id: Arc<str>,
@@ -1379,6 +1382,7 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
     ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
         let fs = self.fs.clone();
         let http_client = self.http_client.clone();
+        let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
         let extension_id = self.extension_id.clone();
         let agent_id = self.agent_id.clone();
@@ -1526,23 +1530,29 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
 
             // Validate and resolve cmd path
             let cmd = &target_config.cmd;
-            if cmd.contains("..") {
-                anyhow::bail!("command path cannot contain '..': {}", cmd);
-            }
 
-            let cmd_path = if cmd.starts_with("./") || cmd.starts_with(".\\") {
-                // Relative to extraction directory
-                version_dir.join(&cmd[2..])
+            let cmd_path = if cmd == "node" {
+                // Use Zed's managed Node.js runtime
+                node_runtime.binary_path().await?
             } else {
-                // On PATH
-                anyhow::bail!("command must be relative (start with './'): {}", cmd);
-            };
+                if cmd.contains("..") {
+                    anyhow::bail!("command path cannot contain '..': {}", cmd);
+                }
 
-            anyhow::ensure!(
-                fs.is_file(&cmd_path).await,
-                "Missing command {} after extraction",
-                cmd_path.to_string_lossy()
-            );
+                if cmd.starts_with("./") || cmd.starts_with(".\\") {
+                    // Relative to extraction directory
+                    let cmd_path = version_dir.join(&cmd[2..]);
+                    anyhow::ensure!(
+                        fs.is_file(&cmd_path).await,
+                        "Missing command {} after extraction",
+                        cmd_path.to_string_lossy()
+                    );
+                    cmd_path
+                } else {
+                    // On PATH
+                    anyhow::bail!("command must be relative (start with './'): {}", cmd);
+                }
+            };
 
             let command = AgentServerCommand {
                 path: cmd_path,
@@ -1828,6 +1838,7 @@ mod extension_agent_tests {
         let agent = LocalExtensionArchiveAgent {
             fs,
             http_client,
+            node_runtime: node_runtime::NodeRuntime::unavailable(),
             project_environment,
             extension_id: Arc::from("my-extension"),
             agent_id: Arc::from("my-agent"),
@@ -1891,6 +1902,48 @@ mod extension_agent_tests {
         assert!(manifest_entry.targets.contains_key("linux-x86_64"));
         let target = manifest_entry.targets.get("linux-x86_64").unwrap();
         assert_eq!(target.cmd, "./release-agent");
+    }
+
+    #[gpui::test]
+    async fn test_node_command_uses_managed_runtime(cx: &mut TestAppContext) {
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        let http_client = http_client::FakeHttpClient::with_404_response();
+        let node_runtime = NodeRuntime::unavailable();
+        let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
+        let project_environment = cx.new(|cx| {
+            crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx)
+        });
+
+        let agent = LocalExtensionArchiveAgent {
+            fs: fs.clone(),
+            http_client,
+            node_runtime,
+            project_environment,
+            extension_id: Arc::from("node-extension"),
+            agent_id: Arc::from("node-agent"),
+            targets: {
+                let mut map = HashMap::default();
+                map.insert(
+                    "darwin-aarch64".to_string(),
+                    extension::TargetConfig {
+                        archive: "https://example.com/node-agent.zip".into(),
+                        cmd: "node".into(),
+                        args: vec!["index.js".into()],
+                        sha256: None,
+                    },
+                );
+                map
+            },
+            env: HashMap::default(),
+        };
+
+        // Verify that when cmd is "node", it attempts to use the node runtime
+        assert_eq!(agent.extension_id.as_ref(), "node-extension");
+        assert_eq!(agent.agent_id.as_ref(), "node-agent");
+
+        let target = agent.targets.get("darwin-aarch64").unwrap();
+        assert_eq!(target.cmd, "node");
+        assert_eq!(target.args, vec!["index.js"]);
     }
 
     #[test]

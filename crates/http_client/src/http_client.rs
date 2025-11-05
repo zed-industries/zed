@@ -16,7 +16,7 @@ use parking_lot::Mutex;
 #[cfg(feature = "test-support")]
 use std::fmt;
 use std::{any::type_name, sync::Arc};
-pub use url::Url;
+pub use url::{Host, Url};
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RedirectPolicy {

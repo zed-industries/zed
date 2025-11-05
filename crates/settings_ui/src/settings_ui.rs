@@ -11,7 +11,6 @@ use gpui::{
     Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
     WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px, uniform_list,
 };
-use heck::ToTitleCase as _;
 use project::{Project, WorktreeId};
 use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
@@ -38,7 +37,9 @@ use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use workspace::{AppState, OpenOptions, OpenVisible, Workspace, client_side_decorations};
 use zed_actions::{OpenSettings, OpenSettingsAt};
 
-use crate::components::{SettingsInputField, font_picker, icon_theme_picker, theme_picker};
+use crate::components::{
+    EnumVariantDropdown, SettingsInputField, font_picker, icon_theme_picker, theme_picker,
+};
 
 const NAVBAR_CONTAINER_TAB_INDEX: isize = 0;
 const NAVBAR_GROUP_TAB_INDEX: isize = 1;
@@ -3428,7 +3429,7 @@ fn render_dropdown<T>(
     field: SettingField<T>,
     file: SettingsUiFile,
     metadata: Option<&SettingsFieldMetadata>,
-    window: &mut Window,
+    _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement
 where
@@ -3444,56 +3445,19 @@ where
         SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
     let current_value = current_value.copied().unwrap_or(variants()[0]);
 
-    let current_value_label =
-        labels()[variants().iter().position(|v| *v == current_value).unwrap()];
-
-    DropdownMenu::new(
-        "dropdown",
-        if should_do_titlecase {
-            current_value_label.to_title_case()
-        } else {
-            current_value_label.to_string()
-        },
-        window.use_state(cx, |window, cx| {
-            ContextMenu::new(window, cx, move |mut menu, _, _| {
-                for (&value, &label) in std::iter::zip(variants(), labels()) {
-                    let file = file.clone();
-                    menu = menu.toggleable_entry(
-                        if should_do_titlecase {
-                            label.to_title_case()
-                        } else {
-                            label.to_string()
-                        },
-                        value == current_value,
-                        IconPosition::End,
-                        None,
-                        move |_, cx| {
-                            if value == current_value {
-                                return;
-                            }
-                            update_settings_file(
-                                file.clone(),
-                                field.json_path,
-                                cx,
-                                move |settings, _cx| {
-                                    (field.write)(settings, Some(value));
-                                },
-                            )
-                            .log_err(); // todo(settings_ui) don't log err
-                        },
-                    );
-                }
-                menu
+    EnumVariantDropdown::new("dropdown", current_value, variants(), labels(), {
+        move |value, cx| {
+            if value == current_value {
+                return;
+            }
+            update_settings_file(file.clone(), field.json_path, cx, move |settings, _cx| {
+                (field.write)(settings, Some(value));
             })
-        }),
-    )
-    .tab_index(0)
-    .trigger_size(ButtonSize::Medium)
-    .style(DropdownStyle::Outlined)
-    .offset(gpui::Point {
-        x: px(0.0),
-        y: px(2.0),
+            .log_err(); // todo(settings_ui) don't log err
+        }
     })
+    .tab_index(0)
+    .title_case(should_do_titlecase)
     .into_any_element()
 }
 
