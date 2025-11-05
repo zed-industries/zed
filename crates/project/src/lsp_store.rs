@@ -7121,6 +7121,10 @@ impl LspStore {
 
         let task: SemanticTokensTask = cx
             .spawn(async move |lsp_store, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(30))
+                    .await;
+
                 tasks
                     .await
                     .into_iter()
