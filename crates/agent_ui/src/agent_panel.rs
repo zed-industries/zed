@@ -2040,7 +2040,7 @@ impl AgentPanel {
                                     let mut entry =
                                         ContextMenuEntry::new(format!("New {} Thread", agent_name));
                                     if let Some(icon_path) = icon_path {
-                                        entry = entry.custom_icon_path(icon_path);
+                                        entry = entry.custom_icon_svg(icon_path);
                                     } else {
                                         entry = entry.icon(IconName::Terminal);
                                     }
