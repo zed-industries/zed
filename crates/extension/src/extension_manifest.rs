@@ -175,7 +175,8 @@ pub struct AgentServerManifestEntry {
     /// ```
     ///
     /// Note: All commands are executed with the archive extraction directory as the
-    /// working directory.
+    /// working directory, so relative paths in args (like "index.js") will resolve
+    /// relative to the extracted archive contents.
     pub targets: HashMap<String, TargetConfig>,
 }
 
