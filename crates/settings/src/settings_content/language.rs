@@ -280,6 +280,10 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: ["..."]
     pub language_servers: Option<Vec<String>>,
+    /// Whether to use semantic tokens from language servers to color code in the editor.
+    ///
+    /// Default: false
+    pub semantic_tokens: Option<bool>,
     /// Controls where the `editor::Rewrap` action is allowed for this language.
     ///
     /// Note: This setting has no effect in Vim mode, as rewrap is already
