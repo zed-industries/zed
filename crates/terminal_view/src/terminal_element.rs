@@ -1665,6 +1665,8 @@ mod tests {
         assert!(TerminalElement::is_decorative_character('\u{E0B2}')); // Powerline left triangle
         assert!(TerminalElement::is_decorative_character('\u{E0B4}')); // Powerline right half circle (the actual issue!)
         assert!(TerminalElement::is_decorative_character('\u{E0B6}')); // Powerline left half circle
+        assert!(TerminalElement::is_decorative_character('\u{E0CA}')); // Powerline mirrored ice waveform
+        assert!(TerminalElement::is_decorative_character('\u{E0D7}')); // Powerline left triangle inverted
 
         // Characters that should NOT be considered decorative
         assert!(!TerminalElement::is_decorative_character('A')); // Regular letter
