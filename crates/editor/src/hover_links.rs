@@ -241,6 +241,19 @@ impl Editor {
                         }
                     })
                     .collect();
+
+                // todo!()
+                // if let Some(nav_history) = self.nav_history.as_mut() {
+                //     nav_history.start_tag_jump(
+                //         Some(NavigationData {
+                //             cursor_anchor,
+                //             cursor_position,
+                //             scroll_anchor: scroll_state,
+                //             scroll_top_row,
+                //         }),
+                //         cx,
+                //     );
+                // }
                 let navigate_task =
                     self.navigate_to_hover_links(None, links, modifiers.alt, window, cx);
                 self.select(SelectPhase::End, window, cx);

@@ -14038,6 +14038,27 @@ impl Editor {
         );
     }
 
+    fn finish_tag_jump(&mut self, point: Point, cx: &mut Context<Self>) {
+        let Some(nav_history) = self.nav_history.as_mut() else {
+            return;
+        };
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let cursor_anchor = snapshot.anchor_after(point);
+        let cursor_position = cursor_anchor.to_point(&snapshot);
+        let scroll_state = self.scroll_manager.anchor();
+        let scroll_top_row = scroll_state.top_row(&snapshot);
+        dbg!("finish tag jump", cursor_position);
+        nav_history.finish_tag_jump(
+            Some(NavigationData {
+                cursor_anchor,
+                cursor_position,
+                scroll_anchor: scroll_state,
+                scroll_top_row,
+            }),
+            cx,
+        );
+    }
+
     fn push_to_nav_history(
         &mut self,
         cursor_anchor: Anchor,
@@ -16437,17 +16458,36 @@ impl Editor {
         let Some(provider) = self.semantics_provider.clone() else {
             return Task::ready(Ok(Navigated::No));
         };
-        let head = self
+        let cursor = self
             .selections
             .newest::<usize>(&self.display_snapshot(cx))
             .head();
-        let buffer = self.buffer.read(cx);
-        let Some((buffer, head)) = buffer.text_anchor_for_position(head, cx) else {
+        let multi_buffer = self.buffer.read(cx);
+        let Some((buffer, head)) = multi_buffer.text_anchor_for_position(cursor, cx) else {
             return Task::ready(Ok(Navigated::No));
         };
         let Some(definitions) = provider.definitions(&buffer, head, kind, cx) else {
             return Task::ready(Ok(Navigated::No));
         };
+
+        if let Some(nav_history) = self.nav_history.as_mut() {
+            let snapshot = self.buffer.read(cx).snapshot(cx);
+            let cursor_anchor = snapshot.anchor_after(cursor);
+            let cursor_position = snapshot.offset_to_point(cursor);
+            let scroll_anchor = self.scroll_manager.anchor();
+            let scroll_top_row = scroll_anchor.top_row(&snapshot);
+
+            dbg!("start tag jump", cursor_position);
+            nav_history.start_tag_jump(
+                Some(NavigationData {
+                    cursor_anchor,
+                    cursor_position,
+                    scroll_anchor,
+                    scroll_top_row,
+                }),
+                cx,
+            );
+        }
 
         cx.spawn_in(window, async move |editor, cx| {
             let Some(definitions) = definitions.await? else {
@@ -16693,6 +16733,7 @@ impl Editor {
                     if !split
                         && Some(&target_buffer) == editor.buffer.read(cx).as_singleton().as_ref()
                     {
+                        editor.finish_tag_jump(range.start, cx);
                         editor.go_to_singleton_buffer_range(range, window, cx);
                     } else {
                         let pane = workspace.read(cx).active_pane().clone();
@@ -16718,6 +16759,7 @@ impl Editor {
                                 // When selecting a definition in a different buffer, disable the nav history
                                 // to avoid creating a history entry at the previous cursor location.
                                 pane.update(cx, |pane, _| pane.disable_history());
+                                target_editor.finish_tag_jump(range.start, cx);
                                 target_editor.go_to_singleton_buffer_range(range, window, cx);
                                 pane.update(cx, |pane, _| pane.enable_history());
                             });
@@ -17039,6 +17081,7 @@ impl Editor {
 
             multibuffer.with_title(title)
         });
+        let first_range = ranges.first().cloned();
         let existing = workspace.active_pane().update(cx, |pane, cx| {
             pane.items()
                 .filter_map(|item| item.downcast::<Editor>())
@@ -17089,6 +17132,21 @@ impl Editor {
                     selections.clear_disjoint();
                     selections.select_anchor_ranges(ranges);
                 });
+            }
+        });
+        cx.defer({
+            let editor = editor.clone();
+            move |cx| {
+                let Some(range) = first_range else { return };
+                editor.update(cx, |editor, cx| {
+                    let point = editor
+                        .buffer()
+                        .read(cx)
+                        .snapshot(cx)
+                        .summary_for_anchor(&range.start);
+
+                    editor.finish_tag_jump(point, cx)
+                })
             }
         });
 

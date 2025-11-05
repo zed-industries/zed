@@ -2530,7 +2530,7 @@ impl Item for TextThreadEditor {
 
     fn navigate(
         &mut self,
-        data: Box<dyn std::any::Any>,
+        data: Rc<dyn std::any::Any>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {

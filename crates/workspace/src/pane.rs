@@ -211,6 +211,10 @@ actions!(
         GoBack,
         /// Navigates forward in history.
         GoForward,
+        /// Navigates back in the tag stack.
+        GoToOlderTag,
+        /// Navigates forward in the tag stack.
+        GoToNewerTag,
         /// Joins this pane into the next pane.
         JoinIntoNext,
         /// Joins all panes into one.
@@ -417,6 +421,9 @@ struct NavHistoryState {
     backward_stack: VecDeque<NavigationEntry>,
     forward_stack: VecDeque<NavigationEntry>,
     closed_stack: VecDeque<NavigationEntry>,
+    tag_stack: VecDeque<(NavigationEntry, NavigationEntry)>,
+    tag_stack_pos: usize,
+    pending_tag_source: Option<NavigationEntry>,
     paths_by_item: HashMap<EntityId, (ProjectPath, Option<PathBuf>)>,
     pane: WeakEntity<Pane>,
     next_timestamp: Arc<AtomicUsize>,
@@ -438,9 +445,10 @@ impl Default for NavigationMode {
     }
 }
 
+#[derive(Clone)]
 pub struct NavigationEntry {
     pub item: Arc<dyn WeakItemHandle>,
-    pub data: Option<Box<dyn Any + Send>>,
+    pub data: Option<Rc<dyn Any + Send>>,
     pub timestamp: usize,
     pub is_preview: bool,
 }
@@ -513,6 +521,9 @@ impl Pane {
                 backward_stack: Default::default(),
                 forward_stack: Default::default(),
                 closed_stack: Default::default(),
+                tag_stack: Default::default(),
+                tag_stack_pos: 0,
+                pending_tag_source: None,
                 paths_by_item: Default::default(),
                 pane: handle,
                 next_timestamp,
@@ -844,6 +855,24 @@ impl Pane {
                 workspace.update(cx, |workspace, cx| {
                     workspace
                         .go_forward(pane, window, cx)
+                        .detach_and_log_err(cx)
+                })
+            })
+        }
+    }
+
+    pub fn go_to_older_tag(
+        &mut self,
+        _: &GoToOlderTag,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let pane = cx.entity().downgrade();
+            window.defer(cx, move |window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace
+                        .navigate_tag_history(pane, window, cx)
                         .detach_and_log_err(cx)
                 })
             })
@@ -3756,6 +3785,7 @@ impl Render for Pane {
             .on_action(cx.listener(Pane::toggle_zoom))
             .on_action(cx.listener(Self::navigate_backward))
             .on_action(cx.listener(Self::navigate_forward))
+            .on_action(cx.listener(Self::go_to_older_tag))
             .on_action(
                 cx.listener(|pane: &mut Pane, action: &ActivateItem, window, cx| {
                     pane.activate_item(
@@ -3996,8 +4026,40 @@ impl ItemNavHistory {
         self.history.pop(NavigationMode::GoingBack, cx)
     }
 
-    pub fn pop_forward(&mut self, cx: &mut App) -> Option<NavigationEntry> {
-        self.history.pop(NavigationMode::GoingForward, cx)
+    pub fn start_tag_jump<D>(&mut self, data: Option<D>, cx: &mut App)
+    where
+        D: 'static + Any + Send,
+    {
+        if self
+            .item
+            .upgrade()
+            .is_some_and(|item| item.include_in_nav_history())
+        {
+            self.history.start_tag_jump(
+                data.map(|data| Rc::new(data) as Rc<dyn Any + Send>),
+                self.item.clone(),
+                self.is_preview,
+                cx,
+            );
+        }
+    }
+
+    pub fn finish_tag_jump<D>(&mut self, data: Option<D>, cx: &mut App)
+    where
+        D: 'static + Any + Send,
+    {
+        if self
+            .item
+            .upgrade()
+            .is_some_and(|item| item.include_in_nav_history())
+        {
+            self.history.finish_tag_jump(
+                data.map(|data| Rc::new(data) as Rc<dyn Any + Send>),
+                self.item.clone(),
+                self.is_preview,
+                cx,
+            );
+        }
     }
 }
 
@@ -4075,7 +4137,7 @@ impl NavHistory {
                 }
                 state.backward_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
+                    data: data.map(|data| Rc::new(data) as Rc<dyn Any + Send>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
                 });
@@ -4087,7 +4149,7 @@ impl NavHistory {
                 }
                 state.forward_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
+                    data: data.map(|data| Rc::new(data) as Rc<dyn Any + Send>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
                 });
@@ -4098,7 +4160,7 @@ impl NavHistory {
                 }
                 state.backward_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
+                    data: data.map(|data| Rc::new(data) as Rc<dyn Any + Send>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
                 });
@@ -4109,7 +4171,7 @@ impl NavHistory {
                 }
                 state.closed_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
+                    data: data.map(|data| Rc::new(data) as Rc<dyn Any + Send>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
                 });
@@ -4134,6 +4196,55 @@ impl NavHistory {
 
     pub fn path_for_item(&self, item_id: EntityId) -> Option<(ProjectPath, Option<PathBuf>)> {
         self.0.lock().paths_by_item.get(&item_id).cloned()
+    }
+
+    pub fn start_tag_jump(
+        &mut self,
+        data: Option<Rc<dyn Any + Send>>,
+        item: Arc<dyn WeakItemHandle>,
+        is_preview: bool,
+        _cx: &mut App,
+    ) {
+        self.0.lock().pending_tag_source.replace(NavigationEntry {
+            item,
+            data,
+            timestamp: 0,
+            is_preview,
+        });
+    }
+
+    pub fn finish_tag_jump(
+        &mut self,
+        data: Option<Rc<dyn Any + Send>>,
+        item: Arc<dyn WeakItemHandle>,
+        is_preview: bool,
+        _cx: &mut App,
+    ) {
+        let mut state = self.0.lock();
+        let Some(source) = state.pending_tag_source.take() else {
+            debug_panic!("Finished tag jump without starting one?");
+            return;
+        };
+        let dest = NavigationEntry {
+            item,
+            data,
+            timestamp: 0,
+            is_preview,
+        };
+        let truncate_to = state.tag_stack_pos;
+        state.tag_stack.truncate(truncate_to);
+        state.tag_stack.push_back((source, dest));
+        state.tag_stack_pos += 1;
+    }
+
+    pub fn tag_stack_back(&mut self) -> Option<NavigationEntry> {
+        let mut state = self.0.lock();
+        if state.tag_stack_pos > 0 {
+            state.tag_stack_pos -= 1;
+            Some(state.tag_stack[state.tag_stack_pos].0.clone())
+        } else {
+            None
+        }
     }
 }
 

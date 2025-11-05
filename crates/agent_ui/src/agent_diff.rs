@@ -25,6 +25,7 @@ use std::{
     any::{Any, TypeId},
     collections::hash_map::Entry,
     ops::Range,
+    rc::Rc,
     sync::Arc,
 };
 use ui::{CommonAnimationExt, IconButtonShape, KeyBinding, Tooltip, prelude::*, vertical_divider};
@@ -516,12 +517,7 @@ impl Item for AgentDiffPane {
             .update(cx, |editor, cx| editor.deactivated(window, cx));
     }
 
-    fn navigate(
-        &mut self,
-        data: Box<dyn Any>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    fn navigate(&mut self, data: Rc<dyn Any>, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.editor
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }

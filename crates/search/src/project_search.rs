@@ -36,6 +36,7 @@ use std::{
     mem,
     ops::{Not, Range},
     pin::pin,
+    rc::Rc,
     sync::Arc,
 };
 use ui::{IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*, utils::SearchInputWidth};
@@ -633,12 +634,7 @@ impl Item for ProjectSearchView {
         });
     }
 
-    fn navigate(
-        &mut self,
-        data: Box<dyn Any>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    fn navigate(&mut self, data: Rc<dyn Any>, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.results_editor
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }

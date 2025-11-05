@@ -35,6 +35,7 @@ use std::{
     any::{Any, TypeId},
     cmp,
     ops::{Range, RangeInclusive},
+    rc::Rc,
     sync::Arc,
     time::Duration,
 };
@@ -728,12 +729,7 @@ impl Item for ProjectDiagnosticsEditor {
             .update(cx, |editor, cx| editor.deactivated(window, cx));
     }
 
-    fn navigate(
-        &mut self,
-        data: Box<dyn Any>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    fn navigate(&mut self, data: Rc<dyn Any>, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.editor
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }

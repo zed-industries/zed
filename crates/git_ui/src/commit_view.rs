@@ -17,6 +17,7 @@ use std::{
     any::{Any, TypeId},
     fmt::Write as _,
     path::PathBuf,
+    rc::Rc,
     sync::Arc,
 };
 use ui::{
@@ -527,12 +528,7 @@ impl Item for CommitView {
         });
     }
 
-    fn navigate(
-        &mut self,
-        data: Box<dyn Any>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    fn navigate(&mut self, data: Rc<dyn Any>, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.editor
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }

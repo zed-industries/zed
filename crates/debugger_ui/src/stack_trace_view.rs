@@ -1,4 +1,7 @@
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    rc::Rc,
+};
 
 use collections::HashMap;
 use dap::StackFrameId;
@@ -331,12 +334,7 @@ impl Item for StackTraceView {
             .update(cx, |editor, cx| editor.deactivated(window, cx));
     }
 
-    fn navigate(
-        &mut self,
-        data: Box<dyn Any>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    fn navigate(&mut self, data: Rc<dyn Any>, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.editor
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }

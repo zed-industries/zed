@@ -194,7 +194,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn discarded(&self, _project: Entity<Project>, _window: &mut Window, _cx: &mut Context<Self>) {}
     fn on_removed(&self, _cx: &App) {}
     fn workspace_deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
-    fn navigate(&mut self, _: Box<dyn Any>, _window: &mut Window, _: &mut Context<Self>) -> bool {
+    fn navigate(&mut self, _: Rc<dyn Any>, _window: &mut Window, _: &mut Context<Self>) -> bool {
         false
     }
 
@@ -449,7 +449,7 @@ pub trait ItemHandle: 'static + Send {
     fn deactivated(&self, window: &mut Window, cx: &mut App);
     fn on_removed(&self, cx: &App);
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App);
-    fn navigate(&self, data: Box<dyn Any>, window: &mut Window, cx: &mut App) -> bool;
+    fn navigate(&self, data: Rc<dyn Any>, window: &mut Window, cx: &mut App) -> bool;
     fn item_id(&self) -> EntityId;
     fn to_any(&self) -> AnyView;
     fn is_dirty(&self, cx: &App) -> bool;
@@ -900,7 +900,7 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.update(cx, |this, cx| this.workspace_deactivated(window, cx));
     }
 
-    fn navigate(&self, data: Box<dyn Any>, window: &mut Window, cx: &mut App) -> bool {
+    fn navigate(&self, data: Rc<dyn Any>, window: &mut Window, cx: &mut App) -> bool {
         self.update(cx, |this, cx| this.navigate(data, window, cx))
     }
 
@@ -1277,7 +1277,7 @@ pub mod test {
         InteractiveElement, IntoElement, Render, SharedString, Task, WeakEntity, Window,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
-    use std::{any::Any, cell::Cell};
+    use std::{any::Any, cell::Cell, rc::Rc};
     use util::rel_path::rel_path;
 
     pub struct TestProjectItem {
@@ -1510,11 +1510,14 @@ pub mod test {
 
         fn navigate(
             &mut self,
-            state: Box<dyn Any>,
+            state: Rc<dyn Any>,
             _window: &mut Window,
             _: &mut Context<Self>,
         ) -> bool {
-            let state = *state.downcast::<String>().unwrap_or_default();
+            let state = state
+                .downcast_ref::<String>()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
             if state != self.state {
                 self.state = state;
                 true

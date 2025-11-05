@@ -32,9 +32,12 @@ use project::{
     },
 };
 use settings::{Settings, SettingsStore};
-use std::any::{Any, TypeId};
 use std::ops::Range;
 use std::sync::Arc;
+use std::{
+    any::{Any, TypeId},
+    rc::Rc,
+};
 use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::{ResultExt as _, rel_path::RelPath};
@@ -649,12 +652,7 @@ impl Item for ProjectDiff {
             .update(cx, |editor, cx| editor.deactivated(window, cx));
     }
 
-    fn navigate(
-        &mut self,
-        data: Box<dyn Any>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    fn navigate(&mut self, data: Rc<dyn Any>, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.editor
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }

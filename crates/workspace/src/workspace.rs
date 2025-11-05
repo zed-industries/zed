@@ -1927,6 +1927,127 @@ impl Workspace {
             .collect()
     }
 
+    fn navigate_tag_history(
+        &mut self,
+        pane: WeakEntity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<Result<()>> {
+        let to_load = if let Some(pane) = pane.upgrade() {
+            pane.update(cx, |pane, cx| {
+                window.focus(&pane.focus_handle(cx));
+                loop {
+                    // Retrieve the weak item handle from the history.
+                    let entry = pane.nav_history_mut().tag_stack_back()?;
+
+                    // If the item is still present in this pane, then activate it.
+                    if let Some(index) = entry
+                        .item
+                        .upgrade()
+                        .and_then(|v| pane.index_for_item(v.as_ref()))
+                    {
+                        let prev_active_item_index = pane.active_item_index();
+                        pane.activate_item(index, true, true, window, cx);
+
+                        let mut navigated = prev_active_item_index != pane.active_item_index();
+                        if let Some(data) = entry.data {
+                            navigated |= pane.active_item()?.navigate(data, window, cx);
+                        }
+
+                        if navigated {
+                            break None;
+                        }
+                    } else {
+                        // If the item is no longer present in this pane, then retrieve its
+                        // path info in order to reopen it.
+                        break pane
+                            .nav_history()
+                            .path_for_item(entry.item.id())
+                            .map(|(project_path, abs_path)| (project_path, abs_path, entry));
+                    }
+                }
+            })
+        } else {
+            None
+        };
+
+        if let Some((project_path, abs_path, entry)) = to_load {
+            // If the item was no longer present, then load it again from its previous path, first try the local path
+            let open_by_project_path = self.load_path(project_path.clone(), window, cx);
+
+            cx.spawn_in(window, async move  |workspace, cx| {
+                let open_by_project_path = open_by_project_path.await;
+                let mut navigated = false;
+                match open_by_project_path
+                    .with_context(|| format!("Navigating to {project_path:?}"))
+                {
+                    Ok((project_entry_id, build_item)) => {
+                        let prev_active_item_id = pane.update(cx, |pane, _| {
+                            pane.active_item().map(|p| p.item_id())
+                        })?;
+
+                        pane.update_in(cx, |pane, window, cx| {
+                            let item = pane.open_item(
+                                project_entry_id,
+                                project_path,
+                                true,
+                                entry.is_preview,
+                                true,
+                                None,
+                                window, cx,
+                                build_item,
+                            );
+                            navigated |= Some(item.item_id()) != prev_active_item_id;
+                            if let Some(data) = entry.data {
+                                navigated |= item.navigate(data, window, cx);
+                            }
+                        })?;
+                    }
+                    Err(open_by_project_path_e) => {
+                        // Fall back to opening by abs path, in case an external file was opened and closed,
+                        // and its worktree is now dropped
+                        if let Some(abs_path) = abs_path {
+                            let prev_active_item_id = pane.update(cx, |pane, _| {
+                                pane.active_item().map(|p| p.item_id())
+                            })?;
+                            let open_by_abs_path = workspace.update_in(cx, |workspace, window, cx| {
+                                workspace.open_abs_path(abs_path.clone(), OpenOptions { visible: Some(OpenVisible::None), ..Default::default() }, window, cx)
+                            })?;
+                            match open_by_abs_path
+                                .await
+                                .with_context(|| format!("Navigating to {abs_path:?}"))
+                            {
+                                Ok(item) => {
+                                    pane.update_in(cx, |pane, window, cx| {
+                                        navigated |= Some(item.item_id()) != prev_active_item_id;
+                                        if let Some(data) = entry.data {
+                                            navigated |= item.navigate(data, window, cx);
+                                        }
+                                    })?;
+                                }
+                                Err(open_by_abs_path_e) => {
+                                    log::error!("Failed to navigate history: {open_by_project_path_e:#} and {open_by_abs_path_e:#}");
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !navigated {
+                    workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            Self::navigate_tag_history(workspace, pane, window, cx)
+                        })?
+                        .await?;
+                }
+
+                Ok(())
+            })
+        } else {
+            Task::ready(Ok(()))
+        }
+    }
+
     fn navigate_history(
         &mut self,
         pane: WeakEntity<Pane>,

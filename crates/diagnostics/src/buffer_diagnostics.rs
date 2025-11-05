@@ -24,6 +24,7 @@ use settings::Settings;
 use std::{
     any::{Any, TypeId},
     cmp::Ordering,
+    rc::Rc,
     sync::Arc,
 };
 use text::{Anchor, BufferSnapshot, OffsetRangeExt};
@@ -734,12 +735,7 @@ impl Item for BufferDiagnosticsEditor {
         self.multibuffer.read(cx).is_dirty(cx)
     }
 
-    fn navigate(
-        &mut self,
-        data: Box<dyn Any>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    fn navigate(&mut self, data: Rc<dyn Any>, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.editor
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }

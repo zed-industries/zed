@@ -18,6 +18,7 @@ use project::Project;
 use rpc::proto::ChannelVisibility;
 use std::{
     any::{Any, TypeId},
+    rc::Rc,
     sync::Arc,
 };
 use ui::prelude::*;
@@ -515,12 +516,7 @@ impl Item for ChannelView {
         })))
     }
 
-    fn navigate(
-        &mut self,
-        data: Box<dyn Any>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    fn navigate(&mut self, data: Rc<dyn Any>, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.editor
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }

@@ -14,6 +14,7 @@ use std::{
     any::{Any, TypeId},
     path::PathBuf,
     pin::pin,
+    rc::Rc,
     sync::Arc,
     time::Duration,
 };
@@ -301,12 +302,7 @@ impl Item for FileDiffView {
         });
     }
 
-    fn navigate(
-        &mut self,
-        data: Box<dyn Any>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    fn navigate(&mut self, data: Rc<dyn Any>, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.editor
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }

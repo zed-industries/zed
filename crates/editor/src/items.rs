@@ -34,6 +34,7 @@ use std::{
     iter,
     ops::Range,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
 };
 use text::{BufferId, BufferSnapshot, Selection};
@@ -589,7 +590,7 @@ impl Item for Editor {
 
     fn navigate(
         &mut self,
-        data: Box<dyn std::any::Any>,
+        data: Rc<dyn std::any::Any>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
