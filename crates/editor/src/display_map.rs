@@ -187,7 +187,7 @@ impl DisplayMap {
             clip_at_line_ends: self.clip_at_line_ends,
             masked: self.masked,
             fold_placeholder: self.fold_placeholder.clone(),
-            syntax_highlight: highlight_sytnax.clone(),
+            syntax_highlight: highlight_sytnax,
         }
     }
 
