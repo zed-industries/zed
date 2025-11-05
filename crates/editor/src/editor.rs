@@ -102,11 +102,11 @@ use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
     DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
-    Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
+    Focusable, FontId, FontStyle, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
     MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, ScrollHandle,
-    SharedString, Size, Stateful, Styled, Subscription, Task, TextStyle, TextStyleRefinement,
-    UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
-    div, point, prelude::*, pulsating_between, px, relative, size,
+    SharedString, Size, Stateful, StrikethroughStyle, Styled, Subscription, Task, TextStyle,
+    TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity,
+    WeakFocusHandle, Window, div, point, prelude::*, pulsating_between, px, relative, size,
 };
 use hover_links::{HoverLink, HoveredLinkState, find_file};
 use hover_popover::{HoverState, hide_hover};
@@ -165,8 +165,8 @@ use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager};
 use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::{
-    GitGutterSetting, RelativeLineNumbers, Settings, SettingsLocation, SettingsStore,
-    update_settings_file,
+    GitGutterSetting, RelativeLineNumbers, SemanticTokenFontStyle, SemanticTokenFontWeight,
+    SemanticTokenRules, Settings, SettingsLocation, SettingsStore, update_settings_file,
 };
 use smallvec::{SmallVec, smallvec};
 use snippet::Snippet;
@@ -23869,12 +23869,13 @@ impl SemanticsProvider for Entity<Project> {
 }
 
 struct SemanticTokenStylizer<'a> {
+    rules: &'a SemanticTokenRules,
     token_types: Vec<&'a str>,
     modifier_mask: HashMap<&'a str, u32>,
 }
 
 impl<'a> SemanticTokenStylizer<'a> {
-    pub fn new(legend: &'a lsp::SemanticTokensLegend) -> Self {
+    pub fn new(legend: &'a lsp::SemanticTokensLegend, cx: &'a App) -> Self {
         let token_types = legend.token_types.iter().map(|s| s.as_str()).collect();
         let modifier_mask = legend
             .token_modifiers
@@ -23883,6 +23884,9 @@ impl<'a> SemanticTokenStylizer<'a> {
             .map(|(i, modifier)| (modifier.as_str(), 1 << i))
             .collect();
         SemanticTokenStylizer {
+            rules: &ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .semantic_token_rules,
             token_types,
             modifier_mask,
         }
@@ -23905,10 +23909,56 @@ impl<'a> SemanticTokenStylizer<'a> {
         token_type: u32,
         modifiers: u32,
     ) -> Option<HighlightStyle> {
-        let _ = (theme, token_type, modifiers);
-        // TODO: Configs.
+        let name = self.token_type(token_type)?;
 
-        None
+        let rule = self.rules.rules.iter().find(|rule| {
+            rule.token_type == name
+                && rule
+                    .token_modifiers
+                    .iter()
+                    .all(|m| self.has_modifier(modifiers, m))
+        })?;
+
+        let style = rule.style.iter().find_map(|style| theme.get_opt(style));
+
+        let color = rule
+            .foreground_color
+            .map(Into::into)
+            .or_else(|| style.and_then(|s| s.color));
+
+        Some(HighlightStyle {
+            color,
+            background_color: rule
+                .background_color
+                .map(Into::into)
+                .or_else(|| style.and_then(|s| s.background_color)),
+            font_weight: match rule.font_weight {
+                Some(SemanticTokenFontWeight::Normal) => Some(FontWeight::NORMAL),
+                Some(SemanticTokenFontWeight::Bold) => Some(FontWeight::BOLD),
+                None => style.and_then(|s| s.font_weight),
+            },
+            font_style: match rule.font_style {
+                Some(SemanticTokenFontStyle::Normal) => Some(FontStyle::Normal),
+                Some(SemanticTokenFontStyle::Italic) => Some(FontStyle::Italic),
+                None => style.and_then(|s| s.font_style),
+            },
+            underline: rule
+                .underline
+                .map(|u| UnderlineStyle {
+                    thickness: 1.0.into(),
+                    color: Some(u.into()),
+                    ..Default::default()
+                })
+                .or_else(|| style.and_then(|s| s.underline)),
+            strikethrough: rule
+                .strikethrough
+                .map(|s| StrikethroughStyle {
+                    thickness: 1.0.into(),
+                    color: Some(s.into()),
+                })
+                .or_else(|| style.and_then(|s| s.strikethrough)),
+            ..Default::default()
+        })
     }
 }
 

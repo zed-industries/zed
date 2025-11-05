@@ -2,6 +2,7 @@ use crate::*;
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
 use fs::Fs;
+use gpui::Rgba;
 use paths::{cursor_settings_file_paths, vscode_settings_file_paths};
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -186,7 +187,10 @@ impl VsCodeSettings {
             file_finder: None,
             git: self.git_settings_content(),
             git_panel: self.git_panel_settings_content(),
-            global_lsp_settings: None,
+            global_lsp_settings: skip_default(GlobalLspSettingsContent {
+                semantic_token_rules: self.semantic_token_rules(),
+                ..Default::default()
+            }),
             helix_mode: None,
             image_viewer: None,
             journal: None,
@@ -352,6 +356,97 @@ impl VsCodeSettings {
         skip_default(SearchSettingsContent {
             include_ignored: self.read_bool("search.useIgnoreFiles"),
             ..Default::default()
+        })
+    }
+
+    fn semantic_token_rules(&self) -> Option<SemanticTokenRules> {
+        let customizations = self
+            .read_value("editor.semanticTokenColorCustomizations")?
+            .as_object()?;
+
+        skip_default(SemanticTokenRules {
+            rules: customizations
+                .get("rules")
+                .and_then(|v| {
+                    Some(
+                        v.as_object()?
+                            .iter()
+                            .filter_map(|(k, v)| {
+                                let v = v.as_object()?;
+
+                                let mut underline = v
+                                    .get("underline")
+                                    .and_then(|b| b.as_bool())
+                                    .unwrap_or(false);
+                                let strikethrough = v
+                                    .get("strikethrough")
+                                    .and_then(|b| b.as_bool())
+                                    .unwrap_or(false);
+                                let mut font_weight =
+                                    v.get("bold").and_then(|b| b.as_bool()).map(|b| {
+                                        if b {
+                                            SemanticTokenFontWeight::Bold
+                                        } else {
+                                            SemanticTokenFontWeight::Normal
+                                        }
+                                    });
+                                let mut font_style =
+                                    v.get("italic").and_then(|b| b.as_bool()).map(|b| {
+                                        if b {
+                                            SemanticTokenFontStyle::Italic
+                                        } else {
+                                            SemanticTokenFontStyle::Normal
+                                        }
+                                    });
+
+                                match v.get("fontStyle").and_then(|s| s.as_str()).unwrap_or("") {
+                                    "bold" => {
+                                        font_style = Some(SemanticTokenFontStyle::Normal);
+                                        font_weight = Some(SemanticTokenFontWeight::Bold);
+                                    }
+                                    "italic" => {
+                                        font_style = Some(SemanticTokenFontStyle::Italic);
+                                        font_weight = Some(SemanticTokenFontWeight::Normal);
+                                    }
+                                    "underline" => {
+                                        underline = true;
+                                    }
+                                    "bold italic" | "italic bold" => {
+                                        font_style = Some(SemanticTokenFontStyle::Italic);
+                                        font_weight = Some(SemanticTokenFontWeight::Bold);
+                                    }
+                                    "normal" => {
+                                        font_style = Some(SemanticTokenFontStyle::Normal);
+                                        font_weight = Some(SemanticTokenFontWeight::Normal);
+                                    }
+                                    _ => {}
+                                }
+
+                                let foreground = v
+                                    .get("foreground")
+                                    .and_then(|v| Rgba::try_from(v.as_str()?).ok())
+                                    .map(|s| s.to_owned());
+                                let background = v
+                                    .get("background")
+                                    .and_then(|v| Rgba::try_from(v.as_str()?).ok())
+                                    .map(|s| s.to_owned());
+
+                                Some(SemanticTokenRule {
+                                    token_type: k.clone(),
+                                    token_modifiers: vec![],
+                                    style: vec![],
+                                    underline: if underline { foreground } else { None },
+                                    strikethrough: if strikethrough { foreground } else { None },
+                                    foreground_color: foreground,
+                                    background_color: background,
+                                    font_weight,
+                                    font_style,
+                                })
+                            })
+                            .collect(),
+                    )
+                })
+                .unwrap_or_default(),
         })
     }
 
