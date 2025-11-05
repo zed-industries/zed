@@ -1880,7 +1880,12 @@ impl AgentPanel {
                 {
                     let focus_handle = focus_handle.clone();
                     move |_window, cx| {
-                        Tooltip::for_action_in("New…", &ToggleNewThreadMenu, &focus_handle, cx)
+                        Tooltip::for_action_in(
+                            "New Thread…",
+                            &ToggleNewThreadMenu,
+                            &focus_handle,
+                            cx,
+                        )
                     }
                 },
             )
@@ -1978,7 +1983,7 @@ impl AgentPanel {
                             .separator()
                             .header("External Agents")
                             .item(
-                                ContextMenuEntry::new("New Claude Code Thread")
+                                ContextMenuEntry::new("New Claude Code")
                                     .icon(IconName::AiClaude)
                                     .disabled(is_via_collab)
                                     .icon_color(Color::Muted)
@@ -2004,7 +2009,7 @@ impl AgentPanel {
                                     }),
                             )
                             .item(
-                                ContextMenuEntry::new("New Codex Thread")
+                                ContextMenuEntry::new("New Codex CLI")
                                     .icon(IconName::AiOpenAi)
                                     .disabled(is_via_collab)
                                     .icon_color(Color::Muted)
@@ -2030,7 +2035,7 @@ impl AgentPanel {
                                     }),
                             )
                             .item(
-                                ContextMenuEntry::new("New Gemini CLI Thread")
+                                ContextMenuEntry::new("New Gemini CLI")
                                     .icon(IconName::AiGemini)
                                     .icon_color(Color::Muted)
                                     .disabled(is_via_collab)
@@ -2074,7 +2079,7 @@ impl AgentPanel {
                                 for agent_name in agent_names {
                                     let icon_path = agent_server_store_read.agent_icon(&agent_name);
                                     let mut entry =
-                                        ContextMenuEntry::new(format!("New {} Thread", agent_name));
+                                        ContextMenuEntry::new(format!("New {}", agent_name));
                                     if let Some(icon_path) = icon_path {
                                         entry = entry.custom_icon_path(icon_path);
                                     } else {
