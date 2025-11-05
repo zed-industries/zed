@@ -177,7 +177,7 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(tab_snapshot, edits, cx));
         let block_snapshot = self.block_map.read(wrap_snapshot, edits).snapshot;
-        let highlight_sytnax = Self::syntax_highlight(&self.buffer, cx);
+        let highlight_syntax = Self::syntax_highlight(&self.buffer, cx);
         DisplaySnapshot {
             block_snapshot,
             diagnostics_max_severity: self.diagnostics_max_severity,
@@ -187,7 +187,7 @@ impl DisplayMap {
             clip_at_line_ends: self.clip_at_line_ends,
             masked: self.masked,
             fold_placeholder: self.fold_placeholder.clone(),
-            syntax_highlight: highlight_sytnax,
+            syntax_highlight: highlight_syntax,
         }
     }
 

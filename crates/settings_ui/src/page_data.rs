@@ -5979,9 +5979,9 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
             files: USER | PROJECT,
         }),
-        SettingsPageItem::SectionHeader("Apperance"),
+        SettingsPageItem::SectionHeader("A"),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Syntax Highlighing",
+            title: "Syntax Highlighting",
             description: "Whether syntax should be highlighted or not.",
             field: Box::new(SettingField {
                 json_path: Some("languages.$(language).highlight_syntax"),
