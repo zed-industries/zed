@@ -1173,6 +1173,7 @@ impl AcpThreadView {
                     message_editor.clear(window, cx);
                 });
             })?;
+            let turn_start_time = Instant::now();
             let send = thread.update(cx, |thread, cx| {
                 thread.action_log().update(cx, |action_log, cx| {
                     for buffer in tracked_buffers {
@@ -1185,7 +1186,15 @@ impl AcpThreadView {
 
                 thread.send(contents, cx)
             })?;
-            send.await
+            let res = send.await;
+            let turn_time_ms = turn_start_time.elapsed().as_millis();
+            telemetry::event!(
+                "Agent Turn Ended",
+                agent = agent_telemetry_id,
+                failed = res.is_err(),
+                turn_time_ms,
+            );
+            res
         });
 
         cx.spawn(async move |this, cx| {
