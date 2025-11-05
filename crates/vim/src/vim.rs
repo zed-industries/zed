@@ -44,7 +44,7 @@ pub use settings::{
     ModeContent, Settings, SettingsStore, UseSystemClipboard, update_settings_file,
 };
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
-use std::{mem, ops::Range, sync::Arc};
+use std::{mem, ops::Range, sync::Arc, thread, time::Duration};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
@@ -1241,6 +1241,7 @@ impl Vim {
     }
 
     pub fn take_count(cx: &mut App) -> Option<usize> {
+        thread::sleep(Duration::from_millis(10));
         let global_state = cx.global_mut::<VimGlobals>();
         if global_state.dot_replaying {
             return global_state.recorded_count;
