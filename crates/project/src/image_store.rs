@@ -107,6 +107,13 @@ pub struct ImageItem {
     pub image_metadata: Option<ImageMetadata>,
 }
 
+// impl Drop for ImageItem {
+//     fn drop(&mut self) {
+//         dbg!(&self.id, &self.file, &self.image_metadata);
+//         println!("Custom backtrace: {}", std::backtrace::Backtrace::capture());
+//     }
+// }
+
 impl ImageItem {
     fn compute_metadata_from_bytes(image_bytes: &[u8]) -> Result<ImageMetadata> {
         let image_format = image::guess_format(image_bytes)?;
@@ -278,6 +285,7 @@ struct RemoteImageStore {
     upstream_client: AnyProtoClient,
     project_id: u64,
     loading_remote_images_by_id: HashMap<ImageId, LoadingRemoteImage>,
+    // opened_images: HashMap<ImageId, Entity<ImageItem>>,
     remote_image_listeners:
         HashMap<ImageId, Vec<oneshot::Sender<anyhow::Result<Entity<ImageItem>>>>>,
 }
@@ -297,7 +305,7 @@ struct LocalImageStore {
 
 pub struct ImageStore {
     state: Box<dyn ImageStoreImpl>,
-    opened_images: HashMap<ImageId, Entity<ImageItem>>,
+    opened_images: HashMap<ImageId, WeakEntity<ImageItem>>,
     worktree_store: Entity<WorktreeStore>,
     #[allow(clippy::type_complexity)]
     loading_images_by_path: HashMap<
@@ -353,11 +361,15 @@ impl ImageStore {
     }
 
     pub fn images(&self) -> impl '_ + Iterator<Item = Entity<ImageItem>> {
-        self.opened_images.values().cloned()
+        self.opened_images
+            .values()
+            .filter_map(|image| image.upgrade())
     }
 
     pub fn get(&self, image_id: ImageId) -> Option<Entity<ImageItem>> {
-        self.opened_images.get(&image_id).cloned()
+        self.opened_images
+            .get(&image_id)
+            .and_then(|image| image.upgrade())
     }
 
     pub fn get_by_path(&self, path: &ProjectPath, cx: &App) -> Option<Entity<ImageItem>> {
@@ -449,7 +461,7 @@ impl ImageStore {
 
     fn add_image(&mut self, image: Entity<ImageItem>, cx: &mut Context<ImageStore>) -> Result<()> {
         let image_id = image.read(cx).id;
-        self.opened_images.insert(image_id, image.clone());
+        self.opened_images.insert(image_id, image.downgrade());
         cx.subscribe(&image, Self::on_image_event).detach();
         cx.emit(ImageStoreEvent::ImageAdded(image));
         Ok(())
@@ -478,7 +490,7 @@ impl ImageStore {
         if let Some(remote) = self.state.as_remote() {
             let worktree_store = self.worktree_store.clone();
             let image = remote.update(cx, |remote, cx| {
-                remote.handle_create_image_for_peer(envelope, &worktree_store, cx)
+                dbg!(remote.handle_create_image_for_peer(envelope, &worktree_store, cx))
             })?;
 
             if let Some(image) = image {
@@ -599,6 +611,8 @@ impl RemoteImageStore {
             }
         }
     }
+
+    // TODO: subscribe to worktree and update image contents or at least mark as dirty on file changes
 }
 
 impl ImageStoreImpl for Entity<LocalImageStore> {

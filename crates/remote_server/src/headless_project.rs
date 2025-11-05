@@ -586,8 +586,7 @@ impl HeadlessProject {
             variant: Some(proto::create_image_for_peer::Variant::State(state)),
         })?;
 
-        // Send the image data in chunks
-        const CHUNK_SIZE: usize = 256 * 1024; // 256KB chunks
+        const CHUNK_SIZE: usize = 1024 * 1024; // 1MB chunks
         let chunks: Vec<_> = content.chunks(CHUNK_SIZE).collect();
         let total_chunks = chunks.len();
 
