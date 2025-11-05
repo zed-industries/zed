@@ -1531,6 +1531,7 @@ fn show_keymap_file_json_error(
         cx.new(|cx| {
             MessageNotification::new(message.clone(), cx)
                 .primary_message("Open Keymap File")
+                .primary_icon(IconName::Settings)
                 .primary_on_click(|window, cx| {
                     window.dispatch_action(zed_actions::OpenKeymapFile.boxed_clone(), cx);
                     cx.emit(DismissEvent);
@@ -1599,6 +1600,7 @@ fn show_markdown_app_notification<F>(
                             .into_any()
                     })
                     .primary_message(primary_button_message)
+                    .primary_icon(IconName::Settings)
                     .primary_on_click_arc(primary_button_on_click)
                 })
             })

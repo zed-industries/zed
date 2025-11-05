@@ -315,6 +315,21 @@ impl KeymapFile {
                 }
                 let _ = write!(error_message, "{section_errors}");
             }
+            // Format error message to match size of other error dialogs
+            let error_message = error_message
+                .lines()
+                .map(|line| {
+                    if line.is_empty() {
+                        String::new()
+                    } else if line.trim_start().starts_with('-') {
+                        line.replacen("- ", "- ##### ", 1)  // Keep bullet formatting
+                    } else {
+                        format!("##### {}", line)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
             KeymapFileLoadResult::SomeFailedToLoad {
                 key_bindings,
                 error_message: MarkdownString(error_message),
