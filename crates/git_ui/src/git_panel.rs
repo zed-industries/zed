@@ -2005,9 +2005,6 @@ impl GitPanel {
         }
     }
 
-    fn generate_commit_message_via_codex(&mut self, cx: &mut Context<Self>) {
-        self.generate_commit_message_via_agent_internal(Codex, cx);
-    }
 
     fn generate_commit_message_via_agent_internal<S>(&mut self, server: S, cx: &mut Context<Self>)
     where
