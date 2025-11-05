@@ -3963,7 +3963,7 @@ impl Repository {
     pub fn stage_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
         let to_stage = self
             .cached_status()
-            .filter(|entry| !entry.status.staging().is_fully_staged())
+            .filter(|entry| entry.status.staging().has_unstaged())
             .map(|entry| entry.repo_path)
             .collect();
         self.stage_entries(to_stage, cx)

@@ -1172,26 +1172,46 @@ impl GitPanel {
         });
     }
 
+    fn change_all_files_stage(&mut self, stage: bool, cx: &mut Context<Self>) {
+        let Some(active_repository) = self.active_repository.clone() else {
+            return;
+        };
+
+        let repository = active_repository.read(cx);
+        self.update_counts(repository);
+        cx.notify();
+
+        cx.spawn({
+            async move |this, cx| {
+                let result = cx
+                    .update(|cx| {
+                        active_repository.update(cx, |repo, cx| {
+                            if stage {
+                                repo.stage_all(cx)
+                            } else {
+                                repo.unstage_all(cx)
+                            }
+                        })
+                    })?
+                    .await;
+
+                this.update(cx, |this, cx| {
+                    if let Err(err) = result {
+                        this.show_error_toast(if stage { "add" } else { "reset" }, err, cx);
+                    }
+                    cx.notify()
+                })
+            }
+        })
+        .detach();
+    }
+
     pub fn stage_all(&mut self, _: &StageAll, _window: &mut Window, cx: &mut Context<Self>) {
-        let entries = self
-            .entries
-            .iter()
-            .filter_map(|entry| entry.status_entry())
-            .filter(|status_entry| status_entry.staging.has_unstaged())
-            .cloned()
-            .collect::<Vec<_>>();
-        self.change_file_stage(true, entries, cx);
+        self.change_all_files_stage(true, cx);
     }
 
     pub fn unstage_all(&mut self, _: &UnstageAll, _window: &mut Window, cx: &mut Context<Self>) {
-        let entries = self
-            .entries
-            .iter()
-            .filter_map(|entry| entry.status_entry())
-            .filter(|status_entry| status_entry.staging.has_staged())
-            .cloned()
-            .collect::<Vec<_>>();
-        self.change_file_stage(false, entries, cx);
+        self.change_all_files_stage(false, cx);
     }
 
     fn toggle_staged_for_entry(
@@ -1264,32 +1284,24 @@ impl GitPanel {
             async move |this, cx| {
                 let result = cx
                     .update(|cx| {
-                        if stage {
-                            active_repository.update(cx, |repo, cx| {
-                                let repo_paths = entries
-                                    .iter()
-                                    .map(|entry| entry.repo_path.clone())
-                                    .collect();
+                        active_repository.update(cx, |repo, cx| {
+                            let repo_paths = entries
+                                .iter()
+                                .map(|entry| entry.repo_path.clone())
+                                .collect();
+                            if stage {
                                 repo.stage_entries(repo_paths, cx)
-                            })
-                        } else {
-                            active_repository.update(cx, |repo, cx| {
-                                let repo_paths = entries
-                                    .iter()
-                                    .map(|entry| entry.repo_path.clone())
-                                    .collect();
+                            } else {
                                 repo.unstage_entries(repo_paths, cx)
-                            })
-                        }
+                            }
+                        })
                     })?
                     .await;
 
                 this.update(cx, |this, cx| {
-                    result
-                        .map_err(|e| {
-                            this.show_error_toast(if stage { "add" } else { "reset" }, e, cx);
-                        })
-                        .ok();
+                    if let Err(err) = result {
+                        this.show_error_toast(if stage { "add" } else { "reset" }, err, cx);
+                    }
                     cx.notify();
                 })
             }
