@@ -1183,7 +1183,11 @@ impl AcpThreadView {
                 });
                 drop(guard);
 
-                telemetry::event!("Agent Message Sent", agent = agent_telemetry_id);
+                telemetry::event!(
+                    "Agent Message Sent",
+                    agent = agent_telemetry_id,
+                    model = model_id
+                );
 
                 thread.send(contents, cx)
             })?;
@@ -1191,7 +1195,7 @@ impl AcpThreadView {
             let turn_time_ms = turn_start_time.elapsed().as_millis();
             let status = if res.is_ok() { "success" } else { "failure" };
             telemetry::event!(
-                "Agent Turn Ended",
+                "Agent Turn Completed",
                 agent = agent_telemetry_id,
                 model = model_id,
                 status,
