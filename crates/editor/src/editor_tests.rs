@@ -43,8 +43,8 @@ use project::{
 };
 use serde_json::{self, json};
 use settings::{
-    AllLanguageSettingsContent, IndentGuideBackgroundColoring, IndentGuideColoring,
-    ProjectSettingsContent,
+    AllLanguageSettingsContent, EditorSettingsContent, IndentGuideBackgroundColoring,
+    IndentGuideColoring, ProjectSettingsContent, SearchSettingsContent,
 };
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
 use std::{
@@ -8374,8 +8374,15 @@ async fn test_add_selection_above_below_multi_cursor_existing_state(cx: &mut Tes
 #[gpui::test]
 async fn test_select_next(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
-
     let mut cx = EditorTestContext::new(cx).await;
+
+    // Enable case sensitive search.
+    update_test_editor_settings(&mut cx, |settings| {
+        let mut search_settings = SearchSettingsContent::default();
+        search_settings.case_sensitive = Some(true);
+        settings.search = Some(search_settings);
+    });
+
     cx.set_state("abc\nˇabc abc\ndefabc\nabc");
 
     cx.update_editor(|e, window, cx| e.select_next(&SelectNext::default(), window, cx))
@@ -8406,13 +8413,40 @@ async fn test_select_next(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| e.select_next(&SelectNext::default(), window, cx))
         .unwrap();
     cx.assert_editor_state("abc\n«ˇabc» «ˇabc»\ndefabc\nabc");
+
+    // Test case sensitivity
+    cx.set_state("«ˇfoo»\nFOO\nFoo\nfoo");
+    cx.update_editor(|e, window, cx| {
+        e.select_next(&SelectNext::default(), window, cx).unwrap();
+    });
+    cx.assert_editor_state("«ˇfoo»\nFOO\nFoo\n«ˇfoo»");
+
+    // Disable case sensitive search.
+    update_test_editor_settings(&mut cx, |settings| {
+        let mut search_settings = SearchSettingsContent::default();
+        search_settings.case_sensitive = Some(false);
+        settings.search = Some(search_settings);
+    });
+
+    cx.set_state("«ˇfoo»\nFOO\nFoo");
+    cx.update_editor(|e, window, cx| {
+        e.select_next(&SelectNext::default(), window, cx).unwrap();
+        e.select_next(&SelectNext::default(), window, cx).unwrap();
+    });
+    cx.assert_editor_state("«ˇfoo»\n«ˇFOO»\n«ˇFoo»");
 }
 
 #[gpui::test]
 async fn test_select_all_matches(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
-
     let mut cx = EditorTestContext::new(cx).await;
+
+    // Enable case sensitive search.
+    update_test_editor_settings(&mut cx, |settings| {
+        let mut search_settings = SearchSettingsContent::default();
+        search_settings.case_sensitive = Some(true);
+        settings.search = Some(search_settings);
+    });
 
     // Test caret-only selections
     cx.set_state("abc\nˇabc abc\ndefabc\nabc");
@@ -8458,6 +8492,26 @@ async fn test_select_all_matches(cx: &mut TestAppContext) {
         e.set_clip_at_line_ends(false, cx);
     });
     cx.assert_editor_state("«abcˇ»");
+
+    // Test case sensitivity
+    cx.set_state("fˇoo\nFOO\nFoo");
+    cx.update_editor(|e, window, cx| {
+        e.select_all_matches(&SelectAllMatches, window, cx).unwrap();
+    });
+    cx.assert_editor_state("«fooˇ»\nFOO\nFoo");
+
+    // Disable case sensitive search.
+    update_test_editor_settings(&mut cx, |settings| {
+        let mut search_settings = SearchSettingsContent::default();
+        search_settings.case_sensitive = Some(false);
+        settings.search = Some(search_settings);
+    });
+
+    cx.set_state("fˇoo\nFOO\nFoo");
+    cx.update_editor(|e, window, cx| {
+        e.select_all_matches(&SelectAllMatches, window, cx).unwrap();
+    });
+    cx.assert_editor_state("«fooˇ»\n«FOOˇ»\n«Fooˇ»");
 }
 
 #[gpui::test]
@@ -8829,8 +8883,15 @@ let foo = «2ˇ»;"#,
 #[gpui::test]
 async fn test_select_previous_with_single_selection(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
-
     let mut cx = EditorTestContext::new(cx).await;
+
+    // Enable case sensitive search.
+    update_test_editor_settings(&mut cx, |settings| {
+        let mut search_settings = SearchSettingsContent::default();
+        search_settings.case_sensitive = Some(true);
+        settings.search = Some(search_settings);
+    });
+
     cx.set_state("abc\n«ˇabc» abc\ndefabc\nabc");
 
     cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
@@ -8855,6 +8916,32 @@ async fn test_select_previous_with_single_selection(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
         .unwrap();
     cx.assert_editor_state("«ˇabc»\n«ˇabc» «ˇabc»\ndef«ˇabc»\n«ˇabc»");
+
+    // Test case sensitivity
+    cx.set_state("foo\nFOO\nFoo\n«ˇfoo»");
+    cx.update_editor(|e, window, cx| {
+        e.select_previous(&SelectPrevious::default(), window, cx)
+            .unwrap();
+        e.select_previous(&SelectPrevious::default(), window, cx)
+            .unwrap();
+    });
+    cx.assert_editor_state("«ˇfoo»\nFOO\nFoo\n«ˇfoo»");
+
+    // Disable case sensitive search.
+    update_test_editor_settings(&mut cx, |settings| {
+        let mut search_settings = SearchSettingsContent::default();
+        search_settings.case_sensitive = Some(false);
+        settings.search = Some(search_settings);
+    });
+
+    cx.set_state("foo\nFOO\n«ˇFoo»");
+    cx.update_editor(|e, window, cx| {
+        e.select_previous(&SelectPrevious::default(), window, cx)
+            .unwrap();
+        e.select_previous(&SelectPrevious::default(), window, cx)
+            .unwrap();
+    });
+    cx.assert_editor_state("«ˇfoo»\n«ˇFOO»\n«ˇFoo»");
 }
 
 #[gpui::test]
@@ -25625,6 +25712,17 @@ pub(crate) fn update_test_project_settings(
             store.update_user_settings(cx, |settings| f(&mut settings.project));
         });
     });
+}
+
+pub(crate) fn update_test_editor_settings(
+    cx: &mut TestAppContext,
+    f: impl Fn(&mut EditorSettingsContent),
+) {
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| f(&mut settings.editor));
+        })
+    })
 }
 
 pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsContent)) {
