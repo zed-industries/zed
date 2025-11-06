@@ -254,9 +254,9 @@ impl MacPlatform {
                 menu.setDelegate_(delegate);
 
                 // Check the first item to see if it is window menu
-                if let Some(i) = menu_config.items.first()
+                if let Some(menu_item) = menu_config.items.first()
                     && matches!(
-                        i,
+                        menu_item,
                         MenuItem::SystemMenu(OsMenu {
                             menu_type: SystemMenuType::Window,
                             ..
