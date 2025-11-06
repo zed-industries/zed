@@ -57,7 +57,8 @@ fn agent_evals() -> NamedJob {
 pub(crate) fn run_unit_evals() -> Workflow {
     let unit_evals = unit_evals();
 
-    named::workflow()
+    Workflow::default()
+        .name("run_unit_evals".to_string())
         .on(Event::default()
             .schedule([
                 // GitHub might drop jobs at busy times, so we choose a random time in the middle of the night.
