@@ -20,7 +20,7 @@ async function main() {
   }
 
   // currently we can only draft notes for patch releases.
-  if (parts[2] == 0) {
+  if (parts[2] === 0) {
     process.exit(0);
   }
 
@@ -41,20 +41,13 @@ async function main() {
       "--depth",
       100,
     ]);
-    execFileSync("git", [
-      "-C",
-      "target/shallow_clone",
-      "rev-parse",
-      "--verify",
-      tag,
-    ]);
-    execFileSync("git", [
-      "-C",
-      "target/shallow_clone",
-      "rev-parse",
-      "--verify",
-      priorTag,
-    ]);
+    execFileSync("git", ["-C", "target/shallow_clone", "rev-parse", "--verify", tag]);
+    try {
+      execFileSync("git", ["-C", "target/shallow_clone", "rev-parse", "--verify", priorTag]);
+    } catch (e) {
+      console.error(`Prior tag ${priorTag} not found`);
+      process.exit(0);
+    }
   } catch (e) {
     console.error(e.stderr.toString());
     process.exit(1);
@@ -90,13 +83,7 @@ async function main() {
 function getCommits(oldTag, newTag) {
   const pullRequestNumbers = execFileSync(
     "git",
-    [
-      "-C",
-      "target/shallow_clone",
-      "log",
-      `${oldTag}..${newTag}`,
-      "--format=DIVIDER\n%H|||%B",
-    ],
+    ["-C", "target/shallow_clone", "log", `${oldTag}..${newTag}`, "--format=DIVIDER\n%H|||%B"],
     { encoding: "utf8" },
   )
     .replace(/\r\n/g, "\n")
