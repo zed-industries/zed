@@ -65,6 +65,7 @@ util.workspace = true
 watch.workspace = true
 worktree.workspace = true
 thiserror.workspace = true
+rayon.workspace = true
 
 [target.'cfg(not(windows))'.dependencies]
 crashes.workspace = true

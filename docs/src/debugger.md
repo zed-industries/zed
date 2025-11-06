@@ -17,6 +17,7 @@ To debug code written in a specific language, Zed needs to find a debug adapter 
 - [C](./languages/c.md#debugging) (built-in)
 - [C++](./languages/cpp.md#debugging) (built-in)
 - [Go](./languages/go.md#debugging) (built-in)
+- [Java](./languages/java.md#debugging) (provided by extension)
 - [JavaScript](./languages/javascript.md#debugging) (built-in)
 - [PHP](./languages/php.md#debugging) (built-in)
 - [Python](./languages/python.md#debugging) (built-in)
@@ -55,6 +56,16 @@ For languages that don't provide preconfigured debug tasks (this includes C, C++
 Check the documentation for your language for example configurations covering typical use-cases. Once you've added configurations to `.zed/debug.json`, they'll appear in the list in the new process modal.
 
 Zed will also load debug configurations from `.vscode/launch.json`, and show them in the new process modal if no configurations are found in `.zed/debug.json`.
+
+#### Global debug configurations
+
+If you run the same launch profiles across multiple projects, you can store them once in your user configuration. Invoke {#action zed::OpenDebugTasks} from the command palette to open the global `debug.json` file; Zed creates it next to your user `settings.json` and keeps it in sync with the debugger UI. The file lives at:
+
+- **macOS:** `~/Library/Application Support/Zed/debug.json`
+- **Linux/BSD:** `$XDG_CONFIG_HOME/zed/debug.json` (falls back to `~/.config/zed/debug.json`)
+- **Windows:** `%APPDATA%\Zed\debug.json`
+
+Populate this file with the same array of objects you would place in `.zed/debug.json`. Any scenarios defined there are merged into every workspace, so your favorite launch presets appear automatically in the "New Debug Session" dialog.
 
 ### Launching & Attaching
 

@@ -57,7 +57,7 @@ impl AgentTool for WebSearchTool {
     }
 
     /// We currently only support Zed Cloud as a provider.
-    fn supported_provider(&self, provider: &LanguageModelProviderId) -> bool {
+    fn supports_provider(provider: &LanguageModelProviderId) -> bool {
         provider == &ZED_CLOUD_PROVIDER_ID
     }
 

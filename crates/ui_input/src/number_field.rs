@@ -31,7 +31,7 @@ pub trait NumberFieldType: Display + Copy + Clone + Sized + PartialOrd + FromStr
     fn saturating_sub(self, rhs: Self) -> Self;
 }
 
-macro_rules! impl_newtype_numeric_stepper {
+macro_rules! impl_newtype_numeric_stepper_float {
     ($type:ident, $default:expr, $large:expr, $small:expr, $min:expr, $max:expr) => {
         impl NumberFieldType for $type {
             fn default_step() -> Self {
@@ -65,13 +65,47 @@ macro_rules! impl_newtype_numeric_stepper {
     };
 }
 
+macro_rules! impl_newtype_numeric_stepper_int {
+    ($type:ident, $default:expr, $large:expr, $small:expr, $min:expr, $max:expr) => {
+        impl NumberFieldType for $type {
+            fn default_step() -> Self {
+                $default.into()
+            }
+
+            fn large_step() -> Self {
+                $large.into()
+            }
+
+            fn small_step() -> Self {
+                $small.into()
+            }
+
+            fn min_value() -> Self {
+                $min.into()
+            }
+
+            fn max_value() -> Self {
+                $max.into()
+            }
+
+            fn saturating_add(self, rhs: Self) -> Self {
+                $type(self.0.saturating_add(rhs.0).min(Self::max_value().0))
+            }
+
+            fn saturating_sub(self, rhs: Self) -> Self {
+                $type(self.0.saturating_sub(rhs.0).max(Self::min_value().0))
+            }
+        }
+    };
+}
+
 #[rustfmt::skip]
-impl_newtype_numeric_stepper!(FontWeight, 50., 100., 10., FontWeight::THIN, FontWeight::BLACK);
-impl_newtype_numeric_stepper!(CodeFade, 0.1, 0.2, 0.05, 0.0, 0.9);
-impl_newtype_numeric_stepper!(InactiveOpacity, 0.1, 0.2, 0.05, 0.0, 1.0);
-impl_newtype_numeric_stepper!(MinimumContrast, 1., 10., 0.5, 0.0, 106.0);
-impl_newtype_numeric_stepper!(DelayMs, 100, 500, 10, 0, 2000);
-impl_newtype_numeric_stepper!(
+impl_newtype_numeric_stepper_float!(FontWeight, 50., 100., 10., FontWeight::THIN, FontWeight::BLACK);
+impl_newtype_numeric_stepper_float!(CodeFade, 0.1, 0.2, 0.05, 0.0, 0.9);
+impl_newtype_numeric_stepper_float!(InactiveOpacity, 0.1, 0.2, 0.05, 0.0, 1.0);
+impl_newtype_numeric_stepper_float!(MinimumContrast, 1., 10., 0.5, 0.0, 106.0);
+impl_newtype_numeric_stepper_int!(DelayMs, 100, 500, 10, 0, 2000);
+impl_newtype_numeric_stepper_float!(
     CenteredPaddingSettings,
     0.05,
     0.2,
@@ -338,7 +372,7 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                 .border_color(border_color)
                 .bg(bg_color)
                 .hover(|s| s.bg(hover_bg_color))
-                .focus(|s| s.border_color(focus_border_color).bg(hover_bg_color))
+                .focus_visible(|s| s.border_color(focus_border_color).bg(hover_bg_color))
                 .child(Icon::new(icon).size(IconSize::Small))
         };
 
@@ -369,7 +403,6 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                 let new_value = value.saturating_sub(step);
                                 let new_value = if new_value < min { min } else { new_value };
                                 on_change(&new_value, window, cx);
-                                window.focus_prev();
                             }
                         };
 

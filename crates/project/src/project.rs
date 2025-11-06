@@ -24,18 +24,16 @@ pub mod worktree_store;
 #[cfg(test)]
 mod project_tests;
 
-mod direnv;
 mod environment;
 use buffer_diff::BufferDiff;
 use context_server_store::ContextServerStore;
-pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
+pub use environment::ProjectEnvironmentEvent;
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
 pub mod search_history;
 mod yarn;
 
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
-use task::Shell;
 
 use crate::{
     agent_server_store::AllAgentServersSettings,
@@ -43,7 +41,7 @@ use crate::{
     lsp_store::{SymbolLocation, log_store::LogKind},
     project_search::SearchResultsHandle,
 };
-pub use agent_server_store::{AgentServerStore, AgentServersUpdated};
+pub use agent_server_store::{AgentServerStore, AgentServersUpdated, ExternalAgentServerName};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
@@ -72,7 +70,7 @@ use futures::future::join_all;
 use futures::{
     StreamExt,
     channel::mpsc::{self, UnboundedReceiver},
-    future::{Shared, try_join_all},
+    future::try_join_all,
 };
 pub use image_store::{ImageItem, ImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
@@ -148,9 +146,9 @@ pub use task_inventory::{
 
 pub use buffer_store::ProjectTransaction;
 pub use lsp_store::{
-    DiagnosticSummary, LanguageServerLogType, LanguageServerProgress, LanguageServerPromptRequest,
-    LanguageServerStatus, LanguageServerToQuery, LspStore, LspStoreEvent,
-    SERVER_PROGRESS_THROTTLE_TIMEOUT,
+    DiagnosticSummary, InvalidationStrategy, LanguageServerLogType, LanguageServerProgress,
+    LanguageServerPromptRequest, LanguageServerStatus, LanguageServerToQuery, LspStore,
+    LspStoreEvent, ProgressToken, SERVER_PROGRESS_THROTTLE_TIMEOUT,
 };
 pub use toolchain_store::{ToolchainStore, Toolchains};
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
@@ -339,12 +337,15 @@ pub enum Event {
     HostReshared,
     Reshared,
     Rejoined,
-    RefreshInlayHints,
+    RefreshInlayHints {
+        server_id: LanguageServerId,
+        request_id: Option<usize>,
+    },
     RefreshCodeLens,
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
-    EntryRenamed(ProjectTransaction),
+    EntryRenamed(ProjectTransaction, ProjectPath, PathBuf),
     AgentLocationChanged,
 }
 
@@ -401,6 +402,26 @@ pub enum PrepareRenameResponse {
     OnlyUnpreparedRenameSupported,
     #[default]
     InvalidPosition,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum InlayId {
+    EditPrediction(usize),
+    DebuggerValue(usize),
+    // LSP
+    Hint(usize),
+    Color(usize),
+}
+
+impl InlayId {
+    pub fn id(&self) -> usize {
+        match self {
+            Self::EditPrediction(id) => *id,
+            Self::DebuggerValue(id) => *id,
+            Self::Hint(id) => *id,
+            Self::Color(id) => *id,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1050,9 +1071,11 @@ impl Project {
 
             let weak_self = cx.weak_entity();
             let context_server_store =
-                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), weak_self, cx));
+                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), weak_self.clone(), cx));
 
-            let environment = cx.new(|_| ProjectEnvironment::new(env));
+            let environment = cx.new(|cx| {
+                ProjectEnvironment::new(env, worktree_store.downgrade(), None, false, cx)
+            });
             let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
             let toolchain_store = cx.new(|cx| {
                 ToolchainStore::local(
@@ -1241,7 +1264,7 @@ impl Project {
 
             let weak_self = cx.weak_entity();
             let context_server_store =
-                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), weak_self, cx));
+                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), weak_self.clone(), cx));
 
             let buffer_store = cx.new(|cx| {
                 BufferStore::remote(
@@ -1287,7 +1310,15 @@ impl Project {
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
 
-            let environment = cx.new(|_| ProjectEnvironment::new(None));
+            let environment = cx.new(|cx| {
+                ProjectEnvironment::new(
+                    None,
+                    worktree_store.downgrade(),
+                    Some(remote.downgrade()),
+                    false,
+                    cx,
+                )
+            });
 
             let lsp_store = cx.new(|cx| {
                 LspStore::new_remote(
@@ -1500,8 +1531,8 @@ impl Project {
             ImageStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
         })?;
 
-        let environment = cx.new(|_| ProjectEnvironment::new(None))?;
-
+        let environment =
+            cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx))?;
         let breakpoint_store =
             cx.new(|_| BreakpointStore::remote(remote_id, client.clone().into()))?;
         let dap_store = cx.new(|cx| {
@@ -1905,37 +1936,8 @@ impl Project {
         self.environment.read(cx).get_cli_environment()
     }
 
-    pub fn buffer_environment<'a>(
-        &'a self,
-        buffer: &Entity<Buffer>,
-        worktree_store: &Entity<WorktreeStore>,
-        cx: &'a mut App,
-    ) -> Shared<Task<Option<HashMap<String, String>>>> {
-        self.environment.update(cx, |environment, cx| {
-            environment.get_buffer_environment(buffer, worktree_store, cx)
-        })
-    }
-
-    pub fn directory_environment(
-        &self,
-        shell: &Shell,
-        abs_path: Arc<Path>,
-        cx: &mut App,
-    ) -> Shared<Task<Option<HashMap<String, String>>>> {
-        self.environment.update(cx, |environment, cx| {
-            if let Some(remote_client) = self.remote_client.clone() {
-                environment.get_remote_directory_environment(shell, abs_path, remote_client, cx)
-            } else {
-                environment.get_local_directory_environment(shell, abs_path, cx)
-            }
-        })
-    }
-
     #[inline]
-    pub fn peek_environment_error<'a>(
-        &'a self,
-        cx: &'a App,
-    ) -> Option<&'a EnvironmentErrorMessage> {
+    pub fn peek_environment_error<'a>(&'a self, cx: &'a App) -> Option<&'a String> {
         self.environment.read(cx).peek_environment_error()
     }
 
@@ -2247,7 +2249,11 @@ impl Project {
 
             project
                 .update(cx, |_, cx| {
-                    cx.emit(Event::EntryRenamed(transaction));
+                    cx.emit(Event::EntryRenamed(
+                        transaction,
+                        new_path.clone(),
+                        new_abs_path.clone(),
+                    ));
                 })
                 .ok();
 
@@ -3059,7 +3065,13 @@ impl Project {
                     return;
                 };
             }
-            LspStoreEvent::RefreshInlayHints => cx.emit(Event::RefreshInlayHints),
+            LspStoreEvent::RefreshInlayHints {
+                server_id,
+                request_id,
+            } => cx.emit(Event::RefreshInlayHints {
+                server_id: *server_id,
+                request_id: *request_id,
+            }),
             LspStoreEvent::RefreshCodeLens => cx.emit(Event::RefreshCodeLens),
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 cx.emit(Event::LanguageServerPrompt(prompt.clone()))
@@ -3434,7 +3446,7 @@ impl Project {
     pub fn cancel_language_server_work(
         &mut self,
         server_id: LanguageServerId,
-        token_to_cancel: Option<String>,
+        token_to_cancel: Option<ProgressToken>,
         cx: &mut Context<Self>,
     ) {
         self.lsp_store.update(cx, |lsp_store, cx| {
@@ -3976,31 +3988,6 @@ impl Project {
                 })
             })?
             .await
-        })
-    }
-
-    pub fn inlay_hints<T: ToOffset>(
-        &mut self,
-        buffer_handle: Entity<Buffer>,
-        range: Range<T>,
-        cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<Vec<InlayHint>>> {
-        let buffer = buffer_handle.read(cx);
-        let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.inlay_hints(buffer_handle, range, cx)
-        })
-    }
-
-    pub fn resolve_inlay_hint(
-        &self,
-        hint: InlayHint,
-        buffer_handle: Entity<Buffer>,
-        server_id: LanguageServerId,
-        cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<InlayHint>> {
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.resolve_inlay_hint(hint, buffer_handle, server_id, cx)
         })
     }
 
@@ -5141,6 +5128,7 @@ impl Project {
             })
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn has_language_servers_for(&self, buffer: &Buffer, cx: &mut App) -> bool {
         self.lsp_store.update(cx, |this, cx| {
             this.language_servers_for_local_buffer(buffer, cx)

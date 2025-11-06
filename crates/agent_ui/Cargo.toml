@@ -25,7 +25,7 @@ agent_settings.workspace = true
 ai_onboarding.workspace = true
 anyhow.workspace = true
 arrayvec.workspace = true
-assistant_context.workspace = true
+assistant_text_thread.workspace = true
 assistant_slash_command.workspace = true
 assistant_slash_commands.workspace = true
 audio.workspace = true
@@ -102,7 +102,7 @@ zed_actions.workspace = true
 [dev-dependencies]
 acp_thread = { workspace = true, features = ["test-support"] }
 agent = { workspace = true, features = ["test-support"] }
-assistant_context = { workspace = true, features = ["test-support"] }
+assistant_text_thread = { workspace = true, features = ["test-support"] }
 buffer_diff = { workspace = true, features = ["test-support"] }
 db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }

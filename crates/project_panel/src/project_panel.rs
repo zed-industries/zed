@@ -294,6 +294,8 @@ actions!(
         ToggleFocus,
         /// Toggles visibility of git-ignored files.
         ToggleHideGitIgnore,
+        /// Toggles visibility of hidden files.
+        ToggleHideHidden,
         /// Starts a new search in the selected directory.
         NewSearchInDirectory,
         /// Unfolds the selected directory.
@@ -378,6 +380,19 @@ pub fn init(cx: &mut App) {
                         .project_panel
                         .get_or_insert_default()
                         .hide_gitignore
+                        .unwrap_or(false),
+                );
+            })
+        });
+
+        workspace.register_action(|workspace, _: &ToggleHideHidden, _, cx| {
+            let fs = workspace.app_state().fs.clone();
+            update_settings_file(fs, cx, move |setting, _| {
+                setting.project_panel.get_or_insert_default().hide_hidden = Some(
+                    !setting
+                        .project_panel
+                        .get_or_insert_default()
+                        .hide_hidden
                         .unwrap_or(false),
                 );
             })
@@ -491,17 +506,17 @@ impl ProjectPanel {
         let project_panel = cx.new(|cx| {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
-            cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
-                this.focus_out(window, cx);
-            })
-            .detach();
 
             cx.subscribe_in(
                 &git_store,
                 window,
                 |this, _, event, window, cx| match event {
-                    GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, _)
-                    | GitStoreEvent::RepositoryAdded(_)
+                    GitStoreEvent::RepositoryUpdated(
+                        _,
+                        RepositoryEvent::StatusesChanged { full_scan: _ },
+                        _,
+                    )
+                    | GitStoreEvent::RepositoryAdded
                     | GitStoreEvent::RepositoryRemoved(_) => {
                         this.update_visible_entries(None, false, false, window, cx);
                         cx.notify();
@@ -646,7 +661,7 @@ impl ProjectPanel {
                             .as_ref()
                             .is_some_and(|state| state.processing_filename.is_none())
                         {
-                            match project_panel.confirm_edit(window, cx) {
+                            match project_panel.confirm_edit(false, window, cx) {
                                 Some(task) => {
                                     task.detach_and_notify_err(window, cx);
                                 }
@@ -950,12 +965,6 @@ impl ProjectPanel {
         }
     }
 
-    fn focus_out(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.focus_handle.is_focused(window) {
-            self.confirm(&Confirm, window, cx);
-        }
-    }
-
     fn deploy_context_menu(
         &mut self,
         position: Point<Pixels>,
@@ -1044,9 +1053,8 @@ impl ProjectPanel {
                                 "Copy Relative Path",
                                 Box::new(zed_actions::workspace::CopyRelativePath),
                             )
-                            .separator()
                             .when(!should_hide_rename, |menu| {
-                                menu.action("Rename", Box::new(Rename))
+                                menu.separator().action("Rename", Box::new(Rename))
                             })
                             .when(!is_root && !is_remote, |menu| {
                                 menu.action("Trash", Box::new(Trash { skip_prompt: false }))
@@ -1424,7 +1432,7 @@ impl ProjectPanel {
     }
 
     fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(task) = self.confirm_edit(window, cx) {
+        if let Some(task) = self.confirm_edit(true, window, cx) {
             task.detach_and_notify_err(window, cx);
         }
     }
@@ -1556,6 +1564,7 @@ impl ProjectPanel {
 
     fn confirm_edit(
         &mut self,
+        refocus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
@@ -1609,7 +1618,7 @@ impl ProjectPanel {
                 filename.clone()
             };
             if let Some(existing) = worktree.read(cx).entry_for_path(&new_path) {
-                if existing.id == entry.id {
+                if existing.id == entry.id && refocus {
                     window.focus(&self.focus_handle);
                 }
                 return None;
@@ -1620,7 +1629,9 @@ impl ProjectPanel {
             });
         };
 
-        window.focus(&self.focus_handle);
+        if refocus {
+            window.focus(&self.focus_handle);
+        }
         edit_state.processing_filename = Some(filename);
         cx.notify();
 
@@ -4685,12 +4696,11 @@ impl ProjectPanel {
                             div()
                                 .id("symlink_icon")
                                 .pr_3()
-                                .tooltip(move |window, cx| {
+                                .tooltip(move |_window, cx| {
                                     Tooltip::with_meta(
                                         path.to_string(),
                                         None,
                                         "Symbolic Link",
-                                        window,
                                         cx,
                                     )
                                 })
@@ -5870,7 +5880,6 @@ impl Render for ProjectPanel {
                         .key_binding(KeyBinding::for_action_in(
                             &workspace::Open,
                             &focus_handle,
-                            window,
                             cx,
                         ))
                         .on_click(cx.listener(|this, _, window, cx| {

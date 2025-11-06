@@ -9,7 +9,6 @@ pub use gpui_macros::{
     overflow_style_methods, padding_style_methods, position_style_methods,
     visibility_style_methods,
 };
-
 const ELLIPSIS: SharedString = SharedString::new_static("…");
 
 /// A trait for elements that can be styled.
@@ -306,6 +305,16 @@ pub trait Styled: Sized {
     /// [Docs](https://tailwindcss.com/docs/justify-content#space-around)
     fn justify_around(mut self) -> Self {
         self.style().justify_content = Some(JustifyContent::SpaceAround);
+        self
+    }
+
+    /// Sets the element to justify items along the container's main axis such
+    /// that there is an equal amount of space around each item, but also
+    /// accounting for the doubling of space you would normally see between
+    /// each item when using justify-around.
+    /// [Docs](https://tailwindcss.com/docs/justify-content#space-evenly)
+    fn justify_evenly(mut self) -> Self {
+        self.style().justify_content = Some(JustifyContent::SpaceEvenly);
         self
     }
 

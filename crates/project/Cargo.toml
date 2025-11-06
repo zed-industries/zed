@@ -72,7 +72,6 @@ serde_json.workspace = true
 settings.workspace = true
 sha2.workspace = true
 shellexpand.workspace = true
-shlex.workspace = true
 smallvec.workspace = true
 smol.workspace = true
 snippet.workspace = true

@@ -15,6 +15,7 @@
 //! You only need to write replacement logic for x-1 to x because you can be certain that, internally, every user will be at x-1, regardless of their on disk state.
 
 use anyhow::{Context as _, Result};
+use settings_json::{infer_json_indent_size, parse_json_with_comments, update_value_in_json_text};
 use std::{cmp::Reverse, ops::Range, sync::LazyLock};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Query, QueryMatch};
@@ -74,7 +75,7 @@ fn run_migrations(text: &str, migrations: &[MigrationType]) -> Result<Option<Str
 
     let mut current_text = text.to_string();
     let mut result: Option<String> = None;
-    let json_indent_size = settings::infer_json_indent_size(&current_text);
+    let json_indent_size = infer_json_indent_size(&current_text);
     for migration in migrations.iter() {
         let migrated_text = match migration {
             MigrationType::TreeSitter(patterns, query) => migrate(&current_text, patterns, query)?,
@@ -83,14 +84,14 @@ fn run_migrations(text: &str, migrations: &[MigrationType]) -> Result<Option<Str
                     return Ok(None);
                 }
                 let old_content: serde_json_lenient::Value =
-                    settings::parse_json_with_comments(&current_text)?;
+                    parse_json_with_comments(&current_text)?;
                 let old_value = serde_json::to_value(&old_content).unwrap();
                 let mut new_value = old_value.clone();
                 callback(&mut new_value)?;
                 if new_value != old_value {
                     let mut current = current_text.clone();
                     let mut edits = vec![];
-                    settings::update_value_in_json_text(
+                    update_value_in_json_text(
                         &mut current,
                         &mut vec![],
                         json_indent_size,
@@ -213,6 +214,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         ),
         MigrationType::Json(migrations::m_2025_10_16::restore_code_actions_on_format),
         MigrationType::Json(migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum),
+        MigrationType::Json(migrations::m_2025_10_21::make_relative_line_numbers_an_enum),
     ];
     run_migrations(text, migrations)
 }
@@ -366,7 +368,13 @@ mod tests {
     #[track_caller]
     fn assert_migrate_settings(input: &str, output: Option<&str>) {
         let migrated = migrate_settings(input).unwrap();
-        assert_migrated_correctly(migrated, output);
+        assert_migrated_correctly(migrated.clone(), output);
+
+        // expect that rerunning the migration does not result in another migration
+        if let Some(migrated) = migrated {
+            let rerun = migrate_settings(&migrated).unwrap();
+            assert_migrated_correctly(rerun, None);
+        }
     }
 
     #[track_caller]
@@ -376,7 +384,13 @@ mod tests {
         output: Option<&str>,
     ) {
         let migrated = run_migrations(input, migrations).unwrap();
-        assert_migrated_correctly(migrated, output);
+        assert_migrated_correctly(migrated.clone(), output);
+
+        // expect that rerunning the migration does not result in another migration
+        if let Some(migrated) = migrated {
+            let rerun = run_migrations(&migrated, migrations).unwrap();
+            assert_migrated_correctly(rerun, None);
+        }
     }
 
     #[test]
@@ -2016,9 +2030,9 @@ mod tests {
                 &r#"{
                     "code_actions_on_format": {
                         "foo": true
-                    }
-                }
-                "#
+                    },
+                    "formatter": []
+                }"#
                 .unindent(),
             ),
         );
@@ -2053,6 +2067,7 @@ mod tests {
             .unindent(),
             Some(
                 &r#"{
+                    "formatter": [],
                     "code_actions_on_format": {
                         "foo": true,
                         "bar": true,
@@ -2080,6 +2095,7 @@ mod tests {
             .unindent(),
             Some(
                 &r#"{
+                    "formatter": [],
                     "code_actions_on_format": {
                         "foo": true,
                         "qux": true,
@@ -2089,6 +2105,21 @@ mod tests {
                 }"#
                 .unindent(),
             ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_16::restore_code_actions_on_format,
+            )],
+            &r#"{
+                "formatter": [],
+                "code_actions_on_format": {
+                    "bar": true,
+                    "baz": false
+                }
+            }"#
+            .unindent(),
+            None,
         );
     }
 

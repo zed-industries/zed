@@ -906,6 +906,16 @@ impl Render for ConfigurationView {
                                             .child(Icon::new(IconName::Check).color(Color::Success))
                                             .child(Label::new("Connected"))
                                             .into_any_element(),
+                                    )
+                                    .child(
+                                        IconButton::new("refresh-models", IconName::RotateCcw)
+                                            .tooltip(Tooltip::text("Refresh models"))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.state.update(cx, |state, _| {
+                                                    state.fetched_models.clear();
+                                                });
+                                                this.retry_connection(cx);
+                                            })),
                                     ),
                             )
                         } else {

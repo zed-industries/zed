@@ -4,7 +4,7 @@ use acp_thread::{AcpThread, AgentThreadEntry};
 use agent::HistoryStore;
 use agent_client_protocol::{self as acp, ToolCallId};
 use collections::HashMap;
-use editor::{Editor, EditorMode, MinimapVisibility};
+use editor::{Editor, EditorMode, MinimapVisibility, SizingBehavior};
 use gpui::{
     AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     ScrollHandle, SharedString, TextStyleRefinement, WeakEntity, Window,
@@ -357,7 +357,7 @@ fn create_editor_diff(
             EditorMode::Full {
                 scale_ui_elements_with_buffer_font_size: false,
                 show_active_line_background: false,
-                sized_by_content: true,
+                sizing_behavior: SizingBehavior::SizeByContent,
             },
             diff.read(cx).multibuffer().clone(),
             None,
@@ -402,7 +402,7 @@ mod tests {
     use agent::HistoryStore;
     use agent_client_protocol as acp;
     use agent_settings::AgentSettings;
-    use assistant_context::ContextStore;
+    use assistant_text_thread::TextThreadStore;
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::{EditorSettings, RowInfo};
     use fs::FakeFs;
@@ -466,8 +466,8 @@ mod tests {
             connection.send_update(session_id, acp::SessionUpdate::ToolCall(tool_call), cx)
         });
 
-        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
 
         let view_state = cx.new(|_cx| {
             EntryViewState::new(
