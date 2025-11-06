@@ -38,10 +38,10 @@ use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle
 use uuid::Uuid;
 
 #[derive(Debug)]
-pub struct UserMessage {
+pub struct UserMessage<T> {
     pub id: Option<UserMessageId>,
     pub content: ContentBlock,
-    pub chunks: Vec<acp::ContentBlock>,
+    pub chunks: Vec<acp::ContentBlock<T>>,
     pub checkpoint: Option<Checkpoint>,
 }
 
@@ -51,7 +51,7 @@ pub struct Checkpoint {
     pub show: bool,
 }
 
-impl UserMessage {
+impl<T> UserMessage<T> {
     fn to_markdown(&self, cx: &App) -> String {
         let mut markdown = String::new();
         if self
@@ -116,13 +116,13 @@ impl AssistantMessageChunk {
 }
 
 #[derive(Debug)]
-pub enum AgentThreadEntry {
-    UserMessage(UserMessage),
+pub enum AgentThreadEntry<T> {
+    UserMessage(UserMessage<T>),
     AssistantMessage(AssistantMessage),
     ToolCall(ToolCall),
 }
 
-impl AgentThreadEntry {
+impl<T> AgentThreadEntry<T> {
     pub fn to_markdown(&self, cx: &App) -> String {
         match self {
             Self::UserMessage(message) => message.to_markdown(cx),
@@ -131,7 +131,7 @@ impl AgentThreadEntry {
         }
     }
 
-    pub fn user_message(&self) -> Option<&UserMessage> {
+    pub fn user_message(&self) -> Option<&UserMessage<T>> {
         if let AgentThreadEntry::UserMessage(message) = self {
             Some(message)
         } else {
@@ -802,9 +802,11 @@ pub struct RetryStatus {
     pub duration: Duration,
 }
 
-pub struct AcpThread {
-    title: SharedString,
-    entries: Vec<AgentThreadEntry>,
+pub struct AnchoredText;
+
+pub struct AcpThread<T = SharedString> {
+    title: T,
+    entries: Vec<AgentThreadEntry<AnchoredText>>,
     plan: Plan,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
@@ -1002,7 +1004,7 @@ impl Display for LoadError {
 
 impl Error for LoadError {}
 
-impl AcpThread {
+impl<T> AcpThread<T> {
     pub fn new(
         title: impl Into<SharedString>,
         connection: Rc<dyn AgentConnection>,
@@ -1152,7 +1154,7 @@ impl AcpThread {
     pub fn push_user_content_block(
         &mut self,
         message_id: Option<UserMessageId>,
-        chunk: acp::ContentBlock,
+        chunk: acp::ContentBlock<T>,
         cx: &mut Context<Self>,
     ) {
         let language_registry = self.project.read(cx).languages().clone();
@@ -1231,7 +1233,7 @@ impl AcpThread {
         }
     }
 
-    fn push_entry(&mut self, entry: AgentThreadEntry, cx: &mut Context<Self>) {
+    fn push_entry(&mut self, entry: AgentThreadEntry<T>, cx: &mut Context<Self>) {
         self.entries.push(entry);
         cx.emit(AcpThreadEvent::NewEntry);
     }
@@ -1924,7 +1926,7 @@ impl AcpThread {
         })
     }
 
-    fn last_user_message(&mut self) -> Option<(usize, &mut UserMessage)> {
+    fn last_user_message(&mut self) -> Option<(usize, &mut UserMessage<T>)> {
         self.entries
             .iter_mut()
             .enumerate()
