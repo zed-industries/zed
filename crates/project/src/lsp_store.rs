@@ -2647,7 +2647,10 @@ impl LocalLspStore {
         };
 
         let Ok(file_url) = lsp::Uri::from_file_path(old_path.as_path()) else {
-            log::warn!("Failed to convert file path to LSP URI during buffer unregistration: {:?}", old_path);
+            log::warn!(
+                "Failed to convert file path to LSP URI during buffer unregistration: {:?}",
+                old_path
+            );
             return;
         };
         self.unregister_buffer_from_language_servers(buffer, &file_url, cx);
