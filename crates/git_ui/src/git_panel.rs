@@ -3619,7 +3619,7 @@ impl GitPanel {
                 .border_color(cx.theme().colors().border.opacity(0.8))
                 .child(
                     div()
-                        .flex_grow()
+                        .cursor_pointer()
                         .overflow_hidden()
                         .line_clamp(1)
                         .child(
