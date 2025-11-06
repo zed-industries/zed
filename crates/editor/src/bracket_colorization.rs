@@ -1,6 +1,7 @@
 use crate::{Editor, RangeToAnchorExt};
 use gpui::{Context, HighlightStyle, Window};
 use itertools::Itertools;
+use language::language_settings;
 use multi_buffer::ToPoint;
 use text::{Bias, Point};
 use ui::ActiveTheme;
@@ -8,8 +9,7 @@ use ui::ActiveTheme;
 struct RainbowBracketHighlight;
 
 impl Editor {
-    // todo! editor menu entry
-    pub(crate) fn refresh_bracket_colors(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
+    pub(crate) fn colorize_brackets(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
         let snapshot = self.snapshot(window, cx);
         let multi_buffer_snapshot = snapshot.buffer_snapshot();
 
@@ -29,6 +29,16 @@ impl Editor {
             .range_to_buffer_ranges(multi_buffer_visible_start..multi_buffer_visible_end)
             .into_iter()
             .filter_map(|(buffer_snapshot, buffer_range, _)| {
+                let colorize_brackets = language_settings::language_settings(
+                    buffer_snapshot.language().map(|language| language.name()),
+                    buffer_snapshot.file(),
+                    cx,
+                )
+                .colorize_brackets;
+                if !colorize_brackets {
+                    return None;
+                }
+
                 let buffer_brackets =
                     buffer_snapshot.bracket_ranges(buffer_range.start..buffer_range.end);
 
@@ -56,6 +66,7 @@ impl Editor {
             .flatten()
             .into_group_map_by(|&(depth, ..)| depth);
 
+        self.clear_highlights::<RainbowBracketHighlight>(cx);
         for (depth, bracket_highlights) in bracket_matches {
             let style = HighlightStyle {
                 // todo! these colors lack contrast for this/are not actually good for that?
@@ -93,7 +104,9 @@ mod tests {
 
     #[gpui::test]
     async fn test_rainbow_bracket_highlights(cx: &mut gpui::TestAppContext) {
-        init_test(cx, |_| {});
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
 
         let mut cx = EditorLspTestContext::new(
             Language::new(
