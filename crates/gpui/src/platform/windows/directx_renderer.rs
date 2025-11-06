@@ -1,5 +1,6 @@
 use std::{
     mem::ManuallyDrop,
+    slice,
     sync::{Arc, OnceLock},
 };
 
@@ -61,18 +62,18 @@ struct DirectXResources {
     // Direct3D rendering objects
     swap_chain: IDXGISwapChain1,
     render_target: ManuallyDrop<ID3D11Texture2D>,
-    render_target_view: [Option<ID3D11RenderTargetView>; 1],
+    render_target_view: Option<ID3D11RenderTargetView>,
 
     // Path intermediate textures (with MSAA)
     path_intermediate_texture: ID3D11Texture2D,
-    path_intermediate_srv: [Option<ID3D11ShaderResourceView>; 1],
+    path_intermediate_srv: Option<ID3D11ShaderResourceView>,
     path_intermediate_msaa_texture: ID3D11Texture2D,
-    path_intermediate_msaa_view: [Option<ID3D11RenderTargetView>; 1],
+    path_intermediate_msaa_view: Option<ID3D11RenderTargetView>,
 
     // Cached window size and viewport
     width: u32,
     height: u32,
-    viewport: [D3D11_VIEWPORT; 1],
+    viewport: D3D11_VIEWPORT,
 }
 
 struct DirectXRenderPipelines {
@@ -86,8 +87,8 @@ struct DirectXRenderPipelines {
 }
 
 struct DirectXGlobalElements {
-    global_params_buffer: [Option<ID3D11Buffer>; 1],
-    sampler: [Option<ID3D11SamplerState>; 1],
+    global_params_buffer: Option<ID3D11Buffer>,
+    sampler: Option<ID3D11SamplerState>,
 }
 
 struct DirectComposition {
@@ -174,12 +175,12 @@ impl DirectXRenderer {
     fn pre_draw(&self) -> Result<()> {
         update_buffer(
             &self.devices.device_context,
-            self.globals.global_params_buffer[0].as_ref().unwrap(),
+            self.globals.global_params_buffer.as_ref().unwrap(),
             &[GlobalParams {
                 gamma_ratios: self.font_info.gamma_ratios,
                 viewport_size: [
-                    self.resources.viewport[0].Width,
-                    self.resources.viewport[0].Height,
+                    self.resources.viewport.Width,
+                    self.resources.viewport.Height,
                 ],
                 grayscale_enhanced_contrast: self.font_info.grayscale_enhanced_contrast,
                 _pad: 0,
@@ -187,15 +188,16 @@ impl DirectXRenderer {
         )?;
         unsafe {
             self.devices.device_context.ClearRenderTargetView(
-                self.resources.render_target_view[0].as_ref().unwrap(),
+                self.resources.render_target_view.as_ref().unwrap(),
                 &[0.0; 4],
+            );
+            self.devices.device_context.OMSetRenderTargets(
+                Some(slice::from_ref(&self.resources.render_target_view)),
+                None,
             );
             self.devices
                 .device_context
-                .OMSetRenderTargets(Some(&self.resources.render_target_view), None);
-            self.devices
-                .device_context
-                .RSSetViewports(Some(&self.resources.viewport));
+                .RSSetViewports(Some(slice::from_ref(&self.resources.viewport)));
         }
         Ok(())
     }
@@ -276,9 +278,10 @@ impl DirectXRenderer {
         self.direct_composition = direct_composition;
 
         unsafe {
-            self.devices
-                .device_context
-                .OMSetRenderTargets(Some(&self.resources.render_target_view), None);
+            self.devices.device_context.OMSetRenderTargets(
+                Some(slice::from_ref(&self.resources.render_target_view)),
+                None,
+            );
         }
         Ok(())
     }
@@ -327,7 +330,7 @@ impl DirectXRenderer {
         // Clear the render target before resizing
         unsafe { self.devices.device_context.OMSetRenderTargets(None, None) };
         unsafe { ManuallyDrop::drop(&mut self.resources.render_target) };
-        drop(self.resources.render_target_view[0].take().unwrap());
+        drop(self.resources.render_target_view.take().unwrap());
 
         // Resizing the swap chain requires a call to the underlying DXGI adapter, which can return the device removed error.
         // The app might have moved to a monitor that's attached to a different graphics device.
@@ -349,9 +352,10 @@ impl DirectXRenderer {
         self.resources
             .recreate_resources(&self.devices, width, height)?;
         unsafe {
-            self.devices
-                .device_context
-                .OMSetRenderTargets(Some(&self.resources.render_target_view), None);
+            self.devices.device_context.OMSetRenderTargets(
+                Some(slice::from_ref(&self.resources.render_target_view)),
+                None,
+            );
         }
 
         Ok(())
@@ -368,8 +372,8 @@ impl DirectXRenderer {
         )?;
         self.pipelines.shadow_pipeline.draw(
             &self.devices.device_context,
-            &self.resources.viewport,
-            &self.globals.global_params_buffer,
+            slice::from_ref(&self.resources.viewport),
+            slice::from_ref(&self.globals.global_params_buffer),
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
             4,
             shadows.len() as u32,
@@ -387,8 +391,8 @@ impl DirectXRenderer {
         )?;
         self.pipelines.quad_pipeline.draw(
             &self.devices.device_context,
-            &self.resources.viewport,
-            &self.globals.global_params_buffer,
+            slice::from_ref(&self.resources.viewport),
+            slice::from_ref(&self.globals.global_params_buffer),
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
             4,
             quads.len() as u32,
@@ -403,15 +407,14 @@ impl DirectXRenderer {
         // Clear intermediate MSAA texture
         unsafe {
             self.devices.device_context.ClearRenderTargetView(
-                self.resources.path_intermediate_msaa_view[0]
-                    .as_ref()
-                    .unwrap(),
+                self.resources.path_intermediate_msaa_view.as_ref().unwrap(),
                 &[0.0; 4],
             );
             // Set intermediate MSAA texture as render target
-            self.devices
-                .device_context
-                .OMSetRenderTargets(Some(&self.resources.path_intermediate_msaa_view), None);
+            self.devices.device_context.OMSetRenderTargets(
+                Some(slice::from_ref(&self.resources.path_intermediate_msaa_view)),
+                None,
+            );
         }
 
         // Collect all vertices and sprites for a single draw call
@@ -431,10 +434,11 @@ impl DirectXRenderer {
             &self.devices.device_context,
             &vertices,
         )?;
+
         self.pipelines.path_rasterization_pipeline.draw(
             &self.devices.device_context,
-            &self.resources.viewport,
-            &self.globals.global_params_buffer,
+            slice::from_ref(&self.resources.viewport),
+            slice::from_ref(&self.globals.global_params_buffer),
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
             vertices.len() as u32,
             1,
@@ -450,9 +454,10 @@ impl DirectXRenderer {
                 RENDER_TARGET_FORMAT,
             );
             // Restore main render target
-            self.devices
-                .device_context
-                .OMSetRenderTargets(Some(&self.resources.render_target_view), None);
+            self.devices.device_context.OMSetRenderTargets(
+                Some(slice::from_ref(&self.resources.render_target_view)),
+                None,
+            );
         }
 
         Ok(())
@@ -494,10 +499,10 @@ impl DirectXRenderer {
         // Draw the sprites with the path texture
         self.pipelines.path_sprite_pipeline.draw_with_texture(
             &self.devices.device_context,
-            &self.resources.path_intermediate_srv,
-            &self.resources.viewport,
-            &self.globals.global_params_buffer,
-            &self.globals.sampler,
+            slice::from_ref(&self.resources.path_intermediate_srv),
+            slice::from_ref(&self.resources.viewport),
+            slice::from_ref(&self.globals.global_params_buffer),
+            slice::from_ref(&self.globals.sampler),
             sprites.len() as u32,
         )
     }
@@ -513,8 +518,8 @@ impl DirectXRenderer {
         )?;
         self.pipelines.underline_pipeline.draw(
             &self.devices.device_context,
-            &self.resources.viewport,
-            &self.globals.global_params_buffer,
+            slice::from_ref(&self.resources.viewport),
+            slice::from_ref(&self.globals.global_params_buffer),
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
             4,
             underlines.len() as u32,
@@ -538,9 +543,9 @@ impl DirectXRenderer {
         self.pipelines.mono_sprites.draw_with_texture(
             &self.devices.device_context,
             &texture_view,
-            &self.resources.viewport,
-            &self.globals.global_params_buffer,
-            &self.globals.sampler,
+            slice::from_ref(&self.resources.viewport),
+            slice::from_ref(&self.globals.global_params_buffer),
+            slice::from_ref(&self.globals.sampler),
             sprites.len() as u32,
         )
     }
@@ -562,9 +567,9 @@ impl DirectXRenderer {
         self.pipelines.poly_sprites.draw_with_texture(
             &self.devices.device_context,
             &texture_view,
-            &self.resources.viewport,
-            &self.globals.global_params_buffer,
-            &self.globals.sampler,
+            slice::from_ref(&self.resources.viewport),
+            slice::from_ref(&self.globals.global_params_buffer),
+            slice::from_ref(&self.globals.sampler),
             sprites.len() as u32,
         )
     }
@@ -789,7 +794,7 @@ impl DirectXGlobalElements {
             };
             let mut buffer = None;
             device.CreateBuffer(&desc, None, Some(&mut buffer))?;
-            [buffer]
+            buffer
         };
 
         let sampler = unsafe {
@@ -807,7 +812,7 @@ impl DirectXGlobalElements {
             };
             let mut output = None;
             device.CreateSamplerState(&desc, Some(&mut output))?;
-            [output]
+            output
         };
 
         Ok(Self {
@@ -832,7 +837,7 @@ struct PipelineState<T> {
     fragment: ID3D11PixelShader,
     buffer: ID3D11Buffer,
     buffer_size: usize,
-    view: [Option<ID3D11ShaderResourceView>; 1],
+    view: Option<ID3D11ShaderResourceView>,
     blend_state: ID3D11BlendState,
     _marker: std::marker::PhantomData<T>,
 }
@@ -902,7 +907,7 @@ impl<T> PipelineState<T> {
     ) -> Result<()> {
         set_pipeline_state(
             device_context,
-            &self.view,
+            slice::from_ref(&self.view),
             topology,
             viewport,
             &self.vertex,
@@ -927,7 +932,7 @@ impl<T> PipelineState<T> {
     ) -> Result<()> {
         set_pipeline_state(
             device_context,
-            &self.view,
+            slice::from_ref(&self.view),
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
             viewport,
             &self.vertex,
@@ -1050,12 +1055,12 @@ fn create_resources(
     height: u32,
 ) -> Result<(
     ManuallyDrop<ID3D11Texture2D>,
-    [Option<ID3D11RenderTargetView>; 1],
+    Option<ID3D11RenderTargetView>,
     ID3D11Texture2D,
-    [Option<ID3D11ShaderResourceView>; 1],
+    Option<ID3D11ShaderResourceView>,
     ID3D11Texture2D,
-    [Option<ID3D11RenderTargetView>; 1],
-    [D3D11_VIEWPORT; 1],
+    Option<ID3D11RenderTargetView>,
+    D3D11_VIEWPORT,
 )> {
     let (render_target, render_target_view) =
         create_render_target_and_its_view(swap_chain, &devices.device)?;
@@ -1081,14 +1086,14 @@ fn create_render_target_and_its_view(
     device: &ID3D11Device,
 ) -> Result<(
     ManuallyDrop<ID3D11Texture2D>,
-    [Option<ID3D11RenderTargetView>; 1],
+    Option<ID3D11RenderTargetView>,
 )> {
     let render_target: ID3D11Texture2D = unsafe { swap_chain.GetBuffer(0) }?;
     let mut render_target_view = None;
     unsafe { device.CreateRenderTargetView(&render_target, None, Some(&mut render_target_view))? };
     Ok((
         ManuallyDrop::new(render_target),
-        [Some(render_target_view.unwrap())],
+        Some(render_target_view.unwrap()),
     ))
 }
 
@@ -1097,7 +1102,7 @@ fn create_path_intermediate_texture(
     device: &ID3D11Device,
     width: u32,
     height: u32,
-) -> Result<(ID3D11Texture2D, [Option<ID3D11ShaderResourceView>; 1])> {
+) -> Result<(ID3D11Texture2D, Option<ID3D11ShaderResourceView>)> {
     let texture = unsafe {
         let mut output = None;
         let desc = D3D11_TEXTURE2D_DESC {
@@ -1122,7 +1127,7 @@ fn create_path_intermediate_texture(
     let mut shader_resource_view = None;
     unsafe { device.CreateShaderResourceView(&texture, None, Some(&mut shader_resource_view))? };
 
-    Ok((texture, [Some(shader_resource_view.unwrap())]))
+    Ok((texture, Some(shader_resource_view.unwrap())))
 }
 
 #[inline]
@@ -1130,7 +1135,7 @@ fn create_path_intermediate_msaa_texture_and_view(
     device: &ID3D11Device,
     width: u32,
     height: u32,
-) -> Result<(ID3D11Texture2D, [Option<ID3D11RenderTargetView>; 1])> {
+) -> Result<(ID3D11Texture2D, Option<ID3D11RenderTargetView>)> {
     let msaa_texture = unsafe {
         let mut output = None;
         let desc = D3D11_TEXTURE2D_DESC {
@@ -1153,15 +1158,11 @@ fn create_path_intermediate_msaa_texture_and_view(
     };
     let mut msaa_view = None;
     unsafe { device.CreateRenderTargetView(&msaa_texture, None, Some(&mut msaa_view))? };
-    Ok((msaa_texture, [Some(msaa_view.unwrap())]))
+    Ok((msaa_texture, Some(msaa_view.unwrap())))
 }
 
 #[inline]
-fn set_viewport(
-    device_context: &ID3D11DeviceContext,
-    width: f32,
-    height: f32,
-) -> [D3D11_VIEWPORT; 1] {
+fn set_viewport(device_context: &ID3D11DeviceContext, width: f32, height: f32) -> D3D11_VIEWPORT {
     let viewport = [D3D11_VIEWPORT {
         TopLeftX: 0.0,
         TopLeftY: 0.0,
@@ -1171,7 +1172,7 @@ fn set_viewport(
         MaxDepth: 1.0,
     }];
     unsafe { device_context.RSSetViewports(Some(&viewport)) };
-    viewport
+    viewport[0]
 }
 
 #[inline]
@@ -1299,10 +1300,10 @@ fn create_buffer(
 fn create_buffer_view(
     device: &ID3D11Device,
     buffer: &ID3D11Buffer,
-) -> Result<[Option<ID3D11ShaderResourceView>; 1]> {
+) -> Result<Option<ID3D11ShaderResourceView>> {
     let mut view = None;
     unsafe { device.CreateShaderResourceView(buffer, None, Some(&mut view)) }?;
-    Ok([view])
+    Ok(view)
 }
 
 #[inline]
