@@ -55,6 +55,12 @@ impl Bitbucket {
             Url::parse(&format!("https://{}", host))?,
         ))
     }
+
+    fn is_self_hosted(&self) -> bool {
+        self.base_url
+            .host_str()
+            .is_some_and(|host| host != "bitbucket.org")
+    }
 }
 
 impl GitHostingProvider for Bitbucket {
@@ -71,11 +77,14 @@ impl GitHostingProvider for Bitbucket {
     }
 
     fn format_line_number(&self, line: u32) -> String {
-        format!("lines-{line}")
+        format!("{line}")
     }
 
     fn format_line_numbers(&self, start_line: u32, end_line: u32) -> String {
-        format!("lines-{start_line}:{end_line}")
+        if self.is_self_hosted() {
+            return format!("{start_line}-{end_line}");
+        }
+        format!("{start_line}:{end_line}")
     }
 
     fn parse_remote_url(&self, url: &str) -> Option<ParsedGitRemote> {
@@ -103,7 +112,12 @@ impl GitHostingProvider for Bitbucket {
     ) -> Url {
         let BuildCommitPermalinkParams { sha } = params;
         let ParsedGitRemote { owner, repo } = remote;
-
+        if self.is_self_hosted() {
+            return self
+                .base_url()
+                .join(&format!("projects/{owner}/repos/{repo}/commits/{sha}"))
+                .unwrap();
+        }
         self.base_url()
             .join(&format!("{owner}/{repo}/commits/{sha}"))
             .unwrap()
@@ -117,15 +131,28 @@ impl GitHostingProvider for Bitbucket {
             selection,
         } = params;
 
-        let mut permalink = self
-            .base_url()
-            .join(&format!("{owner}/{repo}/src/{sha}/{path}"))
-            .unwrap();
-        permalink.set_fragment(
-            selection
-                .map(|selection| self.line_fragment(&selection))
-                .as_deref(),
-        );
+        let (mut permalink, fragment) = if self.is_self_hosted() {
+            (
+                self.base_url()
+                    .join(&format!(
+                        "projects/{owner}/repos/{repo}/browse/{path}?at={sha}"
+                    ))
+                    .unwrap(),
+                selection.map(|selection| self.line_fragment(&selection)),
+            )
+        } else {
+            (
+                self.base_url()
+                    .join(&format!("{owner}/{repo}/src/{sha}/{path}"))
+                    .unwrap(),
+                selection.map(|selection| {
+                    let filename = path.rsplit('/').next().unwrap_or("");
+                    format!("{filename}-{}", self.line_fragment(&selection))
+                }),
+            )
+        };
+
+        permalink.set_fragment(fragment.as_deref());
         permalink
     }
 
@@ -139,7 +166,14 @@ impl GitHostingProvider for Bitbucket {
 
         // Construct the PR URL in Bitbucket format
         let mut url = self.base_url();
-        let path = format!("/{}/{}/pull-requests/{}", remote.owner, remote.repo, number);
+        let path = if self.is_self_hosted() {
+            format!(
+                "/projects/{}/repos/{}/pull-requests/{}",
+                remote.owner, remote.repo, number
+            )
+        } else {
+            format!("/{}/{}/pull-requests/{}", remote.owner, remote.repo, number)
+        };
         url.set_path(&path);
 
         Some(PullRequest { number, url })
@@ -199,6 +233,60 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_remote_url_given_self_hosted_ssh_url() {
+        let remote_url = "git@bitbucket.company.com:zed-industries/zed.git";
+
+        let parsed_remote = Bitbucket::from_remote_url(remote_url)
+            .unwrap()
+            .parse_remote_url(remote_url)
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_remote_url_given_self_hosted_https_url() {
+        let remote_url = "https://bitbucket.company.com/zed-industries/zed.git";
+
+        let parsed_remote = Bitbucket::from_remote_url(remote_url)
+            .unwrap()
+            .parse_remote_url(remote_url)
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_remote_url_given_self_hosted_https_url_with_username() {
+        let remote_url = "https://thorstenballzed@bitbucket.company.com/zed-industries/zed.git";
+
+        let parsed_remote = Bitbucket::from_remote_url(remote_url)
+            .unwrap()
+            .parse_remote_url(remote_url)
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            }
+        );
+    }
+
+    #[test]
     fn test_build_bitbucket_permalink() {
         let permalink = Bitbucket::public_instance().build_permalink(
             ParsedGitRemote {
@@ -213,6 +301,23 @@ mod tests {
     }
 
     #[test]
+    fn test_build_bitbucket_self_hosted_permalink() {
+        let permalink =
+            Bitbucket::from_remote_url("git@bitbucket.company.com:zed-industries/zed.git")
+                .unwrap()
+                .build_permalink(
+                    ParsedGitRemote {
+                        owner: "zed-industries".into(),
+                        repo: "zed".into(),
+                    },
+                    BuildPermalinkParams::new("f00b4r", &repo_path("main.rs"), None),
+                );
+
+        let expected_url = "https://bitbucket.company.com/projects/zed-industries/repos/zed/browse/main.rs?at=f00b4r";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
     fn test_build_bitbucket_permalink_with_single_line_selection() {
         let permalink = Bitbucket::public_instance().build_permalink(
             ParsedGitRemote {
@@ -222,7 +327,24 @@ mod tests {
             BuildPermalinkParams::new("f00b4r", &repo_path("main.rs"), Some(6..6)),
         );
 
-        let expected_url = "https://bitbucket.org/zed-industries/zed/src/f00b4r/main.rs#lines-7";
+        let expected_url = "https://bitbucket.org/zed-industries/zed/src/f00b4r/main.rs#main.rs-7";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_bitbucket_self_hosted_permalink_with_single_line_selection() {
+        let permalink =
+            Bitbucket::from_remote_url("https://bitbucket.company.com/zed-industries/zed.git")
+                .unwrap()
+                .build_permalink(
+                    ParsedGitRemote {
+                        owner: "zed-industries".into(),
+                        repo: "zed".into(),
+                    },
+                    BuildPermalinkParams::new("f00b4r", &repo_path("main.rs"), Some(6..6)),
+                );
+
+        let expected_url = "https://bitbucket.company.com/projects/zed-industries/repos/zed/browse/main.rs?at=f00b4r#7";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -233,11 +355,28 @@ mod tests {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
             },
-            BuildPermalinkParams::new("f00b4r", &repo_path("main.rs"), Some(23..47)),
+            BuildPermalinkParams::new("f00b4r", &repo_path("crates/main.rs"), Some(23..47)),
         );
 
         let expected_url =
-            "https://bitbucket.org/zed-industries/zed/src/f00b4r/main.rs#lines-24:48";
+            "https://bitbucket.org/zed-industries/zed/src/f00b4r/crates/main.rs#main.rs-24:48";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_bitbucket_self_hosted_permalink_with_multi_line_selection() {
+        let permalink =
+            Bitbucket::from_remote_url("git@bitbucket.company.com:zed-industries/zed.git")
+                .unwrap()
+                .build_permalink(
+                    ParsedGitRemote {
+                        owner: "zed-industries".into(),
+                        repo: "zed".into(),
+                    },
+                    BuildPermalinkParams::new("f00b4r", &repo_path("main.rs"), Some(23..47)),
+                );
+
+        let expected_url = "https://bitbucket.company.com/projects/zed-industries/repos/zed/browse/main.rs?at=f00b4r#24-48";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -268,6 +407,38 @@ mod tests {
         assert_eq!(
             pr.url.as_str(),
             "https://bitbucket.org/zed-industries/zed/pull-requests/123"
+        );
+    }
+
+    #[test]
+    fn test_bitbucket_self_hosted_pull_requests() {
+        use indoc::indoc;
+
+        let remote = ParsedGitRemote {
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
+        };
+
+        let bitbucket =
+            Bitbucket::from_remote_url("https://bitbucket.company.com/zed-industries/zed.git")
+                .unwrap();
+
+        // Test message without PR reference
+        let message = "This does not contain a pull request";
+        assert!(bitbucket.extract_pull_request(&remote, message).is_none());
+
+        // Pull request number at end of first line
+        let message = indoc! {r#"
+            Merged in feature-branch (pull request #123)
+
+            Some detailed description of the changes.
+        "#};
+
+        let pr = bitbucket.extract_pull_request(&remote, message).unwrap();
+        assert_eq!(pr.number, 123);
+        assert_eq!(
+            pr.url.as_str(),
+            "https://bitbucket.company.com/projects/zed-industries/repos/zed/pull-requests/123"
         );
     }
 }
