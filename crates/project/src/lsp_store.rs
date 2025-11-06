@@ -573,6 +573,7 @@ impl LocalLspStore {
                 env.extend(settings.env.unwrap_or_default());
 
                 Ok(LanguageServerBinary {
+                    // if `path` is absolute, `.join()` will keep it unmodified
                     path: delegate.worktree_root_path().join(path),
                     env: Some(env),
                     arguments: settings
