@@ -199,6 +199,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: [`DocumentColorsRenderMode::Inlay`]
     pub lsp_document_colors: Option<DocumentColorsRenderMode>,
+    /// Whether to enable rainbow brackets (bracket pair colorization).
+    /// When enabled, matching bracket pairs are colored based on their nesting depth.
+    ///
+    /// Default: false
+    pub rainbow_brackets: Option<bool>,
     /// When to show the scrollbar in the completion menu.
     /// This setting can take four values:
     ///
