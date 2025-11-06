@@ -1208,6 +1208,73 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_language_server_relative_path(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({
+            ".zed": {
+                "settings.json": r#"
+                {
+                    "languages": {
+                        "Rust": {
+                            "language_servers": ["my_fake_lsp"]
+                        }
+                    },
+                    "lsp": {
+                        "my_fake_lsp": {
+                            "binary": {
+                                "path": "relative_path/to/my_fake_lsp_binary.exe",
+                            }
+                        }
+                    },
+
+                }"#,
+            },
+            "relative_path": {
+                "to": {
+                    "my_fake_lsp.exe": "",
+                },
+            },
+            "src": {
+                "main.rs": "",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let mut fake_rust_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "my_fake_lsp",
+            ..Default::default()
+        },
+    );
+
+    cx.run_until_parked();
+
+    // Start the language server by opening a buffer with a compatible file extension.
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let lsp_path = fake_rust_servers.next().await.unwrap().binary.path;
+    assert_eq!(
+        lsp_path.to_string_lossy(),
+        path!("/the-root/relative_path/to/my_fake_lsp_binary.exe"),
+    );
+}
+
+#[gpui::test]
 async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 

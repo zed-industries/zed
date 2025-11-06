@@ -563,8 +563,8 @@ impl LocalLspStore {
         allow_binary_download: bool,
         cx: &mut App,
     ) -> Task<Result<LanguageServerBinary>> {
-        if let Some(settings) = settings.binary.as_ref()
-            && settings.path.is_some()
+        if let Some(settings) = &settings.binary
+            && let Some(path) = settings.path.as_ref().map(PathBuf::from)
         {
             let settings = settings.clone();
 
@@ -573,7 +573,7 @@ impl LocalLspStore {
                 env.extend(settings.env.unwrap_or_default());
 
                 Ok(LanguageServerBinary {
-                    path: PathBuf::from(&settings.path.unwrap()),
+                    path: delegate.worktree_root_path().join(path),
                     env: Some(env),
                     arguments: settings
                         .arguments
