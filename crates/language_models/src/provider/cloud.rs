@@ -2,7 +2,7 @@ use ai_onboarding::YoungAccountBanner;
 use anthropic::AnthropicModelMode;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
-use client::{Client, ModelRequestUsage, UserStore, zed_urls};
+use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::{
     CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_X_AI_HEADER_NAME,
     CURRENT_PLAN_HEADER_NAME, CompletionBody, CompletionEvent, CompletionRequestStatus,
@@ -375,7 +375,6 @@ pub struct CloudLanguageModel {
 
 struct PerformLlmCompletionResponse {
     response: Response<AsyncBody>,
-    usage: Option<ModelRequestUsage>,
     tool_use_limit_reached: bool,
     includes_status_messages: bool,
 }
@@ -417,15 +416,8 @@ impl CloudLanguageModel {
                     .get(TOOL_USE_LIMIT_REACHED_HEADER_NAME)
                     .is_some();
 
-                let usage = if includes_status_messages {
-                    None
-                } else {
-                    ModelRequestUsage::from_headers(response.headers()).ok()
-                };
-
                 return Ok(PerformLlmCompletionResponse {
                     response,
-                    usage,
                     includes_status_messages,
                     tool_use_limit_reached,
                 });
@@ -442,28 +434,8 @@ impl CloudLanguageModel {
                 continue;
             }
 
-            if status == StatusCode::FORBIDDEN
-                && response
-                    .headers()
-                    .get(SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME)
-                    .is_some()
-            {
-                if let Some(MODEL_REQUESTS_RESOURCE_HEADER_VALUE) = response
-                    .headers()
-                    .get(SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME)
-                    .and_then(|resource| resource.to_str().ok())
-                    && let Some(plan) = response
-                        .headers()
-                        .get(CURRENT_PLAN_HEADER_NAME)
-                        .and_then(|plan| plan.to_str().ok())
-                        .and_then(|plan| cloud_llm_client::PlanV1::from_str(plan).ok())
-                        .map(Plan::V1)
-                {
-                    return Err(anyhow!(ModelRequestLimitReachedError { plan }));
-                }
-            } else if status == StatusCode::PAYMENT_REQUIRED {
-                return Err(anyhow!(PaymentRequiredError));
-            }
+            // Privacy mode: We don't enforce subscription limits
+            // Users can use the service without restrictions
 
             let mut body = String::new();
             let headers = response.headers().clone();
@@ -772,7 +744,6 @@ impl LanguageModel for CloudLanguageModel {
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
-                        usage,
                         includes_status_messages,
                         tool_use_limit_reached,
                     } = Self::perform_llm_completion(
@@ -800,7 +771,6 @@ impl LanguageModel for CloudLanguageModel {
                     Ok(map_cloud_completion_events(
                         Box::pin(
                             response_lines(response, includes_status_messages)
-                                .chain(usage_updated_event(usage))
                                 .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
                         ),
                         move |event| mapper.map_event(event),
@@ -822,7 +792,6 @@ impl LanguageModel for CloudLanguageModel {
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
-                        usage,
                         includes_status_messages,
                         tool_use_limit_reached,
                     } = Self::perform_llm_completion(
@@ -846,7 +815,6 @@ impl LanguageModel for CloudLanguageModel {
                     Ok(map_cloud_completion_events(
                         Box::pin(
                             response_lines(response, includes_status_messages)
-                                .chain(usage_updated_event(usage))
                                 .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
                         ),
                         move |event| mapper.map_event(event),
@@ -868,7 +836,6 @@ impl LanguageModel for CloudLanguageModel {
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
-                        usage,
                         includes_status_messages,
                         tool_use_limit_reached,
                     } = Self::perform_llm_completion(
@@ -892,7 +859,6 @@ impl LanguageModel for CloudLanguageModel {
                     Ok(map_cloud_completion_events(
                         Box::pin(
                             response_lines(response, includes_status_messages)
-                                .chain(usage_updated_event(usage))
                                 .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
                         ),
                         move |event| mapper.map_event(event),
@@ -908,7 +874,6 @@ impl LanguageModel for CloudLanguageModel {
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
-                        usage,
                         includes_status_messages,
                         tool_use_limit_reached,
                     } = Self::perform_llm_completion(
@@ -932,7 +897,6 @@ impl LanguageModel for CloudLanguageModel {
                     Ok(map_cloud_completion_events(
                         Box::pin(
                             response_lines(response, includes_status_messages)
-                                .chain(usage_updated_event(usage))
                                 .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
                         ),
                         move |event| mapper.map_event(event),
@@ -967,19 +931,6 @@ where
             })
         })
         .boxed()
-}
-
-fn usage_updated_event<T>(
-    usage: Option<ModelRequestUsage>,
-) -> impl Stream<Item = Result<CompletionEvent<T>>> {
-    futures::stream::iter(usage.map(|usage| {
-        Ok(CompletionEvent::Status(
-            CompletionRequestStatus::UsageUpdated {
-                amount: usage.amount as usize,
-                limit: usage.limit,
-            },
-        ))
-    }))
 }
 
 fn tool_use_limit_reached_event<T>(
@@ -1020,22 +971,36 @@ fn response_lines<T: DeserializeOwned>(
 #[derive(IntoElement, RegisterComponent)]
 struct ZedAiConfiguration {
     is_connected: bool,
-    plan: Option<Plan>,
-    subscription_period: Option<(DateTime<Utc>, DateTime<Utc>)>,
-    eligible_for_trial: bool,
-    account_too_young: bool,
     sign_in_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
 }
 
 impl RenderOnce for ZedAiConfiguration {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let is_pro = self.plan.is_some_and(|plan| {
-            matches!(plan, Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro))
-        });
-        let subscription_text = match (self.plan, self.subscription_period) {
-            (Some(Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro)), Some(_)) => {
-                "You have access to Zed's hosted models through your Pro subscription."
-            }
+        if !self.is_connected {
+            return v_flex()
+                .gap_2()
+                .child(Label::new("Sign in to access Zed's hosted AI models."))
+                .child(
+                    Button::new("sign_in", "Sign In to use Zed AI")
+                        .icon_color(Color::Muted)
+                        .icon(IconName::Github)
+                        .icon_size(IconSize::Small)
+                        .icon_position(IconPosition::Start)
+                        .full_width()
+                        .on_click({
+                            let callback = self.sign_in_callback.clone();
+                            move |_, window, cx| (callback)(window, cx)
+                        }),
+                );
+        }
+
+        v_flex()
+            .gap_2()
+            .w_full()
+            .text_sm()
+            .child(Label::new("You have unlimited access to Zed's hosted AI models."))
+    }
+}
             (Some(Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial)), Some(_)) => {
                 "You have access to Zed's hosted models through your Pro trial."
             }
@@ -1139,14 +1104,9 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.state.read(cx);
-        let user_store = state.user_store.read(cx);
 
         ZedAiConfiguration {
             is_connected: !state.is_signed_out(cx),
-            plan: user_store.plan(),
-            subscription_period: user_store.subscription_period(),
-            eligible_for_trial: user_store.trial_started_at().is_none(),
-            account_too_young: user_store.account_too_young(),
             sign_in_callback: self.sign_in_callback.clone(),
         }
     }
@@ -1166,20 +1126,9 @@ impl Component for ZedAiConfiguration {
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        fn configuration(
-            is_connected: bool,
-            plan: Option<Plan>,
-            eligible_for_trial: bool,
-            account_too_young: bool,
-        ) -> AnyElement {
+        fn configuration(is_connected: bool) -> AnyElement {
             ZedAiConfiguration {
                 is_connected,
-                plan,
-                subscription_period: plan
-                    .is_some()
-                    .then(|| (Utc::now(), Utc::now() + chrono::Duration::days(7))),
-                eligible_for_trial,
-                account_too_young,
                 sign_in_callback: Arc::new(|_, _| {}),
             }
             .into_any_element()
@@ -1190,31 +1139,8 @@ impl Component for ZedAiConfiguration {
                 .p_4()
                 .gap_4()
                 .children(vec![
-                    single_example("Not connected", configuration(false, None, false, false)),
-                    single_example(
-                        "Accept Terms of Service",
-                        configuration(true, None, true, false),
-                    ),
-                    single_example(
-                        "No Plan - Not eligible for trial",
-                        configuration(true, None, false, false),
-                    ),
-                    single_example(
-                        "No Plan - Eligible for trial",
-                        configuration(true, None, true, false),
-                    ),
-                    single_example(
-                        "Free Plan",
-                        configuration(true, Some(Plan::V1(PlanV1::ZedFree)), true, false),
-                    ),
-                    single_example(
-                        "Zed Pro Trial Plan",
-                        configuration(true, Some(Plan::V1(PlanV1::ZedProTrial)), true, false),
-                    ),
-                    single_example(
-                        "Zed Pro Plan",
-                        configuration(true, Some(Plan::V1(PlanV1::ZedPro)), true, false),
-                    ),
+                    single_example("Not connected", configuration(false)),
+                    single_example("Connected - Full Access", configuration(true)),
                 ])
                 .into_any_element(),
         )

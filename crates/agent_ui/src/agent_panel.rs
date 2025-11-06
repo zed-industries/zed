@@ -2236,13 +2236,8 @@ impl AgentPanel {
             | ActiveView::Configuration => return false,
         }
 
-        let plan = self.user_store.read(cx).plan();
-        let has_previous_trial = self.user_store.read(cx).trial_started_at().is_some();
-
-        matches!(
-            plan,
-            Some(Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree))
-        ) && has_previous_trial
+        // Privacy mode: No subscription checking
+        false
     }
 
     fn should_render_onboarding(&self, cx: &mut Context<Self>) -> bool {
@@ -2250,20 +2245,7 @@ impl AgentPanel {
             return false;
         }
 
-        let user_store = self.user_store.read(cx);
-
-        if user_store
-            .plan()
-            .is_some_and(|plan| matches!(plan, Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro)))
-            && user_store
-                .subscription_period()
-                .and_then(|period| period.0.checked_add_days(chrono::Days::new(1)))
-                .is_some_and(|date| date < chrono::Utc::now())
-        {
-            OnboardingUpsell::set_dismissed(true, cx);
-            return false;
-        }
-
+        // Privacy mode: Simplified onboarding without subscription checks
         match &self.active_view {
             ActiveView::History | ActiveView::Configuration => false,
             ActiveView::ExternalAgentThread { thread_view, .. }
@@ -2312,33 +2294,8 @@ impl AgentPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
-        if !self.should_render_trial_end_upsell(cx) {
-            return None;
-        }
-
-        let plan = self.user_store.read(cx).plan()?;
-
-        Some(
-            v_flex()
-                .absolute()
-                .inset_0()
-                .size_full()
-                .bg(cx.theme().colors().panel_background)
-                .opacity(0.85)
-                .block_mouse_except_scroll()
-                .child(EndTrialUpsell::new(
-                    plan,
-                    Arc::new({
-                        let this = cx.entity();
-                        move |_, cx| {
-                            this.update(cx, |_this, cx| {
-                                TrialEndUpsell::set_dismissed(true, cx);
-                                cx.notify();
-                            });
-                        }
-                    }),
-                )),
-        )
+        // Privacy mode: No trial upsells
+        None
     }
 
     fn render_configuration_error(

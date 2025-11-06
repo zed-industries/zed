@@ -58,33 +58,7 @@ impl CloudApiClient {
         build_request(req, body, credentials)
     }
 
-    pub async fn get_authenticated_user(&self) -> Result<GetAuthenticatedUserResponse> {
-        let request = self.build_request(
-            Request::builder().method(Method::GET).uri(
-                self.http_client
-                    .build_zed_cloud_url("/client/users/me", &[])?
-                    .as_ref(),
-            ),
-            AsyncBody::default(),
-        )?;
-
-        let mut response = self.http_client.send(request).await?;
-
-        if !response.status().is_success() {
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await?;
-
-            anyhow::bail!(
-                "Failed to get authenticated user.\nStatus: {:?}\nBody: {body}",
-                response.status()
-            )
-        }
-
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-
-        Ok(serde_json::from_str(&body)?)
-    }
+    // Removed: get_authenticated_user() - no longer fetching subscription data from server
 
     pub fn connect(&self, cx: &App) -> Result<Task<Result<Connection>>> {
         let mut connect_url = self

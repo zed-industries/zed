@@ -1,29 +1,16 @@
 use super::{Client, Status, TypedEnvelope, proto};
 use anyhow::{Context as _, Result};
-use chrono::{DateTime, Utc};
 use cloud_api_client::websocket_protocol::MessageToClient;
-use cloud_api_client::{GetAuthenticatedUserResponse, PlanInfo};
-use cloud_llm_client::{
-    EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME,
-    MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME, MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME, Plan,
-    UsageLimit,
-};
 use collections::{HashMap, HashSet, hash_map::Entry};
-use derive_more::Deref;
-use feature_flags::FeatureFlagAppExt;
 use futures::{Future, StreamExt, channel::mpsc};
 use gpui::{
     App, AsyncApp, Context, Entity, EventEmitter, SharedString, SharedUri, Task, WeakEntity,
 };
-use http_client::http::{HeaderMap, HeaderValue};
 use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
-use std::{
-    str::FromStr as _,
-    sync::{Arc, Weak},
-};
+use std::sync::{Arc, Weak};
 use text::ReplicaId;
-use util::{ResultExt, TryFutureExt as _};
+use util::TryFutureExt as _;
 
 pub type UserId = u64;
 
@@ -108,9 +95,6 @@ pub struct UserStore {
     by_github_login: HashMap<SharedString, u64>,
     participant_indices: HashMap<u64, ParticipantIndex>,
     update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
-    model_request_usage: Option<ModelRequestUsage>,
-    edit_prediction_usage: Option<EditPredictionUsage>,
-    plan_info: Option<PlanInfo>,
     current_user: watch::Receiver<Option<Arc<User>>>,
     contacts: Vec<Arc<Contact>>,
     incoming_contact_requests: Vec<Arc<User>>,
@@ -136,8 +120,6 @@ pub enum Event {
     },
     ShowContacts,
     ParticipantIndicesChanged,
-    PrivateUserInfoUpdated,
-    PlanUpdated,
 }
 
 #[derive(Clone, Copy)]
@@ -153,18 +135,6 @@ enum UpdateContacts {
     Update(proto::UpdateContacts),
     Wait(postage::barrier::Sender),
     Clear(postage::barrier::Sender),
-}
-
-#[derive(Debug, Clone, Copy, Deref)]
-pub struct ModelRequestUsage(pub RequestUsage);
-
-#[derive(Debug, Clone, Copy, Deref)]
-pub struct EditPredictionUsage(pub RequestUsage);
-
-#[derive(Debug, Clone, Copy)]
-pub struct RequestUsage {
-    pub limit: UsageLimit,
-    pub amount: i32,
 }
 
 impl UserStore {
@@ -186,9 +156,6 @@ impl UserStore {
             users: Default::default(),
             by_github_login: Default::default(),
             current_user: current_user_rx,
-            plan_info: None,
-            model_request_usage: None,
-            edit_prediction_usage: None,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
             participant_indices: Default::default(),
@@ -221,44 +188,25 @@ impl UserStore {
                         | Status::Reauthenticated
                         | Status::Connected { .. } => {
                             if let Some(user_id) = client.user_id() {
-                                let response = client
-                                    .cloud_client()
-                                    .get_authenticated_user()
-                                    .await
-                                    .log_err();
+                                // In privacy mode, we don't fetch user details from the server
+                                // Just create a minimal user object
+                                let user = Arc::new(User {
+                                    id: user_id,
+                                    github_login: format!("user_{}", user_id).into(),
+                                    avatar_uri: "".into(),
+                                    name: None,
+                                });
 
-                                let current_user_and_response = if let Some(response) = response {
-                                    let user = Arc::new(User {
-                                        id: user_id,
-                                        github_login: response.user.github_login.clone().into(),
-                                        avatar_uri: response.user.avatar_url.clone().into(),
-                                        name: response.user.name.clone(),
-                                    });
-
-                                    Some((user, response))
-                                } else {
-                                    None
-                                };
-                                current_user_tx
-                                    .send(
-                                        current_user_and_response
-                                            .as_ref()
-                                            .map(|(user, _)| user.clone()),
-                                    )
-                                    .await
-                                    .ok();
+                                current_user_tx.send(Some(user.clone())).await.ok();
 
                                 cx.update(|cx| {
-                                    if let Some((user, response)) = current_user_and_response {
-                                        this.update(cx, |this, cx| {
-                                            this.by_github_login
-                                                .insert(user.github_login.clone(), user_id);
-                                            this.users.insert(user_id, user);
-                                            this.update_authenticated_user(response, cx)
-                                        })
-                                    } else {
+                                    this.update(cx, |this, cx| {
+                                        this.by_github_login
+                                            .insert(user.github_login.clone(), user_id);
+                                        this.users.insert(user_id, user);
+                                        cx.notify();
                                         anyhow::Ok(())
-                                    }
+                                    })
                                 })??;
 
                                 this.update(cx, |_, cx| cx.notify())?;
@@ -267,7 +215,6 @@ impl UserStore {
                         Status::SignedOut => {
                             current_user_tx.send(None).await.ok();
                             this.update(cx, |this, cx| {
-                                cx.emit(Event::PrivateUserInfoUpdated);
                                 cx.notify();
                                 this.clear_contacts()
                             })?
@@ -693,135 +640,12 @@ impl UserStore {
         self.current_user.borrow().clone()
     }
 
-    pub fn plan(&self) -> Option<Plan> {
-        #[cfg(debug_assertions)]
-        if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
-            use cloud_llm_client::PlanV1;
-
-            return match plan.as_str() {
-                "free" => Some(Plan::V1(PlanV1::ZedFree)),
-                "trial" => Some(Plan::V1(PlanV1::ZedProTrial)),
-                "pro" => Some(Plan::V1(PlanV1::ZedPro)),
-                _ => {
-                    panic!("ZED_SIMULATE_PLAN must be one of 'free', 'trial', or 'pro'");
-                }
-            };
-        }
-
-        self.plan_info.as_ref().map(|info| info.plan())
-    }
-
-    pub fn subscription_period(&self) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
-        self.plan_info
-            .as_ref()
-            .and_then(|plan| plan.subscription_period)
-            .map(|subscription_period| {
-                (
-                    subscription_period.started_at.0,
-                    subscription_period.ended_at.0,
-                )
-            })
-    }
-
-    pub fn trial_started_at(&self) -> Option<DateTime<Utc>> {
-        self.plan_info
-            .as_ref()
-            .and_then(|plan| plan.trial_started_at)
-            .map(|trial_started_at| trial_started_at.0)
-    }
-
-    /// Returns whether the user's account is too new to use the service.
-    pub fn account_too_young(&self) -> bool {
-        self.plan_info
-            .as_ref()
-            .map(|plan| plan.is_account_too_young)
-            .unwrap_or_default()
-    }
-
-    /// Returns whether the current user has overdue invoices and usage should be blocked.
-    pub fn has_overdue_invoices(&self) -> bool {
-        self.plan_info
-            .as_ref()
-            .map(|plan| plan.has_overdue_invoices)
-            .unwrap_or_default()
-    }
-
-    pub fn is_usage_based_billing_enabled(&self) -> bool {
-        self.plan_info
-            .as_ref()
-            .map(|plan| plan.is_usage_based_billing_enabled)
-            .unwrap_or_default()
-    }
-
-    pub fn model_request_usage(&self) -> Option<ModelRequestUsage> {
-        if self.plan().is_some_and(|plan| plan.is_v2()) {
-            return None;
-        }
-
-        self.model_request_usage
-    }
-
-    pub fn update_model_request_usage(&mut self, usage: ModelRequestUsage, cx: &mut Context<Self>) {
-        self.model_request_usage = Some(usage);
-        cx.notify();
-    }
-
-    pub fn edit_prediction_usage(&self) -> Option<EditPredictionUsage> {
-        self.edit_prediction_usage
-    }
-
-    pub fn update_edit_prediction_usage(
-        &mut self,
-        usage: EditPredictionUsage,
-        cx: &mut Context<Self>,
-    ) {
-        self.edit_prediction_usage = Some(usage);
-        cx.notify();
-    }
-
-    fn update_authenticated_user(
-        &mut self,
-        response: GetAuthenticatedUserResponse,
-        cx: &mut Context<Self>,
-    ) {
-        let staff = response.user.is_staff && !*feature_flags::ZED_DISABLE_STAFF;
-        cx.update_flags(staff, response.feature_flags);
-        if let Some(client) = self.client.upgrade() {
-            client
-                .telemetry
-                .set_authenticated_user_info(Some(response.user.metrics_id.clone()), staff);
-        }
-
-        self.model_request_usage = Some(ModelRequestUsage(RequestUsage {
-            limit: response.plan.usage.model_requests.limit,
-            amount: response.plan.usage.model_requests.used as i32,
-        }));
-        self.edit_prediction_usage = Some(EditPredictionUsage(RequestUsage {
-            limit: response.plan.usage.edit_predictions.limit,
-            amount: response.plan.usage.edit_predictions.used as i32,
-        }));
-        self.plan_info = Some(response.plan);
-        cx.emit(Event::PrivateUserInfoUpdated);
-    }
-
-    fn handle_message_to_client(this: WeakEntity<Self>, message: &MessageToClient, cx: &App) {
-        cx.spawn(async move |cx| {
+    fn handle_message_to_client(_this: WeakEntity<Self>, message: &MessageToClient, cx: &App) {
+        cx.spawn(async move |_cx| {
             match message {
                 MessageToClient::UserUpdated => {
-                    let cloud_client = cx
-                        .update(|cx| {
-                            this.read_with(cx, |this, _cx| {
-                                this.client.upgrade().map(|client| client.cloud_client())
-                            })
-                        })??
-                        .ok_or(anyhow::anyhow!("Failed to get Cloud client"))?;
-
-                    let response = cloud_client.get_authenticated_user().await?;
-                    cx.update(|cx| {
-                        this.update(cx, |this, cx| {
-                            this.update_authenticated_user(response, cx);
-                        })
-                    })??;
+                    // In privacy mode, we ignore user update messages from the server
+                    log::info!("Ignoring user update message in privacy mode");
                 }
             }
 
@@ -952,49 +776,4 @@ impl Collaborator {
     }
 }
 
-impl RequestUsage {
-    pub fn over_limit(&self) -> bool {
-        match self.limit {
-            UsageLimit::Limited(limit) => self.amount >= limit,
-            UsageLimit::Unlimited => false,
-        }
-    }
 
-    fn from_headers(
-        limit_name: &str,
-        amount_name: &str,
-        headers: &HeaderMap<HeaderValue>,
-    ) -> Result<Self> {
-        let limit = headers
-            .get(limit_name)
-            .with_context(|| format!("missing {limit_name:?} header"))?;
-        let limit = UsageLimit::from_str(limit.to_str()?)?;
-
-        let amount = headers
-            .get(amount_name)
-            .with_context(|| format!("missing {amount_name:?} header"))?;
-        let amount = amount.to_str()?.parse::<i32>()?;
-
-        Ok(Self { limit, amount })
-    }
-}
-
-impl ModelRequestUsage {
-    pub fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
-        Ok(Self(RequestUsage::from_headers(
-            MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME,
-            MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME,
-            headers,
-        )?))
-    }
-}
-
-impl EditPredictionUsage {
-    pub fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
-        Ok(Self(RequestUsage::from_headers(
-            EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME,
-            EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME,
-            headers,
-        )?))
-    }
-}
