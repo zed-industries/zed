@@ -148,6 +148,12 @@ pub struct EditorSettingsContent {
     /// Default: nothing is enabled
     pub search: Option<SearchSettingsContent>,
 
+    /// Whether to enable smart tab feature (skip out of treesitter nodes using
+    /// tab key).
+    ///
+    /// Default: disabled
+    pub smart_tab: Option<SmartTabSettingsContent>,
+
     /// Whether to automatically show a signature help pop-up or not.
     ///
     /// Default: false
@@ -751,6 +757,25 @@ pub struct SearchSettingsContent {
     pub regex: Option<bool>,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: Option<bool>,
+}
+
+#[skip_serializing_none]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+pub struct SmartTabSettingsContent {
+    /// Whether to enable smart tab.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+
+    /// Whether smart tab should supersede the completion menu.
+    ///
+    /// Default: false
+    pub supersede_completions: Option<bool>,
+
+    /// Whether smart tab should supersede accepting edit predictions.
+    ///
+    /// Default: false
+    pub supersede_edit_predictions: Option<bool>,
 }
 
 #[skip_serializing_none]
