@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
-    Vim,
+    ClearOperators, Vim,
     insert::NormalBefore,
     motion::Motion,
     normal::InsertBefore,
@@ -215,6 +215,9 @@ impl Vim {
     ) {
         let count = Vim::take_count(cx);
         Vim::take_forced_motion(cx);
+        if self.active_operator().is_some() {
+            self.stop_recording_immediately(Box::new(ClearOperators), cx);
+        }
 
         let Some((mut actions, selection, mode)) = Vim::update_globals(cx, |globals, _| {
             let actions = globals.recorded_actions.clone();
