@@ -2250,14 +2250,13 @@ impl GitPanel {
                 this.askpass_delegate(format!("git pull {}", remote.name), window, cx)
             })?;
 
+            let branch_name = branch
+                .upstream
+                .is_none()
+                .then(|| branch.name().to_owned().into());
+
             let pull = repo.update(cx, |repo, cx| {
-                repo.pull(
-                    branch.name().to_owned().into(),
-                    remote.name.clone(),
-                    rebase,
-                    askpass,
-                    cx,
-                )
+                repo.pull(branch_name, remote.name.clone(), rebase, askpass, cx)
             })?;
 
             let remote_message = pull.await?;
