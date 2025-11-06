@@ -1,5 +1,5 @@
 use action_log::ActionLog;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use gpui::{
     Action, App, AsyncWindowContext, ClickEvent, Context, Entity, EventEmitter, FocusHandle,
     Focusable, Pixels, WeakEntity, Window, actions, prelude::*, px,
@@ -8,9 +8,7 @@ use language::unified_diff;
 use log::error;
 use project::Project;
 use std::{collections::HashMap, path::PathBuf};
-use ui::{
-    Button, IconName, IconPosition, Label, LabelSize, ListItem, ListItemSpacing, prelude::*,
-};
+use ui::{Button, IconName, IconPosition, Label, LabelSize, ListItem, ListItemSpacing, prelude::*};
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
@@ -199,9 +197,8 @@ impl ComposerPanel {
                 let result = async {
                     let buffer = {
                         let buffer_task = project.update(&mut cx, |project, cx| {
-                            let project_path = project
-                                .find_project_path(&path, cx)
-                                .ok_or_else(|| {
+                            let project_path =
+                                project.find_project_path(&path, cx).ok_or_else(|| {
                                     anyhow!(
                                         "Unable to locate `{}` in the current workspace",
                                         path.display()
@@ -228,7 +225,7 @@ impl ComposerPanel {
                     }
 
                     project
-                        .update(&mut cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
+                        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
                         .await?;
 
                     Ok::<(), anyhow::Error>(())
@@ -247,7 +244,7 @@ impl ComposerPanel {
                 }
             }
 
-            let _ = this.update(&mut cx, |this, cx| {
+            let _ = this.update(cx, |this, cx| {
                 for path in &applied_paths {
                     this.edits.remove(path);
                 }
@@ -268,7 +265,7 @@ impl ComposerPanel {
                 for message in &errors {
                     error!("Composer apply error: {message}");
                 }
-                if let Some(workspace) = this.workspace.upgrade() {
+                if let Some(workspace) = this.project.upgrade() {
                     let message = if errors.len() == 1 {
                         format!("Failed to apply changes: {}", errors[0])
                     } else {
@@ -290,23 +287,17 @@ impl ComposerPanel {
                         .ok();
                 }
             } else if !applied_paths.is_empty() {
-                if let Some(workspace) = this.workspace.upgrade() {
+                if let Some(workspace) = this.project.upgrade() {
                     let message = if applied_paths.len() == 1 {
-                        format!(
-                            "Applied changes to {}",
-                            applied_paths[0].to_string_lossy()
-                        )
+                        format!("Applied changes to {}", applied_paths[0].to_string_lossy())
                     } else {
                         format!("Applied changes to {} files", applied_paths.len())
                     };
                     workspace
                         .update(&mut cx, |workspace, cx| {
                             workspace.show_toast(
-                                Toast::new(
-                                    NotificationId::unique::<ComposerApplyToast>(),
-                                    message,
-                                )
-                                .autohide(),
+                                Toast::new(NotificationId::unique::<ComposerApplyToast>(), message)
+                                    .autohide(),
                                 cx,
                             );
                         })
@@ -329,7 +320,7 @@ impl ComposerPanel {
         let removed_count = staged_paths.len();
 
         for path in staged_paths.iter() {
-            self.edits.remove(&path);
+            self.edits.remove(&path.as_path());
         }
 
         self.selected_file = self.edits.keys().next().cloned();
@@ -342,18 +333,13 @@ impl ComposerPanel {
                 } else {
                     format!("Discarded staged changes for {removed_count} files")
                 };
-                workspace
-                    .update(cx, |workspace, cx| {
-                        workspace.show_toast(
-                            Toast::new(
-                                NotificationId::unique::<ComposerRejectToast>(),
-                                message,
-                            )
+                workspace.update(cx, |workspace, cx| {
+                    workspace.show_toast(
+                        Toast::new(NotificationId::unique::<ComposerRejectToast>(), message)
                             .autohide(),
-                            cx,
-                        );
-                    })
-                    .ok();
+                        cx,
+                    );
+                });
             }
         }
     }
@@ -408,11 +394,8 @@ impl ComposerPanel {
             .children(self.edits.iter().enumerate().map(|(index, (path, edit))| {
                 let is_selected = self.selected_file.as_ref() == Some(path);
                 let path_clone = path.clone();
-                let lines_summary = format!(
-                    "+{} -{} lines",
-                    edit.lines_added(),
-                    edit.lines_removed()
-                );
+                let lines_summary =
+                    format!("+{} -{} lines", edit.lines_added(), edit.lines_removed());
 
                 ListItem::new(("composer-edit", index))
                     .spacing(ListItemSpacing::Sparse)
@@ -498,13 +481,11 @@ impl ComposerPanel {
                             .child(Label::new("Modified").color(Color::Success)),
                     )
             }
-            None => v_flex()
-                .p_4()
-                .child(
-                    Label::new("No file selected")
-                        .color(Color::Muted)
-                        .size(LabelSize::Small),
-                ),
+            None => v_flex().p_4().child(
+                Label::new("No file selected")
+                    .color(Color::Muted)
+                    .size(LabelSize::Small),
+            ),
         }
     }
 }
@@ -577,13 +558,11 @@ impl Render for ComposerPanel {
             .child(self.render_toolbar(cx))
             .when(self.applying, |this| {
                 this.child(
-                    v_flex()
-                        .p_2()
-                        .child(
-                            Label::new("Applying changes...")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
+                    v_flex().p_2().child(
+                        Label::new("Applying changes...")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
                 )
             })
             .child(

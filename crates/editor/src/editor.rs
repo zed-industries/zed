@@ -3174,6 +3174,9 @@ impl Editor {
 
             self.refresh_selected_text_highlights(false, window, cx);
             self.refresh_matching_bracket_highlights(window, cx);
+            if self.rainbow_brackets_enabled(cx) {
+                self.refresh_rainbow_bracket_highlights(window, cx);
+            }
             self.update_visible_edit_prediction(window, cx);
             self.edit_prediction_requires_modifier_in_indent_conflict = true;
             self.inline_blame_popover.take();
@@ -17766,6 +17769,10 @@ impl Editor {
         self.inline_diagnostics_enabled && self.diagnostics_enabled()
     }
 
+    pub fn rainbow_brackets_enabled(&self, cx: &Context<Editor>) -> bool {
+        EditorSettings::get_global(cx).rainbow_brackets
+    }
+
     pub fn show_inline_diagnostics(&self) -> bool {
         self.show_inline_diagnostics
     }
@@ -20961,6 +20968,9 @@ impl Editor {
                 self.refresh_selected_text_highlights(true, window, cx);
                 self.refresh_single_line_folds(window, cx);
                 self.refresh_matching_bracket_highlights(window, cx);
+                if self.rainbow_brackets_enabled(cx) {
+                    self.refresh_rainbow_bracket_highlights(window, cx);
+                }
                 if self.has_active_edit_prediction() {
                     self.update_visible_edit_prediction(window, cx);
                 }

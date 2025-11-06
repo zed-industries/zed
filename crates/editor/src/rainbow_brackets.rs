@@ -1,9 +1,7 @@
-use crate::{Editor, EditorSettings, RangeToAnchorExt};
+use crate::Editor;
 use collections::HashMap;
 use gpui::{Context, HighlightStyle, Hsla, Window};
-use language::Anchor;
-use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
-use settings::Settings;
+use multi_buffer::{Anchor, MultiBufferSnapshot};
 use std::ops::Range;
 use theme::ActiveTheme;
 
@@ -26,6 +24,10 @@ impl Editor {
         cx: &mut Context<Editor>,
     ) {
         self.clear_highlights::<RainbowBracketHighlight>(cx);
+
+        if !self.rainbow_brackets_enabled(cx) {
+            return;
+        }
 
         let snapshot = self.snapshot(window, cx);
         let buffer_snapshot = snapshot.buffer_snapshot();
@@ -51,10 +53,11 @@ impl Editor {
             let depth_index = bracket_info.depth % colors.len();
             let start = buffer_snapshot.anchor_after(bracket_info.range.start);
             let end = buffer_snapshot.anchor_before(bracket_info.range.end);
+            let range = start..end;
             brackets_by_depth
                 .entry(depth_index)
                 .or_default()
-                .push(start..end);
+                .push(range);
         }
 
         // Apply highlights for each depth level
@@ -82,118 +85,77 @@ impl Editor {
         range: Range<usize>,
     ) -> Vec<BracketInfo> {
         let mut bracket_infos = Vec::new();
-        let mut depth_stack: Vec<(Range<usize>, usize)> = Vec::new();
+        let mut depth_stack: Vec<(char, usize)> = Vec::new();
         let mut current_offset = range.start;
 
-        // Find all bracket pairs in the range
         while current_offset < range.end {
-            // Try to find an enclosing bracket pair starting from current position
-            if let Some((opening_range, closing_range)) = buffer_snapshot
-                .innermost_enclosing_bracket_ranges(current_offset..current_offset + 1, None)
-            {
-                // Check if this bracket pair overlaps with our visible range
-                if opening_range.start >= range.start && opening_range.end <= range.end {
-                    // Calculate depth based on how many brackets are still open
-                    let depth = self.calculate_depth_at_position(
-                        buffer_snapshot,
-                        opening_range.start,
-                        &mut depth_stack,
-                    );
+            if let Some((char, _)) = buffer_snapshot.chars_at(current_offset).next() {
+                let is_opening = matches!(char, '(' | '{' | '[');
+                let is_closing = matches!(char, ')' | '}' | ']');
+
+                if is_opening {
+                    // Push opening bracket onto stack
+                    let depth = depth_stack.len();
+                    depth_stack.push((char, current_offset));
 
                     bracket_infos.push(BracketInfo {
-                        range: opening_range.clone(),
+                        range: current_offset..(current_offset + 1),
                         depth,
                         is_opening: true,
                     });
+                } else if is_closing {
+                    // Check if we have a matching opening bracket
+                    let expected_opening = match char {
+                        ')' => '(',
+                        '}' => '{',
+                        ']' => '[',
+                        _ => continue,
+                    };
 
-                    if closing_range.start >= range.start && closing_range.end <= range.end {
+                    // Find and pop the matching opening bracket
+                    if let Some(pos) = depth_stack
+                        .iter()
+                        .rposition(|(c, _)| *c == expected_opening)
+                    {
+                        let depth = pos;
+                        depth_stack.truncate(pos);
+
                         bracket_infos.push(BracketInfo {
-                            range: closing_range.clone(),
+                            range: current_offset..(current_offset + 1),
                             depth,
                             is_opening: false,
                         });
                     }
-
-                    // Move past the opening bracket to find the next one
-                    current_offset = opening_range.end;
-                } else {
-                    // Move forward if the bracket is outside our range
-                    current_offset += 1;
                 }
-            } else {
-                // No bracket found, move forward
-                current_offset += 1;
             }
 
-            // Safety check to prevent infinite loops
-            if current_offset >= buffer_snapshot.len() {
-                break;
-            }
+            current_offset += 1;
         }
 
         bracket_infos
     }
 
-    /// Calculates the depth at a specific position by counting enclosing brackets
-    fn calculate_depth_at_position(
-        &self,
-        buffer_snapshot: &MultiBufferSnapshot,
-        position: usize,
-        _depth_stack: &mut Vec<(Range<usize>, usize)>,
-    ) -> usize {
-        let mut depth = 0;
-        let mut check_position = position;
-
-        // Count how many bracket pairs enclose this position
-        loop {
-            if let Some((opening_range, _closing_range)) = buffer_snapshot
-                .innermost_enclosing_bracket_ranges::<usize>(
-                    check_position..check_position + 1,
-                    Some(Box::new(|open, _close| {
-                        // Only count brackets that truly enclose our position
-                        open.end <= position
-                    })),
-                )
-            {
-                depth += 1;
-                // Move to check for an even more outer bracket pair
-                if opening_range.start > 0 {
-                    check_position = opening_range.start - 1;
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-
-        depth
-    }
-
     /// Gets the rainbow bracket colors from the current theme
     fn get_rainbow_bracket_colors(&self, cx: &mut Context<Editor>) -> Vec<Hsla> {
         let theme = cx.theme();
-        let colors = theme.colors();
 
         // Use accent colors if available, otherwise create a default palette
-        if let Some(accent_colors) = theme.accents() {
+        let accent_colors = theme.accents();
+        if !accent_colors.0.is_empty() {
             accent_colors.0.clone()
         } else {
-            // Default rainbow color palette using available theme colors
+            // Default rainbow color palette
             vec![
-                colors.text_accent,       // Level 0
-                colors.link_text_hover,   // Level 1
-                colors.text_muted,        // Level 2
-                colors.text,              // Level 3
-                colors.editor_foreground, // Level 4
-                colors.text_placeholder,  // Level 5
+                hsla(0.0, 0.95, 0.5, 1.0),   // Red
+                hsla(0.083, 1.0, 0.5, 1.0),  // Orange
+                hsla(0.167, 0.98, 0.5, 1.0), // Yellow
+                hsla(0.333, 0.69, 0.5, 1.0), // Green
+                hsla(0.583, 0.85, 0.5, 1.0), // Blue
+                hsla(0.75, 0.65, 0.5, 1.0),  // Purple
+                hsla(0.917, 0.85, 0.5, 1.0), // Pink
+                hsla(0.472, 0.8, 0.45, 1.0), // Teal
             ]
         }
-    }
-
-    /// Checks if rainbow brackets are enabled in settings
-    pub fn rainbow_brackets_enabled(&self, cx: &Context<Editor>) -> bool {
-        EditorSettings::get_global(cx).rainbow_brackets
     }
 }
 

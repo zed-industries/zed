@@ -479,11 +479,10 @@ impl AgentPanel {
 
     fn sync_composer_action_log(&self, cx: &mut Context<Self>) {
         let action_log = match &self.active_view {
-            ActiveView::ExternalAgentThread { thread_view, .. } => {
-                thread_view.read(cx).as_native_thread(cx).map(|thread| {
-                    thread.read(cx).action_log().clone()
-                })
-            }
+            ActiveView::ExternalAgentThread { thread_view, .. } => thread_view
+                .read(cx)
+                .as_native_thread(cx)
+                .map(|thread| thread.read(cx).action_log().clone()),
             _ => None,
         };
 
@@ -492,15 +491,13 @@ impl AgentPanel {
         };
 
         let action_log_clone = action_log.clone();
-        workspace
-            .update(cx, |workspace, cx| {
-                if let Some(panel) = workspace.panel::<ComposerPanel>(cx) {
-                    panel.update(cx, |composer, _| {
-                        composer.set_action_log(action_log_clone.clone());
-                    });
-                }
-            })
-            .ok();
+        workspace.update(cx, |workspace, cx| {
+            if let Some(panel) = workspace.panel::<ComposerPanel>(cx) {
+                panel.update(cx, |composer, _| {
+                    composer.set_action_log(action_log_clone.clone());
+                });
+            }
+        });
     }
 
     pub fn load(
