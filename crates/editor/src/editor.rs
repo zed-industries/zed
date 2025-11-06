@@ -2299,6 +2299,15 @@ impl Editor {
                     if *local {
                         editor.hide_signature_help(cx, SignatureHelpHiddenBy::Escape);
                         editor.inline_blame_popover.take();
+                        let new_anchor = editor.scroll_manager.anchor();
+                        let snapshot = editor.snapshot(window, cx);
+                        editor.update_restoration_data(cx, move |data| {
+                            data.scroll_position = (
+                                new_anchor.top_row(snapshot.buffer_snapshot()),
+                                new_anchor.offset,
+                            );
+                        });
+
                         editor.post_scroll_update = cx.spawn_in(window, async move |editor, cx| {
                             cx.background_executor()
                                 .timer(Duration::from_millis(50))
@@ -2311,15 +2320,6 @@ impl Editor {
                                         InlayHintRefreshReason::NewLinesShown,
                                         cx,
                                     );
-
-                                    let new_anchor = editor.scroll_manager.anchor();
-                                    let snapshot = editor.snapshot(window, cx);
-                                    editor.update_restoration_data(cx, move |data| {
-                                        data.scroll_position = (
-                                            new_anchor.top_row(snapshot.buffer_snapshot()),
-                                            new_anchor.offset,
-                                        );
-                                    });
                                 })
                                 .ok();
                         });
@@ -21230,18 +21230,19 @@ impl Editor {
                     })
                 }
             }
-        }
 
-        if let Some(inlay_splice) = self.colors.as_mut().and_then(|colors| {
-            colors.render_mode_updated(EditorSettings::get_global(cx).lsp_document_colors)
-        }) {
-            if !inlay_splice.is_empty() {
-                self.splice_inlays(&inlay_splice.to_remove, inlay_splice.to_insert, cx);
+            // TODO kb this does not repaint when brackets are disabled
+            self.colorize_brackets(window, cx);
+
+            if let Some(inlay_splice) = self.colors.as_mut().and_then(|colors| {
+                colors.render_mode_updated(EditorSettings::get_global(cx).lsp_document_colors)
+            }) {
+                if !inlay_splice.is_empty() {
+                    self.splice_inlays(&inlay_splice.to_remove, inlay_splice.to_insert, cx);
+                }
+                self.refresh_colors_for_visible_range(None, window, cx);
             }
-            self.refresh_colors_for_visible_range(None, window, cx);
         }
-
-        self.colorize_brackets(window, cx);
 
         cx.notify();
     }

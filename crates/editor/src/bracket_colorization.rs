@@ -10,6 +10,10 @@ struct RainbowBracketHighlight;
 
 impl Editor {
     pub(crate) fn colorize_brackets(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
+        if !self.mode.is_full() {
+            return;
+        }
+
         let snapshot = self.snapshot(window, cx);
         let multi_buffer_snapshot = snapshot.buffer_snapshot();
 
@@ -66,6 +70,7 @@ impl Editor {
             .flatten()
             .into_group_map_by(|&(depth, ..)| depth);
 
+        // todo! this is not necessary needed, e.g. after scrolling
         self.clear_highlights::<RainbowBracketHighlight>(cx);
         for (depth, bracket_highlights) in bracket_matches {
             let style = HighlightStyle {
@@ -420,7 +425,7 @@ mod tests {
             .max_by_key(|(_, p)| p.end.row)
             .unwrap()
             .clone();
-        // todo! more tests, check consistency of the colors picked also
+        // todo! more tests, check consistency of the colors picked also, settings toggle
         assert_ne!(
             last_bracket, new_last_bracket,
             "After scrolling down, we should have highlighted more brackets"

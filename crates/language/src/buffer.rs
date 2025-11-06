@@ -132,6 +132,7 @@ pub struct Buffer {
 #[derive(Debug)]
 pub struct TreeSitterData {
     data_for_version: Global,
+    /// todo! extract into the same struct inlay chunks use
     chunks: Vec<BufferChunk>,
     brackets_by_chunks: Vec<Option<Vec<BracketMatch>>>,
 }
