@@ -1905,7 +1905,7 @@ impl Editor {
                         }
                     }
 
-                    project::Event::EntryRenamed(transaction) => {
+                    project::Event::EntryRenamed(transaction, project_path, abs_path) => {
                         let Some(workspace) = editor.workspace() else {
                             return;
                         };
@@ -1913,7 +1913,23 @@ impl Editor {
                         else {
                             return;
                         };
+
                         if active_editor.entity_id() == cx.entity_id() {
+                            let entity_id = cx.entity_id();
+                            workspace.update(cx, |this, cx| {
+                                this.panes_mut()
+                                    .iter_mut()
+                                    .filter(|pane| pane.entity_id() != entity_id)
+                                    .for_each(|p| {
+                                        p.update(cx, |pane, _| {
+                                            pane.nav_history_mut().rename_item(
+                                                entity_id,
+                                                project_path.clone(),
+                                                abs_path.clone().into(),
+                                            );
+                                        })
+                                    });
+                            });
                             let edited_buffers_already_open = {
                                 let other_editors: Vec<Entity<Editor>> = workspace
                                     .read(cx)
@@ -1936,7 +1952,6 @@ impl Editor {
                                     })
                                 })
                             };
-
                             if !edited_buffers_already_open {
                                 let workspace = workspace.downgrade();
                                 let transaction = transaction.clone();
