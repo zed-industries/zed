@@ -48,7 +48,7 @@ jobs:
         webhook-url: ${{ secrets.DISCORD_WEBHOOK_RELEASE_NOTES }}
         content: ${{ steps.get-content.outputs.string }}
   publish_winget:
-    runs-on: self-32vcpu-windows-2022
+    runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: set-package-name
       name: after_release::publish_winget::set_package_name
