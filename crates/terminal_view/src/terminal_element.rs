@@ -537,9 +537,10 @@ impl TerminalElement {
 
             // Private Use Area - Powerline separator symbols only
             | 0xE0B0..=0xE0B7 // Powerline separators: triangles (E0B0-E0B3) and half circles (E0B4-E0B7)
-            | 0xE0B8..=0xE0BF // Additional Powerline separators: angles, flames, etc.
-            | 0xE0C0..=0xE0C8 // Powerline separators: pixelated triangles, curves
-            | 0xE0CC..=0xE0D4 // Powerline separators: rounded triangles, ice/lego style
+            | 0xE0B8..=0xE0BF // Powerline separators: corner triangles
+            | 0xE0C0..=0xE0CA // Powerline separators: flames (E0C0-E0C3), pixelated (E0C4-E0C7), and ice (E0C8 & E0CA)
+            | 0xE0CC..=0xE0D1 // Powerline separators: honeycombs (E0CC-E0CD) and lego (E0CE-E0D1)
+            | 0xE0D2..=0xE0D7 // Powerline separators: trapezoid (E0D2 & E0D4) and inverted triangles (E0D6-E0D7)
         )
     }
 
@@ -1661,6 +1662,8 @@ mod tests {
         assert!(TerminalElement::is_decorative_character('\u{E0B2}')); // Powerline left triangle
         assert!(TerminalElement::is_decorative_character('\u{E0B4}')); // Powerline right half circle (the actual issue!)
         assert!(TerminalElement::is_decorative_character('\u{E0B6}')); // Powerline left half circle
+        assert!(TerminalElement::is_decorative_character('\u{E0CA}')); // Powerline mirrored ice waveform
+        assert!(TerminalElement::is_decorative_character('\u{E0D7}')); // Powerline left triangle inverted
 
         // Characters that should NOT be considered decorative
         assert!(!TerminalElement::is_decorative_character('A')); // Regular letter
