@@ -77,14 +77,17 @@ impl GitHostingProvider for Bitbucket {
     }
 
     fn format_line_number(&self, line: u32) -> String {
-        format!("{line}")
+        if self.is_self_hosted() {
+            return format!("{line}");
+        }
+        format!("lines-{line}")
     }
 
     fn format_line_numbers(&self, start_line: u32, end_line: u32) -> String {
         if self.is_self_hosted() {
             return format!("{start_line}-{end_line}");
         }
-        format!("{start_line}:{end_line}")
+        format!("lines-{start_line}:{end_line}")
     }
 
     fn parse_remote_url(&self, url: &str) -> Option<ParsedGitRemote> {
@@ -131,28 +134,23 @@ impl GitHostingProvider for Bitbucket {
             selection,
         } = params;
 
-        let (mut permalink, fragment) = if self.is_self_hosted() {
-            (
-                self.base_url()
-                    .join(&format!(
-                        "projects/{owner}/repos/{repo}/browse/{path}?at={sha}"
-                    ))
-                    .unwrap(),
-                selection.map(|selection| self.line_fragment(&selection)),
-            )
+        let mut permalink = if self.is_self_hosted() {
+            self.base_url()
+                .join(&format!(
+                    "projects/{owner}/repos/{repo}/browse/{path}?at={sha}"
+                ))
+                .unwrap()
         } else {
-            (
-                self.base_url()
-                    .join(&format!("{owner}/{repo}/src/{sha}/{path}"))
-                    .unwrap(),
-                selection.map(|selection| {
-                    let filename = path.rsplit('/').next().unwrap_or("");
-                    format!("{filename}-{}", self.line_fragment(&selection))
-                }),
-            )
+            self.base_url()
+                .join(&format!("{owner}/{repo}/src/{sha}/{path}"))
+                .unwrap()
         };
 
-        permalink.set_fragment(fragment.as_deref());
+        permalink.set_fragment(
+            selection
+                .map(|selection| self.line_fragment(&selection))
+                .as_deref(),
+        );
         permalink
     }
 
@@ -327,7 +325,7 @@ mod tests {
             BuildPermalinkParams::new("f00b4r", &repo_path("main.rs"), Some(6..6)),
         );
 
-        let expected_url = "https://bitbucket.org/zed-industries/zed/src/f00b4r/main.rs#main.rs-7";
+        let expected_url = "https://bitbucket.org/zed-industries/zed/src/f00b4r/main.rs#lines-7";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -355,11 +353,11 @@ mod tests {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
             },
-            BuildPermalinkParams::new("f00b4r", &repo_path("crates/main.rs"), Some(23..47)),
+            BuildPermalinkParams::new("f00b4r", &repo_path("main.rs"), Some(23..47)),
         );
 
         let expected_url =
-            "https://bitbucket.org/zed-industries/zed/src/f00b4r/crates/main.rs#main.rs-24:48";
+            "https://bitbucket.org/zed-industries/zed/src/f00b4r/main.rs#lines-24:48";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
