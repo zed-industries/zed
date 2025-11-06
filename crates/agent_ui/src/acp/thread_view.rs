@@ -5769,12 +5769,7 @@ impl Render for AcpThreadView {
             })
             .children(self.render_thread_retry_status_callout(window, cx))
             .children({
-                if self
-                    .project
-                    .read(cx)
-                    .remote_connection_options(cx)
-                    .is_some_and(|it| it.is_wsl())
-                {
+                if cfg!(windows) && self.project.read(cx).is_local() {
                     self.render_codex_windows_warning(cx)
                 } else {
                     None
