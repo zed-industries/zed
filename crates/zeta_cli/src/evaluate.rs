@@ -12,7 +12,7 @@ use gpui::AsyncApp;
 use zeta2::udiff::DiffLine;
 
 use crate::{
-    example::{Example, NamedExample},
+    example::{Example, ExpectedExcerptSet, NamedExample},
     headless::ZetaCliAppState,
     paths::CACHE_DIR,
     predict::{PredictionDetails, zeta2_predict},
@@ -40,6 +40,7 @@ pub async fn run_evaluate(
     let aggregated_result = EvaluationResult {
         context: Scores::aggregate(all_results.iter().map(|r| &r.context)),
         edit_prediction: Scores::aggregate(all_results.iter().map(|r| &r.edit_prediction)),
+        context_alternative_ix: 0,
     };
 
     if example_len > 1 {
@@ -57,6 +58,8 @@ pub async fn run_evaluate_one(
 ) -> Result<EvaluationResult> {
     let example = NamedExample::load(&example_path).unwrap();
     let example_cache_path = CACHE_DIR.join(&example_path.file_name().unwrap());
+
+    dbg!(&example);
 
     let predictions = if !re_run && example_cache_path.exists() {
         let file_contents = fs::read_to_string(&example_cache_path)?;
@@ -86,7 +89,11 @@ pub async fn run_evaluate_one(
     println!("# {}\n", example.name);
     println!(
         "## Expected Context: \n\n```\n{}\n```\n\n",
-        compare_context(&example.example, &predictions)
+        compare_context(
+            &example.example.expected_excerpts.alternatives
+                [evaluation_result.context_alternative_ix],
+            &predictions
+        )
     );
     println!(
         "## Expected edit prediction:\n\n```diff\n{}\n```\n",
@@ -106,6 +113,7 @@ pub async fn run_evaluate_one(
 pub struct EvaluationResult {
     pub context: Scores,
     pub edit_prediction: Scores,
+    pub context_alternative_ix: usize,
 }
 
 #[derive(Default, Debug)]
@@ -185,18 +193,8 @@ impl EvaluationResult {
 }
 
 pub fn evaluate(example: &Example, preds: &PredictionDetails) -> EvaluationResult {
-    let mut result = EvaluationResult::default();
+    let mut eval_result = EvaluationResult::default();
 
-    let expected_context_lines = example
-        .expected_excerpts
-        .iter()
-        .flat_map(|excerpt| {
-            excerpt
-                .text
-                .lines()
-                .map(|line| format!("{}: {line}", excerpt.path.display()))
-        })
-        .collect();
     let actual_context_lines = preds
         .excerpts
         .iter()
@@ -208,8 +206,25 @@ pub fn evaluate(example: &Example, preds: &PredictionDetails) -> EvaluationResul
         })
         .collect();
 
-    result.context = precision_recall(&expected_context_lines, &actual_context_lines);
+    for expected_alternative in example.expected_excerpts.alternatives.iter() {
+        let expected_context_lines = expected_alternative
+            .excerpts
+            .iter()
+            .flat_map(|excerpt| {
+                excerpt
+                    .text
+                    .lines()
+                    .map(|line| format!("{}: {line}", excerpt.path.display()))
+            })
+            .collect();
 
+        let score = precision_recall(&expected_context_lines, &actual_context_lines);
+        if score.f1_score > eval_result.context.f1_score {
+            eval_result.context = score;
+        }
+    }
+
+    // todo: alternatives for patches
     let expected_patch_lines = example
         .expected_patch
         .lines()
@@ -226,9 +241,9 @@ pub fn evaluate(example: &Example, preds: &PredictionDetails) -> EvaluationResul
         .map(|line| line.to_string())
         .collect();
 
-    result.edit_prediction = precision_recall(&expected_patch_lines, &actual_patch_lines);
+    eval_result.edit_prediction = precision_recall(&expected_patch_lines, &actual_patch_lines);
 
-    result
+    eval_result
 }
 
 fn precision_recall(expected: &HashSet<String>, actual: &HashSet<String>) -> Scores {
@@ -268,13 +283,16 @@ fn precision_recall(expected: &HashSet<String>, actual: &HashSet<String>) -> Sco
 ///
 /// `✓ context line`  -- line was correctly predicted
 /// `✗ context line`  -- line is missing from predictions
-pub fn compare_context(example: &Example, preds: &PredictionDetails) -> String {
+pub fn compare_context(
+    expected_excerpts: &ExpectedExcerptSet,
+    preds: &PredictionDetails,
+) -> String {
     let use_color = std::io::stdout().is_terminal();
     let green = if use_color { "\x1b[32m" } else { "" };
     let red = if use_color { "\x1b[31m" } else { "" };
     let reset = if use_color { "\x1b[0m" } else { "" };
-    let expected: Vec<_> = example
-        .expected_excerpts
+    let expected: Vec<_> = expected_excerpts
+        .excerpts
         .iter()
         .flat_map(|excerpt| {
             excerpt

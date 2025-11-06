@@ -12,7 +12,8 @@ use std::{
 use anyhow::{Context as _, Result, anyhow};
 use clap::ValueEnum;
 use cloud_zeta2_prompt::CURSOR_MARKER;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
+use edit_prediction_context::Line;
 use futures::{
     AsyncWriteExt as _,
     lock::{Mutex, OwnedMutexGuard},
@@ -50,16 +51,32 @@ pub struct Example {
     pub cursor_position: String,
     pub edit_history: String,
     pub expected_patch: String,
-    pub expected_excerpts: Vec<ExpectedExcerpt>,
+    pub expected_excerpts: ExpectedExcerpts,
 }
 
-pub type ExpectedExcerpt = Excerpt;
 pub type ActualExcerpt = Excerpt;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Excerpt {
     pub path: PathBuf,
     pub text: String,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
+pub struct ExpectedExcerpts {
+    pub alternatives: Vec<ExpectedExcerptSet>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
+pub struct ExpectedExcerptSet {
+    pub excerpts: Vec<ExpectedExcerpt>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExpectedExcerpt {
+    pub path: PathBuf,
+    pub text: String,
+    pub required_lines: Vec<Line>,
 }
 
 #[derive(ValueEnum, Debug, Clone)]
@@ -111,13 +128,26 @@ impl NamedExample {
                 cursor_position: String::new(),
                 edit_history: String::new(),
                 expected_patch: String::new(),
-                expected_excerpts: Vec::new(),
+                expected_excerpts: ExpectedExcerpts {
+                    alternatives: vec![ExpectedExcerptSet::default()],
+                },
             },
         };
 
         let mut text = String::new();
-        let mut current_section = String::new();
         let mut block_info: CowStr = "".into();
+
+        #[derive(PartialEq)]
+        enum Section {
+            UncommittedDiff,
+            EditHistory,
+            CursorPosition,
+            ExpectedExcerpts,
+            ExpectedPatch,
+            Other,
+        }
+
+        let mut current_section = Section::Other;
 
         for event in parser {
             match event {
@@ -125,7 +155,7 @@ impl NamedExample {
                     text.push_str(&line);
 
                     if !named.name.is_empty()
-                        && current_section.is_empty()
+                        && current_section == Section::Other
                         // in h1 section
                         && let Some((field, value)) = line.split_once('=')
                     {
@@ -151,7 +181,34 @@ impl NamedExample {
                     named.name = mem::take(&mut text);
                 }
                 Event::End(TagEnd::Heading(HeadingLevel::H2)) => {
-                    current_section = mem::take(&mut text);
+                    let title = mem::take(&mut text);
+                    current_section = if title.eq_ignore_ascii_case(UNCOMMITTED_DIFF_HEADING) {
+                        Section::UncommittedDiff
+                    } else if title.eq_ignore_ascii_case(EDIT_HISTORY_HEADING) {
+                        Section::EditHistory
+                    } else if title.eq_ignore_ascii_case(CURSOR_POSITION_HEADING) {
+                        Section::CursorPosition
+                    } else if title.eq_ignore_ascii_case(EXPECTED_PATCH_HEADING) {
+                        Section::ExpectedPatch
+                    } else if title.eq_ignore_ascii_case(EXPECTED_EXCERPTS_HEADING) {
+                        Section::ExpectedExcerpts
+                    } else {
+                        eprintln!("Warning: Unrecognized section `{title:?}`");
+                        Section::Other
+                    };
+                }
+                Event::End(TagEnd::Heading(HeadingLevel::H3)) => {
+                    mem::take(&mut text);
+                    match current_section {
+                        Section::ExpectedExcerpts => {
+                            let expected_excerpts = &mut named.example.expected_excerpts;
+                            let last_alternative = expected_excerpts.alternatives.last().unwrap();
+                            if !last_alternative.excerpts.is_empty() {
+                                expected_excerpts.alternatives.push(Default::default());
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 Event::End(TagEnd::Heading(level)) => {
                     anyhow::bail!("Unexpected heading level: {level}");
@@ -172,23 +229,42 @@ impl NamedExample {
                 }
                 Event::End(TagEnd::CodeBlock) => {
                     let block_info = block_info.trim();
-                    if current_section.eq_ignore_ascii_case(UNCOMMITTED_DIFF_HEADING) {
-                        named.example.uncommitted_diff = mem::take(&mut text);
-                    } else if current_section.eq_ignore_ascii_case(EDIT_HISTORY_HEADING) {
-                        named.example.edit_history.push_str(&mem::take(&mut text));
-                    } else if current_section.eq_ignore_ascii_case(CURSOR_POSITION_HEADING) {
-                        named.example.cursor_path = block_info.into();
-                        named.example.cursor_position = mem::take(&mut text);
-                    } else if current_section.eq_ignore_ascii_case(EXPECTED_PATCH_HEADING) {
-                        named.example.expected_patch = mem::take(&mut text);
-                    } else if current_section.eq_ignore_ascii_case(EXPECTED_EXCERPTS_HEADING) {
-                        // TODO: "…" should not be a part of the excerpt
-                        named.example.expected_excerpts.push(ExpectedExcerpt {
-                            path: block_info.into(),
-                            text: mem::take(&mut text),
-                        });
-                    } else {
-                        eprintln!("Warning: Unrecognized section `{current_section:?}`")
+                    match current_section {
+                        Section::UncommittedDiff => {
+                            named.example.uncommitted_diff = mem::take(&mut text);
+                        }
+                        Section::EditHistory => {
+                            named.example.edit_history.push_str(&mem::take(&mut text));
+                        }
+                        Section::CursorPosition => {
+                            named.example.cursor_path = block_info.into();
+                            named.example.cursor_position = mem::take(&mut text);
+                        }
+                        Section::ExpectedExcerpts => {
+                            let text = mem::take(&mut text);
+                            for excerpt in text.split("\n…\n") {
+                                let (mut text, required_lines) = extract_required_lines(&excerpt);
+                                if !text.ends_with('\n') {
+                                    text.push('\n');
+                                }
+                                named
+                                    .example
+                                    .expected_excerpts
+                                    .alternatives
+                                    .last_mut()
+                                    .unwrap()
+                                    .excerpts
+                                    .push(ExpectedExcerpt {
+                                        path: block_info.into(),
+                                        text,
+                                        required_lines,
+                                    });
+                            }
+                        }
+                        Section::ExpectedPatch => {
+                            named.example.expected_patch = mem::take(&mut text);
+                        }
+                        Section::Other => {}
                     }
                 }
                 _ => {}
@@ -404,6 +480,47 @@ impl NamedExample {
     }
 }
 
+fn extract_required_lines(text: &str) -> (String, Vec<Line>) {
+    const MARKER: &str = "[ZETA]";
+    let mut new_text = String::new();
+    let mut required_lines = Vec::new();
+    let mut skipped_lines = 0_u32;
+
+    for (row, mut line) in text.split('\n').enumerate() {
+        if let Some(marker_column) = line.find(MARKER) {
+            let mut strip_column = marker_column;
+
+            while strip_column > 0 {
+                let prev_char = line[strip_column - 1..].chars().next().unwrap();
+                if prev_char.is_whitespace() || ['/', '#'].contains(&prev_char) {
+                    strip_column -= 1;
+                } else {
+                    break;
+                }
+            }
+
+            let metadata = &line[marker_column + MARKER.len()..];
+            if metadata.contains("required") {
+                required_lines.push(Line(row as u32 - skipped_lines));
+            }
+
+            if strip_column == 0 {
+                skipped_lines += 1;
+                continue;
+            }
+
+            line = &line[..strip_column];
+        }
+
+        new_text.push_str(line);
+        new_text.push('\n');
+    }
+
+    new_text.pop();
+
+    (new_text, required_lines)
+}
+
 async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
     let output = smol::process::Command::new("git")
         .current_dir(repo_path)
@@ -458,21 +575,31 @@ impl Display for NamedExample {
             )?;
         }
 
-        if !self.example.expected_excerpts.is_empty() {
+        if !self.example.expected_excerpts.alternatives.is_empty() {
             write!(f, "\n## {EXPECTED_EXCERPTS_HEADING}\n\n")?;
 
-            for excerpt in &self.example.expected_excerpts {
-                write!(
-                    f,
-                    "`````{}{}\n{}`````\n\n",
-                    excerpt
-                        .path
-                        .extension()
-                        .map(|ext| format!("{} ", ext.to_string_lossy()))
-                        .unwrap_or_default(),
-                    excerpt.path.display(),
-                    excerpt.text
-                )?;
+            for (i, excerpt_set) in self
+                .example
+                .expected_excerpts
+                .alternatives
+                .iter()
+                .enumerate()
+            {
+                write!(f, "\n### Option {}\n\n", i + 1)?;
+
+                for excerpt in &excerpt_set.excerpts {
+                    write!(
+                        f,
+                        "`````{}{}\n{}`````\n\n",
+                        excerpt
+                            .path
+                            .extension()
+                            .map(|ext| format!("{} ", ext.to_string_lossy()))
+                            .unwrap_or_default(),
+                        excerpt.path.display(),
+                        excerpt.text
+                    )?;
+                }
             }
         }
 
@@ -495,4 +622,45 @@ pub async fn lock_repo(path: impl AsRef<Path>) -> OwnedMutexGuard<()> {
         })
         .lock_owned()
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ::fs::FakeFs;
+    use gpui::TestAppContext;
+    use indoc::indoc;
+    use pretty_assertions::assert_eq;
+    use project::Project;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+
+    #[test]
+    fn test_extract_required_lines() {
+        let input = indoc! {"
+            zero
+            one // [ZETA] required
+            two
+            // [ZETA] something
+            three
+            four # [ZETA] required
+            five
+        "};
+
+        let expected_updated_input = indoc! {"
+            zero
+            one
+            two
+            three
+            four
+            five
+        "};
+
+        let expected_required_lines = vec![Line(1), Line(4)];
+
+        let (updated_input, required_lines) = extract_required_lines(input);
+        assert_eq!(updated_input, expected_updated_input);
+        assert_eq!(required_lines, expected_required_lines);
+    }
 }
