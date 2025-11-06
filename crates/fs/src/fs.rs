@@ -1069,9 +1069,6 @@ pub struct FakeFs {
     // Use an unfair lock to ensure tests are deterministic.
     state: Arc<Mutex<FakeFsState>>,
     executor: gpui::BackgroundExecutor,
-    active_jobs: Arc<Mutex<HashMap<JobId, JobInfo>>>,
-    #[allow(dead_code)]
-    next_job_id: Arc<AtomicUsize>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1353,8 +1350,6 @@ impl FakeFs {
         let this = Arc::new_cyclic(|this| Self {
             this: this.clone(),
             executor: executor.clone(),
-            active_jobs: Arc::new(Mutex::new(HashMap::new())),
-            next_job_id: Arc::new(AtomicUsize::new(0)),
             state: Arc::new(Mutex::new(FakeFsState {
                 root: FakeFsEntry::Dir {
                     inode: 0,
@@ -2628,7 +2623,7 @@ impl Fs for FakeFs {
     }
 
     fn current_job(&self) -> Option<JobInfo> {
-        self.active_jobs.lock().values().next().cloned()
+        None
     }
 
     #[cfg(any(test, feature = "test-support"))]
