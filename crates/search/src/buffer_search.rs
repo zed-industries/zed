@@ -957,16 +957,7 @@ impl BufferSearchBar {
     pub fn set_search_options(&mut self, search_options: SearchOptions, cx: &mut Context<Self>) {
         self.search_options = search_options;
         self.adjust_query_regex_language(cx);
-
-        // TODO!: Check if it would be better to have a method for this, since
-        // it's also called in `toggle_search_option`, just like we have for
-        // `adjust_query_regex_language`.
-        //
-        // Ensure that the global `SearchNextCaseSensitive` is updated to match
-        // the search bar's case sensitivity toggle.
-        let case_sensitive = self.search_options.contains(SearchOptions::CASE_SENSITIVE);
-        cx.update_global::<SelectNextCaseSensitive, _>(|global, _| global.0 = Some(case_sensitive));
-
+        self.sync_select_next_case_sensitivity(cx);
         cx.notify();
     }
 
@@ -1521,6 +1512,7 @@ impl BufferSearchBar {
             .read(cx)
             .as_singleton()
             .expect("query editor should be backed by a singleton buffer");
+
         if enable {
             if let Some(regex_language) = self.regex_language.clone() {
                 query_buffer.update(cx, |query_buffer, cx| {
@@ -1540,7 +1532,7 @@ impl BufferSearchBar {
     /// bar's search options.
     ///
     /// Clears the global case sensitivity override when the search bar is
-    /// dimissed so that only the editor's settings are respected.
+    /// dismissed so that only the editor's settings are respected.
     fn sync_select_next_case_sensitivity(&self, cx: &mut Context<Self>) {
         let case_sensitive = match self.dismissed {
             true => None,
