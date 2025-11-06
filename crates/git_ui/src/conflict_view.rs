@@ -443,7 +443,7 @@ pub(crate) fn resolve_conflict(
     cx: &mut App,
 ) -> Task<()> {
     window.spawn(cx, async move |cx| {
-        let Some((workspace, project, multibuffer, buffer)) = editor
+        let Some((workspace, project, multibuffer, buffer, resolves_all_conflicts)) = editor
             .update(cx, |editor, cx| {
                 let workspace = editor.workspace()?;
                 let project = editor.project()?.clone();
@@ -466,6 +466,7 @@ pub(crate) fn resolve_conflict(
                     })
                     .ok()?;
                 let &(_, block_id) = &state.block_ids[ix];
+                let resolves_all_conflicts = state.block_ids.len() == 1;
                 let range =
                     snapshot.anchor_range_in_excerpt(excerpt_id, resolved_conflict.range)?;
 
@@ -477,16 +478,20 @@ pub(crate) fn resolve_conflict(
                 editor.remove_highlighted_rows::<ConflictsOursMarker>(vec![range.clone()], cx);
                 editor.remove_highlighted_rows::<ConflictsTheirsMarker>(vec![range], cx);
                 editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
-                Some((workspace, project, multibuffer, buffer))
+                Some((workspace, project, multibuffer, buffer, resolves_all_conflicts))
             })
             .ok()
             .flatten()
         else {
             return;
         };
+
         let Some(save) = project
             .update(cx, |project, cx| {
-                if multibuffer.read(cx).all_diff_hunks_expanded() {
+                let should_save = multibuffer
+                    .read_with(cx, |mb, _| mb.is_singleton() || mb.all_diff_hunks_expanded());
+
+                if should_save {
                     project.save_buffer(buffer.clone(), cx)
                 } else {
                     Task::ready(Ok(()))
@@ -496,7 +501,33 @@ pub(crate) fn resolve_conflict(
         else {
             return;
         };
-        if save.await.log_err().is_none() {
+        let save_result = save.await.log_err();
+        let save_ok = save_result.is_some();
+
+        let mut stage_buffer = || -> Option<Task<anyhow::Result<()>>> {
+            let buffer_id = buffer.read_with(cx, |b, _| b.remote_id()).ok()?;
+            let (repository, repo_path) = project
+                .read_with(cx, |project, cx| {
+                    project
+                        .git_store()
+                        .read(cx)
+                        .repository_and_path_for_buffer_id(buffer_id, cx)
+                })
+                .ok()
+                .flatten()?;
+
+            repository
+                .update(cx, |repo, cx| repo.stage_entries(vec![repo_path], cx))
+                .ok()
+        };
+
+        if resolves_all_conflicts && save_ok {
+            if let Some(stage_task) = stage_buffer() {
+                stage_task.await.log_err();
+            }
+        }
+
+        if !save_ok {
             let open_path = maybe!({
                 let path = buffer
                     .read_with(cx, |buffer, cx| buffer.project_path(cx))
