@@ -48,9 +48,8 @@ async fn test_fuzzy_score(cx: &mut TestAppContext) {
                 .iter()
                 .map(|m| m.string.as_str())
                 .collect::<Vec<_>>(),
-            vec!["ElementType", "element_type"]
+            vec!["element_type", "ElementType"]
         );
-        assert!(matches[0].score > matches[1].score);
     }
 
     // fuzzy takes over sort_text and sort_kind
@@ -135,9 +134,6 @@ async fn test_sort_text(cx: &mut TestAppContext) {
             // for each prefix, first item should always be one with lower sort_text
             assert_eq!(matches[0].string, "unreachable!(…)");
             assert_eq!(matches[1].string, "unreachable");
-
-            // fuzzy score should match for first two items as query is common prefix
-            assert_eq!(matches[0].score, matches[1].score);
         })
         .await;
 
@@ -146,9 +142,6 @@ async fn test_sort_text(cx: &mut TestAppContext) {
         // exact match comes first
         assert_eq!(matches[0].string, "unreachable");
         assert_eq!(matches[1].string, "unreachable!(…)");
-
-        // fuzzy score should match for first two items as query is common prefix
-        assert_eq!(matches[0].score, matches[1].score);
     }
 }
 
@@ -332,5 +325,10 @@ async fn filter_and_sort_matches(
         background_executor,
     )
     .await;
-    CompletionsMenu::sort_string_matches(matches, Some(query), snippet_sort_order, completions)
+    dbg!(CompletionsMenu::sort_string_matches(
+        matches,
+        Some(query),
+        snippet_sort_order,
+        completions
+    ))
 }

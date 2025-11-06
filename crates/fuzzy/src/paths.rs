@@ -165,7 +165,9 @@ fn path_match_helper<'a>(
     results: &mut Vec<PathMatch>,
 ) -> std::result::Result<(), Cancelled> {
     let mut candidate_buf = path_prefix.display(path_style).to_string();
-    candidate_buf.push_str(path_style.separator());
+    if !path_prefix.is_empty() {
+        candidate_buf.push_str(path_style.separator());
+    }
     let path_prefix_len = candidate_buf.len();
     for c in candidates {
         if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
@@ -175,15 +177,27 @@ fn path_match_helper<'a>(
         let mut buf = Vec::new();
         candidate_buf.truncate(path_prefix_len);
         candidate_buf.push_str(c.path.as_unix_str());
+        // TODO: need to convert indices/positions from char offsets to byte offsets.
         if let Some(score) = pattern.indices(
             nucleo::Utf32Str::new(dbg!(&candidate_buf), &mut buf),
             matcher,
             &mut indices,
         ) {
+            // TODO: walk both in order for better perf
+            let positions: Vec<_> = candidate_buf
+                .char_indices()
+                .enumerate()
+                .filter_map(|(char_offset, (byte_offset, _))| {
+                    indices
+                        .contains(&(char_offset as u32))
+                        .then_some(byte_offset)
+                })
+                .collect();
+
             results.push(PathMatch {
                 score: score as f64,
                 worktree_id,
-                positions: indices.into_iter().map(|n| n as usize).collect(),
+                positions,
                 is_dir: c.is_dir,
                 path: c.path.into(),
                 path_prefix: Arc::clone(&path_prefix),

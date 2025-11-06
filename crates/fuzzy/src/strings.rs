@@ -185,6 +185,8 @@ where
                                     } else {
                                         length_modifier
                                     },
+
+                                // TODO: need to convert indices/positions from char offsets to byte offsets.
                                 positions: indices.into_iter().map(|n| n as usize).collect(),
                                 string: candidate.string.clone(),
                             })
@@ -255,7 +257,7 @@ mod tests {
         let matches = get_matches(cx, candidates, query, penalize_length).await;
         matches
             .iter()
-            .map(|sm| sm.string.clone())
+            .map(|sm| dbg!(sm).string.clone())
             .collect::<Vec<_>>()
     }
 
@@ -306,5 +308,15 @@ mod tests {
 
         // const CANDIDATES: &'static [&'static str] =
         //     &["crates/livekit_api/vendored/protocol/README.md"];
+    }
+
+    // This is broken?
+    #[gpui::test]
+    async fn broken_nucleo_matcher(cx: &mut TestAppContext) {
+        let candidates = &["lsp_code_lens", "code_lens"];
+        assert_eq!(
+            string_matches(cx, candidates, "lens", false).await,
+            ["code_lens", "lsp_code_lens",]
+        );
     }
 }

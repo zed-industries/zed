@@ -1324,6 +1324,8 @@ impl PickerDelegate for FileFinderDelegate {
 
         let raw_query = match &raw_query.get(0..2) {
             Some(".\\" | "./") => &raw_query[2..],
+            // git diff can add `a\`, `a/`, `b\` or `b/` in front of paths. This
+            // makes it easy to copy those into the file finder.
             Some(prefix @ ("a\\" | "a/" | "b\\" | "b/")) => {
                 if self
                     .workspace

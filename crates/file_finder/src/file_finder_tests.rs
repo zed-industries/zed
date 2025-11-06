@@ -210,9 +210,9 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
         "bandana",
         "./bandana",
         ".\\bandana",
-        util::path!("a/bandana"),
-        "b/bandana",
-        "b\\bandana",
+        util::path!("a/bandana"),  // 'b/' or 'b\` get trimmed off.
+        "b/bandana",               // 'b/' gets trimmed off.
+        "b\\bandana",              // 'b\' gets trimmed off.
         " bandana",
         "bandana ",
         " bandana ",
@@ -2757,10 +2757,10 @@ async fn test_history_items_uniqueness_for_multiple_worktree_open_all_files(
             assert_eq!(path.project.worktree_id, worktree_id2);
             assert_eq!(path.project.path.as_ref(), rel_path("package.json"));
             let panel_match = panel_match.as_ref().unwrap();
-            assert_eq!(panel_match.0.path_prefix, rel_path("repo2").into());
-            assert_eq!(panel_match.0.path, rel_path("package.json").into());
+            assert_eq!(panel_match.path_prefix, rel_path("repo2").into());
+            assert_eq!(panel_match.path, rel_path("package.json").into());
             assert_eq!(
-                panel_match.0.positions,
+                panel_match.positions,
                 vec![6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
             );
         }
@@ -2769,10 +2769,10 @@ async fn test_history_items_uniqueness_for_multiple_worktree_open_all_files(
             assert_eq!(path.project.worktree_id, worktree_id1);
             assert_eq!(path.project.path.as_ref(), rel_path("package.json"));
             let panel_match = panel_match.as_ref().unwrap();
-            assert_eq!(panel_match.0.path_prefix, rel_path("repo1").into());
-            assert_eq!(panel_match.0.path, rel_path("package.json").into());
+            assert_eq!(panel_match.path_prefix, rel_path("repo1").into());
+            assert_eq!(panel_match.path, rel_path("package.json").into());
             assert_eq!(
-                panel_match.0.positions,
+                panel_match.positions,
                 vec![6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
             );
         }
