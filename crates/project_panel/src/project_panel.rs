@@ -27,6 +27,7 @@ use gpui::{
 };
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
+use panel::panel_icon_button;
 use project::{
     Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project, ProjectEntryId,
     ProjectPath, Worktree, WorktreeId,
@@ -54,7 +55,7 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    Color, ContextMenu, DecoratedIcon, Divider, Icon, IconDecoration, IconDecorationKind,
+    Color, ContextMenu, DecoratedIcon, Divider, Icon, IconDecoration, IconDecorationKind, IconName,
     IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing,
     ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
     v_flex,
@@ -3496,6 +3497,10 @@ impl ProjectPanel {
         });
     }
 
+    fn refresh_project_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_visible_entries(None, false, false, window, cx);
+    }
+
     fn expand_entry(
         &mut self,
         worktree_id: WorktreeId,
@@ -4306,6 +4311,18 @@ impl ProjectPanel {
         let diagnostic_severity = details.diagnostic_severity;
         let item_colors = get_item_color(is_sticky, cx);
 
+        let is_root = self
+            .project
+            .read(cx)
+            .worktree_for_id(details.worktree_id, cx)
+            .and_then(|worktree| {
+                let worktree_ref = worktree.read(cx);
+                worktree_ref
+                    .root_entry()
+                    .map(|root_entry| root_entry.id == entry_id)
+            })
+            .unwrap_or(false);
+
         let canonical_path = details
             .canonical_path
             .as_ref()
@@ -4691,7 +4708,7 @@ impl ProjectPanel {
                         }
                     })
                     .selectable(false)
-                    .when_some(canonical_path, |this, path| {
+                    .when_some(canonical_path.clone(), |this, path| {
                         this.end_slot::<AnyElement>(
                             div()
                                 .id("symlink_icon")
@@ -4708,6 +4725,22 @@ impl ProjectPanel {
                                     Icon::new(IconName::ArrowUpRight)
                                         .size(IconSize::Indicator)
                                         .color(filename_text_color),
+                                )
+                                .into_any_element(),
+                        )
+                    })
+                    .when(is_root && canonical_path.is_none(), |this| {
+                        this.end_slot::<AnyElement>(
+                            h_flex()
+                                .pr_1()
+                                .opacity(0.0)
+                                .group_hover("project_entry", |s| s.opacity(1.0))
+                                .child(
+                                    panel_icon_button("refresh-project-panel", IconName::RotateCw)
+                                        .tooltip(Tooltip::text("Refresh Explorer"))
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.refresh_project_panel(window, cx);
+                                        }))
                                 )
                                 .into_any_element(),
                         )
