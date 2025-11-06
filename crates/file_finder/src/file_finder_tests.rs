@@ -1258,6 +1258,89 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_create_file_focused_file_not_belong_to_available_worktrees(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(path!("/roota"), json!({ "the-parent-dira": { "filea": ""}}))
+        .await;
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(path!("/rootb"), json!({"the-parent-dirb":{ "fileb": ""}}))
+        .await;
+
+    let project = Project::test(
+        app_state.fs.clone(),
+        [path!("/roota").as_ref(), path!("/rootb").as_ref()],
+        cx,
+    )
+    .await;
+
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+    let (worktree_id_a, worktree_id_b) = cx.read(|cx| {
+        let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
+        (worktrees[0].read(cx).id(), worktrees[1].read(cx).id())
+    });
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/external/external-file.txt")),
+                OpenOptions {
+                    visible: Some(OpenVisible::None),
+                    ..OpenOptions::default()
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+    let finder = open_file_picker(&workspace, cx);
+
+    finder
+        .update_in(cx, |f, window, cx| {
+            f.delegate
+                .spawn_search(test_path_position("new-file.txt"), window, cx)
+        })
+        .await;
+
+    cx.run_until_parked();
+    finder.update_in(cx, |f, window, cx| {
+        assert_eq!(f.delegate.matches.len(), 1);
+        f.delegate.confirm(false, window, cx); // ✓ works
+    });
+    cx.run_until_parked();
+
+    cx.read(|cx| {
+        let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+
+        let project_path = active_editor.read(cx).project_path(cx);
+
+        assert!(
+            project_path.is_some(),
+            "Active editor should have a project path"
+        );
+
+        let project_path = project_path.unwrap();
+
+        assert!(
+            project_path.worktree_id == worktree_id_a || project_path.worktree_id == worktree_id_b,
+            "New file should be created in one of the available worktrees (A or B), \
+                     not in the external file's worktree. Got worktree_id: {:?}",
+            project_path.worktree_id
+        );
+
+        assert_eq!(project_path.path.as_ref(), &*rel_path("new-file.txt"));
+    })
+}
+
+#[gpui::test]
 async fn test_create_file_no_focused_with_multiple_worktrees(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
     app_state
