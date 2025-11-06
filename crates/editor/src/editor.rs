@@ -5447,26 +5447,6 @@ impl Editor {
             .as_ref()
             .is_none_or(|query| !query.chars().any(|c| c.is_digit(10)));
 
-        let omit_word_completions = !self.word_completions_enabled
-            || (!ignore_word_threshold
-                && match &query {
-                    Some(query) => query.chars().count() < completion_settings.words_min_length,
-                    None => completion_settings.words_min_length != 0,
-                })
-            || (provider.is_some() && completion_settings.words == WordsCompletionMode::Disabled);
-
-        let mut words = if omit_word_completions {
-            Task::ready(BTreeMap::default())
-        } else {
-            cx.background_spawn(async move {
-                buffer_snapshot.words_in_range(WordsQuery {
-                    fuzzy_contents: None,
-                    range: word_search_range,
-                    skip_digits,
-                })
-            })
-        };
-
         let load_provider_completions = provider.as_ref().is_some_and(|provider| {
             trigger.as_ref().is_none_or(|trigger| {
                 provider.is_completion_trigger(
@@ -5503,6 +5483,28 @@ impl Editor {
             )
         } else {
             Task::ready(Ok(Vec::new()))
+        };
+
+        let load_word_completions = load_provider_completions
+            && self.word_completions_enabled
+            && (provider.is_none() || completion_settings.words != WordsCompletionMode::Disabled)
+            && (ignore_word_threshold || {
+                let words_min_length = completion_settings.words_min_length;
+                // check whether word has at least `words_min_length` characters
+                let query_chars = query.iter().flat_map(|q| q.chars());
+                query_chars.take(words_min_length).count() == words_min_length
+            });
+
+        let mut words = if load_word_completions {
+            cx.background_spawn(async move {
+                buffer_snapshot.words_in_range(WordsQuery {
+                    fuzzy_contents: None,
+                    range: word_search_range,
+                    skip_digits,
+                })
+            })
+        } else {
+            Task::ready(BTreeMap::default())
         };
 
         let snippets = if let Some(provider) = &provider
