@@ -8372,7 +8372,7 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
 
 #[track_caller]
 /// We merge lhs into rhs.
-fn merge_pending_ops_snapshots<'a>(
+fn merge_pending_ops_snapshots(
     source: Vec<pending_op::PendingOps>,
     mut target: Vec<pending_op::PendingOps>,
 ) -> Vec<pending_op::PendingOps> {
