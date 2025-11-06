@@ -433,8 +433,7 @@ impl Element for UniformList {
                                         .max(Pixels::ZERO);
                                 }
                                 ScrollStrategy::Bottom => {
-                                    updated_scroll_offset.y = -(item_bottom - list_height
-                                        + offset_pixels)
+                                    updated_scroll_offset.y = -(item_bottom - list_height)
                                         .max(Pixels::ZERO)
                                         .min(content_height - list_height)
                                         .max(Pixels::ZERO);
