@@ -571,6 +571,8 @@ impl Platform for WindowsPlatform {
         write_to_clipboard(item);
     }
 
+    fn write_file_to_clipboard(&self, item: Vec<ClipboardItem>) {}
+
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         read_from_clipboard()
     }

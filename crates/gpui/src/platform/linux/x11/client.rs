@@ -1570,9 +1570,7 @@ impl LinuxClient for X11Client {
         let mut state = self.0.borrow_mut();
         let abs_item_paths = item
             .iter()
-            .map(|item| {
-                format!("file://{}", item.text().unwrap_or_default())
-            })
+            .map(|item| format!("file://{}", item.text().unwrap_or_default()))
             .collect::<Vec<String>>()
             .join("\n");
         state

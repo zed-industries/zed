@@ -1099,6 +1099,8 @@ impl Platform for MacPlatform {
         }
     }
 
+    fn write_file_to_clipboard(&self, item: Vec<ClipboardItem>) {}
+
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         let state = self.0.lock();
         let pasteboard = state.pasteboard;
