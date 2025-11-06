@@ -2511,8 +2511,16 @@ impl Editor {
             key_context.add("renaming");
         }
 
-        if !self.snippet_stack.is_empty() {
+        if let Some(snippet_stack) = self.snippet_stack.last() {
             key_context.add("in_snippet");
+
+            if snippet_stack.active_index > 0 {
+                key_context.add("has_previous_tabstop");
+            }
+
+            if snippet_stack.active_index < snippet_stack.ranges.len().saturating_sub(1) {
+                key_context.add("has_next_tabstop");
+            }
         }
 
         match self.context_menu.borrow().as_ref() {
@@ -10057,6 +10065,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if self.mode.is_single_line() || self.snippet_stack.is_empty() {
+            cx.propagate();
             return;
         }
 
@@ -10064,6 +10073,7 @@ impl Editor {
             self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
             return;
         }
+        cx.propagate();
     }
 
     pub fn previous_snippet_tabstop(
@@ -10073,6 +10083,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if self.mode.is_single_line() || self.snippet_stack.is_empty() {
+            cx.propagate();
             return;
         }
 
@@ -10080,6 +10091,7 @@ impl Editor {
             self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
             return;
         }
+        cx.propagate();
     }
 
     pub fn tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
