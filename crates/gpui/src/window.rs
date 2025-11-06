@@ -1921,6 +1921,9 @@ impl Window {
     /// Executes the provided function with the specified rem size.
     ///
     /// This method must only be called as part of element drawing.
+    // This function is called in a highly recursive manner in editor
+    // prepainting, make sure its inlined to reduce the stack burden
+    #[inline]
     pub fn with_rem_size<F, R>(&mut self, rem_size: Option<impl Into<Pixels>>, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
@@ -2410,6 +2413,9 @@ impl Window {
     /// Push a text style onto the stack, and call a function with that style active.
     /// Use [`Window::text_style`] to get the current, combined text style. This method
     /// should only be called as part of element drawing.
+    // This function is called in a highly recursive manner in editor
+    // prepainting, make sure its inlined to reduce the stack burden
+    #[inline]
     pub fn with_text_style<F, R>(&mut self, style: Option<TextStyleRefinement>, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
@@ -2460,6 +2466,9 @@ impl Window {
 
     /// Invoke the given function with the given content mask after intersecting it
     /// with the current mask. This method should only be called during element drawing.
+    // This function is called in a highly recursive manner in editor
+    // prepainting, make sure its inlined to reduce the stack burden
+    #[inline]
     pub fn with_content_mask<R>(
         &mut self,
         mask: Option<ContentMask<Pixels>>,
