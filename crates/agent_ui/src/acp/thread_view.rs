@@ -539,14 +539,7 @@ impl AcpThreadView {
                 })
                 .log_err()
             } else {
-                let root_dir = if let Some(acp_agent) = connection
-                    .clone()
-                    .downcast::<agent_servers::AcpConnection>()
-                {
-                    acp_agent.root_dir().into()
-                } else {
-                    root_dir.unwrap_or(paths::home_dir().as_path().into())
-                };
+                let root_dir = root_dir.unwrap_or(paths::home_dir().as_path().into());
                 cx.update(|_, cx| {
                     connection
                         .clone()
