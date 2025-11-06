@@ -234,13 +234,20 @@ impl NamedExample {
         }
 
         // Resolve the example to a revision, fetching it if needed.
-        let revision = run_git(&repo_dir, &["rev-parse", &self.example.revision]).await;
+        let revision = run_git(
+            &repo_dir,
+            &[
+                "rev-parse",
+                &format!("{}^{{commit}}", &self.example.revision),
+            ],
+        )
+        .await;
         let revision = if let Ok(revision) = revision {
             revision
         } else {
             run_git(
                 &repo_dir,
-                &["fetch", "--depth", "1", "origin", &self.example.revision],
+                &["fetch", "--depth", "2", "origin", &self.example.revision],
             )
             .await?;
             let revision = run_git(&repo_dir, &["rev-parse", "FETCH_HEAD"]).await?;
