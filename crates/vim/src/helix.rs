@@ -1,8 +1,41 @@
+//! Helix-style text object and selection manipulation.
+//!
+//! This module provides the core functionality for Helix's selection-first editing model.
+//! Unlike Vim's operator-motion model, Helix follows a selection-action pattern where
+//! selections are explicitly made before operations.
+//!
+//! # Architecture
+//!
+//! - `helix_new_selections`: Core selection transformation primitive
+//! - `helix_find_range_*`: Boundary detection for text objects
+//! - Motion handling: Integrates with Vim's motion system
+//!
+//! # Selection Model
+//!
+//! Helix uses a selection-first approach where:
+//! 1. User makes a selection (e.g., select word with `w`)
+//! 2. User performs an action on that selection (e.g., delete with `d`)
+//!
+//! This is different from Vim's operator-motion model where the operator comes first.
+//!
+//! # Examples
+//!
+//! ```rust,ignore
+//! // Select word: move to word boundary
+//! vim.helix_select_motion(Motion::NextWordStart, None, window, cx);
+//!
+//! // Delete selection: operate on current selections
+//! vim.helix_delete(...);
+//! ```
+
 mod boundary;
+mod constants;
 mod duplicate;
 mod object;
 mod paste;
 mod select;
+
+use constants::*;
 
 use editor::display_map::DisplaySnapshot;
 use editor::{
@@ -77,6 +110,14 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 }
 
 impl Vim {
+    /// Moves the cursor in Helix Normal mode without creating a selection.
+    ///
+    /// In Helix Normal mode, motions move the cursor without creating selections.
+    /// This is analogous to Vim's normal mode movement.
+    ///
+    /// # Arguments
+    /// * `motion` - The motion to execute (e.g., NextWordStart, Left, Down)
+    /// * `times` - Optional repeat count for the motion
     pub fn helix_normal_motion(
         &mut self,
         motion: Motion,
@@ -87,6 +128,21 @@ impl Vim {
         self.helix_move_cursor(motion, times, window, cx);
     }
 
+    /// Extends or modifies selections based on a motion in Helix Select mode.
+    ///
+    /// This is the core selection manipulation function. It applies a motion
+    /// to all current selections, extending or modifying them accordingly.
+    ///
+    /// # Arguments
+    /// * `motion` - The motion to apply to selections
+    /// * `times` - Optional repeat count
+    ///
+    /// # Examples
+    /// ```text
+    /// Before: The |quick brown fox
+    /// Motion: NextWordStart (w)
+    /// After:  The «quick» brown fox
+    /// ```
     pub fn helix_select_motion(
         &mut self,
         motion: Motion,
@@ -116,7 +172,23 @@ impl Vim {
         });
     }
 
-    /// Updates all selections based on where the cursors are.
+    /// Updates all selections based on cursor positions using a transformation function.
+    ///
+    /// This is the core selection manipulation primitive for Helix mode. It applies
+    /// the provided transformation to each selection's cursor position and updates
+    /// the selection accordingly.
+    ///
+    /// # Arguments
+    /// * `change` - Function that transforms a cursor position into a new selection range.
+    ///              Returns `None` if the transformation should not be applied.
+    ///
+    /// # Implementation Details
+    /// - Takes the cursor start (either head if reversed/empty, or one char before head)
+    /// - Applies the change function to get new head and tail
+    /// - Updates the selection with the new bounds
+    ///
+    /// # Examples
+    /// Used by operators like text objects, motions, and selection extensions.
     fn helix_new_selections(
         &mut self,
         window: &mut Window,
@@ -145,6 +217,24 @@ impl Vim {
         });
     }
 
+    /// Finds the next text boundary in the forward direction.
+    ///
+    /// Searches forward from the cursor to find a boundary matching the given predicate.
+    /// Used for implementing text objects like words, sentences, paragraphs.
+    ///
+    /// # Arguments
+    /// * `times` - Number of boundaries to cross (defaults to 1)
+    /// * `is_boundary` - Predicate determining if two adjacent characters form a boundary
+    ///
+    /// # Algorithm
+    /// 1. Start from cursor position
+    /// 2. Advance one character right
+    /// 3. Search for boundary using the predicate
+    /// 4. Repeat `times` times or until buffer end
+    ///
+    /// # Performance
+    /// - O(n) where n is the distance to the boundary
+    /// - Early termination if boundary not found
     fn helix_find_range_forward(
         &mut self,
         times: Option<usize>,
@@ -152,7 +242,7 @@ impl Vim {
         cx: &mut Context<Self>,
         mut is_boundary: impl FnMut(char, char, &CharClassifier) -> bool,
     ) {
-        let times = times.unwrap_or(1);
+        let times = times.unwrap_or(DEFAULT_OPERATION_COUNT);
         self.helix_new_selections(window, cx, |cursor, map| {
             let mut head = movement::right(map, cursor);
             let mut tail = cursor;
@@ -179,6 +269,17 @@ impl Vim {
         });
     }
 
+    /// Finds the previous text boundary in the backward direction.
+    ///
+    /// Similar to `helix_find_range_forward` but searches backward from the cursor.
+    ///
+    /// # Arguments
+    /// * `times` - Number of boundaries to cross (defaults to 1)
+    /// * `is_boundary` - Predicate determining if two adjacent characters form a boundary
+    ///
+    /// # Note
+    /// The selection tail is adjusted to include the character at the cursor position
+    /// since backward search starts from the left side of the cursor.
     fn helix_find_range_backward(
         &mut self,
         times: Option<usize>,
@@ -186,7 +287,7 @@ impl Vim {
         cx: &mut Context<Self>,
         mut is_boundary: impl FnMut(char, char, &CharClassifier) -> bool,
     ) {
-        let times = times.unwrap_or(1);
+        let times = times.unwrap_or(DEFAULT_OPERATION_COUNT);
         self.helix_new_selections(window, cx, |cursor, map| {
             let mut head = cursor;
             // The original cursor was one character wide,

@@ -32,6 +32,7 @@ mod lsp_ext;
 mod mouse_context_menu;
 pub mod movement;
 mod persistence;
+mod rainbow_brackets;
 mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
