@@ -356,10 +356,7 @@ impl TextLayout {
                 let (truncate_width, truncation_suffix) =
                     if let Some(text_overflow) = text_style.text_overflow.clone() {
                         let width = known_dimensions.width.or(match available_space.width {
-                            crate::AvailableSpace::Definite(x) => match text_style.line_clamp {
-                                Some(max_lines) => Some(x * max_lines),
-                                None => Some(x),
-                            },
+                            crate::AvailableSpace::Definite(x) => Some(x),
                             _ => None,
                         });
 
@@ -377,14 +374,25 @@ impl TextLayout {
                     return text_layout.size.unwrap();
                 }
 
-                let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
                 let (text, runs) = if let Some(truncate_width) = truncate_width {
-                    line_wrapper.truncate_line(
-                        text.clone(),
-                        truncate_width,
-                        &truncation_suffix,
-                        &runs,
-                    )
+                    let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
+                    if let Some(wrap_width) = wrap_width && let Some(line_clamp) = text_style.line_clamp {
+                        line_wrapper.truncate_last_wrapped_line(
+                            text.clone(),
+                            truncate_width,
+                            &truncation_suffix,
+                            &runs,
+                            wrap_width,
+                            line_clamp
+                        )
+                    } else {
+                        line_wrapper.truncate_line(
+                            text.clone(),
+                            truncate_width,
+                            &truncation_suffix,
+                            &runs,
+                        )
+                    }
                 } else {
                     (text.clone(), Cow::Borrowed(&*runs))
                 };
