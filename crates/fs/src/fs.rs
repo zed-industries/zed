@@ -5,7 +5,6 @@ mod mac_watcher;
 pub mod fs_watcher;
 
 use parking_lot::Mutex;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
@@ -153,7 +152,6 @@ pub trait Fs: Send + Sync {
     async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
-    fn current_job(&self) -> Option<JobInfo>;
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> Arc<FakeFs> {
@@ -227,6 +225,55 @@ pub type JobId = usize;
 pub struct JobInfo {
     pub start: Instant,
     pub message: SharedString,
+    pub id: JobId,
+}
+
+#[derive(Debug, Clone)]
+pub enum JobEvent {
+    Started { info: JobInfo },
+    Completed { id: JobId },
+}
+
+pub type JobEventSender = futures::channel::mpsc::UnboundedSender<JobEvent>;
+pub type JobEventReceiver = futures::channel::mpsc::UnboundedReceiver<JobEvent>;
+
+type JobEventBroadcast = Vec<JobEventSender>;
+
+static GLOBAL_JOB_EVENTS_SUBSCRIBERS: std::sync::Mutex<JobEventBroadcast> =
+    std::sync::Mutex::new(Vec::new());
+
+pub fn subscribe_to_job_events() -> JobEventReceiver {
+    let (sender, receiver) = futures::channel::mpsc::unbounded();
+
+    if let Ok(mut subscribers) = GLOBAL_JOB_EVENTS_SUBSCRIBERS.lock() {
+        subscribers.push(sender);
+    }
+
+    receiver
+}
+
+fn send_job_event(event: JobEvent) {
+    if let Ok(mut subscribers) = GLOBAL_JOB_EVENTS_SUBSCRIBERS.lock() {
+        subscribers.retain(|sender| sender.unbounded_send(event.clone()).is_ok());
+    }
+}
+
+struct JobTracker {
+    id: JobId,
+}
+
+impl JobTracker {
+    fn new(info: JobInfo) -> Self {
+        let id = info.id;
+        send_job_event(JobEvent::Started { info });
+        Self { id }
+    }
+}
+
+impl Drop for JobTracker {
+    fn drop(&mut self) {
+        send_job_event(JobEvent::Completed { id: self.id });
+    }
 }
 
 impl MTime {
@@ -271,7 +318,6 @@ impl From<MTime> for proto::Timestamp {
 pub struct RealFs {
     bundled_git_binary_path: Option<PathBuf>,
     executor: BackgroundExecutor,
-    active_jobs: Arc<Mutex<HashMap<JobId, JobInfo>>>,
     next_job_id: Arc<AtomicUsize>,
 }
 
@@ -377,7 +423,6 @@ impl RealFs {
         Self {
             bundled_git_binary_path: git_binary_path,
             executor,
-            active_jobs: Arc::new(Mutex::new(HashMap::new())),
             next_job_id: Arc::new(AtomicUsize::new(0)),
         }
     }
@@ -978,32 +1023,27 @@ impl Fs for RealFs {
     async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()> {
         let job_id = self.next_job_id.fetch_add(1, Ordering::SeqCst);
         let job_info = JobInfo {
+            id: job_id,
             start: Instant::now(),
             message: SharedString::from(format!("Cloning {}", repo_url)),
         };
 
-        self.active_jobs.lock().insert(job_id, job_info);
+        let _job_tracker = JobTracker::new(job_info);
 
-        let result = async {
-            let output = new_smol_command("git")
-                .current_dir(abs_work_directory)
-                .args(&["clone", repo_url])
-                .output()
-                .await?;
+        let output = new_smol_command("git")
+            .current_dir(abs_work_directory)
+            .args(&["clone", repo_url])
+            .output()
+            .await?;
 
-            if !output.status.success() {
-                anyhow::bail!(
-                    "git clone failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            }
-
-            Ok(())
+        if !output.status.success() {
+            anyhow::bail!(
+                "git clone failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
-        .await;
 
-        self.active_jobs.lock().remove(&job_id);
-        result
+        Ok(())
     }
 
     fn is_fake(&self) -> bool {
@@ -1045,10 +1085,6 @@ impl Fs for RealFs {
 
         temp_dir.close()?;
         case_sensitive
-    }
-
-    fn current_job(&self) -> Option<JobInfo> {
-        self.active_jobs.lock().values().next().cloned()
     }
 }
 
@@ -2622,10 +2658,6 @@ impl Fs for FakeFs {
         Ok(true)
     }
 
-    fn current_job(&self) -> Option<JobInfo> {
-        None
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> Arc<FakeFs> {
         self.this.upgrade().unwrap()
@@ -3240,7 +3272,6 @@ mod tests {
         let fs = RealFs {
             bundled_git_binary_path: None,
             executor,
-            active_jobs: Arc::new(Mutex::new(HashMap::new())),
             next_job_id: Arc::new(AtomicUsize::new(0)),
         };
         let temp_dir = TempDir::new().unwrap();
@@ -3260,7 +3291,6 @@ mod tests {
         let fs = RealFs {
             bundled_git_binary_path: None,
             executor,
-            active_jobs: Arc::new(Mutex::new(HashMap::new())),
             next_job_id: Arc::new(AtomicUsize::new(0)),
         };
         let temp_dir = TempDir::new().unwrap();
