@@ -165,18 +165,18 @@ struct PatchFile<'a> {
 
 struct DiffParser<'a> {
     current_file: Option<PatchFile<'a>>,
-    previous_file: Option<PatchFile<'a>>,
+    current_line: Option<(&'a str, DiffLine<'a>)>,
     hunk: Hunk,
     diff: std::str::Lines<'a>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum DiffEvent<'a> {
     Hunk { path: Cow<'a, str>, hunk: Hunk },
     FileEnd { renamed_to: Option<Cow<'a, str>> },
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 struct Hunk {
     context: String,
     edits: Vec<Edit>,
@@ -188,7 +188,7 @@ impl Hunk {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Edit {
     range: Range<usize>,
     text: String,
@@ -196,126 +196,110 @@ struct Edit {
 
 impl<'a> DiffParser<'a> {
     fn new(diff: &'a str) -> Self {
+        let mut diff = diff.lines();
+        let current_line = diff.next().map(|line| (line, DiffLine::parse(line)));
         DiffParser {
             current_file: None,
-            previous_file: None,
             hunk: Hunk::default(),
-            diff: diff.lines(),
+            current_line,
+            diff,
         }
     }
 
     fn next(&mut self) -> Result<Option<DiffEvent<'a>>> {
-        if let Some(PatchFile { old_path, new_path }) = self.previous_file.take() {
-            let renamed_to = if old_path != new_path {
-                Some(new_path)
-            } else {
-                None
+        loop {
+            let (hunk_done, file_done) = match self.current_line.as_ref().map(|e| &e.1) {
+                Some(DiffLine::OldPath { .. }) | Some(DiffLine::Garbage) | None => (true, true),
+                Some(DiffLine::HunkHeader(_)) => (true, false),
+                _ => (false, false),
             };
-            return Ok(Some(DiffEvent::FileEnd { renamed_to }));
-        }
 
-        while let Some(line) = self.diff.next() {
-            let parsed_line = DiffLine::parse(line);
-            let event = util::maybe!({
+            if hunk_done {
+                if let Some(file) = &self.current_file
+                    && !self.hunk.is_empty()
+                {
+                    return Ok(Some(DiffEvent::Hunk {
+                        path: file.old_path.clone(),
+                        hunk: mem::take(&mut self.hunk),
+                    }));
+                }
+            }
+
+            if file_done {
+                if let Some(PatchFile { old_path, new_path }) = self.current_file.take() {
+                    return Ok(Some(DiffEvent::FileEnd {
+                        renamed_to: if old_path != new_path {
+                            Some(new_path)
+                        } else {
+                            None
+                        },
+                    }));
+                }
+            }
+
+            let Some((line, parsed_line)) = self.current_line.take() else {
+                break;
+            };
+
+            util::maybe!({
                 match parsed_line {
-                    DiffLine::OldPath {
-                        path: updated_old_path,
-                    } => {
-                        self.previous_file = self.current_file.take();
-                        let next_line = self
-                            .diff
-                            .by_ref()
-                            .map(|line| DiffLine::parse(line))
-                            .skip_while(|line| matches!(line, DiffLine::Garbage))
-                            .next();
-
-                        let Some(DiffLine::NewPath {
-                            path: updated_new_path,
-                        }) = next_line
-                        else {
-                            anyhow::bail!("Expected new path after old path");
-                        };
+                    DiffLine::OldPath { path } => {
                         self.current_file = Some(PatchFile {
-                            new_path: updated_new_path,
-                            old_path: updated_old_path,
+                            old_path: path,
+                            new_path: "".into(),
                         });
-
-                        if let Some(prev_file) = &self.previous_file
-                            && !self.hunk.is_empty()
-                        {
-                            let hunk = mem::take(&mut self.hunk);
-                            return Ok(Some(DiffEvent::Hunk {
-                                path: prev_file.old_path.clone(),
-                                hunk,
-                            }));
+                    }
+                    DiffLine::NewPath { path } => {
+                        if let Some(current_file) = &mut self.current_file {
+                            current_file.new_path = path
                         }
                     }
-                    DiffLine::NewPath { .. } => {
-                        anyhow::bail!(
-                            "Found a new path header that wasn't preceded by an old path header"
-                        );
-                    }
-                    DiffLine::HunkHeader(_) => {
-                        return Ok(Some(DiffEvent::Hunk {
-                            path: self
-                                .current_file
-                                .as_ref()
-                                .context("Found hunk header before old path header")?
-                                .old_path
-                                .clone(),
-                            hunk: mem::take(&mut self.hunk),
-                        }));
-                    }
+                    DiffLine::HunkHeader(_) => {}
                     DiffLine::Context(ctx) => {
-                        writeln!(&mut self.hunk.context, "{ctx}")?;
+                        if self.current_file.is_some() {
+                            writeln!(&mut self.hunk.context, "{ctx}")?;
+                        }
                     }
                     DiffLine::Deletion(del) => {
-                        let range = self.hunk.context.len()
-                            ..self.hunk.context.len() + del.len() + '\n'.len_utf8();
-                        if let Some(last_edit) = self.hunk.edits.last_mut()
-                            && last_edit.range.end == range.start
-                        {
-                            last_edit.range.end = range.end;
-                        } else {
-                            self.hunk.edits.push(Edit {
-                                range,
-                                text: String::new(),
-                            });
+                        if self.current_file.is_some() {
+                            let range = self.hunk.context.len()
+                                ..self.hunk.context.len() + del.len() + '\n'.len_utf8();
+                            if let Some(last_edit) = self.hunk.edits.last_mut()
+                                && last_edit.range.end == range.start
+                            {
+                                last_edit.range.end = range.end;
+                            } else {
+                                self.hunk.edits.push(Edit {
+                                    range,
+                                    text: String::new(),
+                                });
+                            }
+                            writeln!(&mut self.hunk.context, "{del}")?;
                         }
-                        writeln!(&mut self.hunk.context, "{del}")?;
                     }
                     DiffLine::Addition(add) => {
-                        let range = self.hunk.context.len()..self.hunk.context.len();
-                        if let Some(last_edit) = self.hunk.edits.last_mut()
-                            && last_edit.range.end == range.start
-                        {
-                            writeln!(&mut last_edit.text, "{add}").unwrap();
-                        } else {
-                            self.hunk.edits.push(Edit {
-                                range,
-                                text: format!("{add}\n"),
-                            });
+                        if self.current_file.is_some() {
+                            let range = self.hunk.context.len()..self.hunk.context.len();
+                            if let Some(last_edit) = self.hunk.edits.last_mut()
+                                && last_edit.range.end == range.start
+                            {
+                                writeln!(&mut last_edit.text, "{add}").unwrap();
+                            } else {
+                                self.hunk.edits.push(Edit {
+                                    range,
+                                    text: format!("{add}\n"),
+                                });
+                            }
                         }
                     }
                     DiffLine::Garbage => {}
                 }
-                Ok(None)
+
+                anyhow::Ok(())
             })
             .with_context(|| format!("on line:\n\n```\n{}```", line))?;
 
-            if event.is_some() {
-                return Ok(event);
-            }
-        }
-
-        if let Some(current_file) = self.current_file.take() {
-            let old_path = current_file.old_path.clone();
-            self.previous_file = Some(current_file);
-
-            return Ok(Some(DiffEvent::Hunk {
-                path: old_path.clone(),
-                hunk: mem::take(&mut self.hunk),
-            }));
+            self.current_line = self.diff.next().map(|line| (line, DiffLine::parse(line)));
         }
 
         anyhow::Ok(None)
@@ -640,6 +624,56 @@ mod tests {
             parse_header_path("a/", "\"C:\\\\Projects\\\\My App\\\\old file.txt\""),
             "C:\\Projects\\My App\\old file.txt"
         );
+    }
+
+    #[test]
+    fn test_parse_diff_with_leading_and_trailing_garbage() {
+        let diff = indoc! {"
+            I need to make some changes.
+
+            I'll change the following things:
+            - one
+              - two
+            - three
+
+            ```
+            --- a/file.txt
+            +++ b/file.txt
+             one
+            +AND
+             two
+            ```
+
+            Summary of what I did:
+            - one
+              - two
+            - three
+
+            That's about it.
+        "};
+
+        let mut events = Vec::new();
+        let mut parser = DiffParser::new(diff);
+        while let Some(event) = parser.next().unwrap() {
+            events.push(event);
+        }
+
+        assert_eq!(
+            events,
+            &[
+                DiffEvent::Hunk {
+                    path: "file.txt".into(),
+                    hunk: Hunk {
+                        context: "one\ntwo\n".into(),
+                        edits: vec![Edit {
+                            range: 4..4,
+                            text: "AND\n".into()
+                        }],
+                    }
+                },
+                DiffEvent::FileEnd { renamed_to: None }
+            ],
+        )
     }
 
     #[gpui::test]
