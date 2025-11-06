@@ -42,7 +42,7 @@ pub(crate) fn run_tests() -> Workflow {
         &should_run_tests,
     ]);
 
-    let jobs = [
+    let mut jobs = vec![
         orchestrate,
         check_style(),
         should_run_tests.guard(run_platform_tests(Platform::Windows)),
@@ -50,7 +50,6 @@ pub(crate) fn run_tests() -> Workflow {
         should_run_tests.guard(run_platform_tests(Platform::Mac)),
         should_run_tests.guard(doctests()),
         should_run_tests.guard(check_workspace_binaries()),
-        should_run_tests.guard(check_postgres_and_protobuf_migrations()), // could be more specific here?
         should_run_tests.guard(check_dependencies()), // could be more specific here?
         should_check_docs.guard(check_docs()),
         should_check_licences.guard(check_licenses()),
@@ -73,6 +72,8 @@ pub(crate) fn run_tests() -> Workflow {
         )),
     ];
     let tests_pass = tests_pass(&jobs);
+
+    jobs.push(should_run_tests.guard(check_postgres_and_protobuf_migrations())); // could be more specific here?
 
     named::workflow()
         .add_event(Event::default()

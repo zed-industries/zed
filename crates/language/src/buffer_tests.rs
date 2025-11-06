@@ -2633,7 +2633,7 @@ fn test_language_scope_at_with_combined_injections(cx: &mut App) {
         buffer.set_language_registry(language_registry.clone());
         buffer.set_language(
             language_registry
-                .language_for_name("ERB")
+                .language_for_name("HTML+ERB")
                 .now_or_never()
                 .unwrap()
                 .ok(),
@@ -2748,6 +2748,50 @@ fn test_language_at_for_markdown_code_block(cx: &mut App) {
             let language = snapshot.language_at(point).unwrap();
             assert_eq!(language.name().as_ref(), "Rust");
         }
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_syntax_layer_at_for_injected_languages(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    cx.new(|cx| {
+        let text = r#"
+            ```html+erb
+            <div>Hello</div>
+            <%= link_to "Some", "https://zed.dev" %>
+            ```
+        "#
+        .unindent();
+
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        language_registry.add(Arc::new(erb_lang()));
+        language_registry.add(Arc::new(html_lang()));
+        language_registry.add(Arc::new(ruby_lang()));
+
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language_registry(language_registry.clone());
+        buffer.set_language(
+            language_registry
+                .language_for_name("HTML+ERB")
+                .now_or_never()
+                .unwrap()
+                .ok(),
+            cx,
+        );
+
+        let snapshot = buffer.snapshot();
+
+        // Test points in the code line
+        let html_point = Point::new(1, 4);
+        let language = snapshot.language_at(html_point).unwrap();
+        assert_eq!(language.name().as_ref(), "HTML");
+
+        let ruby_point = Point::new(2, 6);
+        let language = snapshot.language_at(ruby_point).unwrap();
+        assert_eq!(language.name().as_ref(), "Ruby");
 
         buffer
     });
@@ -3655,7 +3699,7 @@ fn html_lang() -> Language {
 fn erb_lang() -> Language {
     Language::new(
         LanguageConfig {
-            name: "ERB".into(),
+            name: "HTML+ERB".into(),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["erb".to_string()],
                 ..Default::default()
@@ -3673,15 +3717,15 @@ fn erb_lang() -> Language {
     .with_injection_query(
         r#"
             (
-                (code) @injection.content
-                (#set! injection.language "ruby")
-                (#set! injection.combined)
+                (code) @content
+                (#set! "language" "ruby")
+                (#set! "combined")
             )
 
             (
-                (content) @injection.content
-                (#set! injection.language "html")
-                (#set! injection.combined)
+                (content) @content
+                (#set! "language" "html")
+                (#set! "combined")
             )
         "#,
     )

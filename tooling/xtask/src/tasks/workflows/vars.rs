@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use gh_workflow::{Concurrency, Env, Expression, WorkflowDispatchInput};
+use gh_workflow::{Concurrency, Env, Expression, Step, WorkflowDispatchInput};
 
 use crate::tasks::workflows::{runners::Platform, steps::NamedJob};
 
@@ -34,6 +34,8 @@ secret!(ZED_CLIENT_CHECKSUM_SEED);
 secret!(ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON);
 secret!(ZED_SENTRY_MINIDUMP_ENDPOINT);
 secret!(SLACK_APP_ZED_UNIT_EVALS_BOT_TOKEN);
+secret!(ZED_ZIPPY_APP_ID);
+secret!(ZED_ZIPPY_APP_PRIVATE_KEY);
 
 // todo(ci) make these secrets too...
 var!(AZURE_SIGNING_ACCOUNT_NAME);
@@ -116,6 +118,30 @@ impl PathCondition {
     }
 }
 
+pub(crate) struct StepOutput {
+    name: &'static str,
+    step_id: String,
+}
+
+impl StepOutput {
+    pub fn new<T>(step: &Step<T>, name: &'static str) -> Self {
+        Self {
+            name,
+            step_id: step
+                .value
+                .id
+                .clone()
+                .expect("Steps that produce outputs must have an ID"),
+        }
+    }
+}
+
+impl std::fmt::Display for StepOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "${{{{ steps.{}.outputs.{} }}}}", self.step_id, self.name)
+    }
+}
+
 pub(crate) struct Input {
     pub input_type: &'static str,
     pub name: &'static str,
@@ -131,10 +157,6 @@ impl Input {
         }
     }
 
-    pub fn var(&self) -> String {
-        format!("${{{{ inputs.{} }}}}", self.name)
-    }
-
     pub fn input(&self) -> WorkflowDispatchInput {
         WorkflowDispatchInput {
             description: self.name.to_owned(),
@@ -142,6 +164,12 @@ impl Input {
             input_type: self.input_type.to_owned(),
             default: self.default.clone(),
         }
+    }
+}
+
+impl std::fmt::Display for Input {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "${{{{ inputs.{} }}}}", self.name)
     }
 }
 

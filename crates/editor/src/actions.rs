@@ -621,8 +621,6 @@ actions!(
         NextEditPrediction,
         /// Scrolls to the next screen.
         NextScreen,
-        /// Goes to the next snippet tabstop if one exists.
-        NextSnippetTabstop,
         /// Opens the context menu at cursor position.
         OpenContextMenu,
         /// Opens excerpts from the current file.
@@ -656,8 +654,6 @@ actions!(
         Paste,
         /// Navigates to the previous edit prediction.
         PreviousEditPrediction,
-        /// Goes to the previous snippet tabstop if one exists.
-        PreviousSnippetTabstop,
         /// Redoes the last undone edit.
         Redo,
         /// Redoes the last selection change.

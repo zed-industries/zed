@@ -164,6 +164,19 @@ pub struct AgentServerManifestEntry {
     /// args = ["--serve"]
     /// sha256 = "abc123..."  # optional
     /// ```
+    ///
+    /// For Node.js-based agents, you can use "node" as the cmd to automatically
+    /// use Zed's managed Node.js runtime instead of relying on the user's PATH:
+    /// ```toml
+    /// [agent_servers.nodeagent.targets.darwin-aarch64]
+    /// archive = "https://example.com/nodeagent.zip"
+    /// cmd = "node"
+    /// args = ["index.js", "--port", "3000"]
+    /// ```
+    ///
+    /// Note: All commands are executed with the archive extraction directory as the
+    /// working directory, so relative paths in args (like "index.js") will resolve
+    /// relative to the extracted archive contents.
     pub targets: HashMap<String, TargetConfig>,
 }
 

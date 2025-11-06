@@ -918,26 +918,85 @@ pub(crate) struct ElementStateBox {
 }
 
 fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> Bounds<Pixels> {
-    const DEFAULT_WINDOW_OFFSET: Point<Pixels> = point(px(0.), px(35.));
+    #[cfg(target_os = "macos")]
+    {
+        const CASCADE_OFFSET: f32 = 25.0;
 
-    // TODO, BUG: if you open a window with the currently active window
-    // on the stack, this will erroneously select the 'unwrap_or_else'
-    // code path
-    cx.active_window()
-        .and_then(|w| w.update(cx, |_, window, _| window.bounds()).ok())
-        .map(|mut bounds| {
-            bounds.origin += DEFAULT_WINDOW_OFFSET;
-            bounds
-        })
-        .unwrap_or_else(|| {
-            let display = display_id
-                .map(|id| cx.find_display(id))
-                .unwrap_or_else(|| cx.primary_display());
+        let display = display_id
+            .map(|id| cx.find_display(id))
+            .unwrap_or_else(|| cx.primary_display());
 
-            display
-                .map(|display| display.default_bounds())
-                .unwrap_or_else(|| Bounds::new(point(px(0.), px(0.)), DEFAULT_WINDOW_SIZE))
-        })
+        let display_bounds = display
+            .as_ref()
+            .map(|d| d.bounds())
+            .unwrap_or_else(|| Bounds::new(point(px(0.), px(0.)), DEFAULT_WINDOW_SIZE));
+
+        // TODO, BUG: if you open a window with the currently active window
+        // on the stack, this will erroneously select the 'unwrap_or_else'
+        // code path
+        let (base_origin, base_size) = cx
+            .active_window()
+            .and_then(|w| {
+                w.update(cx, |_, window, _| {
+                    let bounds = window.bounds();
+                    (bounds.origin, bounds.size)
+                })
+                .ok()
+            })
+            .unwrap_or_else(|| {
+                let default_bounds = display
+                    .as_ref()
+                    .map(|d| d.default_bounds())
+                    .unwrap_or_else(|| Bounds::new(point(px(0.), px(0.)), DEFAULT_WINDOW_SIZE));
+                (default_bounds.origin, default_bounds.size)
+            });
+
+        let cascade_offset = point(px(CASCADE_OFFSET), px(CASCADE_OFFSET));
+        let proposed_origin = base_origin + cascade_offset;
+        let proposed_bounds = Bounds::new(proposed_origin, base_size);
+
+        let display_right = display_bounds.origin.x + display_bounds.size.width;
+        let display_bottom = display_bounds.origin.y + display_bounds.size.height;
+        let window_right = proposed_bounds.origin.x + proposed_bounds.size.width;
+        let window_bottom = proposed_bounds.origin.y + proposed_bounds.size.height;
+
+        let fits_horizontally = window_right <= display_right;
+        let fits_vertically = window_bottom <= display_bottom;
+
+        let final_origin = match (fits_horizontally, fits_vertically) {
+            (true, true) => proposed_origin,
+            (false, true) => point(display_bounds.origin.x, base_origin.y),
+            (true, false) => point(base_origin.x, display_bounds.origin.y),
+            (false, false) => display_bounds.origin,
+        };
+
+        Bounds::new(final_origin, base_size)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        const DEFAULT_WINDOW_OFFSET: Point<Pixels> = point(px(0.), px(35.));
+
+        // TODO, BUG: if you open a window with the currently active window
+        // on the stack, this will erroneously select the 'unwrap_or_else'
+        // code path
+        cx.active_window()
+            .and_then(|w| w.update(cx, |_, window, _| window.bounds()).ok())
+            .map(|mut bounds| {
+                bounds.origin += DEFAULT_WINDOW_OFFSET;
+                bounds
+            })
+            .unwrap_or_else(|| {
+                let display = display_id
+                    .map(|id| cx.find_display(id))
+                    .unwrap_or_else(|| cx.primary_display());
+
+                display
+                    .as_ref()
+                    .map(|display| display.default_bounds())
+                    .unwrap_or_else(|| Bounds::new(point(px(0.), px(0.)), DEFAULT_WINDOW_SIZE))
+            })
+    }
 }
 
 impl Window {
@@ -3084,6 +3143,7 @@ impl Window {
         &mut self,
         bounds: Bounds<Pixels>,
         path: SharedString,
+        mut data: Option<&[u8]>,
         transformation: TransformationMatrix,
         color: Hsla,
         cx: &App,
@@ -3104,7 +3164,8 @@ impl Window {
         let Some(tile) =
             self.sprite_atlas
                 .get_or_insert_with(&params.clone().into(), &mut || {
-                    let Some((size, bytes)) = cx.svg_renderer.render_alpha_mask(&params)? else {
+                    let Some((size, bytes)) = cx.svg_renderer.render_alpha_mask(&params, data)?
+                    else {
                         return Ok(None);
                     };
                     Ok(Some((size, Cow::Owned(bytes))))
@@ -3558,6 +3619,7 @@ impl Window {
             PlatformInput::KeyDown(KeyDownEvent {
                 keystroke: keystroke.clone(),
                 is_held: false,
+                prefer_character_input: false,
             }),
             cx,
         );
@@ -3856,17 +3918,35 @@ impl Window {
             return;
         }
 
-        for binding in match_result.bindings {
-            self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
-            if !cx.propagate_event {
-                self.dispatch_keystroke_observers(
-                    event,
-                    Some(binding.action),
-                    match_result.context_stack,
-                    cx,
-                );
-                self.pending_input_changed(cx);
-                return;
+        let skip_bindings = event
+            .downcast_ref::<KeyDownEvent>()
+            .filter(|key_down_event| key_down_event.prefer_character_input)
+            .map(|_| {
+                self.platform_window
+                    .take_input_handler()
+                    .map_or(false, |mut input_handler| {
+                        let accepts = input_handler.accepts_text_input(self, cx);
+                        self.platform_window.set_input_handler(input_handler);
+                        // If modifiers are not excessive (e.g. AltGr), and the input handler is accepting text input,
+                        // we prefer the text input over bindings.
+                        accepts
+                    })
+            })
+            .unwrap_or(false);
+
+        if !skip_bindings {
+            for binding in match_result.bindings {
+                self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
+                if !cx.propagate_event {
+                    self.dispatch_keystroke_observers(
+                        event,
+                        Some(binding.action),
+                        match_result.context_stack,
+                        cx,
+                    );
+                    self.pending_input_changed(cx);
+                    return;
+                }
             }
         }
 
@@ -3975,6 +4055,7 @@ impl Window {
             let event = KeyDownEvent {
                 keystroke: replay.keystroke.clone(),
                 is_held: false,
+                prefer_character_input: true,
             };
 
             cx.propagate_event = true;
