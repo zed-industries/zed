@@ -166,7 +166,7 @@ impl LineWrapper {
         runs: &'a [TextRun],
     ) -> (SharedString, Cow<'a, [TextRun]>) {
         if let Some(truncate_ix) =
-            self.get_truncation_index(&*line, truncate_width, truncation_suffix)
+            self.get_truncation_index(&line, truncate_width, truncation_suffix)
         {
             let trimmed = line.trim_ascii_end();
             let result = if trimmed.len() <= truncate_ix {
@@ -201,7 +201,7 @@ impl LineWrapper {
             return self.truncate_line(line, truncate_width, truncation_suffix, runs);
         }
 
-        let fragment = [LineFragment::Text { text: &*line }];
+        let fragment = [LineFragment::Text { text: &line }];
 
         let Some(start_index) = self.wrap_line(&fragment, wrap_width).skip(lines - 2).next() else {
             return (line, Cow::Borrowed(runs));
