@@ -8554,6 +8554,22 @@ async fn test_repository_pending_ops_staging(
             }
         ],
     );
+
+    repo.update(cx, |repo, _cx| {
+        let git_statuses = repo.cached_status().collect::<Vec<_>>();
+
+        assert_eq!(
+            git_statuses,
+            [StatusEntry {
+                repo_path: repo_path("a.txt"),
+                status: TrackedStatus {
+                    index_status: StatusCode::Added,
+                    worktree_status: StatusCode::Unmodified
+                }
+                .into(),
+            }]
+        );
+    });
 }
 
 #[gpui::test]
@@ -8644,6 +8660,22 @@ async fn test_repository_pending_ops_long_running_staging(
             }
         ],
     );
+
+    repo.update(cx, |repo, _cx| {
+        let git_statuses = repo.cached_status().collect::<Vec<_>>();
+
+        assert_eq!(
+            git_statuses,
+            [StatusEntry {
+                repo_path: repo_path("a.txt"),
+                status: TrackedStatus {
+                    index_status: StatusCode::Added,
+                    worktree_status: StatusCode::Unmodified
+                }
+                .into(),
+            }]
+        );
+    });
 }
 
 #[gpui::test]
@@ -8755,6 +8787,24 @@ async fn test_repository_pending_ops_stage_all(
             },
         ],
     );
+
+    repo.update(cx, |repo, _cx| {
+        let git_statuses = repo.cached_status().collect::<Vec<_>>();
+
+        assert_eq!(
+            git_statuses,
+            [
+                StatusEntry {
+                    repo_path: repo_path("a.txt"),
+                    status: FileStatus::Untracked,
+                },
+                StatusEntry {
+                    repo_path: repo_path("b.txt"),
+                    status: FileStatus::Untracked,
+                },
+            ]
+        );
+    });
 }
 
 #[gpui::test]
