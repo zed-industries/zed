@@ -146,6 +146,26 @@ Zed currently supports links to the hosted versions of
 [SourceHut](https://sr.ht) and
 [Codeberg](https://codeberg.org).
 
+### Custom Git Hosting Providers
+
+If you use a self-hosted Git instance (like a company GitLab server), you can configure Zed to create clickable links to your instance by adding a `git_hosting_providers` setting:
+
+```json [settings]
+{
+  "git_hosting_providers": [
+    {
+      "provider": "gitlab",
+      "name": "Company GitLab",
+      "base_url": "https://gitlab.company.com"
+    }
+  ]
+}
+```
+
+The `provider` field specifies which type of hosting service you're using (`github`, `gitlab`, `bitbucket`, `sourcehut`, or `codeberg`), `name` is a display name for your instance, and `base_url` is the root URL of your self-hosted server.
+
+You can configure multiple custom providers if you work with several self-hosted instances.
+
 Zed also has a Copy Permalink feature to create a permanent link to a code snippet on your Git hosting service.
 These links are useful for sharing a specific line or range of lines in a file at a specific commit.
 Trigger this action via the [Command Palette](./getting-started.md#command-palette) (search for `permalink`),
