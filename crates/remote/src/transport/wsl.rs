@@ -98,21 +98,10 @@ impl WslRemoteConnection {
         let args = &["-m"];
         let output = wsl_command_impl(options, &program, args, true)
             .output()
-            .await?;
+            .await;
 
-        if !output.status.success() {
-            let output = wsl_command_impl(options, &program, args, false)
-                .output()
-                .await?;
-
-            if !output.status.success() {
-                return Err(anyhow!(
-                    "Command '{}' failed: {}",
-                    program,
-                    String::from_utf8_lossy(&output.stderr).trim()
-                ));
-            }
-
+        if !output.is_ok_and(|output| output.status.success()) {
+            run_wsl_command_impl(options, &program, args, false).await?;
             Ok(false)
         } else {
             Ok(true)
