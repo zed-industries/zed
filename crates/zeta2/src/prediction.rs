@@ -1,12 +1,11 @@
-use std::{ops::Range, path::Path, str::FromStr, sync::Arc};
+use std::{ops::Range, sync::Arc};
 
 use gpui::{AsyncApp, Entity};
 use language::{Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, TextBufferSnapshot};
-use util::ResultExt;
 use uuid::Uuid;
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
-pub struct EditPredictionId(Uuid);
+pub struct EditPredictionId(pub Uuid);
 
 impl Into<Uuid> for EditPredictionId {
     fn into(self) -> Uuid {
@@ -37,96 +36,31 @@ pub struct EditPrediction {
 }
 
 impl EditPrediction {
-    pub async fn from_response(
-        mut response: open_ai::Response,
-        active_buffer: &Entity<Buffer>,
-        included_files: Vec<(
-            Entity<Buffer>,
-            BufferSnapshot,
-            Arc<Path>,
-            Vec<Range<Anchor>>,
-        )>,
+    pub async fn new(
+        id: EditPredictionId,
+        edited_buffer: &Entity<Buffer>,
+        edited_buffer_snapshot: &BufferSnapshot,
+        edits: Vec<(Range<Anchor>, Arc<str>)>,
         cx: &mut AsyncApp,
     ) -> Option<Self> {
-        let Some(choice) = response.choices.pop() else {
-            log::error!("No output from completion response");
-            return None;
-        };
-
-        let output_text = match choice.message {
-            open_ai::RequestMessage::Assistant {
-                content: Some(open_ai::MessageContent::Plain(content)),
-                ..
-            } => content,
-            open_ai::RequestMessage::Assistant {
-                content: Some(open_ai::MessageContent::Multipart(mut content)),
-                ..
-            } => {
-                if content.is_empty() {
-                    log::error!("No output from Baseten completion response");
-                    return None;
-                }
-
-                match content.remove(0) {
-                    open_ai::MessagePart::Text { text } => text,
-                    open_ai::MessagePart::Image { .. } => {
-                        log::error!("Expected text, got an image");
-                        return None;
-                    }
-                }
-            }
-            _ => {
-                log::error!("Invalid response message: {:?}", choice.message);
-                return None;
-            }
-        };
-
-        let (edited_buffer_snapshot, edits) = crate::udiff::parse_diff(&output_text, |path| {
-            included_files
-                .iter()
-                .find_map(|(_, buffer, probe_path, ranges)| {
-                    if probe_path.as_ref() == path {
-                        Some((buffer, ranges.as_slice()))
-                    } else {
-                        None
-                    }
-                })
-        })
-        .await
-        .log_err()?;
-
-        let edited_buffer = included_files.iter().find_map(|(buffer, snapshot, _, _)| {
-            if snapshot.remote_id() == edited_buffer_snapshot.remote_id() {
-                Some(buffer)
-            } else {
-                None
-            }
-        })?;
-
-        let (buffer, edits, snapshot, edit_preview_task) = edited_buffer
+        let (edits, snapshot, edit_preview_task) = edited_buffer
             .read_with(cx, |buffer, cx| {
                 let new_snapshot = buffer.snapshot();
                 let edits: Arc<[_]> =
                     interpolate_edits(&edited_buffer_snapshot, &new_snapshot, edits.into())?.into();
 
-                Some((
-                    active_buffer.clone(),
-                    edits.clone(),
-                    new_snapshot,
-                    buffer.preview_edits(edits, cx),
-                ))
+                Some((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
             })
             .ok()??;
 
         let edit_preview = edit_preview_task.await;
-        let request_id = Uuid::from_str(&response.id).log_err()?;
 
         Some(EditPrediction {
-            id: EditPredictionId(request_id),
+            id,
             edits,
             snapshot,
             edit_preview,
-            buffer,
+            buffer: edited_buffer.clone(),
         })
     }
 

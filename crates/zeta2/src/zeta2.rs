@@ -30,6 +30,7 @@ use project::Project;
 use release_channel::AppVersion;
 use serde::de::DeserializeOwned;
 use std::collections::{VecDeque, hash_map};
+use uuid::Uuid;
 
 use std::ops::Range;
 use std::path::Path;
@@ -918,22 +919,84 @@ impl Zeta {
                         .ok();
                 }
 
-                response.map(|(res, usage)| (Some((res, included_files)), usage))
+                let (mut res, usage) = response?;
+
+                let request_id = EditPredictionId(Uuid::from_str(&res.id)?);
+
+                let Some(choice) = res.choices.pop() else {
+                    return Ok((None, usage));
+                };
+
+                let output_text = match choice.message {
+                    open_ai::RequestMessage::Assistant {
+                        content: Some(open_ai::MessageContent::Plain(content)),
+                        ..
+                    } => content,
+                    open_ai::RequestMessage::Assistant {
+                        content: Some(open_ai::MessageContent::Multipart(mut content)),
+                        ..
+                    } => {
+                        if content.is_empty() {
+                            log::error!("No output from Baseten completion response");
+                            return Ok((None, usage));
+                        }
+
+                        match content.remove(0) {
+                            open_ai::MessagePart::Text { text } => text,
+                            open_ai::MessagePart::Image { .. } => {
+                                log::error!("Expected text, got an image");
+                                return Ok((None, usage));
+                            }
+                        }
+                    }
+                    _ => {
+                        log::error!("Invalid response message: {:?}", choice.message);
+                        return Ok((None, usage));
+                    }
+                };
+
+                let (edited_buffer_snapshot, edits) =
+                    crate::udiff::parse_diff(&output_text, |path| {
+                        included_files
+                            .iter()
+                            .find_map(|(_, buffer, probe_path, ranges)| {
+                                if probe_path.as_ref() == path {
+                                    Some((buffer, ranges.as_slice()))
+                                } else {
+                                    None
+                                }
+                            })
+                    })
+                    .await?;
+
+                let edited_buffer = included_files
+                    .iter()
+                    .find_map(|(buffer, snapshot, _, _)| {
+                        if snapshot.remote_id() == edited_buffer_snapshot.remote_id() {
+                            Some(buffer.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .context("Failed to find buffer in included_buffers, even though we just found the snapshot")?.clone();
+
+                anyhow::Ok((Some((request_id, edited_buffer, edited_buffer_snapshot.clone(), edits)), usage))
             }
         });
 
-        let buffer = active_buffer.clone();
-
         cx.spawn({
             async move |this, cx| {
-                let Some((response, included_files)) =
+                let Some((id, edited_buffer, edited_buffer_snapshot, edits)) =
                     Self::handle_api_response(&this, request_task.await, cx)?
                 else {
                     return Ok(None);
                 };
 
                 // TODO telemetry: duration, etc
-                Ok(EditPrediction::from_response(response, &buffer, included_files, cx).await)
+                Ok(
+                    EditPrediction::new(id, &edited_buffer, &edited_buffer_snapshot, edits, cx)
+                        .await,
+                )
             }
         })
     }

@@ -7,9 +7,9 @@ use std::{
 
 use anyhow::Result;
 use clap::Args;
-use cloud_llm_client::udiff::DiffLine;
 use collections::HashSet;
 use gpui::AsyncApp;
+use zeta2::udiff::DiffLine;
 
 use crate::{
     example::{Example, NamedExample},
