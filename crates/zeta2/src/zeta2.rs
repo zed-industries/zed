@@ -978,7 +978,7 @@ impl Zeta {
                             None
                         }
                     })
-                    .context("Failed to find buffer in included_buffers, even though we just found the snapshot")?.clone();
+                    .context("Failed to find buffer in included_buffers, even though we just found the snapshot")?;
 
                 anyhow::Ok((Some((request_id, edited_buffer, edited_buffer_snapshot.clone(), edits)), usage))
             }
