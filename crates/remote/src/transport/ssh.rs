@@ -370,7 +370,7 @@ impl RemoteConnection for SshRemoteConnection {
 
         let ssh_proxy_process = match self
             .socket
-            .ssh_command(self.ssh_shell_kind, "env", &proxy_args)
+            .ssh_command(self.ssh_shell_kind, "env", &proxy_args, false)
             // IMPORTANT: we kill this process when we drop the task that uses it.
             .kill_on_drop(true)
             .spawn()
@@ -578,6 +578,7 @@ impl SshRemoteConnection {
                 self.ssh_shell_kind,
                 &dst_path.display(self.path_style()),
                 &["version"],
+                true,
             )
             .await
             .is_ok()
@@ -615,13 +616,13 @@ impl SshRemoteConnection {
             {
                 Ok(_) => {
                     self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
-                        .await?;
+                        .await
+                        .context("extracting server binary")?;
                     return Ok(dst_path);
                 }
                 Err(e) => {
                     log::error!(
-                        "Failed to download binary on server, attempting to upload server: {}",
-                        e
+                        "Failed to download binary on server, attempting to upload server: {e:#}",
                     )
                 }
             }
@@ -629,11 +630,14 @@ impl SshRemoteConnection {
 
         let src_path = delegate
             .download_server_binary_locally(self.ssh_platform, release_channel, wanted_version, cx)
-            .await?;
+            .await
+            .context("downloading server binary locally")?;
         self.upload_local_server_binary(&src_path, &tmp_path_gz, delegate, cx)
-            .await?;
+            .await
+            .context("uploading server binary")?;
         self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
-            .await?;
+            .await
+            .context("extracting server binary")?;
         Ok(dst_path)
     }
 
@@ -651,6 +655,7 @@ impl SshRemoteConnection {
                     self.ssh_shell_kind,
                     "mkdir",
                     &["-p", parent.display(self.path_style()).as_ref()],
+                    true,
                 )
                 .await?;
         }
@@ -675,6 +680,7 @@ impl SshRemoteConnection {
                     "-o",
                     &tmp_path_gz.display(self.path_style()),
                 ],
+                true,
             )
             .await
         {
@@ -682,7 +688,7 @@ impl SshRemoteConnection {
             Err(e) => {
                 if self
                     .socket
-                    .run_command(self.ssh_shell_kind, "which", &["curl"])
+                    .run_command(self.ssh_shell_kind, "which", &["curl"], true)
                     .await
                     .is_ok()
                 {
@@ -702,6 +708,7 @@ impl SshRemoteConnection {
                             "-O",
                             &tmp_path_gz.display(self.path_style()),
                         ],
+                        true,
                     )
                     .await
                 {
@@ -709,7 +716,7 @@ impl SshRemoteConnection {
                     Err(e) => {
                         if self
                             .socket
-                            .run_command(self.ssh_shell_kind, "which", &["wget"])
+                            .run_command(self.ssh_shell_kind, "which", &["wget"], true)
                             .await
                             .is_ok()
                         {
@@ -738,6 +745,7 @@ impl SshRemoteConnection {
                     self.ssh_shell_kind,
                     "mkdir",
                     &["-p", parent.display(self.path_style()).as_ref()],
+                    true,
                 )
                 .await?;
         }
@@ -778,14 +786,23 @@ impl SshRemoteConnection {
         let dst_path = dst_path.display(self.path_style());
         let dst_path = shell_kind.try_quote(&dst_path).context("shell quoting")?;
         let script = if let Some(tmp_path) = orig_tmp_path.strip_suffix(".gz") {
+            let orig_tmp_path = shell_kind
+                .try_quote(&orig_tmp_path)
+                .context("shell quoting")?;
+            let tmp_path = shell_kind.try_quote(&tmp_path).context("shell quoting")?;
             format!(
                 "gunzip -f {orig_tmp_path} && chmod {server_mode} {tmp_path} && mv {tmp_path} {dst_path}",
             )
         } else {
+            let orig_tmp_path = shell_kind
+                .try_quote(&orig_tmp_path)
+                .context("shell quoting")?;
             format!("chmod {server_mode} {orig_tmp_path} && mv {orig_tmp_path} {dst_path}",)
         };
         let args = shell_kind.args_for_shell(false, script.to_string());
-        self.socket.run_command(shell_kind, "sh", &args).await?;
+        self.socket
+            .run_command(shell_kind, "sh", &args, true)
+            .await?;
         Ok(())
     }
 
@@ -934,6 +951,7 @@ impl SshSocket {
         shell_kind: ShellKind,
         program: &str,
         args: &[impl AsRef<str>],
+        allow_pseudo_tty: bool,
     ) -> process::Command {
         let mut command = util::command::new_smol_command("ssh");
         let program = shell_kind.prepend_command_prefix(program);
@@ -953,9 +971,11 @@ impl SshSocket {
         let separator = shell_kind.sequential_commands_separator();
         let to_run = format!("cd{separator} {to_run}");
         self.ssh_options(&mut command, true)
-            .arg(self.connection_options.ssh_url())
-            .arg("-T")
-            .arg(to_run);
+            .arg(self.connection_options.ssh_url());
+        if !allow_pseudo_tty {
+            command.arg("-T");
+        }
+        command.arg(to_run);
         log::debug!("ssh {:?}", command);
         command
     }
@@ -965,8 +985,12 @@ impl SshSocket {
         shell_kind: ShellKind,
         program: &str,
         args: &[impl AsRef<str>],
+        allow_pseudo_tty: bool,
     ) -> Result<String> {
-        let output = self.ssh_command(shell_kind, program, args).output().await?;
+        let output = self
+            .ssh_command(shell_kind, program, args, allow_pseudo_tty)
+            .output()
+            .await?;
         anyhow::ensure!(
             output.status.success(),
             "failed to run command: {}",
@@ -1039,7 +1063,7 @@ impl SshSocket {
     }
 
     async fn platform(&self, shell: ShellKind) -> Result<RemotePlatform> {
-        let uname = self.run_command(shell, "uname", &["-sm"]).await?;
+        let uname = self.run_command(shell, "uname", &["-sm"], false).await?;
         let Some((os, arch)) = uname.split_once(" ") else {
             anyhow::bail!("unknown uname: {uname:?}")
         };
@@ -1072,7 +1096,7 @@ impl SshSocket {
     async fn shell(&self) -> String {
         let default_shell = "sh";
         match self
-            .run_command(ShellKind::Posix, "sh", &["-c", "echo $SHELL"])
+            .run_command(ShellKind::Posix, "sh", &["-c", "echo $SHELL"], false)
             .await
         {
             Ok(shell) => match shell.trim() {
