@@ -89,6 +89,12 @@ impl Add<u16> for PendingOpId {
     }
 }
 
+impl From<u16> for PendingOpId {
+    fn from(id: u16) -> Self {
+        Self(id)
+    }
+}
+
 impl PendingOps {
     pub fn new(path: &RepoPath) -> Self {
         Self {

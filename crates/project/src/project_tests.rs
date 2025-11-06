@@ -2,7 +2,7 @@
 
 use crate::{
     Event,
-    git_store::{GitStoreEvent, RepositoryEvent, StatusEntry},
+    git_store::{GitStoreEvent, RepositoryEvent, StatusEntry, pending_op},
     task_inventory::TaskContexts,
     task_store::TaskSettingsLocation,
     *,
@@ -8367,6 +8367,96 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
             }]
         )
     });
+}
+
+#[gpui::test]
+async fn test_repository_pending_ops_staging(
+    executor: gpui::BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "my-repo": {
+                ".git": {},
+                "a.txt": "a",
+            }
+
+        }),
+    )
+    .await;
+
+    fs.set_status_for_repo(
+        path!("/root/my-repo/.git").as_ref(),
+        &[("a.txt", FileStatus::Untracked)],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root/my-repo").as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
+
+    let repo = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+
+    // Ensure we have no pending ops for any of the untracked files
+    repo.read_with(cx, |repo, _cx| {
+        assert!(repo.pending_ops_by_path.is_empty());
+    });
+
+    let mut id = 1u16;
+
+    let mut assert_stage = async |path: RepoPath, stage| {
+        let git_status = if stage {
+            pending_op::GitStatus::Staged
+        } else {
+            pending_op::GitStatus::Unstaged
+        };
+        repo.update(cx, |repo, cx| {
+            let task = if stage {
+                repo.stage_entries(vec![path.clone()], cx)
+            } else {
+                repo.unstage_entries(vec![path.clone()], cx)
+            };
+            let ops = repo.pending_ops_for_path(&path).unwrap();
+            assert_eq!(
+                ops.ops.last(),
+                Some(&pending_op::PendingOp {
+                    id: id.into(),
+                    git_status,
+                    job_status: pending_op::JobStatus::Running
+                })
+            );
+            task
+        })
+        .await
+        .unwrap();
+
+        repo.read_with(cx, |repo, _cx| {
+            let ops = repo.pending_ops_for_path(&path).unwrap();
+            assert_eq!(
+                ops.ops.last(),
+                Some(&pending_op::PendingOp {
+                    id: id.into(),
+                    git_status,
+                    job_status: pending_op::JobStatus::Finished
+                })
+            );
+        });
+
+        id += 1;
+    };
+
+    assert_stage(repo_path("a.txt"), true).await;
+    assert_stage(repo_path("a.txt"), false).await;
+    assert_stage(repo_path("a.txt"), true).await;
+    assert_stage(repo_path("a.txt"), false).await;
+    assert_stage(repo_path("a.txt"), true).await;
 }
 
 #[gpui::test]
