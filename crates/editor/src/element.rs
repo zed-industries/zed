@@ -4071,17 +4071,17 @@ impl EditorElement {
                                                         cx,
                                                     )),
                                             )
-                                            .on_click(window.listener_for(&self.editor, {
-                                                let jump_data = jump_data.clone();
+                                            .on_click(window.listener_for(
+                                                &self.editor,
                                                 move |editor, e: &ClickEvent, window, cx| {
                                                     editor.open_excerpts_common(
-                                                        Some(jump_data.clone()),
+                                                        None,
                                                         e.modifiers().secondary(),
                                                         window,
                                                         cx,
                                                     );
-                                                }
-                                            })),
+                                                },
+                                            )),
                                     )
                                 },
                             )
