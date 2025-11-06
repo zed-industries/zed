@@ -165,7 +165,9 @@ impl LineWrapper {
         truncation_suffix: &str,
         runs: &'a [TextRun],
     ) -> (SharedString, Cow<'a, [TextRun]>) {
-        if let Some(truncate_ix) = self.get_truncation_index(&*line, truncate_width, truncation_suffix) {
+        if let Some(truncate_ix) =
+            self.get_truncation_index(&*line, truncate_width, truncation_suffix)
+        {
             let trimmed = line.trim_ascii_end();
             let result = if trimmed.len() <= truncate_ix {
                 SharedString::new(trimmed)
@@ -201,20 +203,26 @@ impl LineWrapper {
 
         let fragment = [LineFragment::Text { text: &*line }];
 
-        let Some(start_index) = self.wrap_line(&fragment, wrap_width).skip(lines-2).next() else {
+        let Some(start_index) = self.wrap_line(&fragment, wrap_width).skip(lines - 2).next() else {
             return (line, Cow::Borrowed(runs));
         };
 
         let last_line = &line[start_index.ix..];
 
-        if let Some(truncate_ix) = self.get_truncation_index(last_line, truncate_width, truncation_suffix) {
+        if let Some(truncate_ix) =
+            self.get_truncation_index(last_line, truncate_width, truncation_suffix)
+        {
             let trimmed = line.trim_ascii_end();
-            let result = if trimmed.len() <= start_index.ix+truncate_ix {
+            let result = if trimmed.len() <= start_index.ix + truncate_ix {
                 SharedString::new(trimmed)
             } else if truncation_suffix.is_empty() {
-                SharedString::new(&line[..start_index.ix+truncate_ix])
+                SharedString::new(&line[..start_index.ix + truncate_ix])
             } else {
-                let string = format!("{}{}", &line[..start_index.ix+truncate_ix], truncation_suffix);
+                let string = format!(
+                    "{}{}",
+                    &line[..start_index.ix + truncate_ix],
+                    truncation_suffix
+                );
                 SharedString::from(string)
             };
 

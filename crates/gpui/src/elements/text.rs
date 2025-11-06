@@ -375,15 +375,18 @@ impl TextLayout {
                 }
 
                 let (text, runs) = if let Some(truncate_width) = truncate_width {
-                    let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
-                    if let Some(wrap_width) = wrap_width && let Some(line_clamp) = text_style.line_clamp {
+                    let mut line_wrapper =
+                        cx.text_system().line_wrapper(text_style.font(), font_size);
+                    if let Some(wrap_width) = wrap_width
+                        && let Some(line_clamp) = text_style.line_clamp
+                    {
                         line_wrapper.truncate_last_wrapped_line(
                             text.clone(),
                             truncate_width,
                             &truncation_suffix,
                             &runs,
                             wrap_width,
-                            line_clamp
+                            line_clamp,
                         )
                     } else {
                         line_wrapper.truncate_line(
