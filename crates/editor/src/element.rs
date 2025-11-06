@@ -3902,206 +3902,192 @@ impl EditorElement {
         // block header padding is the height of the header minus the button size divided by 2, minus the outer padding
         let header_padding_size = (header_height_size - button_size) / 2.0 - outer_padding;
 
-        let header = div()
-            .p_1()
-            .w_full()
-            .h(header_height_size)
-            .child(
-                h_flex()
-                    .size_full()
-                    .gap_2()
-                    .px(header_padding_size)
-                    .rounded_sm()
-                    .when(is_sticky, |el| el.shadow_md())
-                    .border_1()
-                    .map(|div| {
-                        let border_color = if is_selected
-                            && is_folded
-                            && focus_handle.contains_focused(window, cx)
-                        {
+        let header = div().p_1().w_full().h(header_height_size).child(
+            h_flex()
+                .size_full()
+                .gap_2()
+                .px(header_padding_size)
+                .rounded_sm()
+                .when(is_sticky, |el| el.shadow_md())
+                .border_1()
+                .map(|div| {
+                    let border_color =
+                        if is_selected && is_folded && focus_handle.contains_focused(window, cx) {
                             colors.border_focused
                         } else {
                             colors.border
                         };
-                        div.border_color(border_color)
-                    })
-                    .bg(colors.editor_subheader_background)
-                    .hover(|style| style.bg(colors.element_hover))
-                    .map(|header| {
-                        let editor = self.editor.clone();
-                        let buffer_id = for_excerpt.buffer_id;
-                        let toggle_chevron_icon =
-                            FileIcons::get_chevron_icon(!is_folded, cx).map(Icon::from_path);
-                        header.child(
-                            div()
-                                .hover(|style| style.bg(colors.element_selected))
-                                .rounded_xs()
-                                .child(
-                                    ButtonLike::new("toggle-buffer-fold")
-                                        .style(ui::ButtonStyle::Transparent)
-                                        .height(button_size.into())
-                                        .width(button_size)
-                                        .children(toggle_chevron_icon)
-                                        .tooltip({
-                                            let focus_handle = focus_handle.clone();
-                                            move |_window, cx| {
-                                                Tooltip::with_meta_in(
-                                                    "Toggle Excerpt Fold",
-                                                    Some(&ToggleFold),
-                                                    format!(
-                                                        "{} to toggle all",
-                                                        text_for_keystroke(
-                                                            &Modifiers::alt(),
-                                                            "click",
-                                                            cx
-                                                        )
-                                                    ),
-                                                    &focus_handle,
-                                                    cx,
-                                                )
-                                            }
-                                        })
-                                        .on_click(move |event, window, cx| {
-                                            if event.modifiers().alt {
-                                                // Alt+click toggles all buffers
+                    div.border_color(border_color)
+                })
+                .bg(colors.editor_subheader_background)
+                .hover(|style| style.bg(colors.element_hover))
+                .map(|header| {
+                    let editor = self.editor.clone();
+                    let buffer_id = for_excerpt.buffer_id;
+                    let toggle_chevron_icon =
+                        FileIcons::get_chevron_icon(!is_folded, cx).map(Icon::from_path);
+                    header.child(
+                        div()
+                            .hover(|style| style.bg(colors.element_selected))
+                            .rounded_xs()
+                            .child(
+                                ButtonLike::new("toggle-buffer-fold")
+                                    .style(ui::ButtonStyle::Transparent)
+                                    .height(button_size.into())
+                                    .width(button_size)
+                                    .children(toggle_chevron_icon)
+                                    .tooltip({
+                                        let focus_handle = focus_handle.clone();
+                                        move |_window, cx| {
+                                            Tooltip::with_meta_in(
+                                                "Toggle Excerpt Fold",
+                                                Some(&ToggleFold),
+                                                format!(
+                                                    "{} to toggle all",
+                                                    text_for_keystroke(
+                                                        &Modifiers::alt(),
+                                                        "click",
+                                                        cx
+                                                    )
+                                                ),
+                                                &focus_handle,
+                                                cx,
+                                            )
+                                        }
+                                    })
+                                    .on_click(move |event, window, cx| {
+                                        if event.modifiers().alt {
+                                            // Alt+click toggles all buffers
+                                            editor.update(cx, |editor, cx| {
+                                                editor.toggle_fold_all(&ToggleFoldAll, window, cx);
+                                            });
+                                        } else {
+                                            // Regular click toggles single buffer
+                                            if is_folded {
                                                 editor.update(cx, |editor, cx| {
-                                                    editor.toggle_fold_all(
-                                                        &ToggleFoldAll,
-                                                        window,
-                                                        cx,
-                                                    );
+                                                    editor.unfold_buffer(buffer_id, cx);
                                                 });
                                             } else {
-                                                // Regular click toggles single buffer
-                                                if is_folded {
-                                                    editor.update(cx, |editor, cx| {
-                                                        editor.unfold_buffer(buffer_id, cx);
-                                                    });
-                                                } else {
-                                                    editor.update(cx, |editor, cx| {
-                                                        editor.fold_buffer(buffer_id, cx);
-                                                    });
-                                                }
+                                                editor.update(cx, |editor, cx| {
+                                                    editor.fold_buffer(buffer_id, cx);
+                                                });
                                             }
-                                        }),
-                                ),
-                        )
-                    })
-                    .children(
-                        editor
-                            .addons
-                            .values()
-                            .filter_map(|addon| {
-                                addon.render_buffer_header_controls(for_excerpt, window, cx)
-                            })
-                            .take(1),
+                                        }
+                                    }),
+                            ),
                     )
-                    .child(h_flex().size(px(12.0)).justify_center().children(indicator))
-                    .child(
-                        h_flex()
-                            .cursor_pointer()
-                            .id("path header block")
-                            .size_full()
-                            .justify_between()
-                            .overflow_hidden()
-                            .child(h_flex().gap_2().map(|path_header| {
-                                let filename = filename
-                                    .map(SharedString::from)
-                                    .unwrap_or_else(|| "untitled".into());
+                })
+                .children(
+                    editor
+                        .addons
+                        .values()
+                        .filter_map(|addon| {
+                            addon.render_buffer_header_controls(for_excerpt, window, cx)
+                        })
+                        .take(1),
+                )
+                .child(h_flex().size(px(12.0)).justify_center().children(indicator))
+                .child(
+                    h_flex()
+                        .cursor_pointer()
+                        .id("path header block")
+                        .size_full()
+                        .justify_between()
+                        .overflow_hidden()
+                        .child(h_flex().gap_2().map(|path_header| {
+                            let filename = filename
+                                .map(SharedString::from)
+                                .unwrap_or_else(|| "untitled".into());
 
-                                path_header
-                                    .when(ItemSettings::get_global(cx).file_icons, |el| {
-                                        let path = path::Path::new(filename.as_str());
-                                        let icon =
-                                            FileIcons::get_icon(path, cx).unwrap_or_default();
-                                        let icon = Icon::from_path(icon).color(Color::Muted);
-                                        el.child(icon)
-                                    })
-                                    .child(
-                                        ButtonLike::new("filename-button")
-                                            .style(ButtonStyle::Subtle)
-                                            .child(
-                                                div()
-                                                    .child(
-                                                        Label::new(filename)
-                                                            .single_line()
-                                                            .color(file_status_label_color(
-                                                                file_status,
-                                                            ))
-                                                            .when(
-                                                                file_status.is_some_and(|s| {
-                                                                    s.is_deleted()
-                                                                }),
-                                                                |label| label.strikethrough(),
-                                                            ),
-                                                    )
-                                                    .group_hover("", |div| div.underline()),
-                                            )
-                                            .on_click(window.listener_for(&self.editor, {
-                                                let jump_data = jump_data.clone();
-                                                move |editor, e: &ClickEvent, window, cx| {
-                                                    editor.open_excerpts_common(
-                                                        Some(jump_data.clone()),
-                                                        e.modifiers().secondary(),
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }
-                                            })),
-                                    )
-                                    .when_some(parent_path, |then, path| {
-                                        then.child(div().child(path).text_color(
-                                            if file_status.is_some_and(FileStatus::is_deleted) {
-                                                colors.text_disabled
-                                            } else {
-                                                colors.text_muted
-                                            },
-                                        ))
-                                    })
-                            }))
-                            .when(
-                                can_open_excerpts && is_selected && relative_path.is_some(),
-                                |el| {
-                                    el.child(
-                                        ButtonLike::new("open-file-button")
-                                            .style(ButtonStyle::OutlinedGhost)
-                                            .child(
-                                                h_flex()
-                                                    .gap_2p5()
-                                                    .child(Label::new("Open file"))
-                                                    .child(KeyBinding::for_action_in(
-                                                        &OpenExcerpts,
-                                                        &focus_handle,
-                                                        cx,
-                                                    )),
-                                            )
-                                            .on_click(window.listener_for(&self.editor, {
-                                                let jump_data = jump_data.clone();
-                                                move |editor, e: &ClickEvent, window, cx| {
-                                                    editor.open_excerpts_common(
-                                                        Some(jump_data.clone()),
-                                                        e.modifiers().secondary(),
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }
-                                            })),
-                                    )
-                                },
-                            )
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .on_click(window.listener_for(&self.editor, {
-                                let buffer_id = for_excerpt.buffer_id;
-                                move |editor, _e: &ClickEvent, _window, cx| {
-                                    if is_folded {
-                                        editor.unfold_buffer(buffer_id, cx);
-                                    } else {
-                                        editor.fold_buffer(buffer_id, cx);
-                                    }
+                            path_header
+                                .when(ItemSettings::get_global(cx).file_icons, |el| {
+                                    let path = path::Path::new(filename.as_str());
+                                    let icon = FileIcons::get_icon(path, cx).unwrap_or_default();
+                                    let icon = Icon::from_path(icon).color(Color::Muted);
+                                    el.child(icon)
+                                })
+                                .child(
+                                    ButtonLike::new("filename-button")
+                                        .style(ButtonStyle::Subtle)
+                                        .child(
+                                            div()
+                                                .child(
+                                                    Label::new(filename)
+                                                        .single_line()
+                                                        .color(file_status_label_color(file_status))
+                                                        .when(
+                                                            file_status
+                                                                .is_some_and(|s| s.is_deleted()),
+                                                            |label| label.strikethrough(),
+                                                        ),
+                                                )
+                                                .group_hover("", |div| div.underline()),
+                                        )
+                                        .on_click(window.listener_for(&self.editor, {
+                                            let jump_data = jump_data.clone();
+                                            move |editor, e: &ClickEvent, window, cx| {
+                                                editor.open_excerpts_common(
+                                                    Some(jump_data.clone()),
+                                                    e.modifiers().secondary(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                        })),
+                                )
+                                .when_some(parent_path, |then, path| {
+                                    then.child(div().child(path).text_color(
+                                        if file_status.is_some_and(FileStatus::is_deleted) {
+                                            colors.text_disabled
+                                        } else {
+                                            colors.text_muted
+                                        },
+                                    ))
+                                })
+                        }))
+                        .when(
+                            can_open_excerpts && is_selected && relative_path.is_some(),
+                            |el| {
+                                el.child(
+                                    ButtonLike::new("open-file-button")
+                                        .style(ButtonStyle::OutlinedGhost)
+                                        .child(
+                                            h_flex()
+                                                .gap_2p5()
+                                                .child(Label::new("Open file"))
+                                                .child(KeyBinding::for_action_in(
+                                                    &OpenExcerpts,
+                                                    &focus_handle,
+                                                    cx,
+                                                )),
+                                        )
+                                        .on_click(window.listener_for(&self.editor, {
+                                            let jump_data = jump_data.clone();
+                                            move |editor, e: &ClickEvent, window, cx| {
+                                                editor.open_excerpts_common(
+                                                    Some(jump_data.clone()),
+                                                    e.modifiers().secondary(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                        })),
+                                )
+                            },
+                        )
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(window.listener_for(&self.editor, {
+                            let buffer_id = for_excerpt.buffer_id;
+                            move |editor, _e: &ClickEvent, _window, cx| {
+                                if is_folded {
+                                    editor.unfold_buffer(buffer_id, cx);
+                                } else {
+                                    editor.fold_buffer(buffer_id, cx);
                                 }
-                            })),
-                    ),
-            );
+                            }
+                        })),
+                ),
+        );
 
         let file = for_excerpt.buffer.file().cloned();
         let editor = self.editor.clone();
