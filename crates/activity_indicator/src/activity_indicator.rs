@@ -432,6 +432,23 @@ impl ActivityIndicator {
             });
         }
 
+        // Show any long-running fs command
+        if let Some(fs_job_info) = self.project.read(cx).fs().current_job()
+            && Instant::now() - fs_job_info.start >= GIT_OPERATION_DELAY
+        {
+            return Some(Content {
+                icon: Some(
+                    Icon::new(IconName::ArrowCircle)
+                        .size(IconSize::Small)
+                        .with_rotate_animation(2)
+                        .into_any_element(),
+                ),
+                message: fs_job_info.message.into(),
+                on_click: None,
+                tooltip_message: None,
+            });
+        }
+
         // Show any language server installation info.
         let mut downloading = SmallVec::<[_; 3]>::new();
         let mut checking_for_update = SmallVec::<[_; 3]>::new();

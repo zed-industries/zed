@@ -4,6 +4,11 @@ mod mac_watcher;
 #[cfg(not(target_os = "macos"))]
 pub mod fs_watcher;
 
+use parking_lot::Mutex;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
+
 use anyhow::{Context as _, Result, anyhow};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
@@ -12,6 +17,7 @@ use gpui::App;
 use gpui::BackgroundExecutor;
 use gpui::Global;
 use gpui::ReadGlobal as _;
+use gpui::SharedString;
 use std::borrow::Cow;
 use util::command::new_smol_command;
 
@@ -51,8 +57,7 @@ use git::{
     repository::{RepoPath, repo_path},
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
-#[cfg(any(test, feature = "test-support"))]
-use parking_lot::Mutex;
+
 #[cfg(any(test, feature = "test-support"))]
 use smol::io::AsyncReadExt;
 #[cfg(any(test, feature = "test-support"))]
@@ -148,6 +153,7 @@ pub trait Fs: Send + Sync {
     async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
+    fn current_job(&self) -> Option<JobInfo>;
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> Arc<FakeFs> {
@@ -215,6 +221,14 @@ pub struct Metadata {
 #[serde(transparent)]
 pub struct MTime(SystemTime);
 
+pub type JobId = usize;
+
+#[derive(Clone, Debug)]
+pub struct JobInfo {
+    pub start: Instant,
+    pub message: SharedString,
+}
+
 impl MTime {
     /// Conversion intended for persistence and testing.
     pub fn from_seconds_and_nanos(secs: u64, nanos: u32) -> Self {
@@ -257,6 +271,8 @@ impl From<MTime> for proto::Timestamp {
 pub struct RealFs {
     bundled_git_binary_path: Option<PathBuf>,
     executor: BackgroundExecutor,
+    active_jobs: Arc<Mutex<HashMap<JobId, JobInfo>>>,
+    next_job_id: Arc<AtomicUsize>,
 }
 
 pub trait FileHandle: Send + Sync + std::fmt::Debug {
@@ -361,6 +377,8 @@ impl RealFs {
         Self {
             bundled_git_binary_path: git_binary_path,
             executor,
+            active_jobs: Arc::new(Mutex::new(HashMap::new())),
+            next_job_id: Arc::new(AtomicUsize::new(0)),
         }
     }
 }
@@ -862,7 +880,6 @@ impl Fs for RealFs {
         Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
         Arc<dyn Watcher>,
     ) {
-        use parking_lot::Mutex;
         use util::{ResultExt as _, paths::SanitizedPath};
 
         let (tx, rx) = smol::channel::unbounded();
@@ -959,20 +976,34 @@ impl Fs for RealFs {
     }
 
     async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()> {
-        let output = new_smol_command("git")
-            .current_dir(abs_work_directory)
-            .args(&["clone", repo_url])
-            .output()
-            .await?;
+        let job_id = self.next_job_id.fetch_add(1, Ordering::SeqCst);
+        let job_info = JobInfo {
+            start: Instant::now(),
+            message: SharedString::from(format!("Cloning {}", repo_url)),
+        };
 
-        if !output.status.success() {
-            anyhow::bail!(
-                "git clone failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+        self.active_jobs.lock().insert(job_id, job_info);
+
+        let result = async {
+            let output = new_smol_command("git")
+                .current_dir(abs_work_directory)
+                .args(&["clone", repo_url])
+                .output()
+                .await?;
+
+            if !output.status.success() {
+                anyhow::bail!(
+                    "git clone failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+
+            Ok(())
         }
+        .await;
 
-        Ok(())
+        self.active_jobs.lock().remove(&job_id);
+        result
     }
 
     fn is_fake(&self) -> bool {
@@ -1015,6 +1046,10 @@ impl Fs for RealFs {
         temp_dir.close()?;
         case_sensitive
     }
+
+    fn current_job(&self) -> Option<JobInfo> {
+        self.active_jobs.lock().values().next().cloned()
+    }
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
@@ -1034,6 +1069,9 @@ pub struct FakeFs {
     // Use an unfair lock to ensure tests are deterministic.
     state: Arc<Mutex<FakeFsState>>,
     executor: gpui::BackgroundExecutor,
+    active_jobs: Arc<Mutex<HashMap<JobId, JobInfo>>>,
+    #[allow(dead_code)]
+    next_job_id: Arc<AtomicUsize>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1315,6 +1353,8 @@ impl FakeFs {
         let this = Arc::new_cyclic(|this| Self {
             this: this.clone(),
             executor: executor.clone(),
+            active_jobs: Arc::new(Mutex::new(HashMap::new())),
+            next_job_id: Arc::new(AtomicUsize::new(0)),
             state: Arc::new(Mutex::new(FakeFsState {
                 root: FakeFsEntry::Dir {
                     inode: 0,
@@ -2587,6 +2627,10 @@ impl Fs for FakeFs {
         Ok(true)
     }
 
+    fn current_job(&self) -> Option<JobInfo> {
+        self.active_jobs.lock().values().next().cloned()
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> Arc<FakeFs> {
         self.this.upgrade().unwrap()
@@ -3201,6 +3245,8 @@ mod tests {
         let fs = RealFs {
             bundled_git_binary_path: None,
             executor,
+            active_jobs: Arc::new(Mutex::new(HashMap::new())),
+            next_job_id: Arc::new(AtomicUsize::new(0)),
         };
         let temp_dir = TempDir::new().unwrap();
         let file_to_be_replaced = temp_dir.path().join("file.txt");
@@ -3219,6 +3265,8 @@ mod tests {
         let fs = RealFs {
             bundled_git_binary_path: None,
             executor,
+            active_jobs: Arc::new(Mutex::new(HashMap::new())),
+            next_job_id: Arc::new(AtomicUsize::new(0)),
         };
         let temp_dir = TempDir::new().unwrap();
         let file_to_be_replaced = temp_dir.path().join("file.txt");
