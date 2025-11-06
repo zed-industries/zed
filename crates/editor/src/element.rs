@@ -46,7 +46,7 @@ use gpui::{
     Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle,
     DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
-    KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent,
+    KeybindingKeystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
     ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
     Style, Styled, TextRun, TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill,
@@ -3896,17 +3896,21 @@ impl EditorElement {
         let focus_handle = editor.focus_handle(cx);
         let colors = cx.theme().colors();
 
+        let button_size = px(28.);
+        let outer_padding = rems(0.25).to_pixels(window.rem_size());
+        let header_height_size = FILE_HEADER_HEIGHT as f32 * window.line_height();
+        // block header padding is the height of the header minus the button size divided by 2, minus the outer padding
+        let header_padding_size = (header_height_size - button_size) / 2.0 - outer_padding;
+
         let header = div()
             .p_1()
             .w_full()
-            .h(FILE_HEADER_HEIGHT as f32 * window.line_height())
+            .h(header_height_size)
             .child(
                 h_flex()
                     .size_full()
                     .gap_2()
-                    .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
-                    .pl_0p5()
-                    .pr_5()
+                    .px(header_padding_size)
                     .rounded_sm()
                     .when(is_sticky, |el| el.shadow_md())
                     .border_1()
@@ -3935,8 +3939,8 @@ impl EditorElement {
                                 .child(
                                     ButtonLike::new("toggle-buffer-fold")
                                         .style(ui::ButtonStyle::Transparent)
-                                        .height(px(28.).into())
-                                        .width(px(28.))
+                                        .height(button_size.into())
+                                        .width(button_size)
                                         .children(toggle_chevron_icon)
                                         .tooltip({
                                             let focus_handle = focus_handle.clone();
