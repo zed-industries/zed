@@ -1,8 +1,9 @@
 # Agent Server Extensions
 
-Agent Servers are programs that provide AI agent implementations through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com). Agent Server Extensions let you package up an Agent Server so that users can install the extension and have your agent easily available to use in Zed.
+Agent Servers are programs that provide AI agent implementations through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
+Agent Server Extensions let you package up an Agent Server so that users can install the extension and have your agent easily available to use in Zed.
 
-You can see the current Agent Server Extensions either by opening the Extensions tab in Zed (execute the `zed: extensions` command) and changing the filter from `All` to `Agent Servers`, or by visiting [https://zed.dev/extensions?filter=agent-servers](https://zed.dev/extensions?filter=agent-servers).
+You can see the current Agent Server extensions either by opening the Extensions tab in Zed (execute the `zed: extensions` command) and changing the filter from `All` to `Agent Servers`, or by visiting [the Zed website](https://zed.dev/extensions?filter=agent-servers).
 
 ## Defining Agent Server Extensions
 
@@ -147,7 +148,10 @@ For optimal display, follow these guidelines:
 - Ensure you have a clean SVG code by processing it through [SVGOMG](https://jakearchibald.github.io/svgomg/)
 - Avoid including icons with gradients as they will often make the SVG more complicated and possibly not render perfectly
 
-Note that we'll automatically convert your icon to monochrome to preserve Zed's design consistency. (You can still use opacity in different paths of your SVG to add visual layering.)
+Note that we'll automatically convert your icon to monochrome to preserve Zed's design consistency.
+(You can still use opacity in different paths of your SVG to add visual layering.)
+
+---
 
 This is all you need to distribute an agent server through Zed's extension system!
 
