@@ -33,5 +33,4 @@ message ImageState {
 message ImageChunk {
     uint64 image_id = 1;
     bytes data = 2;
-    bool is_last = 3;
 }

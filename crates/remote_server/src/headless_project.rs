@@ -31,8 +31,12 @@ use rpc::{
 use settings::{Settings as _, initial_server_settings_content};
 use smol::stream::StreamExt;
 use std::{
+    num::NonZeroU64,
     path::{Path, PathBuf},
-    sync::{Arc, atomic::AtomicUsize},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+    },
 };
 use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
@@ -533,11 +537,12 @@ impl HeadlessProject {
         message: TypedEnvelope<proto::OpenImageByPath>,
         mut cx: AsyncApp,
     ) -> Result<proto::OpenImageResponse> {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(1);
         let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
         let path = RelPath::from_proto(&message.payload.path)?;
         let project_id = message.payload.project_id;
+        use proto::create_image_for_peer::Variant;
 
-        // Load the raw file bytes from the worktree (no ImageItem creation on server)
         let (worktree_store, session) = this.read_with(&cx, |this, _| {
             (this.worktree_store.clone(), this.session.clone())
         })?;
@@ -554,25 +559,14 @@ impl HeadlessProject {
         let content = loaded_file.content;
         let file = loaded_file.file;
 
-        // Convert file to proto while we still have sync access
         let proto_file = worktree.read_with(&cx, |_worktree, cx| file.to_proto(cx))?;
-        // Generate a unique image ID using timestamp and random data
-        let image_id = ImageId::from(
-            std::num::NonZeroU64::new(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos() as u64,
-            )
-            .unwrap(),
-        );
+        let image_id =
+            ImageId::from(NonZeroU64::new(NEXT_ID.fetch_add(1, Ordering::Relaxed)).unwrap());
 
-        // Guess the image format
-        let format = ::image::guess_format(&content)
+        let format = image::guess_format(&content)
             .map(|f| format!("{:?}", f).to_lowercase())
             .unwrap_or_else(|_| "unknown".to_string());
 
-        // Send the image state first
         let state = proto::ImageState {
             id: image_id.to_proto(),
             file: Some(proto_file),
@@ -583,25 +577,18 @@ impl HeadlessProject {
         session.send(proto::CreateImageForPeer {
             project_id,
             peer_id: Some(REMOTE_SERVER_PEER_ID),
-            variant: Some(proto::create_image_for_peer::Variant::State(state)),
+            variant: Some(Variant::State(state)),
         })?;
 
         const CHUNK_SIZE: usize = 1024 * 1024; // 1MB chunks
-        let chunks: Vec<_> = content.chunks(CHUNK_SIZE).collect();
-        let total_chunks = chunks.len();
-
-        for (i, chunk) in chunks.into_iter().enumerate() {
-            let is_last = i == total_chunks - 1;
+        for chunk in content.chunks(CHUNK_SIZE) {
             session.send(proto::CreateImageForPeer {
                 project_id,
                 peer_id: Some(REMOTE_SERVER_PEER_ID),
-                variant: Some(proto::create_image_for_peer::Variant::Chunk(
-                    proto::ImageChunk {
-                        image_id: image_id.to_proto(),
-                        data: chunk.to_vec(),
-                        is_last,
-                    },
-                )),
+                variant: Some(Variant::Chunk(proto::ImageChunk {
+                    image_id: image_id.to_proto(),
+                    data: chunk.to_vec(),
+                })),
             })?;
         }
 
