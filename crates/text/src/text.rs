@@ -2281,12 +2281,20 @@ impl BufferSnapshot {
             } else {
                 insertion_cursor.prev();
             }
-            let insertion = insertion_cursor.item().expect("invalid insertion");
+            let Some(insertion) = insertion_cursor.item() else {
+                panic!(
+                    "invalid insertion for buffer {}@{:?} with anchor {:?}",
+                    self.remote_id(),
+                    self.version,
+                    anchor
+                );
+            };
             assert_eq!(
                 insertion.timestamp,
                 anchor.timestamp,
-                "invalid insertion for buffer {} with anchor {:?}",
+                "invalid insertion for buffer {}@{:?} and anchor {:?}",
                 self.remote_id(),
+                self.version,
                 anchor
             );
 

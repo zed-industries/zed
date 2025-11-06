@@ -1723,7 +1723,7 @@ impl GitStore {
             &mut cx,
         );
 
-        let branch_name = envelope.payload.branch_name.into();
+        let branch_name = envelope.payload.branch_name.map(|name| name.into());
         let remote_name = envelope.payload.remote_name.into();
         let rebase = envelope.payload.rebase;
 
@@ -4293,7 +4293,7 @@ impl Repository {
 
     pub fn pull(
         &mut self,
-        branch: SharedString,
+        branch: Option<SharedString>,
         remote: SharedString,
         rebase: bool,
         askpass: AskPassDelegate,
@@ -4303,13 +4303,16 @@ impl Repository {
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let id = self.id;
 
-        let status = if rebase {
-            Some(format!("git pull --rebase {} {}", remote, branch).into())
-        } else {
-            Some(format!("git pull {} {}", remote, branch).into())
-        };
+        let mut status = "git pull".to_string();
+        if rebase {
+            status.push_str(" --rebase");
+        }
+        status.push_str(&format!(" {}", remote));
+        if let Some(b) = &branch {
+            status.push_str(&format!(" {}", b));
+        }
 
-        self.send_job(status, move |git_repo, cx| async move {
+        self.send_job(Some(status.into()), move |git_repo, cx| async move {
             match git_repo {
                 RepositoryState::Local {
                     backend,
@@ -4318,7 +4321,7 @@ impl Repository {
                 } => {
                     backend
                         .pull(
-                            branch.to_string(),
+                            branch.as_ref().map(|b| b.to_string()),
                             remote.to_string(),
                             rebase,
                             askpass,
@@ -4339,7 +4342,7 @@ impl Repository {
                             repository_id: id.to_proto(),
                             askpass_id,
                             rebase,
-                            branch_name: branch.to_string(),
+                            branch_name: branch.as_ref().map(|b| b.to_string()),
                             remote_name: remote.to_string(),
                         })
                         .await

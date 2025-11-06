@@ -477,7 +477,7 @@ impl TextThreadEditor {
                     editor.insert(&format!("/{name}"), window, cx);
                     if command.accepts_arguments() {
                         editor.insert(" ", window, cx);
-                        editor.show_completions(&ShowCompletions, window, cx);
+                        editor.show_completions(&ShowCompletions::default(), window, cx);
                     }
                 });
             });

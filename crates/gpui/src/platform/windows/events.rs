@@ -1370,7 +1370,7 @@ fn should_prefer_character_input(vkey: VIRTUAL_KEY, scan_code: u16) -> bool {
             scan_code as u32,
             Some(&keyboard_state),
             &mut buffer_c,
-            0x4,
+            0x5,
         )
     };
     if result_c < 0 {
@@ -1415,7 +1415,7 @@ fn should_prefer_character_input(vkey: VIRTUAL_KEY, scan_code: u16) -> bool {
             scan_code as u32,
             Some(&state_no_modifiers),
             &mut buffer_c_no_modifiers,
-            0x4,
+            0x5,
         )
     };
     if result_c_no_modifiers <= 0 {

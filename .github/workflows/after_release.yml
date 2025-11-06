@@ -1,0 +1,69 @@
+# Generated from xtask::workflows::after_release
+# Rebuild with `cargo xtask workflows`.
+name: after_release
+on:
+  release:
+    types:
+    - published
+jobs:
+  rebuild_releases_page:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: after_release::rebuild_releases_page
+      run: 'curl https://zed.dev/api/revalidate-releases -H "Authorization: Bearer ${RELEASE_NOTES_API_TOKEN}"'
+      shell: bash -euxo pipefail {0}
+      env:
+        RELEASE_NOTES_API_TOKEN: ${{ secrets.RELEASE_NOTES_API_TOKEN }}
+  post_to_discord:
+    needs:
+    - rebuild_releases_page
+    if: github.repository_owner == 'zed-industries'
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - id: get-release-url
+      name: after_release::post_to_discord::get_release_url
+      run: |
+        if [ "${{ github.event.release.prerelease }}" == "true" ]; then
+            URL="https://zed.dev/releases/preview"
+        else
+            URL="https://zed.dev/releases/stable"
+        fi
+
+        echo "URL=$URL" >> "$GITHUB_OUTPUT"
+      shell: bash -euxo pipefail {0}
+    - id: get-content
+      name: after_release::post_to_discord::get_content
+      uses: 2428392/gh-truncate-string-action@b3ff790d21cf42af3ca7579146eedb93c8fb0757
+      with:
+        stringToTruncate: |
+          📣 Zed [${{ github.event.release.tag_name }}](<${{ steps.get-release-url.outputs.URL }}>) was just released!
+
+          ${{ github.event.release.body }}
+        maxLength: 2000
+        truncationSymbol: '...'
+    - name: after_release::post_to_discord::discord_webhook_action
+      uses: tsickert/discord-webhook@c840d45a03a323fbc3f7507ac7769dbd91bfb164
+      with:
+        webhook-url: ${{ secrets.DISCORD_WEBHOOK_RELEASE_NOTES }}
+        content: ${{ steps.get-content.outputs.string }}
+  publish_winget:
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - id: set-package-name
+      name: after_release::publish_winget::set_package_name
+      run: |
+        if [ "${{ github.event.release.prerelease }}" == "true" ]; then
+            PACKAGE_NAME=ZedIndustries.Zed.Preview
+        else
+            PACKAGE_NAME=ZedIndustries.Zed
+        fi
+
+        echo "PACKAGE_NAME=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"
+      shell: bash -euxo pipefail {0}
+    - name: after_release::publish_winget::winget_releaser
+      uses: vedantmgoyal9/winget-releaser@19e706d4c9121098010096f9c495a70a7518b30f
+      with:
+        identifier: ${{ steps.set-package-name.outputs.PACKAGE_NAME }}
+        max-versions-to-keep: 5
+        token: ${{ secrets.WINGET_TOKEN }}

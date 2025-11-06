@@ -190,6 +190,15 @@ pub fn main() {
         }
     }
 
+    #[cfg(all(not(debug_assertions), target_os = "windows"))]
+    unsafe {
+        use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+
+        if args.foreground {
+            let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+
     // `zed --printenv` Outputs environment variables as JSON to stdout
     if args.printenv {
         util::shell_env::print_env();
@@ -204,15 +213,6 @@ pub fn main() {
     // Set custom data directory.
     if let Some(dir) = &args.user_data_dir {
         paths::set_custom_data_dir(dir);
-    }
-
-    #[cfg(all(not(debug_assertions), target_os = "windows"))]
-    unsafe {
-        use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
-
-        if args.foreground {
-            let _ = AttachConsole(ATTACH_PARENT_PROCESS);
-        }
     }
 
     #[cfg(target_os = "windows")]

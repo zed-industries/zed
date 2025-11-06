@@ -333,60 +333,51 @@ async fn load_directory_shell_environment(
             .into()
     };
 
-    if cfg!(target_os = "windows") {
+    let (shell, args) = shell.program_and_args();
+    let mut envs = util::shell_env::capture(shell.clone(), args, abs_path)
+        .await
+        .with_context(|| {
+            tx.unbounded_send("Failed to load environment variables".into())
+                .ok();
+            format!("capturing shell environment with {shell:?}")
+        })?;
+
+    if cfg!(target_os = "windows")
+        && let Some(path) = envs.remove("Path")
+    {
+        // windows env vars are case-insensitive, so normalize the path var
+        // so we can just assume `PATH` in other places
+        envs.insert("PATH".into(), path);
+    }
+    // If the user selects `Direct` for direnv, it would set an environment
+    // variable that later uses to know that it should not run the hook.
+    // We would include in `.envs` call so it is okay to run the hook
+    // even if direnv direct mode is enabled.
+    let direnv_environment = match load_direnv {
+        DirenvSettings::ShellHook => None,
         // Note: direnv is not available on Windows, so we skip direnv processing
         // and just return the shell environment
-        let (shell, args) = shell.program_and_args();
-        let mut envs = util::shell_env::capture(shell.clone(), args, abs_path)
+        DirenvSettings::Direct if cfg!(target_os = "windows") => None,
+        DirenvSettings::Direct => load_direnv_environment(&envs, &dir)
             .await
             .with_context(|| {
-                tx.unbounded_send("Failed to load environment variables".into())
+                tx.unbounded_send("Failed to load direnv environment".into())
                     .ok();
-                format!("capturing shell environment with {shell:?}")
-            })?;
-        if let Some(path) = envs.remove("Path") {
-            // windows env vars are case-insensitive, so normalize the path var
-            // so we can just assume `PATH` in other places
-            envs.insert("PATH".into(), path);
-        }
-        Ok(envs)
-    } else {
-        let (shell, args) = shell.program_and_args();
-        let mut envs = util::shell_env::capture(shell.clone(), args, abs_path)
-            .await
-            .with_context(|| {
-                tx.unbounded_send("Failed to load environment variables".into())
-                    .ok();
-                format!("capturing shell environment with {shell:?}")
-            })?;
-
-        // If the user selects `Direct` for direnv, it would set an environment
-        // variable that later uses to know that it should not run the hook.
-        // We would include in `.envs` call so it is okay to run the hook
-        // even if direnv direct mode is enabled.
-        let direnv_environment = match load_direnv {
-            DirenvSettings::ShellHook => None,
-            DirenvSettings::Direct => load_direnv_environment(&envs, &dir)
-                .await
-                .with_context(|| {
-                    tx.unbounded_send("Failed to load direnv environment".into())
-                        .ok();
-                    "load direnv environment"
-                })
-                .log_err(),
-        };
-        if let Some(direnv_environment) = direnv_environment {
-            for (key, value) in direnv_environment {
-                if let Some(value) = value {
-                    envs.insert(key, value);
-                } else {
-                    envs.remove(&key);
-                }
+                "load direnv environment"
+            })
+            .log_err(),
+    };
+    if let Some(direnv_environment) = direnv_environment {
+        for (key, value) in direnv_environment {
+            if let Some(value) = value {
+                envs.insert(key, value);
+            } else {
+                envs.remove(&key);
             }
         }
-
-        Ok(envs)
     }
+
+    Ok(envs)
 }
 
 async fn load_direnv_environment(

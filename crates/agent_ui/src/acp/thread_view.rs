@@ -294,7 +294,6 @@ pub struct AcpThreadView {
     resume_thread_metadata: Option<DbThreadMetadata>,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 5],
-    #[cfg(target_os = "windows")]
     show_codex_windows_warning: bool,
 }
 
@@ -401,7 +400,6 @@ impl AcpThreadView {
             ),
         ];
 
-        #[cfg(target_os = "windows")]
         let show_codex_windows_warning = crate::ExternalAgent::parse_built_in(agent.as_ref())
             == Some(crate::ExternalAgent::Codex);
 
@@ -447,7 +445,6 @@ impl AcpThreadView {
             focus_handle: cx.focus_handle(),
             new_server_version_available: None,
             resume_thread_metadata: resume_thread,
-            #[cfg(target_os = "windows")]
             show_codex_windows_warning,
         }
     }
@@ -1506,6 +1503,12 @@ impl AcpThreadView {
                             })
                             .unwrap_or_default();
 
+                        // Run SpawnInTerminal in the same dir as the ACP server
+                        let cwd = connection
+                            .clone()
+                            .downcast::<agent_servers::AcpConnection>()
+                            .map(|acp_conn| acp_conn.root_dir().to_path_buf());
+
                         // Build SpawnInTerminal from _meta
                         let login = task::SpawnInTerminal {
                             id: task::TaskId(format!("external-agent-{}-login", label)),
@@ -1514,6 +1517,7 @@ impl AcpThreadView {
                             command: Some(command.to_string()),
                             args,
                             command_label: label.to_string(),
+                            cwd,
                             env,
                             use_new_terminal: true,
                             allow_concurrent_runs: true,
@@ -1526,8 +1530,9 @@ impl AcpThreadView {
                         pending_auth_method.replace(method.clone());
 
                         if let Some(workspace) = self.workspace.upgrade() {
+                            let project = self.project.clone();
                             let authenticate = Self::spawn_external_agent_login(
-                                login, workspace, false, window, cx,
+                                login, workspace, project, false, true, window, cx,
                             );
                             cx.notify();
                             self.auth_task = Some(cx.spawn_in(window, {
@@ -1671,7 +1676,10 @@ impl AcpThreadView {
             && let Some(login) = self.login.clone()
         {
             if let Some(workspace) = self.workspace.upgrade() {
-                Self::spawn_external_agent_login(login, workspace, false, window, cx)
+                let project = self.project.clone();
+                Self::spawn_external_agent_login(
+                    login, workspace, project, false, false, window, cx,
+                )
             } else {
                 Task::ready(Ok(()))
             }
@@ -1721,17 +1729,40 @@ impl AcpThreadView {
     fn spawn_external_agent_login(
         login: task::SpawnInTerminal,
         workspace: Entity<Workspace>,
+        project: Entity<Project>,
         previous_attempt: bool,
+        check_exit_code: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
         let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
             return Task::ready(Ok(()));
         };
-        let project = workspace.read(cx).project().clone();
 
         window.spawn(cx, async move |cx| {
             let mut task = login.clone();
+            if let Some(cmd) = &task.command {
+                // Have "node" command use Zed's managed Node runtime by default
+                if cmd == "node" {
+                    let resolved_node_runtime = project
+                        .update(cx, |project, cx| {
+                            let agent_server_store = project.agent_server_store().clone();
+                            agent_server_store.update(cx, |store, cx| {
+                                store.node_runtime().map(|node_runtime| {
+                                    cx.background_spawn(async move {
+                                        node_runtime.binary_path().await
+                                    })
+                                })
+                            })
+                        });
+
+                    if let Ok(Some(resolve_task)) = resolved_node_runtime {
+                        if let Ok(node_path) = resolve_task.await {
+                            task.command = Some(node_path.to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
             task.shell = task::Shell::WithArguments {
                 program: task.command.take().expect("login command should be set"),
                 args: std::mem::take(&mut task.args),
@@ -1749,44 +1780,65 @@ impl AcpThreadView {
             })?;
 
             let terminal = terminal.await?;
-            let mut exit_status = terminal
-                .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
-                .fuse();
 
-            let logged_in = cx
-                .spawn({
-                    let terminal = terminal.clone();
-                    async move |cx| {
-                        loop {
-                            cx.background_executor().timer(Duration::from_secs(1)).await;
-                            let content =
-                                terminal.update(cx, |terminal, _cx| terminal.get_content())?;
-                            if content.contains("Login successful")
-                                || content.contains("Type your message")
-                            {
-                                return anyhow::Ok(());
+            if check_exit_code {
+                // For extension-based auth, wait for the process to exit and check exit code
+                let exit_status = terminal
+                    .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
+                    .await;
+
+                match exit_status {
+                    Some(status) if status.success() => {
+                        Ok(())
+                    }
+                    Some(status) => {
+                        Err(anyhow!("Login command failed with exit code: {:?}", status.code()))
+                    }
+                    None => {
+                        Err(anyhow!("Login command terminated without exit status"))
+                    }
+                }
+            } else {
+                // For hardcoded agents (claude-login, gemini-cli): look for specific output
+                let mut exit_status = terminal
+                    .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
+                    .fuse();
+
+                let logged_in = cx
+                    .spawn({
+                        let terminal = terminal.clone();
+                        async move |cx| {
+                            loop {
+                                cx.background_executor().timer(Duration::from_secs(1)).await;
+                                let content =
+                                    terminal.update(cx, |terminal, _cx| terminal.get_content())?;
+                                if content.contains("Login successful")
+                                    || content.contains("Type your message")
+                                {
+                                    return anyhow::Ok(());
+                                }
                             }
                         }
+                    })
+                    .fuse();
+                futures::pin_mut!(logged_in);
+                futures::select_biased! {
+                    result = logged_in => {
+                        if let Err(e) = result {
+                            log::error!("{e}");
+                            return Err(anyhow!("exited before logging in"));
+                        }
                     }
-                })
-                .fuse();
-            futures::pin_mut!(logged_in);
-            futures::select_biased! {
-                result = logged_in => {
-                    if let Err(e) = result {
-                        log::error!("{e}");
+                    _ = exit_status => {
+                        if !previous_attempt && project.read_with(cx, |project, _| project.is_via_remote_server())? && login.label.contains("gemini") {
+                            return cx.update(|window, cx| Self::spawn_external_agent_login(login, workspace, project.clone(), true, false, window, cx))?.await
+                        }
                         return Err(anyhow!("exited before logging in"));
                     }
                 }
-                _ = exit_status => {
-                    if !previous_attempt && project.read_with(cx, |project, _| project.is_via_remote_server())? && login.label.contains("gemini") {
-                        return cx.update(|window, cx| Self::spawn_external_agent_login(login, workspace, true, window, cx))?.await
-                    }
-                    return Err(anyhow!("exited before logging in"));
-                }
+                terminal.update(cx, |terminal, _| terminal.kill_active_task())?;
+                Ok(())
             }
-            terminal.update(cx, |terminal, _| terminal.kill_active_task())?;
-            Ok(())
         })
     }
 
@@ -5197,7 +5249,6 @@ impl AcpThreadView {
         )
     }
 
-    #[cfg(target_os = "windows")]
     fn render_codex_windows_warning(&self, cx: &mut Context<Self>) -> Option<Callout> {
         if self.show_codex_windows_warning {
             Some(
@@ -5213,8 +5264,9 @@ impl AcpThreadView {
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .on_click(cx.listener({
-                                move |_, _, window, cx| {
-                                    window.dispatch_action(
+                                move |_, _, _window, cx| {
+                                    #[cfg(windows)]
+                                    _window.dispatch_action(
                                         zed_actions::wsl_actions::OpenWsl::default().boxed_clone(),
                                         cx,
                                     );
@@ -5717,13 +5769,10 @@ impl Render for AcpThreadView {
             })
             .children(self.render_thread_retry_status_callout(window, cx))
             .children({
-                #[cfg(target_os = "windows")]
-                {
+                if cfg!(windows) && self.project.read(cx).is_local() {
                     self.render_codex_windows_warning(cx)
-                }
-                #[cfg(not(target_os = "windows"))]
-                {
-                    Vec::<Empty>::new()
+                } else {
+                    None
                 }
             })
             .children(self.render_thread_error(cx))

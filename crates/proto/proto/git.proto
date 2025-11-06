@@ -403,7 +403,7 @@ message Pull {
     reserved 2;
     uint64 repository_id = 3;
     string remote_name = 4;
-    string branch_name = 5;
+    optional string branch_name = 5;
     uint64 askpass_id = 6;
     bool rebase = 7;
 }

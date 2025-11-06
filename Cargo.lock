@@ -7091,7 +7091,6 @@ dependencies = [
  "askpass",
  "buffer_diff",
  "call",
- "chrono",
  "cloud_llm_client",
  "collections",
  "command_palette_hooks",
@@ -18620,6 +18619,7 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "log",
+ "mach2 0.5.0",
  "nix 0.29.0",
  "pretty_assertions",
  "rand 0.9.2",
@@ -20953,6 +20953,7 @@ dependencies = [
  "gh-workflow",
  "indexmap 2.11.4",
  "indoc",
+ "serde",
  "toml 0.8.23",
  "toml_edit 0.22.27",
 ]
@@ -21137,7 +21138,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.212.0"
+version = "0.213.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",
