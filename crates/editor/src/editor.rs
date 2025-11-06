@@ -318,6 +318,7 @@ pub fn init(cx: &mut App) {
     init_settings(cx);
 
     cx.set_global(GlobalBlameRenderer(Arc::new(())));
+    cx.set_global(SelectNextCaseSensitive(None));
 
     workspace::register_project_item::<Editor>(cx);
     workspace::FollowableViewRegistry::register::<Editor>(cx);
@@ -1490,6 +1491,15 @@ struct AddSelectionsGroup {
     above: bool,
     stack: Vec<usize>,
 }
+
+// TODO!: Would it be worth it for this to actually be just a `bool` which is
+// always set to the `search.case_sensitive` value? Are we afraid that this
+// might get out of sync with that value? Is there a good way for us to ensure
+// that this is always up to date?
+//
+// Having it set to that value means we no longer need an `Option<T>`.
+pub struct SelectNextCaseSensitive(pub Option<bool>);
+impl Global for SelectNextCaseSensitive {}
 
 #[derive(Clone)]
 struct SelectNextState {
@@ -14711,13 +14721,23 @@ impl Editor {
     }
 
     /// Builds an `AhoCorasick` automaton from the provided patterns, while
-    /// setting the case sensitivity based on the editor's settings.
+    /// setting the case sensitivity based on the global
+    /// `SelectNextCaseSensitive` setting, if set, otherwise based on the
+    /// editor's settings.
     fn build_query<I, P>(cx: &Context<Self>, patterns: I) -> Result<AhoCorasick, BuildError>
     where
         I: IntoIterator<Item = P>,
         P: AsRef<[u8]>,
     {
-        let case_sensitive = EditorSettings::get_global(cx).search.case_sensitive;
+        let case_sensitive = cx
+            .try_global::<SelectNextCaseSensitive>()
+            .or(Some(&SelectNextCaseSensitive(None)))
+            .map_or(None, |global| global.0)
+            .map_or_else(
+                || EditorSettings::get_global(cx).search.case_sensitive,
+                |value| value,
+            );
+
         let mut builder = AhoCorasickBuilder::new();
         builder.ascii_case_insensitive(!case_sensitive);
         builder.build(patterns)
