@@ -31,7 +31,6 @@ log.workspace = true
 open_ai.workspace = true
 project.workspace = true
 release_channel.workspace = true
-schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
