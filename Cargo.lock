@@ -39,6 +39,7 @@ dependencies = [
  "util",
  "uuid",
  "watch",
+ "zlog",
 ]
 
 [[package]]
@@ -3198,7 +3199,9 @@ dependencies = [
  "indoc",
  "ordered-float 2.10.1",
  "rustc-hash 2.1.1",
+ "schemars 1.0.4",
  "serde",
+ "serde_json",
  "strum 0.27.2",
 ]
 
@@ -21675,10 +21678,10 @@ dependencies = [
  "language_model",
  "log",
  "lsp",
+ "open_ai",
  "pretty_assertions",
  "project",
  "release_channel",
- "schemars 1.0.4",
  "serde",
  "serde_json",
  "settings",
@@ -21687,6 +21690,7 @@ dependencies = [
  "uuid",
  "workspace",
  "worktree",
+ "zlog",
 ]
 
 [[package]]

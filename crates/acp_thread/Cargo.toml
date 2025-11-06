@@ -56,3 +56,4 @@ rand.workspace = true
 tempfile.workspace = true
 util.workspace = true
 settings.workspace = true
+zlog.workspace = true

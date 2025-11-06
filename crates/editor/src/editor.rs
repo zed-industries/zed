@@ -616,7 +616,7 @@ pub(crate) enum EditDisplayMode {
 
 enum EditPrediction {
     Edit {
-        edits: Vec<(Range<Anchor>, String)>,
+        edits: Vec<(Range<Anchor>, Arc<str>)>,
         edit_preview: Option<EditPreview>,
         display_mode: EditDisplayMode,
         snapshot: BufferSnapshot,
@@ -7960,7 +7960,7 @@ impl Editor {
                         let inlay = Inlay::edit_prediction(
                             post_inc(&mut self.next_inlay_id),
                             range.start,
-                            new_text.as_str(),
+                            new_text.as_ref(),
                         );
                         inlay_ids.push(inlay.id);
                         inlays.push(inlay);
@@ -8982,7 +8982,7 @@ impl Editor {
         newest_selection_head: Option<DisplayPoint>,
         editor_width: Pixels,
         style: &EditorStyle,
-        edits: &Vec<(Range<Anchor>, String)>,
+        edits: &Vec<(Range<Anchor>, Arc<str>)>,
         edit_preview: &Option<language::EditPreview>,
         snapshot: &language::BufferSnapshot,
         window: &mut Window,
@@ -24382,25 +24382,20 @@ impl InvalidationRegion for SnippetState {
 
 fn edit_prediction_edit_text(
     current_snapshot: &BufferSnapshot,
-    edits: &[(Range<Anchor>, String)],
+    edits: &[(Range<Anchor>, impl AsRef<str>)],
     edit_preview: &EditPreview,
     include_deletions: bool,
     cx: &App,
 ) -> HighlightedText {
     let edits = edits
         .iter()
-        .map(|(anchor, text)| {
-            (
-                anchor.start.text_anchor..anchor.end.text_anchor,
-                text.clone(),
-            )
-        })
+        .map(|(anchor, text)| (anchor.start.text_anchor..anchor.end.text_anchor, text))
         .collect::<Vec<_>>();
 
     edit_preview.highlight_edits(current_snapshot, &edits, include_deletions, cx)
 }
 
-fn edit_prediction_fallback_text(edits: &[(Range<Anchor>, String)], cx: &App) -> HighlightedText {
+fn edit_prediction_fallback_text(edits: &[(Range<Anchor>, Arc<str>)], cx: &App) -> HighlightedText {
     // Fallback for providers that don't provide edit_preview (like Copilot/Supermaven)
     // Just show the raw edit text with basic styling
     let mut text = String::new();
@@ -24793,7 +24788,7 @@ impl Focusable for BreakpointPromptEditor {
 }
 
 fn all_edits_insertions_or_deletions(
-    edits: &Vec<(Range<Anchor>, String)>,
+    edits: &Vec<(Range<Anchor>, Arc<str>)>,
     snapshot: &MultiBufferSnapshot,
 ) -> bool {
     let mut all_insertions = true;
