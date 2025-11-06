@@ -1,7 +1,6 @@
 use std::{
     cell::RefCell,
     ffi::OsStr,
-    mem::ManuallyDrop,
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::{Arc, atomic::Ordering},
@@ -57,7 +56,7 @@ pub(crate) struct WindowsPlatformState {
     jump_list: JumpList,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: Option<HCURSOR>,
-    directx_devices: ManuallyDrop<DirectXDevices>,
+    directx_devices: Option<DirectXDevices>,
 }
 
 #[derive(Default)]
@@ -76,7 +75,7 @@ impl WindowsPlatformState {
         let callbacks = PlatformCallbacks::default();
         let jump_list = JumpList::new();
         let current_cursor = load_cursor(CursorStyle::Arrow);
-        let directx_devices = ManuallyDrop::new(directx_devices);
+        let directx_devices = Some(directx_devices);
 
         Self {
             callbacks,
@@ -190,7 +189,7 @@ impl WindowsPlatform {
             main_receiver: self.inner.main_receiver.clone(),
             platform_window_handle: self.handle,
             disable_direct_composition: self.disable_direct_composition,
-            directx_devices: (*self.inner.state.borrow().directx_devices).clone(),
+            directx_devices: self.inner.state.borrow().directx_devices.clone().unwrap(),
         }
     }
 
@@ -238,7 +237,7 @@ impl WindowsPlatform {
     }
 
     fn begin_vsync_thread(&self) {
-        let mut directx_device = (*self.inner.state.borrow().directx_devices).clone();
+        let mut directx_device = self.inner.state.borrow().directx_devices.clone().unwrap();
         let platform_window: SafeHwnd = self.handle.into();
         let validation_number = self.inner.validation_number;
         let all_windows = Arc::downgrade(&self.raw_window_handles);
@@ -250,13 +249,15 @@ impl WindowsPlatform {
                 loop {
                     vsync_provider.wait_for_vsync();
                     if check_device_lost(&directx_device.device) {
-                        handle_gpu_device_lost(
+                        if let Err(err) = handle_gpu_device_lost(
                             &mut directx_device,
                             platform_window.as_raw(),
                             validation_number,
                             &all_windows,
                             &text_system,
-                        );
+                        ) {
+                            panic!("Device lost: {err}");
+                        }
                     }
                     let Some(all_windows) = all_windows.upgrade() else {
                         break;
@@ -826,10 +827,8 @@ impl WindowsPlatformInner {
         let mut lock = self.state.borrow_mut();
         let directx_devices = lparam.0 as *const DirectXDevices;
         let directx_devices = unsafe { &*directx_devices };
-        unsafe {
-            ManuallyDrop::drop(&mut lock.directx_devices);
-        }
-        lock.directx_devices = ManuallyDrop::new(directx_devices.clone());
+        lock.directx_devices.take();
+        lock.directx_devices = Some(directx_devices.clone());
 
         Some(0)
     }
@@ -842,14 +841,6 @@ impl Drop for WindowsPlatform {
                 .context("Destroying platform window")
                 .log_err();
             OleUninitialize();
-        }
-    }
-}
-
-impl Drop for WindowsPlatformState {
-    fn drop(&mut self) {
-        unsafe {
-            ManuallyDrop::drop(&mut self.directx_devices);
         }
     }
 }
@@ -1077,37 +1068,28 @@ fn handle_gpu_device_lost(
     validation_number: usize,
     all_windows: &std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     text_system: &std::sync::Weak<DirectWriteTextSystem>,
-) {
+) -> Result<()> {
     // Here we wait a bit to ensure the system has time to recover from the device lost state.
     // If we don't wait, the final drawing result will be blank.
     std::thread::sleep(std::time::Duration::from_millis(350));
 
-    try_to_recover_from_device_lost(
-        || {
-            DirectXDevices::new()
-                .context("Failed to recreate new DirectX devices after device lost")
-        },
-        |new_devices| *directx_devices = new_devices,
-        || {
-            log::error!("Failed to recover DirectX devices after multiple attempts.");
-            // Do something here?
-            // At this point, the device loss is considered unrecoverable.
-            // std::process::exit(1);
-        },
-    );
+    *directx_devices = try_to_recover_from_device_lost(|| {
+        DirectXDevices::new().context("Failed to recreate new DirectX devices after device lost")
+    })?;
     log::info!("DirectX devices successfully recreated.");
 
+    let lparam = LPARAM(directx_devices as *const _ as _);
     unsafe {
         SendMessageW(
             platform_window,
             WM_GPUI_GPU_DEVICE_LOST,
             Some(WPARAM(validation_number)),
-            Some(LPARAM(directx_devices as *const _ as _)),
+            Some(lparam),
         );
     }
 
     if let Some(text_system) = text_system.upgrade() {
-        text_system.handle_gpu_lost(&directx_devices);
+        text_system.handle_gpu_lost(&directx_devices)?;
     }
     if let Some(all_windows) = all_windows.upgrade() {
         for window in all_windows.read().iter() {
@@ -1116,7 +1098,7 @@ fn handle_gpu_device_lost(
                     window.as_raw(),
                     WM_GPUI_GPU_DEVICE_LOST,
                     Some(WPARAM(validation_number)),
-                    Some(LPARAM(directx_devices as *const _ as _)),
+                    Some(lparam),
                 );
             }
         }
@@ -1132,6 +1114,7 @@ fn handle_gpu_device_lost(
             }
         }
     }
+    Ok(())
 }
 
 const PLATFORM_WINDOW_CLASS_NAME: PCWSTR = w!("Zed::PlatformWindow");
