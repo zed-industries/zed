@@ -8647,6 +8647,117 @@ async fn test_repository_pending_ops_long_running_staging(
 }
 
 #[gpui::test]
+async fn test_repository_pending_ops_stage_all(
+    executor: gpui::BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "my-repo": {
+                ".git": {},
+                "a.txt": "a",
+                "b.txt": "b"
+            }
+
+        }),
+    )
+    .await;
+
+    fs.set_status_for_repo(
+        path!("/root/my-repo/.git").as_ref(),
+        &[
+            ("a.txt", FileStatus::Untracked),
+            ("b.txt", FileStatus::Untracked),
+        ],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root/my-repo").as_ref()], cx).await;
+    let pending_ops_all = Arc::new(Mutex::new(SumTree::default()));
+    project.update(cx, |project, cx| {
+        let pending_ops_all = pending_ops_all.clone();
+        cx.subscribe(project.git_store(), move |_, _, e, _| {
+            if let GitStoreEvent::RepositoryUpdated(
+                _,
+                RepositoryEvent::PendingOpsChanged { pending_ops },
+                _,
+            ) = e
+            {
+                let merged = merge_pending_ops_snapshots(
+                    pending_ops.items(()),
+                    pending_ops_all.lock().items(()),
+                );
+                *pending_ops_all.lock() = SumTree::from_iter(merged.into_iter(), ());
+            }
+        })
+        .detach();
+    });
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let repo = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+
+    repo.update(cx, |repo, cx| {
+        repo.stage_entries(vec![repo_path("a.txt")], cx)
+    })
+    .await
+    .unwrap();
+    repo.update(cx, |repo, cx| repo.stage_all(cx))
+        .await
+        .unwrap();
+    repo.update(cx, |repo, cx| repo.unstage_all(cx))
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    assert_eq!(
+        pending_ops_all
+            .lock()
+            .get(&worktree::PathKey(repo_path("a.txt").0), ())
+            .unwrap()
+            .ops,
+        vec![
+            pending_op::PendingOp {
+                id: 1u16.into(),
+                git_status: pending_op::GitStatus::Staged,
+                job_status: pending_op::JobStatus::Finished
+            },
+            pending_op::PendingOp {
+                id: 2u16.into(),
+                git_status: pending_op::GitStatus::Unstaged,
+                job_status: pending_op::JobStatus::Finished
+            },
+        ],
+    );
+    assert_eq!(
+        pending_ops_all
+            .lock()
+            .get(&worktree::PathKey(repo_path("b.txt").0), ())
+            .unwrap()
+            .ops,
+        vec![
+            pending_op::PendingOp {
+                id: 1u16.into(),
+                git_status: pending_op::GitStatus::Staged,
+                job_status: pending_op::JobStatus::Finished
+            },
+            pending_op::PendingOp {
+                id: 2u16.into(),
+                git_status: pending_op::GitStatus::Unstaged,
+                job_status: pending_op::JobStatus::Finished
+            },
+        ],
+    );
+}
+
+#[gpui::test]
 async fn test_repository_subfolder_git_status(
     executor: gpui::BackgroundExecutor,
     cx: &mut gpui::TestAppContext,

@@ -3097,15 +3097,6 @@ impl RepositorySnapshot {
             .cloned()
     }
 
-    pub fn new_pending_op(&self, git_status: pending_op::GitStatus) -> PendingOp {
-        let id = self.pending_ops_by_path.summary().item_summary.max_id + 1;
-        PendingOp {
-            id,
-            git_status,
-            job_status: pending_op::JobStatus::Running,
-        }
-    }
-
     pub fn abs_path_to_repo_path(&self, abs_path: &Path) -> Option<RepoPath> {
         Self::abs_path_to_repo_path_inner(&self.work_directory_abs_path, abs_path, self.path_style)
     }
@@ -5304,14 +5295,18 @@ impl Repository {
         let mut edits = Vec::with_capacity(paths.len());
         let mut ids = Vec::with_capacity(paths.len());
         for path in paths {
-            let op = self.snapshot.new_pending_op(git_status);
             let mut ops = self
                 .snapshot
                 .pending_ops_for_path(&path)
                 .unwrap_or_else(|| PendingOps::new(&path));
-            ops.ops.push(op);
+            let id = ops.max_id() + 1;
+            ops.ops.push(PendingOp {
+                id,
+                git_status,
+                job_status: pending_op::JobStatus::Running,
+            });
             edits.push(sum_tree::Edit::Insert(ops));
-            ids.push((op.id, path));
+            ids.push((id, path));
         }
         self.snapshot.pending_ops_by_path.edit(edits, ());
         ids

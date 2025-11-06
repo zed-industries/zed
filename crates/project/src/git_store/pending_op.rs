@@ -34,7 +34,6 @@ pub struct PendingOp {
 
 #[derive(Clone, Debug)]
 pub struct PendingOpsSummary {
-    pub max_id: PendingOpId,
     pub staged_count: usize,
     pub staging_count: usize,
 }
@@ -49,7 +48,6 @@ impl Item for PendingOps {
         PathSummary {
             max_path: self.repo_path.0.clone(),
             item_summary: PendingOpsSummary {
-                max_id: self.ops.last().map(|op| op.id).unwrap_or_default(),
                 staged_count: self.staged() as usize,
                 staging_count: self.staging() as usize,
             },
@@ -60,14 +58,12 @@ impl Item for PendingOps {
 impl ContextLessSummary for PendingOpsSummary {
     fn zero() -> Self {
         Self {
-            max_id: PendingOpId::default(),
             staged_count: 0,
             staging_count: 0,
         }
     }
 
     fn add_summary(&mut self, summary: &Self) {
-        self.max_id = summary.max_id;
         self.staged_count += summary.staged_count;
         self.staging_count += summary.staging_count;
     }
@@ -101,6 +97,10 @@ impl PendingOps {
             repo_path: path.clone(),
             ops: Vec::new(),
         }
+    }
+
+    pub fn max_id(&self) -> PendingOpId {
+        self.ops.last().map(|op| op.id).unwrap_or_default()
     }
 
     pub fn op_by_id(&self, id: PendingOpId) -> Option<&PendingOp> {
