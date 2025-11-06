@@ -1336,8 +1336,8 @@ async fn test_create_file_focused_file_not_belong_to_available_worktrees(cx: &mu
             project_path.worktree_id
         );
 
-        assert_eq!(project_path.path.as_ref(), &*rel_path("new-file.txt"));
-    })
+        assert_eq!(project_path.path.as_ref(), rel_path("new-file.txt"));
+    });
 }
 
 #[gpui::test]
