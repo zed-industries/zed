@@ -813,6 +813,22 @@ impl MinimapVisibility {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BufferSerialization {
+    All,
+    NonDirtyBuffers,
+}
+
+impl BufferSerialization {
+    fn new(restore_unsaved_buffers: bool) -> Self {
+        if restore_unsaved_buffers {
+            Self::All
+        } else {
+            Self::NonDirtyBuffers
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct RunnableTasks {
     templates: Vec<(TaskSourceKind, TaskTemplate)>,
@@ -1130,7 +1146,7 @@ pub struct Editor {
     show_git_blame_inline_delay_task: Option<Task<()>>,
     git_blame_inline_enabled: bool,
     render_diff_hunk_controls: RenderDiffHunkControlsFn,
-    serialize_dirty_buffers: bool,
+    buffer_serialization: Option<BufferSerialization>,
     show_selection_menu: Option<bool>,
     blame: Option<Entity<GitBlame>>,
     blame_subscription: Option<Subscription>,
@@ -2206,10 +2222,13 @@ impl Editor {
             git_blame_inline_enabled: full_mode
                 && ProjectSettings::get_global(cx).git.inline_blame.enabled,
             render_diff_hunk_controls: Arc::new(render_diff_hunk_controls),
-            serialize_dirty_buffers: !is_minimap
-                && ProjectSettings::get_global(cx)
-                    .session
-                    .restore_unsaved_buffers,
+            buffer_serialization: is_minimap.not().then(|| {
+                BufferSerialization::new(
+                    ProjectSettings::get_global(cx)
+                        .session
+                        .restore_unsaved_buffers,
+                )
+            }),
             blame: None,
             blame_subscription: None,
             tasks: BTreeMap::default(),
@@ -2767,6 +2786,14 @@ impl Editor {
         self.workspace.as_ref()?.0.upgrade()
     }
 
+    /// Returns the workspace serialization ID if this editor should be serialized.
+    fn workspace_serialization_id(&self, _cx: &App) -> Option<WorkspaceId> {
+        self.workspace
+            .as_ref()
+            .filter(|_| self.should_serialize_buffer())
+            .and_then(|workspace| workspace.1)
+    }
+
     pub fn title<'a>(&self, cx: &'a App) -> Cow<'a, str> {
         self.buffer().read(cx).title(cx)
     }
@@ -3015,6 +3042,20 @@ impl Editor {
         self.auto_replace_emoji_shortcode = auto_replace;
     }
 
+    pub fn set_should_serialize(&mut self, should_serialize: bool, cx: &App) {
+        self.buffer_serialization = should_serialize.then(|| {
+            BufferSerialization::new(
+                ProjectSettings::get_global(cx)
+                    .session
+                    .restore_unsaved_buffers,
+            )
+        })
+    }
+
+    fn should_serialize_buffer(&self) -> bool {
+        self.buffer_serialization.is_some()
+    }
+
     pub fn toggle_edit_predictions(
         &mut self,
         _: &ToggleEditPrediction,
@@ -3232,8 +3273,7 @@ impl Editor {
             });
 
             if WorkspaceSettings::get(None, cx).restore_on_startup != RestoreOnStartupBehavior::None
-                && let Some(workspace_id) =
-                    self.workspace.as_ref().and_then(|workspace| workspace.1)
+                && let Some(workspace_id) = self.workspace_serialization_id(cx)
             {
                 let snapshot = self.buffer().read(cx).snapshot(cx);
                 let selections = selections.clone();
@@ -3298,7 +3338,7 @@ impl Editor {
             data.folds = inmemory_folds;
         });
 
-        let Some(workspace_id) = self.workspace.as_ref().and_then(|workspace| workspace.1) else {
+        let Some(workspace_id) = self.workspace_serialization_id(cx) else {
             return;
         };
         let background_executor = cx.background_executor().clone();
@@ -21199,8 +21239,9 @@ impl Editor {
         }
 
         let project_settings = ProjectSettings::get_global(cx);
-        self.serialize_dirty_buffers =
-            !self.mode.is_minimap() && project_settings.session.restore_unsaved_buffers;
+        self.buffer_serialization = self
+            .should_serialize_buffer()
+            .then(|| BufferSerialization::new(project_settings.session.restore_unsaved_buffers));
 
         if self.mode.is_full() {
             let show_inline_diagnostics = project_settings.diagnostics.inline.enabled;

@@ -98,21 +98,10 @@ impl WslRemoteConnection {
         let args = &["-m"];
         let output = wsl_command_impl(options, &program, args, true)
             .output()
-            .await?;
+            .await;
 
-        if !output.status.success() {
-            let output = wsl_command_impl(options, &program, args, false)
-                .output()
-                .await?;
-
-            if !output.status.success() {
-                return Err(anyhow!(
-                    "Command '{}' failed: {}",
-                    program,
-                    String::from_utf8_lossy(&output.stderr).trim()
-                ));
-            }
-
+        if !output.is_ok_and(|output| output.status.success()) {
+            run_wsl_command_impl(options, &program, args, false).await?;
             Ok(false)
         } else {
             Ok(true)
@@ -210,8 +199,6 @@ impl WslRemoteConnection {
             return Ok(dst_path);
         }
 
-        delegate.set_status(Some("Installing remote server"), cx);
-
         let wanted_version = match release_channel {
             ReleaseChannel::Nightly | ReleaseChannel::Dev => None,
             _ => Some(cx.update(|cx| AppVersion::global(cx))?),
@@ -242,7 +229,7 @@ impl WslRemoteConnection {
         delegate: &Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        delegate.set_status(Some("Uploading remote server to WSL"), cx);
+        delegate.set_status(Some("Uploading remote server"), cx);
 
         if let Some(parent) = dst_path.parent() {
             let parent = parent.display(PathStyle::Posix);

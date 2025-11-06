@@ -3903,11 +3903,11 @@ impl EditorElement {
             .child(
                 h_flex()
                     .size_full()
-                    .gap_2()
                     .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
-                    .pl_0p5()
-                    .pr_5()
+                    .pl_1()
+                    .pr_2()
                     .rounded_sm()
+                    .gap_1p5()
                     .when(is_sticky, |el| el.shadow_md())
                     .border_1()
                     .map(|div| {
@@ -3928,15 +3928,17 @@ impl EditorElement {
                         let buffer_id = for_excerpt.buffer_id;
                         let toggle_chevron_icon =
                             FileIcons::get_chevron_icon(!is_folded, cx).map(Icon::from_path);
+                        let button_size = rems_from_px(28.);
+
                         header.child(
                             div()
                                 .hover(|style| style.bg(colors.element_selected))
                                 .rounded_xs()
                                 .child(
                                     ButtonLike::new("toggle-buffer-fold")
-                                        .style(ui::ButtonStyle::Transparent)
-                                        .height(px(28.).into())
-                                        .width(px(28.))
+                                        .style(ButtonStyle::Transparent)
+                                        .height(button_size.into())
+                                        .width(button_size)
                                         .children(toggle_chevron_icon)
                                         .tooltip({
                                             let focus_handle = focus_handle.clone();
@@ -3992,7 +3994,13 @@ impl EditorElement {
                             })
                             .take(1),
                     )
-                    .child(h_flex().size(px(12.0)).justify_center().children(indicator))
+                    .child(
+                        h_flex()
+                            .size(rems_from_px(12.0))
+                            .justify_center()
+                            .flex_shrink_0()
+                            .children(indicator),
+                    )
                     .child(
                         h_flex()
                             .cursor_pointer()
@@ -4000,7 +4008,7 @@ impl EditorElement {
                             .size_full()
                             .justify_between()
                             .overflow_hidden()
-                            .child(h_flex().gap_2().map(|path_header| {
+                            .child(h_flex().gap_0p5().map(|path_header| {
                                 let filename = filename
                                     .map(SharedString::from)
                                     .unwrap_or_else(|| "untitled".into());
@@ -4059,18 +4067,13 @@ impl EditorElement {
                                 can_open_excerpts && is_selected && relative_path.is_some(),
                                 |el| {
                                     el.child(
-                                        ButtonLike::new("open-file-button")
+                                        Button::new("open-file", "Open File")
                                             .style(ButtonStyle::OutlinedGhost)
-                                            .child(
-                                                h_flex()
-                                                    .gap_2p5()
-                                                    .child(Label::new("Open file"))
-                                                    .child(KeyBinding::for_action_in(
-                                                        &OpenExcerpts,
-                                                        &focus_handle,
-                                                        cx,
-                                                    )),
-                                            )
+                                            .key_binding(KeyBinding::for_action_in(
+                                                &OpenExcerpts,
+                                                &focus_handle,
+                                                cx,
+                                            ))
                                             .on_click(window.listener_for(&self.editor, {
                                                 let jump_data = jump_data.clone();
                                                 move |editor, e: &ClickEvent, window, cx| {
@@ -4101,6 +4104,7 @@ impl EditorElement {
 
         let file = for_excerpt.buffer.file().cloned();
         let editor = self.editor.clone();
+
         right_click_menu("buffer-header-context-menu")
             .trigger(move |_, _, _| header)
             .menu(move |window, cx| {
