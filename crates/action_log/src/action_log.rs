@@ -1,10 +1,12 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use clock;
-use collections::BTreeMap;
+use collections::{BTreeMap, HashSet};
 use futures::{FutureExt, StreamExt, channel::mpsc};
-use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
-use language::{Anchor, Buffer, BufferEvent, DiskState, LanguageName, Point, ToPoint};
+use gpui::{
+    App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
+};
+use language::{Anchor, Buffer, BufferEvent, DiskState, Point, ToPoint};
 use project::{Project, ProjectItem, lsp_store::OpenLspBufferHandle};
 use std::{cmp, ops::Range, sync::Arc};
 use text::{Edit, Patch, Rope};
@@ -568,17 +570,28 @@ impl ActionLog {
         agent_telemetry_id: Option<&str>,
         cx: &mut Context<Self>,
     ) {
-        let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
+        let mut metrics = ActionLogMetrics::default();
+        self.keep_edits_in_range_impl(&buffer, buffer_range, &mut metrics, cx);
+        if let Some(agent) = agent_telemetry_id {
+            telemetry_report_accepted_edits(agent, metrics);
+        }
+    }
+
+    fn keep_edits_in_range_impl(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        buffer_range: Range<impl language::ToPoint>,
+        metrics: &mut ActionLogMetrics,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tracked_buffer) = self.tracked_buffers.get_mut(buffer) else {
             return;
         };
 
         match tracked_buffer.status {
             TrackedBufferStatus::Deleted => {
-                if let Some((buffer, agent)) =
-                    self.tracked_buffers.remove(&buffer).zip(agent_telemetry_id)
-                {
-                    ActionLogTelemetry::for_buffer(&buffer, cx).report_accepted(agent);
-                }
+                metrics.add_edits(buffer.read(cx), tracked_buffer.unreviewed_edits.edits());
+                self.tracked_buffers.remove(&buffer);
                 cx.notify();
             }
             _ => {
@@ -586,8 +599,6 @@ impl ActionLog {
                 let buffer_range =
                     buffer_range.start.to_point(buffer)..buffer_range.end.to_point(buffer);
                 let mut delta = 0i32;
-                let mut telemetry = ActionLogTelemetry::default();
-                telemetry.add_language_from_buffer(tracked_buffer.buffer.read(cx));
                 tracked_buffer.unreviewed_edits.retain_mut(|edit| {
                     edit.old.start = (edit.old.start as i32 + delta) as u32;
                     edit.old.end = (edit.old.end as i32 + delta) as u32;
@@ -619,7 +630,7 @@ impl ActionLog {
                                 .collect::<String>(),
                         );
                         delta += edit.new_len() as i32 - edit.old_len() as i32;
-                        telemetry.add_edit(edit);
+                        metrics.add_edit(buffer, edit);
                         false
                     }
                 });
@@ -629,9 +640,6 @@ impl ActionLog {
                     tracked_buffer.status = TrackedBufferStatus::Modified;
                 }
                 tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
-                if let Some(agent_telemetry_id) = agent_telemetry_id {
-                    telemetry.report_accepted(agent_telemetry_id);
-                }
             }
         }
     }
@@ -641,6 +649,21 @@ impl ActionLog {
         buffer: Entity<Buffer>,
         buffer_ranges: Vec<Range<impl language::ToPoint>>,
         agent_telemetry_id: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let mut metrics = ActionLogMetrics::default();
+        let task = self.reject_edits_in_ranges_impl(buffer, buffer_ranges, &mut metrics, cx);
+        if let Some(agent) = agent_telemetry_id {
+            telemetry_report_rejected_edits(agent, metrics);
+        }
+        task
+    }
+
+    fn reject_edits_in_ranges_impl(
+        &mut self,
+        buffer: Entity<Buffer>,
+        buffer_ranges: Vec<Range<impl language::ToPoint>>,
+        metrics: &mut ActionLogMetrics,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
@@ -697,11 +720,8 @@ impl ActionLog {
                     }
                 };
 
-                if let Some((tracked_buffer, agent)) =
-                    self.tracked_buffers.remove(&buffer).zip(agent_telemetry_id)
-                {
-                    ActionLogTelemetry::for_buffer(&tracked_buffer, cx).report_rejected(agent);
-                }
+                metrics.add_edits(buffer.read(cx), tracked_buffer.unreviewed_edits.edits());
+                self.tracked_buffers.remove(&buffer);
                 cx.notify();
                 task
             }
@@ -714,11 +734,8 @@ impl ActionLog {
                     .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx));
 
                 // Clear all tracked edits for this buffer and start over as if we just read it.
-                if let Some((tracked_buffer, agent)) =
-                    self.tracked_buffers.remove(&buffer).zip(agent_telemetry_id)
-                {
-                    ActionLogTelemetry::for_buffer(&tracked_buffer, cx).report_rejected(agent);
-                }
+                metrics.add_edits(buffer.read(cx), tracked_buffer.unreviewed_edits.edits());
+                self.tracked_buffers.remove(&buffer);
                 self.buffer_read(buffer.clone(), cx);
                 cx.notify();
                 save
@@ -733,8 +750,6 @@ impl ActionLog {
                         .peekable();
 
                     let mut edits_to_revert = Vec::new();
-                    let mut telemetry = ActionLogTelemetry::default();
-                    telemetry.add_language_from_buffer(buffer);
                     for edit in tracked_buffer.unreviewed_edits.edits() {
                         let new_range = tracked_buffer
                             .snapshot
@@ -759,7 +774,7 @@ impl ActionLog {
                         }
 
                         if revert {
-                            telemetry.add_edit(edit);
+                            metrics.add_edit(buffer, edit);
                             let old_range = tracked_buffer
                                 .diff_base
                                 .point_to_offset(Point::new(edit.old.start, 0))
@@ -775,9 +790,6 @@ impl ActionLog {
                         }
                     }
 
-                    if let Some(agent) = agent_telemetry_id {
-                        telemetry.report_rejected(agent);
-                    }
                     buffer.edit(edits_to_revert, None, cx);
                 });
                 self.project
@@ -787,10 +799,12 @@ impl ActionLog {
     }
 
     pub fn keep_all_edits(&mut self, agent_telemetry_id: Option<&str>, cx: &mut Context<Self>) {
+        let mut metrics = ActionLogMetrics::default();
         self.tracked_buffers.retain(|_buffer, tracked_buffer| {
-            if let Some(agent) = agent_telemetry_id {
-                ActionLogTelemetry::for_buffer(tracked_buffer, cx).report_accepted(agent);
-            }
+            metrics.add_edits(
+                tracked_buffer.buffer.read(cx),
+                tracked_buffer.unreviewed_edits.edits(),
+            );
             match tracked_buffer.status {
                 TrackedBufferStatus::Deleted => false,
                 _ => {
@@ -804,6 +818,9 @@ impl ActionLog {
                 }
             }
         });
+        if let Some(agent) = agent_telemetry_id {
+            telemetry_report_accepted_edits(agent, metrics);
+        }
         cx.notify();
     }
 
@@ -812,11 +829,12 @@ impl ActionLog {
         agent_telemetry_id: Option<&str>,
         cx: &mut Context<Self>,
     ) -> Task<()> {
+        let mut metrics = ActionLogMetrics::default();
         let futures = self.changed_buffers(cx).into_keys().map(|buffer| {
-            let reject = self.reject_edits_in_ranges(
+            let reject = self.reject_edits_in_ranges_impl(
                 buffer,
                 vec![Anchor::MIN..Anchor::MAX],
-                agent_telemetry_id,
+                &mut metrics,
                 cx,
             );
 
@@ -827,7 +845,10 @@ impl ActionLog {
 
         let task = futures::future::join_all(futures);
 
-        cx.spawn(async move |_, _| {
+        if let Some(agent) = agent_telemetry_id {
+            telemetry_report_rejected_edits(agent, metrics);
+        }
+        cx.background_spawn(async move {
             task.await;
         })
     }
@@ -858,50 +879,52 @@ impl ActionLog {
 }
 
 #[derive(Default)]
-struct ActionLogTelemetry {
-    lines_added: u32,
+struct ActionLogMetrics {
     lines_removed: u32,
-    language: Option<LanguageName>,
+    lines_added: u32,
+    languages: HashSet<SharedString>,
 }
 
-impl ActionLogTelemetry {
-    fn for_buffer(buffer: &TrackedBuffer, cx: &App) -> Self {
-        let mut this = Self::default();
-        this.add_language_from_buffer(buffer.buffer.read(cx));
-        for edit in buffer.unreviewed_edits.edits() {
-            this.add_edit(edit);
+impl ActionLogMetrics {
+    fn add_edits(&mut self, buffer: &Buffer, edits: &[Edit<u32>]) {
+        self.add_language(buffer);
+        for edit in edits {
+            self.lines_added += edit.new_len();
+            self.lines_removed += edit.old_len();
         }
-        this
     }
 
-    fn add_language_from_buffer(&mut self, buffer: &Buffer) {
-        self.language = buffer.language().map(|l| l.name());
-    }
-
-    fn add_edit(&mut self, edit: &Edit<u32>) {
+    fn add_edit(&mut self, buffer: &Buffer, edit: &Edit<u32>) {
+        self.add_language(buffer);
         self.lines_added += edit.new_len();
         self.lines_removed += edit.old_len();
     }
 
-    fn report_accepted(self, agent: &str) {
-        telemetry::event!(
-            "Agent Edits Accepted",
-            agent,
-            language = self.language,
-            lines_added = self.lines_added,
-            lines_removed = self.lines_removed,
-        );
+    fn add_language(&mut self, buffer: &Buffer) {
+        if let Some(language) = buffer.language().map(|l| l.name().0) {
+            self.languages.insert(language);
+        }
     }
+}
 
-    fn report_rejected(self, agent: &str) {
-        telemetry::event!(
-            "Agent Edits Rejected",
-            agent,
-            language = self.language,
-            lines_added = self.lines_added,
-            lines_removed = self.lines_removed
-        );
-    }
+fn telemetry_report_accepted_edits(agent: &str, metrics: ActionLogMetrics) {
+    telemetry::event!(
+        "Agent Edits Accepted",
+        agent,
+        languages = metrics.languages,
+        lines_added = metrics.lines_added,
+        lines_removed = metrics.lines_removed
+    );
+}
+
+fn telemetry_report_rejected_edits(agent: &str, metrics: ActionLogMetrics) {
+    telemetry::event!(
+        "Agent Edits Rejected",
+        agent,
+        languages = metrics.languages,
+        lines_added = metrics.lines_added,
+        lines_removed = metrics.lines_removed
+    );
 }
 
 fn apply_non_conflicting_edits(
