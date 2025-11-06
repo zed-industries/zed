@@ -9623,7 +9623,7 @@ async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppCo
 
     let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
-        "/dir",
+        path!("/dir"),
         json!({
             ".git": {},
            "src": {
@@ -9635,7 +9635,7 @@ async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppCo
     .await;
 
     fs.set_head_for_repo(
-        Path::new("/dir/.git"),
+        path!("/dir/.git").as_ref(),
         &[
             ("src/file_1.rs", file_1_committed.clone()),
             ("src/file_2.rs", file_2_committed.clone()),
@@ -9643,18 +9643,18 @@ async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppCo
         "deadbeef",
     );
     fs.set_index_for_repo(
-        Path::new("/dir/.git"),
+        path!("/dir/.git").as_ref(),
         &[
             ("src/file_1.rs", file_1_staged.clone()),
             ("src/file_2.rs", file_2_staged.clone()),
         ],
     );
 
-    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
 
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/dir/src/file_1.rs", cx)
+            project.open_local_buffer(path!("/dir/src/file_1.rs"), cx)
         })
         .await
         .unwrap();
