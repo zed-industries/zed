@@ -694,16 +694,22 @@ impl EventEmitter<()> for NotebookEditor {}
 impl Item for NotebookEditor {
     type Event = ();
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| Self::new(self.project.clone(), self.notebook_item.clone(), window, cx)))
+        Task::ready(Some(cx.new(|cx| {
+            Self::new(self.project.clone(), self.notebook_item.clone(), window, cx)
+        })))
     }
 
     fn buffer_kind(&self, _: &App) -> workspace::item::ItemBufferKind {

@@ -2,18 +2,22 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use call::{ActiveCall, ParticipantLocation, Room};
+use channel::ChannelStore;
 use client::{User, proto::PeerId};
 use gpui::{
     AnyElement, Hsla, IntoElement, MouseButton, Path, ScreenCaptureSource, Styled, WeakEntity,
     canvas, point,
 };
 use gpui::{App, Task, Window, actions};
+use project::WorktreeSettings;
 use rpc::proto::{self};
+use settings::{Settings as _, SettingsLocation};
 use theme::ActiveTheme;
 use ui::{
     Avatar, AvatarAudioStatusIndicator, ContextMenu, ContextMenuItem, Divider, DividerColor,
     Facepile, PopoverMenu, SplitButton, SplitButtonStyle, TintColor, Tooltip, prelude::*,
 };
+use util::rel_path::RelPath;
 use workspace::notifications::DetachAndPromptErr;
 
 use crate::TitleBar;
@@ -216,6 +220,8 @@ impl TitleBar {
                                 .on_click({
                                     let peer_id = collaborator.peer_id;
                                     cx.listener(move |this, _, window, cx| {
+                                        cx.stop_propagation();
+
                                         this.workspace
                                             .update(cx, |workspace, cx| {
                                                 if is_following {
@@ -347,6 +353,11 @@ impl TitleBar {
         let can_share_projects = room.can_share_projects();
         let screen_sharing_supported = cx.is_screen_capture_supported();
 
+        let channel_store = ChannelStore::global(cx);
+        let channel = room
+            .channel_id()
+            .and_then(|channel_id| channel_store.read(cx).channel_for_id(channel_id).cloned());
+
         let mut children = Vec::new();
 
         children.push(
@@ -368,6 +379,20 @@ impl TitleBar {
         );
 
         if is_local && can_share_projects && !is_connecting_to_project {
+            let is_sharing_disabled = channel.is_some_and(|channel| match channel.visibility {
+                proto::ChannelVisibility::Public => project.visible_worktrees(cx).any(|worktree| {
+                    let worktree_id = worktree.read(cx).id();
+
+                    let settings_location = Some(SettingsLocation {
+                        worktree_id,
+                        path: RelPath::empty(),
+                    });
+
+                    WorktreeSettings::get(settings_location, cx).prevent_sharing_in_public_channels
+                }),
+                proto::ChannelVisibility::Members => false,
+            });
+
             children.push(
                 Button::new(
                     "toggle_sharing",
@@ -382,6 +407,11 @@ impl TitleBar {
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .toggle_state(is_shared)
                 .label_size(LabelSize::Small)
+                .when(is_sharing_disabled, |parent| {
+                    parent.disabled(true).tooltip(Tooltip::text(
+                        "This project may not be shared in a public channel.",
+                    ))
+                })
                 .on_click(cx.listener(move |this, _, window, cx| {
                     if is_shared {
                         this.unshare_project(window, cx);

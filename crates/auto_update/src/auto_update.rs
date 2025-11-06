@@ -331,6 +331,16 @@ impl AutoUpdater {
 
     pub fn start_polling(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         cx.spawn(async move |this, cx| {
+            #[cfg(target_os = "windows")]
+            {
+                use util::ResultExt;
+
+                cleanup_windows()
+                    .await
+                    .context("failed to cleanup old directories")
+                    .log_err();
+            }
+
             loop {
                 this.update(cx, |this, cx| this.poll(UpdateCheckType::Automatic, cx))?;
                 cx.background_executor().timer(POLL_INTERVAL).await;
@@ -396,6 +406,7 @@ impl AutoUpdater {
         arch: &str,
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
+        set_status: impl Fn(&str, &mut AsyncApp) + Send + 'static,
         cx: &mut AsyncApp,
     ) -> Result<PathBuf> {
         let this = cx.update(|cx| {
@@ -405,6 +416,7 @@ impl AutoUpdater {
                 .context("auto-update not initialized")
         })??;
 
+        set_status("Fetching remote server release", cx);
         let release = Self::get_release(
             &this,
             "zed-remote-server",
@@ -429,6 +441,7 @@ impl AutoUpdater {
                 "downloading zed-remote-server {os} {arch} version {}",
                 release.version
             );
+            set_status("Downloading remote server", cx);
             download_remote_server_binary(&version_path, release, client, cx).await?;
         }
 
@@ -923,6 +936,32 @@ async fn install_release_macos(
     Ok(None)
 }
 
+#[cfg(target_os = "windows")]
+async fn cleanup_windows() -> Result<()> {
+    use util::ResultExt;
+
+    let parent = std::env::current_exe()?
+        .parent()
+        .context("No parent dir for Zed.exe")?
+        .to_owned();
+
+    // keep in sync with crates/auto_update_helper/src/updater.rs
+    smol::fs::remove_dir(parent.join("updates"))
+        .await
+        .context("failed to remove updates dir")
+        .log_err();
+    smol::fs::remove_dir(parent.join("install"))
+        .await
+        .context("failed to remove install dir")
+        .log_err();
+    smol::fs::remove_dir(parent.join("old"))
+        .await
+        .context("failed to remove old version dir")
+        .log_err();
+
+    Ok(())
+}
+
 async fn install_release_windows(downloaded_installer: PathBuf) -> Result<Option<PathBuf>> {
     let output = Command::new(downloaded_installer)
         .arg("/verysilent")
@@ -962,7 +1001,7 @@ pub async fn finalize_auto_update_on_quit() {
             .parent()
             .map(|p| p.join("tools").join("auto_update_helper.exe"))
     {
-        let mut command = smol::process::Command::new(helper);
+        let mut command = util::command::new_smol_command(helper);
         command.arg("--launch");
         command.arg("false");
         if let Ok(mut cmd) = command.spawn() {

@@ -6,10 +6,10 @@ use crate::markdown_elements::{
 };
 use fs::normalize_path;
 use gpui::{
-    AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div,
-    Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
-    Keystroke, Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText,
-    TextStyle, WeakEntity, Window, div, img, rems,
+    AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, Div, Element,
+    ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke,
+    Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText, TextStyle,
+    WeakEntity, Window, div, img, rems,
 };
 use settings::Settings;
 use std::{
@@ -233,12 +233,11 @@ fn render_markdown_list_item(
     cx: &mut RenderContext,
 ) -> AnyElement {
     use ParsedMarkdownListItemType::*;
-
-    let padding = cx.scaled_rems((parsed.depth - 1) as f32);
+    let depth = parsed.depth.saturating_sub(1) as usize;
 
     let bullet = match &parsed.item_type {
-        Ordered(order) => format!("{}.", order).into_any_element(),
-        Unordered => "•".into_any_element(),
+        Ordered(order) => list_item_prefix(*order as usize, true, depth).into_any_element(),
+        Unordered => list_item_prefix(1, false, depth).into_any_element(),
         Task(checked, range) => div()
             .id(cx.next_id(range))
             .mt(cx.scaled_rems(3.0 / 16.0))
@@ -294,13 +293,14 @@ fn render_markdown_list_item(
         .collect();
 
     let item = h_flex()
-        .pl(DefiniteLength::Absolute(AbsoluteLength::Rems(padding)))
+        .when(!parsed.nested, |this| this.pl(cx.scaled_rems(depth as f32)))
+        .when(parsed.nested && depth > 0, |this| this.ml_neg_1p5())
         .items_start()
         .children(vec![
             bullet,
             v_flex()
                 .children(contents)
-                .gap(cx.scaled_rems(1.0))
+                .when(!parsed.nested, |this| this.gap(cx.scaled_rems(1.0)))
                 .pr(cx.scaled_rems(1.0))
                 .w_full(),
         ]);
@@ -884,6 +884,38 @@ impl Render for InteractiveMarkdownElementTooltip {
     }
 }
 
+/// Returns the prefix for a list item.
+fn list_item_prefix(order: usize, ordered: bool, depth: usize) -> String {
+    let ix = order.saturating_sub(1);
+    const NUMBERED_PREFIXES_1: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const NUMBERED_PREFIXES_2: &str = "abcdefghijklmnopqrstuvwxyz";
+    const BULLETS: [&str; 5] = ["•", "◦", "▪", "‣", "⁃"];
+
+    if ordered {
+        match depth {
+            0 => format!("{}. ", order),
+            1 => format!(
+                "{}. ",
+                NUMBERED_PREFIXES_1
+                    .chars()
+                    .nth(ix % NUMBERED_PREFIXES_1.len())
+                    .unwrap()
+            ),
+            _ => format!(
+                "{}. ",
+                NUMBERED_PREFIXES_2
+                    .chars()
+                    .nth(ix % NUMBERED_PREFIXES_2.len())
+                    .unwrap()
+            ),
+        }
+    } else {
+        let depth = depth.min(BULLETS.len() - 1);
+        let bullet = BULLETS[depth];
+        return format!("{} ", bullet);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1023,5 +1055,26 @@ mod tests {
                 ])
             ])
         );
+    }
+
+    #[test]
+    fn test_list_item_prefix() {
+        assert_eq!(list_item_prefix(1, true, 0), "1. ");
+        assert_eq!(list_item_prefix(2, true, 0), "2. ");
+        assert_eq!(list_item_prefix(3, true, 0), "3. ");
+        assert_eq!(list_item_prefix(11, true, 0), "11. ");
+        assert_eq!(list_item_prefix(1, true, 1), "A. ");
+        assert_eq!(list_item_prefix(2, true, 1), "B. ");
+        assert_eq!(list_item_prefix(3, true, 1), "C. ");
+        assert_eq!(list_item_prefix(1, true, 2), "a. ");
+        assert_eq!(list_item_prefix(2, true, 2), "b. ");
+        assert_eq!(list_item_prefix(7, true, 2), "g. ");
+        assert_eq!(list_item_prefix(1, true, 1), "A. ");
+        assert_eq!(list_item_prefix(1, true, 2), "a. ");
+        assert_eq!(list_item_prefix(1, false, 0), "• ");
+        assert_eq!(list_item_prefix(1, false, 1), "◦ ");
+        assert_eq!(list_item_prefix(1, false, 2), "▪ ");
+        assert_eq!(list_item_prefix(1, false, 3), "‣ ");
+        assert_eq!(list_item_prefix(1, false, 4), "⁃ ");
     }
 }

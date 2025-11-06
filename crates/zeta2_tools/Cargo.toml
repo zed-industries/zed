@@ -12,6 +12,7 @@ workspace = true
 path = "src/zeta2_tools.rs"
 
 [dependencies]
+anyhow.workspace = true
 chrono.workspace = true
 client.workspace = true
 cloud_llm_client.workspace = true
@@ -29,6 +30,7 @@ project.workspace = true
 serde.workspace = true
 telemetry.workspace = true
 text.workspace = true
+regex-syntax = "0.8.8"
 ui.workspace = true
 ui_input.workspace = true
 util.workspace = true

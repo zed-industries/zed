@@ -680,7 +680,7 @@ pub struct CodeLabelBuilder {
     filter_range: Range<usize>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Deserialize, JsonSchema, Debug)]
 pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: LanguageName,
@@ -823,7 +823,7 @@ pub struct LanguageMatcher {
 }
 
 /// The configuration for JSX tag auto-closing.
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Deserialize, JsonSchema, Debug)]
 pub struct JsxTagAutoCloseConfig {
     /// The name of the node for a opening tag
     pub open_tag_node_name: String,
@@ -2324,17 +2324,19 @@ impl CodeLabel {
     }
 
     pub fn plain(text: String, filter_text: Option<&str>) -> Self {
-        Self::filtered(text, filter_text, Vec::new())
+        Self::filtered(text.clone(), text.len(), filter_text, Vec::new())
     }
 
     pub fn filtered(
         text: String,
+        label_len: usize,
         filter_text: Option<&str>,
         runs: Vec<(Range<usize>, HighlightId)>,
     ) -> Self {
+        assert!(label_len <= text.len());
         let filter_range = filter_text
             .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
-            .unwrap_or(0..text.len());
+            .unwrap_or(0..label_len);
         Self::new(text, filter_range, runs)
     }
 

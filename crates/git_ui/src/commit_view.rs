@@ -4,8 +4,8 @@ use editor::{Editor, EditorEvent, MultiBuffer, SelectionEffects, multibuffer_con
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncApp, AsyncWindowContext, Context,
-    Entity, EventEmitter, FocusHandle, Focusable, IntoElement, PromptLevel, Render, WeakEntity,
-    Window, actions,
+    Entity, EventEmitter, FocusHandle, Focusable, IntoElement, PromptLevel, Render, Task,
+    WeakEntity, Window, actions,
 };
 use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -415,12 +415,14 @@ fn format_commit(commit: &CommitDetails, is_stash: bool) -> String {
         commit.author_name, commit.author_email
     )
     .unwrap();
+    let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
     writeln!(
         &mut result,
         "Date:   {}",
-        time_format::format_local_timestamp(
+        time_format::format_localized_timestamp(
             time::OffsetDateTime::from_unix_timestamp(commit.commit_timestamp).unwrap(),
             time::OffsetDateTime::now_utc(),
+            local_offset,
             time_format::TimestampFormat::MediumAbsolute,
         ),
     )
@@ -556,16 +558,20 @@ impl Item for CommitView {
         });
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| {
+        Task::ready(Some(cx.new(|cx| {
             let editor = cx.new(|cx| {
                 self.editor
                     .update(cx, |editor, cx| editor.clone(window, cx))
@@ -577,7 +583,7 @@ impl Item for CommitView {
                 commit: self.commit.clone(),
                 stash: self.stash,
             }
-        }))
+        })))
     }
 }
 

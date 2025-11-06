@@ -22,7 +22,7 @@ use ui::{
     ButtonStyle, ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, IconButton,
     IconName, IconSize, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
-use vim_mode_setting::VimModeSetting;
+use vim_mode_setting::{HelixModeSetting, VimModeSetting};
 use workspace::item::ItemBufferKind;
 use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, item::ItemHandle,
@@ -307,6 +307,7 @@ impl Render for QuickActionBar {
         let editor = editor.downgrade();
         let editor_settings_dropdown = {
             let vim_mode_enabled = VimModeSetting::get_global(cx).0;
+            let helix_mode_enabled = HelixModeSetting::get_global(cx).0;
 
             PopoverMenu::new("editor-settings")
                 .trigger_with_tooltip(
@@ -583,9 +584,24 @@ impl Render for QuickActionBar {
                                     move |window, cx| {
                                         let new_value = !vim_mode_enabled;
                                         VimModeSetting::override_global(VimModeSetting(new_value), cx);
+                                        HelixModeSetting::override_global(HelixModeSetting(false), cx);
                                         window.refresh();
                                     }
                                 },
+                            );
+                            menu = menu.toggleable_entry(
+                                "Helix Mode",
+                                helix_mode_enabled,
+                                IconPosition::Start,
+                                None,
+                                {
+                                    move |window, cx| {
+                                        let new_value = !helix_mode_enabled;
+                                        HelixModeSetting::override_global(HelixModeSetting(new_value), cx);
+                                        VimModeSetting::override_global(VimModeSetting(false), cx);
+                                        window.refresh();
+                                    }
+                                }
                             );
 
                             menu

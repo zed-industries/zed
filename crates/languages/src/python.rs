@@ -406,6 +406,7 @@ impl LspAdapter for PyrightLspAdapter {
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
         let label = &item.label;
+        let label_len = label.len();
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
             lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
@@ -427,9 +428,10 @@ impl LspAdapter for PyrightLspAdapter {
         }
         Some(language::CodeLabel::filtered(
             text,
+            label_len,
             item.filter_text.as_deref(),
             highlight_id
-                .map(|id| (0..label.len(), id))
+                .map(|id| (0..label_len, id))
                 .into_iter()
                 .collect(),
         ))
@@ -1210,13 +1212,14 @@ impl ToolchainLister for PythonToolchainProvider {
                 activation_script.extend(match shell {
                     ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
                     ShellKind::Posix => Some(format!("\"{pyenv}\" shell - sh {version}")),
-                    ShellKind::Nushell => Some(format!("\"{pyenv}\" shell - nu {version}")),
+                    ShellKind::Nushell => Some(format!("^\"{pyenv}\" shell - nu {version}")),
                     ShellKind::PowerShell => None,
                     ShellKind::Csh => None,
                     ShellKind::Tcsh => None,
                     ShellKind::Cmd => None,
                     ShellKind::Rc => None,
                     ShellKind::Xonsh => None,
+                    ShellKind::Elvish => None,
                 })
             }
             _ => {}
@@ -1466,6 +1469,7 @@ impl LspAdapter for PyLspAdapter {
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
         let label = &item.label;
+        let label_len = label.len();
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
             lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method")?,
@@ -1476,6 +1480,7 @@ impl LspAdapter for PyLspAdapter {
         };
         Some(language::CodeLabel::filtered(
             label.clone(),
+            label_len,
             item.filter_text.as_deref(),
             vec![(0..label.len(), highlight_id)],
         ))
@@ -1741,6 +1746,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
         let label = &item.label;
+        let label_len = label.len();
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
             lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
@@ -1762,6 +1768,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
         }
         Some(language::CodeLabel::filtered(
             text,
+            label_len,
             item.filter_text.as_deref(),
             highlight_id
                 .map(|id| (0..label.len(), id))
@@ -1866,12 +1873,8 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 }
                 // Basedpyright by default uses `strict` type checking, we tone it down as to not surpris users
                 maybe!({
-                    let basedpyright = object
-                        .entry("basedpyright")
-                        .or_insert(Value::Object(serde_json::Map::default()));
-                    let analysis = basedpyright
-                        .as_object_mut()?
-                        .entry("analysis")
+                    let analysis = object
+                        .entry("basedpyright.analysis")
                         .or_insert(Value::Object(serde_json::Map::default()));
                     if let serde_json::map::Entry::Vacant(v) =
                         analysis.as_object_mut()?.entry("typeCheckingMode")

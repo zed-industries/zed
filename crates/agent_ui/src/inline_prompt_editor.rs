@@ -260,10 +260,10 @@ impl<T: 'static> PromptEditor<T> {
 
         let agent_panel_keybinding =
             ui::text_for_action(&zed_actions::assistant::ToggleFocus, window, cx)
-                .map(|keybinding| format!("{keybinding} to chat ― "))
+                .map(|keybinding| format!("{keybinding} to chat"))
                 .unwrap_or_default();
 
-        format!("{action}… ({agent_panel_keybinding}↓↑ for history)")
+        format!("{action}… ({agent_panel_keybinding} ― ↓↑ for history — @ to include context)")
     }
 
     pub fn prompt(&self, cx: &App) -> String {

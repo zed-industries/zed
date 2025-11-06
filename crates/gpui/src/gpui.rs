@@ -95,7 +95,7 @@ pub use smol::Timer;
 pub use style::*;
 pub use styled::*;
 pub use subscription::*;
-use svg_renderer::*;
+pub use svg_renderer::*;
 pub(crate) use tab_stop::*;
 pub use taffy::{AvailableSpace, LayoutId};
 #[cfg(any(test, feature = "test-support"))]
@@ -107,7 +107,7 @@ pub use util::{FutureExt, Timeout, arc_cow::ArcCow};
 pub use view::*;
 pub use window::*;
 
-use std::{any::Any, borrow::BorrowMut, future::Future};
+use std::{any::Any, future::Future};
 use taffy::TaffyLayoutEngine;
 
 /// The context trait, allows the different contexts in GPUI to be used
@@ -253,7 +253,7 @@ pub trait BorrowAppContext {
 
 impl<C> BorrowAppContext for C
 where
-    C: BorrowMut<App>,
+    C: std::borrow::BorrowMut<App>,
 {
     fn set_global<G: Global>(&mut self, global: G) {
         self.borrow_mut().set_global(global)

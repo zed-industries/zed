@@ -64,6 +64,12 @@ pub struct WorktreeSettingsContent {
     #[serde(skip_serializing_if = "Maybe::is_unset")]
     pub project_name: Maybe<String>,
 
+    /// Whether to prevent this project from being shared in public channels.
+    ///
+    /// Default: false
+    #[serde(default)]
+    pub prevent_sharing_in_public_channels: bool,
+
     /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
     /// `file_scan_inclusions`.
     ///
@@ -91,6 +97,10 @@ pub struct WorktreeSettingsContent {
     /// Treat the files matching these globs as `.env` files.
     /// Default: ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]
     pub private_files: Option<ExtendingVec<String>>,
+
+    /// Treat the files matching these globs as hidden files. You can hide hidden files in the project panel.
+    /// Default: ["**/.*"]
+    pub hidden_files: Option<Vec<String>>,
 }
 
 #[skip_serializing_none]
