@@ -16,7 +16,7 @@ use text::{Bias, Point};
 use theme::ActiveTheme;
 use ui::prelude::*;
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
-use workspace::ModalView;
+use workspace::{DismissDecision, ModalView};
 
 pub fn init(cx: &mut App) {
     LineIndicatorFormat::register(cx);
@@ -31,7 +31,16 @@ pub struct GoToLine {
     _subscriptions: Vec<Subscription>,
 }
 
-impl ModalView for GoToLine {}
+impl ModalView for GoToLine {
+    fn on_before_dismiss(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> DismissDecision {
+        self.prev_scroll_position.take();
+        DismissDecision::Dismiss(true)
+    }
+}
 
 impl Focusable for GoToLine {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -768,5 +777,172 @@ mod tests {
             Project::init_settings(cx);
             state
         })
+    }
+
+    #[gpui::test]
+    async fn test_scroll_position_on_outside_click(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let file_content = (0..100)
+            .map(|i| format!("struct Line{};", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs.insert_tree(path!("/dir"), json!({"a.rs": file_content}))
+            .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.rs")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        let go_to_line_view = open_go_to_line_view(&workspace, cx);
+
+        let scroll_position_before_input =
+            editor.update(cx, |editor, cx| editor.scroll_position(cx));
+        cx.simulate_input("47");
+        let scroll_position_after_input =
+            editor.update(cx, |editor, cx| editor.scroll_position(cx));
+        assert_ne!(scroll_position_before_input, scroll_position_after_input);
+
+        drop(go_to_line_view);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.hide_modal(window, cx);
+        });
+        cx.run_until_parked();
+
+        let scroll_position_after_auto_dismiss =
+            editor.update(cx, |editor, cx| editor.scroll_position(cx));
+        assert_eq!(
+            scroll_position_after_auto_dismiss, scroll_position_after_input,
+            "Dismissing via outside click should maintain new scroll position"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_scroll_position_on_cancel(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let file_content = (0..100)
+            .map(|i| format!("struct Line{};", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs.insert_tree(path!("/dir"), json!({"a.rs": file_content}))
+            .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.rs")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        let go_to_line_view = open_go_to_line_view(&workspace, cx);
+
+        let scroll_position_before_input =
+            editor.update(cx, |editor, cx| editor.scroll_position(cx));
+        cx.simulate_input("47");
+        let scroll_position_after_input =
+            editor.update(cx, |editor, cx| editor.scroll_position(cx));
+        assert_ne!(scroll_position_before_input, scroll_position_after_input);
+
+        cx.dispatch_action(menu::Cancel);
+        drop(go_to_line_view);
+        cx.run_until_parked();
+
+        let scroll_position_after_cancel =
+            editor.update(cx, |editor, cx| editor.scroll_position(cx));
+        assert_eq!(
+            scroll_position_after_cancel, scroll_position_after_input,
+            "Cancel should maintain new scroll position"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_scroll_position_on_confirm(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let file_content = (0..100)
+            .map(|i| format!("struct Line{};", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs.insert_tree(path!("/dir"), json!({"a.rs": file_content}))
+            .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.rs")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        let go_to_line_view = open_go_to_line_view(&workspace, cx);
+
+        let scroll_position_before_input =
+            editor.update(cx, |editor, cx| editor.scroll_position(cx));
+        cx.simulate_input("47");
+        let scroll_position_after_input =
+            editor.update(cx, |editor, cx| editor.scroll_position(cx));
+        assert_ne!(scroll_position_before_input, scroll_position_after_input);
+
+        cx.dispatch_action(menu::Confirm);
+        drop(go_to_line_view);
+        cx.run_until_parked();
+
+        let scroll_position_after_confirm =
+            editor.update(cx, |editor, cx| editor.scroll_position(cx));
+        assert_eq!(
+            scroll_position_after_confirm, scroll_position_after_input,
+            "Confirm should maintain new scroll position"
+        );
     }
 }

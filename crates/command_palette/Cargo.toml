@@ -20,6 +20,7 @@ command_palette_hooks.workspace = true
 db.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+menu.workspace = true
 log.workspace = true
 picker.workspace = true
 postage.workspace = true

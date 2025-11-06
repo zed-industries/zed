@@ -67,6 +67,7 @@ lsp = { workspace = true, features = ["test-support"] }
 parking_lot.workspace = true
 project_panel.workspace = true
 release_channel.workspace = true
+settings_ui.workspace = true
 settings.workspace = true
 perf.workspace = true
 util = { workspace = true, features = ["test-support"] }

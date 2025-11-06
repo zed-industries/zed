@@ -257,6 +257,13 @@ pub fn main() {
         return;
     }
 
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .stack_size(10 * 1024 * 1024)
+        .thread_name(|ix| format!("RayonWorker{}", ix))
+        .build_global()
+        .unwrap();
+
     log::info!(
         "========== starting zed version {}, sha {} ==========",
         app_version,
@@ -853,10 +860,13 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 // languages.$(language).tab_size
                 // [ languages $(language) tab_size]
                 workspace::with_active_or_new_workspace(cx, |_workspace, window, cx| {
-                    window.dispatch_action(
-                        Box::new(zed_actions::OpenSettingsAt { path: setting_path }),
-                        cx,
-                    );
+                    match setting_path {
+                        None => window.dispatch_action(Box::new(zed_actions::OpenSettings), cx),
+                        Some(setting_path) => window.dispatch_action(
+                            Box::new(zed_actions::OpenSettingsAt { path: setting_path }),
+                            cx,
+                        ),
+                    }
                 });
             }
         }

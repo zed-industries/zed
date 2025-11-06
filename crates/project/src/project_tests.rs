@@ -1817,10 +1817,6 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         .await;
     assert_eq!(
         events.next().await.unwrap(),
-        Event::RefreshInlayHints(fake_server.server.server_id())
-    );
-    assert_eq!(
-        events.next().await.unwrap(),
         Event::DiskBasedDiagnosticsStarted {
             language_server_id: LanguageServerId(0),
         }
@@ -1956,10 +1952,6 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             fake_server.server.name(),
             Some(worktree_id)
         )
-    );
-    assert_eq!(
-        events.next().await.unwrap(),
-        Event::RefreshInlayHints(fake_server.server.server_id())
     );
     fake_server.start_progress(progress_token).await;
     assert_eq!(
@@ -9171,7 +9163,9 @@ async fn test_odd_events_for_ignored_dirs(
         repository_updates.lock().drain(..).collect::<Vec<_>>(),
         vec![
             RepositoryEvent::MergeHeadsChanged,
-            RepositoryEvent::BranchChanged
+            RepositoryEvent::BranchChanged,
+            RepositoryEvent::StatusesChanged { full_scan: false },
+            RepositoryEvent::StatusesChanged { full_scan: false },
         ],
         "Initial worktree scan should produce a repo update event"
     );

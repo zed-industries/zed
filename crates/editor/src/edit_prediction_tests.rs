@@ -1,12 +1,13 @@
 use edit_prediction::EditPredictionProvider;
-use gpui::{Entity, prelude::*};
+use gpui::{Entity, KeyBinding, Modifiers, prelude::*};
 use indoc::indoc;
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
 use std::ops::Range;
 use text::{Point, ToOffset};
 
 use crate::{
-    EditPrediction, editor_tests::init_test, test::editor_test_context::EditorTestContext,
+    AcceptEditPrediction, EditPrediction, MenuEditPredictionsPolicy, editor_tests::init_test,
+    test::editor_test_context::EditorTestContext,
 };
 
 #[gpui::test]
@@ -270,6 +271,63 @@ async fn test_edit_prediction_jump_disabled_for_non_zed_providers(cx: &mut gpui:
     });
 }
 
+#[gpui::test]
+async fn test_edit_prediction_preview_cleanup_on_toggle_off(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    // Bind `ctrl-shift-a` to accept the provided edit prediction. The actual key
+    // binding here doesn't matter, we simply need to confirm that holding the
+    // binding's modifiers triggers the edit prediction preview.
+    cx.update(|cx| cx.bind_keys([KeyBinding::new("ctrl-shift-a", AcceptEditPrediction, None)]));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionProvider::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state("let x = ˇ;");
+
+    propose_edits(&provider, vec![(8..8, "42")], &mut cx);
+    cx.update_editor(|editor, window, cx| {
+        editor.set_menu_edit_predictions_policy(MenuEditPredictionsPolicy::ByProvider);
+        editor.update_visible_edit_prediction(window, cx)
+    });
+
+    cx.editor(|editor, _, _| {
+        assert!(editor.has_active_edit_prediction());
+    });
+
+    // Simulate pressing the modifiers for `AcceptEditPrediction`, namely
+    // `ctrl-shift`, so that we can confirm that the edit prediction preview is
+    // activated.
+    let modifiers = Modifiers::control_shift();
+    cx.simulate_modifiers_change(modifiers);
+    cx.run_until_parked();
+
+    cx.editor(|editor, _, _| {
+        assert!(editor.edit_prediction_preview_is_active());
+    });
+
+    // Disable showing edit predictions without issuing a new modifiers changed
+    // event, to confirm that the edit prediction preview is still active.
+    cx.update_editor(|editor, window, cx| {
+        editor.set_show_edit_predictions(Some(false), window, cx);
+    });
+
+    cx.editor(|editor, _, _| {
+        assert!(!editor.has_active_edit_prediction());
+        assert!(editor.edit_prediction_preview_is_active());
+    });
+
+    // Now release the modifiers
+    // Simulate releasing all modifiers, ensuring that even with edit prediction
+    // disabled, the edit prediction preview is cleaned up.
+    cx.simulate_modifiers_change(Modifiers::none());
+    cx.run_until_parked();
+
+    cx.editor(|editor, _, _| {
+        assert!(!editor.edit_prediction_preview_is_active());
+    });
+}
+
 fn assert_editor_active_edit_completion(
     cx: &mut EditorTestContext,
     assert: impl FnOnce(MultiBufferSnapshot, &Vec<(Range<Anchor>, String)>),
@@ -395,7 +453,7 @@ impl EditPredictionProvider for FakeEditPredictionProvider {
     }
 
     fn show_completions_in_menu() -> bool {
-        false
+        true
     }
 
     fn supports_jump_to_edit() -> bool {
