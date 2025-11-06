@@ -552,7 +552,7 @@ pub trait GitRepository: Send + Sync {
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>>;
 
-    fn get_remotes(&self, branch_name: Option<String>) -> BoxFuture<'_, Result<Vec<Remote>>>;
+    fn get_remotes(&self) -> BoxFuture<'_, Result<Vec<Remote>>>;
 
     /// returns a list of remote branches that contain HEAD
     fn check_for_pushed_commit(&self) -> BoxFuture<'_, Result<Vec<SharedString>>>;
@@ -1761,49 +1761,20 @@ impl GitRepository for RealGitRepository {
         .boxed()
     }
 
-    fn get_remotes(&self, branch_name: Option<String>) -> BoxFuture<'_, Result<Vec<Remote>>> {
+    fn get_remotes(&self) -> BoxFuture<'_, Result<Vec<Remote>>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
         self.executor
             .spawn(async move {
                 let working_directory = working_directory?;
-                if let Some(branch_name) = branch_name {
-                    let branch_push_remote = new_smol_command(&git_binary_path)
-                        .current_dir(&working_directory)
-                        .args(["config", "--get"])
-                        .arg(format!("branch.{}.pushRemote", branch_name))
-                        .output()
-                        .await?;
-                    if branch_push_remote.status.success() {
-                        let remote_name = String::from_utf8_lossy(&branch_push_remote.stdout);
-
-                        return Ok(vec![Remote {
-                            name: remote_name.trim().to_string().into(),
-                        }]);
-                    }
-
-                    let remote_push_default = new_smol_command(&git_binary_path)
-                        .current_dir(&working_directory)
-                        .args(["config", "--get", "remote.pushDefault"])
-                        .output()
-                        .await?;
-                    if remote_push_default.status.success() {
-                        let remote_name = String::from_utf8_lossy(&remote_push_default.stdout);
-
-                        return Ok(vec![Remote {
-                            name: remote_name.trim().to_string().into(),
-                        }]);
-                    }
-
-                    let branch_remote = new_smol_command(&git_binary_path)
-                        .current_dir(&working_directory)
-                        .args(["config", "--get"])
-                        .arg(format!("branch.{}.remote", branch_name))
-                        .output()
-                        .await?;
-                    if branch_remote.status.success() {
-                        let remote_name = String::from_utf8_lossy(&branch_remote.stdout);
-
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(&working_directory)
+                    .args(["rev-parse", "--abbrev-ref", "@{push}"])
+                    .output()
+                    .await?;
+                if output.status.success() {
+                    let abbrev_ref = String::from_utf8_lossy(&output.stdout);
+                    if let Some(remote_name) = abbrev_ref.split('/').next() {
                         return Ok(vec![Remote {
                             name: remote_name.trim().to_string().into(),
                         }]);

@@ -4595,7 +4595,7 @@ impl Repository {
         let id = self.id;
         self.send_job(None, move |repo, _cx| async move {
             match repo {
-                RepositoryState::Local { backend, .. } => backend.get_remotes(branch_name).await,
+                RepositoryState::Local { backend, .. } => backend.get_remotes().await,
                 RepositoryState::Remote { project_id, client } => {
                     let response = client
                         .request(proto::GetRemotes {
