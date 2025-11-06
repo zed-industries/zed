@@ -40,7 +40,6 @@ pub async fn run_evaluate(
     let aggregated_result = EvaluationResult {
         context: Scores::aggregate(all_results.iter().map(|r| &r.context)),
         edit_prediction: Scores::aggregate(all_results.iter().map(|r| &r.edit_prediction)),
-        context_alternative_ix: 0,
     };
 
     if example_len > 1 {
@@ -58,8 +57,6 @@ pub async fn run_evaluate_one(
 ) -> Result<EvaluationResult> {
     let example = NamedExample::load(&example_path).unwrap();
     let example_cache_path = CACHE_DIR.join(&example_path.file_name().unwrap());
-
-    dbg!(&example);
 
     let predictions = if !re_run && example_cache_path.exists() {
         let file_contents = fs::read_to_string(&example_cache_path)?;
@@ -86,15 +83,16 @@ pub async fn run_evaluate_one(
 
     let evaluation_result = evaluate(&example.example, &predictions);
 
-    println!("# {}\n", example.name);
-    println!(
-        "## Expected Context: \n\n```\n{}\n```\n\n",
-        compare_context(
-            &example.example.expected_excerpts.alternatives
-                [evaluation_result.context_alternative_ix],
-            &predictions
-        )
-    );
+    // println!("# {}\n", example.name);
+    // println!(
+    //     "## Expected Context: \n\n```\n{}\n```\n\n",
+    //     compare_context(
+    //         &example.example.expected_context.alternatives
+    //             [evaluation_result.context_alternative_ix],
+    //         &predictions
+    //     )
+    // );
+
     println!(
         "## Expected edit prediction:\n\n```diff\n{}\n```\n",
         compare_diffs(&example.example.expected_patch, &predictions.diff)
@@ -111,22 +109,30 @@ pub async fn run_evaluate_one(
 
 #[derive(Debug, Default)]
 pub struct EvaluationResult {
-    pub context: Scores,
     pub edit_prediction: Scores,
-    pub context_alternative_ix: usize,
+    pub context: Scores,
 }
 
 #[derive(Default, Debug)]
 pub struct Scores {
-    pub precision: f64,
-    pub recall: f64,
-    pub f1_score: f64,
     pub true_positives: usize,
     pub false_positives: usize,
     pub false_negatives: usize,
 }
 
 impl Scores {
+    pub fn new(expected: &HashSet<String>, actual: &HashSet<String>) -> Scores {
+        let true_positives = expected.intersection(actual).count();
+        let false_positives = actual.difference(expected).count();
+        let false_negatives = expected.difference(actual).count();
+
+        Scores {
+            true_positives,
+            false_positives,
+            false_negatives,
+        }
+    }
+
     pub fn to_markdown(&self) -> String {
         format!(
             "
@@ -136,17 +142,15 @@ F1 Score        : {:.4}
 True Positives  : {}
 False Positives : {}
 False Negatives : {}",
-            self.precision,
-            self.recall,
-            self.f1_score,
+            self.precision(),
+            self.recall(),
+            self.f1_score(),
             self.true_positives,
             self.false_positives,
             self.false_negatives
         )
     }
-}
 
-impl Scores {
     pub fn aggregate<'a>(scores: impl Iterator<Item = &'a Scores>) -> Scores {
         let mut true_positives = 0;
         let mut false_positives = 0;
@@ -158,20 +162,36 @@ impl Scores {
             false_negatives += score.false_negatives;
         }
 
-        let precision = true_positives as f64 / (true_positives + false_positives) as f64;
-        let recall = true_positives as f64 / (true_positives + false_negatives) as f64;
-        let mut f1_score = 2.0 * precision * recall / (precision + recall);
-        if f1_score.is_nan() {
-            f1_score = 0.0;
-        }
-
         Scores {
-            precision,
-            recall,
-            f1_score,
             true_positives,
             false_positives,
             false_negatives,
+        }
+    }
+
+    pub fn precision(&self) -> f64 {
+        if self.true_positives + self.false_positives == 0 {
+            0.0
+        } else {
+            self.true_positives as f64 / (self.true_positives + self.false_positives) as f64
+        }
+    }
+
+    pub fn recall(&self) -> f64 {
+        if self.true_positives + self.false_negatives == 0 {
+            0.0
+        } else {
+            self.true_positives as f64 / (self.true_positives + self.false_negatives) as f64
+        }
+    }
+
+    pub fn f1_score(&self) -> f64 {
+        let recall = self.recall();
+        let precision = self.precision();
+        if precision + recall == 0.0 {
+            0.0
+        } else {
+            2.0 * precision * recall / (precision + recall)
         }
     }
 }
@@ -195,7 +215,7 @@ impl EvaluationResult {
 pub fn evaluate(example: &Example, preds: &PredictionDetails) -> EvaluationResult {
     let mut eval_result = EvaluationResult::default();
 
-    let actual_context_lines = preds
+    let actual_context_lines: HashSet<_> = preds
         .excerpts
         .iter()
         .flat_map(|excerpt| {
@@ -206,23 +226,37 @@ pub fn evaluate(example: &Example, preds: &PredictionDetails) -> EvaluationResul
         })
         .collect();
 
-    for expected_alternative in example.expected_excerpts.alternatives.iter() {
-        let expected_context_lines = expected_alternative
-            .excerpts
-            .iter()
-            .flat_map(|excerpt| {
-                excerpt
-                    .text
-                    .lines()
-                    .map(|line| format!("{}: {line}", excerpt.path.display()))
-            })
-            .collect();
+    let mut false_positive_lines = actual_context_lines.clone();
 
-        let score = precision_recall(&expected_context_lines, &actual_context_lines);
-        if score.f1_score > eval_result.context.f1_score {
-            eval_result.context = score;
+    for entry in &example.expected_context {
+        let mut best_alternative_score = Scores::default();
+
+        for alternative in &entry.alternatives {
+            let expected: HashSet<_> = alternative
+                .excerpts
+                .iter()
+                .flat_map(|excerpt| {
+                    excerpt
+                        .text
+                        .lines()
+                        .map(|line| format!("{}: {line}", excerpt.path.display()))
+                })
+                .collect();
+
+            let scores = Scores::new(&expected, &actual_context_lines);
+
+            false_positive_lines.retain(|line| !actual_context_lines.contains(line));
+
+            if scores.recall() > best_alternative_score.recall() {
+                best_alternative_score = scores;
+            }
         }
+
+        eval_result.context.false_negatives += best_alternative_score.false_negatives;
+        eval_result.context.true_positives += best_alternative_score.true_positives;
     }
+
+    eval_result.context.false_positives = false_positive_lines.len();
 
     // todo: alternatives for patches
     let expected_patch_lines = example
@@ -241,40 +275,8 @@ pub fn evaluate(example: &Example, preds: &PredictionDetails) -> EvaluationResul
         .map(|line| line.to_string())
         .collect();
 
-    eval_result.edit_prediction = precision_recall(&expected_patch_lines, &actual_patch_lines);
-
+    eval_result.edit_prediction = Scores::new(&expected_patch_lines, &actual_patch_lines);
     eval_result
-}
-
-fn precision_recall(expected: &HashSet<String>, actual: &HashSet<String>) -> Scores {
-    let true_positives = expected.intersection(actual).count();
-    let false_positives = actual.difference(expected).count();
-    let false_negatives = expected.difference(actual).count();
-
-    let precision = if true_positives + false_positives == 0 {
-        0.0
-    } else {
-        true_positives as f64 / (true_positives + false_positives) as f64
-    };
-    let recall = if true_positives + false_negatives == 0 {
-        0.0
-    } else {
-        true_positives as f64 / (true_positives + false_negatives) as f64
-    };
-    let f1_score = if precision + recall == 0.0 {
-        0.0
-    } else {
-        2.0 * precision * recall / (precision + recall)
-    };
-
-    Scores {
-        precision,
-        recall,
-        f1_score,
-        true_positives,
-        false_positives,
-        false_negatives,
-    }
 }
 
 /// Compare actual and expected context.

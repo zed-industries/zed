@@ -12,7 +12,7 @@ use std::{
 use anyhow::{Context as _, Result, anyhow};
 use clap::ValueEnum;
 use cloud_zeta2_prompt::CURSOR_MARKER;
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use edit_prediction_context::Line;
 use futures::{
     AsyncWriteExt as _,
@@ -32,7 +32,7 @@ const UNCOMMITTED_DIFF_HEADING: &str = "Uncommitted Diff";
 const EDIT_HISTORY_HEADING: &str = "Edit History";
 const CURSOR_POSITION_HEADING: &str = "Cursor Position";
 const EXPECTED_PATCH_HEADING: &str = "Expected Patch";
-const EXPECTED_EXCERPTS_HEADING: &str = "Expected Excerpts";
+const EXPECTED_CONTEXT_HEADING: &str = "Expected Context";
 const REPOSITORY_URL_FIELD: &str = "repository_url";
 const REVISION_FIELD: &str = "revision";
 
@@ -51,7 +51,7 @@ pub struct Example {
     pub cursor_position: String,
     pub edit_history: String,
     pub expected_patch: String,
-    pub expected_excerpts: ExpectedExcerpts,
+    pub expected_context: Vec<ExpectedContextEntry>,
 }
 
 pub type ActualExcerpt = Excerpt;
@@ -63,12 +63,14 @@ pub struct Excerpt {
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
-pub struct ExpectedExcerpts {
+pub struct ExpectedContextEntry {
+    pub heading: String,
     pub alternatives: Vec<ExpectedExcerptSet>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ExpectedExcerptSet {
+    pub heading: String,
     pub excerpts: Vec<ExpectedExcerpt>,
 }
 
@@ -128,9 +130,7 @@ impl NamedExample {
                 cursor_position: String::new(),
                 edit_history: String::new(),
                 expected_patch: String::new(),
-                expected_excerpts: ExpectedExcerpts {
-                    alternatives: vec![ExpectedExcerptSet::default()],
-                },
+                expected_context: Vec::new(),
             },
         };
 
@@ -190,7 +190,7 @@ impl NamedExample {
                         Section::CursorPosition
                     } else if title.eq_ignore_ascii_case(EXPECTED_PATCH_HEADING) {
                         Section::ExpectedPatch
-                    } else if title.eq_ignore_ascii_case(EXPECTED_EXCERPTS_HEADING) {
+                    } else if title.eq_ignore_ascii_case(EXPECTED_CONTEXT_HEADING) {
                         Section::ExpectedExcerpts
                     } else {
                         eprintln!("Warning: Unrecognized section `{title:?}`");
@@ -198,14 +198,27 @@ impl NamedExample {
                     };
                 }
                 Event::End(TagEnd::Heading(HeadingLevel::H3)) => {
-                    mem::take(&mut text);
+                    let heading = mem::take(&mut text);
                     match current_section {
                         Section::ExpectedExcerpts => {
-                            let expected_excerpts = &mut named.example.expected_excerpts;
-                            let last_alternative = expected_excerpts.alternatives.last().unwrap();
-                            if !last_alternative.excerpts.is_empty() {
-                                expected_excerpts.alternatives.push(Default::default());
-                            }
+                            named.example.expected_context.push(ExpectedContextEntry {
+                                heading,
+                                alternatives: Vec::new(),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+                Event::End(TagEnd::Heading(HeadingLevel::H4)) => {
+                    let heading = mem::take(&mut text);
+                    match current_section {
+                        Section::ExpectedExcerpts => {
+                            let expected_context = &mut named.example.expected_context;
+                            let last_entry = expected_context.last_mut().unwrap();
+                            last_entry.alternatives.push(ExpectedExcerptSet {
+                                heading,
+                                excerpts: Vec::new(),
+                            })
                         }
                         _ => {}
                     }
@@ -247,10 +260,21 @@ impl NamedExample {
                                 if !text.ends_with('\n') {
                                     text.push('\n');
                                 }
-                                named
+                                let alternatives = &mut named
                                     .example
-                                    .expected_excerpts
-                                    .alternatives
+                                    .expected_context
+                                    .last_mut()
+                                    .unwrap()
+                                    .alternatives;
+
+                                if alternatives.is_empty() {
+                                    alternatives.push(ExpectedExcerptSet {
+                                        heading: String::new(),
+                                        excerpts: vec![],
+                                    });
+                                }
+
+                                alternatives
                                     .last_mut()
                                     .unwrap()
                                     .excerpts
@@ -575,30 +599,33 @@ impl Display for NamedExample {
             )?;
         }
 
-        if !self.example.expected_excerpts.alternatives.is_empty() {
-            write!(f, "\n## {EXPECTED_EXCERPTS_HEADING}\n\n")?;
+        if !self.example.expected_context.is_empty() {
+            write!(f, "\n## {EXPECTED_CONTEXT_HEADING}\n\n")?;
 
-            for (i, excerpt_set) in self
-                .example
-                .expected_excerpts
-                .alternatives
-                .iter()
-                .enumerate()
-            {
-                write!(f, "\n### Option {}\n\n", i + 1)?;
+            for entry in &self.example.expected_context {
+                write!(f, "\n### {}\n\n", entry.heading)?;
 
-                for excerpt in &excerpt_set.excerpts {
-                    write!(
-                        f,
-                        "`````{}{}\n{}`````\n\n",
-                        excerpt
-                            .path
-                            .extension()
-                            .map(|ext| format!("{} ", ext.to_string_lossy()))
-                            .unwrap_or_default(),
-                        excerpt.path.display(),
-                        excerpt.text
-                    )?;
+                let skip_h4 =
+                    entry.alternatives.len() == 1 && entry.alternatives[0].heading.is_empty();
+
+                for excerpt_set in &entry.alternatives {
+                    if !skip_h4 {
+                        write!(f, "\n#### {}\n\n", excerpt_set.heading)?;
+                    }
+
+                    for excerpt in &excerpt_set.excerpts {
+                        write!(
+                            f,
+                            "`````{}{}\n{}`````\n\n",
+                            excerpt
+                                .path
+                                .extension()
+                                .map(|ext| format!("{} ", ext.to_string_lossy()))
+                                .unwrap_or_default(),
+                            excerpt.path.display(),
+                            excerpt.text
+                        )?;
+                    }
                 }
             }
         }
@@ -627,14 +654,8 @@ pub async fn lock_repo(path: impl AsRef<Path>) -> OwnedMutexGuard<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ::fs::FakeFs;
-    use gpui::TestAppContext;
     use indoc::indoc;
     use pretty_assertions::assert_eq;
-    use project::Project;
-    use serde_json::json;
-    use settings::SettingsStore;
-    use util::path;
 
     #[test]
     fn test_extract_required_lines() {
