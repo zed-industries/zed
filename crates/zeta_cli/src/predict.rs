@@ -141,7 +141,7 @@ pub async fn zeta2_predict(
                     zeta.request_prediction(&project, &cursor_buffer, cursor_anchor, cx)
                 })?);
             }
-            zeta2::ZetaDebugInfo::EditPredicted(request) => {
+            zeta2::ZetaDebugInfo::EditPredictionRequested(request) => {
                 prediction_started_at = Some(Instant::now());
                 fs::write(
                     LOGS_DIR.join("prediction_prompt.md"),

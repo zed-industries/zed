@@ -121,7 +121,7 @@ impl Zeta2ContextView {
                     self.handle_context_retrieval_finished(info, window, cx);
                 }
             }
-            ZetaDebugInfo::EditPredicted(_) => {}
+            ZetaDebugInfo::EditPredictionRequested(_) => {}
         }
     }
 

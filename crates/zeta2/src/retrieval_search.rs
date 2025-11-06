@@ -63,13 +63,20 @@ pub async fn run_retrieval_searches(
         let mut snapshots = HashMap::default();
 
         let mut total_bytes = 0;
-        while let Some((buffer, snapshot, ranges, size)) = results_rx.next().await {
-            if total_bytes + size > MAX_RESULTS_LEN {
-                break;
-            }
-            total_bytes += size;
+        'outer: while let Some((buffer, snapshot, excerpts)) = results_rx.next().await {
             snapshots.insert(buffer.entity_id(), snapshot);
-            results.entry(buffer).or_default().extend(ranges);
+            let existing = results.entry(buffer).or_default();
+            existing.reserve(excerpts.len());
+
+            for (range, size) in excerpts {
+                // Blunt trimming of the results until we have a proper algorithmic filtering step
+                if (total_bytes + size) > MAX_RESULTS_LEN {
+                    log::trace!("Combined results reached limit of {MAX_RESULTS_LEN}B");
+                    break 'outer;
+                }
+                total_bytes += size;
+                existing.push(range);
+            }
         }
 
         for (buffer, ranges) in results.iter_mut() {
@@ -94,7 +101,7 @@ const MAX_RESULTS_LEN: usize = MAX_EXCERPT_LEN * 5;
 async fn run_query(
     glob: &str,
     regex: &str,
-    results_tx: UnboundedSender<(Entity<Buffer>, BufferSnapshot, Vec<Range<Anchor>>, usize)>,
+    results_tx: UnboundedSender<(Entity<Buffer>, BufferSnapshot, Vec<(Range<Anchor>, usize)>)>,
     path_style: PathStyle,
     exclude_matcher: PathMatcher,
     project: &Entity<Project>,
@@ -117,9 +124,11 @@ async fn run_query(
     let results = project.update(cx, |project, cx| project.search(query, cx))?;
     futures::pin_mut!(results);
 
-    let mut total_search_bytes = 0;
-
     while let Some(SearchResult::Buffer { buffer, ranges }) = results.next().await {
+        if results_tx.is_closed() {
+            break;
+        }
+
         if ranges.is_empty() {
             continue;
         }
@@ -128,43 +137,41 @@ async fn run_query(
         let results_tx = results_tx.clone();
 
         cx.background_spawn(async move {
-            let mut anchor_ranges = Vec::with_capacity(ranges.len());
-            let mut total_buffer_bytes = 0;
+            let mut excerpts = Vec::with_capacity(ranges.len());
 
             for range in ranges {
                 let offset_range = range.to_offset(&snapshot);
                 let query_point = (offset_range.start + offset_range.len() / 2).to_point(&snapshot);
 
-                if total_search_bytes + MIN_EXCERPT_LEN >= MAX_RESULTS_LEN {
-                    break;
-                }
-
                 let excerpt = EditPredictionExcerpt::select_from_buffer(
                     query_point,
                     &snapshot,
                     &EditPredictionExcerptOptions {
-                        max_bytes: MAX_EXCERPT_LEN.min(MAX_RESULTS_LEN - total_search_bytes),
+                        max_bytes: MAX_EXCERPT_LEN,
                         min_bytes: MIN_EXCERPT_LEN,
                         target_before_cursor_over_total_bytes: 0.5,
                     },
                     None,
                 );
 
-                if let Some(excerpt) = excerpt {
-                    total_search_bytes += excerpt.range.len();
-                    total_buffer_bytes += excerpt.range.len();
-                    if !excerpt.line_range.is_empty() {
-                        anchor_ranges.push(
-                            snapshot.anchor_after(excerpt.range.start)
-                                ..snapshot.anchor_before(excerpt.range.end),
-                        );
-                    }
+                if let Some(excerpt) = excerpt
+                    && !excerpt.line_range.is_empty()
+                {
+                    excerpts.push((
+                        snapshot.anchor_after(excerpt.range.start)
+                            ..snapshot.anchor_before(excerpt.range.end),
+                        excerpt.range.len(),
+                    ));
                 }
             }
 
-            results_tx
-                .unbounded_send((buffer, snapshot, anchor_ranges, total_buffer_bytes))
-                .log_err();
+            let send_result = results_tx.unbounded_send((buffer, snapshot, excerpts));
+
+            if let Err(err) = send_result
+                && !err.is_disconnected()
+            {
+                log::error!("{err}");
+            }
         })
         .detach();
     }

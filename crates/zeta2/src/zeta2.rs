@@ -149,7 +149,7 @@ pub enum ZetaDebugInfo {
     SearchQueriesGenerated(ZetaSearchQueryDebugInfo),
     SearchQueriesExecuted(ZetaContextRetrievalDebugInfo),
     ContextRetrievalFinished(ZetaContextRetrievalDebugInfo),
-    EditPredicted(ZetaEditPredictionDebugInfo),
+    EditPredictionRequested(ZetaEditPredictionDebugInfo),
 }
 
 #[derive(Debug)]
@@ -546,7 +546,7 @@ impl Zeta {
             prediction,
         } = project_state.current_prediction.as_ref()?;
 
-        if dbg!(prediction.targets_buffer(buffer.read(cx))) {
+        if prediction.targets_buffer(buffer.read(cx)) {
             Some(BufferEditPrediction::Local { prediction })
         } else if *requested_by_buffer_id == buffer.entity_id() {
             Some(BufferEditPrediction::Jump { prediction })
@@ -852,17 +852,19 @@ impl Zeta {
                     let (response_tx, response_rx) = oneshot::channel();
 
                     debug_tx
-                        .unbounded_send(ZetaDebugInfo::EditPredicted(ZetaEditPredictionDebugInfo {
-                            request: cloud_request.clone(),
-                            retrieval_time,
-                            buffer: active_buffer.downgrade(),
-                            local_prompt: match prompt_result.as_ref() {
-                                Ok((prompt, _)) => Ok(prompt.clone()),
-                                Err(err) => Err(err.to_string()),
+                        .unbounded_send(ZetaDebugInfo::EditPredictionRequested(
+                            ZetaEditPredictionDebugInfo {
+                                request: cloud_request.clone(),
+                                retrieval_time,
+                                buffer: active_buffer.downgrade(),
+                                local_prompt: match prompt_result.as_ref() {
+                                    Ok((prompt, _)) => Ok(prompt.clone()),
+                                    Err(err) => Err(err.to_string()),
+                                },
+                                position,
+                                response_rx,
                             },
-                            position,
-                            response_rx,
-                        }))
+                        ))
                         .ok();
                     Some(response_tx)
                 } else {
@@ -880,7 +882,7 @@ impl Zeta {
 
                 let (prompt, _) = prompt_result?;
                 let request = open_ai::Request {
-                    model: std::env::var("ZED_ZETA2_MODEL").unwrap_or("2327jz9q".to_string()),
+                    model: std::env::var("ZED_ZETA2_MODEL").unwrap_or("yqvev8r3".to_string()),
                     messages: vec![open_ai::RequestMessage::User {
                         content: open_ai::MessageContent::Plain(prompt),
                     }],
@@ -895,10 +897,14 @@ impl Zeta {
                     reasoning_effort: None,
                 };
 
+                log::trace!("Sending edit prediction request");
+
                 let before_request = chrono::Utc::now();
                 let response =
                     Self::send_raw_llm_request(client, llm_token, app_version, request).await;
                 let request_time = chrono::Utc::now() - before_request;
+
+                log::trace!("Got edit prediction response");
 
                 if let Some(debug_response_tx) = debug_response_tx {
                     debug_response_tx
@@ -1201,9 +1207,12 @@ impl Zeta {
         };
 
         cx.spawn(async move |this, cx| {
+            log::trace!("Sending search planning request");
             let response =
                 Self::send_raw_llm_request(client, llm_token, app_version, request).await;
             let mut response = Self::handle_api_response(&this, response, cx)?;
+
+            log::trace!("Got search planning response");
 
             let choice = response
                 .choices
@@ -1251,8 +1260,12 @@ impl Zeta {
                     .ok();
             }
 
+            log::trace!("Running retrieval search: {regex_by_glob:#?}");
+
             let related_excerpts_result =
                 retrieval_search::run_retrieval_searches(project.clone(), regex_by_glob, cx).await;
+
+            log::trace!("Search queries executed");
 
             if let Some(debug_tx) = &debug_tx {
                 debug_tx

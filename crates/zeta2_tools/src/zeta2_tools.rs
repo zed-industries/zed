@@ -371,7 +371,7 @@ impl Zeta2Inspector {
             let language_registry = self.project.read(cx).languages().clone();
             async move |this, cx| {
                 let mut languages = HashMap::default();
-                let ZetaDebugInfo::EditPredicted(prediction) = prediction else {
+                let ZetaDebugInfo::EditPredictionRequested(prediction) = prediction else {
                     return;
                 };
                 for ext in prediction
