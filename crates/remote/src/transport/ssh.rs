@@ -850,7 +850,7 @@ impl SshRemoteConnection {
             if let Some(mut stdin) = child.stdin.take() {
                 use futures::AsyncWriteExt;
                 stdin.write_all(sftp_batch.as_bytes()).await?;
-                drop(stdin);
+                stdin.flush().await?;
             }
 
             let output = child.output().await?;
