@@ -1,4 +1,5 @@
 //! Zeta2 prompt planning and generation code shared with cloud.
+pub mod retrieval_prompt;
 
 use anyhow::{Context as _, Result, anyhow};
 use cloud_llm_client::predict_edits_v3::{
@@ -275,7 +276,7 @@ pub fn write_excerpts<'a>(
     }
 }
 
-fn push_events(output: &mut String, events: &[predict_edits_v3::Event]) {
+pub fn push_events(output: &mut String, events: &[predict_edits_v3::Event]) {
     if events.is_empty() {
         return;
     };

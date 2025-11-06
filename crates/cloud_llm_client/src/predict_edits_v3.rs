@@ -11,7 +11,14 @@ use uuid::Uuid;
 
 use crate::PredictEditsGitInfo;
 
-// TODO: snippet ordering within file / relative to excerpt
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanContextRetrievalRequest {
+    pub excerpt: String,
+    pub excerpt_path: Arc<Path>,
+    pub excerpt_line_range: Range<Line>,
+    pub cursor_file_max_row: Line,
+    pub events: Vec<Event>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictEditsRequest {

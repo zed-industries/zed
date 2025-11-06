@@ -23,7 +23,7 @@ use ui_input::InputField;
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use workspace::{Item, SplitDirection, Workspace};
 use zeta2::{
-    ContextMode, DEFAULT_SYNTAX_CONTEXT_OPTIONS, LlmContextOptions, Zeta, Zeta2FeatureFlag,
+    AgenticContextOptions, ContextMode, DEFAULT_SYNTAX_CONTEXT_OPTIONS, Zeta, Zeta2FeatureFlag,
     ZetaDebugInfo, ZetaEditPredictionDebugInfo, ZetaOptions,
 };
 
@@ -218,7 +218,7 @@ impl Zeta2Inspector {
         });
 
         match &options.context {
-            ContextMode::Llm(_) => {
+            ContextMode::Agentic(_) => {
                 self.context_mode = ContextModeState::Llm;
             }
             ContextMode::Syntax(_) => {
@@ -308,9 +308,11 @@ impl Zeta2Inspector {
                 };
 
                 let context = match zeta_options.context {
-                    ContextMode::Llm(_context_options) => ContextMode::Llm(LlmContextOptions {
-                        excerpt: excerpt_options,
-                    }),
+                    ContextMode::Agentic(_context_options) => {
+                        ContextMode::Agentic(AgenticContextOptions {
+                            excerpt: excerpt_options,
+                        })
+                    }
                     ContextMode::Syntax(context_options) => {
                         let max_retrieved_declarations = match &this.context_mode {
                             ContextModeState::Llm => {
@@ -823,11 +825,11 @@ impl Zeta2Inspector {
                                             let current_options =
                                                 this.zeta.read(cx).options().clone();
                                             match current_options.context.clone() {
-                                                ContextMode::Llm(_) => {}
+                                                ContextMode::Agentic(_) => {}
                                                 ContextMode::Syntax(context_options) => {
                                                     let options = ZetaOptions {
-                                                        context: ContextMode::Llm(
-                                                            LlmContextOptions {
+                                                        context: ContextMode::Agentic(
+                                                            AgenticContextOptions {
                                                                 excerpt: context_options.excerpt,
                                                             },
                                                         ),
@@ -854,7 +856,7 @@ impl Zeta2Inspector {
                                             let current_options =
                                                 this.zeta.read(cx).options().clone();
                                             match current_options.context.clone() {
-                                                ContextMode::Llm(context_options) => {
+                                                ContextMode::Agentic(context_options) => {
                                                     let options = ZetaOptions {
                                                         context: ContextMode::Syntax(
                                                             EditPredictionContextOptions {

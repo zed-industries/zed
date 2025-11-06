@@ -7,6 +7,7 @@ use cloud_llm_client::{
     ZED_VERSION_HEADER_NAME,
 };
 use cloud_zeta2_prompt::DEFAULT_MAX_PROMPT_BYTES;
+use cloud_zeta2_prompt::retrieval_prompt::SearchToolInput;
 use collections::HashMap;
 use edit_prediction_context::{
     DeclarationId, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
@@ -24,11 +25,12 @@ use gpui::{
 use language::{Anchor, Buffer, DiagnosticSet, LanguageServerId, ToOffset as _, ToPoint};
 use language::{BufferSnapshot, OffsetRangeExt};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
+use open_ai::FunctionDefinition;
 use project::Project;
 use release_channel::AppVersion;
 use serde::de::DeserializeOwned;
 use std::collections::{VecDeque, hash_map};
-use std::fmt::Write;
+
 use std::ops::Range;
 use std::path::Path;
 use std::str::FromStr as _;
@@ -42,14 +44,12 @@ use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_noti
 pub mod merge_excerpts;
 mod prediction;
 mod provider;
-pub mod related_excerpts;
+pub mod retrieval_search;
 pub mod udiff;
 
 use crate::merge_excerpts::merge_excerpts;
 use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
-use crate::related_excerpts::find_related_excerpts;
-pub use crate::related_excerpts::{LlmContextOptions, SearchToolQuery};
 pub use provider::ZetaEditPredictionProvider;
 
 /// Maximum number of events to track.
@@ -61,9 +61,10 @@ pub const DEFAULT_EXCERPT_OPTIONS: EditPredictionExcerptOptions = EditPrediction
     target_before_cursor_over_total_bytes: 0.5,
 };
 
-pub const DEFAULT_CONTEXT_OPTIONS: ContextMode = ContextMode::Llm(DEFAULT_LLM_CONTEXT_OPTIONS);
+pub const DEFAULT_CONTEXT_OPTIONS: ContextMode =
+    ContextMode::Agentic(DEFAULT_AGENTIC_CONTEXT_OPTIONS);
 
-pub const DEFAULT_LLM_CONTEXT_OPTIONS: LlmContextOptions = LlmContextOptions {
+pub const DEFAULT_AGENTIC_CONTEXT_OPTIONS: AgenticContextOptions = AgenticContextOptions {
     excerpt: DEFAULT_EXCERPT_OPTIONS,
 };
 
@@ -124,14 +125,19 @@ pub struct ZetaOptions {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ContextMode {
-    Llm(LlmContextOptions),
+    Agentic(AgenticContextOptions),
     Syntax(EditPredictionContextOptions),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgenticContextOptions {
+    pub excerpt: EditPredictionExcerptOptions,
 }
 
 impl ContextMode {
     pub fn excerpt(&self) -> &EditPredictionExcerptOptions {
         match self {
-            ContextMode::Llm(options) => &options.excerpt,
+            ContextMode::Agentic(options) => &options.excerpt,
             ContextMode::Syntax(options) => &options.excerpt,
         }
     }
@@ -142,7 +148,6 @@ pub enum ZetaDebugInfo {
     ContextRetrievalStarted(ZetaContextRetrievalStartedDebugInfo),
     SearchQueriesGenerated(ZetaSearchQueryDebugInfo),
     SearchQueriesExecuted(ZetaContextRetrievalDebugInfo),
-    SearchResultsFiltered(ZetaContextRetrievalDebugInfo),
     ContextRetrievalFinished(ZetaContextRetrievalDebugInfo),
     EditPredicted(ZetaEditPredictionDebugInfo),
 }
@@ -174,7 +179,7 @@ pub struct ZetaEditPredictionDebugInfo {
 pub struct ZetaSearchQueryDebugInfo {
     pub project: Entity<Project>,
     pub timestamp: Instant,
-    pub queries: Vec<SearchToolQuery>,
+    pub regex_by_glob: HashMap<String, String>,
 }
 
 pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
@@ -729,7 +734,7 @@ impl Zeta {
                     );
 
                 let cloud_request = match options.context {
-                    ContextMode::Llm(context_options) => {
+                    ContextMode::Agentic(context_options) => {
                         let Some(excerpt) = EditPredictionExcerpt::select_from_buffer(
                             cursor_point,
                             &active_snapshot,
@@ -892,7 +897,7 @@ impl Zeta {
 
                 let before_request = chrono::Utc::now();
                 let response =
-                    Self::send_prediction_request(client, llm_token, app_version, request).await;
+                    Self::send_raw_llm_request(client, llm_token, app_version, request).await;
                 let request_time = chrono::Utc::now() - before_request;
 
                 if let Some(debug_response_tx) = debug_response_tx {
@@ -927,7 +932,7 @@ impl Zeta {
         })
     }
 
-    async fn send_prediction_request(
+    async fn send_raw_llm_request(
         client: Arc<Client>,
         llm_token: LlmApiToken,
         app_version: SemanticVersion,
@@ -1075,7 +1080,7 @@ impl Zeta {
         cursor_position: language::Anchor,
         cx: &mut Context<Self>,
     ) {
-        if !matches!(&self.options().context, ContextMode::Llm { .. }) {
+        if !matches!(&self.options().context, ContextMode::Agentic { .. }) {
             return;
         }
 
@@ -1123,36 +1128,142 @@ impl Zeta {
         cursor_position: language::Anchor,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        let Some(zeta_project) = self.projects.get(&project.entity_id()) else {
+            return Task::ready(anyhow::Ok(()));
+        };
+
+        let ContextMode::Agentic(options) = &self.options().context else {
+            return Task::ready(anyhow::Ok(()));
+        };
+
+        let snapshot = buffer.read(cx).snapshot();
+        let cursor_point = cursor_position.to_point(&snapshot);
+        let Some(cursor_excerpt) = EditPredictionExcerpt::select_from_buffer(
+            cursor_point,
+            &snapshot,
+            &options.excerpt,
+            None,
+        ) else {
+            return Task::ready(Ok(()));
+        };
+
+        let current_file_path: Arc<Path> = snapshot
+            .file()
+            .map(|f| f.full_path(cx).into())
+            .unwrap_or_else(|| Path::new("untitled").into());
+
+        let prompt = match cloud_zeta2_prompt::retrieval_prompt::build_prompt(
+            predict_edits_v3::PlanContextRetrievalRequest {
+                excerpt: cursor_excerpt.text(&snapshot).body,
+                excerpt_path: current_file_path,
+                excerpt_line_range: cursor_excerpt.line_range,
+                cursor_file_max_row: Line(snapshot.max_point().row),
+                events: zeta_project
+                    .events
+                    .iter()
+                    .filter_map(|ev| ev.to_request_event(cx))
+                    .collect(),
+            },
+        ) {
+            Ok(prompt) => prompt,
+            Err(err) => {
+                return Task::ready(Err(err));
+            }
+        };
+
+        let app_version = AppVersion::global(cx);
+        let client = self.client.clone();
+        let llm_token = self.llm_token.clone();
+        let debug_tx = self.debug_tx.clone();
+
+        let (tool_schema, tool_description) = &*cloud_zeta2_prompt::retrieval_prompt::TOOL_SCHEMA;
+
+        let request = open_ai::Request {
+            model: std::env::var("ZED_ZETA2_MODEL").unwrap_or("2327jz9q".to_string()),
+            messages: vec![open_ai::RequestMessage::User {
+                content: open_ai::MessageContent::Plain(prompt),
+            }],
+            stream: false,
+            max_completion_tokens: None,
+            stop: Default::default(),
+            temperature: 0.7,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            tools: vec![open_ai::ToolDefinition::Function {
+                function: FunctionDefinition {
+                    name: cloud_zeta2_prompt::retrieval_prompt::TOOL_NAME.to_string(),
+                    description: Some(tool_description.clone()),
+                    parameters: Some(tool_schema.clone()),
+                },
+            }],
+            prompt_cache_key: None,
+            reasoning_effort: None,
+        };
+
         cx.spawn(async move |this, cx| {
-            let related_excerpts_result = this
-                .update(cx, |this, cx| {
-                    let Some(zeta_project) = this.projects.get(&project.entity_id()) else {
-                        return Task::ready(anyhow::Ok(HashMap::default()));
-                    };
+            let response =
+                Self::send_raw_llm_request(client, llm_token, app_version, request).await;
+            let mut response = Self::handle_api_response(&this, response, cx)?;
 
-                    let ContextMode::Llm(options) = &this.options().context else {
-                        return Task::ready(anyhow::Ok(HashMap::default()));
-                    };
+            let choice = response
+                .choices
+                .pop()
+                .context("No choices in retrieval response")?;
+            let open_ai::RequestMessage::Assistant {
+                content: _,
+                tool_calls,
+            } = choice.message
+            else {
+                anyhow::bail!("Retrieval response didn't include an assistant message");
+            };
 
-                    let mut edit_history_unified_diff = String::new();
+            let mut regex_by_glob: HashMap<String, String> = HashMap::default();
+            for tool_call in tool_calls {
+                let open_ai::ToolCallContent::Function { function } = tool_call.content;
+                if function.name != cloud_zeta2_prompt::retrieval_prompt::TOOL_NAME {
+                    log::warn!(
+                        "Context retrieval response tried to call an unknown tool: {}",
+                        function.name
+                    );
 
-                    for event in zeta_project.events.iter() {
-                        if let Some(event) = event.to_request_event(cx) {
-                            writeln!(&mut edit_history_unified_diff, "{event}").ok();
-                        }
+                    continue;
+                }
+
+                let input: SearchToolInput = serde_json::from_str(&function.arguments)?;
+                for query in input.queries {
+                    let regex = regex_by_glob.entry(query.glob).or_default();
+                    if !regex.is_empty() {
+                        regex.push('|');
                     }
+                    regex.push_str(&query.regex);
+                }
+            }
 
-                    find_related_excerpts(
-                        buffer.clone(),
-                        cursor_position,
-                        &project,
-                        edit_history_unified_diff,
-                        options,
-                        this.debug_tx.clone(),
-                        cx,
-                    )
-                })?
-                .await;
+            if let Some(debug_tx) = &debug_tx {
+                debug_tx
+                    .unbounded_send(ZetaDebugInfo::SearchQueriesGenerated(
+                        ZetaSearchQueryDebugInfo {
+                            project: project.clone(),
+                            timestamp: Instant::now(),
+                            regex_by_glob: regex_by_glob.clone(),
+                        },
+                    ))
+                    .ok();
+            }
+
+            let related_excerpts_result =
+                retrieval_search::run_retrieval_searches(project.clone(), regex_by_glob, cx).await;
+
+            if let Some(debug_tx) = &debug_tx {
+                debug_tx
+                    .unbounded_send(ZetaDebugInfo::SearchQueriesExecuted(
+                        ZetaContextRetrievalDebugInfo {
+                            project: project.clone(),
+                            timestamp: Instant::now(),
+                        },
+                    ))
+                    .ok();
+            }
 
             this.update(cx, |this, _cx| {
                 let Some(zeta_project) = this.projects.get_mut(&project.entity_id()) else {
@@ -1272,7 +1383,7 @@ impl Zeta {
                 &snapshot,
                 parent_abs_path.as_deref(),
                 match &options.context {
-                    ContextMode::Llm(_) => {
+                    ContextMode::Agentic(_) => {
                         // TODO
                         panic!("Llm mode not supported in zeta cli yet");
                     }
@@ -1449,15 +1560,10 @@ fn add_signature(
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        path::{Path, PathBuf},
-        sync::Arc,
-    };
+    use std::{path::Path, sync::Arc};
 
     use client::UserStore;
     use clock::FakeSystemClock;
-    use cloud_llm_client::predict_edits_v3::{self, Point};
-    use edit_prediction_context::Line;
     use futures::{
         AsyncReadExt, StreamExt,
         channel::{mpsc, oneshot},
@@ -1468,7 +1574,7 @@ mod tests {
         prelude::*,
     };
     use indoc::indoc;
-    use language::{LanguageServerId, OffsetRangeExt as _};
+    use language::OffsetRangeExt as _;
     use open_ai::Usage;
     use pretty_assertions::{assert_eq, assert_matches};
     use project::{FakeFs, Project};

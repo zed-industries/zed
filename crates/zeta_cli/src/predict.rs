@@ -7,7 +7,6 @@ use clap::Args;
 use cloud_zeta2_prompt::{CURSOR_MARKER, write_codeblock};
 use futures::StreamExt as _;
 use gpui::AsyncApp;
-use language_model::LanguageModelRegistry;
 use project::Project;
 use serde::Deserialize;
 use std::cell::Cell;
@@ -54,16 +53,6 @@ pub async fn zeta2_predict(
 
     if !AUTHENTICATED.get() {
         AUTHENTICATED.set(true);
-
-        cx.update(|cx| {
-            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-                registry
-                    .provider(&zeta2::related_excerpts::MODEL_PROVIDER_ID)
-                    .unwrap()
-                    .authenticate(cx)
-            })
-        })?
-        .await?;
 
         app_state
             .client
@@ -139,7 +128,7 @@ pub async fn zeta2_predict(
                 search_queries_generated_at = Some(info.timestamp);
                 fs::write(
                     LOGS_DIR.join("search_queries.json"),
-                    serde_json::to_string_pretty(&info.queries).unwrap(),
+                    serde_json::to_string_pretty(&info.regex_by_glob).unwrap(),
                 )?;
             }
             zeta2::ZetaDebugInfo::SearchQueriesExecuted(info) => {
@@ -190,7 +179,6 @@ pub async fn zeta2_predict(
                 }
                 break;
             }
-            _ => {}
         }
     }
 
