@@ -55,9 +55,13 @@ use zed::{
 
 use crate::zed::{OpenRequestKind, eager_load_active_theme_and_icon_theme};
 
-#[cfg(feature = "mimalloc")]
+#[cfg(feature = "jemalloc")]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(all(feature = "tikv-jemallocator", not(target_os = "windows")))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
     let message = "Zed failed to launch";
