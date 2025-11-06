@@ -261,7 +261,9 @@ impl DapStore {
                     .get(&adapter.name());
                 let user_installed_path = dap_settings.and_then(|s| match &s.binary {
                     DapBinary::Default => None,
-                    DapBinary::Custom(binary) => Some(PathBuf::from(binary)),
+                    DapBinary::Custom(binary) => {
+                        Some(worktree.read(cx).abs_path().join(PathBuf::from(binary)))
+                    }
                 });
                 let user_args = dap_settings.map(|s| s.args.clone());
                 let user_env = dap_settings.map(|s| s.env.clone());
