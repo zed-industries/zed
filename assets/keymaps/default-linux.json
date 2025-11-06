@@ -736,14 +736,14 @@
     }
   },
   {
-    "context": "Editor && in_snippet && has_next_tabstop",
+    "context": "Editor && in_snippet && has_next_tabstop && !showing_completions",
     "use_key_equivalents": true,
     "bindings": {
       "tab": "editor::NextSnippetTabstop"
     }
   },
   {
-    "context": "Editor && in_snippet && has_previous_tabstop",
+    "context": "Editor && in_snippet && has_previous_tabstop && !showing_completions",
     "use_key_equivalents": true,
     "bindings": {
       "shift-tab": "editor::PreviousSnippetTabstop"
