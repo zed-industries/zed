@@ -116,7 +116,7 @@ fn publish_winget() -> NamedJob {
 
     named::job(
         Job::default()
-            .runs_on(runners::LINUX_SMALL)
+            .runs_on(runners::WINDOWS_DEFAULT)
             .add_step(set_package_name)
             .add_step(winget_releaser(&package_name)),
     )
