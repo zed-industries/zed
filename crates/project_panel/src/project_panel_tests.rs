@@ -2209,7 +2209,7 @@ async fn test_create_duplicate_items_and_check_history(cx: &mut gpui::TestAppCon
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        path!("/src"),
+        "/src",
         json!({
             "test": {
                 "first.txt": "// First Txt file",
