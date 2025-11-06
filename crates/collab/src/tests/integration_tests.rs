@@ -7065,7 +7065,7 @@ async fn test_remote_git_branches(
     // Also try creating a new branch
     cx_b.update(|cx| {
         repo_b.update(cx, |repository, _cx| {
-            repository.create_branch("totally-new-branch".to_string())
+            repository.create_branch("totally-new-branch".to_string(), None)
         })
     })
     .await

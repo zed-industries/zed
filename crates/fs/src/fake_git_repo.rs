@@ -407,7 +407,11 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn create_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
+    fn create_branch(
+        &self,
+        name: String,
+        _base_branch: Option<String>,
+    ) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
             state.branches.insert(name);
             Ok(())

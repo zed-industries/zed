@@ -431,7 +431,8 @@ pub trait GitRepository: Send + Sync {
     fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>>;
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
-    fn create_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
+    fn create_branch(&self, name: String, base_branch: Option<String>)
+    -> BoxFuture<'_, Result<()>>;
     fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>>;
 
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>>;
@@ -1358,14 +1359,28 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn create_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
-        let repo = self.repository.clone();
+    fn create_branch(
+        &self,
+        name: String,
+        base_branch: Option<String>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = self.working_directory();
+        let executor = self.executor.clone();
+
         self.executor
             .spawn(async move {
-                let repo = repo.lock();
-                let current_commit = repo.head()?.peel_to_commit()?;
-                repo.branch(&name, &current_commit, false)?;
-                Ok(())
+                let mut args = vec!["switch", "-c", &name];
+                let base_branch_str;
+                if let Some(ref base) = base_branch {
+                    base_branch_str = base.clone();
+                    args.push(&base_branch_str);
+                }
+
+                GitBinary::new(git_binary_path, working_directory?, executor)
+                    .run(&args)
+                    .await?;
+                anyhow::Ok(())
             })
             .boxed()
     }
