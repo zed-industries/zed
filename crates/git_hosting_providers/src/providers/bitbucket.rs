@@ -1,6 +1,7 @@
 use std::str::FromStr;
 use std::sync::LazyLock;
 
+use anyhow::{Result, bail};
 use regex::Regex;
 use url::Url;
 
@@ -8,6 +9,8 @@ use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
     PullRequest, RemoteUrl,
 };
+
+use crate::get_host_from_git_remote_url;
 
 fn pull_request_regex() -> &'static Regex {
     static PULL_REQUEST_REGEX: LazyLock<Regex> = LazyLock::new(|| {
@@ -32,6 +35,25 @@ impl Bitbucket {
 
     pub fn public_instance() -> Self {
         Self::new("Bitbucket", Url::parse("https://bitbucket.org").unwrap())
+    }
+
+    pub fn from_remote_url(remote_url: &str) -> Result<Self> {
+        let host = get_host_from_git_remote_url(remote_url)?;
+        if host == "bitbucket.org" {
+            bail!("the BitBucket instance is not self-hosted");
+        }
+
+        // TODO: detecting self hosted instances by checking whether "bitbucket" is in the url or not
+        // is not very reliable. See https://github.com/zed-industries/zed/issues/26393 for more
+        // information.
+        if !host.contains("bitbucket") {
+            bail!("not a BitBucket URL");
+        }
+
+        Ok(Self::new(
+            "BitBucket Self-Hosted",
+            Url::parse(&format!("https://{}", host))?,
+        ))
     }
 }
 
@@ -60,7 +82,7 @@ impl GitHostingProvider for Bitbucket {
         let url = RemoteUrl::from_str(url).ok()?;
 
         let host = url.host_str()?;
-        if host != "bitbucket.org" {
+        if host != self.base_url.host_str()? {
             return None;
         }
 
