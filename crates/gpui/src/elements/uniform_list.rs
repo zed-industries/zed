@@ -92,6 +92,10 @@ pub enum ScrollStrategy {
     /// May not be possible if there's not enough list items above the item scrolled to:
     /// in this case, the element will be placed at the closest possible position.
     Bottom,
+    /// If the element is not visible attempt to place it at:
+    /// - The top of the list's viewport if the target element is above currently visible elements.
+    /// - The bottom of the list's viewport if the target element is above currently visible elements.
+    Nearest,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -391,34 +395,42 @@ impl Element for UniformList {
                         scroll_offset.x = Pixels::ZERO;
                     }
 
-                    if let Some(deferred_scroll) = shared_scroll_to_item {
-                        let mut ix = deferred_scroll.item_index;
+                    if let Some(DeferredScrollToItem {
+                        mut item_index,
+                        mut strategy,
+                        offset,
+                        scroll_strict,
+                    }) = shared_scroll_to_item
+                    {
                         if y_flipped {
-                            ix = self.item_count.saturating_sub(ix + 1);
+                            item_index = self.item_count.saturating_sub(item_index + 1);
                         }
                         let list_height = padded_bounds.size.height;
                         let mut updated_scroll_offset = shared_scroll_offset.borrow_mut();
-                        let item_top = item_height * ix;
+                        let item_top = item_height * item_index;
                         let item_bottom = item_top + item_height;
                         let scroll_top = -updated_scroll_offset.y;
-                        let offset_pixels = item_height * deferred_scroll.offset;
+                        let offset_pixels = item_height * offset;
 
-                        let scroll_strategy = if deferred_scroll.scroll_strict {
-                            Some(deferred_scroll.strategy)
-                        } else if item_top < scroll_top + offset_pixels {
-                            Some(ScrollStrategy::Top)
-                        } else if item_bottom > scroll_top + list_height {
-                            Some(ScrollStrategy::Bottom)
-                        } else {
-                            None
-                        };
-                        if let Some(scroll_strategy) = scroll_strategy {
-                            match scroll_strategy {
+                        // is the selected item above/below currently visible items
+                        let is_above = item_top < scroll_top + offset_pixels;
+                        let is_below = item_bottom > scroll_top + list_height;
+
+                        if scroll_strict || is_above || is_below {
+                            if strategy == ScrollStrategy::Nearest {
+                                if is_above {
+                                    strategy = ScrollStrategy::Top;
+                                } else if is_below {
+                                    strategy = ScrollStrategy::Bottom;
+                                }
+                            }
+
+                            let max_scroll_offset =
+                                (content_height - list_height).max(Pixels::ZERO);
+                            match strategy {
                                 ScrollStrategy::Top => {
                                     updated_scroll_offset.y = -(item_top - offset_pixels)
-                                        .max(Pixels::ZERO)
-                                        .min(content_height - list_height)
-                                        .max(Pixels::ZERO);
+                                        .clamp(Pixels::ZERO, max_scroll_offset);
                                 }
                                 ScrollStrategy::Center => {
                                     let item_center = item_top + item_height / 2.0;
@@ -426,17 +438,15 @@ impl Element for UniformList {
                                     let viewport_height = list_height - offset_pixels;
                                     let viewport_center = offset_pixels + viewport_height / 2.0;
                                     let target_scroll_top = item_center - viewport_center;
-
-                                    updated_scroll_offset.y = -target_scroll_top
-                                        .max(Pixels::ZERO)
-                                        .min(content_height - list_height)
-                                        .max(Pixels::ZERO);
+                                    updated_scroll_offset.y =
+                                        -target_scroll_top.clamp(Pixels::ZERO, max_scroll_offset);
                                 }
                                 ScrollStrategy::Bottom => {
                                     updated_scroll_offset.y = -(item_bottom - list_height)
-                                        .max(Pixels::ZERO)
-                                        .min(content_height - list_height)
-                                        .max(Pixels::ZERO);
+                                        .clamp(Pixels::ZERO, max_scroll_offset);
+                                }
+                                ScrollStrategy::Nearest => {
+                                    // Nearest, but the item is visible -> no scroll is required
                                 }
                             }
                         }
