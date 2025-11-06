@@ -158,6 +158,8 @@ pub struct LanguageSettings {
     pub completions: CompletionSettings,
     /// Preferred debuggers for this language.
     pub debuggers: Vec<String>,
+    /// Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor.
+    pub colorize_brackets: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -589,6 +591,7 @@ impl settings::Settings for AllLanguageSettings {
                 },
                 show_completions_on_input: settings.show_completions_on_input.unwrap(),
                 show_completion_documentation: settings.show_completion_documentation.unwrap(),
+                colorize_brackets: settings.colorize_brackets.unwrap(),
                 completions: CompletionSettings {
                     words: completions.words.unwrap(),
                     words_min_length: completions.words_min_length.unwrap() as usize,

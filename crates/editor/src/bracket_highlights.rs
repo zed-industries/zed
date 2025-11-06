@@ -8,7 +8,7 @@ use ui::ActiveTheme;
 struct RainbowBracketHighlight;
 
 impl Editor {
-    // todo! settings for enabling/disabling this, anything else to configure?
+    // todo! editor menu entry
     pub(crate) fn refresh_bracket_colors(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
         let snapshot = self.snapshot(window, cx);
         let multi_buffer_snapshot = snapshot.buffer_snapshot();
