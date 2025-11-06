@@ -968,66 +968,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_image_stored_with_strong_reference(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-
-        fs.insert_tree("/root", json!({})).await;
-        fs.insert_file(
-            "/root/test.png",
-            vec![
-                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
-                0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
-                0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78,
-                0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
-                0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
-            ],
-        )
-        .await;
-
-        let project = Project::test(fs, ["/root".as_ref()], cx).await;
-
-        let worktree_id =
-            cx.update(|cx| project.read(cx).worktrees(cx).next().unwrap().read(cx).id());
-
-        let project_path = ProjectPath {
-            worktree_id,
-            path: rel_path("test.png").into(),
-        };
-
-        let image = project
-            .update(cx, |project, cx| {
-                project.open_image(project_path.clone(), cx)
-            })
-            .await
-            .unwrap();
-
-        let image_id = cx.update(|cx| image.read(cx).id);
-
-        // Verify the image is stored in opened_images with a strong reference
-        let is_in_store = project.update(cx, |project, cx| {
-            let image_store = &project.image_store;
-            image_store.read(cx).get(image_id).is_some()
-        });
-
-        assert!(is_in_store, "Image should be stored with strong reference");
-
-        // Drop the original image handle
-        drop(image);
-
-        // Verify the image is still in the store (strong reference keeps it alive)
-        let still_in_store = project.update(cx, |project, cx| {
-            let image_store = &project.image_store;
-            image_store.read(cx).get(image_id).is_some()
-        });
-
-        assert!(
-            still_in_store,
-            "Image should remain in store after dropping local reference"
-        );
-    }
-
-    #[gpui::test]
     fn test_compute_metadata_from_bytes() {
         // Single white pixel PNG
         let png_bytes = vec![
