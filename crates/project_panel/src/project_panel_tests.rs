@@ -2203,7 +2203,6 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
 // when it triggers the lsp store it converts `/src/test/first copy.txt` into an uri
 // but it fails with message `"/src\\test\\first copy.txt" is not parseable as an URI`
 #[gpui::test]
-#[cfg_attr(target_os = "windows", ignore)]
 async fn test_create_duplicate_items_and_check_history(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
