@@ -12,6 +12,7 @@ use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
 use std::{
     cell::RefCell, collections::HashMap, mem, ops::Range, path::PathBuf, rc::Rc, sync::Arc, vec,
 };
+use ui::SharedString;
 
 pub async fn parse_markdown(
     markdown_input: &str,
@@ -875,13 +876,21 @@ impl<'a> MarkdownParser<'a> {
             }
             markup5ever_rcdom::NodeData::Comment { .. } => {}
             markup5ever_rcdom::NodeData::Element { name, attrs, .. } => {
+                let mut styles = if let Some(styles) = Self::markdown_style_from_html_styles(
+                    Self::extract_styles_from_attributes(attrs),
+                ) {
+                    vec![MarkdownHighlight::Style(styles)]
+                } else {
+                    Vec::default()
+                };
+
                 if local_name!("img") == name.local {
                     if let Some(image) = self.extract_image(source_range, attrs) {
                         elements.push(ParsedMarkdownElement::Image(image));
                     }
                 } else if local_name!("p") == name.local {
                     let mut paragraph = MarkdownParagraph::new();
-                    self.parse_paragraph(source_range, node, &mut paragraph);
+                    self.parse_paragraph(source_range, node, &mut paragraph, &mut styles);
 
                     if !paragraph.is_empty() {
                         elements.push(ParsedMarkdownElement::Paragraph(paragraph));
@@ -896,7 +905,7 @@ impl<'a> MarkdownParser<'a> {
                         | local_name!("h6")
                 ) {
                     let mut paragraph = MarkdownParagraph::new();
-                    self.consume_paragraph(source_range.clone(), node, &mut paragraph);
+                    self.consume_paragraph(source_range.clone(), node, &mut paragraph, &mut styles);
 
                     if !paragraph.is_empty() {
                         elements.push(ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
@@ -943,24 +952,111 @@ impl<'a> MarkdownParser<'a> {
         source_range: Range<usize>,
         node: &Rc<markup5ever_rcdom::Node>,
         paragraph: &mut MarkdownParagraph,
+        highlights: &mut Vec<MarkdownHighlight>,
     ) {
+        fn add_highlight_range(
+            text: &String,
+            start: usize,
+            highlights: Vec<MarkdownHighlight>,
+        ) -> Vec<(Range<usize>, MarkdownHighlight)> {
+            highlights
+                .into_iter()
+                .map(|style| (start..text.len(), style))
+                .collect()
+        }
+
         match &node.data {
             markup5ever_rcdom::NodeData::Text { contents } => {
-                paragraph.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
-                    source_range,
-                    regions: Vec::default(),
-                    region_ranges: Vec::default(),
-                    highlights: Vec::default(),
-                    contents: contents.borrow().to_string().into(),
-                }));
+                let contents = contents.borrow().to_string();
+
+                // append the text to the last chunk, so we can have a hacky version
+                // of inline text with highlighting
+                if let Some(text) = paragraph.iter_mut().last().and_then(|p| match p {
+                    MarkdownParagraphChunk::Text(text) => Some(text),
+                    _ => None,
+                }) {
+                    let mut new_text = text.contents.to_string();
+                    new_text.push_str(&contents);
+                    let highlights = add_highlight_range(
+                        &new_text,
+                        text.contents.len(),
+                        std::mem::take(highlights),
+                    );
+
+                    text.contents = SharedString::from(new_text);
+                    text.highlights.extend(highlights);
+                } else {
+                    paragraph.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range,
+                        highlights: add_highlight_range(&contents, 0, std::mem::take(highlights)),
+                        regions: Vec::default(),
+                        contents: contents.into(),
+                        region_ranges: Vec::default(),
+                    }));
+                }
             }
             markup5ever_rcdom::NodeData::Element { name, attrs, .. } => {
                 if local_name!("img") == name.local {
                     if let Some(image) = self.extract_image(source_range, attrs) {
                         paragraph.push(MarkdownParagraphChunk::Image(image));
                     }
+                } else if local_name!("b") == name.local || local_name!("strong") == name.local {
+                    highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        italic: false,
+                        underline: false,
+                        oblique: false,
+                        strikethrough: false,
+                        weight: FontWeight::BOLD,
+                        link: false,
+                    }));
+
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
+                } else if local_name!("i") == name.local {
+                    highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        italic: true,
+                        oblique: false,
+                        underline: false,
+                        strikethrough: false,
+                        weight: FontWeight::NORMAL,
+                        link: false,
+                    }));
+
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
+                } else if local_name!("em") == name.local {
+                    highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        italic: false,
+                        underline: false,
+                        oblique: true,
+                        strikethrough: false,
+                        weight: FontWeight::NORMAL,
+                        link: false,
+                    }));
+
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
+                } else if local_name!("del") == name.local {
+                    highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        italic: false,
+                        underline: false,
+                        oblique: false,
+                        strikethrough: true,
+                        weight: FontWeight::NORMAL,
+                        link: false,
+                    }));
+
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
+                } else if local_name!("ins") == name.local {
+                    highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        italic: false,
+                        underline: true,
+                        oblique: false,
+                        strikethrough: false,
+                        weight: FontWeight::NORMAL,
+                        link: false,
+                    }));
+
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
                 } else {
-                    self.consume_paragraph(source_range, node, paragraph);
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
                 }
             }
             _ => {}
@@ -972,9 +1068,10 @@ impl<'a> MarkdownParser<'a> {
         source_range: Range<usize>,
         node: &Rc<markup5ever_rcdom::Node>,
         paragraph: &mut MarkdownParagraph,
+        highlights: &mut Vec<MarkdownHighlight>,
     ) {
         for node in node.children.borrow().iter() {
-            self.parse_paragraph(source_range.clone(), node, paragraph);
+            self.parse_paragraph(source_range.clone(), node, paragraph, highlights);
         }
     }
 
@@ -1019,7 +1116,7 @@ impl<'a> MarkdownParser<'a> {
                 }
 
                 let mut children = MarkdownParagraph::new();
-                self.consume_paragraph(source_range, node, &mut children);
+                self.consume_paragraph(source_range, node, &mut children, &mut Vec::new());
 
                 let is_header = matches!(name.local, local_name!("th"));
 
@@ -1081,6 +1178,58 @@ impl<'a> MarkdownParser<'a> {
                 None
             }
         })
+    }
+
+    fn markdown_style_from_html_styles(
+        styles: HashMap<String, String>,
+    ) -> Option<MarkdownHighlightStyle> {
+        let mut markdown_style = MarkdownHighlightStyle::default();
+
+        if let Some(text_decoration) = styles.get("text-decoration") {
+            match text_decoration.to_lowercase().as_str() {
+                "underline" => {
+                    markdown_style.underline = true;
+                }
+                "line-through" => {
+                    markdown_style.strikethrough = true;
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(font_style) = styles.get("font-style") {
+            match font_style.to_lowercase().as_str() {
+                "italic" => {
+                    markdown_style.italic = true;
+                }
+                "oblique" => {
+                    markdown_style.oblique = true;
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(font_weight) = styles.get("font-weight") {
+            match font_weight.to_lowercase().as_str() {
+                "bold" => {
+                    markdown_style.weight = FontWeight::BOLD;
+                }
+                "lighter" => {
+                    markdown_style.weight = FontWeight::THIN;
+                }
+                _ => {
+                    if let Some(weight) = font_weight.parse::<f32>().ok() {
+                        markdown_style.weight = FontWeight(weight);
+                    }
+                }
+            }
+        }
+
+        if markdown_style != MarkdownHighlightStyle::default() {
+            Some(markdown_style)
+        } else {
+            None
+        }
     }
 
     fn extract_styles_from_attributes(
