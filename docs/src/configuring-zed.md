@@ -3172,12 +3172,52 @@ Non-negative `integer` values
 
 ```json [settings]
 "search": {
+  "button": true,
   "whole_word": false,
   "case_sensitive": false,
   "include_ignored": false,
-  "regex": false
+  "regex": false,
+  "center_on_match": false
 },
 ```
+
+### Button
+
+- Description: Whether to show the project search button in the status bar.
+- Setting: `button`
+- Default: `true`
+
+### Whole Word
+
+- Description: Whether to only match on whole words.
+- Setting: `whole_word`
+- Default: `false`
+
+### Case Sensitive
+
+- Description: Whether to match case sensitively. This setting affects both
+  searches and editor actions like "Select Next Occurrence", "Select Previous
+  Occurrence", and "Select All Occurrences".
+- Setting: `case_sensitive`
+- Default: `false`
+
+### Include Ignore
+
+- Description: Whether to include gitignored files in search results.
+- Setting: `include_ignored`
+- Default: `false`
+
+### Regex
+
+- Description: Whether to interpret the search query as a regular expression.
+- Setting: `regex`
+- Default: `false`
+
+### Center On Match
+
+- Description: Whether to center the cursor on each search match when navigating.
+- Setting: `center_on_match`
+- Default: `false`
 
 ## Search Wrap
 

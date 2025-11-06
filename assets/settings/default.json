@@ -612,9 +612,13 @@
   "search": {
     // Whether to show the project search button in the status bar.
     "button": true,
+    // Whether to only match on whole words.
     "whole_word": false,
+    // Whether to match case sensitively.
     "case_sensitive": false,
+    // Whether to include gitignored files in search results.
     "include_ignored": false,
+    // Whether to interpret the search query as a regular expression.
     "regex": false,
     // Whether to center the cursor on each search match when navigating.
     "center_on_match": false
