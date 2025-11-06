@@ -13,13 +13,179 @@ use anyhow::anyhow;
 use collections::HashMap;
 use gpui::AsyncApp;
 use gpui::Entity;
-use language::{Anchor, Buffer, BufferId, BufferSnapshot, OffsetRangeExt as _};
+use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, TextBufferSnapshot};
 use project::Project;
 
+pub async fn parse_diff<'a>(
+    diff: &'a str,
+    get_buffer: impl Fn(&Path) -> Option<(&'a BufferSnapshot, &'a [Range<Anchor>])> + Send,
+) -> Result<(&'a BufferSnapshot, Vec<(Range<Anchor>, Arc<str>)>)> {
+    let mut diff = DiffParser::new(diff);
+    let mut edited_buffer = None;
+    let mut edits = Vec::new();
+
+    while let Some(event) = diff.next()? {
+        match event {
+            DiffEvent::Hunk {
+                path: file_path,
+                hunk,
+            } => {
+                let (buffer, ranges) = match edited_buffer {
+                    None => {
+                        edited_buffer = get_buffer(&Path::new(file_path.as_ref()));
+                        edited_buffer.as_ref().unwrap()
+                    }
+                    Some(ref current) => current,
+                };
+
+                edits.extend(resolve_hunk_edits_in_buffer(hunk, &buffer.text, ranges)?);
+            }
+            DiffEvent::FileEnd { renamed_to } => {
+                let (buffer, _) = edited_buffer
+                    .take()
+                    .expect("Got a FileEnd event before an Hunk event");
+
+                if renamed_to.is_some() {
+                    anyhow::bail!("edit predictions cannot rename files");
+                }
+
+                if diff.next()?.is_some() {
+                    anyhow::bail!("Edited more than one file");
+                }
+
+                return Ok((buffer, edits));
+            }
+        }
+    }
+
+    Err(anyhow::anyhow!("No EOF"))
+}
+
+#[derive(Debug)]
+pub struct OpenedBuffers<'a>(#[allow(unused)] HashMap<Cow<'a, str>, Entity<Buffer>>);
+
+#[must_use]
+pub async fn apply_diff<'a>(
+    diff: &'a str,
+    project: &Entity<Project>,
+    cx: &mut AsyncApp,
+) -> Result<OpenedBuffers<'a>> {
+    let mut included_files = HashMap::default();
+
+    for line in diff.lines() {
+        let diff_line = DiffLine::parse(line);
+
+        if let DiffLine::OldPath { path } = diff_line {
+            let buffer = project
+                .update(cx, |project, cx| {
+                    let project_path =
+                        project
+                            .find_project_path(path.as_ref(), cx)
+                            .with_context(|| {
+                                format!("Failed to find worktree for new path: {}", path)
+                            })?;
+                    anyhow::Ok(project.open_buffer(project_path, cx))
+                })??
+                .await?;
+
+            included_files.insert(path, buffer);
+        }
+    }
+
+    let ranges = [Anchor::MIN..Anchor::MAX];
+
+    let mut diff = DiffParser::new(diff);
+    let mut current_file = None;
+    let mut edits = vec![];
+
+    while let Some(event) = diff.next()? {
+        match event {
+            DiffEvent::Hunk {
+                path: file_path,
+                hunk,
+            } => {
+                let (buffer, ranges) = match current_file {
+                    None => {
+                        let buffer = included_files
+                            .get_mut(&file_path)
+                            .expect("Opened all files in diff");
+
+                        current_file = Some((buffer, ranges.as_slice()));
+                        current_file.as_ref().unwrap()
+                    }
+                    Some(ref current) => current,
+                };
+
+                buffer.read_with(cx, |buffer, _| {
+                    edits.extend(resolve_hunk_edits_in_buffer(hunk, buffer, ranges)?);
+                    anyhow::Ok(())
+                })??;
+            }
+            DiffEvent::FileEnd { renamed_to } => {
+                let (buffer, _) = current_file
+                    .take()
+                    .expect("Got a FileEnd event before an Hunk event");
+
+                if let Some(renamed_to) = renamed_to {
+                    project
+                        .update(cx, |project, cx| {
+                            let new_project_path = project
+                                .find_project_path(Path::new(renamed_to.as_ref()), cx)
+                                .with_context(|| {
+                                    format!("Failed to find worktree for new path: {}", renamed_to)
+                                })?;
+
+                            let project_file = project::File::from_dyn(buffer.read(cx).file())
+                                .expect("Wrong file type");
+
+                            anyhow::Ok(project.rename_entry(
+                                project_file.entry_id.unwrap(),
+                                new_project_path,
+                                cx,
+                            ))
+                        })??
+                        .await?;
+                }
+
+                let edits = mem::take(&mut edits);
+                buffer.update(cx, |buffer, cx| {
+                    buffer.edit(edits, None, cx);
+                })?;
+            }
+        }
+    }
+
+    Ok(OpenedBuffers(included_files))
+}
+
+struct PatchFile<'a> {
+    old_path: Cow<'a, str>,
+    new_path: Cow<'a, str>,
+}
+
+struct DiffParser<'a> {
+    current_file: Option<PatchFile<'a>>,
+    previous_file: Option<PatchFile<'a>>,
+    hunk: Hunk,
+    diff: std::str::Lines<'a>,
+}
+
+#[derive(Debug)]
+enum DiffEvent<'a> {
+    Hunk { path: Cow<'a, str>, hunk: Hunk },
+    FileEnd { renamed_to: Option<Cow<'a, str>> },
+}
+
 #[derive(Debug, Default)]
-struct HunkState {
+struct Hunk {
     context: String,
     edits: Vec<Edit>,
+}
+
+impl Hunk {
+    fn is_empty(&self) -> bool {
+        self.context.is_empty() && self.edits.is_empty()
+    }
 }
 
 #[derive(Debug)]
@@ -28,238 +194,177 @@ struct Edit {
     text: String,
 }
 
-pub async fn parse_diff<'a>(
-    diff: &str,
-    get_buffer: impl Fn(&Path) -> Option<(&'a BufferSnapshot, &'a [Range<Anchor>])> + Send,
-) -> Result<(BufferSnapshot, Vec<(Range<Anchor>, Arc<str>)>)> {
-    let mut edited_buffer = None;
-    let mut buffer_edits = Vec::new();
-    process_diff(
-        &(),
-        diff,
-        |path, _| get_buffer(path),
-        async |buffer, renamed_to, edits| {
-            if edited_buffer.is_some() {
-                anyhow::bail!("edited more than one file");
-            }
-            if renamed_to.is_some() {
-                anyhow::bail!("edit predictions cannot rename files");
-            }
-            edited_buffer = Some(buffer.clone());
-            buffer_edits = edits;
-            Ok(())
-        },
-    )
-    .await?;
-    Ok((edited_buffer.context("no files in diff")?, buffer_edits))
-}
-
-#[must_use]
-pub async fn apply_diff(
-    diff: &str,
-    project: &Entity<Project>,
-    cx: &mut AsyncApp,
-) -> Result<HashMap<BufferId, Entity<Buffer>>> {
-    let mut included_files = HashMap::default();
-    let mut opened_buffers = HashMap::default();
-    for line in diff.lines() {
-        let diff_line = DiffLine::parse(line);
-        if let DiffLine::OldPath { path } = diff_line {
-            let buffer = project
-                .update(cx, |project, cx| {
-                    let project_path = project
-                        .find_project_path(path.as_ref(), cx)
-                        .context("Failed to find worktree for new path")?;
-                    anyhow::Ok(project.open_buffer(project_path, cx))
-                })??
-                .await?;
-
-            let path = Arc::from(Path::new(path.as_ref()));
-            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-            opened_buffers.insert(snapshot.remote_id(), buffer.clone());
-            included_files.insert(path, (buffer, snapshot));
+impl<'a> DiffParser<'a> {
+    fn new(diff: &'a str) -> Self {
+        DiffParser {
+            current_file: None,
+            previous_file: None,
+            hunk: Hunk::default(),
+            diff: diff.lines(),
         }
     }
 
-    let ranges = [Anchor::MIN..Anchor::MAX];
-    let cx_2 = cx.clone();
-
-    process_diff(
-        &mut included_files,
-        diff,
-        |path, included_files| {
-            let (buffer, snapshot) = included_files.get_mut(path)?;
-            *snapshot = buffer
-                .read_with(&cx_2, |buffer, _| buffer.snapshot())
-                .ok()?;
-            Some((&*snapshot, ranges.as_slice()))
-        },
-        async |buffer, new_path, edits| {
-            if let Some(new_path) = new_path {
-                project
-                    .update(cx, |project, cx| {
-                        let new_project_path = project
-                            .find_project_path(new_path, cx)
-                            .context("Failed to find worktree for new path")?;
-                        let project_file =
-                            project::File::from_dyn(buffer.file()).context("Wrong file type")?;
-                        anyhow::Ok(project.rename_entry(
-                            project_file.entry_id.unwrap(),
-                            new_project_path,
-                            cx,
-                        ))
-                    })??
-                    .await?;
-            }
-
-            let buffer = opened_buffers.get(&buffer.remote_id()).unwrap();
-            buffer.update(cx, |buffer, cx| {
-                buffer.edit(edits, None, cx);
-            })
-        },
-    )
-    .await?;
-    Ok(opened_buffers)
-}
-
-async fn process_diff<'a, T>(
-    mut payload: T,
-    diff: &str,
-    get_buffer: impl for<'b> Fn(&Path, &'b mut T) -> Option<(&'b BufferSnapshot, &'b [Range<Anchor>])>,
-    mut on_buffer: impl AsyncFnMut(
-        &BufferSnapshot,
-        Option<&Path>,
-        Vec<(Range<Anchor>, Arc<str>)>,
-    ) -> Result<()>,
-) -> Result<()> {
-    let mut current_file = None;
-    let mut new_path = None;
-    let mut hunk = HunkState::default();
-    let mut edits = Vec::new();
-
-    let mut diff_lines = diff.lines().map(DiffLine::parse).peekable();
-    while let Some(diff_line) = diff_lines.next() {
-        match diff_line {
-            DiffLine::OldPath { path } => {
-                let (buffer, ranges) = get_buffer(Path::new(path.as_ref()), &mut payload)
-                    .with_context(|| format!("Failed to get buffer for {path}"))?;
-                current_file = Some((Path::new(path.as_ref()).to_path_buf(), buffer, ranges));
-            }
-            DiffLine::NewPath { path } => {
-                if current_file.is_none() {
-                    anyhow::bail!(
-                        "Found a new path header (`+++`) before an (`---`) old path header"
-                    );
-                }
-                new_path = Some(path)
-            }
-            DiffLine::Context(ctx) => {
-                writeln!(&mut hunk.context, "{ctx}")?;
-            }
-            DiffLine::Deletion(del) => {
-                let range = hunk.context.len()..hunk.context.len() + del.len() + '\n'.len_utf8();
-                if let Some(last_edit) = hunk.edits.last_mut()
-                    && last_edit.range.end == range.start
-                {
-                    last_edit.range.end = range.end;
-                } else {
-                    hunk.edits.push(Edit {
-                        range,
-                        text: String::new(),
-                    });
-                }
-                writeln!(&mut hunk.context, "{del}")?;
-            }
-            DiffLine::Addition(add) => {
-                let range = hunk.context.len()..hunk.context.len();
-                if let Some(last_edit) = hunk.edits.last_mut()
-                    && last_edit.range.end == range.start
-                {
-                    writeln!(&mut last_edit.text, "{add}").unwrap();
-                } else {
-                    hunk.edits.push(Edit {
-                        range,
-                        text: format!("{add}\n"),
-                    });
-                }
-            }
-            DiffLine::HunkHeader(_) | DiffLine::Garbage => {}
-        }
-
-        let (at_hunk_end, at_file_end) = match diff_lines.peek() {
-            Some(DiffLine::OldPath { .. }) | None => (true, true),
-            Some(DiffLine::HunkHeader(_)) => (true, false),
-            _ => (false, false),
-        };
-
-        if at_hunk_end {
-            let hunk = mem::take(&mut hunk);
-
-            let Some((old_path, buffer, ranges)) = current_file.as_ref() else {
-                anyhow::bail!("Missing old path (`---`) header")
-            };
-
-            // TODO is it worth using project search?
-            let context_offset = if hunk.context.is_empty() {
-                Ok(0)
+    fn next(&mut self) -> Result<Option<DiffEvent<'a>>> {
+        if let Some(PatchFile { old_path, new_path }) = self.previous_file.take() {
+            let renamed_to = if old_path != new_path {
+                Some(new_path)
             } else {
-                let mut offset = None;
-                for range in *ranges {
-                    let range = range.to_offset(buffer);
-                    let text = buffer.text_for_range(range.clone()).collect::<String>();
-                    for (ix, _) in text.match_indices(&hunk.context) {
-                        if offset.is_some() {
-                            anyhow::bail!("Context is not unique enough:\n{}", hunk.context);
+                None
+            };
+            return Ok(Some(DiffEvent::FileEnd { renamed_to }));
+        }
+
+        while let Some(line) = self.diff.next() {
+            let parsed_line = DiffLine::parse(line);
+            let event = util::maybe!({
+                match parsed_line {
+                    DiffLine::OldPath {
+                        path: updated_old_path,
+                    } => {
+                        self.previous_file = self.current_file.take();
+                        let next_line = self
+                            .diff
+                            .by_ref()
+                            .map(|line| DiffLine::parse(line))
+                            .skip_while(|line| matches!(line, DiffLine::Garbage))
+                            .next();
+
+                        let Some(DiffLine::NewPath {
+                            path: updated_new_path,
+                        }) = next_line
+                        else {
+                            anyhow::bail!("Expected new path after old path");
+                        };
+                        self.current_file = Some(PatchFile {
+                            new_path: updated_new_path,
+                            old_path: updated_old_path,
+                        });
+
+                        if let Some(prev_file) = &self.previous_file
+                            && !self.hunk.is_empty()
+                        {
+                            let hunk = mem::take(&mut self.hunk);
+                            return Ok(Some(DiffEvent::Hunk {
+                                path: prev_file.old_path.clone(),
+                                hunk,
+                            }));
                         }
-                        offset = Some(range.start + ix);
                     }
+                    DiffLine::NewPath { .. } => {
+                        anyhow::bail!(
+                            "Found a new path header that wasn't preceded by an old path header"
+                        );
+                    }
+                    DiffLine::HunkHeader(_) => {
+                        return Ok(Some(DiffEvent::Hunk {
+                            path: self
+                                .current_file
+                                .as_ref()
+                                .context("Found hunk header before old path header")?
+                                .old_path
+                                .clone(),
+                            hunk: mem::take(&mut self.hunk),
+                        }));
+                    }
+                    DiffLine::Context(ctx) => {
+                        writeln!(&mut self.hunk.context, "{ctx}")?;
+                    }
+                    DiffLine::Deletion(del) => {
+                        let range = self.hunk.context.len()
+                            ..self.hunk.context.len() + del.len() + '\n'.len_utf8();
+                        if let Some(last_edit) = self.hunk.edits.last_mut()
+                            && last_edit.range.end == range.start
+                        {
+                            last_edit.range.end = range.end;
+                        } else {
+                            self.hunk.edits.push(Edit {
+                                range,
+                                text: String::new(),
+                            });
+                        }
+                        writeln!(&mut self.hunk.context, "{del}")?;
+                    }
+                    DiffLine::Addition(add) => {
+                        let range = self.hunk.context.len()..self.hunk.context.len();
+                        if let Some(last_edit) = self.hunk.edits.last_mut()
+                            && last_edit.range.end == range.start
+                        {
+                            writeln!(&mut last_edit.text, "{add}").unwrap();
+                        } else {
+                            self.hunk.edits.push(Edit {
+                                range,
+                                text: format!("{add}\n"),
+                            });
+                        }
+                    }
+                    DiffLine::Garbage => {}
                 }
-                offset.ok_or_else(|| {
-                    anyhow!(
-                        "Failed to match context:\n{}\n\nBuffer:\n{}",
-                        hunk.context,
-                        buffer.text(),
-                    )
-                })
-            }?;
+                Ok(None)
+            })
+            .with_context(|| format!("on line:\n\n```\n{}```", line))?;
 
-            edits.extend(hunk.edits.into_iter().flat_map(|edit| {
-                let old_text = buffer
-                    .text_for_range(
-                        context_offset + edit.range.start..context_offset + edit.range.end,
-                    )
-                    .collect::<String>();
-                let edits_within_hunk = language::text_diff(&old_text, &edit.text);
-                edits_within_hunk
-                    .into_iter()
-                    .map(move |(inner_range, inner_text)| {
-                        (
-                            buffer
-                                .anchor_after(context_offset + edit.range.start + inner_range.start)
-                                ..buffer.anchor_before(
-                                    context_offset + edit.range.start + inner_range.end,
-                                ),
-                            inner_text,
-                        )
-                    })
-            }));
-
-            if at_file_end {
-                let Some(new_path) = new_path.take() else {
-                    anyhow::bail!("Missing new path (`+++`) header")
-                };
-                let new_path = Path::new(new_path.as_ref());
-                let renamed_to = if old_path != new_path {
-                    Some(new_path)
-                } else {
-                    None
-                };
-                on_buffer(buffer, renamed_to, mem::take(&mut edits)).await?;
+            if event.is_some() {
+                return Ok(event);
             }
         }
-    }
 
-    anyhow::Ok(())
+        if let Some(current_file) = self.current_file.take() {
+            let old_path = current_file.old_path.clone();
+            self.previous_file = Some(current_file);
+
+            return Ok(Some(DiffEvent::Hunk {
+                path: old_path.clone(),
+                hunk: mem::take(&mut self.hunk),
+            }));
+        }
+
+        anyhow::Ok(None)
+    }
+}
+
+fn resolve_hunk_edits_in_buffer(
+    hunk: Hunk,
+    buffer: &TextBufferSnapshot,
+    ranges: &[Range<Anchor>],
+) -> Result<impl Iterator<Item = (Range<Anchor>, Arc<str>)>, anyhow::Error> {
+    let context_offset = if hunk.context.is_empty() {
+        Ok(0)
+    } else {
+        let mut offset = None;
+        for range in ranges {
+            let range = range.to_offset(buffer);
+            let text = buffer.text_for_range(range.clone()).collect::<String>();
+            for (ix, _) in text.match_indices(&hunk.context) {
+                if offset.is_some() {
+                    anyhow::bail!("Context is not unique enough:\n{}", hunk.context);
+                }
+                offset = Some(range.start + ix);
+            }
+        }
+        offset.ok_or_else(|| {
+            anyhow!(
+                "Failed to match context:\n{}\n\nBuffer:\n{}",
+                hunk.context,
+                buffer.text(),
+            )
+        })
+    }?;
+    let iter = hunk.edits.into_iter().flat_map(move |edit| {
+        let old_text = buffer
+            .text_for_range(context_offset + edit.range.start..context_offset + edit.range.end)
+            .collect::<String>();
+        let edits_within_hunk = language::text_diff(&old_text, &edit.text);
+        edits_within_hunk
+            .into_iter()
+            .map(move |(inner_range, inner_text)| {
+                (
+                    buffer.anchor_after(context_offset + edit.range.start + inner_range.start)
+                        ..buffer.anchor_before(context_offset + edit.range.start + inner_range.end),
+                    inner_text,
+                )
+            })
+    });
+    Ok(iter)
 }
 
 #[derive(Debug, PartialEq)]
