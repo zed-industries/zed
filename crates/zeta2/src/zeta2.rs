@@ -1577,6 +1577,7 @@ mod tests {
 
     use client::UserStore;
     use clock::FakeSystemClock;
+    use cloud_zeta2_prompt::retrieval_prompt::{SearchToolInput, SearchToolQuery};
     use futures::{
         AsyncReadExt, StreamExt,
         channel::{mpsc, oneshot},
@@ -1651,6 +1652,53 @@ mod tests {
                 .current_prediction_for_buffer(&buffer1, &project, cx)
                 .unwrap();
             assert_matches!(prediction, BufferEditPrediction::Local { .. });
+        });
+
+        // Context refresh
+        let refresh_task = zeta.update(cx, |zeta, cx| {
+            zeta.refresh_context(project.clone(), buffer1.clone(), position, cx)
+        });
+        let (_request, respond_tx) = req_rx.next().await.unwrap();
+        respond_tx
+            .send(open_ai::Response {
+                id: Uuid::new_v4().to_string(),
+                object: "response".into(),
+                created: 0,
+                model: "model".into(),
+                choices: vec![open_ai::Choice {
+                    index: 0,
+                    message: open_ai::RequestMessage::Assistant {
+                        content: None,
+                        tool_calls: vec![open_ai::ToolCall {
+                            id: "search".into(),
+                            content: open_ai::ToolCallContent::Function {
+                                function: open_ai::FunctionContent {
+                                    name: cloud_zeta2_prompt::retrieval_prompt::TOOL_NAME
+                                        .to_string(),
+                                    arguments: serde_json::to_string(&SearchToolInput {
+                                        queries: Box::new([SearchToolQuery {
+                                            glob: "root/2.txt".to_string(),
+                                            regex: ".".to_string(),
+                                        }]),
+                                    })
+                                    .unwrap(),
+                                },
+                            },
+                        }],
+                    },
+                    finish_reason: None,
+                }],
+                usage: Usage {
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0,
+                },
+            })
+            .unwrap();
+        refresh_task.await.unwrap();
+
+        zeta.update(cx, |zeta, _cx| {
+            zeta.discard_current_prediction(&project);
         });
 
         // Prediction for another file

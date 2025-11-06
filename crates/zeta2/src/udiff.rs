@@ -33,7 +33,9 @@ pub async fn parse_diff<'a>(
                 let (buffer, ranges) = match edited_buffer {
                     None => {
                         edited_buffer = get_buffer(&Path::new(file_path.as_ref()));
-                        edited_buffer.as_ref().unwrap()
+                        edited_buffer
+                            .as_ref()
+                            .context("Model tried to edit a file that wasn't included")?
                     }
                     Some(ref current) => current,
                 };

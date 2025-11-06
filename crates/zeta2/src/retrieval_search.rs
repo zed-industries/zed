@@ -86,6 +86,20 @@ pub async fn run_retrieval_searches(
                         .cmp(&b.start, snapshot)
                         .then(b.end.cmp(&b.end, snapshot))
                 });
+
+                let mut index = 1;
+                while index < ranges.len() {
+                    if ranges[index - 1]
+                        .end
+                        .cmp(&ranges[index].start, snapshot)
+                        .is_gt()
+                    {
+                        let removed = ranges.remove(index);
+                        ranges[index - 1].end = removed.end;
+                    } else {
+                        index += 1;
+                    }
+                }
             }
         }
 
