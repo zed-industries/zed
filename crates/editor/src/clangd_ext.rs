@@ -88,10 +88,14 @@ pub fn switch_source_header(
                 )
             })?;
 
-        let path = PathBuf::from(goto);
-
         workspace
             .update_in(cx, |workspace, window, cx| {
+                let goto = if workspace.path_style(cx).is_windows() {
+                    goto.strip_prefix('/').unwrap_or(goto)
+                } else {
+                    goto
+                };
+                let path = PathBuf::from(goto);
                 workspace.open_abs_path(
                     path,
                     OpenOptions {
