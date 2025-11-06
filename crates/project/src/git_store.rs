@@ -317,6 +317,9 @@ pub enum RepositoryEvent {
     MergeHeadsChanged,
     BranchChanged,
     StashEntriesChanged,
+    PendingOpsChanged {
+        pending_ops: SumTree<pending_op::PendingOps>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -3848,8 +3851,6 @@ impl Repository {
         let status = format!("git add {paths}");
         let job_key = GitJobKey::WriteIndex(entries.clone());
 
-        dbg!(self.pending_ops_for_path(&entries[0]));
-
         self.spawn_job_with_tracking(
             entries.clone(),
             pending_op::GitStatus::Staged,
@@ -5580,7 +5581,6 @@ async fn compute_snapshot(
         MergeDetails::load(&backend, &statuses_by_path, &prev_snapshot).await?;
     log::debug!("new merge details (changed={merge_heads_changed:?}): {merge_details:?}");
 
-    dbg!();
     let pending_ops_by_path = SumTree::from_iter(
         prev_snapshot.pending_ops_by_path.iter().filter_map(|ops| {
             let inner_ops: Vec<PendingOp> =
@@ -5596,6 +5596,12 @@ async fn compute_snapshot(
         }),
         (),
     );
+
+    if pending_ops_by_path != prev_snapshot.pending_ops_by_path {
+        events.push(RepositoryEvent::PendingOpsChanged {
+            pending_ops: prev_snapshot.pending_ops_by_path.clone(),
+        })
+    }
 
     if merge_heads_changed {
         events.push(RepositoryEvent::MergeHeadsChanged);
