@@ -460,13 +460,8 @@ impl CompletionsMenu {
         cx: &mut Context<Editor>,
     ) {
         if self.selected_item != match_index {
-            let strategy = if match_index > self.selected_item {
-                ScrollStrategy::Bottom
-            } else {
-                ScrollStrategy::Top
-            };
             self.selected_item = match_index;
-            self.handle_selection_changed(provider, window, cx, strategy);
+            self.handle_selection_changed(provider, window, cx);
         }
     }
 
@@ -491,10 +486,9 @@ impl CompletionsMenu {
         provider: Option<&dyn CompletionProvider>,
         window: &mut Window,
         cx: &mut Context<Editor>,
-        strategy: ScrollStrategy,
     ) {
         self.scroll_handle
-            .scroll_to_item(self.selected_item, strategy);
+            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
         if let Some(provider) = provider {
             let entries = self.entries.borrow();
             let entry = if self.selected_item < entries.len() {
@@ -1130,7 +1124,7 @@ impl CompletionsMenu {
     ) {
         *self.entries.borrow_mut() = matches.into_boxed_slice();
         self.selected_item = 0;
-        self.handle_selection_changed(provider.as_deref(), window, cx, ScrollStrategy::Top);
+        self.handle_selection_changed(provider.as_deref(), window, cx);
     }
 
     pub fn sort_string_matches(

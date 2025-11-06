@@ -402,23 +402,18 @@ impl Element for UniformList {
                         let item_bottom = item_top + item_height;
                         let scroll_top = -updated_scroll_offset.y;
                         let offset_pixels = item_height * deferred_scroll.offset;
-                        let mut scrolled_to_top = false;
 
-                        if item_top < scroll_top + offset_pixels {
-                            scrolled_to_top = true;
-                            // todo: using the padding here is wrong - this only works well for few scenarios
-                            updated_scroll_offset.y = -item_top + padding.top + offset_pixels;
+                        let scroll_strategy = if deferred_scroll.scroll_strict {
+                            Some(deferred_scroll.strategy)
+                        } else if item_top < scroll_top + offset_pixels {
+                            Some(ScrollStrategy::Top)
                         } else if item_bottom > scroll_top + list_height {
-                            scrolled_to_top = true;
-                            updated_scroll_offset.y = -(item_bottom - list_height);
-                        }
-
-                        if deferred_scroll.scroll_strict
-                            || (scrolled_to_top
-                                && (item_top < scroll_top + offset_pixels
-                                    || item_bottom > scroll_top + list_height))
-                        {
-                            match deferred_scroll.strategy {
+                            Some(ScrollStrategy::Bottom)
+                        } else {
+                            None
+                        };
+                        if let Some(scroll_strategy) = scroll_strategy {
+                            match scroll_strategy {
                                 ScrollStrategy::Top => {
                                     updated_scroll_offset.y = -(item_top - offset_pixels)
                                         .max(Pixels::ZERO)
