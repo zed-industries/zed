@@ -2647,7 +2647,7 @@ impl LocalLspStore {
         };
 
         let Ok(file_url) = lsp::Uri::from_file_path(old_path.as_path()) else {
-            debug_panic!("{old_path:?} is not parseable as an URI");
+            log::warn!("Failed to convert file path to LSP URI during buffer unregistration: {:?}", old_path);
             return;
         };
         self.unregister_buffer_from_language_servers(buffer, &file_url, cx);
@@ -7643,14 +7643,13 @@ impl LspStore {
         let buffer = buffer.read(cx);
         let file = File::from_dyn(buffer.file())?;
         let abs_path = file.as_local()?.abs_path(cx);
-        let uri = lsp::Uri::from_file_path(abs_path).unwrap();
+        let uri = lsp::Uri::from_file_path(abs_path).ok()?;
         let next_snapshot = buffer.text_snapshot();
         for language_server in language_servers {
             let language_server = language_server.clone();
 
             let buffer_snapshots = self
-                .as_local_mut()
-                .unwrap()
+                .as_local_mut()?
                 .buffer_snapshots
                 .get_mut(&buffer.remote_id())
                 .and_then(|m| m.get_mut(&language_server.server_id()))?;
