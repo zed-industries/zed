@@ -1,5 +1,5 @@
 use crate::{Editor, RangeToAnchorExt};
-use gpui::{Context, HighlightStyle, Hsla, Window};
+use gpui::{Context, HighlightStyle, Window};
 use itertools::Itertools;
 use multi_buffer::ToPoint;
 use text::{Bias, Point};

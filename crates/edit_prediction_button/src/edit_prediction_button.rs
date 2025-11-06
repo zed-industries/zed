@@ -13,7 +13,7 @@ use gpui::{
 };
 use indoc::indoc;
 use language::{
-    EditPredictionsMode, File, Language, Rope,
+    EditPredictionsMode, File, Language,
     language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
 };
 use project::DisableAiSettings;
@@ -1056,11 +1056,8 @@ async fn open_disabled_globs_setting_in_editor(
 ) -> Result<()> {
     let settings_editor = workspace
         .update_in(cx, |_, window, cx| {
-            create_and_open_local_file(paths::settings_file(), window, cx, |cx| {
-                Rope::from_str(
-                    settings::initial_user_settings_content().as_ref(),
-                    cx.background_executor(),
-                )
+            create_and_open_local_file(paths::settings_file(), window, cx, || {
+                settings::initial_user_settings_content().as_ref().into()
             })
         })?
         .await?

@@ -255,6 +255,19 @@
   // Whether to display inline and alongside documentation for items in the
   // completions menu
   "show_completion_documentation": true,
+  // When to show the scrollbar in the completion menu.
+  // This setting can take four values:
+  //
+  // 1. Show the scrollbar if there's important information or
+  //    follow the system's configured behavior
+  //   "auto"
+  // 2. Match the system's configured behavior:
+  //    "system"
+  // 3. Always show the scrollbar:
+  //    "always"
+  // 4. Never show the scrollbar:
+  //    "never" (default)
+  "completion_menu_scrollbar": "never",
   // Show method signatures in the editor, when inside parentheses.
   "auto_signature_help": false,
   // Whether to show the signature help after completion or a bracket pair inserted.
@@ -592,7 +605,7 @@
   // to both the horizontal and vertical delta values while scrolling. Fast scrolling
   // happens when a user holds the alt or option key while scrolling.
   "fast_scroll_sensitivity": 4.0,
-  "relative_line_numbers": false,
+  "relative_line_numbers": "disabled",
   // If 'search_wrap' is disabled, search result do not wrap around the end of the file.
   "search_wrap": true,
   // Search options to enable by default when opening new project and buffer searches.
@@ -602,7 +615,9 @@
     "whole_word": false,
     "case_sensitive": false,
     "include_ignored": false,
-    "regex": false
+    "regex": false,
+    // Whether to center the cursor on each search match when navigating.
+    "center_on_match": false
   },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
@@ -1232,6 +1247,9 @@
   // that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes
   // precedence over these inclusions.
   "file_scan_inclusions": [".env*"],
+  // Globs to match files that will be considered "hidden". These files can be hidden from the
+  // project panel by toggling the "hide_hidden" setting.
+  "hidden_files": ["**/.*"],
   // Git gutter behavior configuration.
   "git": {
     // Control whether the git gutter is shown. May take 2 values:
@@ -1719,6 +1737,9 @@
         "allowed": true
       }
     },
+    "HTML+ERB": {
+      "language_servers": ["herb", "!ruby-lsp", "..."]
+    },
     "Java": {
       "prettier": {
         "allowed": true,
@@ -1741,6 +1762,9 @@
         "allowed": true
       }
     },
+    "JS+ERB": {
+      "language_servers": ["!ruby-lsp", "..."]
+    },
     "Kotlin": {
       "language_servers": ["!kotlin-language-server", "kotlin-lsp", "..."]
     },
@@ -1755,6 +1779,7 @@
     "Markdown": {
       "format_on_save": "off",
       "use_on_type_format": false,
+      "remove_trailing_whitespace_on_save": false,
       "allow_rewrap": "anywhere",
       "soft_wrap": "editor_width",
       "prettier": {
@@ -1844,6 +1869,9 @@
       "prettier": {
         "allowed": true
       }
+    },
+    "YAML+ERB": {
+      "language_servers": ["!ruby-lsp", "..."]
     },
     "Zig": {
       "language_servers": ["zls", "..."]

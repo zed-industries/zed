@@ -75,14 +75,14 @@ use language::{
     range_from_lsp, range_to_lsp,
 };
 use lsp::{
-    AdapterServerCapabilities, CodeActionKind, CompletionContext, DiagnosticServerCapabilities,
-    DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions, Edit,
-    FileOperationFilter, FileOperationPatternKind, FileOperationRegistrationOptions, FileRename,
-    FileSystemWatcher, LSP_REQUEST_TIMEOUT, LanguageServer, LanguageServerBinary,
-    LanguageServerBinaryOptions, LanguageServerId, LanguageServerName, LanguageServerSelector,
-    LspRequestFuture, MessageActionItem, MessageType, OneOf, RenameFilesParams, SymbolKind,
-    TextDocumentSyncSaveOptions, TextEdit, Uri, WillRenameFiles, WorkDoneProgressCancelParams,
-    WorkspaceFolder, notification::DidRenameFiles,
+    AdapterServerCapabilities, CodeActionKind, CompletionContext, CompletionOptions,
+    DiagnosticServerCapabilities, DiagnosticSeverity, DiagnosticTag,
+    DidChangeWatchedFilesRegistrationOptions, Edit, FileOperationFilter, FileOperationPatternKind,
+    FileOperationRegistrationOptions, FileRename, FileSystemWatcher, LSP_REQUEST_TIMEOUT,
+    LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId,
+    LanguageServerName, LanguageServerSelector, LspRequestFuture, MessageActionItem, MessageType,
+    OneOf, RenameFilesParams, SymbolKind, TextDocumentSyncSaveOptions, TextEdit, Uri,
+    WillRenameFiles, WorkDoneProgressCancelParams, WorkspaceFolder, notification::DidRenameFiles,
 };
 use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;
@@ -238,7 +238,7 @@ pub struct DocumentDiagnostics {
     version: Option<i32>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct DynamicRegistrations {
     did_change_watched_files: HashMap<String, Vec<FileSystemWatcher>>,
     diagnostics: HashMap<Option<String>, DiagnosticServerCapabilities>,
@@ -5341,8 +5341,8 @@ impl LspStore {
                 request.to_proto(project_id, buffer.read(cx)),
             );
             let buffer = buffer.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let Some(project) = weak_project.upgrade() else {
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let Some(lsp_store) = weak_lsp_store.upgrade() else {
                     return Ok(None);
                 };
                 let Some(responses) = request_task.await? else {
@@ -5351,7 +5351,7 @@ impl LspStore {
                 let actions = join_all(responses.payload.into_iter().map(|response| {
                     GetDefinitions { position }.response_from_proto(
                         response.response,
-                        project.clone(),
+                        lsp_store.clone(),
                         buffer.clone(),
                         cx.clone(),
                     )
@@ -5407,8 +5407,8 @@ impl LspStore {
                 request.to_proto(project_id, buffer.read(cx)),
             );
             let buffer = buffer.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let Some(project) = weak_project.upgrade() else {
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let Some(lsp_store) = weak_lsp_store.upgrade() else {
                     return Ok(None);
                 };
                 let Some(responses) = request_task.await? else {
@@ -5417,7 +5417,7 @@ impl LspStore {
                 let actions = join_all(responses.payload.into_iter().map(|response| {
                     GetDeclarations { position }.response_from_proto(
                         response.response,
-                        project.clone(),
+                        lsp_store.clone(),
                         buffer.clone(),
                         cx.clone(),
                     )
@@ -5473,8 +5473,8 @@ impl LspStore {
                 request.to_proto(project_id, buffer.read(cx)),
             );
             let buffer = buffer.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let Some(project) = weak_project.upgrade() else {
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let Some(lsp_store) = weak_lsp_store.upgrade() else {
                     return Ok(None);
                 };
                 let Some(responses) = request_task.await? else {
@@ -5483,7 +5483,7 @@ impl LspStore {
                 let actions = join_all(responses.payload.into_iter().map(|response| {
                     GetTypeDefinitions { position }.response_from_proto(
                         response.response,
-                        project.clone(),
+                        lsp_store.clone(),
                         buffer.clone(),
                         cx.clone(),
                     )
@@ -5539,8 +5539,8 @@ impl LspStore {
                 request.to_proto(project_id, buffer.read(cx)),
             );
             let buffer = buffer.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let Some(project) = weak_project.upgrade() else {
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let Some(lsp_store) = weak_lsp_store.upgrade() else {
                     return Ok(None);
                 };
                 let Some(responses) = request_task.await? else {
@@ -5549,7 +5549,7 @@ impl LspStore {
                 let actions = join_all(responses.payload.into_iter().map(|response| {
                     GetImplementations { position }.response_from_proto(
                         response.response,
-                        project.clone(),
+                        lsp_store.clone(),
                         buffer.clone(),
                         cx.clone(),
                     )
@@ -5606,8 +5606,8 @@ impl LspStore {
                 request.to_proto(project_id, buffer.read(cx)),
             );
             let buffer = buffer.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let Some(project) = weak_project.upgrade() else {
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let Some(lsp_store) = weak_lsp_store.upgrade() else {
                     return Ok(None);
                 };
                 let Some(responses) = request_task.await? else {
@@ -5617,7 +5617,7 @@ impl LspStore {
                 let locations = join_all(responses.payload.into_iter().map(|lsp_response| {
                     GetReferences { position }.response_from_proto(
                         lsp_response.response,
-                        project.clone(),
+                        lsp_store.clone(),
                         buffer.clone(),
                         cx.clone(),
                     )
@@ -5674,8 +5674,8 @@ impl LspStore {
                 request.to_proto(project_id, buffer.read(cx)),
             );
             let buffer = buffer.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let Some(project) = weak_project.upgrade() else {
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let Some(lsp_store) = weak_lsp_store.upgrade() else {
                     return Ok(None);
                 };
                 let Some(responses) = request_task.await? else {
@@ -5688,7 +5688,7 @@ impl LspStore {
                     }
                     .response_from_proto(
                         response.response,
-                        project.clone(),
+                        lsp_store.clone(),
                         buffer.clone(),
                         cx.clone(),
                     )
@@ -7187,7 +7187,7 @@ impl LspStore {
             );
             let buffer = buffer.clone();
             cx.spawn(async move |lsp_store, cx| {
-                let Some(project) = lsp_store.upgrade() else {
+                let Some(lsp_store) = lsp_store.upgrade() else {
                     return Ok(None);
                 };
                 let colors = join_all(
@@ -7201,7 +7201,7 @@ impl LspStore {
                         .map(|color_response| {
                             let response = request.response_from_proto(
                                 color_response.response,
-                                project.clone(),
+                                lsp_store.clone(),
                                 buffer.clone(),
                                 cx.clone(),
                             );
@@ -7265,8 +7265,8 @@ impl LspStore {
                 request.to_proto(upstream_project_id, buffer.read(cx)),
             );
             let buffer = buffer.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let project = weak_project.upgrade()?;
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let lsp_store = weak_lsp_store.upgrade()?;
                 let signatures = join_all(
                     request_task
                         .await
@@ -7278,7 +7278,7 @@ impl LspStore {
                         .map(|response| {
                             let response = GetSignatureHelp { position }.response_from_proto(
                                 response.response,
-                                project.clone(),
+                                lsp_store.clone(),
                                 buffer.clone(),
                                 cx.clone(),
                             );
@@ -7329,8 +7329,8 @@ impl LspStore {
                 request.to_proto(upstream_project_id, buffer.read(cx)),
             );
             let buffer = buffer.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let project = weak_project.upgrade()?;
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let lsp_store = weak_lsp_store.upgrade()?;
                 let hovers = join_all(
                     request_task
                         .await
@@ -7342,7 +7342,7 @@ impl LspStore {
                         .map(|response| {
                             let response = GetHover { position }.response_from_proto(
                                 response.response,
-                                project.clone(),
+                                lsp_store.clone(),
                                 buffer.clone(),
                                 cx.clone(),
                             );
@@ -10164,7 +10164,7 @@ impl LspStore {
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         if let Some(environment) = &self.as_local().map(|local| local.environment.clone()) {
             environment.update(cx, |env, cx| {
-                env.get_buffer_environment(buffer, &self.worktree_store, cx)
+                env.buffer_environment(buffer, &self.worktree_store, cx)
             })
         } else {
             Task::ready(None).shared()
@@ -11931,12 +11931,38 @@ impl LspStore {
                 "textDocument/completion" => {
                     if let Some(caps) = reg
                         .register_options
-                        .map(serde_json::from_value)
+                        .map(serde_json::from_value::<CompletionOptions>)
                         .transpose()?
                     {
                         server.update_capabilities(|capabilities| {
-                            capabilities.completion_provider = Some(caps);
+                            capabilities.completion_provider = Some(caps.clone());
                         });
+
+                        if let Some(local) = self.as_local() {
+                            let mut buffers_with_language_server = Vec::new();
+                            for handle in self.buffer_store.read(cx).buffers() {
+                                let buffer_id = handle.read(cx).remote_id();
+                                if local
+                                    .buffers_opened_in_servers
+                                    .get(&buffer_id)
+                                    .filter(|s| s.contains(&server_id))
+                                    .is_some()
+                                {
+                                    buffers_with_language_server.push(handle);
+                                }
+                            }
+                            let triggers = caps
+                                .trigger_characters
+                                .unwrap_or_default()
+                                .into_iter()
+                                .collect::<BTreeSet<_>>();
+                            for handle in buffers_with_language_server {
+                                let triggers = triggers.clone();
+                                let _ = handle.update(cx, move |buffer, cx| {
+                                    buffer.set_completion_triggers(server_id, triggers, cx);
+                                });
+                            }
+                        }
                         notify_server_capabilities_updated(&server, cx);
                     }
                 }
@@ -12036,14 +12062,11 @@ impl LspStore {
                             .context("Could not obtain Language Servers state")?;
                         local
                             .language_server_dynamic_registrations
-                            .get_mut(&server_id)
-                            .and_then(|registrations| {
-                                registrations
-                                    .diagnostics
-                                    .insert(Some(reg.id.clone()), caps.clone())
-                            });
+                            .entry(server_id)
+                            .or_default()
+                            .diagnostics
+                            .insert(Some(reg.id.clone()), caps.clone());
 
-                        let mut can_now_provide_diagnostics = false;
                         if let LanguageServerState::Running {
                             workspace_diagnostics_refresh_tasks,
                             ..
@@ -12056,20 +12079,42 @@ impl LspStore {
                             )
                         {
                             workspace_diagnostics_refresh_tasks.insert(Some(reg.id), task);
-                            can_now_provide_diagnostics = true;
                         }
 
-                        // We don't actually care about capabilities.diagnostic_provider, but it IS relevant for the remote peer
-                        // to know that there's at least one provider. Otherwise, it will never ask us to issue documentdiagnostic calls on their behalf,
-                        // as it'll think that they're not supported.
-                        if can_now_provide_diagnostics {
-                            server.update_capabilities(|capabilities| {
-                                debug_assert!(capabilities.diagnostic_provider.is_none());
+                        let mut did_update_caps = false;
+                        server.update_capabilities(|capabilities| {
+                            if capabilities.diagnostic_provider.as_ref().is_none_or(
+                                |current_caps| {
+                                    let supports_workspace_diagnostics =
+                                        |capabilities: &DiagnosticServerCapabilities| {
+                                            match capabilities {
+                                            DiagnosticServerCapabilities::Options(
+                                                diagnostic_options,
+                                            ) => diagnostic_options.workspace_diagnostics,
+                                            DiagnosticServerCapabilities::RegistrationOptions(
+                                                diagnostic_registration_options,
+                                            ) => {
+                                                diagnostic_registration_options
+                                                    .diagnostic_options
+                                                    .workspace_diagnostics
+                                            }
+                                        }
+                                        };
+                                    // We don't actually care about capabilities.diagnostic_provider, but it IS relevant for the remote peer
+                                    // to know that there's at least one provider. Otherwise, it will never ask us to issue documentdiagnostic calls on their behalf,
+                                    // as it'll think that they're not supported.
+                                    // If we did not support any workspace diagnostics up to this point but now do, let's update.
+                                    !supports_workspace_diagnostics(current_caps)
+                                        & supports_workspace_diagnostics(&caps)
+                                },
+                            ) {
+                                did_update_caps = true;
                                 capabilities.diagnostic_provider = Some(caps);
-                            });
+                            }
+                        });
+                        if did_update_caps {
+                            notify_server_capabilities_updated(&server, cx);
                         }
-
-                        notify_server_capabilities_updated(&server, cx);
                     }
                 }
                 "textDocument/documentColor" => {
@@ -12304,10 +12349,7 @@ impl LspStore {
             .update(cx, |buffer, _| buffer.wait_for_version(version))?
             .await?;
         lsp_store.update(cx, |lsp_store, cx| {
-            let lsp_data = lsp_store
-                .lsp_data
-                .entry(buffer_id)
-                .or_insert_with(|| BufferLspData::new(&buffer, cx));
+            let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
             let chunks_queried_for = lsp_data
                 .inlay_hints
                 .applicable_chunks(&[range])
@@ -12923,7 +12965,7 @@ impl LanguageServerWatchedPathsBuilder {
         language_server_id: LanguageServerId,
         cx: &mut Context<LspStore>,
     ) -> LanguageServerWatchedPaths {
-        let project = cx.weak_entity();
+        let lsp_store = cx.weak_entity();
 
         const LSP_ABS_PATH_OBSERVE: Duration = Duration::from_millis(100);
         let abs_paths = self
@@ -12934,7 +12976,7 @@ impl LanguageServerWatchedPathsBuilder {
                     let abs_path = abs_path.clone();
                     let fs = fs.clone();
 
-                    let lsp_store = project.clone();
+                    let lsp_store = lsp_store.clone();
                     async move |_, cx| {
                         maybe!(async move {
                             let mut push_updates = fs.watch(&abs_path, LSP_ABS_PATH_OBSERVE).await;
@@ -13402,9 +13444,8 @@ impl LocalLspAdapterDelegate {
         fs: Arc<dyn Fs>,
         cx: &mut App,
     ) -> Arc<Self> {
-        let load_shell_env_task = environment.update(cx, |env, cx| {
-            env.get_worktree_environment(worktree.clone(), cx)
-        });
+        let load_shell_env_task =
+            environment.update(cx, |env, cx| env.worktree_environment(worktree.clone(), cx));
 
         Arc::new(Self {
             lsp_store,

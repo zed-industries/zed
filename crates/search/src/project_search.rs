@@ -12,7 +12,9 @@ use editor::{
     SelectionEffects, VimFlavor,
     actions::{Backtab, SelectAll, Tab},
     items::active_match_index,
-    multibuffer_context_lines, vim_flavor,
+    multibuffer_context_lines,
+    scroll::Autoscroll,
+    vim_flavor,
 };
 use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
@@ -55,7 +57,9 @@ actions!(
         /// Moves to the next input field.
         NextField,
         /// Toggles the search filters panel.
-        ToggleFilters
+        ToggleFilters,
+        /// Toggles collapse/expand state of all search result excerpts.
+        ToggleAllSearchResults
     ]
 );
 
@@ -117,6 +121,20 @@ pub fn init(cx: &mut App) {
         register_workspace_action_for_present_search(workspace, |workspace, action, window, cx| {
             ProjectSearchView::search_in_new(workspace, action, window, cx)
         });
+
+        register_workspace_action_for_present_search(
+            workspace,
+            |workspace, action: &ToggleAllSearchResults, window, cx| {
+                if let Some(search_view) = workspace
+                    .active_item(cx)
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+                {
+                    search_view.update(cx, |search_view, cx| {
+                        search_view.toggle_all_search_results(action, window, cx);
+                    });
+                }
+            },
+        );
 
         register_workspace_action_for_present_search(
             workspace,
@@ -217,6 +235,7 @@ pub struct ProjectSearchView {
     replace_enabled: bool,
     included_opened_only: bool,
     regex_language: Option<Arc<Language>>,
+    results_collapsed: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -649,6 +668,44 @@ impl Item for ProjectSearchView {
     fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
         self.results_editor.breadcrumbs(theme, cx)
     }
+
+    fn breadcrumb_prefix(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        if !self.has_matches() {
+            return None;
+        }
+
+        let is_collapsed = self.results_collapsed;
+
+        let (icon, tooltip_label) = if is_collapsed {
+            (IconName::ChevronUpDown, "Expand All Search Results")
+        } else {
+            (IconName::ChevronDownUp, "Collapse All Search Results")
+        };
+
+        let focus_handle = self.query_editor.focus_handle(cx);
+
+        Some(
+            IconButton::new("project-search-collapse-expand", icon)
+                .shape(IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action_in(
+                        tooltip_label,
+                        &ToggleAllSearchResults,
+                        &focus_handle,
+                        cx,
+                    )
+                })
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.toggle_all_search_results(&ToggleAllSearchResults, window, cx);
+                }))
+                .into_any_element(),
+        )
+    }
 }
 
 impl ProjectSearchView {
@@ -749,6 +806,34 @@ impl ProjectSearchView {
         self.entity.update(cx, |model, _cx| {
             model.match_ranges = match_ranges;
         });
+    }
+
+    fn toggle_all_search_results(
+        &mut self,
+        _: &ToggleAllSearchResults,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.results_collapsed = !self.results_collapsed;
+        self.update_results_visibility(cx);
+    }
+
+    fn update_results_visibility(&mut self, cx: &mut Context<Self>) {
+        self.results_editor.update(cx, |editor, cx| {
+            let multibuffer = editor.buffer().read(cx);
+            let buffer_ids = multibuffer.excerpt_buffer_ids();
+
+            if self.results_collapsed {
+                for buffer_id in buffer_ids {
+                    editor.fold_buffer(buffer_id, cx);
+                }
+            } else {
+                for buffer_id in buffer_ids {
+                    editor.unfold_buffer(buffer_id, cx);
+                }
+            }
+        });
+        cx.notify();
     }
 
     pub fn new(
@@ -909,8 +994,10 @@ impl ProjectSearchView {
             replace_enabled: false,
             included_opened_only: false,
             regex_language: None,
+            results_collapsed: false,
             _subscriptions: subscriptions,
         };
+
         this.entity_changed(window, cx);
         this
     }
@@ -1346,8 +1433,13 @@ impl ProjectSearchView {
             self.results_editor.update(cx, |editor, cx| {
                 let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
                 let range_to_select = editor.range_for_match(&range_to_select, collapse);
+                let autoscroll = if EditorSettings::get_global(cx).search.center_on_match {
+                    Autoscroll::center()
+                } else {
+                    Autoscroll::fit()
+                };
                 editor.unfold_ranges(std::slice::from_ref(&range_to_select), false, true, cx);
-                editor.change_selections(Default::default(), window, cx, |s| {
+                editor.change_selections(SelectionEffects::scroll(autoscroll), window, cx, |s| {
                     s.select_ranges([range_to_select])
                 });
             });
@@ -1404,6 +1496,7 @@ impl ProjectSearchView {
 
     fn entity_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let match_ranges = self.entity.read(cx).match_ranges.clone();
+
         if match_ranges.is_empty() {
             self.active_match_index = None;
             self.results_editor.update(cx, |editor, cx| {
@@ -1961,6 +2054,8 @@ impl Render for ProjectSearchBar {
             })
             .unwrap_or_else(|| "0/0".to_string());
 
+        let query_focus = search.query_editor.focus_handle(cx);
+
         let query_column = input_base_styles(InputPanel::Query)
             .on_action(cx.listener(|this, action, window, cx| this.confirm(action, window, cx)))
             .on_action(cx.listener(|this, action, window, cx| {
@@ -1990,11 +2085,9 @@ impl Render for ProjectSearchBar {
                     )),
             );
 
-        let query_focus = search.query_editor.focus_handle(cx);
-
         let matches_column = h_flex()
-            .pl_2()
-            .ml_2()
+            .ml_1()
+            .pl_1p5()
             .border_l_1()
             .border_color(theme_colors.border_variant)
             .child(render_action_button(

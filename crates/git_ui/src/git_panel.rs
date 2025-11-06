@@ -2219,7 +2219,7 @@ impl GitPanel {
         .detach();
     }
 
-    pub(crate) fn pull(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn pull(&mut self, rebase: bool, window: &mut Window, cx: &mut Context<Self>) {
         if !self.can_push_and_pull(cx) {
             return;
         }
@@ -2250,13 +2250,13 @@ impl GitPanel {
                 this.askpass_delegate(format!("git pull {}", remote.name), window, cx)
             })?;
 
+            let branch_name = branch
+                .upstream
+                .is_none()
+                .then(|| branch.name().to_owned().into());
+
             let pull = repo.update(cx, |repo, cx| {
-                repo.pull(
-                    branch.name().to_owned().into(),
-                    remote.name.clone(),
-                    askpass,
-                    cx,
-                )
+                repo.pull(branch_name, remote.name.clone(), rebase, askpass, cx)
             })?;
 
             let remote_message = pull.await?;
@@ -3618,7 +3618,7 @@ impl GitPanel {
                 .border_color(cx.theme().colors().border.opacity(0.8))
                 .child(
                     div()
-                        .flex_grow()
+                        .cursor_pointer()
                         .overflow_hidden()
                         .line_clamp(1)
                         .child(

@@ -8,7 +8,7 @@ See [Configuring Zed](./configuring-zed.md) for additional information and other
 
 You can install many [themes](./themes.md) and [icon themes](./icon-themes.md) in form of extensions by running {#action zed::Extensions} from the command palette.
 
-You can preview/choose amongst your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and {#action icon_theme_selector::Toggle} ({#kb icon_theme_selector::Toggle}) which will modify the following settings:
+You can preview/choose amongst your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and {#action icon_theme_selector::Toggle} which will modify the following settings:
 
 ```json [settings]
 {
@@ -209,7 +209,7 @@ TBD: Centered layout related settings
     "folds": true,                // Show/hide show fold buttons in the gutter.
     "min_line_number_digits": 4   // Reserve space for N digit line numbers
   },
-  "relative_line_numbers": false, // Show relative line numbers in gutter
+  "relative_line_numbers": "enabled", // Show relative line numbers in gutter
 
   // Indent guides
   "indent_guides": {
@@ -368,6 +368,8 @@ TBD: Centered layout related settings
 
   // How to render LSP `textDocument/documentColor` colors in the editor.
   "lsp_document_colors": "inlay",        // none, inlay, border, background
+  // When to show the scrollbar in the completion menu.
+  "completion_menu_scrollbar": "never", // auto, system, always, never
 ```
 
 ### Edit Predictions {#editor-ai}

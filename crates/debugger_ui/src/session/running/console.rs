@@ -6,7 +6,10 @@ use alacritty_terminal::vte::ansi;
 use anyhow::Result;
 use collections::HashMap;
 use dap::{CompletionItem, CompletionItemType, OutputEvent};
-use editor::{Bias, CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
+use editor::{
+    Bias, CompletionProvider, Editor, EditorElement, EditorMode, EditorStyle, ExcerptId,
+    SizingBehavior,
+};
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Action as _, AppContext, Context, Corner, Entity, FocusHandle, Focusable, HighlightStyle, Hsla,
@@ -59,6 +62,11 @@ impl Console {
     ) -> Self {
         let console = cx.new(|cx| {
             let mut editor = Editor::multi_line(window, cx);
+            editor.set_mode(EditorMode::Full {
+                scale_ui_elements_with_buffer_font_size: true,
+                show_active_line_background: true,
+                sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
+            });
             editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
             editor.set_read_only(true);
             editor.disable_scrollbars_and_minimap(window, cx);

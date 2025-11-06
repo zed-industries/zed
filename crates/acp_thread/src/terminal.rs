@@ -5,10 +5,8 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, Task};
 use language::LanguageRegistry;
 use markdown::Markdown;
 use project::Project;
-use settings::{Settings as _, SettingsLocation};
 use std::{path::PathBuf, process::ExitStatus, sync::Arc, time::Instant};
 use task::Shell;
-use terminal::terminal_settings::TerminalSettings;
 use util::get_default_system_shell_preferring_bash;
 
 pub struct Terminal {
@@ -187,17 +185,9 @@ pub async fn create_terminal_entity(
     let mut env = if let Some(dir) = &cwd {
         project
             .update(cx, |project, cx| {
-                let worktree = project.find_worktree(dir.as_path(), cx);
-                let shell = TerminalSettings::get(
-                    worktree.as_ref().map(|(worktree, path)| SettingsLocation {
-                        worktree_id: worktree.read(cx).id(),
-                        path: &path,
-                    }),
-                    cx,
-                )
-                .shell
-                .clone();
-                project.directory_environment(&shell, dir.clone().into(), cx)
+                project.environment().update(cx, |env, cx| {
+                    env.directory_environment(dir.clone().into(), cx)
+                })
             })?
             .await
             .unwrap_or_default()

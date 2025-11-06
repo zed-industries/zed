@@ -1,10 +1,14 @@
+mod evaluate;
 mod example;
 mod headless;
+mod predict;
 mod source_location;
 mod syntax_retrieval_stats;
 mod util;
 
+use crate::evaluate::{EvaluateArguments, run_evaluate};
 use crate::example::{ExampleFormat, NamedExample};
+use crate::predict::{PredictArguments, run_zeta2_predict};
 use crate::syntax_retrieval_stats::retrieval_stats;
 use ::serde::Serialize;
 use ::util::paths::PathStyle;
@@ -24,8 +28,9 @@ use language_model::LanguageModelRegistry;
 use project::{Project, Worktree};
 use reqwest_client::ReqwestClient;
 use serde_json::json;
-use std::io;
-use std::{collections::HashSet, path::PathBuf, process::exit, str::FromStr, sync::Arc};
+use std::io::{self};
+use std::time::Duration;
+use std::{collections::HashSet, path::PathBuf, str::FromStr, sync::Arc};
 use zeta2::{ContextMode, LlmContextOptions, SearchToolQuery};
 
 use crate::headless::ZetaCliAppState;
@@ -46,8 +51,6 @@ enum Command {
         command: Zeta1Command,
     },
     Zeta2 {
-        #[clap(flatten)]
-        args: Zeta2Args,
         #[command(subcommand)]
         command: Zeta2Command,
     },
@@ -70,14 +73,20 @@ enum Zeta1Command {
 enum Zeta2Command {
     Syntax {
         #[clap(flatten)]
+        args: Zeta2Args,
+        #[clap(flatten)]
         syntax_args: Zeta2SyntaxArgs,
         #[command(subcommand)]
         command: Zeta2SyntaxCommand,
     },
     Llm {
+        #[clap(flatten)]
+        args: Zeta2Args,
         #[command(subcommand)]
         command: Zeta2LlmCommand,
     },
+    Predict(PredictArguments),
+    Eval(EvaluateArguments),
 }
 
 #[derive(Subcommand, Debug)]
@@ -170,6 +179,7 @@ fn syntax_args_to_options(
         max_prompt_bytes: zeta2_args.max_prompt_bytes,
         prompt_format: zeta2_args.prompt_format.clone().into(),
         file_indexing_parallelism: zeta2_args.file_indexing_parallelism,
+        buffer_change_grouping_interval: Duration::ZERO,
     }
 }
 
@@ -609,43 +619,62 @@ fn main() {
     app.run(move |cx| {
         let app_state = Arc::new(headless::init(cx));
         cx.spawn(async move |cx| {
-            let result = match args.command {
+            match args.command {
                 Command::Zeta1 {
                     command: Zeta1Command::Context { context_args },
                 } => {
                     let context = zeta1_context(context_args, &app_state, cx).await.unwrap();
-                    serde_json::to_string_pretty(&context.body).map_err(|err| anyhow::anyhow!(err))
+                    let result = serde_json::to_string_pretty(&context.body).unwrap();
+                    println!("{}", result);
                 }
-                Command::Zeta2 { args, command } => match command {
+                Command::Zeta2 { command } => match command {
+                    Zeta2Command::Predict(arguments) => {
+                        run_zeta2_predict(arguments, &app_state, cx).await;
+                    }
+                    Zeta2Command::Eval(arguments) => {
+                        run_evaluate(arguments, &app_state, cx).await;
+                    }
                     Zeta2Command::Syntax {
+                        args,
                         syntax_args,
                         command,
-                    } => match command {
-                        Zeta2SyntaxCommand::Context { context_args } => {
-                            zeta2_syntax_context(args, syntax_args, context_args, &app_state, cx)
+                    } => {
+                        let result = match command {
+                            Zeta2SyntaxCommand::Context { context_args } => {
+                                zeta2_syntax_context(
+                                    args,
+                                    syntax_args,
+                                    context_args,
+                                    &app_state,
+                                    cx,
+                                )
                                 .await
-                        }
-                        Zeta2SyntaxCommand::Stats {
-                            worktree,
-                            extension,
-                            limit,
-                            skip,
-                        } => {
-                            retrieval_stats(
+                            }
+                            Zeta2SyntaxCommand::Stats {
                                 worktree,
-                                app_state,
                                 extension,
                                 limit,
                                 skip,
-                                syntax_args_to_options(&args, &syntax_args, false),
-                                cx,
-                            )
-                            .await
-                        }
-                    },
-                    Zeta2Command::Llm { command } => match command {
+                            } => {
+                                retrieval_stats(
+                                    worktree,
+                                    app_state,
+                                    extension,
+                                    limit,
+                                    skip,
+                                    syntax_args_to_options(&args, &syntax_args, false),
+                                    cx,
+                                )
+                                .await
+                            }
+                        };
+                        println!("{}", result.unwrap());
+                    }
+                    Zeta2Command::Llm { args, command } => match command {
                         Zeta2LlmCommand::Context { context_args } => {
-                            zeta2_llm_context(args, context_args, &app_state, cx).await
+                            let result =
+                                zeta2_llm_context(args, context_args, &app_state, cx).await;
+                            println!("{}", result.unwrap());
                         }
                     },
                 },
@@ -655,21 +684,10 @@ fn main() {
                 } => {
                     let example = NamedExample::load(path).unwrap();
                     example.write(output_format, io::stdout()).unwrap();
-                    let _ = cx.update(|cx| cx.quit());
-                    return;
                 }
             };
 
-            match result {
-                Ok(output) => {
-                    println!("{}", output);
-                    let _ = cx.update(|cx| cx.quit());
-                }
-                Err(e) => {
-                    eprintln!("Failed: {:?}", e);
-                    exit(1);
-                }
-            }
+            let _ = cx.update(|cx| cx.quit());
         })
         .detach();
     });

@@ -33,7 +33,6 @@ pub mod search_history;
 mod yarn;
 
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
-use task::Shell;
 
 use crate::{
     agent_server_store::AllAgentServersSettings,
@@ -68,7 +67,7 @@ use futures::future::join_all;
 use futures::{
     StreamExt,
     channel::mpsc::{self, UnboundedReceiver},
-    future::{Shared, try_join_all},
+    future::try_join_all,
 };
 pub use image_store::{ImageItem, ImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
@@ -345,7 +344,7 @@ pub enum Event {
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
-    EntryRenamed(ProjectTransaction),
+    EntryRenamed(ProjectTransaction, ProjectPath, PathBuf),
     AgentLocationChanged,
 }
 
@@ -715,10 +714,8 @@ pub enum ResolveState {
 impl InlayHint {
     pub fn text(&self) -> Rope {
         match &self.label {
-            InlayHintLabel::String(s) => Rope::from_str_small(s),
-            InlayHintLabel::LabelParts(parts) => {
-                Rope::from_iter_small(parts.iter().map(|part| &*part.value))
-            }
+            InlayHintLabel::String(s) => Rope::from(s),
+            InlayHintLabel::LabelParts(parts) => parts.iter().map(|part| &*part.value).collect(),
         }
     }
 }
@@ -1073,9 +1070,11 @@ impl Project {
 
             let weak_self = cx.weak_entity();
             let context_server_store =
-                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), weak_self, cx));
+                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), weak_self.clone(), cx));
 
-            let environment = cx.new(|cx| ProjectEnvironment::new(env, cx));
+            let environment = cx.new(|cx| {
+                ProjectEnvironment::new(env, worktree_store.downgrade(), None, false, cx)
+            });
             let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
             let toolchain_store = cx.new(|cx| {
                 ToolchainStore::local(
@@ -1264,7 +1263,7 @@ impl Project {
 
             let weak_self = cx.weak_entity();
             let context_server_store =
-                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), weak_self, cx));
+                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), weak_self.clone(), cx));
 
             let buffer_store = cx.new(|cx| {
                 BufferStore::remote(
@@ -1310,7 +1309,15 @@ impl Project {
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
 
-            let environment = cx.new(|cx| ProjectEnvironment::new(None, cx));
+            let environment = cx.new(|cx| {
+                ProjectEnvironment::new(
+                    None,
+                    worktree_store.downgrade(),
+                    Some(remote.downgrade()),
+                    false,
+                    cx,
+                )
+            });
 
             let lsp_store = cx.new(|cx| {
                 LspStore::new_remote(
@@ -1523,8 +1530,8 @@ impl Project {
             ImageStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
         })?;
 
-        let environment = cx.new(|cx| ProjectEnvironment::new(None, cx))?;
-
+        let environment =
+            cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx))?;
         let breakpoint_store =
             cx.new(|_| BreakpointStore::remote(remote_id, client.clone().into()))?;
         let dap_store = cx.new(|cx| {
@@ -1928,32 +1935,6 @@ impl Project {
         self.environment.read(cx).get_cli_environment()
     }
 
-    pub fn buffer_environment<'a>(
-        &'a self,
-        buffer: &Entity<Buffer>,
-        worktree_store: &Entity<WorktreeStore>,
-        cx: &'a mut App,
-    ) -> Shared<Task<Option<HashMap<String, String>>>> {
-        self.environment.update(cx, |environment, cx| {
-            environment.get_buffer_environment(buffer, worktree_store, cx)
-        })
-    }
-
-    pub fn directory_environment(
-        &self,
-        shell: &Shell,
-        abs_path: Arc<Path>,
-        cx: &mut App,
-    ) -> Shared<Task<Option<HashMap<String, String>>>> {
-        self.environment.update(cx, |environment, cx| {
-            if let Some(remote_client) = self.remote_client.clone() {
-                environment.get_remote_directory_environment(shell, abs_path, remote_client, cx)
-            } else {
-                environment.get_local_directory_environment(shell, abs_path, cx)
-            }
-        })
-    }
-
     #[inline]
     pub fn peek_environment_error<'a>(&'a self, cx: &'a App) -> Option<&'a String> {
         self.environment.read(cx).peek_environment_error()
@@ -2267,7 +2248,11 @@ impl Project {
 
             project
                 .update(cx, |_, cx| {
-                    cx.emit(Event::EntryRenamed(transaction));
+                    cx.emit(Event::EntryRenamed(
+                        transaction,
+                        new_path.clone(),
+                        new_abs_path.clone(),
+                    ));
                 })
                 .ok();
 
@@ -5411,12 +5396,7 @@ impl Project {
             worktree
                 .update(cx, |worktree, cx| {
                     let line_ending = text::LineEnding::detect(&new_text);
-                    worktree.write_file(
-                        rel_path.clone(),
-                        Rope::from_str(&new_text, cx.background_executor()),
-                        line_ending,
-                        cx,
-                    )
+                    worktree.write_file(rel_path.clone(), new_text.into(), line_ending, cx)
                 })?
                 .await
                 .context("Failed to write settings file")?;

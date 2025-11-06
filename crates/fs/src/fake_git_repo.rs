@@ -7,7 +7,7 @@ use git::{
     blame::Blame,
     repository::{
         AskPassDelegate, Branch, CommitDetails, CommitOptions, FetchOptions, GitRepository,
-        GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode,
+        GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode, Worktree,
     },
     status::{
         DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
@@ -387,6 +387,19 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>> {
+        unimplemented!()
+    }
+
+    fn create_worktree(
+        &self,
+        _: String,
+        _: PathBuf,
+        _: Option<String>,
+    ) -> BoxFuture<'_, Result<()>> {
+        unimplemented!()
+    }
+
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, |state| {
             state.current_branch_name = Some(name);
@@ -528,8 +541,9 @@ impl GitRepository for FakeGitRepository {
 
     fn pull(
         &self,
-        _branch: String,
+        _branch: Option<String>,
         _remote: String,
+        _rebase: bool,
         _askpass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
         _cx: AsyncApp,
