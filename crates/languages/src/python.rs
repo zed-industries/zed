@@ -406,6 +406,7 @@ impl LspAdapter for PyrightLspAdapter {
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
         let label = &item.label;
+        let label_len = label.len();
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
             lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
@@ -427,9 +428,10 @@ impl LspAdapter for PyrightLspAdapter {
         }
         Some(language::CodeLabel::filtered(
             text,
+            label_len,
             item.filter_text.as_deref(),
             highlight_id
-                .map(|id| (0..label.len(), id))
+                .map(|id| (0..label_len, id))
                 .into_iter()
                 .collect(),
         ))
@@ -1466,6 +1468,7 @@ impl LspAdapter for PyLspAdapter {
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
         let label = &item.label;
+        let label_len = label.len();
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
             lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method")?,
@@ -1476,6 +1479,7 @@ impl LspAdapter for PyLspAdapter {
         };
         Some(language::CodeLabel::filtered(
             label.clone(),
+            label_len,
             item.filter_text.as_deref(),
             vec![(0..label.len(), highlight_id)],
         ))
@@ -1741,6 +1745,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
         let label = &item.label;
+        let label_len = label.len();
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
             lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
@@ -1762,6 +1767,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
         }
         Some(language::CodeLabel::filtered(
             text,
+            label_len,
             item.filter_text.as_deref(),
             highlight_id
                 .map(|id| (0..label.len(), id))
