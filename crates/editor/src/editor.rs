@@ -1492,12 +1492,7 @@ struct AddSelectionsGroup {
     stack: Vec<usize>,
 }
 
-// TODO!: Would it be worth it for this to actually be just a `bool` which is
-// always set to the `search.case_sensitive` value? Are we afraid that this
-// might get out of sync with that value? Is there a good way for us to ensure
-// that this is always up to date?
-//
-// Having it set to that value means we no longer need an `Option<T>`.
+/// Global override for case sensitivity in `select_*` methods.
 pub struct SelectNextCaseSensitive(pub Option<bool>);
 impl Global for SelectNextCaseSensitive {}
 

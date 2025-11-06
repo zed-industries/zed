@@ -694,6 +694,8 @@ impl BufferSearchBar {
     pub fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
         self.dismissed = true;
         self.query_error = None;
+        self.sync_select_next_case_sensitivity(cx);
+
         for searchable_item in self.searchable_items_with_matches.keys() {
             if let Some(searchable_item) =
                 WeakSearchableItemHandle::upgrade(searchable_item.as_ref(), cx)
@@ -709,14 +711,6 @@ impl BufferSearchBar {
             let handle = active_editor.item_focus_handle(cx);
             self.focus(&handle, window);
         }
-
-        // TODO!: Check if it would be better to have a method for this, since
-        // it's also called in `toggle_search_option`, just like we have for
-        // `adjust_query_regex_language`.
-        //
-        // Ensure that the global `SearchNextCaseSensitive` is reset when
-        // dismissing the `BufferSearchBar`.
-        cx.update_global::<SelectNextCaseSensitive, _>(|global, _| global.0 = None);
 
         cx.emit(Event::UpdateLocation);
         cx.emit(ToolbarItemEvent::ChangeLocation(
@@ -737,6 +731,7 @@ impl BufferSearchBar {
             }
             self.search_suggested(window, cx);
             self.smartcase(window, cx);
+            self.sync_select_next_case_sensitivity(cx);
             self.replace_enabled = deploy.replace_enabled;
             self.selection_search_enabled = if deploy.selection_search_enabled {
                 Some(FilteredSearchRange::Default)
@@ -759,12 +754,6 @@ impl BufferSearchBar {
             }
             return true;
         }
-
-        //
-        // Ensure that the global `SearchNextCaseSensitive` is updated to match
-        // the search bar's case sensitivity toggle.
-        let case_sensitive = self.search_options.contains(SearchOptions::CASE_SENSITIVE);
-        cx.update_global::<SelectNextCaseSensitive, _>(|global, _| global.0 = Some(case_sensitive));
 
         cx.propagate();
         false
@@ -932,11 +921,7 @@ impl BufferSearchBar {
         self.default_options = self.search_options;
         drop(self.update_matches(false, false, window, cx));
         self.adjust_query_regex_language(cx);
-
-        // Ensure that the global `SearchNextCaseSensitive` is updated to match
-        // the search bar's case sensitivity toggle.
-        let case_sensitive = self.search_options.contains(SearchOptions::CASE_SENSITIVE);
-        cx.update_global::<SelectNextCaseSensitive, _>(|global, _| global.0 = Some(case_sensitive));
+        self.sync_select_next_case_sensitivity(cx);
 
         cx.notify();
     }
@@ -1547,6 +1532,22 @@ impl BufferSearchBar {
                 query_buffer.set_language(None, cx);
             })
         }
+    }
+
+    /// Updates the global `SelectNextCaseSensitive` to match the search bar's
+    /// current case sensitivity setting. This ensures that editor's
+    /// `select_next`/ `select_previous` operations respect the buffer search
+    /// bar's search options.
+    ///
+    /// Clears the global case sensitivity override when the search bar is
+    /// dimissed so that only the editor's settings are respected.
+    fn sync_select_next_case_sensitivity(&self, cx: &mut Context<Self>) {
+        let case_sensitive = match self.dismissed {
+            true => None,
+            false => Some(self.search_options.contains(SearchOptions::CASE_SENSITIVE)),
+        };
+
+        cx.update_global::<SelectNextCaseSensitive, _>(|global, _| global.0 = case_sensitive);
     }
 }
 
