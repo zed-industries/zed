@@ -29,7 +29,6 @@ use crate::{
     lsp_command::{self, *},
     lsp_store::{
         self,
-        inlay_hint_cache::BufferChunk,
         log_store::{GlobalLogStore, LanguageServerKind},
     },
     manifest_tree::{
@@ -73,6 +72,7 @@ use language::{
         serialize_lsp_edit, serialize_version,
     },
     range_from_lsp, range_to_lsp,
+    row_chunk::RowChunk,
 };
 use lsp::{
     AdapterServerCapabilities, CodeActionKind, CompletionContext, CompletionOptions,
@@ -3590,7 +3590,7 @@ pub struct BufferLspData {
     code_lens: Option<CodeLensData>,
     inlay_hints: BufferInlayHints,
     lsp_requests: HashMap<LspKey, HashMap<LspRequestId, Task<()>>>,
-    chunk_lsp_requests: HashMap<LspKey, HashMap<BufferChunk, LspRequestId>>,
+    chunk_lsp_requests: HashMap<LspKey, HashMap<RowChunk, LspRequestId>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -6624,7 +6624,7 @@ impl LspStore {
         self.latest_lsp_data(buffer, cx)
             .inlay_hints
             .applicable_chunks(ranges)
-            .map(|chunk| chunk.start..chunk.end)
+            .map(|chunk| chunk.start..chunk.end_exclusive)
             .collect()
     }
 
@@ -6675,7 +6675,7 @@ impl LspStore {
         let mut ranges_to_query = None;
         let applicable_chunks = existing_inlay_hints
             .applicable_chunks(ranges.as_slice())
-            .filter(|chunk| !known_chunks.contains(&(chunk.start..chunk.end)))
+            .filter(|chunk| !known_chunks.contains(&(chunk.start..chunk.end_exclusive)))
             .collect::<Vec<_>>();
         if applicable_chunks.is_empty() {
             return HashMap::default();
@@ -6697,9 +6697,12 @@ impl LspStore {
             ) {
                 (None, None) => {
                     let end = if last_chunk_number == row_chunk.id {
-                        Point::new(row_chunk.end, buffer_snapshot.line_len(row_chunk.end))
+                        Point::new(
+                            row_chunk.end_exclusive,
+                            buffer_snapshot.line_len(row_chunk.end_exclusive),
+                        )
                     } else {
-                        Point::new(row_chunk.end, 0)
+                        Point::new(row_chunk.end_exclusive, 0)
                     };
                     ranges_to_query.get_or_insert_with(Vec::new).push((
                         row_chunk,
@@ -6713,7 +6716,7 @@ impl LspStore {
                         if for_server.is_none_or(|for_server| for_server == server_id) {
                             cached_inlay_hints
                                 .get_or_insert_with(HashMap::default)
-                                .entry(row_chunk.start..row_chunk.end)
+                                .entry(row_chunk.start..row_chunk.end_exclusive)
                                 .or_insert_with(HashMap::default)
                                 .entry(server_id)
                                 .or_insert_with(Vec::new)
@@ -6727,7 +6730,7 @@ impl LspStore {
                         if for_server.is_none_or(|for_server| for_server == server_id) {
                             cached_inlay_hints
                                 .get_or_insert_with(HashMap::default)
-                                .entry(row_chunk.start..row_chunk.end)
+                                .entry(row_chunk.start..row_chunk.end_exclusive)
                                 .or_insert_with(HashMap::default)
                                 .entry(server_id)
                                 .or_insert_with(Vec::new)
@@ -6814,7 +6817,7 @@ impl LspStore {
                 .map(|(row_chunk, hints)| (row_chunk, Task::ready(Ok(hints))))
                 .chain(hint_fetch_tasks.into_iter().map(|(chunk, hints_fetch)| {
                     (
-                        chunk.start..chunk.end,
+                        chunk.start..chunk.end_exclusive,
                         cx.spawn(async move |_, _| {
                             hints_fetch.await.map_err(|e| {
                                 if e.error_code() != ErrorCode::Internal {

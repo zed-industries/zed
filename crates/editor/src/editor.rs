@@ -21231,7 +21231,6 @@ impl Editor {
                 }
             }
 
-            // TODO kb this does not repaint when brackets are disabled
             self.colorize_brackets(window, cx);
 
             if let Some(inlay_splice) = self.colors.as_mut().and_then(|colors| {

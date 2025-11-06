@@ -1,9 +1,12 @@
+pub mod row_chunk;
+
 use crate::{
     DebuggerTextObject, LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag,
     TextObject, TreeSitterOptions,
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
     language_settings::{LanguageSettings, language_settings},
     outline::OutlineItem,
+    row_chunk::RowChunks,
     syntax_map::{
         SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatch,
         SyntaxMapMatches, SyntaxSnapshot, ToTreeSitterPoint,
@@ -18,8 +21,8 @@ pub use crate::{
     proto,
 };
 use anyhow::{Context as _, Result};
+use clock::Lamport;
 pub use clock::ReplicaId;
-use clock::{Global, Lamport};
 use collections::HashMap;
 use fs::MTime;
 use futures::channel::oneshot;
@@ -131,45 +134,20 @@ pub struct Buffer {
 
 #[derive(Debug)]
 pub struct TreeSitterData {
-    data_for_version: Global,
-    /// todo! extract into the same struct inlay chunks use
-    chunks: Vec<BufferChunk>,
+    chunks: RowChunks,
     brackets_by_chunks: Vec<Option<Vec<BracketMatch>>>,
 }
 
 const MAX_ROWS_IN_A_CHUNK: u32 = 50;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BufferChunk {
-    id: usize,
-    pub start: BufferRow,
-    pub end: BufferRow,
-}
 
 impl TreeSitterData {
     fn clear(&mut self) {
         self.brackets_by_chunks = vec![None; self.chunks.len()];
     }
 
-    fn from_buffer_range(buffer_point_range: Range<Point>, version: Global) -> Self {
-        let buffer_row_range = buffer_point_range.start.row..=buffer_point_range.end.row;
-        let chunks = buffer_row_range
-            .clone()
-            .step_by(MAX_ROWS_IN_A_CHUNK as usize)
-            .enumerate()
-            .map(|(id, chunk_start)| {
-                let chunk_end =
-                    std::cmp::min(chunk_start + MAX_ROWS_IN_A_CHUNK, *buffer_row_range.end());
-                BufferChunk {
-                    id,
-                    start: chunk_start,
-                    end: chunk_end,
-                }
-            })
-            .collect::<Vec<_>>();
-
+    fn new(snapshot: text::BufferSnapshot) -> Self {
+        let chunks = RowChunks::new(snapshot, MAX_ROWS_IN_A_CHUNK);
         Self {
-            data_for_version: version,
             brackets_by_chunks: vec![None; chunks.len()],
             chunks,
         }
@@ -1028,10 +1006,7 @@ impl Buffer {
         let saved_mtime = file.as_ref().and_then(|file| file.disk_state().mtime());
         let snapshot = buffer.snapshot();
         let syntax_map = Mutex::new(SyntaxMap::new(&snapshot));
-        let tree_sitter_data = TreeSitterData::from_buffer_range(
-            (0..buffer.len()).to_point(&buffer),
-            buffer.version(),
-        );
+        let tree_sitter_data = TreeSitterData::new(snapshot);
         Self {
             saved_mtime,
             tree_sitter_data: Arc::new(Mutex::new(tree_sitter_data)),
@@ -1084,10 +1059,7 @@ impl Buffer {
                 let language_registry = language_registry.clone();
                 syntax.reparse(&text, language_registry, language);
             }
-            let tree_sitter_data = TreeSitterData::from_buffer_range(
-                (0..text.len()).to_point(&text),
-                text.version().clone(),
-            );
+            let tree_sitter_data = TreeSitterData::new(text.clone());
             BufferSnapshot {
                 text,
                 syntax,
@@ -1112,10 +1084,7 @@ impl Buffer {
         )
         .snapshot();
         let syntax = SyntaxMap::new(&text).snapshot();
-        let tree_sitter_data = TreeSitterData::from_buffer_range(
-            (0..text.len()).to_point(&text),
-            text.version().clone(),
-        );
+        let tree_sitter_data = TreeSitterData::new(text.clone());
         BufferSnapshot {
             text,
             syntax,
@@ -1144,10 +1113,7 @@ impl Buffer {
         if let Some(language) = language.clone() {
             syntax.reparse(&text, language_registry, language);
         }
-        let tree_sitter_data = TreeSitterData::from_buffer_range(
-            (0..text.len()).to_point(&text),
-            text.version().clone(),
-        );
+        let tree_sitter_data = TreeSitterData::new(text.clone());
         BufferSnapshot {
             text,
             syntax,
@@ -4184,29 +4150,17 @@ impl BufferSnapshot {
         let mut tree_sitter_data = self.tree_sitter_data.lock();
         if self
             .version
-            .changed_since(&tree_sitter_data.data_for_version)
+            .changed_since(&tree_sitter_data.chunks.version())
         {
-            *tree_sitter_data = TreeSitterData::from_buffer_range(
-                (0..self.len()).to_point(self),
-                self.version().clone(),
-            );
+            *tree_sitter_data = TreeSitterData::new(self.text.clone());
         }
 
-        let point_range = range.to_point(self);
-        let row_range = point_range.start.row..=point_range.end.row;
-        let applicable_chunks = tree_sitter_data
-            .chunks
-            .iter()
-            .filter(move |buffer_chunk| {
-                let chunk_row_range = buffer_chunk.start..buffer_chunk.end;
-                chunk_row_range.contains(&row_range.start())
-                    || chunk_row_range.contains(&row_range.end())
-            })
-            .copied()
-            .collect::<Vec<_>>();
-
         let mut all_bracket_matches = Vec::new();
-        for chunk in applicable_chunks {
+        for chunk in tree_sitter_data
+            .chunks
+            .applicable_chunks(&[self.anchor_before(range.start)..self.anchor_after(range.end)])
+            .collect::<Vec<_>>()
+        {
             let chunk_brackets = &mut tree_sitter_data.brackets_by_chunks[chunk.id];
             let bracket_matches = match chunk_brackets {
                 Some(cached_brackets) => cached_brackets.clone(),
