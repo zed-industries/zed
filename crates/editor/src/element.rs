@@ -8666,7 +8666,7 @@ impl Element for EditorElement {
                     );
                     let end_row = DisplayRow(end_row);
 
-                    let row_infos = snapshot
+                    let row_infos = snapshot // note we only get the visual range
                         .row_infos(start_row)
                         .take((start_row..end_row).len())
                         .collect::<Vec<RowInfo>>();
@@ -8760,6 +8760,16 @@ impl Element for EditorElement {
                         })
                         .unwrap_or_default();
 
+                    // TODO ugliness here
+                    let mut highlighted_ranges = self.editor.update(cx, |editor, cx| {
+                        editor.update_word_diff(&row_infos, cx);
+                        let diff = editor.word_diff_highlights(&row_infos);
+                        highlighted_ranges.extend(diff);
+                        highlighted_ranges
+                    });
+
+                    // TODO make this come from git stuff
+                    // git stuff should probably be higher up in the stack
                     highlighted_ranges.insert(
                         0,
                         (

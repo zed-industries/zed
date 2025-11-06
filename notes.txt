@@ -57,3 +57,45 @@ let chunks = snapshot.highlighted_chunks(rows.clone(), true, style);
 LineWithInvisibles::from_chunks(
 ```
 slightly above that a TextRun is made
+
+
+`RowInfo` contains buffer_diff::DiffHunkStatus
+snapshot.row_infos -> Iter<RowInfo>
+.. calls block_snapshot.row_infos() -> BlockRows
+.. `BlockRows` implements Iterator item=RowInfo
+.. `BlockRows` has field input_rows: `WrapRows`
+.. `BlockRows::next()` calls input_rows.next()
+.. `WrapRows::next()` -> `RowInfo`
+.. `FoldRows::next()` -> `RowInfo`
+.. `InlayBufferRow::next()` -> `RowInfo`
+.. `MultiBufferRows::next()` -> `RowInfo`
+    -> ACTUAL LOGIC
+
+    the logic is:
+
+    ```
+    let result = Some(RowInfo {
+        diff_status: region
+            .diff_hunk_status
+            .filter(|_| self.point < region.range.end),
+           // TODO cache the word level diff here
+           // TODO calc in foreground if that turns out to be worth it
+           // Could lead to flickering but we can adress that by
+           // - fading in
+           // - loading a bit more lines
+    ```
+
+    field `diff_hunk_status` is set in
+    MultiBufferCursor::build_region() which calls MultiBufferCursor::diff_transform
+    which is a cursor over DiffTransform
+
+// row_infos.next() -> if we don't have the word diff data for this row yet, kick off the calculation
+
+------------------
+
+sketch of a possible approach:
+
+- in EditorElement::prepaint (or a helper editor API), call buffer_snapshot.diff_hunks_in_range
+- MultiBufferDiffHunk {
+  compute_word_level_diff: Box<dyn Fn(/* stuff */)>
+}
