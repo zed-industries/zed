@@ -69,9 +69,7 @@ use cloud_llm_client::CompletionIntent;
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::{
-        DetachAndPromptErr, ErrorMessagePrompt, NotificationFrame, NotificationId, SuppressEvent,
-    },
+    notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId},
 };
 
 actions!(
@@ -2025,27 +2023,7 @@ impl GitPanel {
 
             let fs = this.read_with(cx, |this, _| this.fs.clone()).ok()?;
 
-            let notification_id = NotificationId::unique::<GitCloneNotification>();
-            workspace
-                .update(cx, {
-                    let repo_name = repo_name.clone();
-                    |workspace, cx| {
-                        workspace.show_notification(notification_id.clone(), cx, |cx| {
-                            cx.new(|cx| GitCloneNotification::new(repo_name, cx))
-                        });
-                    }
-                })
-                .ok()?;
-
-            let clone_result = fs.git_clone(&repo, path.as_path()).await;
-
-            workspace
-                .update(cx, |workspace, cx| {
-                    workspace.dismiss_notification(&notification_id, cx);
-                })
-                .ok();
-
-            let prompt_answer = match clone_result {
+            let prompt_answer = match fs.git_clone(&repo, path.as_path()).await {
                 Ok(_) => cx.update(|window, cx| {
                     window.prompt(
                         PromptLevel::Info,
@@ -4472,67 +4450,6 @@ impl Panel for GitPanel {
 }
 
 impl PanelHeader for GitPanel {}
-
-struct GitCloneNotification {
-    repo_name: SharedString,
-    focus_handle: FocusHandle,
-}
-
-impl GitCloneNotification {
-    fn new(repo_name: String, cx: &mut Context<Self>) -> Self {
-        Self {
-            repo_name: repo_name.into(),
-            focus_handle: cx.focus_handle(),
-        }
-    }
-}
-
-impl EventEmitter<DismissEvent> for GitCloneNotification {}
-
-impl EventEmitter<SuppressEvent> for GitCloneNotification {}
-
-impl Focusable for GitCloneNotification {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-impl workspace::notifications::Notification for GitCloneNotification {}
-
-impl Render for GitCloneNotification {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        NotificationFrame::new()
-            .with_title(Some("Cloning Repository"))
-            .show_suppress_button(false)
-            .on_close(cx.listener(|_, _, _, cx| {
-                cx.emit(DismissEvent);
-            }))
-            .with_content(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(
-                                Icon::new(IconName::ArrowCircle)
-                                    .size(ui::IconSize::Small)
-                                    .color(Color::Accent)
-                                    .with_rotate_animation(2),
-                            )
-                            .child(
-                                Label::new(format!("Cloning \"{}\"", self.repo_name))
-                                    .size(ui::LabelSize::Default),
-                            ),
-                    )
-                    .child(
-                        Label::new("Please wait while the repository is being cloned...")
-                            .size(ui::LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
-            )
-    }
-}
 
 struct GitPanelMessageTooltip {
     commit_tooltip: Option<Entity<CommitTooltip>>,
