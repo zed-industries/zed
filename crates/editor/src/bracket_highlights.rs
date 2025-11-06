@@ -3,29 +3,9 @@ use gpui::{Context, HighlightStyle, Hsla, Window};
 use itertools::Itertools;
 use multi_buffer::ToPoint;
 use text::{Bias, Point};
+use ui::ActiveTheme;
 
 struct RainbowBracketHighlight;
-
-// todo! these colors lack contrast for this/are not actually good for that?
-// cx.theme().accents().color_for_index(depth as u32);
-const COLORS: [Hsla; 6] = [
-    gpui::red(),
-    Hsla {
-        h: 30.0 / 360.0,
-        s: 1.0,
-        l: 0.5,
-        a: 1.0,
-    },
-    gpui::yellow(),
-    gpui::green(),
-    gpui::blue(),
-    Hsla {
-        h: 270.0 / 360.0,
-        s: 1.0,
-        l: 0.5,
-        a: 1.0,
-    },
-];
 
 impl Editor {
     // todo! settings for enabling/disabling this, anything else to configure?
@@ -78,7 +58,8 @@ impl Editor {
 
         for (depth, bracket_highlights) in bracket_matches {
             let style = HighlightStyle {
-                color: Some(COLORS[depth as usize % COLORS.len()]),
+                // todo! these colors lack contrast for this/are not actually good for that?
+                color: Some(cx.theme().accents().color_for_index(depth as u32)),
                 ..HighlightStyle::default()
             };
 
