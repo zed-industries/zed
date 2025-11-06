@@ -210,8 +210,6 @@ impl WslRemoteConnection {
             return Ok(dst_path);
         }
 
-        delegate.set_status(Some("Installing remote server"), cx);
-
         let wanted_version = match release_channel {
             ReleaseChannel::Nightly | ReleaseChannel::Dev => None,
             _ => Some(cx.update(|cx| AppVersion::global(cx))?),
@@ -242,7 +240,7 @@ impl WslRemoteConnection {
         delegate: &Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        delegate.set_status(Some("Uploading remote server to WSL"), cx);
+        delegate.set_status(Some("Uploading remote server"), cx);
 
         if let Some(parent) = dst_path.parent() {
             let parent = parent.display(PathStyle::Posix);
