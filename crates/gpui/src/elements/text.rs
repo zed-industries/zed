@@ -356,10 +356,7 @@ impl TextLayout {
                 let (truncate_width, truncation_suffix) =
                     if let Some(text_overflow) = text_style.text_overflow.clone() {
                         let width = known_dimensions.width.or(match available_space.width {
-                            crate::AvailableSpace::Definite(x) => match text_style.line_clamp {
-                                Some(max_lines) => Some(x * max_lines),
-                                None => Some(x),
-                            },
+                            crate::AvailableSpace::Definite(x) => Some(x),
                             _ => None,
                         });
 
@@ -382,6 +379,7 @@ impl TextLayout {
                     line_wrapper.truncate_line(
                         text.clone(),
                         truncate_width,
+                        text_style.line_clamp.unwrap_or(1),
                         &truncation_suffix,
                         &runs,
                     )
