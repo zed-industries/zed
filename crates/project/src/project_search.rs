@@ -268,7 +268,10 @@ impl Search {
                             .spawn(async move |cx| {
                                 let _ = maybe!(async move {
                                     let response = request.await?;
-
+                                    log::error!(
+                                        "Received {} match candidates for a project search",
+                                        response.buffer_ids.len()
+                                    );
                                     for buffer_id in response.buffer_ids {
                                         let buffer_id = BufferId::new(buffer_id)?;
                                         let buffer = buffer_store
@@ -296,6 +299,8 @@ impl Search {
                 let matches_count = AtomicUsize::new(0);
                 let matched_buffer_count = AtomicUsize::new(0);
 
+                let should_find_all_matches = !tx.is_closed();
+
                 let worker_pool = executor.scoped(|scope| {
                     let num_cpus = executor.num_cpus();
 
@@ -317,14 +322,30 @@ impl Search {
                     drop(candidate_searcher);
                 });
 
-                let buffer_snapshots = Self::grab_buffer_snapshots(
-                    grab_buffer_snapshot_rx,
-                    find_all_matches_tx,
-                    cx.clone(),
-                );
+                // The caller of `into_handle` decides whether they're interested in all matches (files that matched + all matching ranges) or
+                // just the files. *They are using the same stream as the guts of the project search do*.
+                // This means that we cannot grab values off of that stream unless it's strictly needed for making a progress in project search.
+                //
+                // Grabbing buffer snapshots is only necessary when we're looking for all matches. If the caller decided that they're not interested
+                // in all matches, running that task unconditionally would hinder caller's ability to observe all matching file paths.
+                let buffer_snapshots = if should_find_all_matches {
+                    Some(
+                        Self::grab_buffer_snapshots(
+                            grab_buffer_snapshot_rx,
+                            find_all_matches_tx,
+                            cx.clone(),
+                        )
+                        .boxed_local(),
+                    )
+                } else {
+                    drop(find_all_matches_tx);
+                    None
+                };
+
                 futures::future::join_all(
-                    [worker_pool.boxed_local(), buffer_snapshots.boxed_local()]
+                    [worker_pool.boxed_local()]
                         .into_iter()
+                        .chain(buffer_snapshots)
                         .chain(tasks),
                 )
                 .await;
@@ -464,6 +485,7 @@ impl Search {
                 let snapshot = buffer.read_with(&mut cx, |this, _| this.snapshot())?;
                 find_all_matches_tx.send((buffer, snapshot)).await?;
             }
+            debug_assert!(rx.is_empty());
             Result::<_, anyhow::Error>::Ok(())
         })
         .await;
@@ -574,7 +596,7 @@ impl Worker<'_> {
                 find_all_matches = find_all_matches.next() => {
 
                     if self.publish_matches.is_closed() {
-                        break;
+                        continue;
                     }
                     let Some(matches) = find_all_matches else {
                         self.publish_matches = bounded(1).0;
