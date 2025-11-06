@@ -616,6 +616,70 @@ fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
     );
 }
 
+/// This test checks for cases where an edit invalidates a diff hunk (by
+/// invalidating the anchor at the start of the added region), but does not
+/// cover the whole added region. The multibuffer should handle this by
+/// extending the edit until the end of the added region.
+#[gpui::test]
+async fn test_edits_invalidating_diff_hunks(cx: &mut TestAppContext) {
+    let base_text = "one\ntwo\nfour\n";
+    let text = "one\ntwo\nTHREE\nfour\n";
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+
+    let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.add_diff(diff.clone(), cx);
+        multibuffer.set_all_diff_hunks_expanded(cx);
+        (multibuffer.snapshot(cx), multibuffer.subscribe())
+    });
+
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc! {
+            "
+              one
+              two
+            + THREE
+              four
+            "
+        },
+    );
+
+    dbg!("----------------------------");
+
+    // Make an edit to the buffer that invalidates the added hunk, but does not cover the whole added region.
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.edit([(Point::new(1, 1)..Point::new(2, 2), "")], None, cx);
+    });
+
+    let edits = assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc! {
+            "
+              one
+              tREE
+              four
+            "
+        },
+    );
+
+    // The old and new end of the edit are extended to cover the rest of the former diff hunk's added region.
+    pretty_assertions::assert_eq!(
+        edits,
+        vec![Edit {
+            old: 5..14,
+            new: 5..9,
+        }]
+    );
+}
+
 #[gpui::test]
 fn test_excerpt_events(cx: &mut App) {
     let buffer_1 = cx.new(|cx| Buffer::local(sample_text(10, 3, 'a'), cx));
@@ -3439,7 +3503,7 @@ fn assert_new_snapshot(
     subscription: &mut Subscription,
     cx: &mut TestAppContext,
     expected_diff: &str,
-) {
+) -> Vec<Edit<usize>> {
     let new_snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
     let actual_text = new_snapshot.text();
     let line_infos = new_snapshot
@@ -3447,12 +3511,10 @@ fn assert_new_snapshot(
         .collect::<Vec<_>>();
     let actual_diff = format_diff(&actual_text, &line_infos, &Default::default(), None);
     pretty_assertions::assert_eq!(actual_diff, expected_diff);
-    check_edits(
-        snapshot,
-        &new_snapshot,
-        &subscription.consume().into_inner(),
-    );
+    let edits = subscription.consume().into_inner();
+    check_edits(snapshot, &new_snapshot, &edits);
     *snapshot = new_snapshot;
+    edits
 }
 
 #[track_caller]
@@ -3961,54 +4023,4 @@ fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
             }
         }
     }
-}
-
-// FIXME
-#[gpui::test]
-async fn test_diff_hunk_row_ranges(cx: &mut TestAppContext) {
-    let text = indoc!(
-        "
-        ONE
-        "
-    );
-    let base_text = indoc!(
-        "
-        one
-        "
-    );
-
-    let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
-    cx.run_until_parked();
-
-    let multibuffer = cx.new(|cx| {
-        let mut multibuffer = MultiBuffer::singleton(buffer.clone(), cx);
-        multibuffer.set_all_diff_hunks_expanded(cx);
-        multibuffer.add_diff(diff.clone(), cx);
-        multibuffer
-    });
-
-    let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
-        (multibuffer.snapshot(cx), multibuffer.subscribe())
-    });
-    assert_new_snapshot(
-        &multibuffer,
-        &mut snapshot,
-        &mut subscription,
-        cx,
-        indoc!(
-            "
-             - one
-             + ONE
-             "
-        ),
-    );
-    let hunks = snapshot
-        .diff_hunks_in_range(Anchor::min()..Anchor::max())
-        .collect::<Vec<_>>();
-    hunks[0]
-        .multi_buffer_range()
-        .start
-        .bias_right(&snapshot)
-        .to_point(&snapshot);
 }

@@ -70,6 +70,7 @@ pub struct DiffHunk {
     pub secondary_status: DiffHunkSecondaryStatus,
 }
 
+// FIXME
 /// We store [`InternalDiffHunk`]s internally so we don't need to store the additional row range.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct InternalDiffHunk {
@@ -268,6 +269,16 @@ impl BufferDiffSnapshot {
         self.secondary_diff.as_deref()
     }
 
+    pub fn valid_and_invalid_hunks_intersecting_range<'a>(
+        &'a self,
+        range: Range<Anchor>,
+        buffer: &'a text::BufferSnapshot,
+    ) -> impl 'a + Iterator<Item = DiffHunk> {
+        let unstaged_counterpart = self.secondary_diff.as_ref().map(|diff| &diff.inner);
+        self.inner
+            .hunks_intersecting_range(range, buffer, unstaged_counterpart)
+    }
+
     pub fn hunks_intersecting_range<'a>(
         &'a self,
         range: Range<Anchor>,
@@ -276,6 +287,7 @@ impl BufferDiffSnapshot {
         let unstaged_counterpart = self.secondary_diff.as_ref().map(|diff| &diff.inner);
         self.inner
             .hunks_intersecting_range(range, buffer, unstaged_counterpart)
+            .filter(|hunk| hunk.buffer_range.start.is_valid(buffer))
     }
 
     pub fn hunks_intersecting_range_rev<'a>(
@@ -561,10 +573,6 @@ impl BufferDiffInner {
             loop {
                 let (start_point, (start_anchor, start_base)) = summaries.next()?;
                 let (mut end_point, (mut end_anchor, end_base)) = summaries.next()?;
-
-                if !start_anchor.is_valid(buffer) {
-                    continue;
-                }
 
                 if end_point.column > 0 && end_point < max_point {
                     end_point.row += 1;
@@ -1140,6 +1148,7 @@ impl BufferDiff {
             .map(|diff| &diff.read(cx).inner);
         self.inner
             .hunks_intersecting_range(range, buffer_snapshot, unstaged_counterpart)
+            .filter(|hunk| hunk.buffer_range.start.is_valid(buffer_snapshot))
     }
 
     pub fn hunks_intersecting_range_rev<'a>(

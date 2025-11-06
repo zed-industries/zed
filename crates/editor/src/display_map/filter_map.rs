@@ -1,35 +1,23 @@
-use std::fmt::Write;
 use std::{cmp, ops::Range};
 
-use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
+use buffer_diff::DiffHunkStatusKind;
 use multi_buffer::{
     AnchorRangeExt as _, MultiBufferDiffHunk, MultiBufferSnapshot, ToOffset as _, ToPoint as _,
 };
 use rope::{Point, TextSummary};
-use schemars::transform;
 use sum_tree::{Dimensions, SumTree};
 use text::Bias;
 use util::{RangeExt as _, debug_panic};
 
-/// All summaries are an integral number of multibuffer rows.
-#[derive(Debug, Clone, Copy)]
-struct WholeLineTextSummary(pub TextSummary);
-
-impl WholeLineTextSummary {
-    pub fn empty() -> Self {
-        Self(TextSummary::default())
-    }
-}
-
 #[derive(Debug, Clone)]
 enum Transform {
     Isomorphic {
-        summary: WholeLineTextSummary,
+        summary: TextSummary,
         #[cfg(test)]
         text: String,
     },
     Filter {
-        summary: WholeLineTextSummary,
+        summary: TextSummary,
         #[cfg(test)]
         text: String,
     },
@@ -38,13 +26,6 @@ enum Transform {
 impl Transform {
     fn is_isomorphic(&self) -> bool {
         matches!(self, Transform::Isomorphic { .. })
-    }
-
-    fn summary(&self) -> &WholeLineTextSummary {
-        match self {
-            Self::Isomorphic { summary, .. } => summary,
-            Self::Filter { summary, .. } => summary,
-        }
     }
 
     #[cfg(test)]
@@ -67,7 +48,7 @@ impl sum_tree::Item for Transform {
             },
             Self::Filter { summary, .. } => TransformSummary {
                 input: *summary,
-                output: WholeLineTextSummary::empty(),
+                output: TextSummary::default(),
             },
         }
     }
@@ -75,21 +56,21 @@ impl sum_tree::Item for Transform {
 
 #[derive(Debug, Clone, Copy)]
 struct TransformSummary {
-    input: WholeLineTextSummary,
-    output: WholeLineTextSummary,
+    input: TextSummary,
+    output: TextSummary,
 }
 
 impl sum_tree::ContextLessSummary for TransformSummary {
     fn zero() -> Self {
         TransformSummary {
-            input: WholeLineTextSummary::empty(),
-            output: WholeLineTextSummary::empty(),
+            input: TextSummary::default(),
+            output: TextSummary::default(),
         }
     }
 
     fn add_summary(&mut self, summary: &Self) {
-        self.input.0 += summary.input.0;
-        self.output.0 += summary.output.0;
+        self.input += summary.input;
+        self.output += summary.output;
     }
 }
 
@@ -148,7 +129,7 @@ impl sum_tree::Dimension<'_, TransformSummary> for FilterOffset {
         summary: &'_ TransformSummary,
         cx: <TransformSummary as sum_tree::Summary>::Context<'_>,
     ) {
-        self.0 += summary.output.0.len;
+        self.0 += summary.output.len;
     }
 }
 
@@ -162,7 +143,7 @@ impl sum_tree::Dimension<'_, TransformSummary> for usize {
         summary: &'_ TransformSummary,
         cx: <TransformSummary as sum_tree::Summary>::Context<'_>,
     ) {
-        *self += summary.input.0.len;
+        *self += summary.input.len;
     }
 }
 
@@ -179,7 +160,7 @@ impl sum_tree::Dimension<'_, TransformSummary> for FilterPoint {
         summary: &'_ TransformSummary,
         cx: <TransformSummary as sum_tree::Summary>::Context<'_>,
     ) {
-        self.0 += summary.output.0.lines;
+        self.0 += summary.output.lines;
     }
 }
 
@@ -191,7 +172,14 @@ impl FilterMap {
             mode,
             snapshot: FilterSnapshot {
                 buffer_snapshot: buffer_snapshot.clone(),
-                transforms: SumTree::default(),
+                transforms: SumTree::from_item(
+                    Transform::Isomorphic {
+                        summary: buffer_snapshot.text_summary(),
+                        #[cfg(test)]
+                        text: buffer_snapshot.text(),
+                    },
+                    (),
+                ),
             },
         };
         this.sync(
@@ -216,7 +204,7 @@ impl FilterMap {
         );
 
         pretty_assertions::assert_eq!(
-            self.snapshot.transforms.summary().input.0,
+            self.snapshot.transforms.summary().input,
             self.snapshot.buffer_snapshot.text_summary(),
             "input summary does not match buffer snapshot"
         );
@@ -243,12 +231,14 @@ impl FilterMap {
                 "more than one transform in a trivial map"
             );
             pretty_assertions::assert_eq!(
-                self.snapshot.transforms.summary().output.0,
+                self.snapshot.transforms.summary().output,
                 self.snapshot.buffer_snapshot.text_summary(),
                 "output summary for trivial map does not match buffer snapshot"
             );
             return;
         };
+
+        dbg!(&mode);
 
         #[cfg(test)]
         log::info!("filter map output text:\n{}", self.snapshot.text());
@@ -293,7 +283,7 @@ impl FilterMap {
         );
 
         pretty_assertions::assert_eq!(
-            self.snapshot.transforms.summary().output.0,
+            self.snapshot.transforms.summary().output,
             expected_summary,
             "wrong output summary for nontrivial map"
         )
@@ -312,7 +302,7 @@ impl FilterMap {
             self.snapshot.buffer_snapshot = buffer_snapshot.clone();
             self.snapshot.transforms = SumTree::from_item(
                 Transform::Isomorphic {
-                    summary: WholeLineTextSummary(buffer_snapshot.text_summary()),
+                    summary: buffer_snapshot.text_summary(),
                     #[cfg(test)]
                     text: buffer_snapshot.text(),
                 },
@@ -342,52 +332,70 @@ impl FilterMap {
 
         transform_cursor.next();
 
-        // for e1 in &buffer_edits {
-        //     for e2 in &buffer_edits {
-        //         assert!(!e1.old.overlaps(e2.old));
-        //     }
-        // }
-        //
-        // Edit { old: 3..6, new: 10..20 }    -> Edit { old: 10..20, new: something_else }
-        // break at old = 4
-        // old = 3..4, 4..6
-        // new = 10..20, 10..20
-        // new = 10..20, 20..20
-        // new = ??????
-
-        // convert vec<edit> to vecdeque<edit>
-        // iterate through edits
-        // check if an edit crosses a transform boundary
-        // if it does, truncate, and push the other half to the front of the queue
-
-        // |--------------------------------------| len = 216           self.snapshot.transforms (cursor) SumTree<FilterTransform>
-        //    <-----> <--------------> <------> <-------> <---->
-        //    <-----> <--------------> <------> <><-----> <---->
-        //    <-->
-        //
-        //    |
-        //            |
-        //                             |
-        //
-        // |---------| |-----------| |------------|                      new_transforms: SumTree<FilterTransform>
-        //
-        // first iteration should give us new transforms like:
-        //
-        //
-
         let mut buffer_edits = buffer_edits.into_iter().peekable();
 
-        while let Some(buffer_edit) = buffer_edits.next() {
+        // We may need to extend/remove some of the buffer edits depending on
+        // how they line up with the hunks. Consider the following case:
+        //
+        // hunks: |--unchanged---|-----deleted----|-----added------|
+        // edits: <-1->     <-----------2----------->    <-3->  <---4--->
+        //
+        // Edit 2 overlaps the start of the added region, but doesn't cover the
+        // whole region. This means that the anchor for that region will be
+        // invalidated, but not all of the region will be covered by an edit,
+        // and so will not have its hunk info invalidated.
+        //
+        // To solve this, we need to extend edit 2 so that it covers all of the
+        // added region, while ensuring it doesn't overlap any other edits. For
+        // edit 3, we can just delete it entirely, since it's fully contained
+        // within the hunk. However, for edit 4, we "merge" edit 2 with it,
+        // extending edit 2 so that it covers all of edit 4. However, we need to
+        // be careful, since edit 4 might ALSO be a bad edit (i.e. it overlaps
+        // with a hunk in the same way edit 2 does). In this case, we need to
+        // repeat the process until we get a clean hunk end.
+        while let Some(mut buffer_edit) = buffer_edits.next() {
+            //                         hunk buffer range start
+            //                         v
+            //         |-deleted range-|-added range-| hunk
+            //                            <------>
+            //  <------------------------->            buffer_edit.old (what we currently invalidate)
+            //                             <-------------------------->
+            //
+            //
+            //                 <------------------------------->
+
+            // while let Some(prev_diff_hunk_start) = self
+            //     .snapshot
+            //     .buffer_snapshot
+            //     .diff_hunk_before(buffer_edit.old.end)
+            //     && buffer_edit
+            //         .old
+            //         .contains(&prev_diff_hunk_start.to_offset(&self.snapshot.buffer_snapshot))
+            // {
+            //     let mut revised_edit_old_end: usize = prev_diff_hunk.end;
+            //     let mut revised_edit_new_end: usize =
+            //         buffer_edit.new.end + (revised_edit_old_end - buffer_edit.old.end);
+            //     while let Some(next_edit) = buffer_edits.peek()
+            //         && next_edit.old.start < revised_edit_old_end
+            //     {
+            //         revised_edit_old_end = revised_edit_old_end.max(next_edit.old.end);
+            //         revised_edit_new_end = revised_edit_new_end.max(next_edit.new.end);
+            //         buffer_edits.next();
+            //     }
+            //     buffer_edit.old.end = revised_edit_old_end;
+            //     buffer_edit.new.end = revised_edit_new_end;
+            // }
+
             debug_assert!(transform_cursor.start().0 <= buffer_edit.old.end);
 
             // Reuse any old transforms that strictly precede the start of the edit.
             log::info!(
                 "input len before append is {}",
-                new_transforms.summary().input.0.len
+                new_transforms.summary().input.len
             );
             log::info!(
                 "output len before append is {}",
-                new_transforms.summary().output.0.len
+                new_transforms.summary().output.len
             );
             new_transforms.append(
                 transform_cursor.slice(&buffer_edit.old.start, Bias::Left),
@@ -395,19 +403,19 @@ impl FilterMap {
             );
             log::info!(
                 "input len after append is {}",
-                new_transforms.summary().input.0.len
+                new_transforms.summary().input.len
             );
             log::info!(
                 "output len after append is {}",
-                new_transforms.summary().output.0.len
+                new_transforms.summary().output.len
             );
 
             let mut edit_old_start = transform_cursor.start().1;
-            let mut edit_new_start = FilterOffset(new_transforms.summary().output.0.len);
+            let mut edit_new_start = FilterOffset(new_transforms.summary().output.len);
 
             // If the edit starts in the middle of a transform, split the transform and push the unaffected portion.
-            if buffer_edit.new.start > new_transforms.summary().input.0.len {
-                let range = new_transforms.summary().input.0.len..buffer_edit.new.start;
+            if buffer_edit.new.start > new_transforms.summary().input.len {
+                let range = new_transforms.summary().input.len..buffer_edit.new.start;
                 match transform_cursor.item() {
                     Some(Transform::Isomorphic { .. }) => {
                         let summary = push_isomorphic(&mut new_transforms, range, &buffer_snapshot);
@@ -427,7 +435,7 @@ impl FilterMap {
                 let deletion_range = deletion_range.clamp(buffer_edit.new.clone());
                 let addition_range = addition_range.clamp(buffer_edit.new.clone());
                 // Push an isomorphic transform for any content preceding this hunk.
-                let prefix_range = new_transforms.summary().input.0.len..deletion_range.start;
+                let prefix_range = new_transforms.summary().input.len..deletion_range.start;
                 push_isomorphic(&mut new_transforms, prefix_range, &buffer_snapshot);
 
                 match mode {
@@ -443,36 +451,20 @@ impl FilterMap {
             }
 
             // Push any non-hunk content after the last hunk.
-            if buffer_edit.new.end > new_transforms.summary().input.0.len {
-                let suffix_range = new_transforms.summary().input.0.len..buffer_edit.new.end;
+            if buffer_edit.new.end > new_transforms.summary().input.len {
+                let suffix_range = new_transforms.summary().input.len..buffer_edit.new.end;
                 push_isomorphic(&mut new_transforms, suffix_range, &buffer_snapshot);
             }
 
-            //           transforms_cursor.start()
-            //           v
-            //           |----------------------------| old transforms
-            // -------------->    <------------->       edits
-            //               ^ buffer_edit.old.end
-
             transform_cursor.seek(&buffer_edit.old.end, Bias::Right);
             let mut edit_old_end = transform_cursor.end().1;
-            let edit_new_end = FilterOffset(new_transforms.summary().output.0.len);
+            let edit_new_end = FilterOffset(new_transforms.summary().output.len);
             if buffer_edit.old.end > transform_cursor.start().0 {
-                // let summary = self
-                //     .snapshot
-                //     .buffer_snapshot
-                //     .text_summary_for_range(buffer_edit.old.end..transform_cursor.end().0);
                 match transform_cursor.item() {
                     Some(Transform::Isomorphic { .. }) => {
-                        // push_isomorphic(&mut new_transforms, summary);
                         edit_old_end.0 += buffer_edit.old.end - transform_cursor.start().0;
-                        // edit_new_end.0 += buffer_edit.old.end - transform_cursor.start().0;
-                        // transform_cursor.next();
                     }
-                    Some(Transform::Filter { .. }) => {
-                        // push_filter(&mut new_transforms, summary);
-                        // transform_cursor.next();
-                    }
+                    Some(Transform::Filter { .. }) => {}
                     None => {}
                 }
             }
@@ -481,7 +473,7 @@ impl FilterMap {
             if buffer_edits.peek().is_none_or(|next_buffer_edit| {
                 next_buffer_edit.old.start >= transform_cursor.end().0
             }) {
-                let suffix_start = new_transforms.summary().input.0.len;
+                let suffix_start = new_transforms.summary().input.len;
                 let suffix_len = transform_cursor.end().0 - buffer_edit.old.end;
                 match transform_cursor.item() {
                     Some(Transform::Isomorphic { .. }) => {
@@ -504,7 +496,6 @@ impl FilterMap {
                     }
                     None => {}
                 }
-                // HERE
             }
 
             output_edits.push(text::Edit {
@@ -517,14 +508,14 @@ impl FilterMap {
 
         log::info!(
             "input len before suffix is {}",
-            new_transforms.summary().input.0.len
+            new_transforms.summary().input.len
         );
         let suffix = transform_cursor.suffix();
         log::info!("suffix summary is {:?}", suffix.summary());
         new_transforms.append(suffix, ());
         log::info!(
             "input len after suffix is {}",
-            new_transforms.summary().input.0.len
+            new_transforms.summary().input.len
         );
 
         drop(transform_cursor);
@@ -533,6 +524,7 @@ impl FilterMap {
         self.snapshot.buffer_snapshot = buffer_snapshot;
         #[cfg(debug_assertions)]
         self.check_invariants();
+        // TODO assert that the output edits are well-formed and that applying them transforms the old snapshot into the new snapshot
         (self.snapshot.clone(), output_edits)
     }
 }
@@ -559,8 +551,6 @@ fn text_summaries_for_diff_hunk(
     hunk: &multi_buffer::MultiBufferDiffHunk,
     buffer_snapshot: &MultiBufferSnapshot,
 ) -> (TextSummary, TextSummary) {
-    // TODO does it make sense to do this in terms of points?
-    // let start_of_hunk = Point::new(hunk.row_range.start.0, 0);
     let start_of_hunk = hunk
         .multi_buffer_range()
         .start
@@ -596,14 +586,11 @@ impl FilterSnapshot {
     }
 }
 
-// TODO use a multibuffer cursor instead of calling text_summary_for_range every time
 fn push_isomorphic(
     transforms: &mut SumTree<Transform>,
     range: Range<usize>,
     snapshot: &MultiBufferSnapshot,
 ) -> TextSummary {
-    // dbg!(std::panic::Location::caller());
-
     if range.is_empty() {
         return TextSummary::default();
     }
@@ -624,7 +611,7 @@ fn push_isomorphic(
                 text,
             } = transform
             {
-                summary.0 += summary_to_add;
+                *summary += summary_to_add;
                 #[cfg(test)]
                 text.push_str(&text_to_add);
                 merged = true;
@@ -635,7 +622,7 @@ fn push_isomorphic(
     if !merged {
         transforms.push(
             Transform::Isomorphic {
-                summary: WholeLineTextSummary(summary_to_add),
+                summary: summary_to_add,
                 #[cfg(test)]
                 text: text_to_add,
             },
@@ -670,7 +657,7 @@ fn push_filter(
                 text,
             } = transform
             {
-                summary.0 += summary_to_add;
+                *summary += summary_to_add;
                 #[cfg(test)]
                 text.push_str(&text_to_add);
                 merged = true;
@@ -681,7 +668,7 @@ fn push_filter(
     if !merged {
         transforms.push(
             Transform::Filter {
-                summary: WholeLineTextSummary(summary_to_add),
+                summary: summary_to_add,
                 #[cfg(test)]
                 text: text_to_add,
             },
@@ -717,8 +704,7 @@ impl FilterSnapshot {
         if range.end > cursor.start().0 {
             summary += cursor
                 .summary::<_, TransformSummary>(&range.end, Bias::Right)
-                .output
-                .0;
+                .output;
 
             let overshoot = range.end.0 - cursor.start().0.0;
             match cursor.item() {
@@ -754,20 +740,21 @@ impl FilterSnapshot {
     }
 
     fn max_point(&self) -> FilterPoint {
-        FilterPoint(self.transforms.summary().output.0.lines)
+        FilterPoint(self.transforms.summary().output.lines)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use buffer_diff::BufferDiff;
     use collections::HashMap;
     use gpui::{AppContext as _, Entity};
     use language::{Buffer, Capability};
-    use multi_buffer::{MultiBuffer, MultiBufferSnapshot, randomly_mutate_multibuffer_with_diffs};
+    use multi_buffer::{MultiBuffer, randomly_mutate_multibuffer_with_diffs};
     use rand::{Rng as _, rngs::StdRng};
-    use text::BufferId;
+    use text::{BufferId, Point};
 
-    use crate::display_map::filter_map::{FilterMap, FilterMode, FilterSnapshot};
+    use crate::display_map::filter_map::{FilterMap, FilterMode};
 
     #[gpui::test(iterations = 100)]
     fn test_random_filter_map(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
@@ -809,5 +796,34 @@ mod tests {
             let buffer_edits = subscription.consume().into_inner();
             filter_map.sync(buffer_snapshot, buffer_edits);
         }
+    }
+
+    #[gpui::test]
+    fn test_deleting_hunk_start_anchor(cx: &mut gpui::TestAppContext) {
+        let base_text = "old line\n";
+        let multibuffer = cx.update(|cx| MultiBuffer::build_simple("old line\nnew line\n", cx));
+        let buffer = multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer.all_buffers().into_iter().next().unwrap()
+        });
+        let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.add_diff(diff.clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let mut filter_map = FilterMap::new(
+            Some(FilterMode::RemoveInsertions),
+            multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx)),
+        );
+
+        let subscription = multibuffer.update(cx, |multibuffer, _| multibuffer.subscribe());
+        let snapshot = multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.edit([(Point::new(0, 0)..Point::new(1, 1), "")], None, cx);
+            multibuffer.snapshot(cx)
+        });
+        let edits = subscription.consume();
+
+        filter_map.sync(snapshot, edits.into_inner());
     }
 }
