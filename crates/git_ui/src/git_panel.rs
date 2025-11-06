@@ -1230,7 +1230,7 @@ impl GitPanel {
                 let stage = if active_repository
                     .read(cx)
                     .pending_ops_for_path(&status_entry.repo_path)
-                    .map(|ops| ops.staging())
+                    .map(|ops| ops.staging() || ops.staged())
                     .unwrap_or(status_entry.status.staging().has_staged())
                 {
                     if let Some(op) = self.bulk_staging.clone()
