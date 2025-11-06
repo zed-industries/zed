@@ -102,11 +102,11 @@ use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
     DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
-    Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
+    Focusable, FontId, FontStyle, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
     MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, ScrollHandle,
-    SharedString, Size, Stateful, Styled, Subscription, Task, TextStyle, TextStyleRefinement,
-    UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
-    div, point, prelude::*, pulsating_between, px, relative, size,
+    SharedString, Size, Stateful, StrikethroughStyle, Styled, Subscription, Task, TextStyle,
+    TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity,
+    WeakFocusHandle, Window, div, point, prelude::*, pulsating_between, px, relative, size,
 };
 use hover_links::{HoverLink, HoveredLinkState, find_file};
 use hover_popover::{HoverState, hide_hover};
@@ -154,7 +154,7 @@ use project::{
     git_store::GitStoreEvent,
     lsp_store::{
         CacheInlayHints, CompletionDocumentation, FormatTrigger, LspFormatTarget,
-        OpenLspBufferHandle,
+        OpenLspBufferHandle, semantic_tokens::BufferSemanticTokens,
     },
     project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings},
 };
@@ -164,8 +164,8 @@ use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager};
 use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::{
-    GitGutterSetting, RelativeLineNumbers, Settings, SettingsLocation, SettingsStore,
-    update_settings_file,
+    GitGutterSetting, RelativeLineNumbers, SemanticTokenFontStyle, SemanticTokenFontWeight,
+    SemanticTokenRules, Settings, SettingsLocation, SettingsStore, update_settings_file,
 };
 use smallvec::{SmallVec, smallvec};
 use snippet::Snippet;
@@ -1196,6 +1196,8 @@ pub struct Editor {
     inlay_hints: Option<LspInlayHintData>,
     folding_newlines: Task<()>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
+    semantic_tokens_enabled: bool,
+    pub(crate) update_semantic_tokens_task: Task<()>,
 }
 
 fn debounce_value(debounce_ms: u64) -> Option<Duration> {
@@ -1877,17 +1879,25 @@ impl Editor {
                             cx,
                         );
                     }
+                    project::Event::RefreshSemanticTokens {
+                        server_id: _,
+                        request_id: _,
+                    } => {
+                        editor.refresh_semantic_tokens(window, cx);
+                    }
                     project::Event::LanguageServerRemoved(..) => {
                         if editor.tasks_update_task.is_none() {
                             editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
                         }
                         editor.registered_buffers.clear();
                         editor.register_visible_buffers(cx);
+                        editor.update_semantic_tokens(window, cx);
                     }
                     project::Event::LanguageServerAdded(..) => {
                         if editor.tasks_update_task.is_none() {
                             editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
                         }
+                        editor.update_semantic_tokens(window, cx);
                     }
                     project::Event::SnippetEdit(id, snippet_edits) => {
                         if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
@@ -1911,13 +1921,14 @@ impl Editor {
                     }
                     project::Event::LanguageServerBufferRegistered { buffer_id, .. } => {
                         let buffer_id = *buffer_id;
-                        if editor.buffer().read(cx).buffer(buffer_id).is_some() {
+                        if let Some(buffer) = editor.buffer().read(cx).buffer(buffer_id) {
                             editor.register_buffer(buffer_id, cx);
                             editor.update_lsp_data(Some(buffer_id), window, cx);
                             editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                             refresh_linked_ranges(editor, window, cx);
                             editor.refresh_code_actions(window, cx);
                             editor.refresh_document_highlights(cx);
+                            editor.update_buffer_semantic_tokens(&buffer, window, cx);
                         }
                     }
 
@@ -2293,6 +2304,8 @@ impl Editor {
             selection_drag_state: SelectionDragState::None,
             folding_newlines: Task::ready(()),
             lookup_key: None,
+            semantic_tokens_enabled: true,
+            update_semantic_tokens_task: Task::ready(()),
         };
 
         if is_minimap {
@@ -6587,6 +6600,114 @@ impl Editor {
                 cx.notify();
             })
         }));
+    }
+
+    pub fn toggle_semantic_tokens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.semantic_tokens_enabled = !self.semantic_tokens_enabled;
+
+        for buffer in self.buffer.read(cx).all_buffers() {
+            self.update_buffer_semantic_tokens(&buffer, window, cx);
+        }
+    }
+
+    pub fn semantic_tokens_available(&self, cx: &App) -> bool {
+        self.buffer.read(cx).all_buffers().iter().any(|buffer| {
+            let buffer = buffer.read(cx);
+            let file = buffer.file();
+
+            language_settings(buffer.language().map(|l| l.name()), file, cx).semantic_tokens
+        })
+    }
+
+    pub fn semantic_tokens_enabled(&self) -> bool {
+        self.semantic_tokens_enabled
+    }
+
+    pub(crate) fn refresh_semantic_tokens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(sema) = self.semantics_provider.as_ref() else {
+            return;
+        };
+
+        for buffer in self.buffer.read(cx).all_buffers() {
+            sema.refresh_semantic_tokens(&buffer, cx);
+        }
+
+        self.update_semantic_tokens(window, cx);
+    }
+
+    pub(crate) fn update_semantic_tokens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for buffer in self.buffer.read(cx).all_buffers() {
+            self.update_buffer_semantic_tokens(&buffer, window, cx);
+        }
+    }
+
+    pub(crate) fn update_buffer_semantic_tokens(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.mode.is_full() || !self.semantic_tokens_enabled {
+            self.display_map.update(cx, |display_map, _| {
+                display_map.semantic_tokens.clear();
+            });
+            return;
+        }
+
+        let buffer_entity = buffer.clone();
+        let buffer = buffer.read(cx);
+        let buffer_id = buffer.remote_id();
+        let file = buffer.file();
+
+        let settings = language_settings(buffer.language().map(|l| l.name()), file, cx);
+        if !settings.semantic_tokens {
+            self.display_map.update(cx, |display_map, _| {
+                display_map.semantic_tokens.remove(&buffer_id);
+            });
+            return;
+        }
+
+        let Some(sema) = self.semantics_provider.as_ref() else {
+            return;
+        };
+
+        // `semantic_tokens` gets debounced, so we can call this frequently.
+        let task = sema.semantic_tokens(buffer_entity, cx);
+
+        self.update_semantic_tokens_task = cx.spawn_in(window, async move |this, cx| {
+            let tokens = task.await;
+
+            this.update(cx, |this, cx| {
+                if let (Some(tokens), Some(project)) = (tokens.log_err(), this.project()) {
+                    this.display_map.update(cx, |display_map, cx| {
+                        let lsp_store = project.read(cx).lsp_store().read(cx);
+                        let legends = tokens.servers.keys().filter_map(|&server| {
+                            let caps = lsp_store.lsp_server_capabilities.get(&server)?;
+                            let provider = caps.semantic_tokens_provider.as_ref()?;
+                            let legend = match provider {
+                                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => &opts.legend,
+                                lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(opts) => &opts.semantic_tokens_options.legend,
+                            };
+                            Some((server, legend))
+                        });
+
+                        if let Some(buffer) = this.buffer.read(cx).buffer(buffer_id) {
+                            let view = PositionedSemanticTokens::new(
+                                buffer.read(cx),
+                                &tokens,
+                                legends,
+                                cx,
+                            );
+                            display_map
+                                .semantic_tokens
+                                .insert(buffer_id, Arc::new(view));
+                        }
+                    });
+                    cx.notify();
+                }
+            })
+            .log_err();
+        });
     }
 
     fn start_inline_blame_timer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -17708,7 +17829,7 @@ impl Editor {
     pub fn stop_language_server(
         &mut self,
         _: &StopLanguageServer,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(project) = self.project.clone() {
@@ -17722,6 +17843,7 @@ impl Editor {
                 });
             });
             self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+            self.update_semantic_tokens(window, cx);
         }
     }
 
@@ -21068,6 +21190,8 @@ impl Editor {
                 }
 
                 if let Some(buffer) = edited_buffer {
+                    self.update_buffer_semantic_tokens(buffer, window, cx);
+
                     if buffer.read(cx).file().is_none() {
                         cx.emit(EditorEvent::TitleChanged);
                     }
@@ -21153,6 +21277,7 @@ impl Editor {
             multi_buffer::Event::ExcerptsExpanded { ids } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 self.refresh_document_highlights(cx);
+                self.update_semantic_tokens(window, cx);
                 cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
             }
             multi_buffer::Event::Reparsed(buffer_id) => {
@@ -21246,6 +21371,7 @@ impl Editor {
             )),
             cx,
         );
+        self.update_semantic_tokens(window, cx);
 
         let old_cursor_shape = self.cursor_shape;
         let old_show_breadcrumbs = self.show_breadcrumbs;
@@ -22924,6 +23050,14 @@ pub trait SemanticsProvider {
         cx: &mut App,
     ) -> Option<HashMap<Range<BufferRow>, Task<Result<CacheInlayHints>>>>;
 
+    fn refresh_semantic_tokens(&self, buffer_handle: &Entity<Buffer>, cx: &mut App);
+
+    fn semantic_tokens(
+        &self,
+        buffer_handle: Entity<Buffer>,
+        cx: &mut App,
+    ) -> Shared<Task<std::result::Result<Arc<BufferSemanticTokens>, Arc<anyhow::Error>>>>;
+
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool;
 
     fn document_highlights(
@@ -23445,6 +23579,22 @@ impl SemanticsProvider for Entity<Project> {
         }))
     }
 
+    fn refresh_semantic_tokens(&self, buffer: &Entity<Buffer>, cx: &mut App) {
+        self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+            lsp_store.refresh_semantic_tokens(buffer, cx)
+        })
+    }
+
+    fn semantic_tokens(
+        &self,
+        buffer: Entity<Buffer>,
+        cx: &mut App,
+    ) -> Shared<Task<std::result::Result<Arc<BufferSemanticTokens>, Arc<anyhow::Error>>>> {
+        self.read(cx)
+            .lsp_store()
+            .update(cx, |lsp_store, cx| lsp_store.semantic_tokens(buffer, cx))
+    }
+
     fn range_for_rename(
         &self,
         buffer: &Entity<Buffer>,
@@ -23487,6 +23637,100 @@ impl SemanticsProvider for Entity<Project> {
         Some(self.update(cx, |project, cx| {
             project.perform_rename(buffer.clone(), position, new_name, cx)
         }))
+    }
+}
+
+struct SemanticTokenStylizer<'a> {
+    rules: &'a SemanticTokenRules,
+    token_types: Vec<&'a str>,
+    modifier_mask: HashMap<&'a str, u32>,
+}
+
+impl<'a> SemanticTokenStylizer<'a> {
+    pub fn new(legend: &'a lsp::SemanticTokensLegend, cx: &'a App) -> Self {
+        let token_types = legend.token_types.iter().map(|s| s.as_str()).collect();
+        let modifier_mask = legend
+            .token_modifiers
+            .iter()
+            .enumerate()
+            .map(|(i, modifier)| (modifier.as_str(), 1 << i))
+            .collect();
+        SemanticTokenStylizer {
+            rules: &ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .semantic_token_rules,
+            token_types,
+            modifier_mask,
+        }
+    }
+
+    pub fn token_type(&self, token_type: u32) -> Option<&'a str> {
+        self.token_types.get(token_type as usize).copied()
+    }
+
+    pub fn has_modifier(&self, token_modifiers: u32, modifier: &str) -> bool {
+        let Some(mask) = self.modifier_mask.get(modifier) else {
+            return false;
+        };
+        (token_modifiers & mask) != 0
+    }
+
+    pub fn convert(
+        &self,
+        theme: &'a SyntaxTheme,
+        token_type: u32,
+        modifiers: u32,
+    ) -> Option<HighlightStyle> {
+        let name = self.token_type(token_type)?;
+
+        let rule = self.rules.rules.iter().find(|rule| {
+            rule.token_type == name
+                && rule
+                    .token_modifiers
+                    .iter()
+                    .all(|m| self.has_modifier(modifiers, m))
+        })?;
+
+        let style = rule.style.iter().find_map(|style| theme.get_opt(style));
+
+        let color = rule
+            .foreground_color
+            .map(Into::into)
+            .or_else(|| style.and_then(|s| s.color));
+
+        Some(HighlightStyle {
+            color,
+            background_color: rule
+                .background_color
+                .map(Into::into)
+                .or_else(|| style.and_then(|s| s.background_color)),
+            font_weight: match rule.font_weight {
+                Some(SemanticTokenFontWeight::Normal) => Some(FontWeight::NORMAL),
+                Some(SemanticTokenFontWeight::Bold) => Some(FontWeight::BOLD),
+                None => style.and_then(|s| s.font_weight),
+            },
+            font_style: match rule.font_style {
+                Some(SemanticTokenFontStyle::Normal) => Some(FontStyle::Normal),
+                Some(SemanticTokenFontStyle::Italic) => Some(FontStyle::Italic),
+                None => style.and_then(|s| s.font_style),
+            },
+            underline: rule
+                .underline
+                .map(|u| UnderlineStyle {
+                    thickness: 1.0.into(),
+                    color: Some(u.into()),
+                    ..Default::default()
+                })
+                .or_else(|| style.and_then(|s| s.underline)),
+            strikethrough: rule
+                .strikethrough
+                .map(|s| StrikethroughStyle {
+                    thickness: 1.0.into(),
+                    color: Some(s.into()),
+                })
+                .or_else(|| style.and_then(|s| s.strikethrough)),
+            ..Default::default()
+        })
     }
 }
 

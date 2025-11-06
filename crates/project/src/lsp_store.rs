@@ -14,6 +14,7 @@ pub mod json_language_server_ext;
 pub mod log_store;
 pub mod lsp_ext_command;
 pub mod rust_analyzer_ext;
+pub mod semantic_tokens;
 pub mod vue_language_server_ext;
 
 mod inlay_hint_cache;
@@ -31,6 +32,7 @@ use crate::{
         self,
         inlay_hint_cache::BufferChunk,
         log_store::{GlobalLogStore, LanguageServerKind},
+        semantic_tokens::{BufferSemanticTokens, ServerSemanticTokens},
     },
     manifest_tree::{
         LanguageServerTree, LanguageServerTreeNode, LaunchDisposition, ManifestQueryDelegate,
@@ -3588,6 +3590,7 @@ pub struct BufferLspData {
     buffer_version: Global,
     document_colors: Option<DocumentColorData>,
     code_lens: Option<CodeLensData>,
+    semantic_tokens: Option<SemanticTokensData>,
     inlay_hints: BufferInlayHints,
     lsp_requests: HashMap<LspKey, HashMap<LspRequestId, Task<()>>>,
     chunk_lsp_requests: HashMap<LspKey, HashMap<BufferChunk, LspRequestId>>,
@@ -3605,6 +3608,7 @@ impl BufferLspData {
             buffer_version: buffer.read(cx).version(),
             document_colors: None,
             code_lens: None,
+            semantic_tokens: None,
             inlay_hints: BufferInlayHints::new(buffer, cx),
             lsp_requests: HashMap::default(),
             chunk_lsp_requests: HashMap::default(),
@@ -3638,6 +3642,8 @@ pub struct DocumentColors {
 
 type DocumentColorTask = Shared<Task<std::result::Result<DocumentColors, Arc<anyhow::Error>>>>;
 type CodeLensTask = Shared<Task<std::result::Result<Option<Vec<CodeAction>>, Arc<anyhow::Error>>>>;
+type SemanticTokensTask =
+    Shared<Task<std::result::Result<Arc<BufferSemanticTokens>, Arc<anyhow::Error>>>>;
 
 #[derive(Debug, Default)]
 struct DocumentColorData {
@@ -3650,6 +3656,12 @@ struct DocumentColorData {
 struct CodeLensData {
     lens: HashMap<LanguageServerId, Vec<CodeAction>>,
     update: Option<(Global, CodeLensTask)>,
+}
+
+#[derive(Default, Debug)]
+struct SemanticTokensData {
+    buffer_tokens: Arc<BufferSemanticTokens>,
+    update: Option<(Global, SemanticTokensTask)>,
 }
 
 #[derive(Debug)]
@@ -3669,6 +3681,10 @@ pub enum LspStoreEvent {
     },
     Notification(String),
     RefreshInlayHints {
+        server_id: LanguageServerId,
+        request_id: Option<usize>,
+    },
+    RefreshSemanticTokens {
         server_id: LanguageServerId,
         request_id: Option<usize>,
     },
@@ -3748,6 +3764,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_get_color_presentation);
         client.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
         client.add_entity_request_handler(Self::handle_refresh_inlay_hints);
+        client.add_entity_request_handler(Self::handle_refresh_semantic_tokens);
         client.add_entity_request_handler(Self::handle_refresh_code_lens);
         client.add_entity_request_handler(Self::handle_on_type_formatting);
         client.add_entity_request_handler(Self::handle_apply_additional_edits_for_completion);
@@ -6936,6 +6953,207 @@ impl LspStore {
         }
     }
 
+    pub fn current_semantic_tokens(
+        &self,
+        buffer: BufferId,
+    ) -> Option<(Arc<BufferSemanticTokens>, Global)> {
+        let lsp_data = self.lsp_data.get(&buffer)?;
+
+        Some((
+            lsp_data.semantic_tokens.as_ref()?.buffer_tokens.clone(),
+            lsp_data.buffer_version.clone(),
+        ))
+    }
+
+    pub fn refresh_semantic_tokens(&mut self, buffer: &Entity<Buffer>, cx: &mut Context<Self>) {
+        self.latest_lsp_data(buffer, cx).semantic_tokens = None;
+    }
+
+    pub fn semantic_tokens(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> SemanticTokensTask {
+        let version_queried_for = buffer.read(cx).version();
+        let buffer_id = buffer.read(cx).remote_id();
+        let server_ids = self.local_lsp_servers_for_buffer(&buffer, cx);
+
+        // If there are no servers yet, don't try and debounce. This makes startup quicker.
+        if server_ids.is_empty() {
+            return Task::ready(Ok(Default::default())).shared();
+        }
+
+        let semantic_tokens_data = self
+            .latest_lsp_data(&buffer, cx)
+            .semantic_tokens
+            .get_or_insert_default();
+
+        if let Some((updating_for, task)) = semantic_tokens_data.update.as_ref()
+            && !version_queried_for.changed_since(updating_for)
+        {
+            return task.clone();
+        }
+
+        let request_ids = semantic_tokens_data
+            .buffer_tokens
+            .servers
+            .iter()
+            .filter_map(|(&server_id, data)| Some((server_id, data.result_id.as_ref()?.clone())))
+            .collect::<HashMap<_, _>>();
+
+        let tasks = join_all(server_ids.into_iter().map(|server_id| {
+            if let Some(result_id) = request_ids.get(&server_id).cloned() {
+                let request = SemanticTokensDelta {
+                    previous_result_id: result_id,
+                };
+
+                if self
+                    .lsp_server_capabilities
+                    .get(&server_id)
+                    .is_some_and(|caps| {
+                        request.check_capabilities(AdapterServerCapabilities {
+                            server_capabilities: caps.clone(),
+                            code_action_kinds: None,
+                        })
+                    })
+                {
+                    return self.send_semantic_tokens_delta(buffer.clone(), cx, server_id, request);
+                }
+            }
+
+            self.send_semantic_tokens_full(buffer.clone(), cx, server_id)
+        }));
+
+        let task: SemanticTokensTask = cx
+            .spawn(async move |lsp_store, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(30))
+                    .await;
+
+                tasks
+                    .await
+                    .into_iter()
+                    .collect::<anyhow::Result<()>>()
+                    .map_err(Arc::new)?;
+
+                lsp_store
+                    .update(cx, |lsp_store, _| {
+                        if let Some(lsp_data) = lsp_store.current_lsp_data(buffer_id) {
+                            lsp_data
+                                .semantic_tokens
+                                .as_ref()
+                                .unwrap()
+                                .buffer_tokens
+                                .clone()
+                        } else {
+                            Default::default()
+                        }
+                    })
+                    .map_err(Arc::new)
+            })
+            .shared();
+
+        let semantic_tokens_data = self
+            .latest_lsp_data(&buffer, cx)
+            .semantic_tokens
+            .get_or_insert_default();
+        semantic_tokens_data.update = Some((version_queried_for, task.clone()));
+
+        task
+    }
+
+    fn send_semantic_tokens_full(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+        server: LanguageServerId,
+    ) -> Task<anyhow::Result<()>> {
+        let buffer_id = buffer.read(cx).remote_id();
+
+        self.send_semantic_tokens_request(
+            buffer,
+            cx,
+            server,
+            SemanticTokensFull,
+            move |response, store| {
+                if let Some(lsp_data) = store.current_lsp_data(buffer_id) {
+                    let semantic_tokens_data = lsp_data.semantic_tokens.get_or_insert_default();
+
+                    let semantic_tokens =
+                        ServerSemanticTokens::from_full(response.data, response.id);
+
+                    let mut buffer_tokens = (*semantic_tokens_data.buffer_tokens).clone();
+                    buffer_tokens.servers.insert(server, semantic_tokens);
+                    semantic_tokens_data.buffer_tokens = Arc::new(buffer_tokens);
+                }
+            },
+        )
+    }
+
+    fn send_semantic_tokens_delta(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+        server: LanguageServerId,
+        request: SemanticTokensDelta,
+    ) -> Task<anyhow::Result<()>> {
+        let buffer_id = buffer.read(cx).remote_id();
+
+        self.send_semantic_tokens_request(buffer, cx, server, request, move |response, store| {
+            if let Some(lsp_data) = store.current_lsp_data(buffer_id) {
+                let semantic_tokens_data = lsp_data.semantic_tokens.get_or_insert_default();
+
+                match response {
+                    SemanticTokensDeltaResponse::Full { data, id } => {
+                        let semantic_tokens = ServerSemanticTokens::from_full(data, id);
+
+                        let mut buffer_tokens = (*semantic_tokens_data.buffer_tokens).clone();
+                        buffer_tokens.servers.insert(server, semantic_tokens);
+                        semantic_tokens_data.buffer_tokens = Arc::new(buffer_tokens);
+                    }
+                    SemanticTokensDeltaResponse::Delta { edits, id } => {
+                        let mut buffer_tokens = (*semantic_tokens_data.buffer_tokens).clone();
+
+                        // If we don't have tokens for this server, we shouldn't have sent the request
+                        // in the first place.
+                        if let Some(tokens) = buffer_tokens.servers.get_mut(&server) {
+                            tokens.result_id = id;
+                            tokens.apply(&edits);
+                        }
+
+                        semantic_tokens_data.buffer_tokens = Arc::new(buffer_tokens);
+                    }
+                }
+            }
+        })
+    }
+
+    fn send_semantic_tokens_request<R: LspCommand>(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+        server: LanguageServerId,
+        request: R,
+        handle_response: impl FnOnce(<R as LspCommand>::Response, &mut LspStore) + 'static,
+    ) -> Task<anyhow::Result<()>> {
+        if self.upstream_client().is_some() {
+            // TODO: Semantic tokens on remote servers.
+            return Task::ready(Ok(()));
+        } else {
+            let lsp_request_task =
+                self.request_lsp(buffer, LanguageServerToQuery::Other(server), request, cx);
+            cx.spawn(async move |store, cx| {
+                let response = lsp_request_task
+                    .await
+                    .context("semantic tokens LSP request")?;
+
+                store.upgrade().unwrap().update(cx, move |store, _| {
+                    handle_response(response, store);
+                })
+            })
+        }
+    }
+
     pub fn pull_diagnostics_for_buffer(
         &mut self,
         buffer: Entity<Buffer>,
@@ -8373,6 +8591,33 @@ impl LspStore {
         })
     }
 
+    fn local_lsp_servers_for_buffer(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Vec<LanguageServerId> {
+        let Some(local) = self.as_local() else {
+            return Vec::new();
+        };
+
+        let snapshot = buffer.read(cx).snapshot();
+
+        buffer.update(cx, |buffer, cx| {
+            local
+                .language_servers_for_buffer(buffer, cx)
+                .map(|(_, server)| server.server_id())
+                .filter(|server_id| {
+                    self.as_local().is_none_or(|local| {
+                        local
+                            .buffers_opened_in_servers
+                            .get(&snapshot.remote_id())
+                            .is_some_and(|servers| servers.contains(server_id))
+                    })
+                })
+                .collect()
+        })
+    }
+
     fn request_multiple_lsp_locally<P, R>(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -9777,6 +10022,20 @@ impl LspStore {
     ) -> Result<proto::Ack> {
         lsp_store.update(&mut cx, |_, cx| {
             cx.emit(LspStoreEvent::RefreshInlayHints {
+                server_id: LanguageServerId::from_proto(envelope.payload.server_id),
+                request_id: envelope.payload.request_id.map(|id| id as usize),
+            });
+        })?;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_refresh_semantic_tokens(
+        lsp_store: Entity<Self>,
+        envelope: TypedEnvelope<proto::RefreshSemanticTokens>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        lsp_store.update(&mut cx, |_, cx| {
+            cx.emit(LspStoreEvent::RefreshSemanticTokens {
                 server_id: LanguageServerId::from_proto(envelope.payload.server_id),
                 request_id: envelope.payload.request_id.map(|id| id as usize),
             });
@@ -12533,7 +12792,11 @@ impl LspStore {
             .entry(buffer_id)
             .or_insert_with(|| BufferLspData::new(buffer, cx));
         if buffer_version.changed_since(&lsp_data.buffer_version) {
+            // To send delta requests for semantic tokens, the previous tokens
+            // need to be kept between buffer changes.
+            let semantic_tokens = lsp_data.semantic_tokens.take();
             *lsp_data = BufferLspData::new(buffer, cx);
+            lsp_data.semantic_tokens = semantic_tokens;
         }
         lsp_data
     }

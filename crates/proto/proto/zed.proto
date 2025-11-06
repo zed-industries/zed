@@ -431,7 +431,13 @@ message Envelope {
 
         GitWorktreesResponse git_worktrees_response = 388;
         GitGetWorktrees git_get_worktrees = 389;
-        GitCreateWorktree git_create_worktree = 390; // current max
+        GitCreateWorktree git_create_worktree = 390;
+
+        SemanticTokensFull semantic_tokens_full = 391;
+        SemanticTokensFullResponse semantic_tokens_full_response = 392;
+        SemanticTokensDelta semantic_tokens_delta = 393;
+        SemanticTokensDeltaResponse semantic_tokens_delta_response = 394;
+        RefreshSemanticTokens refresh_semantic_tokens = 395; // current max
     }
 
     reserved 87 to 88;

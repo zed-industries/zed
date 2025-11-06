@@ -29,8 +29,11 @@ pub(crate) mod invisibles;
 mod tab_map;
 mod wrap_map;
 
+pub use custom_highlights::range_from_version;
+
 use crate::{
-    EditorStyle, RowExt, hover_links::InlayHighlight, inlays::Inlay, movement::TextLayoutDetails,
+    EditorStyle, RowExt, SemanticTokenStylizer, hover_links::InlayHighlight, inlays::Inlay,
+    movement::TextLayoutDetails,
 };
 pub use block_map::{
     Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
@@ -38,6 +41,7 @@ pub use block_map::{
     StickyHeaderExcerpt,
 };
 use block_map::{BlockRow, BlockSnapshot};
+use clock::Global;
 use collections::{HashMap, HashSet};
 pub use crease_map::*;
 use fold_map::FoldSnapshot;
@@ -56,6 +60,7 @@ use multi_buffer::{
     RowInfo, ToOffset, ToPoint,
 };
 use project::InlayId;
+use project::lsp_store::semantic_tokens::BufferSemanticTokens;
 use project::project_settings::DiagnosticSeverity;
 use serde::Deserialize;
 
@@ -71,7 +76,7 @@ use std::{
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabSnapshot;
 use text::{BufferId, LineIndent};
-use ui::{SharedString, px};
+use ui::{ActiveTheme, SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
 
@@ -118,12 +123,27 @@ pub struct DisplayMap {
     text_highlights: TextHighlights,
     /// Regions of inlays that should be highlighted.
     inlay_highlights: InlayHighlights,
+    /// The semantic tokens from the language server.
+    pub semantic_tokens: HashMap<BufferId, Arc<PositionedSemanticTokens>>,
     /// A container for explicitly foldable ranges, which supersede indentation based fold range suggestions.
     crease_map: CreaseMap,
     pub(crate) fold_placeholder: FoldPlaceholder,
     pub clip_at_line_ends: bool,
     pub(crate) masked: bool,
     pub(crate) diagnostics_max_severity: DiagnosticSeverity,
+}
+
+#[derive(Debug, Default)]
+pub struct PositionedSemanticTokens {
+    pub tokens: Vec<PositionedSemanticToken>,
+    pub version: Global,
+}
+
+/// A `SemanticToken`, but positioned to an offset in a buffer, and stylized.
+#[derive(Debug)]
+pub struct PositionedSemanticToken {
+    pub range: Range<usize>,
+    pub style: HighlightStyle,
 }
 
 impl DisplayMap {
@@ -164,6 +184,7 @@ impl DisplayMap {
             diagnostics_max_severity,
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
+            semantic_tokens: Default::default(),
             clip_at_line_ends: false,
             masked: false,
         }
@@ -188,6 +209,7 @@ impl DisplayMap {
             crease_snapshot: self.crease_map.snapshot(),
             text_highlights: self.text_highlights.clone(),
             inlay_highlights: self.inlay_highlights.clone(),
+            semantic_tokens: self.semantic_tokens.clone(),
             clip_at_line_ends: self.clip_at_line_ends,
             masked: self.masked,
             fold_placeholder: self.fold_placeholder.clone(),
@@ -617,6 +639,7 @@ impl DisplayMap {
 pub(crate) struct Highlights<'a> {
     pub text_highlights: Option<&'a TextHighlights>,
     pub inlay_highlights: Option<&'a InlayHighlights>,
+    pub semantic_tokens: Option<&'a HashMap<BufferId, Arc<PositionedSemanticTokens>>>,
     pub styles: HighlightStyles,
 }
 
@@ -750,6 +773,7 @@ pub struct DisplaySnapshot {
     block_snapshot: BlockSnapshot,
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
+    semantic_tokens: HashMap<BufferId, Arc<PositionedSemanticTokens>>,
     clip_at_line_ends: bool,
     masked: bool,
     diagnostics_max_severity: DiagnosticSeverity,
@@ -957,6 +981,7 @@ impl DisplaySnapshot {
             Highlights {
                 text_highlights: Some(&self.text_highlights),
                 inlay_highlights: Some(&self.inlay_highlights),
+                semantic_tokens: Some(&self.semantic_tokens),
                 styles: highlight_styles,
             },
         )
@@ -1557,6 +1582,76 @@ impl ToDisplayPoint for Anchor {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
         self.to_point(map.buffer_snapshot()).to_display_point(map)
     }
+}
+
+impl PositionedSemanticTokens {
+    pub fn new<'a>(
+        buffer: &language::Buffer,
+        lsp: &BufferSemanticTokens,
+        legends: impl Iterator<Item = (lsp::LanguageServerId, &'a lsp::SemanticTokensLegend)>,
+        cx: &App,
+    ) -> Self {
+        let stylizers = legends
+            .map(|(id, legend)| (id, SemanticTokenStylizer::new(legend, cx)))
+            .collect::<HashMap<_, _>>();
+
+        let mut tokens = lsp
+            .all_tokens()
+            .filter_map(|(server, token)| {
+                let stylizer = stylizers.get(&server)?;
+                let start = text::Unclipped(text::PointUtf16::new(token.line, token.start));
+                let (start_offset, end_offset) = point_offset_to_offsets(
+                    buffer.clip_point_utf16(start, Bias::Left),
+                    text::OffsetUtf16(token.length as usize),
+                    &buffer,
+                );
+
+                Some(PositionedSemanticToken {
+                    range: start_offset..end_offset,
+                    style: stylizer.convert(
+                        cx.theme().syntax(),
+                        token.token_type,
+                        token.token_modifiers,
+                    )?,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        // These should be sorted, but we rely on it for binary searching, so let's be sure.
+        tokens.sort_by_key(|token| token.range.start);
+
+        PositionedSemanticTokens {
+            tokens,
+            version: buffer.version(),
+        }
+    }
+
+    pub fn tokens_in_range(&self, range: Range<usize>) -> &[PositionedSemanticToken] {
+        let start = self
+            .tokens
+            .binary_search_by_key(&range.start, |token| token.range.start)
+            .unwrap_or_else(|next_ix| next_ix);
+
+        let end = self
+            .tokens
+            .binary_search_by_key(&range.end, |token| token.range.start)
+            .unwrap_or_else(|next_ix| next_ix);
+
+        &self.tokens[start..end]
+    }
+}
+
+fn point_offset_to_offsets(
+    point: text::PointUtf16,
+    length: text::OffsetUtf16,
+    buffer: &text::Buffer,
+) -> (usize, usize) {
+    let start = buffer.as_rope().point_utf16_to_offset(point);
+    let start_offset = buffer.as_rope().offset_to_offset_utf16(start);
+    let end_offset = start_offset + length;
+    let end = buffer.as_rope().offset_utf16_to_offset(end_offset);
+
+    (start, end)
 }
 
 #[cfg(test)]
