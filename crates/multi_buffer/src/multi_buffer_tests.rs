@@ -622,8 +622,8 @@ fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
 /// extending the edit until the end of the added region.
 #[gpui::test]
 async fn test_edits_invalidating_diff_hunks(cx: &mut TestAppContext) {
-    let base_text = "one\ntwo\nfour\n";
-    let text = "one\ntwo\nTHREE\nfour\n";
+    let base_text = "one\ntwo\nfour\nsix\n";
+    let text = "one\ntwo\nTHREE\nfour\nFIVE\nsix\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
     let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
@@ -645,6 +645,8 @@ async fn test_edits_invalidating_diff_hunks(cx: &mut TestAppContext) {
               two
             + THREE
               four
+            + FIVE
+              six
             "
         },
     );
@@ -653,7 +655,7 @@ async fn test_edits_invalidating_diff_hunks(cx: &mut TestAppContext) {
 
     // Make an edit to the buffer that invalidates the added hunk, but does not cover the whole added region.
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.edit([(Point::new(1, 1)..Point::new(2, 2), "")], None, cx);
+        multibuffer.edit([(Point::new(1, 1)..Point::new(4, 2), "")], None, cx);
     });
 
     let edits = assert_new_snapshot(
@@ -664,8 +666,8 @@ async fn test_edits_invalidating_diff_hunks(cx: &mut TestAppContext) {
         indoc! {
             "
               one
-              tREE
-              four
+              tVE
+              six
             "
         },
     );
@@ -674,8 +676,8 @@ async fn test_edits_invalidating_diff_hunks(cx: &mut TestAppContext) {
     pretty_assertions::assert_eq!(
         edits,
         vec![Edit {
-            old: 5..14,
-            new: 5..9,
+            old: 5..24,
+            new: 5..8,
         }]
     );
 }
