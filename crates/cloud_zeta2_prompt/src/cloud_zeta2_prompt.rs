@@ -3,7 +3,7 @@ pub mod retrieval_prompt;
 
 use anyhow::{Context as _, Result, anyhow};
 use cloud_llm_client::predict_edits_v3::{
-    self, Excerpt, Line, Point, PromptFormat, ReferencedDeclaration,
+    self, DiffPathFmt, Excerpt, Line, Point, PromptFormat, ReferencedDeclaration,
 };
 use indoc::indoc;
 use ordered_float::OrderedFloat;
@@ -222,24 +222,6 @@ pub fn write_codeblock<'a>(
         output,
     );
     write!(output, "`````\n\n").unwrap();
-}
-
-/// always format the Path as a unix path with `/` as the path sep in Diffs
-struct DiffPathFmt<'a>(&'a Path);
-
-impl<'a> std::fmt::Display for DiffPathFmt<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut is_first = true;
-        for component in self.0.components() {
-            if !is_first {
-                f.write_char('/')?;
-            } else {
-                is_first = false;
-            }
-            write!(f, "{}", component.as_os_str().display())?;
-        }
-        Ok(())
-    }
 }
 
 pub fn write_excerpts<'a>(
