@@ -1,9 +1,9 @@
 use crate::{
     ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
     HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextOverflow,
-    TextRun, TextStyle, TooltipId, WhiteSpace, Window, WrappedLine, WrappedLineLayout,
-    register_tooltip_mouse_handlers, set_tooltip_on_window,
+    LineFragment, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size,
+    TextOverflow, TextRun, TextStyle, TooltipId, WhiteSpace, Window, WrappedLine,
+    WrappedLineLayout, px, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
 use smallvec::SmallVec;
@@ -375,11 +375,31 @@ impl TextLayout {
                 }
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
-                let (text, runs) = if let Some(truncate_width) = truncate_width {
+                let (text, runs) = if let Some(wrap_width) = truncate_width {
+                    let mut truncate_width = wrap_width;
+
+                    // For multiple lines, we need to account for the width  by using `wrap_line` to
+                    // calculate the actual width that wrapped of each line.
+                    let line_clamp = text_style.line_clamp.unwrap_or(1);
+                    if line_clamp > 1 {
+                        let mut ix = 0;
+                        let boundaries = line_wrapper
+                            .wrap_line(&[LineFragment::text(&text)], wrap_width)
+                            .take(line_clamp - 1)
+                            .collect::<Vec<_>>();
+                        for boundary in boundaries.iter() {
+                            let line_width = text[ix..boundary.ix]
+                                .chars()
+                                .map(|c| line_wrapper.width_for_char(c))
+                                .fold(px(0.0), |a, x| a + x);
+                            ix = boundary.ix;
+                            truncate_width += line_width;
+                        }
+                    }
+
                     line_wrapper.truncate_line(
                         text.clone(),
                         truncate_width,
-                        text_style.line_clamp.unwrap_or(1),
                         &truncation_suffix,
                         &runs,
                     )

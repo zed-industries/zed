@@ -132,35 +132,10 @@ impl LineWrapper {
     pub fn truncate_line<'a>(
         &mut self,
         line: SharedString,
-        wrap_width: Pixels,
-        line_clamp: usize,
+        truncate_width: Pixels,
         truncation_suffix: &str,
         runs: &'a [TextRun],
     ) -> (SharedString, Cow<'a, [TextRun]>) {
-        let mut truncate_width = wrap_width;
-        if line_clamp > 1 {
-            // For multiple lines, we need to account for the width
-            // by using `wrap_line` to calculate the actual width that
-            // wrapped of each line.
-            let mut ix = 0;
-            for _ in 0..line_clamp - 1 {
-                let fragment = &line[ix..];
-                let Some(boundary) = self
-                    .wrap_line(&[LineFragment::text(&fragment)], wrap_width)
-                    .next()
-                else {
-                    continue;
-                };
-
-                let line_width = fragment[..boundary.ix]
-                    .chars()
-                    .map(|c| self.width_for_char(c))
-                    .fold(px(0.0), |a, x| a + x);
-                ix = boundary.ix;
-                truncate_width += line_width;
-            }
-        }
-
         let mut width = px(0.);
         let mut suffix_width = truncation_suffix
             .chars()
@@ -520,7 +495,7 @@ mod tests {
             let dummy_run_lens = vec![text.len()];
             let dummy_runs = generate_test_runs(&dummy_run_lens);
             let (result, dummy_runs) =
-                wrapper.truncate_line(text.into(), px(220.), 1, ellipsis, &dummy_runs);
+                wrapper.truncate_line(text.into(), px(220.), ellipsis, &dummy_runs);
             assert_eq!(result, expected);
             assert_eq!(dummy_runs.first().unwrap().len, result.len());
         }
@@ -559,7 +534,7 @@ mod tests {
         ) {
             let dummy_runs = generate_test_runs(run_lens);
             let (result, dummy_runs) =
-                wrapper.truncate_line(text.into(), line_width, 1, "…", &dummy_runs);
+                wrapper.truncate_line(text.into(), line_width, "…", &dummy_runs);
             assert_eq!(result, expected);
             for (run, result_len) in dummy_runs.iter().zip(result_run_len) {
                 assert_eq!(run.len, *result_len);
