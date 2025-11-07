@@ -2526,7 +2526,7 @@ pub mod tests {
             assert_eq!(
                 search_view
                     .results_editor
-                    .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    .update(cx, |editor, cx| editor.selections.display_ranges(&editor.display_snapshot(cx))),
                 [DisplayPoint::new(DisplayRow(2), 32)..DisplayPoint::new(DisplayRow(2), 35)]
             );
 
@@ -2537,9 +2537,9 @@ pub mod tests {
             .update(cx, |search_view, window, cx| {
                 assert_eq!(search_view.active_match_index, Some(1));
                 assert_eq!(
-                    search_view
-                        .results_editor
-                        .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    search_view.results_editor.update(cx, |editor, cx| editor
+                        .selections
+                        .display_ranges(&editor.display_snapshot(cx))),
                     [DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40)]
                 );
                 search_view.select_match(Direction::Next, window, cx);
@@ -2550,9 +2550,9 @@ pub mod tests {
             .update(cx, |search_view, window, cx| {
                 assert_eq!(search_view.active_match_index, Some(2));
                 assert_eq!(
-                    search_view
-                        .results_editor
-                        .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    search_view.results_editor.update(cx, |editor, cx| editor
+                        .selections
+                        .display_ranges(&editor.display_snapshot(cx))),
                     [DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9)]
                 );
                 search_view.select_match(Direction::Next, window, cx);
@@ -2563,9 +2563,9 @@ pub mod tests {
             .update(cx, |search_view, window, cx| {
                 assert_eq!(search_view.active_match_index, Some(0));
                 assert_eq!(
-                    search_view
-                        .results_editor
-                        .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    search_view.results_editor.update(cx, |editor, cx| editor
+                        .selections
+                        .display_ranges(&editor.display_snapshot(cx))),
                     [DisplayPoint::new(DisplayRow(2), 32)..DisplayPoint::new(DisplayRow(2), 35)]
                 );
                 search_view.select_match(Direction::Prev, window, cx);
@@ -2576,9 +2576,9 @@ pub mod tests {
             .update(cx, |search_view, window, cx| {
                 assert_eq!(search_view.active_match_index, Some(2));
                 assert_eq!(
-                    search_view
-                        .results_editor
-                        .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    search_view.results_editor.update(cx, |editor, cx| editor
+                        .selections
+                        .display_ranges(&editor.display_snapshot(cx))),
                     [DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9)]
                 );
                 search_view.select_match(Direction::Prev, window, cx);
@@ -2589,9 +2589,9 @@ pub mod tests {
             .update(cx, |search_view, _, cx| {
                 assert_eq!(search_view.active_match_index, Some(1));
                 assert_eq!(
-                    search_view
-                        .results_editor
-                        .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    search_view.results_editor.update(cx, |editor, cx| editor
+                        .selections
+                        .display_ranges(&editor.display_snapshot(cx))),
                     [DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40)]
                 );
             })

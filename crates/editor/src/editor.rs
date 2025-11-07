@@ -1843,7 +1843,7 @@ impl Editor {
             })
         });
 
-        let selections = SelectionsCollection::new(display_map.clone());
+        let selections = SelectionsCollection::new();
 
         let blink_manager = cx.new(|cx| {
             let mut blink_manager = BlinkManager::new(CURSOR_BLINK_INTERVAL, cx);
@@ -2434,7 +2434,7 @@ impl Editor {
     }
 
     pub fn display_snapshot(&self, cx: &mut App) -> DisplaySnapshot {
-        self.selections.display_map(cx)
+        self.display_map.update(cx, |map, cx| map.snapshot(cx))
     }
 
     pub fn deploy_mouse_context_menu(
@@ -3370,7 +3370,7 @@ impl Editor {
         let other_selections = other.read(cx).selections.disjoint_anchors().to_vec();
         if !other_selections.is_empty() {
             self.selections
-                .change_with(&self.buffer().read(cx).snapshot(cx), cx, |selections| {
+                .change_with(&self.display_snapshot(cx), |selections| {
                     selections.select_anchors(other_selections);
                 });
         }
@@ -3381,8 +3381,8 @@ impl Editor {
                 if other_selections.is_empty() {
                     return;
                 }
-                let snapshot = this.buffer.read(cx).snapshot(cx);
-                this.selections.change_with(&snapshot, cx, |selections| {
+                let snapshot = this.display_snapshot(cx);
+                this.selections.change_with(&snapshot, |selections| {
                     selections.select_anchors(other_selections);
                 });
             }
@@ -3395,10 +3395,10 @@ impl Editor {
                     return;
                 }
                 other.update(cx, |other_editor, cx| {
-                    let snapshot = other_editor.buffer.read(cx).snapshot(cx);
+                    let snapshot = other_editor.display_snapshot(cx);
                     other_editor
                         .selections
-                        .change_with(&snapshot, cx, |selections| {
+                        .change_with(&snapshot, |selections| {
                             selections.select_anchors(these_selections);
                         })
                 });
@@ -3418,12 +3418,12 @@ impl Editor {
         cx: &mut Context<Self>,
         change: impl FnOnce(&mut MutableSelectionsCollection<'_, '_>) -> R,
     ) -> R {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let snapshot = self.display_snapshot(cx);
         if let Some(state) = &mut self.deferred_selection_effects_state {
             state.effects.scroll = effects.scroll.or(state.effects.scroll);
             state.effects.completions = effects.completions;
             state.effects.nav_history = effects.nav_history.or(state.effects.nav_history);
-            let (changed, result) = self.selections.change_with(&snapshot, cx, change);
+            let (changed, result) = self.selections.change_with(&snapshot, change);
             state.changed |= changed;
             return result;
         }
@@ -3438,7 +3438,7 @@ impl Editor {
                 add_selections_state: self.add_selections_state.clone(),
             },
         };
-        let (changed, result) = self.selections.change_with(&snapshot, cx, change);
+        let (changed, result) = self.selections.change_with(&snapshot, change);
         state.changed = state.changed || changed;
         if self.defer_selection_effects {
             self.deferred_selection_effects_state = Some(state);
@@ -16283,7 +16283,7 @@ impl Editor {
             .map(|s| s.to_vec())
         {
             self.change_selections(Default::default(), window, cx, |s| {
-                let map = s.display_map();
+                let map = s.display_snapshot();
                 s.select_display_ranges(selections.iter().map(|a| {
                     let point = a.to_display_point(&map);
                     point..point
@@ -16304,7 +16304,7 @@ impl Editor {
             .map(|s| s.to_vec())
         {
             self.change_selections(Default::default(), window, cx, |s| {
-                let map = s.display_map();
+                let map = s.display_snapshot();
                 s.select_display_ranges(selections.iter().map(|a| {
                     let point = a.to_display_point(&map);
                     point..point
@@ -18100,7 +18100,7 @@ impl Editor {
     ) {
         let old_cursor_position = self.selections.newest_anchor().head();
         self.selections
-            .change_with(&self.buffer.read(cx).snapshot(cx), cx, |s| {
+            .change_with(&self.display_snapshot(cx), |s| {
                 s.select_anchors(selections);
                 if let Some(pending_selection) = pending_selection {
                     s.set_pending(pending_selection, SelectMode::Character);
@@ -20315,7 +20315,7 @@ impl Editor {
 
         let locations = self
             .selections
-            .all_anchors(&multibuffer.snapshot(cx), cx)
+            .all_anchors(&self.display_snapshot(cx))
             .iter()
             .map(|selection| {
                 (
