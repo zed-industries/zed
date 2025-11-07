@@ -968,8 +968,6 @@ impl<'a> MarkdownParser<'a> {
 
         match &node.data {
             markup5ever_rcdom::NodeData::Text { contents } => {
-                let contents = contents.borrow().to_string();
-
                 // append the text to the last chunk, so we can have a hacky version
                 // of inline text with highlighting
                 if let Some(text) = paragraph.iter_mut().last().and_then(|p| match p {
@@ -977,7 +975,7 @@ impl<'a> MarkdownParser<'a> {
                     _ => None,
                 }) {
                     let mut new_text = text.contents.to_string();
-                    new_text.push_str(&contents);
+                    new_text.push_str(&contents.borrow());
                     let highlights = add_highlight_range(
                         &new_text,
                         text.contents.len(),
@@ -987,6 +985,7 @@ impl<'a> MarkdownParser<'a> {
                     text.contents = SharedString::from(new_text);
                     text.highlights.extend(highlights);
                 } else {
+                    let contents = contents.borrow().to_string();
                     paragraph.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
                         source_range,
                         highlights: add_highlight_range(&contents, 0, std::mem::take(highlights)),
@@ -1003,56 +1002,36 @@ impl<'a> MarkdownParser<'a> {
                     }
                 } else if local_name!("b") == name.local || local_name!("strong") == name.local {
                     highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
-                        italic: false,
-                        underline: false,
-                        oblique: false,
-                        strikethrough: false,
                         weight: FontWeight::BOLD,
-                        link: false,
+                        ..Default::default()
                     }));
 
                     self.consume_paragraph(source_range, node, paragraph, highlights);
                 } else if local_name!("i") == name.local {
                     highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
                         italic: true,
-                        oblique: false,
-                        underline: false,
-                        strikethrough: false,
-                        weight: FontWeight::NORMAL,
-                        link: false,
+                        ..Default::default()
                     }));
 
                     self.consume_paragraph(source_range, node, paragraph, highlights);
                 } else if local_name!("em") == name.local {
                     highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
-                        italic: false,
-                        underline: false,
                         oblique: true,
-                        strikethrough: false,
-                        weight: FontWeight::NORMAL,
-                        link: false,
+                        ..Default::default()
                     }));
 
                     self.consume_paragraph(source_range, node, paragraph, highlights);
                 } else if local_name!("del") == name.local {
                     highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
-                        italic: false,
-                        underline: false,
-                        oblique: false,
                         strikethrough: true,
-                        weight: FontWeight::NORMAL,
-                        link: false,
+                        ..Default::default()
                     }));
 
                     self.consume_paragraph(source_range, node, paragraph, highlights);
                 } else if local_name!("ins") == name.local {
                     highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
-                        italic: false,
                         underline: true,
-                        oblique: false,
-                        strikethrough: false,
-                        weight: FontWeight::NORMAL,
-                        link: false,
+                        ..Default::default()
                     }));
 
                     self.consume_paragraph(source_range, node, paragraph, highlights);
@@ -1390,7 +1369,12 @@ impl<'a> MarkdownParser<'a> {
                 markup5ever_rcdom::NodeData::Element { name, .. } => {
                     if local_name!("caption") == name.local {
                         let mut paragraph = MarkdownParagraph::new();
-                        self.parse_paragraph(source_range.clone(), node, &mut paragraph);
+                        self.parse_paragraph(
+                            source_range.clone(),
+                            node,
+                            &mut paragraph,
+                            &mut Vec::new(),
+                        );
                         caption = Some(paragraph);
                     }
                     if local_name!("thead") == name.local {
