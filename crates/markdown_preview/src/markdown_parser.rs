@@ -1554,108 +1554,96 @@ mod tests {
         let parsed =
                 parse("<p>Some text <strong>strong text</strong> more text <b>bold text</b> more text <i>italic text</i> more text <em>emphasized text</em> more text <del>deleted text</del> more text <ins>inserted text</ins></p>").await;
 
-        assert_eq!(ParsedMarkdown {
-            children: vec![ParsedMarkdownElement::Paragraph(vec![
-                MarkdownParagraphChunk::Text(ParsedMarkdownText {
-                    source_range: 0..205,
-                    contents: "Some text strong text more text bold text more text italic text more text emphasized text more text deleted text more text inserted text".into(),
-                    highlights: vec![
-                        (
-                            10..21,
-                            MarkdownHighlight::Style(
-                                MarkdownHighlightStyle {
-                                    italic: false,
-                                    underline: false,
-                                    strikethrough: false,
-                                    weight: FontWeight(
-                                        700.0,
-                                    ),
-                                    link: false,
-                                    oblique: false,
-                                },
-                            ),
-                        ),
-                        (
-                            32..41,
-                            MarkdownHighlight::Style(
-                                MarkdownHighlightStyle {
-                                    italic: false,
-                                    underline: false,
-                                    strikethrough: false,
-                                    weight: FontWeight(
-                                        700.0,
-                                    ),
-                                    link: false,
-                                    oblique: false,
-                                },
-                            ),
-                        ),
-                        (
-                            52..63,
-                            MarkdownHighlight::Style(
-                                MarkdownHighlightStyle {
-                                    italic: true,
-                                    underline: false,
-                                    strikethrough: false,
-                                    weight: FontWeight(
-                                        400.0,
-                                    ),
-                                    link: false,
-                                    oblique: false,
-                                },
-                            ),
-                        ),
-                        (
-                            74..89,
-                            MarkdownHighlight::Style(
-                                MarkdownHighlightStyle {
-                                    italic: false,
-                                    underline: false,
-                                    strikethrough: false,
-                                    weight: FontWeight(
-                                        400.0,
-                                    ),
-                                    link: false,
-                                    oblique: true,
-                                },
-                            ),
-                        ),
-                        (
-                            100..112,
-                            MarkdownHighlight::Style(
-                                MarkdownHighlightStyle {
-                                    italic: false,
-                                    underline: false,
-                                    strikethrough: true,
-                                    weight: FontWeight(
-                                        400.0,
-                                    ),
-                                    link: false,
-                                    oblique: false,
-                                },
-                            ),
-                        ),
-                        (
-                            123..136,
-                            MarkdownHighlight::Style(
-                                MarkdownHighlightStyle {
-                                    italic: false,
-                                    underline: true,
-                                    strikethrough: false,
-                                    weight: FontWeight(
-                                        400.0,
-                                    ),
-                                    link: false,
-                                    oblique: false,
-                                },
-                            ),
-                        ),
-                    ],
-                    region_ranges: Default::default(),
-                    regions: Default::default()
-                }),
-            ])]
-        }, parsed);
+        assert_eq!(1, parsed.children.len());
+        let chunks = if let ParsedMarkdownElement::Paragraph(chunks) = &parsed.children[0] {
+            chunks
+        } else {
+            panic!("Expected a paragraph");
+        };
+
+        assert_eq!(1, chunks.len());
+        let text = if let MarkdownParagraphChunk::Text(text) = &chunks[0] {
+            text
+        } else {
+            panic!("Expected a paragraph");
+        };
+
+        assert_eq!(0..205, text.source_range);
+        assert_eq!(
+            "Some text strong text more text bold text more text italic text more text emphasized text more text deleted text more text inserted text",
+            text.contents.as_str(),
+        );
+        assert_eq!(
+            vec![
+                (
+                    10..21,
+                    MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        italic: false,
+                        underline: false,
+                        strikethrough: false,
+                        weight: FontWeight(700.0,),
+                        link: false,
+                        oblique: false,
+                    },),
+                ),
+                (
+                    32..41,
+                    MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        italic: false,
+                        underline: false,
+                        strikethrough: false,
+                        weight: FontWeight(700.0,),
+                        link: false,
+                        oblique: false,
+                    },),
+                ),
+                (
+                    52..63,
+                    MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        italic: true,
+                        underline: false,
+                        strikethrough: false,
+                        weight: FontWeight(400.0,),
+                        link: false,
+                        oblique: false,
+                    },),
+                ),
+                (
+                    74..89,
+                    MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        italic: false,
+                        underline: false,
+                        strikethrough: false,
+                        weight: FontWeight(400.0,),
+                        link: false,
+                        oblique: true,
+                    },),
+                ),
+                (
+                    100..112,
+                    MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        italic: false,
+                        underline: false,
+                        strikethrough: true,
+                        weight: FontWeight(400.0,),
+                        link: false,
+                        oblique: false,
+                    },),
+                ),
+                (
+                    123..136,
+                    MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        italic: false,
+                        underline: true,
+                        strikethrough: false,
+                        weight: FontWeight(400.0,),
+                        link: false,
+                        oblique: false,
+                    },),
+                ),
+            ],
+            text.highlights
+        );
     }
 
     #[gpui::test]
