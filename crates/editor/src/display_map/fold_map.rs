@@ -630,6 +630,14 @@ pub struct FoldSnapshot {
     pub version: usize,
 }
 
+impl Deref for FoldSnapshot {
+    type Target = InlaySnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inlay_snapshot
+    }
+}
+
 impl FoldSnapshot {
     pub fn buffer(&self) -> &MultiBufferSnapshot {
         &self.inlay_snapshot.buffer
