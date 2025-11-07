@@ -90,7 +90,7 @@ const UNIFIED_DIFF_REMINDER: &str = indoc! {"
     Do not include the cursor marker in your output.
     Your diff should include edited file paths in its file headers (lines beginning with `---` and `+++`).
     Removed lines begin with `-`.
-    Added lines begin with `-`.
+    Added lines begin with `+`.
     Other lines begin with an extra space.
     There's no need to include actual line numbers in the hunk headers - `@@ ... @@` is fine.
 "};
