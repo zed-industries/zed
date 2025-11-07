@@ -1,5 +1,4 @@
 use std::{
-    cell::Ref,
     cmp, fmt, iter, mem,
     ops::{Deref, DerefMut, Range, Sub},
     sync::Arc,
@@ -7,27 +6,26 @@ use std::{
 
 use collections::HashMap;
 use gpui::{App, Entity, Pixels};
-use itertools::Itertools;
+use itertools::Itertools as _;
 use language::{Bias, Point, Selection, SelectionGoal, TextDimension};
 use util::post_inc;
 
 use crate::{
-    Anchor, DisplayPoint, DisplayRow, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode,
-    ToOffset, ToPoint,
+    Anchor, DisplayPoint, DisplayRow, ExcerptId, MultiBufferSnapshot, SelectMode, ToOffset,
+    ToPoint,
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     movement::TextLayoutDetails,
 };
 
 #[derive(Debug, Clone)]
 pub struct PendingSelection {
-    pub selection: Selection<Anchor>,
-    pub mode: SelectMode,
+    selection: Selection<Anchor>,
+    mode: SelectMode,
 }
 
 #[derive(Debug, Clone)]
 pub struct SelectionsCollection {
     display_map: Entity<DisplayMap>,
-    buffer: Entity<MultiBuffer>,
     next_selection_id: usize,
     line_mode: bool,
     /// The non-pending, non-overlapping selections.
@@ -40,10 +38,9 @@ pub struct SelectionsCollection {
 }
 
 impl SelectionsCollection {
-    pub fn new(display_map: Entity<DisplayMap>, buffer: Entity<MultiBuffer>) -> Self {
+    pub fn new(display_map: Entity<DisplayMap>) -> Self {
         Self {
             display_map,
-            buffer,
             next_selection_id: 1,
             line_mode: false,
             disjoint: Arc::default(),
@@ -64,10 +61,6 @@ impl SelectionsCollection {
 
     pub fn display_map(&self, cx: &mut App) -> DisplaySnapshot {
         self.display_map.update(cx, |map, cx| map.snapshot(cx))
-    }
-
-    fn buffer<'a>(&self, cx: &'a App) -> Ref<'a, MultiBufferSnapshot> {
-        self.buffer.read(cx).read(cx)
     }
 
     pub fn clone_state(&mut self, other: &SelectionsCollection) {
@@ -106,15 +99,18 @@ impl SelectionsCollection {
     }
 
     /// Non-overlapping selections using anchors, including the pending selection.
-    pub fn all_anchors(&self, cx: &mut App) -> Arc<[Selection<Anchor>]> {
+    pub fn all_anchors(
+        &self,
+        snapshot: &MultiBufferSnapshot,
+        cx: &mut App,
+    ) -> Arc<[Selection<Anchor>]> {
         if self.pending.is_none() {
             self.disjoint_anchors_arc()
         } else {
             let all_offset_selections = self.all::<usize>(&self.display_map(cx));
-            let buffer = self.buffer(cx);
             all_offset_selections
                 .into_iter()
-                .map(|selection| selection_to_anchor_selection(selection, &buffer))
+                .map(|selection| selection_to_anchor_selection(selection, snapshot))
                 .collect()
         }
     }
@@ -414,10 +410,12 @@ impl SelectionsCollection {
 
     pub fn change_with<R>(
         &mut self,
+        buffer_snapshot: &MultiBufferSnapshot,
         cx: &mut App,
-        change: impl FnOnce(&mut MutableSelectionsCollection) -> R,
+        change: impl FnOnce(&mut MutableSelectionsCollection<'_, '_>) -> R,
     ) -> (bool, R) {
         let mut mutable_collection = MutableSelectionsCollection {
+            buffer_snapshot,
             collection: self,
             selections_changed: false,
             cx,
@@ -460,13 +458,14 @@ impl SelectionsCollection {
     }
 }
 
-pub struct MutableSelectionsCollection<'a> {
+pub struct MutableSelectionsCollection<'snap, 'a> {
     collection: &'a mut SelectionsCollection,
+    buffer_snapshot: &'snap MultiBufferSnapshot,
     selections_changed: bool,
     cx: &'a mut App,
 }
 
-impl<'a> fmt::Debug for MutableSelectionsCollection<'a> {
+impl<'snap, 'a> fmt::Debug for MutableSelectionsCollection<'snap, 'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MutableSelectionsCollection")
             .field("collection", &self.collection)
@@ -475,13 +474,9 @@ impl<'a> fmt::Debug for MutableSelectionsCollection<'a> {
     }
 }
 
-impl<'a> MutableSelectionsCollection<'a> {
+impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
     pub fn display_map(&mut self) -> DisplaySnapshot {
         self.collection.display_map(self.cx)
-    }
-
-    pub fn buffer(&self) -> Ref<'_, MultiBufferSnapshot> {
-        self.collection.buffer(self.cx)
     }
 
     pub fn clear_disjoint(&mut self) {
@@ -512,12 +507,11 @@ impl<'a> MutableSelectionsCollection<'a> {
     }
 
     pub(crate) fn set_pending_anchor_range(&mut self, range: Range<Anchor>, mode: SelectMode) {
-        let buffer = self.buffer.read(self.cx).snapshot(self.cx);
         self.collection.pending = Some(PendingSelection {
             selection: {
                 let mut start = range.start;
                 let mut end = range.end;
-                let reversed = if start.cmp(&end, &buffer).is_gt() {
+                let reversed = if start.cmp(&end, self.buffer_snapshot).is_gt() {
                     mem::swap(&mut start, &mut end);
                     true
                 } else {
@@ -557,7 +551,7 @@ impl<'a> MutableSelectionsCollection<'a> {
             return true;
         }
 
-        if !oldest.start.cmp(&oldest.end, &self.buffer()).is_eq() {
+        if !oldest.start.cmp(&oldest.end, self.buffer_snapshot).is_eq() {
             let head = oldest.head();
             oldest.start = head;
             oldest.end = head;
@@ -575,8 +569,8 @@ impl<'a> MutableSelectionsCollection<'a> {
     {
         let display_map = self.display_map();
         let mut selections = self.collection.all(&display_map);
-        let mut start = range.start.to_offset(&self.buffer());
-        let mut end = range.end.to_offset(&self.buffer());
+        let mut start = range.start.to_offset(self.buffer_snapshot);
+        let mut end = range.end.to_offset(self.buffer_snapshot);
         let reversed = if start > end {
             mem::swap(&mut start, &mut end);
             true
@@ -597,10 +591,9 @@ impl<'a> MutableSelectionsCollection<'a> {
     where
         T: ToOffset + std::marker::Copy + std::fmt::Debug,
     {
-        let buffer = self.buffer.read(self.cx).snapshot(self.cx);
         let mut selections = selections
             .into_iter()
-            .map(|selection| selection.map(|it| it.to_offset(&buffer)))
+            .map(|selection| selection.map(|it| it.to_offset(self.buffer_snapshot)))
             .map(|mut selection| {
                 if selection.start > selection.end {
                     mem::swap(&mut selection.start, &mut selection.end);
@@ -629,7 +622,7 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.collection.disjoint = Arc::from_iter(
             selections
                 .into_iter()
-                .map(|selection| selection_to_anchor_selection(selection, &buffer)),
+                .map(|selection| selection_to_anchor_selection(selection, self.buffer_snapshot)),
         );
         self.collection.pending = None;
         self.selections_changed = true;
@@ -647,10 +640,9 @@ impl<'a> MutableSelectionsCollection<'a> {
         I: IntoIterator<Item = Range<T>>,
         T: ToOffset,
     {
-        let buffer = self.buffer.read(self.cx).snapshot(self.cx);
-        let ranges = ranges
-            .into_iter()
-            .map(|range| range.start.to_offset(&buffer)..range.end.to_offset(&buffer));
+        let ranges = ranges.into_iter().map(|range| {
+            range.start.to_offset(self.buffer_snapshot)..range.end.to_offset(self.buffer_snapshot)
+        });
         self.select_offset_ranges(ranges);
     }
 
@@ -686,13 +678,12 @@ impl<'a> MutableSelectionsCollection<'a> {
     where
         I: IntoIterator<Item = Range<Anchor>>,
     {
-        let buffer = self.buffer.read(self.cx).snapshot(self.cx);
         let selections = ranges
             .into_iter()
             .map(|range| {
                 let mut start = range.start;
                 let mut end = range.end;
-                let reversed = if start.cmp(&end, &buffer).is_gt() {
+                let reversed = if start.cmp(&end, self.buffer_snapshot).is_gt() {
                     mem::swap(&mut start, &mut end);
                     true
                 } else {
@@ -791,7 +782,6 @@ impl<'a> MutableSelectionsCollection<'a> {
         mut move_selection: impl FnMut(&MultiBufferSnapshot, &mut Selection<usize>),
     ) {
         let mut changed = false;
-        let snapshot = self.buffer().clone();
         let display_map = self.display_map();
         let selections = self
             .collection
@@ -799,14 +789,13 @@ impl<'a> MutableSelectionsCollection<'a> {
             .into_iter()
             .map(|selection| {
                 let mut moved_selection = selection.clone();
-                move_selection(&snapshot, &mut moved_selection);
+                move_selection(self.buffer_snapshot, &mut moved_selection);
                 if selection != moved_selection {
                     changed = true;
                 }
                 moved_selection
             })
             .collect();
-        drop(snapshot);
 
         if changed {
             self.select(selections)
@@ -886,12 +875,11 @@ impl<'a> MutableSelectionsCollection<'a> {
         let mut selections_with_lost_position = HashMap::default();
 
         let anchors_with_status = {
-            let buffer = self.buffer();
             let disjoint_anchors = self
                 .disjoint
                 .iter()
                 .flat_map(|selection| [&selection.start, &selection.end]);
-            buffer.refresh_anchors(disjoint_anchors)
+            self.buffer_snapshot.refresh_anchors(disjoint_anchors)
         };
         let adjusted_disjoint: Vec<_> = anchors_with_status
             .chunks(2)
@@ -926,9 +914,9 @@ impl<'a> MutableSelectionsCollection<'a> {
         }
 
         if let Some(pending) = pending.as_mut() {
-            let buffer = self.buffer();
-            let anchors =
-                buffer.refresh_anchors([&pending.selection.start, &pending.selection.end]);
+            let anchors = self
+                .buffer_snapshot
+                .refresh_anchors([&pending.selection.start, &pending.selection.end]);
             let (_, start, kept_start) = anchors[0];
             let (_, end, kept_end) = anchors[1];
             let kept_head = if pending.selection.reversed {
@@ -951,14 +939,14 @@ impl<'a> MutableSelectionsCollection<'a> {
     }
 }
 
-impl Deref for MutableSelectionsCollection<'_> {
+impl Deref for MutableSelectionsCollection<'_, '_> {
     type Target = SelectionsCollection;
     fn deref(&self) -> &Self::Target {
         self.collection
     }
 }
 
-impl DerefMut for MutableSelectionsCollection<'_> {
+impl DerefMut for MutableSelectionsCollection<'_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.collection
     }
