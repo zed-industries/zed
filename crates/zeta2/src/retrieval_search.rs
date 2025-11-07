@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 use anyhow::Result;
+use cloud_zeta2_prompt::retrieval_prompt::SearchToolQuery;
 use collections::HashMap;
 use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions};
 use futures::{
@@ -8,9 +9,10 @@ use futures::{
     channel::mpsc::{self, UnboundedSender},
 };
 use gpui::{AppContext, AsyncApp, Entity};
-use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt, ToPoint as _};
+use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt, ToOffset, ToPoint};
 use project::{
     Project, WorktreeSettings,
+    debugger::session::StackFrame,
     search::{SearchQuery, SearchResult},
 };
 use util::{
@@ -21,7 +23,7 @@ use workspace::item::Settings as _;
 
 pub async fn run_retrieval_searches(
     project: Entity<Project>,
-    regex_by_glob: HashMap<String, String>,
+    queries: Vec<SearchToolQuery>,
     cx: &mut AsyncApp,
 ) -> Result<HashMap<Entity<Buffer>, Vec<Range<Anchor>>>> {
     let (exclude_matcher, path_style) = project.update(cx, |project, cx| {
@@ -37,14 +39,13 @@ pub async fn run_retrieval_searches(
 
     let (results_tx, mut results_rx) = mpsc::unbounded();
 
-    for (glob, regex) in regex_by_glob {
+    for query in queries {
         let exclude_matcher = exclude_matcher.clone();
         let results_tx = results_tx.clone();
         let project = project.clone();
         cx.spawn(async move |cx| {
             run_query(
-                &glob,
-                &regex,
+                query,
                 results_tx.clone(),
                 path_style,
                 exclude_matcher,
@@ -113,82 +114,144 @@ const MAX_EXCERPT_LEN: usize = 768;
 const MAX_RESULTS_LEN: usize = MAX_EXCERPT_LEN * 5;
 
 async fn run_query(
-    glob: &str,
-    regex: &str,
+    input_query: SearchToolQuery,
     results_tx: UnboundedSender<(Entity<Buffer>, BufferSnapshot, Vec<(Range<Anchor>, usize)>)>,
     path_style: PathStyle,
     exclude_matcher: PathMatcher,
     project: &Entity<Project>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    let include_matcher = PathMatcher::new(vec![glob], path_style)?;
+    let include_matcher = PathMatcher::new(vec![input_query.glob], path_style)?;
 
-    let query = SearchQuery::regex(
-        regex,
-        false,
-        true,
-        false,
-        true,
-        include_matcher,
-        exclude_matcher,
-        true,
-        None,
-    )?;
+    let make_search = |regex: &str| -> Result<SearchQuery> {
+        SearchQuery::regex(
+            regex,
+            false,
+            true,
+            false,
+            true,
+            include_matcher.clone(),
+            exclude_matcher.clone(),
+            true,
+            None,
+        )
+    };
 
-    let results = project.update(cx, |project, cx| project.search(query, cx))?;
-    futures::pin_mut!(results);
+    let mut syntax_mode_regexes_iter = input_query.syntax_node.iter();
 
-    while let Some(SearchResult::Buffer { buffer, ranges }) = results.next().await {
-        if results_tx.is_closed() {
-            break;
+    if let Some(top_search_regex) = syntax_mode_regexes_iter.next() {
+        let top_search_query = make_search(top_search_regex)?;
+
+        let top_search_results_rx =
+            project.update(cx, |project, cx| project.search(top_search_query, cx))?;
+        futures::pin_mut!(top_search_results_rx);
+
+        let mut matched_node: Option<(Entity<Buffer>, BufferSnapshot, Range<usize>)> = None;
+
+        while let Some(SearchResult::Buffer { buffer, ranges }) = top_search_results_rx.next().await
+        {
+            let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+
+            // todo! handle the rest?
+            if let Some(node_range) = ranges
+                .first()
+                .and_then(|range| expand_to_parent_range(range, &snapshot))
+            {
+                matched_node = Some((buffer, snapshot, node_range));
+                break;
+            };
         }
 
-        if ranges.is_empty() {
-            continue;
+        let Some(mut matched_node) = matched_node else {
+            return anyhow::Ok(());
+        };
+
+        for syntax_node_regex in syntax_mode_regexes_iter {
+            let search_query = make_search(syntax_node_regex)?;
+
+            let (_, snapshot, parent_range) = &matched_node;
+            let results = search_query
+                .search(&snapshot, Some(parent_range.clone()))
+                .await;
+
+            // todo! handle the rest?
+            if let Some(node_range) = results
+                .first()
+                .and_then(|range| expand_to_parent_range(range, snapshot))
+            {
+                matched_node.2 = node_range;
+                break;
+            };
         }
 
-        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
-        let results_tx = results_tx.clone();
+        if let Some(content_regex) = input_query.content {
+            let search_query = make_search(&content_regex)?;
 
-        cx.background_spawn(async move {
-            let mut excerpts = Vec::with_capacity(ranges.len());
+            let (buffer, snapshot, parent_range) = matched_node;
+            let results = search_query
+                .search(&snapshot, Some(parent_range.clone()))
+                .await;
 
-            for range in ranges {
-                let offset_range = range.to_offset(&snapshot);
-                let query_point = (offset_range.start + offset_range.len() / 2).to_point(&snapshot);
+            // todo! expand excerpts
+            let ranges = results
+                .into_iter()
+                .map(|range| {
+                    let size = range.len();
+                    (
+                        snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end),
+                        size,
+                    )
+                })
+                .collect();
 
-                let excerpt = EditPredictionExcerpt::select_from_buffer(
-                    query_point,
-                    &snapshot,
-                    &EditPredictionExcerptOptions {
-                        max_bytes: MAX_EXCERPT_LEN,
-                        min_bytes: MIN_EXCERPT_LEN,
-                        target_before_cursor_over_total_bytes: 0.5,
-                    },
-                    None,
-                );
-
-                if let Some(excerpt) = excerpt
-                    && !excerpt.line_range.is_empty()
-                {
-                    excerpts.push((
-                        snapshot.anchor_after(excerpt.range.start)
-                            ..snapshot.anchor_before(excerpt.range.end),
-                        excerpt.range.len(),
-                    ));
-                }
-            }
-
-            let send_result = results_tx.unbounded_send((buffer, snapshot, excerpts));
+            let send_result = results_tx.unbounded_send((buffer.clone(), snapshot.clone(), ranges));
 
             if let Err(err) = send_result
                 && !err.is_disconnected()
             {
                 log::error!("{err}");
             }
-        })
-        .detach();
+        }
+    } else if let Some(content_regex) = &input_query.content {
+        let search_query = make_search(&content_regex)?;
+
+        let results_rx = project.update(cx, |project, cx| project.search(search_query, cx))?;
+        futures::pin_mut!(results_rx);
+
+        while let Some(SearchResult::Buffer { buffer, ranges }) = results_rx.next().await {
+            let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+
+            // todo! expand excerpts
+            let ranges = ranges
+                .into_iter()
+                .map(|range| {
+                    let size = range.to_offset(&snapshot).len();
+                    (range, size)
+                })
+                .collect();
+
+            let send_result = results_tx.unbounded_send((buffer.clone(), snapshot.clone(), ranges));
+
+            if let Err(err) = send_result
+                && !err.is_disconnected()
+            {
+                log::error!("{err}");
+            }
+        }
     }
 
     anyhow::Ok(())
+}
+
+fn expand_to_parent_range<T: ToPoint + ToOffset>(
+    range: &Range<T>,
+    snapshot: &BufferSnapshot,
+) -> Option<Range<usize>> {
+    let mut line_range = range.to_point(&snapshot);
+    line_range.start.column = 0;
+    line_range.end.column = snapshot.line_len(line_range.start.row);
+    // todo! skip result if matched line isn't the first node line?
+
+    let node = snapshot.syntax_ancestor(line_range)?;
+    Some(node.byte_range())
 }

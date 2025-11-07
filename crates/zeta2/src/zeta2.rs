@@ -7,7 +7,7 @@ use cloud_llm_client::{
     ZED_VERSION_HEADER_NAME,
 };
 use cloud_zeta2_prompt::DEFAULT_MAX_PROMPT_BYTES;
-use cloud_zeta2_prompt::retrieval_prompt::SearchToolInput;
+use cloud_zeta2_prompt::retrieval_prompt::{SearchToolInput, SearchToolQuery};
 use collections::HashMap;
 use edit_prediction_context::{
     DeclarationId, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
@@ -180,6 +180,7 @@ pub struct ZetaEditPredictionDebugInfo {
 pub struct ZetaSearchQueryDebugInfo {
     pub project: Entity<Project>,
     pub timestamp: Instant,
+    // todo!
     pub regex_by_glob: HashMap<String, String>,
 }
 
@@ -1270,7 +1271,7 @@ impl Zeta {
                 anyhow::bail!("Retrieval response didn't include an assistant message");
             };
 
-            let mut regex_by_glob: HashMap<String, String> = HashMap::default();
+            let mut queries: Vec<SearchToolQuery> = Vec::new();
             for tool_call in tool_calls {
                 let open_ai::ToolCallContent::Function { function } = tool_call.content;
                 if function.name != cloud_zeta2_prompt::retrieval_prompt::TOOL_NAME {
@@ -1283,13 +1284,7 @@ impl Zeta {
                 }
 
                 let input: SearchToolInput = serde_json::from_str(&function.arguments)?;
-                for query in input.queries {
-                    let regex = regex_by_glob.entry(query.glob).or_default();
-                    if !regex.is_empty() {
-                        regex.push('|');
-                    }
-                    regex.push_str(&query.regex);
-                }
+                queries.extend(input.queries);
             }
 
             if let Some(debug_tx) = &debug_tx {
@@ -1298,16 +1293,16 @@ impl Zeta {
                         ZetaSearchQueryDebugInfo {
                             project: project.clone(),
                             timestamp: Instant::now(),
-                            regex_by_glob: regex_by_glob.clone(),
+                            regex_by_glob: Default::default(),
                         },
                     ))
                     .ok();
             }
 
-            log::trace!("Running retrieval search: {regex_by_glob:#?}");
+            log::trace!("Running retrieval search: {queries:#?}");
 
             let related_excerpts_result =
-                retrieval_search::run_retrieval_searches(project.clone(), regex_by_glob, cx).await;
+                retrieval_search::run_retrieval_searches(project.clone(), queries, cx).await;
 
             log::trace!("Search queries executed");
 
@@ -1754,7 +1749,9 @@ mod tests {
                                     arguments: serde_json::to_string(&SearchToolInput {
                                         queries: Box::new([SearchToolQuery {
                                             glob: "root/2.txt".to_string(),
-                                            regex: ".".to_string(),
+                                            syntax_node: vec![],
+                                            // todo!
+                                            content: None,
                                         }]),
                                     })
                                     .unwrap(),

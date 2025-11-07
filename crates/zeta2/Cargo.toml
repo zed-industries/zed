@@ -38,6 +38,7 @@ util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 worktree.workspace = true
+itertools.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }
