@@ -33,12 +33,12 @@ project.workspace = true
 release_channel.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+smol.workspace = true
 thiserror.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 worktree.workspace = true
-itertools.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

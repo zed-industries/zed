@@ -3,7 +3,6 @@ use std::ops::Range;
 use anyhow::Result;
 use cloud_zeta2_prompt::retrieval_prompt::SearchToolQuery;
 use collections::HashMap;
-use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions};
 use futures::{
     StreamExt,
     channel::mpsc::{self, UnboundedSender},
@@ -12,9 +11,9 @@ use gpui::{AppContext, AsyncApp, Entity};
 use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt, ToOffset, ToPoint};
 use project::{
     Project, WorktreeSettings,
-    debugger::session::StackFrame,
     search::{SearchQuery, SearchResult},
 };
+use smol::channel;
 use util::{
     ResultExt as _,
     paths::{PathMatcher, PathStyle},
@@ -113,6 +112,13 @@ const MIN_EXCERPT_LEN: usize = 16;
 const MAX_EXCERPT_LEN: usize = 768;
 const MAX_RESULTS_LEN: usize = MAX_EXCERPT_LEN * 5;
 
+struct SearchJob {
+    buffer: Entity<Buffer>,
+    snapshot: BufferSnapshot,
+    ranges: Vec<Range<usize>>,
+    query_ix: usize,
+}
+
 async fn run_query(
     input_query: SearchToolQuery,
     results_tx: UnboundedSender<(Entity<Buffer>, BufferSnapshot, Vec<(Range<Anchor>, usize)>)>,
@@ -137,96 +143,66 @@ async fn run_query(
         )
     };
 
-    let mut syntax_mode_regexes_iter = input_query.syntax_node.iter();
-
-    if let Some(top_search_regex) = syntax_mode_regexes_iter.next() {
+    if let Some(top_search_regex) = input_query.syntax_node.first() {
         let top_search_query = make_search(top_search_regex)?;
+        let queries = input_query
+            .syntax_node
+            .into_iter()
+            .skip(1)
+            .map(|query| make_search(&query))
+            .collect::<Result<Vec<_>>>()?;
+        let content_query = input_query
+            .content
+            .map(|regex| make_search(&regex))
+            .transpose()?;
+
+        let (jobs_tx, jobs_rx) = channel::unbounded();
 
         let top_search_results_rx =
             project.update(cx, |project, cx| project.search(top_search_query, cx))?;
-        futures::pin_mut!(top_search_results_rx);
 
-        let mut matched_node: Option<(Entity<Buffer>, BufferSnapshot, Range<usize>)> = None;
-
-        while let Some(SearchResult::Buffer { buffer, ranges }) = top_search_results_rx.next().await
-        {
-            let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
-
-            // todo! handle the rest?
-            if let Some(node_range) = ranges
-                .first()
-                .and_then(|range| expand_to_parent_range(range, &snapshot))
-            {
-                matched_node = Some((buffer, snapshot, node_range));
-                break;
-            };
-        }
-
-        let Some(mut matched_node) = matched_node else {
-            return anyhow::Ok(());
-        };
-
-        for syntax_node_regex in syntax_mode_regexes_iter {
-            let search_query = make_search(syntax_node_regex)?;
-
-            let (_, snapshot, parent_range) = &matched_node;
-            let results = search_query
-                .search(&snapshot, Some(parent_range.clone()))
-                .await;
-
-            // todo! handle the rest?
-            if let Some(node_range) = results
-                .first()
-                .and_then(|range| expand_to_parent_range(range, snapshot))
-            {
-                matched_node.2 = node_range;
-                break;
-            };
-        }
-
-        if let Some(content_regex) = input_query.content {
-            let search_query = make_search(&content_regex)?;
-
-            let (buffer, snapshot, parent_range) = matched_node;
-            let results = search_query
-                .search(&snapshot, Some(parent_range.clone()))
-                .await;
-
-            // todo! expand
-            let ranges = results
-                .into_iter()
-                .map(|range| {
-                    let size = range.len();
-                    (
-                        snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end),
-                        size,
-                    )
-                })
-                .collect();
-
-            let send_result = results_tx.unbounded_send((buffer.clone(), snapshot.clone(), ranges));
-
-            if let Err(err) = send_result
-                && !err.is_disconnected()
-            {
-                log::error!("{err}");
+        let top_search_task = cx.spawn({
+            let jobs_tx = jobs_tx.clone();
+            async move |cx| {
+                futures::pin_mut!(top_search_results_rx);
+                while let Some(SearchResult::Buffer { buffer, ranges }) =
+                    top_search_results_rx.next().await
+                {
+                    buffer
+                        .read_with(cx, |buffer, _| buffer.parsing_idle())?
+                        .await;
+                    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+                    let expanded_ranges: Vec<_> = ranges
+                        .into_iter()
+                        .filter_map(|range| expand_to_parent_range(&range, &snapshot))
+                        .collect();
+                    jobs_tx
+                        .send(SearchJob {
+                            buffer,
+                            snapshot,
+                            ranges: expanded_ranges,
+                            query_ix: 0,
+                        })
+                        .await?;
+                }
+                anyhow::Ok(())
             }
-        } else {
-            let (buffer, snapshot, parent_range) = matched_node;
-            let ranges = vec![(
-                snapshot.anchor_before(parent_range.start)..snapshot.anchor_after(parent_range.end),
-                parent_range.len(),
-            )];
+        });
 
-            // todo! expand
-            let send_result = results_tx.unbounded_send((buffer.clone(), snapshot.clone(), ranges));
-
-            if let Err(err) = send_result
-                && !err.is_disconnected()
-            {
-                log::error!("{err}");
+        let n_workers = cx.background_executor().num_cpus();
+        let search_job_task = cx.background_executor().scoped(|scope| {
+            for _ in 0..n_workers {
+                scope.spawn(async {
+                    while let Ok(job) = jobs_rx.recv().await {
+                        process_search_job(&results_tx, &jobs_tx, &queries, &content_query, job)
+                            .await;
+                    }
+                });
             }
-        }
+        });
+
+        search_job_task.await;
+        top_search_task.await?;
     } else if let Some(content_regex) = &input_query.content {
         let search_query = make_search(&content_regex)?;
 
@@ -258,6 +234,64 @@ async fn run_query(
     }
 
     anyhow::Ok(())
+}
+
+async fn process_search_job(
+    results_tx: &UnboundedSender<(Entity<Buffer>, BufferSnapshot, Vec<(Range<Anchor>, usize)>)>,
+    jobs_tx: &channel::Sender<SearchJob>,
+    queries: &Vec<SearchQuery>,
+    content_query: &Option<SearchQuery>,
+    job: SearchJob,
+) {
+    if let Some(search_query) = queries.get(job.query_ix) {
+        let mut subranges = Vec::new();
+        for range in job.ranges {
+            let search_results = search_query.search(&job.snapshot, Some(range)).await;
+
+            for range in search_results {
+                subranges.extend(expand_to_parent_range(&range, &job.snapshot));
+            }
+        }
+        jobs_tx
+            .send(SearchJob {
+                buffer: job.buffer,
+                snapshot: job.snapshot,
+                ranges: subranges,
+                query_ix: job.query_ix + 1,
+            })
+            .await
+            .ok();
+    } else {
+        let ranges = if let Some(content_query) = content_query {
+            let mut subranges = Vec::new();
+            for range in job.ranges {
+                let search_results = content_query.search(&job.snapshot, Some(range)).await;
+                subranges.extend(search_results);
+            }
+            subranges
+        } else {
+            job.ranges
+        };
+
+        let matches = ranges
+            .into_iter()
+            .map(|range| {
+                let size = range.len();
+                (
+                    job.snapshot.anchor_before(range.start)..job.snapshot.anchor_after(range.end),
+                    size,
+                )
+            })
+            .collect();
+
+        let send_result = results_tx.unbounded_send((job.buffer, job.snapshot, matches));
+
+        if let Err(err) = send_result
+            && !err.is_disconnected()
+        {
+            log::error!("{err}");
+        }
+    }
 }
 
 fn expand_to_parent_range<T: ToPoint + ToOffset>(
