@@ -2379,7 +2379,7 @@ impl RemoteServerProjects {
                     .inset(true)
                     .spacing(ui::ListItemSpacing::Sparse)
                     .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
-                    .child(Label::new("Add Forward"))
+                    .child(Label::new("Forward Port"))
                     .on_click(cx.listener({
                         let server_index_clone = server_index;
                         move |this, _, window, cx| {
