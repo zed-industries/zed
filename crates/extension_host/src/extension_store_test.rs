@@ -866,7 +866,6 @@ fn init_test(cx: &mut TestAppContext) {
         extension::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         Project::init_settings(cx);
-        ExtensionSettings::register(cx);
         language::init(cx);
         gpui_tokio::init(cx);
     });

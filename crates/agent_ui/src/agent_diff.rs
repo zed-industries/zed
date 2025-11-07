@@ -1733,11 +1733,9 @@ mod tests {
             cx.set_global(settings_store);
             language::init(cx);
             Project::init_settings(cx);
-            AgentSettings::register(cx);
             prompt_store::init(cx);
             workspace::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
-            EditorSettings::register(cx);
             language_model::init_settings(cx);
         });
 
@@ -1892,11 +1890,9 @@ mod tests {
             cx.set_global(settings_store);
             language::init(cx);
             Project::init_settings(cx);
-            AgentSettings::register(cx);
             prompt_store::init(cx);
             workspace::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
-            EditorSettings::register(cx);
             language_model::init_settings(cx);
             workspace::register_project_item::<Editor>(cx);
         });

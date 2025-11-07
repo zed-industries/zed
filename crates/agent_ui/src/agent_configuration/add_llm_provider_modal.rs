@@ -734,7 +734,6 @@ mod tests {
             Project::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             language_settings::init(cx);
-            EditorSettings::register(cx);
             language_model::init_settings(cx);
             language_models::init_settings(cx);
         });

@@ -1754,8 +1754,6 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             language::init(cx);
-            TelemetrySettings::register(cx);
-            agent_settings::AgentSettings::register(cx);
             Project::init_settings(cx);
         });
     }

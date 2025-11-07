@@ -1,6 +1,7 @@
 use dap_types::SteppingGranularity;
-use settings::{Settings, SettingsContent};
+use settings::{RegisterSetting, Settings, SettingsContent};
 
+#[derive(Debug, RegisterSetting)]
 pub struct DebuggerSettings {
     /// Determines the stepping granularity.
     ///

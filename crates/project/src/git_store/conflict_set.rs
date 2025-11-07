@@ -488,9 +488,6 @@ mod tests {
         zlog::init_test();
         cx.update(|cx| {
             settings::init(cx);
-            WorktreeSettings::register(cx);
-            Project::init_settings(cx);
-            AllLanguageSettings::register(cx);
         });
         let initial_text = "
             one
@@ -589,9 +586,6 @@ mod tests {
         zlog::init_test();
         cx.update(|cx| {
             settings::init(cx);
-            WorktreeSettings::register(cx);
-            Project::init_settings(cx);
-            AllLanguageSettings::register(cx);
         });
 
         let initial_text = "

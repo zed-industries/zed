@@ -88,7 +88,6 @@ pub struct SettingsAssets;
 pub fn init(cx: &mut App) {
     let settings = SettingsStore::new(cx, &default_settings());
     cx.set_global(settings);
-    BaseKeymap::register(cx);
     SettingsStore::observe_active_settings_profile_name(cx).detach();
 }
 

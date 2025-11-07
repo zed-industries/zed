@@ -75,8 +75,6 @@ impl HeadlessProject {
     pub fn init(cx: &mut App) {
         settings::init(cx);
         language::init(cx);
-        project::Project::init_settings(cx);
-        extension_host::ExtensionSettings::register(cx);
         log_store::init(true, cx);
     }
 

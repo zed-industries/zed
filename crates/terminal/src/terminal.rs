@@ -182,10 +182,6 @@ impl EventListener for ZedListener {
     }
 }
 
-pub fn init(cx: &mut App) {
-    TerminalSettings::register(cx);
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalBounds {
     pub cell_width: Pixels,

@@ -527,14 +527,6 @@ impl From<WorkspaceId> for i64 {
     }
 }
 
-pub fn init_settings(cx: &mut App) {
-    WorkspaceSettings::register(cx);
-    ItemSettings::register(cx);
-    PreviewTabsSettings::register(cx);
-    TabBarSettings::register(cx);
-    StatusBarSettings::register(cx);
-}
-
 fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, cx: &mut App) {
     let paths = cx.prompt_for_paths(options);
     cx.spawn(
@@ -568,7 +560,6 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
 }
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
-    init_settings(cx);
     component::init();
     theme_preview::init(cx);
     toast_layer::init(cx);

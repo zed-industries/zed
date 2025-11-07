@@ -34,8 +34,6 @@ use workspace::{
 use zed_actions::{OpenRecent, OpenRemote};
 
 pub fn init(cx: &mut App) {
-    SshSettings::register(cx);
-
     #[cfg(target_os = "windows")]
     cx.on_action(|open_wsl: &zed_actions::wsl_actions::OpenFolderInWsl, cx| {
         let create_new_window = open_wsl.create_new_window;
@@ -915,7 +913,6 @@ mod tests {
             crate::init(cx);
             editor::init(cx);
             workspace::init_settings(cx);
-            DebuggerSettings::register(cx);
             Project::init_settings(cx);
             state
         })

@@ -470,7 +470,6 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
         language_model::init(client.clone(), cx);
         language_models::init(user_store, client, cx);
         agent_settings::init(cx);
-        AllAgentServersSettings::register(cx);
 
         #[cfg(test)]
         AllAgentServersSettings::override_global(

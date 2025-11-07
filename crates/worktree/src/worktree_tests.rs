@@ -2269,6 +2269,5 @@ fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        WorktreeSettings::register(cx);
     });
 }
