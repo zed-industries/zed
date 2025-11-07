@@ -4540,19 +4540,13 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<StickyHeaders> {
-        let outline = self.editor.update(cx, |editor, _| {
-            editor
-                .sticky_scroll_outline(snapshot.buffer_snapshot())
-                .cloned()
-        })?;
-
         let scroll_top = snapshot.scroll_position().y;
         let show_line_numbers = snapshot
             .show_line_numbers
             .unwrap_or_else(|| EditorSettings::get_global(cx).gutter.line_numbers);
 
-        struct Row<'a> {
-            item: &'a language::OutlineItem<Anchor>,
+        struct Row {
+            item: language::OutlineItem<Anchor>,
             sticky_row: DisplayRow,
             max_sticky_row: DisplayRow,
             depth: usize,
@@ -4562,10 +4556,11 @@ impl EditorElement {
         let mut end_rows = Vec::<DisplayRow>::new();
         let mut rows = Vec::<Row>::new();
 
-        for item in &outline.items {
-            let body_range = item.range.clone();
-            let start_point = body_range.start.to_point(snapshot.buffer_snapshot());
-            let end_point = body_range.end.to_point(snapshot.buffer_snapshot());
+        let items = self.editor.read(cx).sticky_headers(cx).unwrap_or_default();
+
+        for item in items {
+            let start_point = item.range.start.to_point(snapshot.buffer_snapshot());
+            let end_point = item.range.end.to_point(snapshot.buffer_snapshot());
 
             let sticky_row = snapshot
                 .display_snapshot

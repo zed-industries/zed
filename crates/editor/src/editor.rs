@@ -117,7 +117,7 @@ use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
     DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
-    IndentSize, Language, OffsetRangeExt, Outline, Point, Runnable, RunnableRange, Selection,
+    IndentSize, Language, OffsetRangeExt, OutlineItem, Point, Runnable, RunnableRange, Selection,
     SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, LspInsertMode, RewrapBehavior, WordsCompletionMode, all_language_settings,
@@ -263,13 +263,6 @@ impl ReportEditorEvent {
             Self::Closed => "Editor Closed",
         }
     }
-}
-
-struct StickyOutlineCache {
-    outline: Arc<Outline<Anchor>>,
-    edit_count: usize,
-    syntax_update_count: usize,
-    excerpt_id: ExcerptId,
 }
 
 pub enum ActiveDebugLine {}
@@ -1196,7 +1189,7 @@ pub struct Editor {
     hide_mouse_mode: HideMouseMode,
     pub change_list: ChangeList,
     inline_value_cache: InlineValueCache,
-    sticky_outline_cache: Option<StickyOutlineCache>,
+
     selection_drag_state: SelectionDragState,
     colors: Option<LspColorData>,
     post_scroll_update: Task<()>,
@@ -1778,39 +1771,89 @@ impl Editor {
         Editor::new_internal(mode, buffer, project, None, window, cx)
     }
 
-    pub(crate) fn sticky_scroll_outline(
-        &mut self,
-        buffer_snapshot: &MultiBufferSnapshot,
-    ) -> Option<&Arc<Outline<Anchor>>> {
-        let edit_count = buffer_snapshot.edit_count();
-        let (excerpt_id, _buffer_id, buffer) = buffer_snapshot.as_singleton()?;
-        let syntax_update_count = buffer.syntax_update_count();
+    fn to_multi_buffer_range(
+        range: Range<text::Anchor>,
+        buffer_id: Option<BufferId>,
+        excerpt_id: ExcerptId,
+        diff_base_anchor: Option<text::Anchor>,
+    ) -> Range<Anchor> {
+        let start = range.start;
+        let end = range.end;
+        let new_start = Anchor {
+            buffer_id,
+            excerpt_id,
+            text_anchor: start,
+            diff_base_anchor,
+        };
+        let new_end = Anchor {
+            buffer_id,
+            excerpt_id,
+            text_anchor: end,
+            diff_base_anchor,
+        };
 
-        let cache_is_valid = self.sticky_outline_cache.as_ref().is_some_and(|cache| {
-            cache.edit_count == edit_count
-                && cache.syntax_update_count == syntax_update_count
-                && cache.excerpt_id == *excerpt_id
-        });
+        new_start..new_end
+    }
 
-        if !cache_is_valid {
-            let outline = buffer_snapshot.outline(None);
-            let Some(outline) = outline.filter(|outline| !outline.items.is_empty()) else {
-                self.sticky_outline_cache = None;
-                return None;
-            };
+    pub fn sticky_headers(&self, cx: &App) -> Option<Vec<OutlineItem<Anchor>>> {
+        let multi_buffer = self.buffer().read(cx);
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+        let multi_buffer_visible_start = self
+            .scroll_manager
+            .anchor()
+            .anchor
+            .to_point(&multi_buffer_snapshot);
+        let max_row = multi_buffer_snapshot.max_point().row;
 
-            let outline = Arc::new(outline);
-            self.sticky_outline_cache = Some(StickyOutlineCache {
-                outline,
-                edit_count,
-                syntax_update_count,
-                excerpt_id: *excerpt_id,
-            });
+        let start_row = (multi_buffer_visible_start.row).min(max_row);
+        let end_row = (multi_buffer_visible_start.row + 10).min(max_row);
+
+        if let Some((excerpt_id, buffer_id, buffer)) = multi_buffer.read(cx).as_singleton() {
+            let outline_items = buffer
+                .outline_items_containing(
+                    Point::new(start_row, 0)..Point::new(end_row, 0),
+                    true,
+                    self.style().map(|style| style.syntax.as_ref()),
+                )
+                .into_iter()
+                .map(|outline_item| OutlineItem {
+                    depth: outline_item.depth,
+                    range: Self::to_multi_buffer_range(
+                        outline_item.range,
+                        Some(buffer_id),
+                        excerpt_id.clone(),
+                        None,
+                    ),
+                    source_range_for_text: Self::to_multi_buffer_range(
+                        outline_item.source_range_for_text,
+                        Some(buffer_id),
+                        excerpt_id.clone(),
+                        None,
+                    ),
+                    text: outline_item.text,
+                    highlight_ranges: outline_item.highlight_ranges,
+                    name_ranges: outline_item.name_ranges,
+                    body_range: outline_item.body_range.map(|range| {
+                        Self::to_multi_buffer_range(
+                            range,
+                            Some(buffer_id),
+                            excerpt_id.clone(),
+                            None,
+                        )
+                    }),
+                    annotation_range: outline_item.annotation_range.map(|range| {
+                        Self::to_multi_buffer_range(
+                            range,
+                            Some(buffer_id),
+                            excerpt_id.clone(),
+                            None,
+                        )
+                    }),
+                });
+            return Some(outline_items.collect());
         }
 
-        self.sticky_outline_cache
-            .as_ref()
-            .map(|cache| &cache.outline)
+        None
     }
 
     fn new_internal(
@@ -2239,7 +2282,6 @@ impl Editor {
             diagnostics_enabled: full_mode,
             word_completions_enabled: full_mode,
             inline_value_cache: InlineValueCache::new(inlay_hint_settings.show_value_hints),
-            sticky_outline_cache: None,
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
             last_bounds: None,
