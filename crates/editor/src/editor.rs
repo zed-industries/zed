@@ -3366,7 +3366,6 @@ impl Editor {
         other: Entity<Editor>,
         cx: &mut Context<Self>,
     ) -> gpui::Subscription {
-        assert_eq!(self.buffer(), other.read(cx).buffer());
         let other_selections = other.read(cx).selections.disjoint_anchors().to_vec();
         if !other_selections.is_empty() {
             self.selections
