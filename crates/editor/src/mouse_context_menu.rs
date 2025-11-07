@@ -1,6 +1,6 @@
 use crate::{
     Copy, CopyAndTrim, CopyPermalinkToLine, Cut, DisplayPoint, DisplaySnapshot, Editor,
-    EvaluateSelectedText, FindAllReferences, GoToDeclaration, GoToDefinition, GoToImplementation,
+    EvaluateSelectedText, FindAllReferences, GoToDeclaration, GoToDefinition, FindAllImplementations,
     GoToTypeDefinition, Paste, Rename, RevealInFileManager, RunToCursor, SelectMode,
     SelectionEffects, SelectionExt, ToDisplayPoint, ToggleCodeActions,
     actions::{Format, FormatSelections},
@@ -219,7 +219,7 @@ pub fn deploy_context_menu(
                 .action("Go to Definition", Box::new(GoToDefinition))
                 .action("Go to Declaration", Box::new(GoToDeclaration))
                 .action("Go to Type Definition", Box::new(GoToTypeDefinition))
-                .action("Go to Implementation", Box::new(GoToImplementation))
+                .action("Go to Implementation", Box::new(FindAllImplementations))
                 .action("Find All References", Box::new(FindAllReferences))
                 .separator()
                 .action("Rename Symbol", Box::new(Rename))

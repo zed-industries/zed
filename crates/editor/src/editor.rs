@@ -16472,7 +16472,7 @@ impl Editor {
 
     pub fn go_to_implementation(
         &mut self,
-        _: &GoToImplementation,
+        _: &FindAllImplementations,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Navigated>> {
@@ -16481,7 +16481,7 @@ impl Editor {
 
     pub fn go_to_implementation_split(
         &mut self,
-        _: &GoToImplementationSplit,
+        _: &FindAllImplementationsSplit,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Navigated>> {

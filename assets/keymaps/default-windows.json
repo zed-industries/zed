@@ -528,7 +528,7 @@
       "f12": "editor::GoToDefinition",
       "alt-f12": "editor::GoToDefinitionSplit",
       "ctrl-shift-f10": "editor::GoToDefinitionSplit",
-      "ctrl-f12": "editor::GoToImplementation",
+      "ctrl-f12": "editor::FindAllImplementations",
       "shift-f12": "editor::GoToTypeDefinition",
       "ctrl-alt-f12": "editor::GoToTypeDefinitionSplit",
       "shift-alt-f12": "editor::FindAllReferences",
