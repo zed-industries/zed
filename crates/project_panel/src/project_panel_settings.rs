@@ -2,13 +2,16 @@ use editor::EditorSettings;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{DockSide, ProjectPanelEntrySpacing, Settings, ShowDiagnostics, ShowIndentGuides};
+use settings::{
+    DockSide, ProjectPanelEntrySpacing, RegisterSetting, Settings, ShowDiagnostics,
+    ShowIndentGuides,
+};
 use ui::{
     px,
     scrollbars::{ScrollbarVisibility, ShowScrollbar},
 };
 
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, RegisterSetting)]
 pub struct ProjectPanelSettings {
     pub button: bool,
     pub hide_gitignore: bool,

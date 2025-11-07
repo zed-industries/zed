@@ -1,6 +1,6 @@
 pub mod cursor_position;
 
-use cursor_position::{LineIndicatorFormat, UserCaretPosition};
+use cursor_position::UserCaretPosition;
 use editor::{
     Anchor, Editor, MultiBufferSnapshot, RowHighlightOptions, SelectionEffects, ToOffset, ToPoint,
     actions::Tab,
@@ -11,7 +11,6 @@ use gpui::{
     Subscription, div, prelude::*,
 };
 use language::Buffer;
-use settings::Settings;
 use text::{Bias, Point};
 use theme::ActiveTheme;
 use ui::prelude::*;
@@ -19,7 +18,6 @@ use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::{DismissDecision, ModalView};
 
 pub fn init(cx: &mut App) {
-    LineIndicatorFormat::register(cx);
     cx.observe_new(GoToLine::register).detach();
 }
 
@@ -770,11 +768,8 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let state = AppState::test(cx);
-            language::init(cx);
             crate::init(cx);
             editor::init(cx);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
             state
         })
     }

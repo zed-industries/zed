@@ -1901,10 +1901,8 @@ mod tests {
         let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
-            language::init(cx);
             editor::init(cx);
             workspace::init(app_state.clone(), cx);
-            Project::init_settings(cx);
         });
 
         let project = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
@@ -2077,10 +2075,8 @@ mod tests {
         let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
-            language::init(cx);
             editor::init(cx);
             workspace::init(app_state.clone(), cx);
-            Project::init_settings(cx);
         });
 
         app_state
@@ -2907,10 +2903,8 @@ mod tests {
         let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
-            language::init(cx);
             editor::init(cx);
             workspace::init(app_state.clone(), cx);
-            Project::init_settings(cx);
         });
 
         app_state

@@ -35,7 +35,6 @@ mod yarn;
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
 
 use crate::{
-    agent_server_store::AllAgentServersSettings,
     git_store::GitStore,
     lsp_store::{SymbolLocation, log_store::LogKind},
 };
@@ -101,7 +100,7 @@ use rpc::{
 };
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
-use settings::{InvalidSettingsError, Settings, SettingsLocation, SettingsStore};
+use settings::{InvalidSettingsError, RegisterSetting, Settings, SettingsLocation, SettingsStore};
 use smol::channel::Receiver;
 use snippet::Snippet;
 use snippet_provider::SnippetProvider;
@@ -996,7 +995,7 @@ pub enum PulledDiagnostics {
 /// Whether to disable all AI features in Zed.
 ///
 /// Default: false
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, RegisterSetting)]
 pub struct DisableAiSettings {
     pub disable_ai: bool,
 }
@@ -1010,16 +1009,8 @@ impl settings::Settings for DisableAiSettings {
 }
 
 impl Project {
-    pub fn init_settings(cx: &mut App) {
-        WorktreeSettings::register(cx);
-        ProjectSettings::register(cx);
-        DisableAiSettings::register(cx);
-        AllAgentServersSettings::register(cx);
-    }
-
     pub fn init(client: &Arc<Client>, cx: &mut App) {
         connection_manager::init(client.clone(), cx);
-        Self::init_settings(cx);
 
         let client: AnyProtoClient = client.clone().into();
         client.add_entity_message_handler(Self::handle_add_collaborator);
@@ -5759,7 +5750,6 @@ mod disable_ai_settings_tests {
     async fn test_disable_ai_settings_security(cx: &mut TestAppContext) {
         cx.update(|cx| {
             settings::init(cx);
-            Project::init_settings(cx);
 
             // Test 1: Default is false (AI enabled)
             assert!(

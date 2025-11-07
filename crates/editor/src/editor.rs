@@ -310,13 +310,7 @@ pub enum HideMouseCursorOrigin {
     MovementAction,
 }
 
-pub fn init_settings(cx: &mut App) {
-    EditorSettings::register(cx);
-}
-
 pub fn init(cx: &mut App) {
-    init_settings(cx);
-
     cx.set_global(GlobalBlameRenderer(Arc::new(())));
 
     workspace::register_project_item::<Editor>(cx);
@@ -3366,7 +3360,6 @@ impl Editor {
         other: Entity<Editor>,
         cx: &mut Context<Self>,
     ) -> gpui::Subscription {
-        assert_eq!(self.buffer(), other.read(cx).buffer());
         let other_selections = other.read(cx).selections.disjoint_anchors().to_vec();
         if !other_selections.is_empty() {
             self.selections

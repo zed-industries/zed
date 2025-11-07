@@ -3651,9 +3651,6 @@ pub mod test {
     pub fn register_settings(cx: &mut App) {
         settings::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
-        workspace::init_settings(cx);
-        project::Project::init_settings(cx);
-        language::init(cx);
         editor::init(cx);
         menu::init();
     }

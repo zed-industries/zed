@@ -217,7 +217,7 @@ impl LanguageModels {
                                 }
                                 _ => {
                                     log::error!(
-                                        "Failed to authenticate provider: {}: {err}",
+                                        "Failed to authenticate provider: {}: {err:#}",
                                         provider_name.0
                                     );
                                 }
@@ -1626,9 +1626,7 @@ mod internal_tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            Project::init_settings(cx);
-            agent_settings::init(cx);
-            language::init(cx);
+
             LanguageModelRegistry::test(cx);
         });
     }

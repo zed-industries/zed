@@ -3922,7 +3922,6 @@ fn assert_bracket_pairs(
 fn init_settings(cx: &mut App, f: fn(&mut AllLanguageSettingsContent)) {
     let settings_store = SettingsStore::test(cx);
     cx.set_global(settings_store);
-    crate::init(cx);
     cx.update_global::<SettingsStore, _>(|settings, cx| {
         settings.update_user_settings(cx, |content| f(&mut content.project.all_languages));
     });

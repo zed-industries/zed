@@ -108,7 +108,6 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
         ThemeRegistry::global(cx).load_bundled_themes();
     }
 
-    ThemeSettings::register(cx);
     FontFamilyCache::init_global(cx);
 
     let theme = GlobalTheme::configured_theme(cx);
