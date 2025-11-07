@@ -86,7 +86,7 @@ pub use syntax_map::{
     OwnedSyntaxLayer, SyntaxLayer, SyntaxMapMatches, ToTreeSitterPoint, TreeSitterOptions,
 };
 pub use text::{AnchorRangeExt, LineEnding};
-pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
+pub use tree_sitter::{Node, Parser, QueryCapture, Tree, TreeCursor};
 
 /// Initializes the `language` crate.
 ///
