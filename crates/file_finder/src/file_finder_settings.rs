@@ -2,12 +2,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct FileFinderSettings {
     pub file_icons: bool,
     pub modal_max_width: FileFinderWidth,
     pub skip_focus_for_active_in_search: bool,
     pub include_ignored: Option<bool>,
+    pub priorities: Vec<String>,
 }
 
 impl Settings for FileFinderSettings {
@@ -23,6 +24,7 @@ impl Settings for FileFinderSettings {
                 settings::IncludeIgnoredContent::Indexed => Some(false),
                 settings::IncludeIgnoredContent::Smart => None,
             },
+            priorities: file_finder.path_priorities.clone().unwrap_or_default(),
         }
     }
 }
