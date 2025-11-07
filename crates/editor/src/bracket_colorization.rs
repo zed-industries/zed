@@ -4,7 +4,7 @@ use itertools::Itertools;
 use language::language_settings;
 use multi_buffer::ToPoint;
 use text::{Bias, Point};
-use ui::ActiveTheme;
+use ui::{ActiveTheme, utils::ensure_minimum_contrast};
 
 struct RainbowBracketHighlight;
 
@@ -72,10 +72,12 @@ impl Editor {
 
         // todo! this is not necessary needed, e.g. after scrolling
         self.clear_highlights::<RainbowBracketHighlight>(cx);
+        let editor_background = cx.theme().colors().editor_background;
         for (depth, bracket_highlights) in bracket_matches {
+            let bracket_color = cx.theme().accents().color_for_index(depth as u32);
+            let adjusted_color = ensure_minimum_contrast(bracket_color, editor_background, 55.0);
             let style = HighlightStyle {
-                // todo! these colors lack contrast for this/are not actually good for that?
-                color: Some(cx.theme().accents().color_for_index(depth as u32)),
+                color: Some(adjusted_color),
                 ..HighlightStyle::default()
             };
 
