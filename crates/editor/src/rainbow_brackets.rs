@@ -594,7 +594,7 @@ mod tests {
 
     fn javascript_test_language() -> Language {
         javascript_language_with_rainbow_query(Cow::from(include_str!(
-            "../../../languages/src/javascript/brackets.scm"
+            "../../languages/src/javascript/brackets.scm"
         )))
     }
 
