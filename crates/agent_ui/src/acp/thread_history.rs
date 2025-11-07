@@ -673,7 +673,7 @@ impl EntryTimeFormat {
                 timezone,
                 time_format::TimestampFormat::EnhancedAbsolute,
             ),
-            EntryTimeFormat::TimeOnly => time_format::format_time(timestamp),
+            EntryTimeFormat::TimeOnly => time_format::format_time(timestamp.to_offset(timezone)),
         }
     }
 }
