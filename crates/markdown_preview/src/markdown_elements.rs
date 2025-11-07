@@ -222,6 +222,10 @@ impl MarkdownHighlight {
                     });
                 }
 
+                if style.oblique {
+                    highlight.font_style = Some(FontStyle::Oblique)
+                }
+
                 Some(highlight)
             }
 
@@ -243,6 +247,8 @@ pub struct MarkdownHighlightStyle {
     pub weight: FontWeight,
     /// Whether the text should be stylized as link.
     pub link: bool,
+    // Whether the text should be obliqued.
+    pub oblique: bool,
 }
 
 /// A parsed region in a Markdown document.
