@@ -796,4 +796,15 @@ mod test {
         cx.simulate_shared_keystrokes("@ b").await;
         cx.shared_state().await.assert_eq("aaaaaaabbbˇd");
     }
+
+    #[gpui::test]
+    async fn test_repeat_clear(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Check that, when repeat is preceded by something other than a number,
+        // the current operator is cleared, in order to prevent infinite loops.
+        cx.set_state("ˇhello world", Mode::Normal);
+        cx.simulate_keystrokes("d .");
+        assert_eq!(cx.active_operator(), None);
+    }
 }
