@@ -220,8 +220,8 @@ TBD: Centered layout related settings
     "background_coloring": "disabled" // disabled, indent_aware
   },
 
-  "sticky_headers" {
-    "enabled": false // Whether to show sticky headers at the top of the editor. Disabled by default.
+  "sticky_scroll" {
+    "enabled": false // Whether to stick scopes to the top of the editor. Disabled by default.
   }
 ```
 
