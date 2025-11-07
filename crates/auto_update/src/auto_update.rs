@@ -406,6 +406,7 @@ impl AutoUpdater {
         arch: &str,
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
+        set_status: impl Fn(&str, &mut AsyncApp) + Send + 'static,
         cx: &mut AsyncApp,
     ) -> Result<PathBuf> {
         let this = cx.update(|cx| {
@@ -415,6 +416,7 @@ impl AutoUpdater {
                 .context("auto-update not initialized")
         })??;
 
+        set_status("Fetching remote server release", cx);
         let release = Self::get_release(
             &this,
             "zed-remote-server",
@@ -439,6 +441,7 @@ impl AutoUpdater {
                 "downloading zed-remote-server {os} {arch} version {}",
                 release.version
             );
+            set_status("Downloading remote server", cx);
             download_remote_server_binary(&version_path, release, client, cx).await?;
         }
 

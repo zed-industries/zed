@@ -64,23 +64,23 @@ pub enum StageStatus {
 }
 
 impl StageStatus {
-    pub fn is_fully_staged(&self) -> bool {
+    pub const fn is_fully_staged(&self) -> bool {
         matches!(self, StageStatus::Staged)
     }
 
-    pub fn is_fully_unstaged(&self) -> bool {
+    pub const fn is_fully_unstaged(&self) -> bool {
         matches!(self, StageStatus::Unstaged)
     }
 
-    pub fn has_staged(&self) -> bool {
+    pub const fn has_staged(&self) -> bool {
         matches!(self, StageStatus::Staged | StageStatus::PartiallyStaged)
     }
 
-    pub fn has_unstaged(&self) -> bool {
+    pub const fn has_unstaged(&self) -> bool {
         matches!(self, StageStatus::Unstaged | StageStatus::PartiallyStaged)
     }
 
-    pub fn as_bool(self) -> Option<bool> {
+    pub const fn as_bool(self) -> Option<bool> {
         match self {
             StageStatus::Staged => Some(true),
             StageStatus::Unstaged => Some(false),

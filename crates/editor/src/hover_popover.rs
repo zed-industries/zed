@@ -1,7 +1,7 @@
 use crate::{
     ActiveDiagnostic, Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings,
     EditorSnapshot, GlobalDiagnosticRenderer, Hover,
-    display_map::{InlayOffset, ToDisplayPoint, invisibles::is_invisible},
+    display_map::{InlayOffset, ToDisplayPoint, is_invisible},
     hover_links::{InlayHighlight, RangeInEditor},
     movement::TextLayoutDetails,
     scroll::ScrollAmount,

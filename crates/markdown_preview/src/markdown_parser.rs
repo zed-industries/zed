@@ -533,6 +533,7 @@ impl<'a> MarkdownParser<'a> {
             source_range,
             header,
             body,
+            caption: None,
         }
     }
 
@@ -1232,11 +1233,17 @@ impl<'a> MarkdownParser<'a> {
     ) -> Option<ParsedMarkdownTable> {
         let mut header_rows = Vec::new();
         let mut body_rows = Vec::new();
+        let mut caption = None;
 
-        // node should be a thead or tbody element
+        // node should be a thead, tbody or caption element
         for node in node.children.borrow().iter() {
             match &node.data {
                 markup5ever_rcdom::NodeData::Element { name, .. } => {
+                    if local_name!("caption") == name.local {
+                        let mut paragraph = MarkdownParagraph::new();
+                        self.parse_paragraph(source_range.clone(), node, &mut paragraph);
+                        caption = Some(paragraph);
+                    }
                     if local_name!("thead") == name.local {
                         // node should be a tr element
                         for node in node.children.borrow().iter() {
@@ -1262,6 +1269,7 @@ impl<'a> MarkdownParser<'a> {
                 source_range,
                 body: body_rows,
                 header: header_rows,
+                caption,
             })
         } else {
             None
@@ -1919,6 +1927,7 @@ mod tests {
             ParsedMarkdown {
                 children: vec![ParsedMarkdownElement::Table(table(
                     0..366,
+                    None,
                     vec![row(vec![
                         column(
                             1,
@@ -1976,6 +1985,77 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_html_table_with_caption() {
+        let parsed = parse(
+            "<table>
+            <caption>My Table</caption>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>Chris</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>Dennis</td>
+            </tr>
+          </tbody>
+        </table>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![ParsedMarkdownElement::Table(table(
+                    0..280,
+                    Some(vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range: 0..280,
+                        contents: "My Table".into(),
+                        highlights: Default::default(),
+                        region_ranges: Default::default(),
+                        regions: Default::default()
+                    })]),
+                    vec![],
+                    vec![
+                        row(vec![
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("1", 0..280),
+                                ParsedMarkdownTableAlignment::None
+                            ),
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("Chris", 0..280),
+                                ParsedMarkdownTableAlignment::None
+                            )
+                        ]),
+                        row(vec![
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("2", 0..280),
+                                ParsedMarkdownTableAlignment::None
+                            ),
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("Dennis", 0..280),
+                                ParsedMarkdownTableAlignment::None
+                            )
+                        ]),
+                    ],
+                ))],
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
     async fn test_html_table_without_headings() {
         let parsed = parse(
             "<table>
@@ -1997,6 +2077,7 @@ mod tests {
             ParsedMarkdown {
                 children: vec![ParsedMarkdownElement::Table(table(
                     0..240,
+                    None,
                     vec![],
                     vec![
                         row(vec![
@@ -2056,6 +2137,7 @@ mod tests {
             ParsedMarkdown {
                 children: vec![ParsedMarkdownElement::Table(table(
                     0..150,
+                    None,
                     vec![row(vec![
                         column(
                             1,
@@ -2253,6 +2335,7 @@ Some other content
 
         let expected_table = table(
             0..48,
+            None,
             vec![row(vec![
                 column(
                     1,
@@ -2288,6 +2371,7 @@ Some other content
 
         let expected_table = table(
             0..95,
+            None,
             vec![row(vec![
                 column(
                     1,
@@ -2809,6 +2893,7 @@ fn main() {
 
     fn table(
         source_range: Range<usize>,
+        caption: Option<MarkdownParagraph>,
         header: Vec<ParsedMarkdownTableRow>,
         body: Vec<ParsedMarkdownTableRow>,
     ) -> ParsedMarkdownTable {
@@ -2816,6 +2901,7 @@ fn main() {
             source_range,
             header,
             body,
+            caption,
         }
     }
 

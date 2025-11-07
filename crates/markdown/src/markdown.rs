@@ -1289,7 +1289,7 @@ impl Element for MarkdownElement {
                 }
                 MarkdownEvent::SoftBreak => builder.push_text(" ", range.clone()),
                 MarkdownEvent::HardBreak => builder.push_text("\n", range.clone()),
-                _ => log::error!("unsupported markdown event {:?}", event),
+                _ => log::debug!("unsupported markdown event {:?}", event),
             }
         }
         if self.style.code_block_overflow_x_scroll {

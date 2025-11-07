@@ -265,9 +265,10 @@ impl minidumper::ServerHandler for CrashServer {
             3 => {
                 let gpu_specs: system_specs::GpuSpecs =
                     bincode::deserialize(&buffer).expect("gpu specs");
-                self.active_gpu
-                    .set(gpu_specs)
-                    .expect("already set active gpu");
+                // we ignore the case where it was already set because this message is sent
+                // on each new window. in theory all zed windows should be using the same
+                // GPU so this is fine.
+                self.active_gpu.set(gpu_specs).ok();
             }
             _ => {
                 panic!("invalid message kind");

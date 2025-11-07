@@ -4325,6 +4325,10 @@ impl Workspace {
         cx.emit(Event::PaneRemoved);
     }
 
+    pub fn panes_mut(&mut self) -> &mut [Entity<Pane>] {
+        &mut self.panes
+    }
+
     pub fn panes(&self) -> &[Entity<Pane>] {
         &self.panes
     }
