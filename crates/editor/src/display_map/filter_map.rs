@@ -337,26 +337,7 @@ impl FilterMap {
 
         let mut buffer_edits = buffer_edits.into_iter().peekable();
 
-        // We may need to extend/remove some of the buffer edits depending on
-        // how they line up with the hunks. Consider the following case:
-        //
-        // hunks: |--unchanged---|-----deleted----|-----added------|
-        // edits: <-1->     <-----------2----------->    <-3->  <---4--->
-        //
-        // Edit 2 overlaps the start of the added region, but doesn't cover the
-        // whole region. This means that the anchor for that region will be
-        // invalidated, but not all of the region will be covered by an edit,
-        // and so will not have its hunk info invalidated.
-        //
-        // To solve this, we need to extend edit 2 so that it covers all of the
-        // added region, while ensuring it doesn't overlap any other edits. For
-        // edit 3, we can just delete it entirely, since it's fully contained
-        // within the hunk. However, for edit 4, we "merge" edit 2 with it,
-        // extending edit 2 so that it covers all of edit 4. However, we need to
-        // be careful, since edit 4 might ALSO be a bad edit (i.e. it overlaps
-        // with a hunk in the same way edit 2 does). In this case, we need to
-        // repeat the process until we get a clean hunk end.
-        while let Some(mut buffer_edit) = buffer_edits.next() {
+        while let Some(buffer_edit) = buffer_edits.next() {
             dbg!(&buffer_edit);
 
             // Reuse any old transforms that strictly precede the start of the edit.

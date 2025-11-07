@@ -2457,7 +2457,6 @@ impl MultiBuffer {
             .cursor::<Dimensions<ExcerptOffset, usize>>(());
         let mut new_diff_transforms = SumTree::default();
         let mut old_expanded_hunks = HashSet::default();
-        let mut processed_invalidated_hunks = HashSet::default();
         let mut output_edits = Vec::new();
         let mut output_delta = 0_isize;
         let mut at_transform_boundary = true;
@@ -2506,7 +2505,6 @@ impl MultiBuffer {
                     &mut new_diff_transforms,
                     &mut end_of_current_insert,
                     &mut old_expanded_hunks,
-                    &mut processed_invalidated_hunks,
                     snapshot,
                     change_kind,
                 );
@@ -2523,8 +2521,10 @@ impl MultiBuffer {
                     additional_edit.old.end = last_overlapping_edit.old.end;
                     if additional_edit.new.end > last_overlapping_edit.new.end {
                         let overshoot = additional_edit.new.end - last_overlapping_edit.new.end;
-                        additional_edit.new.end = last_overlapping_edit.new.end;
+                        // additional_edit.new.end = last_overlapping_edit.new.end;
                         additional_edit.old.end += overshoot;
+                    } else {
+                        additional_edit.new.end = last_overlapping_edit.new.end;
                     }
                 }
                 excerpt_edits.push_front(additional_edit);
@@ -2614,7 +2614,6 @@ impl MultiBuffer {
         new_diff_transforms: &mut SumTree<DiffTransform>,
         end_of_current_insert: &mut Option<(TypedOffset<Excerpt>, DiffTransformHunkInfo)>,
         old_expanded_hunks: &mut HashSet<DiffTransformHunkInfo>,
-        processed_invalidated_hunks: &mut HashSet<DiffTransformHunkInfo>,
         snapshot: &MultiBufferSnapshot,
         change_kind: DiffChangeKind,
     ) -> (bool, Option<Edit<TypedOffset<Excerpt>>>) {
@@ -2699,17 +2698,14 @@ impl MultiBuffer {
 
                     if !hunk.buffer_range.start.is_valid(buffer) {
                         if old_expanded_hunks.contains(&hunk_info)
-                            && !processed_invalidated_hunks.contains(&hunk_info)
-                            && hunk_buffer_range.end > edit_buffer_end
+                            && hunk_excerpt_end > edit.new.end
                         {
-                            processed_invalidated_hunks.insert(hunk_info);
                             let overshoot = hunk_excerpt_end - edit.new.end;
                             additional_edit = Some(Edit {
                                 old: edit.old.end..edit.old.end + overshoot,
                                 new: edit.new.end..hunk_excerpt_end,
                             });
                         }
-
                         continue;
                     }
 
