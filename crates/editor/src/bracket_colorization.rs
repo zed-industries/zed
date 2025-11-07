@@ -1,38 +1,23 @@
 use crate::{Editor, RangeToAnchorExt};
-use gpui::{Context, HighlightStyle, Window};
+use gpui::{Context, HighlightStyle};
 use itertools::Itertools;
 use language::language_settings;
-use multi_buffer::ToPoint;
-use text::{Bias, Point};
 use ui::{ActiveTheme, utils::ensure_minimum_contrast};
 
 struct RainbowBracketHighlight;
 
 impl Editor {
-    pub(crate) fn colorize_brackets(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
+    pub(crate) fn colorize_brackets(&mut self, cx: &mut Context<Editor>) {
         if !self.mode.is_full() {
             return;
         }
 
-        let snapshot = self.snapshot(window, cx);
-        let multi_buffer_snapshot = snapshot.buffer_snapshot();
-
-        let multi_buffer_visible_start = snapshot
-            .scroll_anchor
-            .anchor
-            .to_point(multi_buffer_snapshot);
-
-        // todo! deduplicate?
-        let multi_buffer_visible_end = multi_buffer_snapshot.clip_point(
-            multi_buffer_visible_start
-                + Point::new(self.visible_line_count().unwrap_or(40.).ceil() as u32, 0),
-            Bias::Left,
-        );
-
-        let bracket_matches = multi_buffer_snapshot
-            .range_to_buffer_ranges(multi_buffer_visible_start..multi_buffer_visible_end)
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let bracket_matches = self
+            .visible_excerpts(cx)
             .into_iter()
-            .filter_map(|(buffer_snapshot, buffer_range, _)| {
+            .filter_map(|(excerpt_id, (buffer, _, buffer_range))| {
+                let buffer_snapshot = buffer.read(cx).snapshot();
                 let colorize_brackets = language_settings::language_settings(
                     buffer_snapshot.language().map(|language| language.name()),
                     buffer_snapshot.file(),
@@ -43,26 +28,30 @@ impl Editor {
                     return None;
                 }
 
-                let buffer_brackets =
-                    buffer_snapshot.bracket_ranges(buffer_range.start..buffer_range.end);
-
-                // todo! is there a good way to use the excerpt_id instead?
-                let mut excerpt = multi_buffer_snapshot.excerpt_containing(buffer_range.clone())?;
-
                 Some(
-                    buffer_brackets
+                    buffer_snapshot
+                        .bracket_ranges(buffer_range.start..buffer_range.end)
                         .into_iter()
                         .filter_map(|pair| {
-                            let buffer_range = pair.open_range.start..pair.close_range.end;
-                            if excerpt.contains_buffer_range(buffer_range) {
-                                Some((
-                                    pair.depth,
-                                    excerpt.map_range_from_buffer(pair.open_range),
-                                    excerpt.map_range_from_buffer(pair.close_range),
-                                ))
-                            } else {
-                                None
-                            }
+                            let buffer_open_range = buffer_snapshot
+                                .anchor_before(pair.open_range.start)
+                                ..buffer_snapshot.anchor_after(pair.open_range.end);
+                            let multi_buffer_open_range = multi_buffer_snapshot
+                                .anchor_in_excerpt(excerpt_id, buffer_open_range.start)?
+                                ..multi_buffer_snapshot
+                                    .anchor_in_excerpt(excerpt_id, buffer_open_range.end)?;
+                            let buffer_close_range = buffer_snapshot
+                                .anchor_before(pair.close_range.start)
+                                ..buffer_snapshot.anchor_after(pair.close_range.end);
+                            let multi_buffer_close_range = multi_buffer_snapshot
+                                .anchor_in_excerpt(excerpt_id, buffer_close_range.start)?
+                                ..multi_buffer_snapshot
+                                    .anchor_in_excerpt(excerpt_id, buffer_close_range.end)?;
+                            Some((
+                                pair.depth,
+                                multi_buffer_open_range,
+                                multi_buffer_close_range,
+                            ))
                         })
                         .collect::<Vec<_>>(),
                 )
