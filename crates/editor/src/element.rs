@@ -232,6 +232,8 @@ impl EditorElement {
         register_action(editor, window, Editor::blame_hover);
         register_action(editor, window, Editor::delete);
         register_action(editor, window, Editor::tab);
+        register_action(editor, window, Editor::next_snippet_tabstop);
+        register_action(editor, window, Editor::previous_snippet_tabstop);
         register_action(editor, window, Editor::backtab);
         register_action(editor, window, Editor::indent);
         register_action(editor, window, Editor::outdent);
@@ -8332,7 +8334,7 @@ impl LineWithInvisibles {
                     let fragment_end_x = fragment_start_x + shaped_line.width;
                     if x < fragment_end_x {
                         return Some(
-                            fragment_start_index + shaped_line.index_for_x(x - fragment_start_x)?,
+                            fragment_start_index + shaped_line.index_for_x(x - fragment_start_x),
                         );
                     }
                     fragment_start_x = fragment_end_x;

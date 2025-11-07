@@ -127,8 +127,10 @@ impl Project {
                         .language_for_name(&toolchain.language_name.0)
                         .await
                         .ok();
-                    let lister = language?.toolchain_lister();
-                    return Some(lister?.activation_script(&toolchain, shell_kind));
+                    let lister = language?.toolchain_lister()?;
+                    return cx
+                        .update(|cx| lister.activation_script(&toolchain, shell_kind, cx))
+                        .ok();
                 }
                 None
             })
@@ -319,7 +321,8 @@ impl Project {
                 .unwrap_or_else(get_default_system_shell),
             None => settings.shell.program(),
         };
-        let shell_kind = ShellKind::new(&shell, self.path_style(cx).is_windows());
+
+        let is_windows = self.path_style(cx).is_windows();
 
         // Prepare a task for resolving the environment
         let env_task =
@@ -327,6 +330,7 @@ impl Project {
 
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
+            let shell_kind = ShellKind::new(&shell, is_windows);
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
 
@@ -339,13 +343,16 @@ impl Project {
                         .language_for_name(&toolchain.language_name.0)
                         .await
                         .ok();
-                    let lister = language?.toolchain_lister();
-                    return Some(lister?.activation_script(&toolchain, shell_kind));
+                    let lister = language?.toolchain_lister()?;
+                    return cx
+                        .update(|cx| lister.activation_script(&toolchain, shell_kind, cx))
+                        .ok();
                 }
                 None
             })
             .await
             .unwrap_or_default();
+
             let builder = project
                 .update(cx, move |_, cx| {
                     let (shell, env) = {

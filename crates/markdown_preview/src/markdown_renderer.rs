@@ -561,12 +561,17 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
     }
 
     cx.with_common_p(div())
-        .grid()
-        .size_full()
-        .grid_cols(max_column_count as u16)
-        .border_1()
-        .border_color(cx.border_color)
-        .children(cells)
+        .when_some(parsed.caption.as_ref(), |this, caption| {
+            this.children(render_markdown_text(caption, cx))
+        })
+        .child(
+            div()
+                .grid()
+                .grid_cols(max_column_count as u16)
+                .border_1()
+                .border_color(cx.border_color)
+                .children(cells),
+        )
         .into_any()
 }
 
