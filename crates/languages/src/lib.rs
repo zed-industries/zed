@@ -14,7 +14,7 @@ pub use language::*;
 
 use crate::{
     json::JsonTaskProvider,
-    python::{BasedPyrightLspAdapter, RuffLspAdapter, PyreflyLspAdapter},
+    python::{BasedPyrightLspAdapter, RuffLspAdapter},
 };
 
 mod bash;

@@ -38,7 +38,7 @@ use std::{
     fmt::Write,
     path::{Path, PathBuf},
     sync::Arc,
-    ffi::OsString, // <-- needed for Pyrefly adapter
+    ffi::OsString,
 };
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
@@ -489,8 +489,9 @@ impl LspAdapter for PyrightLspAdapter {
 
             // If we have a detected toolchain, configure Pyright to use it
             if let Some(toolchain) = toolchain
-                && let Ok(env) =
-                    serde_json::from_value::<PythonToolchainData>(toolchain.as_json.clone())
+                && let Ok(env) = serde_json::from_value::<
+                    pet_core::python_environment::PythonEnvironment,
+                >(toolchain.as_json.clone())
             {
                 if !user_settings.is_object() {
                     user_settings = Value::Object(serde_json::Map::default());
@@ -498,7 +499,7 @@ impl LspAdapter for PyrightLspAdapter {
                 let object = user_settings.as_object_mut().unwrap();
 
                 let interpreter_path = toolchain.path.to_string();
-                if let Some(venv_dir) = &env.environment.prefix {
+                if let Some(venv_dir) = env.prefix {
                     // Set venvPath and venv at the root level
                     // This matches the format of a pyrightconfig.json file
                     if let Some(parent) = venv_dir.parent() {
@@ -556,75 +557,68 @@ impl PyreflyLspAdapter {
         Self
     }
 
-    /// Try a binary and confirm it runs by invoking `--version`.
-    async fn probe_binary(
+    async fn check_binary_exists(
         delegate: &dyn LspAdapterDelegate,
-        path: impl Into<OsString>,
-        args: &[&str],
-    ) -> Option<LanguageServerBinary> {
-        let path = PathBuf::from(path.into());
-        if delegate
-            .try_exec(LanguageServerBinary {
-                path: path.clone(),
-                arguments: args.iter().map(|s| (*s).into()).collect(),
-                env: None,
-            })
-            .await
-            .is_ok()
-        {
-            return Some(LanguageServerBinary {
-                path,
-                arguments: vec![OsString::from("lsp")],
-                env: None,
-            });
-        }
-        None
+        binary: &str,
+    ) -> Option<PathBuf> {
+        delegate.which(binary.as_ref()).await
     }
 
-    /// Prefer a directly-installed `pyrefly`, otherwise fall back to `uvx` or `pipx run`.
-    async fn find_launcher(
+    async fn find_ephemeral_launcher(
         delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        // 1) `pyrefly` on PATH (installed via pip/pipx/uv tool)
-        if let Some(bin) = Self::probe_binary(delegate, "pyrefly", &["--version"]).await {
-            let LanguageServerBinary { path, .. } = bin;
-            return Some(LanguageServerBinary {
-                path,
-                arguments: vec![OsString::from("lsp")],
+        if let Some(uv_path) = Self::check_binary_exists(delegate, "uv").await {
+            let test_binary = LanguageServerBinary {
+                path: uv_path.clone(),
+                arguments: vec![
+                    OsString::from("tool"),
+                    OsString::from("run"),
+                    OsString::from("pyrefly"),
+                    OsString::from("--version"),
+                ],
                 env: None,
-            });
+            };
+            if delegate.try_exec(test_binary).await.is_ok() {
+                return Some(LanguageServerBinary {
+                    path: uv_path,
+                    arguments: vec![
+                        OsString::from("tool"),
+                        OsString::from("run"),
+                        OsString::from("pyrefly"),
+                        OsString::from("lsp"),
+                    ],
+                    env: None,
+                });
+            }
         }
 
-        // 2) `uvx pyrefly` — ephemeral execution provided by uv
-        if let Some(bin) = Self::probe_binary(delegate, "uvx", &["pyrefly", "--version"]).await {
-            let LanguageServerBinary { path, .. } = bin;
-            return Some(LanguageServerBinary {
-                path,
-                arguments: vec![OsString::from("pyrefly"), OsString::from("lsp")],
-                env: None,
-            });
-        }
-
-        // 3) `pipx run pyrefly`
-        if let Some(bin) = Self::probe_binary(delegate, "pipx", &["run", "pyrefly", "--version"]).await {
-            let LanguageServerBinary { path, .. } = bin;
-            return Some(LanguageServerBinary {
-                path,
+        if let Some(pipx_path) = Self::check_binary_exists(delegate, "pipx").await {
+            let test_binary = LanguageServerBinary {
+                path: pipx_path.clone(),
                 arguments: vec![
                     OsString::from("run"),
                     OsString::from("pyrefly"),
-                    OsString::from("lsp"),
+                    OsString::from("--version"),
                 ],
                 env: None,
-            });
+            };
+            if delegate.try_exec(test_binary).await.is_ok() {
+                return Some(LanguageServerBinary {
+                    path: pipx_path,
+                    arguments: vec![
+                        OsString::from("run"),
+                        OsString::from("pyrefly"),
+                        OsString::from("lsp"),
+                    ],
+                    env: None,
+                });
+            }
         }
 
         None
     }
 
-    /// Build a `pythonExtension.activeEnvironment` payload consistent with Ty / Pyright handling.
     fn build_python_env_value(env: &PythonEnvironment) -> Value {
-        // executable URI
         let executable_uri = env
             .executable
             .as_ref()
@@ -632,14 +626,12 @@ impl PyreflyLspAdapter {
             .map(|u| u.to_string())
             .unwrap_or_default();
 
-        // sysPrefix
         let sys_prefix = env
             .prefix
             .as_ref()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
 
-        // environment name/type
         let environment_name = env
             .name
             .clone()
@@ -681,7 +673,6 @@ impl LspAdapter for PyreflyLspAdapter {
         Self::SERVER_NAME
     }
 
-    // Provide per-workspace LSP settings (same pattern as Ty / Pyright).
     async fn workspace_configuration(
         self: Arc<Self>,
         adapter: &Arc<dyn LspAdapterDelegate>,
@@ -695,8 +686,6 @@ impl LspAdapter for PyreflyLspAdapter {
             })?
             .unwrap_or_else(|| json!({}));
 
-        // If user settings were explicitly `null`, coerce to an empty object.
-        // Some configs (or migrations) leave `"settings": null`, which decodes to `Value::Null`.
         if !root.is_object() {
             root = json!({});
         }
@@ -704,8 +693,6 @@ impl LspAdapter for PyreflyLspAdapter {
         if let Some(toolchain) = toolchain.and_then(|tc| {
             serde_json::from_value::<PythonEnvironment>(tc.as_json).ok()
         }) {
-            // VSCode-style “pythonExtension.activeEnvironment” (what Ty sets),
-            // plus Pyrefly’s explicit interpreter settings.
             let interpreter = toolchain
                 .executable
                 .as_ref()
@@ -735,14 +722,18 @@ impl LspAdapter for PyreflyLspAdapter {
 impl LspInstaller for PyreflyLspAdapter {
     type BinaryVersion = String;
 
-    // Prefer a user/system install. If found, return it directly.
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
         _toolchain: Option<Toolchain>,
         _app: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
-        PyreflyLspAdapter::find_launcher(delegate).await
+        let pyrefly_path = delegate.which("pyrefly".as_ref()).await?;
+        Some(LanguageServerBinary {
+            path: pyrefly_path,
+            arguments: vec![OsString::from("lsp")],
+            env: None,
+        })
     }
 
     async fn fetch_latest_server_version(
@@ -751,7 +742,6 @@ impl LspInstaller for PyreflyLspAdapter {
         _include_prerelease: bool,
         _app: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
-        // No GitHub releases to fetch; we rely on PATH/uvx/pipx.
         Ok("system".to_string())
     }
 
@@ -761,13 +751,12 @@ impl LspInstaller for PyreflyLspAdapter {
         _container_dir: PathBuf,
         _delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        // We don't download Pyrefly. Ask the user to install it.
         Err(anyhow!(
             "Pyrefly not found. Install it with one of:\n\
              • uv tool install pyrefly\n\
-             • pipx install pyrefly\n\
              • pip install --user pyrefly\n\
-             Or ensure `uvx`/`pipx` are available."
+             • pipx install pyrefly\n\
+             Or ensure `uv` or `pipx` are available for on-demand execution."
         ))
     }
 
@@ -776,7 +765,7 @@ impl LspInstaller for PyreflyLspAdapter {
         _container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        PyreflyLspAdapter::find_launcher(delegate).await
+        Self::find_ephemeral_launcher(delegate).await
     }
 }
 
@@ -1453,11 +1442,11 @@ impl ToolchainLister for PythonToolchainProvider {
             Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {
                 if let Some(activation_scripts) = &toolchain.activation_scripts {
                     if let Some(activate_script_path) = activation_scripts.get(&shell) {
-                        let activate_keyword = shell.activate_keyword();
+                    let activate_keyword = shell.activate_keyword();
                         if let Some(quoted) =
                             shell.try_quote(&activate_script_path.to_string_lossy())
-                        {
-                            activation_script.push(format!("{activate_keyword} {quoted}"));
+                    {
+                        activation_script.push(format!("{activate_keyword} {quoted}"));
                         }
                     }
                 }
@@ -1613,7 +1602,7 @@ impl pet_core::os_environment::Environment for EnvironmentApi<'_> {
                     .or_else(|| self.get_env_var("Path".to_string()))
                     .unwrap_or_default(),
             )
-            .collect::<Vec<PathBuf>>();
+                    .collect::<Vec<PathBuf>>();
 
             log::trace!("Env PATH: {:?}", paths);
             for p in self.pet_env.get_know_global_search_locations() {
