@@ -807,4 +807,25 @@ mod test {
         cx.simulate_keystrokes("d .");
         assert_eq!(cx.active_operator(), None);
     }
+
+    #[gpui::test]
+    async fn test_repeat_clear_repeat(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "ˇthe quick brown
+            fox jumps over
+            the lazy dog"
+        })
+        .await;
+        cx.simulate_shared_keystrokes("d d").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇfox jumps over
+            the lazy dog"
+        });
+        cx.simulate_shared_keystrokes("d . .").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇthe lazy dog"
+        });
+    }
 }
