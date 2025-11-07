@@ -7,6 +7,7 @@ use menu::{Confirm, SelectNext, SelectPrevious};
 use pretty_assertions::{assert_eq, assert_matches};
 use project::{FS_WATCH_LATENCY, RemoveOptions};
 use serde_json::json;
+use settings::SettingsStore;
 use util::{path, rel_path::rel_path};
 use workspace::{AppState, CloseActiveItem, OpenOptions, ToggleFileFinder, Workspace, open_paths};
 
@@ -490,7 +491,7 @@ async fn test_row_column_numbers_query_inside_file(cx: &mut TestAppContext) {
     cx.executor().advance_clock(Duration::from_secs(2));
 
     editor.update(cx, |editor, cx| {
-            let all_selections = editor.selections.all_adjusted(cx);
+            let all_selections = editor.selections.all_adjusted(&editor.display_snapshot(cx));
             assert_eq!(
                 all_selections.len(),
                 1,
@@ -565,7 +566,7 @@ async fn test_row_column_numbers_query_outside_file(cx: &mut TestAppContext) {
     cx.executor().advance_clock(Duration::from_secs(2));
 
     editor.update(cx, |editor, cx| {
-            let all_selections = editor.selections.all_adjusted(cx);
+            let all_selections = editor.selections.all_adjusted(&editor.display_snapshot(cx));
             assert_eq!(
                 all_selections.len(),
                 1,
@@ -654,6 +655,147 @@ async fn test_matching_cancellation(cx: &mut TestAppContext) {
                 .search_matches_only()
                 .as_slice(),
             &matches[0..4]
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_ignored_root_with_file_inclusions(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_inclusions = Some(vec![
+                    "height_demo/**/hi_bonjour".to_string(),
+                    "**/height_1".to_string(),
+                ]);
+            });
+        })
+    });
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/ancestor",
+            json!({
+                ".gitignore": "ignored-root",
+                "ignored-root": {
+                    "happiness": "",
+                    "height": "",
+                    "hi": "",
+                    "hiccup": "",
+                },
+                "tracked-root": {
+                    ".gitignore": "height*",
+                    "happiness": "",
+                    "height": "",
+                    "heights": {
+                        "height_1": "",
+                        "height_2": "",
+                    },
+                    "height_demo": {
+                        "test_1": {
+                            "hi_bonjour": "hi_bonjour",
+                            "hi": "hello",
+                        },
+                        "hihi": "bye",
+                        "test_2": {
+                            "hoi": "nl"
+                        }
+                    },
+                    "height_include": {
+                        "height_1_include": "",
+                        "height_2_include": "",
+                    },
+                    "hi": "",
+                    "hiccup": "",
+                },
+            }),
+        )
+        .await;
+
+    let project = Project::test(
+        app_state.fs.clone(),
+        [
+            Path::new(path!("/ancestor/tracked-root")),
+            Path::new(path!("/ancestor/ignored-root")),
+        ],
+        cx,
+    )
+    .await;
+    let (picker, _workspace, cx) = build_find_picker(project, cx);
+
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .spawn_search(test_path_position("hi"), window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker);
+        assert_eq!(matches.history.len(), 0);
+        assert_eq!(
+            matches.search,
+            vec![
+                rel_path("ignored-root/hi").into(),
+                rel_path("tracked-root/hi").into(),
+                rel_path("ignored-root/hiccup").into(),
+                rel_path("tracked-root/hiccup").into(),
+                rel_path("tracked-root/height_demo/test_1/hi_bonjour").into(),
+                rel_path("ignored-root/height").into(),
+                rel_path("tracked-root/heights/height_1").into(),
+                rel_path("ignored-root/happiness").into(),
+                rel_path("tracked-root/happiness").into(),
+            ],
+            "All ignored files that were indexed are found for default ignored mode"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_ignored_root_with_file_inclusions_repro(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_inclusions = Some(vec!["**/.env".to_string()]);
+            });
+        })
+    });
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/src",
+            json!({
+                ".gitignore": "node_modules",
+                "node_modules": {
+                    "package.json": "// package.json",
+                    ".env": "BAR=FOO"
+                },
+                ".env": "FOO=BAR"
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [Path::new(path!("/src"))], cx).await;
+    let (picker, _workspace, cx) = build_find_picker(project, cx);
+
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .spawn_search(test_path_position("json"), window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker);
+        assert_eq!(matches.history.len(), 0);
+        assert_eq!(
+            matches.search,
+            vec![],
+            "All ignored files that were indexed are found for default ignored mode"
         );
     });
 }
@@ -2500,6 +2642,147 @@ async fn test_search_results_refreshed_on_adding_and_removing_worktrees(
         assert_eq!(finder.delegate.matches.len(), 2);
         assert_match_at_position(finder, 0, "main.rs");
         assert_match_at_position(finder, 1, "rs");
+    });
+}
+
+#[gpui::test]
+async fn test_history_items_uniqueness_for_multiple_worktree_open_all_files(
+    cx: &mut TestAppContext,
+) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/repo1"),
+            json!({
+                "package.json": r#"{"name": "repo1"}"#,
+                "src": {
+                    "index.js": "// Repo 1 index",
+                }
+            }),
+        )
+        .await;
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/repo2"),
+            json!({
+                "package.json": r#"{"name": "repo2"}"#,
+                "src": {
+                    "index.js": "// Repo 2 index",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(
+        app_state.fs.clone(),
+        [path!("/repo1").as_ref(), path!("/repo2").as_ref()],
+        cx,
+    )
+    .await;
+
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let (worktree_id1, worktree_id2) = cx.read(|cx| {
+        let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
+        (worktrees[0].read(cx).id(), worktrees[1].read(cx).id())
+    });
+
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                ProjectPath {
+                    worktree_id: worktree_id1,
+                    path: rel_path("package.json").into(),
+                },
+                None,
+                true,
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    cx.dispatch_action(workspace::CloseActiveItem {
+        save_intent: None,
+        close_pinned: false,
+    });
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                ProjectPath {
+                    worktree_id: worktree_id2,
+                    path: rel_path("package.json").into(),
+                },
+                None,
+                true,
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    cx.dispatch_action(workspace::CloseActiveItem {
+        save_intent: None,
+        close_pinned: false,
+    });
+
+    let picker = open_file_picker(&workspace, cx);
+    cx.simulate_input("package.json");
+
+    picker.update(cx, |finder, _| {
+        let matches = &finder.delegate.matches.matches;
+
+        assert_eq!(
+            matches.len(),
+            2,
+            "Expected 1 history match + 1 search matches, but got {} matches: {:?}",
+            matches.len(),
+            matches
+        );
+
+        assert_matches!(matches[0], Match::History { .. });
+
+        let search_matches = collect_search_matches(finder);
+        assert_eq!(
+            search_matches.history.len(),
+            2,
+            "Should have exactly 2 history match"
+        );
+        assert_eq!(
+            search_matches.search.len(),
+            0,
+            "Should have exactly 0 search match (because we already opened the 2 package.json)"
+        );
+
+        if let Match::History { path, panel_match } = &matches[0] {
+            assert_eq!(path.project.worktree_id, worktree_id2);
+            assert_eq!(path.project.path.as_ref(), rel_path("package.json"));
+            let panel_match = panel_match.as_ref().unwrap();
+            assert_eq!(panel_match.0.path_prefix, rel_path("repo2").into());
+            assert_eq!(panel_match.0.path, rel_path("package.json").into());
+            assert_eq!(
+                panel_match.0.positions,
+                vec![6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+            );
+        }
+
+        if let Match::History { path, panel_match } = &matches[1] {
+            assert_eq!(path.project.worktree_id, worktree_id1);
+            assert_eq!(path.project.path.as_ref(), rel_path("package.json"));
+            let panel_match = panel_match.as_ref().unwrap();
+            assert_eq!(panel_match.0.path_prefix, rel_path("repo1").into());
+            assert_eq!(panel_match.0.path, rel_path("package.json").into());
+            assert_eq!(
+                panel_match.0.positions,
+                vec![6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+            );
+        }
     });
 }
 

@@ -2,10 +2,7 @@ use editor::EditorSettings;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{
-    DockSide, ProjectPanelEntrySpacing, Settings, SettingsContent, ShowDiagnostics,
-    ShowIndentGuides,
-};
+use settings::{DockSide, ProjectPanelEntrySpacing, Settings, ShowDiagnostics, ShowIndentGuides};
 use ui::{
     px,
     scrollbars::{ScrollbarVisibility, ShowScrollbar},
@@ -32,6 +29,7 @@ pub struct ProjectPanelSettings {
     pub hide_root: bool,
     pub hide_hidden: bool,
     pub drag_and_drop: bool,
+    pub open_file_on_paste: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -82,41 +80,7 @@ impl Settings for ProjectPanelSettings {
             hide_root: project_panel.hide_root.unwrap(),
             hide_hidden: project_panel.hide_hidden.unwrap(),
             drag_and_drop: project_panel.drag_and_drop.unwrap(),
-        }
-    }
-
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
-        if let Some(hide_gitignore) = vscode.read_bool("explorer.excludeGitIgnore") {
-            current.project_panel.get_or_insert_default().hide_gitignore = Some(hide_gitignore);
-        }
-        if let Some(auto_reveal) = vscode.read_bool("explorer.autoReveal") {
-            current
-                .project_panel
-                .get_or_insert_default()
-                .auto_reveal_entries = Some(auto_reveal);
-        }
-        if let Some(compact_folders) = vscode.read_bool("explorer.compactFolders") {
-            current.project_panel.get_or_insert_default().auto_fold_dirs = Some(compact_folders);
-        }
-
-        if Some(false) == vscode.read_bool("git.decorations.enabled") {
-            current.project_panel.get_or_insert_default().git_status = Some(false);
-        }
-        if Some(false) == vscode.read_bool("problems.decorations.enabled") {
-            current
-                .project_panel
-                .get_or_insert_default()
-                .show_diagnostics = Some(ShowDiagnostics::Off);
-        }
-        if let (Some(false), Some(false)) = (
-            vscode.read_bool("explorer.decorations.badges"),
-            vscode.read_bool("explorer.decorations.colors"),
-        ) {
-            current.project_panel.get_or_insert_default().git_status = Some(false);
-            current
-                .project_panel
-                .get_or_insert_default()
-                .show_diagnostics = Some(ShowDiagnostics::Off);
+            open_file_on_paste: project_panel.open_file_on_paste.unwrap(),
         }
     }
 }

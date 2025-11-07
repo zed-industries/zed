@@ -222,7 +222,7 @@ impl LspAdapter for GoLspAdapter {
             Some((lsp::CompletionItemKind::MODULE, detail)) => {
                 let text = format!("{label} {detail}");
                 let source = Rope::from(format!("import {text}").as_str());
-                let runs = language.highlight_text(&source, 7..7 + text.len());
+                let runs = language.highlight_text(&source, 7..7 + text[name_offset..].len());
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -242,7 +242,7 @@ impl LspAdapter for GoLspAdapter {
                     Rope::from(format!("var {} {}", &text[name_offset..], detail).as_str());
                 let runs = adjust_runs(
                     name_offset,
-                    language.highlight_text(&source, 4..4 + text.len()),
+                    language.highlight_text(&source, 4..4 + text[name_offset..].len()),
                 );
                 let filter_range = completion
                     .filter_text
@@ -259,7 +259,7 @@ impl LspAdapter for GoLspAdapter {
                 let source = Rope::from(format!("type {}", &text[name_offset..]).as_str());
                 let runs = adjust_runs(
                     name_offset,
-                    language.highlight_text(&source, 5..5 + text.len()),
+                    language.highlight_text(&source, 5..5 + text[name_offset..].len()),
                 );
                 let filter_range = completion
                     .filter_text
@@ -276,7 +276,7 @@ impl LspAdapter for GoLspAdapter {
                 let source = Rope::from(format!("type {}", &text[name_offset..]).as_str());
                 let runs = adjust_runs(
                     name_offset,
-                    language.highlight_text(&source, 5..5 + text.len()),
+                    language.highlight_text(&source, 5..5 + text[name_offset..].len()),
                 );
                 let filter_range = completion
                     .filter_text
@@ -294,7 +294,7 @@ impl LspAdapter for GoLspAdapter {
                     Rope::from(format!("type T struct {{ {} }}", &text[name_offset..]).as_str());
                 let runs = adjust_runs(
                     name_offset,
-                    language.highlight_text(&source, 16..16 + text.len()),
+                    language.highlight_text(&source, 16..16 + text[name_offset..].len()),
                 );
                 let filter_range = completion
                     .filter_text
@@ -312,7 +312,7 @@ impl LspAdapter for GoLspAdapter {
                     let source = Rope::from(format!("func {} {{}}", &text[name_offset..]).as_str());
                     let runs = adjust_runs(
                         name_offset,
-                        language.highlight_text(&source, 5..5 + text.len()),
+                        language.highlight_text(&source, 5..5 + text[name_offset..].len()),
                     );
                     let filter_range = completion
                         .filter_text

@@ -306,7 +306,7 @@ pub async fn download_adapter_from_github(
     anyhow::ensure!(
         response.status().is_success(),
         "download failed with status {}",
-        response.status().to_string()
+        response.status()
     );
 
     delegate.output_to_console("Download complete".to_owned());
@@ -356,6 +356,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
+        user_env: Option<HashMap<String, String>>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary>;
 
@@ -455,6 +456,7 @@ impl DebugAdapter for FakeAdapter {
         task_definition: &DebugTaskDefinition,
         _: Option<PathBuf>,
         _: Option<Vec<String>>,
+        _: Option<HashMap<String, String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let connection = task_definition

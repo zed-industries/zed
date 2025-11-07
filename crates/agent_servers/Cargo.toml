@@ -38,6 +38,7 @@ language_model.workspace = true
 language_models.workspace = true
 log.workspace = true
 project.workspace = true
+release_channel.workspace = true
 reqwest_client = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
@@ -51,7 +52,6 @@ terminal.workspace = true
 uuid.workspace = true
 util.workspace = true
 watch.workspace = true
-workspace-hack.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

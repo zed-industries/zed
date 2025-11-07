@@ -288,7 +288,7 @@ pub fn snippets_dir() -> &'static PathBuf {
 /// Returns the path to the contexts directory.
 ///
 /// This is where the saved contexts from the Assistant are stored.
-pub fn contexts_dir() -> &'static PathBuf {
+pub fn text_threads_dir() -> &'static PathBuf {
     static CONTEXTS_DIR: OnceLock<PathBuf> = OnceLock::new();
     CONTEXTS_DIR.get_or_init(|| {
         if cfg!(target_os = "macos") {
@@ -370,12 +370,12 @@ pub fn debug_adapters_dir() -> &'static PathBuf {
     DEBUG_ADAPTERS_DIR.get_or_init(|| data_dir().join("debug_adapters"))
 }
 
-/// Returns the path to the agent servers directory
+/// Returns the path to the external agents directory
 ///
 /// This is where agent servers are downloaded to
-pub fn agent_servers_dir() -> &'static PathBuf {
-    static AGENT_SERVERS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    AGENT_SERVERS_DIR.get_or_init(|| data_dir().join("agent_servers"))
+pub fn external_agents_dir() -> &'static PathBuf {
+    static EXTERNAL_AGENTS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    EXTERNAL_AGENTS_DIR.get_or_init(|| data_dir().join("external_agents"))
 }
 
 /// Returns the path to the Copilot directory.

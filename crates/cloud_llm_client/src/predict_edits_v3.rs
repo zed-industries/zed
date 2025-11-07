@@ -1,6 +1,7 @@
 use chrono::Duration;
 use serde::{Deserialize, Serialize};
 use std::{
+    fmt::{Display, Write as _},
     ops::{Add, Range, Sub},
     path::{Path, PathBuf},
     sync::Arc,
@@ -10,7 +11,14 @@ use uuid::Uuid;
 
 use crate::PredictEditsGitInfo;
 
-// TODO: snippet ordering within file / relative to excerpt
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanContextRetrievalRequest {
+    pub excerpt: String,
+    pub excerpt_path: Arc<Path>,
+    pub excerpt_line_range: Range<Line>,
+    pub cursor_file_max_row: Line,
+    pub events: Vec<Event>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictEditsRequest {
@@ -22,7 +30,11 @@ pub struct PredictEditsRequest {
     pub cursor_point: Point,
     /// Within `signatures`
     pub excerpt_parent: Option<usize>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub included_files: Vec<IncludedFile>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub signatures: Vec<Signature>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub referenced_declarations: Vec<ReferencedDeclaration>,
     pub events: Vec<Event>,
     #[serde(default)]
@@ -43,17 +55,30 @@ pub struct PredictEditsRequest {
     pub prompt_format: PromptFormat,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IncludedFile {
+    pub path: Arc<Path>,
+    pub max_row: Line,
+    pub excerpts: Vec<Excerpt>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Excerpt {
+    pub start_line: Line,
+    pub text: Arc<str>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum PromptFormat {
     MarkedExcerpt,
     LabeledSections,
-    NumberedLines,
+    NumLinesUniDiff,
     /// Prompt format intended for use via zeta_cli
     OnlySnippets,
 }
 
 impl PromptFormat {
-    pub const DEFAULT: PromptFormat = PromptFormat::NumberedLines;
+    pub const DEFAULT: PromptFormat = PromptFormat::NumLinesUniDiff;
 }
 
 impl Default for PromptFormat {
@@ -74,7 +99,7 @@ impl std::fmt::Display for PromptFormat {
             PromptFormat::MarkedExcerpt => write!(f, "Marked Excerpt"),
             PromptFormat::LabeledSections => write!(f, "Labeled Sections"),
             PromptFormat::OnlySnippets => write!(f, "Only Snippets"),
-            PromptFormat::NumberedLines => write!(f, "Numbered Lines"),
+            PromptFormat::NumLinesUniDiff => write!(f, "Numbered Lines / Unified Diff"),
         }
     }
 }
@@ -89,6 +114,56 @@ pub enum Event {
         diff: String,
         predicted: bool,
     },
+}
+
+impl Display for Event {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Event::BufferChange {
+                path,
+                old_path,
+                diff,
+                predicted,
+            } => {
+                let new_path = path.as_deref().unwrap_or(Path::new("untitled"));
+                let old_path = old_path.as_deref().unwrap_or(new_path);
+
+                if *predicted {
+                    write!(
+                        f,
+                        "// User accepted prediction:\n--- a/{}\n+++ b/{}\n{diff}",
+                        DiffPathFmt(old_path),
+                        DiffPathFmt(new_path)
+                    )
+                } else {
+                    write!(
+                        f,
+                        "--- a/{}\n+++ b/{}\n{diff}",
+                        DiffPathFmt(old_path),
+                        DiffPathFmt(new_path)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/// always format the Path as a unix path with `/` as the path sep in Diffs
+pub struct DiffPathFmt<'a>(pub &'a Path);
+
+impl<'a> std::fmt::Display for DiffPathFmt<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut is_first = true;
+        for component in self.0.components() {
+            if !is_first {
+                f.write_char('/')?;
+            } else {
+                is_first = false;
+            }
+            write!(f, "{}", component.as_os_str().display())?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -202,5 +277,84 @@ impl Sub for Line {
 
     fn sub(self, rhs: Self) -> Self::Output {
         Self(self.0 - rhs.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use indoc::indoc;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_event_display() {
+        let ev = Event::BufferChange {
+            path: None,
+            old_path: None,
+            diff: "@@ -1,2 +1,2 @@\n-a\n-b\n".into(),
+            predicted: false,
+        };
+        assert_eq!(
+            ev.to_string(),
+            indoc! {"
+                --- a/untitled
+                +++ b/untitled
+                @@ -1,2 +1,2 @@
+                -a
+                -b
+            "}
+        );
+
+        let ev = Event::BufferChange {
+            path: Some(PathBuf::from("foo/bar.txt")),
+            old_path: Some(PathBuf::from("foo/bar.txt")),
+            diff: "@@ -1,2 +1,2 @@\n-a\n-b\n".into(),
+            predicted: false,
+        };
+        assert_eq!(
+            ev.to_string(),
+            indoc! {"
+                --- a/foo/bar.txt
+                +++ b/foo/bar.txt
+                @@ -1,2 +1,2 @@
+                -a
+                -b
+            "}
+        );
+
+        let ev = Event::BufferChange {
+            path: Some(PathBuf::from("abc.txt")),
+            old_path: Some(PathBuf::from("123.txt")),
+            diff: "@@ -1,2 +1,2 @@\n-a\n-b\n".into(),
+            predicted: false,
+        };
+        assert_eq!(
+            ev.to_string(),
+            indoc! {"
+                --- a/123.txt
+                +++ b/abc.txt
+                @@ -1,2 +1,2 @@
+                -a
+                -b
+            "}
+        );
+
+        let ev = Event::BufferChange {
+            path: Some(PathBuf::from("abc.txt")),
+            old_path: Some(PathBuf::from("123.txt")),
+            diff: "@@ -1,2 +1,2 @@\n-a\n-b\n".into(),
+            predicted: true,
+        };
+        assert_eq!(
+            ev.to_string(),
+            indoc! {"
+                // User accepted prediction:
+                --- a/123.txt
+                +++ b/abc.txt
+                @@ -1,2 +1,2 @@
+                -a
+                -b
+            "}
+        );
     }
 }

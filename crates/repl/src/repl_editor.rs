@@ -85,7 +85,11 @@ pub fn run(
 
     let editor = editor.upgrade().context("editor was dropped")?;
     let selected_range = editor
-        .update(cx, |editor, cx| editor.selections.newest_adjusted(cx))
+        .update(cx, |editor, cx| {
+            editor
+                .selections
+                .newest_adjusted(&editor.display_snapshot(cx))
+        })
         .range();
     let multibuffer = editor.read(cx).buffer().clone();
     let Some(buffer) = multibuffer.read(cx).as_singleton() else {
@@ -473,9 +477,12 @@ fn language_supported(language: &Arc<Language>, cx: &mut App) -> bool {
 fn get_language(editor: WeakEntity<Editor>, cx: &mut App) -> Option<Arc<Language>> {
     editor
         .update(cx, |editor, cx| {
-            let selection = editor.selections.newest::<usize>(cx);
-            let buffer = editor.buffer().read(cx).snapshot(cx);
-            buffer.language_at(selection.head()).cloned()
+            let display_snapshot = editor.display_snapshot(cx);
+            let selection = editor.selections.newest::<usize>(&display_snapshot);
+            display_snapshot
+                .buffer_snapshot()
+                .language_at(selection.head())
+                .cloned()
         })
         .ok()
         .flatten()

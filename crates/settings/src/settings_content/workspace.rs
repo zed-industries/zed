@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 
-use crate::{DockPosition, DockSide, ScrollbarSettingsContent, ShowIndentGuides};
+use crate::{
+    CenteredPaddingSettings, DelayMs, DockPosition, DockSide, InactiveOpacity,
+    ScrollbarSettingsContent, ShowIndentGuides, serialize_optional_f32_with_two_decimal_places,
+};
 
 #[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -56,6 +59,7 @@ pub struct WorkspaceSettingsContent {
     /// Given as a fraction that will be multiplied by the smaller dimension of the workspace.
     ///
     /// Default: `0.2` (20% of the smaller dimension of the workspace)
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub drop_target_size: Option<f32>,
     /// Whether to close the window when using 'close active item' on a workspace with no tabs
     ///
@@ -249,6 +253,7 @@ pub struct ActivePaneModifiers {
     /// The border is drawn inset.
     ///
     /// Default: `0.0`
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub border_size: Option<f32>,
     /// Opacity of inactive panels.
     /// When set to 1.0, the inactive panes have the same opacity as the active one.
@@ -256,7 +261,8 @@ pub struct ActivePaneModifiers {
     /// Values are clamped to the [0.0, 1.0] range.
     ///
     /// Default: `1.0`
-    pub inactive_opacity: Option<f32>,
+    #[schemars(range(min = 0.0, max = 1.0))]
+    pub inactive_opacity: Option<InactiveOpacity>,
 }
 
 #[derive(
@@ -377,15 +383,31 @@ pub struct StatusBarSettingsContent {
     ///
     /// Default: true
     pub cursor_position_button: Option<bool>,
+    /// Whether to show active line endings button in the status bar.
+    ///
+    /// Default: false
+    pub line_endings_button: Option<bool>,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(rename_all = "snake_case")]
 pub enum AutosaveSetting {
     /// Disable autosave.
     Off,
     /// Save after inactivity period of `milliseconds`.
-    AfterDelay { milliseconds: u64 },
+    AfterDelay { milliseconds: DelayMs },
     /// Autosave when focus changes.
     OnFocusChange,
     /// Autosave when the active window changes.
@@ -441,20 +463,20 @@ pub enum PaneSplitDirectionVertical {
     Right,
 }
 
-#[skip_serializing_none]
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
+#[skip_serializing_none]
 pub struct CenteredLayoutSettings {
     /// The relative width of the left padding of the central pane from the
     /// workspace when the centered layout is used.
     ///
     /// Default: 0.2
-    pub left_padding: Option<f32>,
+    pub left_padding: Option<CenteredPaddingSettings>,
     // The relative width of the right padding of the central pane from the
     // workspace when the centered layout is used.
     ///
     /// Default: 0.2
-    pub right_padding: Option<f32>,
+    pub right_padding: Option<CenteredPaddingSettings>,
 }
 
 #[derive(
@@ -502,6 +524,7 @@ pub struct ProjectPanelSettingsContent {
     /// Customize default width (in pixels) taken by project panel
     ///
     /// Default: 240
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
     /// The position of project panel
     ///
@@ -526,6 +549,7 @@ pub struct ProjectPanelSettingsContent {
     /// Amount of indentation (in pixels) for nested items.
     ///
     /// Default: 20
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub indent_size: Option<f32>,
     /// Whether to reveal it in the project panel automatically,
     /// when a corresponding project entry becomes active.
@@ -566,6 +590,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub drag_and_drop: Option<bool>,
+    /// Whether to automatically open files when pasting them in the project panel.
+    ///
+    /// Default: true
+    pub open_file_on_paste: Option<bool>,
 }
 
 #[derive(

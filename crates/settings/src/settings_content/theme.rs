@@ -9,6 +9,8 @@ use std::{fmt::Display, sync::Arc};
 
 use serde_with::skip_serializing_none;
 
+use crate::serialize_f32_with_two_decimal_places;
+
 /// Settings for rendering text in UI and text buffers.
 
 #[skip_serializing_none]
@@ -16,6 +18,7 @@ use serde_with::skip_serializing_none;
 pub struct ThemeSettingsContent {
     /// The default font size for text in the UI.
     #[serde(default)]
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub ui_font_size: Option<f32>,
     /// The name of a font to use for rendering in the UI.
     #[serde(default)]
@@ -42,6 +45,7 @@ pub struct ThemeSettingsContent {
     pub buffer_font_fallbacks: Option<Vec<FontFamilyName>>,
     /// The default font size for rendering in text buffers.
     #[serde(default)]
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub buffer_font_size: Option<f32>,
     /// The weight of the editor font in CSS units from 100 to 900.
     #[serde(default)]
@@ -56,9 +60,11 @@ pub struct ThemeSettingsContent {
     pub buffer_font_features: Option<FontFeatures>,
     /// The font size for agent responses in the agent panel. Falls back to the UI font size if unset.
     #[serde(default)]
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub agent_ui_font_size: Option<f32>,
     /// The font size for user messages in the agent panel.
     #[serde(default)]
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub agent_buffer_font_size: Option<f32>,
     /// The name of the Zed theme to use.
     #[serde(default)]
@@ -104,11 +110,17 @@ pub struct ThemeSettingsContent {
     derive_more::FromStr,
 )]
 #[serde(transparent)]
-pub struct CodeFade(pub f32);
+pub struct CodeFade(#[serde(serialize_with = "serialize_f32_with_two_decimal_places")] pub f32);
 
 impl Display for CodeFade {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:.2}", self.0)
+    }
+}
+
+impl From<f32> for CodeFade {
+    fn from(x: f32) -> Self {
+        Self(x)
     }
 }
 
@@ -125,7 +137,18 @@ fn default_buffer_font_weight() -> Option<FontWeight> {
 }
 
 /// Represents the selection of a theme, which can be either static or dynamic.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(untagged)]
 pub enum ThemeSelection {
     /// A static theme selection, represented by a single theme name.
@@ -143,7 +166,18 @@ pub enum ThemeSelection {
 }
 
 /// Represents the selection of an icon theme, which can be either static or dynamic.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(untagged)]
 pub enum IconThemeSelection {
     /// A static icon theme selection, represented by a single icon theme name.
@@ -167,7 +201,18 @@ pub enum IconThemeSelection {
 ///
 /// `System` will select the theme based on the system's appearance.
 #[derive(
-    Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, MergeFrom,
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeMode {
@@ -262,7 +307,19 @@ impl From<FontFamilyName> for String {
 }
 
 /// The buffer's line height.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Default)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    JsonSchema,
+    MergeFrom,
+    Default,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(rename_all = "snake_case")]
 pub enum BufferLineHeight {
     /// A less dense line height.
@@ -838,6 +895,35 @@ pub struct ThemeColorsContent {
     /// Deprecated in favor of `version_control_conflict_marker_theirs`.
     #[deprecated]
     pub version_control_conflict_theirs_background: Option<String>,
+
+    /// Background color for Vim Normal mode indicator.
+    #[serde(rename = "vim.normal.background")]
+    pub vim_normal_background: Option<String>,
+    /// Background color for Vim Insert mode indicator.
+    #[serde(rename = "vim.insert.background")]
+    pub vim_insert_background: Option<String>,
+    /// Background color for Vim Replace mode indicator.
+    #[serde(rename = "vim.replace.background")]
+    pub vim_replace_background: Option<String>,
+    /// Background color for Vim Visual mode indicator.
+    #[serde(rename = "vim.visual.background")]
+    pub vim_visual_background: Option<String>,
+    /// Background color for Vim Visual Line mode indicator.
+    #[serde(rename = "vim.visual_line.background")]
+    pub vim_visual_line_background: Option<String>,
+    /// Background color for Vim Visual Block mode indicator.
+    #[serde(rename = "vim.visual_block.background")]
+    pub vim_visual_block_background: Option<String>,
+    /// Background color for Vim Helix Normal mode indicator.
+    #[serde(rename = "vim.helix_normal.background")]
+    pub vim_helix_normal_background: Option<String>,
+    /// Background color for Vim Helix Select mode indicator.
+    #[serde(rename = "vim.helix_select.background")]
+    pub vim_helix_select_background: Option<String>,
+
+    /// Text color for Vim mode indicator label.
+    #[serde(rename = "vim.mode.text")]
+    pub vim_mode_text: Option<String>,
 }
 
 #[skip_serializing_none]

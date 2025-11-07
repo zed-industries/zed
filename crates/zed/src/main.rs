@@ -190,6 +190,15 @@ pub fn main() {
         }
     }
 
+    #[cfg(all(not(debug_assertions), target_os = "windows"))]
+    unsafe {
+        use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+
+        if args.foreground {
+            let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+
     // `zed --printenv` Outputs environment variables as JSON to stdout
     if args.printenv {
         util::shell_env::print_env();
@@ -204,15 +213,6 @@ pub fn main() {
     // Set custom data directory.
     if let Some(dir) = &args.user_data_dir {
         paths::set_custom_data_dir(dir);
-    }
-
-    #[cfg(all(not(debug_assertions), target_os = "windows"))]
-    unsafe {
-        use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
-
-        if args.foreground {
-            let _ = AttachConsole(ATTACH_PARENT_PROCESS);
-        }
     }
 
     #[cfg(target_os = "windows")]
@@ -256,6 +256,13 @@ pub fn main() {
         println!("Zed System Specs (from CLI):\n{}", system_specs);
         return;
     }
+
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .stack_size(10 * 1024 * 1024)
+        .thread_name(|ix| format!("RayonWorker{}", ix))
+        .build_global()
+        .unwrap();
 
     log::info!(
         "========== starting zed version {}, sha {} ==========",
@@ -582,7 +589,6 @@ pub fn main() {
             false,
             cx,
         );
-        assistant_tools::init(app_state.client.http_client(), cx);
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
 
@@ -847,6 +853,25 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     })
                     .detach();
                 });
+            }
+            OpenRequestKind::Setting { setting_path } => {
+                // zed://settings/languages/$(language)/tab_size  - DONT SUPPORT
+                // zed://settings/languages/Rust/tab_size  - SUPPORT
+                // languages.$(language).tab_size
+                // [ languages $(language) tab_size]
+                cx.spawn(async move |cx| {
+                    let workspace =
+                        workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+
+                    workspace.update(cx, |_, window, cx| match setting_path {
+                        None => window.dispatch_action(Box::new(zed_actions::OpenSettings), cx),
+                        Some(setting_path) => window.dispatch_action(
+                            Box::new(zed_actions::OpenSettingsAt { path: setting_path }),
+                            cx,
+                        ),
+                    })
+                })
+                .detach_and_log_err(cx);
             }
         }
 

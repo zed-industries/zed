@@ -364,18 +364,20 @@ Zed offers customization options for syntax highlighting and themes, allowing yo
 
 ### Customizing Syntax Highlighting
 
-Zed uses Tree-sitter grammars for syntax highlighting. Override the default highlighting using the `experimental.theme_overrides` setting.
+Zed uses Tree-sitter grammars for syntax highlighting. Override the default highlighting using the `theme_overrides` setting.
 
 This example makes comments italic and changes the color of strings:
 
 ```json [settings]
-"experimental.theme_overrides": {
-  "syntax": {
-    "comment": {
-      "font_style": "italic"
-    },
-    "string": {
-      "color": "#00AA00"
+"theme_overrides": {
+  "One Dark": {
+    "syntax": {
+      "comment": {
+        "font_style": "italic"
+      },
+      "string": {
+        "color": "#00AA00"
+      }
     }
   }
 }

@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use acp_thread::AgentModelSelector;
+use acp_thread::{AgentModelInfo, AgentModelSelector};
 use gpui::{Entity, FocusHandle};
 use picker::popover_menu::PickerPopoverMenu;
 use ui::{
@@ -36,12 +36,8 @@ impl AcpModelSelectorPopover {
         self.menu_handle.toggle(window, cx);
     }
 
-    pub fn active_model_name(&self, cx: &App) -> Option<SharedString> {
-        self.selector
-            .read(cx)
-            .delegate
-            .active_model()
-            .map(|model| model.name.clone())
+    pub fn active_model<'a>(&self, cx: &'a App) -> Option<&'a AgentModelInfo> {
+        self.selector.read(cx).delegate.active_model()
     }
 }
 
@@ -77,14 +73,8 @@ impl Render for AcpModelSelectorPopover {
                         .ml_0p5(),
                 )
                 .child(Icon::new(icon).color(Color::Muted).size(IconSize::XSmall)),
-            move |window, cx| {
-                Tooltip::for_action_in(
-                    "Change Model",
-                    &ToggleModelSelector,
-                    &focus_handle,
-                    window,
-                    cx,
-                )
+            move |_window, cx| {
+                Tooltip::for_action_in("Change Model", &ToggleModelSelector, &focus_handle, cx)
             },
             gpui::Corner::BottomRight,
             cx,
