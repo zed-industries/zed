@@ -1404,6 +1404,7 @@ impl VariableList {
                         div()
                             .text_ui(cx)
                             .w_full()
+                            .truncate()
                             .when(self.disabled, |this| {
                                 this.text_color(Color::Disabled.color(cx))
                             })

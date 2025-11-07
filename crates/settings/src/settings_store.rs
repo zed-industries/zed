@@ -124,6 +124,14 @@ pub trait Settings: 'static + Send + Sync + Sized {
     }
 }
 
+pub struct RegisteredSetting {
+    pub settings_value: fn() -> Box<dyn AnySettingValue>,
+    pub from_settings: fn(&SettingsContent) -> Box<dyn Any>,
+    pub id: fn() -> TypeId,
+}
+
+inventory::collect!(RegisteredSetting);
+
 #[derive(Clone, Copy, Debug)]
 pub struct SettingsLocation<'a> {
     pub worktree_id: WorktreeId,
@@ -220,13 +228,17 @@ pub enum LocalSettingsKind {
 
 impl Global for SettingsStore {}
 
+#[doc(hidden)]
 #[derive(Debug)]
-struct SettingValue<T> {
-    global_value: Option<T>,
-    local_values: Vec<(WorktreeId, Arc<RelPath>, T)>,
+pub struct SettingValue<T> {
+    #[doc(hidden)]
+    pub global_value: Option<T>,
+    #[doc(hidden)]
+    pub local_values: Vec<(WorktreeId, Arc<RelPath>, T)>,
 }
 
-trait AnySettingValue: 'static + Send + Sync {
+#[doc(hidden)]
+pub trait AnySettingValue: 'static + Send + Sync {
     fn setting_type_name(&self) -> &'static str;
 
     fn from_settings(&self, s: &SettingsContent) -> Box<dyn Any>;
@@ -250,7 +262,7 @@ impl SettingsStore {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
         let default_settings: Rc<SettingsContent> =
             parse_json_with_comments(default_settings).unwrap();
-        Self {
+        let mut this = Self {
             setting_values: Default::default(),
             default_settings: default_settings.clone(),
             global_settings: None,
@@ -268,7 +280,11 @@ impl SettingsStore {
                 }
             }),
             file_errors: BTreeMap::default(),
-        }
+        };
+
+        this.load_settings_types();
+
+        this
     }
 
     pub fn observe_active_settings_profile_name(cx: &mut App) -> gpui::Subscription {
@@ -288,19 +304,34 @@ impl SettingsStore {
 
     /// Add a new type of setting to the store.
     pub fn register_setting<T: Settings>(&mut self) {
-        let setting_type_id = TypeId::of::<T>();
-        let entry = self.setting_values.entry(setting_type_id);
+        self.register_setting_internal(&RegisteredSetting {
+            settings_value: || {
+                Box::new(SettingValue::<T> {
+                    global_value: None,
+                    local_values: Vec::new(),
+                })
+            },
+            from_settings: |content| Box::new(T::from_settings(content)),
+            id: || TypeId::of::<T>(),
+        });
+    }
+
+    fn load_settings_types(&mut self) {
+        for registered_setting in inventory::iter::<RegisteredSetting>() {
+            self.register_setting_internal(registered_setting);
+        }
+    }
+
+    fn register_setting_internal(&mut self, registered_setting: &RegisteredSetting) {
+        let entry = self.setting_values.entry((registered_setting.id)());
 
         if matches!(entry, hash_map::Entry::Occupied(_)) {
             return;
         }
 
-        let setting_value = entry.or_insert(Box::new(SettingValue::<T> {
-            global_value: None,
-            local_values: Vec::new(),
-        }));
-        let value = T::from_settings(&self.merged_settings);
-        setting_value.set_global_value(Box::new(value));
+        let setting_value = entry.or_insert((registered_setting.settings_value)());
+        let value = (registered_setting.from_settings)(&self.merged_settings);
+        setting_value.set_global_value(value);
     }
 
     /// Get the value of a setting.

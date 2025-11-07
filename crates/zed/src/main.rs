@@ -409,7 +409,7 @@ pub fn main() {
             handle_settings_changed,
         );
         handle_keymap_file_changes(user_keymap_file_rx, cx);
-        client::init_settings(cx);
+
         let user_agent = format!(
             "Zed/{} ({}; {})",
             AppVersion::global(cx),
@@ -468,7 +468,6 @@ pub fn main() {
         let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
-        language::init(cx);
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
@@ -573,7 +572,6 @@ pub fn main() {
         supermaven::init(app_state.client.clone(), cx);
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
-        agent_settings::init(cx);
         acp_tools::init(cx);
         zeta2_tools::init(cx);
         web_search::init(cx);
@@ -859,15 +857,19 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 // zed://settings/languages/Rust/tab_size  - SUPPORT
                 // languages.$(language).tab_size
                 // [ languages $(language) tab_size]
-                workspace::with_active_or_new_workspace(cx, |_workspace, window, cx| {
-                    match setting_path {
+                cx.spawn(async move |cx| {
+                    let workspace =
+                        workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+
+                    workspace.update(cx, |_, window, cx| match setting_path {
                         None => window.dispatch_action(Box::new(zed_actions::OpenSettings), cx),
                         Some(setting_path) => window.dispatch_action(
                             Box::new(zed_actions::OpenSettingsAt { path: setting_path }),
                             cx,
                         ),
-                    }
-                });
+                    })
+                })
+                .detach_and_log_err(cx);
             }
         }
 
