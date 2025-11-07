@@ -136,25 +136,24 @@ async fn capture_windows(
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
     let shell_kind = ShellKind::new(shell_path, true);
-    if let ShellKind::Posix
-    | ShellKind::Csh
-    | ShellKind::Tcsh
-    | ShellKind::Rc
-    | ShellKind::Fish
-    | ShellKind::Xonsh = shell_kind
+    if let ShellKind::Csh | ShellKind::Tcsh | ShellKind::Rc | ShellKind::Fish | ShellKind::Xonsh =
+        shell_kind
     {
         return Err(anyhow::anyhow!("unsupported shell kind"));
     }
     let mut cmd = crate::command::new_smol_command(shell_path);
     let cmd = match shell_kind {
-        ShellKind::Posix
-        | ShellKind::Csh
-        | ShellKind::Tcsh
-        | ShellKind::Rc
-        | ShellKind::Fish
-        | ShellKind::Xonsh => {
+        ShellKind::Csh | ShellKind::Tcsh | ShellKind::Rc | ShellKind::Fish | ShellKind::Xonsh => {
             unreachable!()
         }
+        ShellKind::Posix => cmd.args([
+            "-c",
+            &format!(
+                "cd '{}'; '{}' --printenv",
+                directory.display(),
+                zed_path.display()
+            ),
+        ]),
         ShellKind::PowerShell => cmd.args([
             "-NonInteractive",
             "-NoProfile",
@@ -168,7 +167,7 @@ async fn capture_windows(
         ShellKind::Elvish => cmd.args([
             "-c",
             &format!(
-                "cd '{}'; {} --printenv",
+                "cd '{}'; '{}' --printenv",
                 directory.display(),
                 zed_path.display()
             ),
