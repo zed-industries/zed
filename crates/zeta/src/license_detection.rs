@@ -390,8 +390,7 @@ mod tests {
     use gpui::TestAppContext;
     use rand::Rng as _;
     use serde_json::json;
-    use settings::{Settings as _, SettingsStore};
-    use worktree::WorktreeSettings;
+    use settings::SettingsStore;
 
     use super::*;
 

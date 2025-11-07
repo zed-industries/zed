@@ -268,13 +268,10 @@ mod tests {
         status::{UnmergedStatus, UnmergedStatusCode},
     };
     use gpui::{BackgroundExecutor, TestAppContext};
-    use language::language_settings::AllLanguageSettings;
     use serde_json::json;
-    use settings::Settings as _;
     use text::{Buffer, BufferId, Point, ReplicaId, ToOffset as _};
     use unindent::Unindent as _;
     use util::{path, rel_path::rel_path};
-    use worktree::WorktreeSettings;
 
     #[test]
     fn test_parse_conflicts_in_buffer() {

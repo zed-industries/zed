@@ -14,14 +14,12 @@ use gpui::{
     div, px, size,
 };
 use log::LevelFilter;
-use project::Project;
 use reqwest_client::ReqwestClient;
 use settings::{KeymapFile, Settings};
 use simplelog::SimpleLogger;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::prelude::*;
-use workspace;
 
 use crate::app_menus::app_menus;
 use crate::assets::Assets;
@@ -85,10 +83,7 @@ fn main() {
             theme::ThemeSelection::Static(settings::ThemeName(theme_name.into()));
         ThemeSettings::override_global(theme_settings, cx);
 
-        language::init(cx);
         editor::init(cx);
-        Project::init_settings(cx);
-        workspace::init_settings(cx);
         init(cx);
         load_storybook_keymap(cx);
         cx.set_menus(app_menus());

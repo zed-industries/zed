@@ -84,7 +84,6 @@ async fn test_sharing_an_ssh_remote_project(
     let node = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
     let _headless_project = server_cx.new(|cx| {
-        client::init_settings(cx);
         HeadlessProject::new(
             HeadlessAppState {
                 session: server_ssh,
@@ -245,7 +244,6 @@ async fn test_ssh_collaboration_git_branches(
     let node = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
     let headless_project = server_cx.new(|cx| {
-        client::init_settings(cx);
         HeadlessProject::new(
             HeadlessAppState {
                 session: server_ssh,
@@ -450,7 +448,6 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     server_cx.update(HeadlessProject::init);
     let remote_http_client = Arc::new(BlockedHttpClient);
     let _headless_project = server_cx.new(|cx| {
-        client::init_settings(cx);
         HeadlessProject::new(
             HeadlessAppState {
                 session: server_ssh,
@@ -612,7 +609,6 @@ async fn test_remote_server_debugger(
     let node = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
     let _headless_project = server_cx.new(|cx| {
-        client::init_settings(cx);
         HeadlessProject::new(
             HeadlessAppState {
                 session: server_ssh,
@@ -721,7 +717,6 @@ async fn test_slow_adapter_startup_retries(
     let node = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
     let _headless_project = server_cx.new(|cx| {
-        client::init_settings(cx);
         HeadlessProject::new(
             HeadlessAppState {
                 session: server_ssh,

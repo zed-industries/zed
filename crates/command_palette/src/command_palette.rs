@@ -788,13 +788,11 @@ mod tests {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
-            language::init(cx);
             editor::init(cx);
             menu::init();
             go_to_line::init(cx);
             workspace::init(app_state.clone(), cx);
             init(cx);
-            Project::init_settings(cx);
             cx.bind_keys(KeymapFile::load_panic_on_failure(
                 r#"[
                     {

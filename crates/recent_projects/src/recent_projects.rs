@@ -760,10 +760,9 @@ impl Render for MatchTooltip {
 mod tests {
     use std::path::PathBuf;
 
-    use dap::debugger_settings::DebuggerSettings;
     use editor::Editor;
     use gpui::{TestAppContext, UpdateGlobal, WindowHandle};
-    use project::Project;
+
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
@@ -909,11 +908,8 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let state = AppState::test(cx);
-            language::init(cx);
             crate::init(cx);
             editor::init(cx);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
             state
         })
     }

@@ -1,7 +1,4 @@
-use crate::{
-    Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle,
-    worktree_settings::WorktreeSettings,
-};
+use crate::{Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle};
 use anyhow::Result;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
 use git::GITIGNORE;
@@ -12,7 +9,7 @@ use pretty_assertions::assert_eq;
 use rand::prelude::*;
 
 use serde_json::json;
-use settings::{Settings, SettingsStore};
+use settings::SettingsStore;
 use std::{
     env,
     fmt::Write,

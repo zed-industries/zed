@@ -1532,7 +1532,6 @@ mod tests {
     };
     use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
-    use project::Project;
     use settings::{SearchSettingsContent, SettingsStore};
     use smol::stream::StreamExt as _;
     use unindent::Unindent as _;
@@ -1542,11 +1541,8 @@ mod tests {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
-            workspace::init_settings(cx);
             editor::init(cx);
 
-            language::init(cx);
-            Project::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             crate::init(cx);
         });

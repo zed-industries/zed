@@ -978,7 +978,6 @@ impl AppState {
 
         theme::init(theme::LoadThemes::JustBase, cx);
         client::init(&client, cx);
-        crate::init_settings(cx);
 
         Arc::new(Self {
             client,
@@ -11332,9 +11331,6 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
-            language::init(cx);
-            crate::init_settings(cx);
-            Project::init_settings(cx);
         });
     }
 

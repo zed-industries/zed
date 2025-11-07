@@ -4955,7 +4955,7 @@ mod tests {
         status::{StatusCode, UnmergedStatus, UnmergedStatusCode},
     };
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
-    use project::{FakeFs, WorktreeSettings};
+    use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
     use theme::LoadThemes;
@@ -4970,11 +4970,8 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            workspace::init_settings(cx);
             theme::init(LoadThemes::JustBase, cx);
-            language::init(cx);
             editor::init(cx);
-            Project::init_settings(cx);
             crate::init(cx);
         });
     }

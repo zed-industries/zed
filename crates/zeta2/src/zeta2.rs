@@ -2095,8 +2095,6 @@ mod tests {
         cx.update(move |cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
             zlog::init_test();
 
             let (req_tx, req_rx) = mpsc::unbounded();

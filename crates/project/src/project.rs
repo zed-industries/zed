@@ -5750,7 +5750,6 @@ mod disable_ai_settings_tests {
     async fn test_disable_ai_settings_security(cx: &mut TestAppContext) {
         cx.update(|cx| {
             settings::init(cx);
-            Project::init_settings(cx);
 
             // Test 1: Default is false (AI enabled)
             assert!(

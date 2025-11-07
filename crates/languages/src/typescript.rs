@@ -1091,8 +1091,7 @@ mod tests {
     use std::path::Path;
 
     use gpui::{AppContext as _, BackgroundExecutor, TestAppContext};
-    use language::language_settings;
-    use project::{FakeFs, Project};
+    use project::FakeFs;
     use serde_json::json;
     use task::TaskTemplates;
     use unindent::Unindent;
@@ -1432,8 +1431,6 @@ mod tests {
     async fn test_package_json_discovery(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         cx.update(|cx| {
             settings::init(cx);
-            Project::init_settings(cx);
-            language_settings::init(cx);
         });
 
         let package_json_1 = json!({
@@ -1593,8 +1590,6 @@ mod tests {
     ) {
         cx.update(|cx| {
             settings::init(cx);
-            Project::init_settings(cx);
-            language_settings::init(cx);
         });
 
         // Test case with all test runners present

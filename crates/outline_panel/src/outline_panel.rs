@@ -6817,10 +6817,7 @@ outline: struct OutlineEntryExcerpt
 
             theme::init(theme::LoadThemes::JustBase, cx);
 
-            language::init(cx);
             editor::init(cx);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
             project_search::init(cx);
             buffer_search::init(cx);
             super::init(cx);
