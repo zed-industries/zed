@@ -4540,23 +4540,77 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<StickyHeaders> {
-        let scroll_top = snapshot.scroll_position().y;
         let show_line_numbers = snapshot
             .show_line_numbers
             .unwrap_or_else(|| EditorSettings::get_global(cx).gutter.line_numbers);
 
-        struct Row {
-            item: language::OutlineItem<Anchor>,
-            sticky_row: DisplayRow,
-            max_sticky_row: DisplayRow,
-            depth: usize,
-            start_point: Point,
+        let rows = Self::sticky_headers(self.editor.read(cx), snapshot, cx);
+
+        let mut lines = Vec::<StickyHeaderLine>::new();
+
+        for StickyHeader {
+            item,
+            sticky_row,
+            start_point,
+            offset,
+        } in rows.into_iter().rev()
+        {
+            let line = layout_line(
+                sticky_row,
+                snapshot,
+                &self.style,
+                editor_width,
+                is_row_soft_wrapped,
+                window,
+                cx,
+            );
+
+            let line_number = show_line_numbers.then(|| {
+                let number = (start_point.row + 1).to_string();
+                let color = cx.theme().colors().editor_line_number;
+                self.shape_line_number(SharedString::from(number), color, window)
+            });
+
+            lines.push(StickyHeaderLine::new(
+                sticky_row,
+                line_height * offset as f32,
+                line,
+                line_number,
+                item.range.start,
+                line_height,
+                scroll_pixel_position,
+                content_origin,
+                gutter_hitbox,
+                text_hitbox,
+                window,
+                cx,
+            ));
         }
 
-        let mut end_rows = Vec::<DisplayRow>::new();
-        let mut rows = Vec::<Row>::new();
+        lines.reverse();
+        if lines.is_empty() {
+            return None;
+        }
 
-        let items = self.editor.read(cx).sticky_headers(cx).unwrap_or_default();
+        Some(StickyHeaders {
+            lines,
+            gutter_background: cx.theme().colors().editor_gutter_background,
+            content_background: self.style.background,
+            gutter_right_padding: gutter_dimensions.right_padding,
+        })
+    }
+
+    pub(crate) fn sticky_headers(
+        editor: &Editor,
+        snapshot: &EditorSnapshot,
+        cx: &App,
+    ) -> Vec<StickyHeader> {
+        let scroll_top = snapshot.scroll_position().y;
+
+        let mut end_rows = Vec::<DisplayRow>::new();
+        let mut rows = Vec::<StickyHeader>::new();
+
+        let items = editor.sticky_headers(cx).unwrap_or_default();
 
         for item in items {
             let start_point = item.range.start.to_point(snapshot.buffer_snapshot());
@@ -4589,72 +4643,19 @@ impl EditorElement {
                 continue;
             }
 
+            let max_scroll_offset = max_sticky_row.as_f64() - scroll_top;
+            let offset = (depth as f64).min(max_scroll_offset);
+
             end_rows.push(end_row);
-            rows.push(Row {
+            rows.push(StickyHeader {
                 item,
                 sticky_row,
-                max_sticky_row,
-                depth,
                 start_point,
-            });
-        }
-
-        let mut lines = Vec::<StickyHeaderLine>::new();
-
-        for Row {
-            item,
-            sticky_row,
-            max_sticky_row,
-            depth,
-            start_point,
-        } in rows.into_iter().rev()
-        {
-            let max_scroll_offset = (max_sticky_row.as_f64() - scroll_top) as f32;
-            let offset = line_height * (depth as f32).min(max_scroll_offset);
-
-            let line = layout_line(
-                sticky_row,
-                snapshot,
-                &self.style,
-                editor_width,
-                is_row_soft_wrapped,
-                window,
-                cx,
-            );
-
-            let line_number = show_line_numbers.then(|| {
-                let number = (start_point.row + 1).to_string();
-                let color = cx.theme().colors().editor_line_number;
-                self.shape_line_number(SharedString::from(number), color, window)
-            });
-
-            lines.push(StickyHeaderLine::new(
-                sticky_row,
                 offset,
-                line,
-                line_number,
-                item.range.start,
-                line_height,
-                scroll_pixel_position,
-                content_origin,
-                gutter_hitbox,
-                text_hitbox,
-                window,
-                cx,
-            ));
+            });
         }
 
-        lines.reverse();
-        if lines.is_empty() {
-            return None;
-        }
-
-        Some(StickyHeaders {
-            lines,
-            gutter_background: cx.theme().colors().editor_gutter_background,
-            content_background: self.style.background,
-            gutter_right_padding: gutter_dimensions.right_padding,
-        })
+        rows
     }
 
     fn layout_cursor_popovers(
@@ -11149,6 +11150,13 @@ impl HighlightedRange {
             window.paint_path(path, self.color);
         }
     }
+}
+
+pub(crate) struct StickyHeader {
+    pub item: language::OutlineItem<Anchor>,
+    pub sticky_row: DisplayRow,
+    pub start_point: Point,
+    pub offset: ScrollOffset,
 }
 
 enum CursorPopoverType {

@@ -3,6 +3,7 @@ use crate::{
     JoinLines,
     code_context_menus::CodeContextMenu,
     edit_prediction_tests::FakeEditPredictionProvider,
+    element::StickyHeader,
     linked_editing_ranges::LinkedEditingRanges,
     scroll::scroll_amount::ScrollAmount,
     test::{
@@ -27005,6 +27006,79 @@ async fn test_end_of_editor_context(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| {
         assert!(!e.key_context(window, cx).contains("end_of_input"));
     });
+}
+
+#[gpui::test]
+async fn test_sticky_scroll(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let buffer = indoc! {"
+            ˇfn foo() {
+                let abc = 123;
+            }
+            struct Bar;
+            impl Bar {
+                fn new() -> Self {
+                    Self
+                }
+            }
+            fn baz() {
+            }
+        "};
+    cx.set_state(&buffer);
+
+    cx.update_editor(|e, _, cx| {
+        e.buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .update(cx, |buffer, cx| {
+                buffer.set_language(Some(rust_lang()), cx);
+            })
+    });
+
+    let mut sticky_headers = |offset: ScrollOffset| {
+        cx.update_editor(|e, window, cx| {
+            e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+            EditorElement::sticky_headers(&e, &e.snapshot(window, cx), cx)
+                .into_iter()
+                .map(
+                    |StickyHeader {
+                         start_point,
+                         offset,
+                         ..
+                     }| { (start_point, offset) },
+                )
+                .collect::<Vec<_>>()
+        })
+    };
+
+    let fn_foo = Point { row: 0, column: 0 };
+    let impl_bar = Point { row: 4, column: 0 };
+    let fn_new = Point { row: 5, column: 4 };
+
+    assert_eq!(sticky_headers(0.0), vec![]);
+    assert_eq!(sticky_headers(0.5), vec![(fn_foo, 0.0)]);
+    assert_eq!(sticky_headers(1.0), vec![(fn_foo, 0.0)]);
+    assert_eq!(sticky_headers(1.5), vec![(fn_foo, -0.5)]);
+    assert_eq!(sticky_headers(2.0), vec![]);
+    assert_eq!(sticky_headers(2.5), vec![]);
+    assert_eq!(sticky_headers(3.0), vec![]);
+    assert_eq!(sticky_headers(3.5), vec![]);
+    assert_eq!(sticky_headers(4.0), vec![]);
+    assert_eq!(sticky_headers(4.5), vec![(impl_bar, 0.0), (fn_new, 1.0)]);
+    assert_eq!(sticky_headers(5.0), vec![(impl_bar, 0.0), (fn_new, 1.0)]);
+    assert_eq!(sticky_headers(5.5), vec![(impl_bar, 0.0), (fn_new, 0.5)]);
+    assert_eq!(sticky_headers(6.0), vec![(impl_bar, 0.0)]);
+    assert_eq!(sticky_headers(6.5), vec![(impl_bar, 0.0)]);
+    assert_eq!(sticky_headers(7.0), vec![(impl_bar, 0.0)]);
+    assert_eq!(sticky_headers(7.5), vec![(impl_bar, -0.5)]);
+    assert_eq!(sticky_headers(8.0), vec![]);
+    assert_eq!(sticky_headers(8.5), vec![]);
+    assert_eq!(sticky_headers(9.0), vec![]);
+    assert_eq!(sticky_headers(9.5), vec![]);
+    assert_eq!(sticky_headers(10.0), vec![]);
 }
 
 #[gpui::test]

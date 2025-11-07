@@ -2620,6 +2620,9 @@ pub fn rust_lang() -> Arc<Language> {
         Some(tree_sitter_rust::LANGUAGE.into()),
     )
     .with_queries(LanguageQueries {
+        outline: Some(Cow::from(include_str!(
+            "../../languages/src/rust/outline.scm"
+        ))),
         indents: Some(Cow::from(
             r#"
 [
