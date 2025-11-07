@@ -166,9 +166,7 @@ impl NamedExample {
                             REVISION_FIELD => {
                                 named.example.revision = value.trim().to_string();
                             }
-                            _ => {
-                                eprintln!("Warning: Unrecognized field `{field}`");
-                            }
+                            _ => {}
                         }
                     }
                 }
@@ -193,7 +191,6 @@ impl NamedExample {
                     } else if title.eq_ignore_ascii_case(EXPECTED_CONTEXT_HEADING) {
                         Section::ExpectedExcerpts
                     } else {
-                        eprintln!("Warning: Unrecognized section `{title:?}`");
                         Section::Other
                     };
                 }
