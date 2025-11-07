@@ -117,8 +117,8 @@ use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
     DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
-    IndentSize, Language, OffsetRangeExt, Point, Runnable, RunnableRange, Selection, SelectionGoal,
-    TextObject, TransactionId, TreeSitterOptions, WordsQuery,
+    IndentSize, Language, OffsetRangeExt, Outline, Point, Runnable, RunnableRange, Selection,
+    SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, LspInsertMode, RewrapBehavior, WordsCompletionMode, all_language_settings,
         language_settings,
@@ -263,6 +263,13 @@ impl ReportEditorEvent {
             Self::Closed => "Editor Closed",
         }
     }
+}
+
+struct StickyOutlineCache {
+    outline: Arc<Outline<Anchor>>,
+    edit_count: usize,
+    syntax_update_count: usize,
+    excerpt_id: ExcerptId,
 }
 
 pub enum ActiveDebugLine {}
@@ -1189,6 +1196,7 @@ pub struct Editor {
     hide_mouse_mode: HideMouseMode,
     pub change_list: ChangeList,
     inline_value_cache: InlineValueCache,
+    sticky_outline_cache: Option<StickyOutlineCache>,
     selection_drag_state: SelectionDragState,
     colors: Option<LspColorData>,
     post_scroll_update: Task<()>,
@@ -1770,6 +1778,41 @@ impl Editor {
         Editor::new_internal(mode, buffer, project, None, window, cx)
     }
 
+    pub(crate) fn sticky_scroll_outline(
+        &mut self,
+        buffer_snapshot: &MultiBufferSnapshot,
+    ) -> Option<&Arc<Outline<Anchor>>> {
+        let edit_count = buffer_snapshot.edit_count();
+        let (excerpt_id, _buffer_id, buffer) = buffer_snapshot.as_singleton()?;
+        let syntax_update_count = buffer.syntax_update_count();
+
+        let cache_is_valid = self.sticky_outline_cache.as_ref().is_some_and(|cache| {
+            cache.edit_count == edit_count
+                && cache.syntax_update_count == syntax_update_count
+                && cache.excerpt_id == *excerpt_id
+        });
+
+        if !cache_is_valid {
+            let outline = buffer_snapshot.outline(None);
+            let Some(outline) = outline.filter(|outline| !outline.items.is_empty()) else {
+                self.sticky_outline_cache = None;
+                return None;
+            };
+
+            let outline = Arc::new(outline);
+            self.sticky_outline_cache = Some(StickyOutlineCache {
+                outline,
+                edit_count,
+                syntax_update_count,
+                excerpt_id: *excerpt_id,
+            });
+        }
+
+        self.sticky_outline_cache
+            .as_ref()
+            .map(|cache| &cache.outline)
+    }
+
     fn new_internal(
         mode: EditorMode,
         multi_buffer: Entity<MultiBuffer>,
@@ -2196,6 +2239,7 @@ impl Editor {
             diagnostics_enabled: full_mode,
             word_completions_enabled: full_mode,
             inline_value_cache: InlineValueCache::new(inlay_hint_settings.show_value_hints),
+            sticky_outline_cache: None,
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
             last_bounds: None,
