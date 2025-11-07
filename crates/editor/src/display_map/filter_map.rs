@@ -340,7 +340,7 @@ impl FilterMap {
         while let Some(buffer_edit) = buffer_edits.next() {
             dbg!(&buffer_edit);
 
-            // Reuse any old transforms that strictly precede the start of the edit.
+            log::info!("append old transforms before edit");
             log::info!(
                 "input len before append is {}",
                 new_transforms.summary().input.len
@@ -367,16 +367,15 @@ impl FilterMap {
 
             // If the edit starts in the middle of a transform, split the transform and push the unaffected portion.
             if buffer_edit.new.start > new_transforms.summary().input.len {
+                log::info!("split transform at edit start");
                 let range = new_transforms.summary().input.len..buffer_edit.new.start;
-                match dbg!(transform_cursor.item()) {
+                match transform_cursor.item() {
                     Some(FilterTransform::Isomorphic { .. }) => {
-                        dbg!();
                         let summary = push_isomorphic(&mut new_transforms, range, &buffer_snapshot);
                         edit_old_start.0 += summary.len;
                         edit_new_start.0 += summary.len;
                     }
                     Some(FilterTransform::Filter { .. }) => {
-                        dbg!();
                         push_filter(&mut new_transforms, range, &buffer_snapshot);
                     }
                     None => {}
@@ -388,31 +387,27 @@ impl FilterMap {
                 let (deletion_range, addition_range) = diff_hunk_bounds(&hunk, &buffer_snapshot);
                 let deletion_range = deletion_range.clamp(buffer_edit.new.clone());
                 let addition_range = addition_range.clamp(buffer_edit.new.clone());
-                // Push an isomorphic transform for any content preceding this hunk.
                 let prefix_range = new_transforms.summary().input.len..deletion_range.start;
-                dbg!();
+                log::info!("push isomorphic content before hunk");
                 push_isomorphic(&mut new_transforms, prefix_range, &buffer_snapshot);
 
                 match mode {
                     FilterMode::RemoveDeletions => {
-                        dbg!();
+                        log::info!("filter hunk deletion");
                         push_filter(&mut new_transforms, deletion_range, &buffer_snapshot);
-                        dbg!();
                         push_isomorphic(&mut new_transforms, addition_range, &buffer_snapshot);
                     }
                     FilterMode::RemoveInsertions => {
-                        dbg!();
+                        log::info!("filter hunk insertion");
                         push_isomorphic(&mut new_transforms, deletion_range, &buffer_snapshot);
-                        dbg!();
                         push_filter(&mut new_transforms, addition_range, &buffer_snapshot);
                     }
                 }
             }
 
-            // Push any non-hunk content after the last hunk.
+            log::info!("push isomorphic content after last hunk");
             if buffer_edit.new.end > new_transforms.summary().input.len {
                 let suffix_range = new_transforms.summary().input.len..buffer_edit.new.end;
-                dbg!();
                 push_isomorphic(&mut new_transforms, suffix_range, &buffer_snapshot);
             }
 
@@ -420,7 +415,6 @@ impl FilterMap {
             let mut edit_old_end = transform_cursor.end().1;
             let edit_new_end = FilterOffset(new_transforms.summary().output.len);
             if buffer_edit.old.end > transform_cursor.start().0 {
-                dbg!();
                 match transform_cursor.item() {
                     Some(FilterTransform::Isomorphic { .. }) => {
                         edit_old_end.0 += buffer_edit.old.end - transform_cursor.start().0;
@@ -430,15 +424,16 @@ impl FilterMap {
                 }
             }
 
-            // If this is the last edit that intersects the current transform, consume the remainder of the transform and advance.
             if buffer_edits.peek().is_none_or(|next_buffer_edit| {
                 next_buffer_edit.old.start >= transform_cursor.end().0
             }) {
+                log::info!(
+                    "consume remainder of old transform since this is the last intersecting edit"
+                );
                 let suffix_start = new_transforms.summary().input.len;
                 let suffix_len = transform_cursor.end().0 - buffer_edit.old.end;
                 match transform_cursor.item() {
                     Some(FilterTransform::Isomorphic { .. }) => {
-                        dbg!();
                         push_isomorphic(
                             &mut new_transforms,
                             suffix_start
@@ -448,7 +443,6 @@ impl FilterMap {
                         transform_cursor.next();
                     }
                     Some(FilterTransform::Filter { .. }) => {
-                        dbg!();
                         push_filter(
                             &mut new_transforms,
                             suffix_start
@@ -467,8 +461,7 @@ impl FilterMap {
             })
         }
 
-        // Append old transforms after the last edit.
-
+        log::info!("append old transforms after last edit");
         log::info!(
             "input len before suffix is {}",
             new_transforms.summary().input.len
@@ -483,15 +476,61 @@ impl FilterMap {
 
         drop(transform_cursor);
 
-        self.snapshot.transforms = new_transforms;
-        self.snapshot.buffer_snapshot = buffer_snapshot;
+        let new_snapshot = FilterSnapshot {
+            transforms: new_transforms,
+            buffer_snapshot,
+        };
+        #[cfg(test)]
+        check_edits(&self.snapshot, &output_edits, &new_snapshot);
+        self.snapshot = new_snapshot;
         #[cfg(test)]
         self.snapshot.print_transforms();
         #[cfg(debug_assertions)]
         self.check_invariants();
-        // TODO assert that the output edits are well-formed and that applying them transforms the old snapshot into the new snapshot
         (self.snapshot.clone(), output_edits)
     }
+}
+
+#[cfg(test)]
+fn check_edits(
+    old_snapshot: &FilterSnapshot,
+    output_edits: &[text::Edit<FilterOffset>],
+    new_snapshot: &FilterSnapshot,
+) {
+    use itertools::Itertools as _;
+
+    for edit in output_edits {
+        assert!(edit.old.start.0 <= edit.old.end.0, "inverted old range");
+        assert!(edit.new.start.0 <= edit.new.end.0, "inverted new range");
+    }
+    for (l, r) in output_edits.iter().tuple_windows() {
+        assert!(l.old.end.0 <= r.old.start.0, "overlapping old ranges");
+        assert!(l.new.end.0 <= r.new.start.0, "overlapping new ranges");
+    }
+    let mut edited_old_text = old_snapshot.text();
+    let new_text = new_snapshot.text();
+    for edit in output_edits.iter().rev() {
+        let edit_old_range = edit.old.start.0..edit.old.end.0;
+        let edit_new_range = edit.new.start.0..edit.new.end.0;
+        assert!(
+            edited_old_text.get(edit_old_range.clone()).is_some(),
+            "invalid old range ({:?} vs {})",
+            edit_old_range,
+            edited_old_text.len(),
+        );
+        assert!(
+            new_text.get(edit_new_range.clone()).is_some(),
+            "invalid new range ({:?} vs {})",
+            edit_new_range,
+            new_text.len(),
+        );
+        edited_old_text.replace_range(edit_old_range, &new_text[edit_new_range]);
+    }
+    pretty_assertions::assert_eq!(
+        edited_old_text,
+        new_text,
+        "edits don't transform old snapshot into new snapshot"
+    );
 }
 
 fn diff_hunk_bounds(
@@ -583,7 +622,7 @@ fn push_isomorphic(
     let text_to_add = snapshot.text_for_range(range).collect::<String>();
 
     #[cfg(test)]
-    log::info!("push_isomorphic({text_to_add:?})");
+    log::info!("| push_isomorphic({text_to_add:?})");
 
     let mut merged = false;
     transforms.update_last(
@@ -629,7 +668,7 @@ fn push_filter(
     let text_to_add = snapshot.text_for_range(range).collect::<String>();
 
     #[cfg(test)]
-    log::info!("push_filter({text_to_add:?})");
+    log::info!("| push_filter({text_to_add:?})");
 
     let mut merged = false;
     transforms.update_last(

@@ -287,7 +287,7 @@ impl BufferDiffSnapshot {
         let unstaged_counterpart = self.secondary_diff.as_ref().map(|diff| &diff.inner);
         self.inner
             .hunks_intersecting_range(range, buffer, unstaged_counterpart)
-            .filter(|hunk| hunk.buffer_range.start.is_valid(buffer))
+            .filter(|hunk| dbg!(hunk.buffer_range.start.is_valid(buffer)))
     }
 
     pub fn hunks_intersecting_range_rev<'a>(
@@ -536,8 +536,12 @@ impl BufferDiffInner {
             .filter::<_, DiffHunkSummary>(buffer, move |summary| {
                 let summary_range = summary.buffer_range.to_offset(buffer);
                 let before_start = summary_range.end < range.start;
+                // FIXME
+                if before_start {
+                    dbg!(summary_range.to_offset(buffer), range.to_offset(buffer));
+                }
                 let after_end = summary_range.start > range.end;
-                !before_start && !after_end
+                dbg!(!before_start) && dbg!(!after_end)
             });
 
         let anchor_iter = iter::from_fn(move || {
@@ -571,8 +575,11 @@ impl BufferDiffInner {
         let mut summaries = buffer.summaries_for_anchors_with_payload::<Point, _, _>(anchor_iter);
         iter::from_fn(move || {
             loop {
+                dbg!();
                 let (start_point, (start_anchor, start_base)) = summaries.next()?;
+                dbg!();
                 let (mut end_point, (mut end_anchor, end_base)) = summaries.next()?;
+                dbg!();
 
                 if end_point.column > 0 && end_point < max_point {
                     end_point.row += 1;
