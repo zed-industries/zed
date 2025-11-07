@@ -280,7 +280,9 @@ function sign_binary() {
 }
 
 function upload_debug_symbols() {
-    if [[ -n "${SENTRY_AUTH_TOKEN:-}" ]]; then
+    if [ "$local_install" = true ]; then
+        echo "local install; skipping sentry upload."
+    elif [[ -n "${SENTRY_AUTH_TOKEN:-}" ]]; then
         echo "Uploading zed debug symbols to sentry..."
         exe_path="target/${target_triple}/release/Zed"
         if ! dsymutil --flat "target/${target_triple}/${target_dir}/zed" 2> target/dsymutil.log; then
