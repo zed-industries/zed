@@ -1037,6 +1037,7 @@ impl Project {
         client.add_entity_request_handler(Self::handle_open_new_buffer);
         client.add_entity_message_handler(Self::handle_create_buffer_for_peer);
         client.add_entity_message_handler(Self::handle_toggle_lsp_logs);
+        client.add_entity_message_handler(Self::handle_create_image_for_peer);
 
         WorktreeStore::init(&client);
         BufferStore::init(&client);
@@ -1433,6 +1434,7 @@ impl Project {
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.agent_server_store);
 
             remote_proto.add_entity_message_handler(Self::handle_create_buffer_for_peer);
+            remote_proto.add_entity_message_handler(Self::handle_create_image_for_peer);
             remote_proto.add_entity_message_handler(Self::handle_update_worktree);
             remote_proto.add_entity_message_handler(Self::handle_update_project);
             remote_proto.add_entity_message_handler(Self::handle_toast);
@@ -2853,13 +2855,20 @@ impl Project {
         let weak_project = cx.entity().downgrade();
         cx.spawn(async move |_, cx| {
             let image_item = open_image_task.await?;
-            let project = weak_project.upgrade().context("Project dropped")?;
 
-            let metadata = ImageItem::load_image_metadata(image_item.clone(), project, cx).await?;
-            image_item.update(cx, |image_item, cx| {
-                image_item.image_metadata = Some(metadata);
-                cx.emit(ImageItemEvent::MetadataUpdated);
-            })?;
+            // Check if metadata already exists (e.g., for remote images)
+            let needs_metadata =
+                cx.read_entity(&image_item, |item, _| item.image_metadata.is_none())?;
+
+            if needs_metadata {
+                let project = weak_project.upgrade().context("Project dropped")?;
+                let metadata =
+                    ImageItem::load_image_metadata(image_item.clone(), project, cx).await?;
+                image_item.update(cx, |image_item, cx| {
+                    image_item.image_metadata = Some(metadata);
+                    cx.emit(ImageItemEvent::MetadataUpdated);
+                })?;
+            }
 
             Ok(image_item)
         })
@@ -3323,6 +3332,7 @@ impl Project {
         event: &ImageItemEvent,
         cx: &mut Context<Self>,
     ) -> Option<()> {
+        // TODO: handle image events from remote
         if let ImageItemEvent::ReloadNeeded = event
             && !self.is_via_collab()
         {
@@ -5058,6 +5068,20 @@ impl Project {
             })
             .detach_and_log_err(cx);
         buffer.read(cx).remote_id()
+    }
+
+    async fn handle_create_image_for_peer(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::CreateImageForPeer>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            this.image_store.update(cx, |image_store, cx| {
+                image_store.handle_create_image_for_peer(envelope, cx)
+            })
+        })?
+        .log_err();
+        Ok(())
     }
 
     fn synchronize_remote_buffers(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {

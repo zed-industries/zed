@@ -4,12 +4,12 @@ use acp_thread::{
     ToolCallStatus, UserMessageId,
 };
 use acp_thread::{AgentConnection, Plan};
-use action_log::ActionLog;
+use action_log::{ActionLog, ActionLogTelemetry};
 use agent::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
 use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
@@ -169,7 +169,7 @@ impl ThreadFeedbackState {
             }
         }
         let session_id = thread.read(cx).session_id().clone();
-        let agent_name = telemetry.agent_name();
+        let agent = thread.read(cx).connection().telemetry_id();
         let task = telemetry.thread_data(&session_id, cx);
         let rating = match feedback {
             ThreadFeedback::Positive => "positive",
@@ -179,9 +179,9 @@ impl ThreadFeedbackState {
             let thread = task.await?;
             telemetry::event!(
                 "Agent Thread Rated",
+                agent = agent,
                 session_id = session_id,
                 rating = rating,
-                agent = agent_name,
                 thread = thread
             );
             anyhow::Ok(())
@@ -206,15 +206,15 @@ impl ThreadFeedbackState {
         self.comments_editor.take();
 
         let session_id = thread.read(cx).session_id().clone();
-        let agent_name = telemetry.agent_name();
+        let agent = thread.read(cx).connection().telemetry_id();
         let task = telemetry.thread_data(&session_id, cx);
         cx.background_spawn(async move {
             let thread = task.await?;
             telemetry::event!(
                 "Agent Thread Feedback Comments",
+                agent = agent,
                 session_id = session_id,
                 comments = comments,
-                agent = agent_name,
                 thread = thread
             );
             anyhow::Ok(())
@@ -1123,8 +1123,6 @@ impl AcpThreadView {
             message_editor.contents(full_mention_content, cx)
         });
 
-        let agent_telemetry_id = self.agent.telemetry_id();
-
         self.thread_error.take();
         self.editing_message.take();
         self.thread_feedback.clear();
@@ -1132,6 +1130,8 @@ impl AcpThreadView {
         let Some(thread) = self.thread() else {
             return;
         };
+        let agent_telemetry_id = self.agent.telemetry_id();
+        let session_id = thread.read(cx).session_id().clone();
         let thread = thread.downgrade();
         if self.should_be_following {
             self.workspace
@@ -1142,6 +1142,7 @@ impl AcpThreadView {
         }
 
         self.is_loading_contents = true;
+        let model_id = self.current_model_id(cx);
         let guard = cx.new(|_| ());
         cx.observe_release(&guard, |this, _guard, cx| {
             this.is_loading_contents = false;
@@ -1163,6 +1164,7 @@ impl AcpThreadView {
                     message_editor.clear(window, cx);
                 });
             })?;
+            let turn_start_time = Instant::now();
             let send = thread.update(cx, |thread, cx| {
                 thread.action_log().update(cx, |action_log, cx| {
                     for buffer in tracked_buffers {
@@ -1171,11 +1173,27 @@ impl AcpThreadView {
                 });
                 drop(guard);
 
-                telemetry::event!("Agent Message Sent", agent = agent_telemetry_id);
+                telemetry::event!(
+                    "Agent Message Sent",
+                    agent = agent_telemetry_id,
+                    session = session_id,
+                    model = model_id
+                );
 
                 thread.send(contents, cx)
             })?;
-            send.await
+            let res = send.await;
+            let turn_time_ms = turn_start_time.elapsed().as_millis();
+            let status = if res.is_ok() { "success" } else { "failure" };
+            telemetry::event!(
+                "Agent Turn Completed",
+                agent = agent_telemetry_id,
+                session = session_id,
+                model = model_id,
+                status,
+                turn_time_ms,
+            );
+            res
         });
 
         cx.spawn(async move |this, cx| {
@@ -1377,7 +1395,7 @@ impl AcpThreadView {
             AcpThreadEvent::Refusal => {
                 self.thread_retry_status.take();
                 self.thread_error = Some(ThreadError::Refusal);
-                let model_or_agent_name = self.get_current_model_name(cx);
+                let model_or_agent_name = self.current_model_name(cx);
                 let notification_message =
                     format!("{} refused to respond to this request", model_or_agent_name);
                 self.notify_with_sound(&notification_message, IconName::Warning, window, cx);
@@ -1846,6 +1864,14 @@ impl AcpThreadView {
         let Some(thread) = self.thread() else {
             return;
         };
+
+        telemetry::event!(
+            "Agent Tool Call Authorized",
+            agent = self.agent.telemetry_id(),
+            session = thread.read(cx).session_id(),
+            option = option_kind
+        );
+
         thread.update(cx, |thread, cx| {
             thread.authorize_tool_call(tool_call_id, option_id, option_kind, cx);
         });
@@ -3578,6 +3604,7 @@ impl AcpThreadView {
     ) -> Option<AnyElement> {
         let thread = thread_entity.read(cx);
         let action_log = thread.action_log();
+        let telemetry = ActionLogTelemetry::from(thread);
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
         let plan = thread.plan();
 
@@ -3625,6 +3652,7 @@ impl AcpThreadView {
                 .when(self.edits_expanded, |parent| {
                     parent.child(self.render_edited_files(
                         action_log,
+                        telemetry,
                         &changed_buffers,
                         pending_edits,
                         cx,
@@ -3905,6 +3933,7 @@ impl AcpThreadView {
     fn render_edited_files(
         &self,
         action_log: &Entity<ActionLog>,
+        telemetry: ActionLogTelemetry,
         changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
         pending_edits: bool,
         cx: &Context<Self>,
@@ -4024,12 +4053,14 @@ impl AcpThreadView {
                                     .on_click({
                                         let buffer = buffer.clone();
                                         let action_log = action_log.clone();
+                                        let telemetry = telemetry.clone();
                                         move |_, _, cx| {
                                             action_log.update(cx, |action_log, cx| {
                                                 action_log
                                                     .reject_edits_in_ranges(
                                                         buffer.clone(),
                                                         vec![Anchor::MIN..Anchor::MAX],
+                                                        Some(telemetry.clone()),
                                                         cx,
                                                     )
                                                     .detach_and_log_err(cx);
@@ -4044,11 +4075,13 @@ impl AcpThreadView {
                                     .on_click({
                                         let buffer = buffer.clone();
                                         let action_log = action_log.clone();
+                                        let telemetry = telemetry.clone();
                                         move |_, _, cx| {
                                             action_log.update(cx, |action_log, cx| {
                                                 action_log.keep_edits_in_range(
                                                     buffer.clone(),
                                                     Anchor::MIN..Anchor::MAX,
+                                                    Some(telemetry.clone()),
                                                     cx,
                                                 );
                                             })
@@ -4264,17 +4297,23 @@ impl AcpThreadView {
         let Some(thread) = self.thread() else {
             return;
         };
+        let telemetry = ActionLogTelemetry::from(thread.read(cx));
         let action_log = thread.read(cx).action_log().clone();
-        action_log.update(cx, |action_log, cx| action_log.keep_all_edits(cx));
+        action_log.update(cx, |action_log, cx| {
+            action_log.keep_all_edits(Some(telemetry), cx)
+        });
     }
 
     fn reject_all(&mut self, _: &RejectAll, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(thread) = self.thread() else {
             return;
         };
+        let telemetry = ActionLogTelemetry::from(thread.read(cx));
         let action_log = thread.read(cx).action_log().clone();
         action_log
-            .update(cx, |action_log, cx| action_log.reject_all_edits(cx))
+            .update(cx, |action_log, cx| {
+                action_log.reject_all_edits(Some(telemetry), cx)
+            })
             .detach();
     }
 
@@ -4670,35 +4709,36 @@ impl AcpThreadView {
             .languages
             .language_for_name("Markdown");
 
-        let (thread_summary, markdown) = if let Some(thread) = self.thread() {
+        let (thread_title, markdown) = if let Some(thread) = self.thread() {
             let thread = thread.read(cx);
             (thread.title().to_string(), thread.to_markdown(cx))
         } else {
             return Task::ready(Ok(()));
         };
 
+        let project = workspace.read(cx).project().clone();
         window.spawn(cx, async move |cx| {
             let markdown_language = markdown_language_task.await?;
 
+            let buffer = project
+                .update(cx, |project, cx| project.create_buffer(false, cx))?
+                .await?;
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_text(markdown, cx);
+                buffer.set_language(Some(markdown_language), cx);
+                buffer.set_capability(language::Capability::ReadOnly, cx);
+            })?;
+
             workspace.update_in(cx, |workspace, window, cx| {
-                let project = workspace.project().clone();
-
-                if !project.read(cx).is_local() {
-                    bail!("failed to open active thread as markdown in remote project");
-                }
-
-                let buffer = project.update(cx, |project, cx| {
-                    project.create_local_buffer(&markdown, Some(markdown_language), true, cx)
-                });
-                let buffer = cx.new(|cx| {
-                    MultiBuffer::singleton(buffer, cx).with_title(thread_summary.clone())
-                });
+                let buffer = cx
+                    .new(|cx| MultiBuffer::singleton(buffer, cx).with_title(thread_title.clone()));
 
                 workspace.add_item_to_active_pane(
                     Box::new(cx.new(|cx| {
                         let mut editor =
                             Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
-                        editor.set_breadcrumb_header(thread_summary);
+                        editor.set_breadcrumb_header(thread_title);
                         editor
                     })),
                     None,
@@ -4706,9 +4746,7 @@ impl AcpThreadView {
                     window,
                     cx,
                 );
-
-                anyhow::Ok(())
-            })??;
+            })?;
             anyhow::Ok(())
         })
     }
@@ -5334,20 +5372,21 @@ impl AcpThreadView {
         )
     }
 
-    fn get_current_model_name(&self, cx: &App) -> SharedString {
+    fn current_model_id(&self, cx: &App) -> Option<String> {
+        self.model_selector
+            .as_ref()
+            .and_then(|selector| selector.read(cx).active_model(cx).map(|m| m.id.to_string()))
+    }
+
+    fn current_model_name(&self, cx: &App) -> SharedString {
         // For native agent (Zed Agent), use the specific model name (e.g., "Claude 3.5 Sonnet")
         // For ACP agents, use the agent name (e.g., "Claude Code", "Gemini CLI")
         // This provides better clarity about what refused the request
-        if self
-            .agent
-            .clone()
-            .downcast::<agent::NativeAgentServer>()
-            .is_some()
-        {
-            // Native agent - use the model name
+        if self.as_native_connection(cx).is_some() {
             self.model_selector
                 .as_ref()
-                .and_then(|selector| selector.read(cx).active_model_name(cx))
+                .and_then(|selector| selector.read(cx).active_model(cx))
+                .map(|model| model.name.clone())
                 .unwrap_or_else(|| SharedString::from("The model"))
         } else {
             // ACP agent - use the agent name (e.g., "Claude Code", "Gemini CLI")
@@ -5356,7 +5395,7 @@ impl AcpThreadView {
     }
 
     fn render_refusal_error(&self, cx: &mut Context<'_, Self>) -> Callout {
-        let model_or_agent_name = self.get_current_model_name(cx);
+        let model_or_agent_name = self.current_model_name(cx);
         let refusal_message = format!(
             "{} refused to respond to this prompt. This can happen when a model believes the prompt violates its content policy or safety guidelines, so rephrasing it can sometimes address the issue.",
             model_or_agent_name
@@ -6342,6 +6381,10 @@ pub(crate) mod tests {
     struct SaboteurAgentConnection;
 
     impl AgentConnection for SaboteurAgentConnection {
+        fn telemetry_id(&self) -> &'static str {
+            "saboteur"
+        }
+
         fn new_thread(
             self: Rc<Self>,
             project: Entity<Project>,
@@ -6402,6 +6445,10 @@ pub(crate) mod tests {
     struct RefusalAgentConnection;
 
     impl AgentConnection for RefusalAgentConnection {
+        fn telemetry_id(&self) -> &'static str {
+            "refusal"
+        }
+
         fn new_thread(
             self: Rc<Self>,
             project: Entity<Project>,

@@ -32,6 +32,7 @@ dependencies = [
  "settings",
  "smol",
  "task",
+ "telemetry",
  "tempfile",
  "terminal",
  "ui",
@@ -39,6 +40,7 @@ dependencies = [
  "util",
  "uuid",
  "watch",
+ "zlog",
 ]
 
 [[package]]
@@ -79,6 +81,7 @@ dependencies = [
  "rand 0.9.2",
  "serde_json",
  "settings",
+ "telemetry",
  "text",
  "util",
  "watch",
@@ -3198,7 +3201,9 @@ dependencies = [
  "indoc",
  "ordered-float 2.10.1",
  "rustc-hash 2.1.1",
+ "schemars 1.0.4",
  "serde",
+ "serde_json",
  "strum 0.27.2",
 ]
 
@@ -9027,6 +9032,7 @@ dependencies = [
  "settings",
  "smol",
  "task",
+ "terminal",
  "text",
  "theme",
  "toml 0.8.23",
@@ -9674,6 +9680,7 @@ dependencies = [
  "settings",
  "theme",
  "ui",
+ "urlencoding",
  "util",
  "workspace",
 ]
@@ -13969,6 +13976,7 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "http_client",
+ "image",
  "json_schema_store",
  "language",
  "language_extension",
@@ -21674,10 +21682,10 @@ dependencies = [
  "language_model",
  "log",
  "lsp",
+ "open_ai",
  "pretty_assertions",
  "project",
  "release_channel",
- "schemars 1.0.4",
  "serde",
  "serde_json",
  "settings",
@@ -21686,6 +21694,7 @@ dependencies = [
  "uuid",
  "workspace",
  "worktree",
+ "zlog",
 ]
 
 [[package]]

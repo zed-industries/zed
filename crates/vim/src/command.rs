@@ -682,8 +682,9 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                         .disjoint_anchor_ranges()
                         .collect::<Vec<_>>()
                 });
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    let end = Point::new(range.end.0, s.buffer().line_len(range.end));
+                    let end = Point::new(range.end.0, snapshot.line_len(range.end));
                     s.select_ranges([end..Point::new(range.start.0, 0)]);
                 });
                 selections

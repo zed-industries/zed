@@ -4193,7 +4193,7 @@ impl LspStore {
             })
             .detach();
         } else {
-            panic!("oops!");
+            // Our remote connection got closed
         }
         handle
     }

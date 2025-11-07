@@ -542,9 +542,22 @@ impl ContextMenu {
         self
     }
 
-    pub fn action(mut self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
+    pub fn action(self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
+        self.action_checked(label, action, false)
+    }
+
+    pub fn action_checked(
+        mut self,
+        label: impl Into<SharedString>,
+        action: Box<dyn Action>,
+        checked: bool,
+    ) -> Self {
         self.items.push(ContextMenuItem::Entry(ContextMenuEntry {
-            toggle: None,
+            toggle: if checked {
+                Some((IconPosition::Start, true))
+            } else {
+                None
+            },
             label: label.into(),
             action: Some(action.boxed_clone()),
             handler: Rc::new(move |context, window, cx| {

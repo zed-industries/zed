@@ -616,7 +616,7 @@ pub(crate) enum EditDisplayMode {
 
 enum EditPrediction {
     Edit {
-        edits: Vec<(Range<Anchor>, String)>,
+        edits: Vec<(Range<Anchor>, Arc<str>)>,
         edit_preview: Option<EditPreview>,
         display_mode: EditDisplayMode,
         snapshot: BufferSnapshot,
@@ -1843,7 +1843,7 @@ impl Editor {
             })
         });
 
-        let selections = SelectionsCollection::new(display_map.clone(), multi_buffer.clone());
+        let selections = SelectionsCollection::new();
 
         let blink_manager = cx.new(|cx| {
             let mut blink_manager = BlinkManager::new(CURSOR_BLINK_INTERVAL, cx);
@@ -2434,7 +2434,7 @@ impl Editor {
     }
 
     pub fn display_snapshot(&self, cx: &mut App) -> DisplaySnapshot {
-        self.selections.display_map(cx)
+        self.display_map.update(cx, |map, cx| map.snapshot(cx))
     }
 
     pub fn deploy_mouse_context_menu(
@@ -3366,11 +3366,13 @@ impl Editor {
         other: Entity<Editor>,
         cx: &mut Context<Self>,
     ) -> gpui::Subscription {
+        assert_eq!(self.buffer(), other.read(cx).buffer());
         let other_selections = other.read(cx).selections.disjoint_anchors().to_vec();
         if !other_selections.is_empty() {
-            self.selections.change_with(cx, |selections| {
-                selections.select_anchors(other_selections);
-            });
+            self.selections
+                .change_with(&self.display_snapshot(cx), |selections| {
+                    selections.select_anchors(other_selections);
+                });
         }
 
         let other_subscription = cx.subscribe(&other, |this, other, other_evt, cx| {
@@ -3379,7 +3381,8 @@ impl Editor {
                 if other_selections.is_empty() {
                     return;
                 }
-                this.selections.change_with(cx, |selections| {
+                let snapshot = this.display_snapshot(cx);
+                this.selections.change_with(&snapshot, |selections| {
                     selections.select_anchors(other_selections);
                 });
             }
@@ -3392,9 +3395,12 @@ impl Editor {
                     return;
                 }
                 other.update(cx, |other_editor, cx| {
-                    other_editor.selections.change_with(cx, |selections| {
-                        selections.select_anchors(these_selections);
-                    })
+                    let snapshot = other_editor.display_snapshot(cx);
+                    other_editor
+                        .selections
+                        .change_with(&snapshot, |selections| {
+                            selections.select_anchors(these_selections);
+                        })
                 });
             }
         });
@@ -3410,13 +3416,14 @@ impl Editor {
         effects: SelectionEffects,
         window: &mut Window,
         cx: &mut Context<Self>,
-        change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
+        change: impl FnOnce(&mut MutableSelectionsCollection<'_, '_>) -> R,
     ) -> R {
+        let snapshot = self.display_snapshot(cx);
         if let Some(state) = &mut self.deferred_selection_effects_state {
             state.effects.scroll = effects.scroll.or(state.effects.scroll);
             state.effects.completions = effects.completions;
             state.effects.nav_history = effects.nav_history.or(state.effects.nav_history);
-            let (changed, result) = self.selections.change_with(cx, change);
+            let (changed, result) = self.selections.change_with(&snapshot, change);
             state.changed |= changed;
             return result;
         }
@@ -3431,7 +3438,7 @@ impl Editor {
                 add_selections_state: self.add_selections_state.clone(),
             },
         };
-        let (changed, result) = self.selections.change_with(cx, change);
+        let (changed, result) = self.selections.change_with(&snapshot, change);
         state.changed = state.changed || changed;
         if self.defer_selection_effects {
             self.deferred_selection_effects_state = Some(state);
@@ -7960,7 +7967,7 @@ impl Editor {
                         let inlay = Inlay::edit_prediction(
                             post_inc(&mut self.next_inlay_id),
                             range.start,
-                            new_text.as_str(),
+                            new_text.as_ref(),
                         );
                         inlay_ids.push(inlay.id);
                         inlays.push(inlay);
@@ -8982,7 +8989,7 @@ impl Editor {
         newest_selection_head: Option<DisplayPoint>,
         editor_width: Pixels,
         style: &EditorStyle,
-        edits: &Vec<(Range<Anchor>, String)>,
+        edits: &Vec<(Range<Anchor>, Arc<str>)>,
         edit_preview: &Option<language::EditPreview>,
         snapshot: &language::BufferSnapshot,
         window: &mut Window,
@@ -16276,7 +16283,7 @@ impl Editor {
             .map(|s| s.to_vec())
         {
             self.change_selections(Default::default(), window, cx, |s| {
-                let map = s.display_map();
+                let map = s.display_snapshot();
                 s.select_display_ranges(selections.iter().map(|a| {
                     let point = a.to_display_point(&map);
                     point..point
@@ -16297,7 +16304,7 @@ impl Editor {
             .map(|s| s.to_vec())
         {
             self.change_selections(Default::default(), window, cx, |s| {
-                let map = s.display_map();
+                let map = s.display_snapshot();
                 s.select_display_ranges(selections.iter().map(|a| {
                     let point = a.to_display_point(&map);
                     point..point
@@ -18092,14 +18099,15 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let old_cursor_position = self.selections.newest_anchor().head();
-        self.selections.change_with(cx, |s| {
-            s.select_anchors(selections);
-            if let Some(pending_selection) = pending_selection {
-                s.set_pending(pending_selection, SelectMode::Character);
-            } else {
-                s.clear_pending();
-            }
-        });
+        self.selections
+            .change_with(&self.display_snapshot(cx), |s| {
+                s.select_anchors(selections);
+                if let Some(pending_selection) = pending_selection {
+                    s.set_pending(pending_selection, SelectMode::Character);
+                } else {
+                    s.clear_pending();
+                }
+            });
         self.selections_did_change(
             false,
             &old_cursor_position,
@@ -20307,7 +20315,7 @@ impl Editor {
 
         let locations = self
             .selections
-            .all_anchors(cx)
+            .all_anchors(&self.display_snapshot(cx))
             .iter()
             .map(|selection| {
                 (
@@ -22169,6 +22177,10 @@ impl Editor {
     }
 
     fn register_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        if self.ignore_lsp_data() {
+            return;
+        }
+
         if !self.registered_buffers.contains_key(&buffer_id)
             && let Some(project) = self.project.as_ref()
         {
@@ -24382,25 +24394,20 @@ impl InvalidationRegion for SnippetState {
 
 fn edit_prediction_edit_text(
     current_snapshot: &BufferSnapshot,
-    edits: &[(Range<Anchor>, String)],
+    edits: &[(Range<Anchor>, impl AsRef<str>)],
     edit_preview: &EditPreview,
     include_deletions: bool,
     cx: &App,
 ) -> HighlightedText {
     let edits = edits
         .iter()
-        .map(|(anchor, text)| {
-            (
-                anchor.start.text_anchor..anchor.end.text_anchor,
-                text.clone(),
-            )
-        })
+        .map(|(anchor, text)| (anchor.start.text_anchor..anchor.end.text_anchor, text))
         .collect::<Vec<_>>();
 
     edit_preview.highlight_edits(current_snapshot, &edits, include_deletions, cx)
 }
 
-fn edit_prediction_fallback_text(edits: &[(Range<Anchor>, String)], cx: &App) -> HighlightedText {
+fn edit_prediction_fallback_text(edits: &[(Range<Anchor>, Arc<str>)], cx: &App) -> HighlightedText {
     // Fallback for providers that don't provide edit_preview (like Copilot/Supermaven)
     // Just show the raw edit text with basic styling
     let mut text = String::new();
@@ -24793,7 +24800,7 @@ impl Focusable for BreakpointPromptEditor {
 }
 
 fn all_edits_insertions_or_deletions(
-    edits: &Vec<(Range<Anchor>, String)>,
+    edits: &Vec<(Range<Anchor>, Arc<str>)>,
     snapshot: &MultiBufferSnapshot,
 ) -> bool {
     let mut all_insertions = true;

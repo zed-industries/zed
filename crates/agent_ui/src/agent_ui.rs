@@ -12,7 +12,6 @@ mod context_strip;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
-mod message_editor;
 mod profile_selector;
 mod slash_command;
 mod slash_command_picker;
