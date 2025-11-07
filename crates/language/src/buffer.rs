@@ -4145,7 +4145,9 @@ impl BufferSnapshot {
         self.syntax.matches(range, self, query)
     }
 
-    /// todo! docs: this is an unordered collection of matches
+    /// Returns all bracket pairs that intersect with the range given.
+    ///
+    /// The resulting collection is not ordered.
     fn fetch_bracket_ranges(&self, range: Range<usize>) -> Vec<BracketMatch> {
         let mut tree_sitter_data = self.tree_sitter_data.lock();
         if self
