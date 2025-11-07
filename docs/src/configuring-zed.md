@@ -4558,7 +4558,7 @@ See the [debugger page](./debugger.md) for more information about debugging supp
 
 ## Colorize Brackets
 
-- Description: Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor.
+- Description: Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor (also known as "rainbow brackets").
 - Setting: `colorize_brackets`
 - Default: `false`
 
