@@ -566,9 +566,10 @@ fn collect_bracket_captures(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::{AppContext, TestAppContext};
     use indoc::indoc;
-    use language::{Buffer, Language, LanguageConfig, LanguageMatcher, LanguageQueries};
+    use language::{Buffer, Language, LanguageConfig, LanguageMatcher, LanguageQueries, Point};
+    use multi_buffer::MultiBuffer;
     use std::{borrow::Cow, sync::Arc};
     use text::Rope;
 
@@ -672,6 +673,134 @@ mod tests {
         assert!(
             ranges.iter().skip(1).all(|r| r.is_empty()),
             "without scopes, only the first color should be used"
+        );
+    }
+
+    #[gpui::test]
+    async fn nested_levels_cycle_colors(cx: &mut TestAppContext) {
+        let language = Arc::new(javascript_test_language());
+        let rope = Rope::from(indoc! {r#"
+            function colors() {
+                return [{ call: wrapper((alpha[beta()] + gamma)) }];
+            }
+        "#});
+
+        let snapshot = build_snapshot_for_test(cx, language, rope);
+        let excerpt_id = ExcerptId::min();
+        let visible = vec![0..snapshot.len()];
+        let ranges =
+            compute_excerpt_highlights(&snapshot, 0..snapshot.len(), &visible, excerpt_id, 2)
+                .expect("missing rainbow config");
+
+        assert!(
+            ranges[0].len() > 0 && ranges[1].len() > 0,
+            "expected nested brackets to map to multiple colors"
+        );
+    }
+
+    #[gpui::test]
+    async fn filters_highlights_to_visible_ranges(cx: &mut TestAppContext) {
+        let language = Arc::new(javascript_test_language());
+        let rope = Rope::from("({})");
+        let snapshot = build_snapshot_for_test(cx, language, rope);
+        let excerpt_id = ExcerptId::min();
+        let visible = vec![0..1];
+
+        let ranges =
+            compute_excerpt_highlights(&snapshot, 0..snapshot.len(), &visible, excerpt_id, 4)
+                .expect("missing rainbow config");
+        assert_eq!(
+            ranges.iter().map(|r| r.len()).sum::<usize>(),
+            1,
+            "only the opening parenthesis should be emitted"
+        );
+    }
+
+    #[gpui::test]
+    async fn collects_visible_ranges_for_multiple_excerpts(cx: &mut TestAppContext) {
+        let mut app = cx.app.borrow_mut();
+        let multi = MultiBuffer::build_multi(
+            [
+                ("alpha()\n", vec![Point::new(0, 0)..Point::new(1, 0)]),
+                ("beta[]\n", vec![Point::new(0, 0)..Point::new(1, 0)]),
+            ],
+            &mut *app,
+        );
+        drop(app);
+
+        let snapshot = cx.read_entity(&multi, |multi, app| multi.snapshot(app));
+        let visible_ranges =
+            collect_visible_ranges_by_excerpt(&snapshot, Point::new(0, 0)..Point::MAX);
+        let expected: Vec<_> = snapshot
+            .excerpts()
+            .map(|(id, buffer, _)| (id, buffer.len()))
+            .collect();
+        assert_eq!(visible_ranges.len(), expected.len());
+
+        for (excerpt_id, buffer_len) in expected.iter().copied() {
+            let ranges = visible_ranges
+                .get(&excerpt_id)
+                .expect("missing ranges for excerpt");
+            let total_len: usize = ranges.iter().map(|r| r.end - r.start).sum();
+            assert_eq!(total_len, buffer_len);
+        }
+
+        let query_entries = collect_query_excerpts(&snapshot, Point::new(0, 0)..Point::MAX);
+        assert_eq!(query_entries.len(), visible_ranges.len());
+        for (excerpt_id, entry) in query_entries {
+            let ranges = visible_ranges
+                .get(&excerpt_id)
+                .expect("missing ranges for excerpt");
+            let min_start = ranges.iter().map(|r| r.start).min().unwrap();
+            let max_end = ranges.iter().map(|r| r.end).max().unwrap();
+            assert_eq!(entry.range.start, min_start);
+            assert_eq!(entry.range.end, max_end);
+        }
+    }
+
+    #[gpui::test]
+    async fn deep_nesting_uses_first_six_colors(cx: &mut TestAppContext) {
+        let language = Arc::new(javascript_test_language());
+        let rope = Rope::from(indoc! {r#"
+            const deeplyNested = ((((((value))))));
+        "#});
+
+        let snapshot = build_snapshot_for_test(cx, language, rope);
+        let excerpt_id = ExcerptId::min();
+        let visible = vec![0..snapshot.len()];
+        let ranges =
+            compute_excerpt_highlights(&snapshot, 0..snapshot.len(), &visible, excerpt_id, 6)
+                .expect("missing rainbow config");
+
+        for (color_index, color_ranges) in ranges.iter().take(6).enumerate() {
+            assert!(
+                !color_ranges.is_empty(),
+                "expected color {color_index} to have highlights at depth >= 6"
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn deep_nesting_wraps_color_indices(cx: &mut TestAppContext) {
+        let language = Arc::new(javascript_test_language());
+        let rope = Rope::from(indoc! {r#"
+            const wrapped = ((((((value))))));
+        "#});
+
+        let snapshot = build_snapshot_for_test(cx, language, rope);
+        let excerpt_id = ExcerptId::min();
+        let visible = vec![0..snapshot.len()];
+        let ranges =
+            compute_excerpt_highlights(&snapshot, 0..snapshot.len(), &visible, excerpt_id, 3)
+                .expect("missing rainbow config");
+
+        assert!(
+            ranges[0].len() >= 2,
+            "expected deepest levels to wrap back to the first color"
+        );
+        assert!(
+            ranges.iter().flat_map(|r| r).count() > 3,
+            "expected more highlights than available colors to verify wrapping"
         );
     }
 }
