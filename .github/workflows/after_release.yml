@@ -14,7 +14,7 @@ jobs:
       run: curl -fX POST https://cloud.zed.dev/releases/refresh?expect_tag=${{ github.event.release.tag_name }}
       shell: bash -euxo pipefail {0}
     - name: after_release::rebuild_releases_page::redeploy_zed_dev
-      run: npx --yes vercel redeploy https://zed.dev --wait
+      run: npm exec --yes -- vercel@37 --token=$VERCEL_TOKEN --scope zed-industries redeploy https://zed.dev
       shell: bash -euxo pipefail {0}
       env:
         VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
