@@ -1239,6 +1239,55 @@ mod tests {
     }
 
     #[perf]
+    fn compare_paths_mixed_case_numeric_ordering() {
+        let mut paths = vec![
+            (Path::new(".cargo"), false),
+            (Path::new(".cloudflare"), false),
+            (Path::new(".config"), false),
+            (Path::new(".github"), false),
+            (Path::new(".zed"), false),
+            (Path::new("assets"), false),
+            (Path::new("crates"), false),
+            (Path::new("Dir1"), false),
+            (Path::new("dir2"), false),
+            (Path::new("Dir3"), false),
+            (Path::new("docs"), false),
+            (Path::new("extensions"), false),
+            (Path::new("legal"), false),
+            (Path::new("nix"), false),
+            (Path::new("script"), false),
+        ];
+
+        paths.sort_by(|&a, &b| compare_paths(a, b));
+
+        let ordered: Vec<&str> = paths
+            .iter()
+            .map(|(path, _)| path.to_str().unwrap())
+            .collect();
+
+        assert_eq!(
+            ordered,
+            vec![
+                ".cargo",
+                ".cloudflare",
+                ".config",
+                ".github",
+                ".zed",
+                "assets",
+                "crates",
+                "Dir1",
+                "dir2",
+                "Dir3",
+                "docs",
+                "extensions",
+                "legal",
+                "nix",
+                "script"
+            ]
+        );
+    }
+
+    #[perf]
     fn path_with_position_parse_posix_path() {
         // Test POSIX filename edge cases
         // Read more at https://en.wikipedia.org/wiki/Filename
@@ -1913,6 +1962,13 @@ mod tests {
         // Mixed case with numbers
         assert_eq!(natural_sort("File1", "file2"), Ordering::Less);
         assert_eq!(natural_sort("file1", "File2"), Ordering::Less);
+    }
+
+    #[perf]
+    fn test_natural_sort_mixed_case_numeric_ordering() {
+        let mut entries = vec!["Dir1", "dir2", "Dir3"];
+        entries.sort_by(|a, b| natural_sort(a, b));
+        assert_eq!(entries, vec!["Dir1", "dir2", "Dir3"]);
     }
 
     #[perf]
