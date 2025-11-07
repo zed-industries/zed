@@ -6556,15 +6556,10 @@ impl EditorElement {
             }
         });
 
-        for (line_index, hitbox, target_anchor) in sticky_headers
-            .lines
-            .iter()
-            .enumerate()
-            .filter_map(|(line_index, line)| {
-                Some((line_index, line.hitbox.clone(), line.target_anchor))
-            })
-        {
+        for (line_index, line) in sticky_headers.lines.iter().enumerate() {
             let editor = self.editor.clone();
+            let hitbox = line.hitbox.clone();
+            let target_anchor = line.target_anchor;
             window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
                 if !phase.bubble() {
                     return;

@@ -1821,33 +1821,23 @@ impl Editor {
                     range: Self::to_multi_buffer_range(
                         outline_item.range,
                         Some(buffer_id),
-                        excerpt_id.clone(),
+                        *excerpt_id,
                         None,
                     ),
                     source_range_for_text: Self::to_multi_buffer_range(
                         outline_item.source_range_for_text,
                         Some(buffer_id),
-                        excerpt_id.clone(),
+                        *excerpt_id,
                         None,
                     ),
                     text: outline_item.text,
                     highlight_ranges: outline_item.highlight_ranges,
                     name_ranges: outline_item.name_ranges,
                     body_range: outline_item.body_range.map(|range| {
-                        Self::to_multi_buffer_range(
-                            range,
-                            Some(buffer_id),
-                            excerpt_id.clone(),
-                            None,
-                        )
+                        Self::to_multi_buffer_range(range, Some(buffer_id), *excerpt_id, None)
                     }),
                     annotation_range: outline_item.annotation_range.map(|range| {
-                        Self::to_multi_buffer_range(
-                            range,
-                            Some(buffer_id),
-                            excerpt_id.clone(),
-                            None,
-                        )
+                        Self::to_multi_buffer_range(range, Some(buffer_id), *excerpt_id, None)
                     }),
                 });
             return Some(outline_items.collect());
