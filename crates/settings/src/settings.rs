@@ -9,6 +9,13 @@ mod settings_store;
 mod vscode_import;
 
 pub use settings_content::*;
+pub use settings_macros::RegisterSetting;
+
+#[doc(hidden)]
+pub mod private {
+    pub use crate::settings_store::{RegisteredSetting, SettingValue};
+    pub use inventory;
+}
 
 use gpui::{App, Global};
 use rust_embed::RustEmbed;
