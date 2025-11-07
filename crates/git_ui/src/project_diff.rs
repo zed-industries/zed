@@ -32,7 +32,7 @@ use project::{
     },
 };
 use settings::{Settings, SettingsStore};
-use std::any::{Any, TypeId};
+use std::{any::{Any, TypeId}, time::Duration};
 use std::ops::Range;
 use std::sync::Arc;
 use theme::ActiveTheme;
@@ -590,6 +590,10 @@ impl ProjectDiff {
                     .ok();
                 })?;
             }
+            cx.background_executor().timer(Duration::from_millis(5)).await;
+            this.update(cx, |_, cx| {
+                cx.notify();
+            })?;
         }
         this.update(cx, |this, cx| {
             this.pending_scroll.take();

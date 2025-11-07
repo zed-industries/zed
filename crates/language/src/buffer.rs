@@ -969,6 +969,7 @@ impl Buffer {
 
     /// Builds a [`Buffer`] with the given underlying [`TextBuffer`], diff base, [`File`] and [`Capability`].
     pub fn build(buffer: TextBuffer, file: Option<Arc<dyn File>>, capability: Capability) -> Self {
+        log::info!("file: {:?}", file.as_ref().map(|f| f.path()));
         let saved_mtime = file.as_ref().and_then(|file| file.disk_state().mtime());
         let snapshot = buffer.snapshot();
         let syntax_map = Mutex::new(SyntaxMap::new(&snapshot));

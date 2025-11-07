@@ -319,6 +319,8 @@ impl BranchDiff {
                 });
             }
         });
+        // let names: Vec<_> = output.iter().map(|o| o.repo_path.as_unix_str()).collect();
+        // eprintln!("OUTPUT IS *********************************: {names:?}");
         output
     }
 
