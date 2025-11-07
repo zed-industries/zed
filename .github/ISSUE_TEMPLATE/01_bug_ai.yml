@@ -39,7 +39,6 @@ body:
         Output of "zed: copy system specs into clipboard"
     validations:
       required: true
-
   - type: textarea
     attributes:
       label: If applicable, attach your `Zed.log` file to this issue.
