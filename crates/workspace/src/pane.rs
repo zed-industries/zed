@@ -4041,6 +4041,27 @@ impl NavHistory {
         self.0.lock().mode = NavigationMode::Normal;
     }
 
+    pub fn clear(&mut self, cx: &mut App) -> bool {
+        let mut state = self.0.lock();
+
+        if state.backward_stack.is_empty()
+            && state.forward_stack.is_empty()
+            && state.closed_stack.is_empty()
+            && state.paths_by_item.is_empty()
+        {
+            return false;
+        }
+
+        state.mode = NavigationMode::Normal;
+        state.backward_stack.clear();
+        state.forward_stack.clear();
+        state.closed_stack.clear();
+        state.paths_by_item.clear();
+        state.did_update(cx);
+
+        true
+    }
+
     pub fn pop(&mut self, mode: NavigationMode, cx: &mut App) -> Option<NavigationEntry> {
         let mut state = self.0.lock();
         let entry = match mode {
