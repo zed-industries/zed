@@ -38,7 +38,7 @@ secret!(ZED_ZIPPY_APP_ID);
 secret!(ZED_ZIPPY_APP_PRIVATE_KEY);
 secret!(DISCORD_WEBHOOK_RELEASE_NOTES);
 secret!(WINGET_TOKEN);
-secret!(RELEASE_NOTES_API_TOKEN);
+secret!(VERCEL_TOKEN);
 
 // todo(ci) make these secrets too...
 var!(AZURE_SIGNING_ACCOUNT_NAME);
