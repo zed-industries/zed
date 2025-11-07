@@ -1,6 +1,6 @@
-use crate::{Editor, RangeToAnchorExt};
+use crate::Editor;
+use collections::HashMap;
 use gpui::{Context, HighlightStyle};
-use itertools::Itertools;
 use language::language_settings;
 use ui::{ActiveTheme, utils::ensure_minimum_contrast};
 
@@ -13,23 +13,18 @@ impl Editor {
         }
 
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        let bracket_matches = self
-            .visible_excerpts(cx)
-            .into_iter()
-            .filter_map(|(excerpt_id, (buffer, _, buffer_range))| {
+        let bracket_matches = self.visible_excerpts(cx).into_iter().fold(
+            HashMap::default(),
+            |mut acc, (excerpt_id, (buffer, _, buffer_range))| {
                 let buffer_snapshot = buffer.read(cx).snapshot();
-                let colorize_brackets = language_settings::language_settings(
+                if language_settings::language_settings(
                     buffer_snapshot.language().map(|language| language.name()),
                     buffer_snapshot.file(),
                     cx,
                 )
-                .colorize_brackets;
-                if !colorize_brackets {
-                    return None;
-                }
-
-                Some(
-                    buffer_snapshot
+                .colorize_brackets
+                {
+                    for (depth, open_range, close_range) in buffer_snapshot
                         .bracket_ranges(buffer_range.start..buffer_range.end)
                         .into_iter()
                         .filter_map(|pair| {
@@ -53,16 +48,22 @@ impl Editor {
                                 multi_buffer_close_range,
                             ))
                         })
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .flatten()
-            .into_group_map_by(|&(depth, ..)| depth);
+                    {
+                        let ranges = acc.entry(depth).or_insert_with(Vec::new);
+                        ranges.push(open_range);
+                        ranges.push(close_range);
+                    }
+                }
+
+                acc
+            },
+        );
 
         if invalidate {
             self.clear_highlights::<RainbowBracketHighlight>(cx);
         }
 
+        // todo! can we skip the re-highlighting entirely, if it's not adding anything on top?
         let editor_background = cx.theme().colors().editor_background;
         for (depth, bracket_highlights) in bracket_matches {
             let bracket_color = cx.theme().accents().color_for_index(depth as u32);
@@ -74,15 +75,7 @@ impl Editor {
 
             self.highlight_text_key::<RainbowBracketHighlight>(
                 depth,
-                bracket_highlights
-                    .into_iter()
-                    .flat_map(|(_, open, close)| {
-                        [
-                            open.to_anchors(&multi_buffer_snapshot),
-                            close.to_anchors(&multi_buffer_snapshot),
-                        ]
-                    })
-                    .collect(),
+                bracket_highlights,
                 style,
                 cx,
             );
