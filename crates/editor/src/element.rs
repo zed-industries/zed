@@ -4093,7 +4093,6 @@ impl EditorElement {
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(window.listener_for(&self.editor, {
                                 let buffer_id = for_excerpt.buffer_id;
-                                let jump_data = jump_data.clone();
                                 move |editor, e: &ClickEvent, window, cx| {
                                     if e.modifiers().alt {
                                         editor.open_excerpts_common(
