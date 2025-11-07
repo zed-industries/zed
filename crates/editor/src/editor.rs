@@ -118,11 +118,11 @@ use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
     DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
-    IndentSize, Language, OffsetRangeExt, Point, Runnable, RunnableRange, Selection, SelectionGoal,
-    TextObject, TransactionId, TreeSitterOptions, WordsQuery,
+    IndentSize, Language, LanguageName, OffsetRangeExt, Point, Runnable, RunnableRange, Selection,
+    SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
-        self, LspInsertMode, RewrapBehavior, WordsCompletionMode, all_language_settings,
-        language_settings,
+        self, LanguageSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
+        all_language_settings, language_settings,
     },
     point_from_lsp, point_to_lsp, text_diff_with_options,
 };
@@ -175,6 +175,7 @@ use std::{
     borrow::Cow,
     cell::{OnceCell, RefCell},
     cmp::{self, Ordering, Reverse},
+    collections::hash_map,
     iter::{self, Peekable},
     mem,
     num::NonZeroU32,
@@ -1197,6 +1198,7 @@ pub struct Editor {
     inlay_hints: Option<LspInlayHintData>,
     folding_newlines: Task<()>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
+    applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
 }
 
 fn debounce_value(debounce_ms: u64) -> Option<Duration> {
@@ -2294,11 +2296,14 @@ impl Editor {
             selection_drag_state: SelectionDragState::None,
             folding_newlines: Task::ready(()),
             lookup_key: None,
+            applicable_language_settings: HashMap::default(),
         };
 
         if is_minimap {
             return editor;
         }
+
+        editor.applicable_language_settings = editor.fetch_applicable_language_settings(cx);
 
         if let Some(breakpoints) = editor.breakpoint_store.as_ref() {
             editor
@@ -2353,7 +2358,7 @@ impl Editor {
                                 editor.refresh_colors_for_visible_range(None, window, cx);
                                 editor
                                     .refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
-                                editor.colorize_brackets(cx);
+                                editor.colorize_brackets(false, cx);
                             })
                             .ok();
                     });
@@ -3243,7 +3248,7 @@ impl Editor {
             refresh_linked_ranges(self, window, cx);
 
             self.refresh_selected_text_highlights(false, window, cx);
-            self.colorize_brackets(cx);
+            self.colorize_brackets(false, cx);
             self.refresh_matching_bracket_highlights(window, cx);
             self.update_visible_edit_prediction(window, cx);
             self.edit_prediction_requires_modifier_in_indent_conflict = true;
@@ -21030,7 +21035,7 @@ impl Editor {
                 self.refresh_code_actions(window, cx);
                 self.refresh_selected_text_highlights(true, window, cx);
                 self.refresh_single_line_folds(window, cx);
-                self.colorize_brackets(cx);
+                self.colorize_brackets(true, cx);
                 self.refresh_matching_bracket_highlights(window, cx);
                 if self.has_active_edit_prediction() {
                     self.update_visible_edit_prediction(window, cx);
@@ -21085,7 +21090,7 @@ impl Editor {
                 }
                 self.update_lsp_data(Some(buffer_id), window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
-                self.colorize_brackets(cx);
+                self.colorize_brackets(false, cx);
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,
@@ -21123,12 +21128,12 @@ impl Editor {
             multi_buffer::Event::ExcerptsExpanded { ids } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 self.refresh_document_highlights(cx);
-                self.colorize_brackets(cx);
+                self.colorize_brackets(false, cx);
                 cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
             }
             multi_buffer::Event::Reparsed(buffer_id) => {
                 self.tasks_update_task = Some(self.refresh_runnables(window, cx));
-                self.colorize_brackets(cx);
+                self.colorize_brackets(true, cx);
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
 
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
@@ -21199,7 +21204,35 @@ impl Editor {
         cx.notify();
     }
 
+    fn fetch_applicable_language_settings(
+        &self,
+        cx: &App,
+    ) -> HashMap<Option<LanguageName>, LanguageSettings> {
+        if !self.mode.is_full() {
+            return HashMap::default();
+        }
+
+        self.buffer().read(cx).all_buffers().into_iter().fold(
+            HashMap::default(),
+            |mut acc, buffer| {
+                let buffer = buffer.read(cx);
+                let language = buffer.language().map(|language| language.name());
+                if let hash_map::Entry::Vacant(v) = acc.entry(language.clone()) {
+                    let file = buffer.file();
+                    v.insert(language_settings(language, file, cx).into_owned());
+                }
+                acc
+            },
+        )
+    }
+
     fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let new_language_settings = self.fetch_applicable_language_settings(cx);
+        let language_settings_changed = new_language_settings != self.applicable_language_settings;
+        if language_settings_changed {
+            self.applicable_language_settings = new_language_settings;
+        }
+
         if self.diagnostics_enabled() {
             let new_severity = EditorSettings::get_global(cx)
                 .diagnostics_max_severity
@@ -21272,7 +21305,9 @@ impl Editor {
                 }
             }
 
-            self.colorize_brackets(cx);
+            if language_settings_changed {
+                self.colorize_brackets(true, cx);
+            }
 
             if let Some(inlay_splice) = self.colors.as_mut().and_then(|colors| {
                 colors.render_mode_updated(EditorSettings::get_global(cx).lsp_document_colors)

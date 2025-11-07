@@ -7,7 +7,7 @@ use ui::{ActiveTheme, utils::ensure_minimum_contrast};
 struct RainbowBracketHighlight;
 
 impl Editor {
-    pub(crate) fn colorize_brackets(&mut self, cx: &mut Context<Editor>) {
+    pub(crate) fn colorize_brackets(&mut self, invalidate: bool, cx: &mut Context<Editor>) {
         if !self.mode.is_full() {
             return;
         }
@@ -59,8 +59,10 @@ impl Editor {
             .flatten()
             .into_group_map_by(|&(depth, ..)| depth);
 
-        // todo! this is not necessary needed, e.g. after scrolling
-        self.clear_highlights::<RainbowBracketHighlight>(cx);
+        if invalidate {
+            self.clear_highlights::<RainbowBracketHighlight>(cx);
+        }
+
         let editor_background = cx.theme().colors().editor_background;
         for (depth, bracket_highlights) in bracket_matches {
             let bracket_color = cx.theme().accents().color_for_index(depth as u32);
