@@ -1167,8 +1167,7 @@ unsafe extern "system" fn window_procedure(
     lparam: LPARAM,
 ) -> LRESULT {
     if msg == WM_NCCREATE {
-        let window_params = lparam.0 as *const CREATESTRUCTW;
-        let window_params = unsafe { &*window_params };
+        let window_params = unsafe { &*(lparam.0 as *const CREATESTRUCTW) };
         let window_creation_context = window_params.lpCreateParams as *mut WindowCreateContext;
         let window_creation_context = unsafe { &mut *window_creation_context };
         return match WindowsWindowInner::new(window_creation_context, hwnd, window_params) {
