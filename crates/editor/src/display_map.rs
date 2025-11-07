@@ -25,29 +25,25 @@ mod crease_map;
 mod custom_highlights;
 mod fold_map;
 mod inlay_map;
-pub(crate) mod invisibles;
+mod invisibles;
 mod tab_map;
 mod wrap_map;
 
-use crate::{
-    EditorStyle, RowExt, hover_links::InlayHighlight, inlays::Inlay, movement::TextLayoutDetails,
-};
+pub use crate::display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap};
 pub use block_map::{
     Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
     BlockPoint, BlockProperties, BlockRows, BlockStyle, CustomBlockId, EditorMargins, RenderBlock,
     StickyHeaderExcerpt,
 };
-use block_map::{BlockRow, BlockSnapshot};
-use collections::{HashMap, HashSet};
 pub use crease_map::*;
-use fold_map::FoldSnapshot;
 pub use fold_map::{
     ChunkRenderer, ChunkRendererContext, ChunkRendererId, Fold, FoldId, FoldPlaceholder, FoldPoint,
 };
-use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
-use inlay_map::InlaySnapshot;
 pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
+
+use collections::{HashMap, HashSet};
+use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
 use language::{
     OffsetUtf16, Point, Subscription as BufferSubscription, language_settings::language_settings,
 };
@@ -58,6 +54,10 @@ use multi_buffer::{
 use project::InlayId;
 use project::project_settings::DiagnosticSeverity;
 use serde::Deserialize;
+use sum_tree::{Bias, TreeMap};
+use text::{BufferId, LineIndent};
+use ui::{SharedString, px};
+use unicode_segmentation::UnicodeSegmentation;
 
 use std::{
     any::TypeId,
@@ -68,14 +68,15 @@ use std::{
     ops::{Add, Range, Sub},
     sync::Arc,
 };
-use sum_tree::{Bias, TreeMap};
-use tab_map::TabSnapshot;
-use text::{BufferId, LineIndent};
-use ui::{SharedString, px};
-use unicode_segmentation::UnicodeSegmentation;
-use wrap_map::{WrapMap, WrapSnapshot};
 
-pub use crate::display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap};
+use crate::{
+    EditorStyle, RowExt, hover_links::InlayHighlight, inlays::Inlay, movement::TextLayoutDetails,
+};
+use block_map::{BlockRow, BlockSnapshot};
+use fold_map::FoldSnapshot;
+use inlay_map::InlaySnapshot;
+use tab_map::TabSnapshot;
+use wrap_map::{WrapMap, WrapSnapshot};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FoldStatus {
