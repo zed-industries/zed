@@ -6,6 +6,7 @@ use util::ResultExt as _;
 
 #[derive(Clone)]
 pub enum RemoteAction {
+    Commit,
     Fetch(Option<Remote>),
     Pull(Remote),
     Push(SharedString, Remote),
@@ -14,6 +15,7 @@ pub enum RemoteAction {
 impl RemoteAction {
     pub fn name(&self) -> &'static str {
         match self {
+            RemoteAction::Commit => "commit",
             RemoteAction::Fetch(_) => "fetch",
             RemoteAction::Pull(_) => "pull",
             RemoteAction::Push(_, _) => "push",
@@ -34,6 +36,10 @@ pub struct SuccessMessage {
 
 pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> SuccessMessage {
     match action {
+        RemoteAction::Commit => SuccessMessage {
+            message: "Successfully committed".into(),
+            style: SuccessStyle::ToastWithLog { output },
+        },
         RemoteAction::Fetch(remote) => {
             if output.stderr.is_empty() {
                 SuccessMessage {
