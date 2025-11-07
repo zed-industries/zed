@@ -1,5 +1,4 @@
-//! LSP store provides unified access to the language server protocol.
-//! The consumers of LSP store can interact with language servers without knowing exactly which language server they're interacting with.
+//! LSP store provides unified access to the language server protocol. //! The consumers of LSP store can interact with language servers without knowing exactly which language server they're interacting with.
 //!
 //! # Local/Remote LSP Stores
 //! This module is split up into three distinct parts:
@@ -13210,6 +13209,23 @@ impl LanguageServerPromptRequest {
             self.response_channel.send(response).await.ok()
         } else {
             None
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test(
+        level: PromptLevel,
+        message: String,
+        actions: Vec<MessageActionItem>,
+        lsp_name: String,
+    ) -> Self {
+        let (tx, _rx) = smol::channel::unbounded();
+        Self {
+            level,
+            message,
+            actions,
+            lsp_name,
+            response_channel: tx,
         }
     }
 }
