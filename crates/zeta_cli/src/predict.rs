@@ -148,14 +148,6 @@ pub async fn zeta2_predict(
                     &request.local_prompt.unwrap_or_default(),
                 )?;
 
-                let response = request.response_rx.await?.0.map_err(|err| anyhow!(err))?;
-                prediction_finished_at = Some(Instant::now());
-
-                fs::write(
-                    LOGS_DIR.join("prediction_response.json"),
-                    &serde_json::to_string_pretty(&response).unwrap(),
-                )?;
-
                 for included_file in request.request.included_files {
                     let insertions = vec![(request.request.cursor_point, CURSOR_MARKER)];
                     result
@@ -177,6 +169,12 @@ pub async fn zeta2_predict(
                         &mut excerpts_text,
                     );
                 }
+
+                let response = request.response_rx.await?.0.map_err(|err| anyhow!(err))?;
+                let response = zeta2::text_from_response(response).unwrap_or_default();
+                prediction_finished_at = Some(Instant::now());
+                fs::write(LOGS_DIR.join("prediction_response.md"), &response)?;
+
                 break;
             }
         }

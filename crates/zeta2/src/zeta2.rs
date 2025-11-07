@@ -919,40 +919,10 @@ impl Zeta {
                         .ok();
                 }
 
-                let (mut res, usage) = response?;
-
+                let (res, usage) = response?;
                 let request_id = EditPredictionId(Uuid::from_str(&res.id)?);
-
-                let Some(choice) = res.choices.pop() else {
-                    return Ok((None, usage));
-                };
-
-                let output_text = match choice.message {
-                    open_ai::RequestMessage::Assistant {
-                        content: Some(open_ai::MessageContent::Plain(content)),
-                        ..
-                    } => content,
-                    open_ai::RequestMessage::Assistant {
-                        content: Some(open_ai::MessageContent::Multipart(mut content)),
-                        ..
-                    } => {
-                        if content.is_empty() {
-                            log::error!("No output from Baseten completion response");
-                            return Ok((None, usage));
-                        }
-
-                        match content.remove(0) {
-                            open_ai::MessagePart::Text { text } => text,
-                            open_ai::MessagePart::Image { .. } => {
-                                log::error!("Expected text, got an image");
-                                return Ok((None, usage));
-                            }
-                        }
-                    }
-                    _ => {
-                        log::error!("Invalid response message: {:?}", choice.message);
-                        return Ok((None, usage));
-                    }
+                let Some(output_text) = text_from_response(res) else {
+                    return Ok((None, usage))
                 };
 
                 let (edited_buffer_snapshot, edits) =
@@ -1512,6 +1482,38 @@ impl Zeta {
             .read(cx)
             .wait_for_initial_file_indexing(cx)
     }
+}
+
+pub fn text_from_response(mut res: open_ai::Response) -> Option<String> {
+    let choice = res.choices.pop()?;
+    let output_text = match choice.message {
+        open_ai::RequestMessage::Assistant {
+            content: Some(open_ai::MessageContent::Plain(content)),
+            ..
+        } => content,
+        open_ai::RequestMessage::Assistant {
+            content: Some(open_ai::MessageContent::Multipart(mut content)),
+            ..
+        } => {
+            if content.is_empty() {
+                log::error!("No output from Baseten completion response");
+                return None;
+            }
+
+            match content.remove(0) {
+                open_ai::MessagePart::Text { text } => text,
+                open_ai::MessagePart::Image { .. } => {
+                    log::error!("Expected text, got an image");
+                    return None;
+                }
+            }
+        }
+        _ => {
+            log::error!("Invalid response message: {:?}", choice.message);
+            return None;
+        }
+    };
+    Some(output_text)
 }
 
 #[derive(Error, Debug)]
