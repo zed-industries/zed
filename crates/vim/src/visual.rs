@@ -371,12 +371,10 @@ impl Vim {
 
             loop {
                 let laid_out_line = map.layout_row(row, &text_layout_details);
-                let start = DisplayPoint::new(
-                    row,
-                    laid_out_line.closest_index_for_x(positions.start) as u32,
-                );
+                let start =
+                    DisplayPoint::new(row, laid_out_line.index_for_x(positions.start) as u32);
                 let mut end =
-                    DisplayPoint::new(row, laid_out_line.closest_index_for_x(positions.end) as u32);
+                    DisplayPoint::new(row, laid_out_line.index_for_x(positions.end) as u32);
                 if end <= start {
                     if start.column() == map.line_len(start.row()) {
                         end = start;

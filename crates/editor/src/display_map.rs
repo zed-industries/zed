@@ -1097,7 +1097,7 @@ impl DisplaySnapshot {
         details: &TextLayoutDetails,
     ) -> u32 {
         let layout_line = self.layout_row(display_row, details);
-        layout_line.closest_index_for_x(x) as u32
+        layout_line.index_for_x(x) as u32
     }
 
     pub fn grapheme_at(&self, mut point: DisplayPoint) -> Option<SharedString> {
