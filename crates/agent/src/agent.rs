@@ -218,7 +218,7 @@ impl LanguageModels {
                                 }
                                 _ => {
                                     log::error!(
-                                        "Failed to authenticate provider: {}: {err}",
+                                        "Failed to authenticate provider: {}: {err:#}",
                                         provider_name.0
                                     );
                                 }
