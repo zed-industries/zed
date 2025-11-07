@@ -67,7 +67,7 @@ pub async fn run_evaluate_one(
         );
         as_json
     } else {
-        zeta2_predict(example.clone(), &app_state, cx)
+        zeta2_predict(example.clone(), Default::default(), &app_state, cx)
             .await
             .unwrap()
     };

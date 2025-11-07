@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
 use chrono::TimeDelta;
 use client::{Client, EditPredictionUsage, UserStore};
 use cloud_llm_client::predict_edits_v3::{self, PromptFormat, Signature};
@@ -947,19 +947,25 @@ impl Zeta {
                     return Ok((None, usage))
                 };
 
-                let (edited_buffer_snapshot, edits) =
-                    crate::udiff::parse_diff(&output_text, |path| {
-                        included_files
-                            .iter()
-                            .find_map(|(_, buffer, probe_path, ranges)| {
-                                if probe_path.as_ref() == path {
-                                    Some((buffer, ranges.as_slice()))
-                                } else {
-                                    None
-                                }
-                            })
-                    })
-                    .await?;
+                let (edited_buffer_snapshot, edits) = match options.prompt_format {
+                    PromptFormat::NumLinesUniDiff => {
+                        crate::udiff::parse_diff(&output_text, |path| {
+                            included_files
+                                .iter()
+                                .find_map(|(_, buffer, probe_path, ranges)| {
+                                    if probe_path.as_ref() == path {
+                                        Some((buffer, ranges.as_slice()))
+                                    } else {
+                                        None
+                                    }
+                                })
+                        })
+                        .await?
+                    }
+                    _ => {
+                        bail!("unsupported prompt format {}", options.prompt_format)
+                    }
+                };
 
                 let edited_buffer = included_files
                     .iter()
