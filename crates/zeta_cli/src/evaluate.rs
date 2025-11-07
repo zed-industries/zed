@@ -12,7 +12,7 @@ use gpui::AsyncApp;
 use zeta2::udiff::DiffLine;
 
 use crate::{
-    example::{Example, ExpectedExcerptSet, NamedExample},
+    example::{Example, NamedExample},
     headless::ZetaCliAppState,
     paths::CACHE_DIR,
     predict::{PredictionDetails, zeta2_predict},
@@ -82,16 +82,6 @@ pub async fn run_evaluate_one(
     }
 
     let evaluation_result = evaluate(&example.example, &predictions);
-
-    // println!("# {}\n", example.name);
-    // println!(
-    //     "## Expected Context: \n\n```\n{}\n```\n\n",
-    //     compare_context(
-    //         &example.example.expected_context.alternatives
-    //             [evaluation_result.context_alternative_ix],
-    //         &predictions
-    //     )
-    // );
 
     println!(
         "## Expected edit prediction:\n\n```diff\n{}\n```\n",
@@ -277,55 +267,6 @@ pub fn evaluate(example: &Example, preds: &PredictionDetails) -> EvaluationResul
 
     eval_result.edit_prediction = Scores::new(&expected_patch_lines, &actual_patch_lines);
     eval_result
-}
-
-/// Compare actual and expected context.
-///
-/// Return expected context annotated with these markers:
-///
-/// `✓ context line`  -- line was correctly predicted
-/// `✗ context line`  -- line is missing from predictions
-pub fn compare_context(
-    expected_excerpts: &ExpectedExcerptSet,
-    preds: &PredictionDetails,
-) -> String {
-    let use_color = std::io::stdout().is_terminal();
-    let green = if use_color { "\x1b[32m" } else { "" };
-    let red = if use_color { "\x1b[31m" } else { "" };
-    let reset = if use_color { "\x1b[0m" } else { "" };
-    let expected: Vec<_> = expected_excerpts
-        .excerpts
-        .iter()
-        .flat_map(|excerpt| {
-            excerpt
-                .text
-                .lines()
-                .map(|line| (excerpt.path.clone(), line))
-        })
-        .collect();
-    let actual: HashSet<_> = preds
-        .excerpts
-        .iter()
-        .flat_map(|excerpt| {
-            excerpt
-                .text
-                .lines()
-                .map(|line| (excerpt.path.clone(), line))
-        })
-        .collect();
-
-    let annotated = expected
-        .iter()
-        .map(|(path, line)| {
-            if actual.contains(&(path.to_path_buf(), line)) {
-                format!("{green}✓ {line}{reset}")
-            } else {
-                format!("{red}✗ {line}{reset}")
-            }
-        })
-        .collect::<Vec<String>>();
-
-    annotated.join("\n")
 }
 
 /// Return annotated `patch_a` so that:
