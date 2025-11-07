@@ -192,7 +192,7 @@ async fn run_query(
                 .search(&snapshot, Some(parent_range.clone()))
                 .await;
 
-            // todo! expand excerpts
+            // todo! expand
             let ranges = results
                 .into_iter()
                 .map(|range| {
@@ -211,6 +211,21 @@ async fn run_query(
             {
                 log::error!("{err}");
             }
+        } else {
+            let (buffer, snapshot, parent_range) = matched_node;
+            let ranges = vec![(
+                snapshot.anchor_before(parent_range.start)..snapshot.anchor_after(parent_range.end),
+                parent_range.len(),
+            )];
+
+            // todo! expand
+            let send_result = results_tx.unbounded_send((buffer.clone(), snapshot.clone(), ranges));
+
+            if let Err(err) = send_result
+                && !err.is_disconnected()
+            {
+                log::error!("{err}");
+            }
         }
     } else if let Some(content_regex) = &input_query.content {
         let search_query = make_search(&content_regex)?;
@@ -221,7 +236,7 @@ async fn run_query(
         while let Some(SearchResult::Buffer { buffer, ranges }) = results_rx.next().await {
             let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
 
-            // todo! expand excerpts
+            // todo! expand
             let ranges = ranges
                 .into_iter()
                 .map(|range| {
@@ -238,6 +253,8 @@ async fn run_query(
                 log::error!("{err}");
             }
         }
+    } else {
+        log::warn!("Context gathering model produced a glob-only search");
     }
 
     anyhow::Ok(())
