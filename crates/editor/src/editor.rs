@@ -22177,6 +22177,10 @@ impl Editor {
     }
 
     fn register_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        if self.ignore_lsp_data() {
+            return;
+        }
+
         if !self.registered_buffers.contains_key(&buffer_id)
             && let Some(project) = self.project.as_ref()
         {
