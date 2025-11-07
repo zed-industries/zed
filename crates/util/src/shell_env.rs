@@ -208,7 +208,6 @@ async fn capture_windows(
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
-    // "cmd" "/c" "cd \'C:\\Workspace\\salsa\\\'; \'C:\\Workspace\\zed\\zed\\target\\debug\\zed.exe\' --printenv"
     let env_output = String::from_utf8_lossy(&output.stdout);
 
     // Parse the JSON output from zed --printenv
