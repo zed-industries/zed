@@ -43,14 +43,6 @@ pub struct WrapSnapshot {
     interpolated: bool,
 }
 
-impl std::ops::Deref for WrapSnapshot {
-    type Target = TabSnapshot;
-
-    fn deref(&self) -> &Self::Target {
-        &self.tab_snapshot
-    }
-}
-
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct Transform {
     summary: TransformSummary,

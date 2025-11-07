@@ -179,7 +179,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.update_editor(cx, |_, editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             editor.change_selections(Default::default(), window, cx, |s| {
-                let map = s.display_snapshot();
+                let map = s.display_map();
                 let ranges = ranges
                     .into_iter()
                     .map(|(start, end, reversed)| {
@@ -304,7 +304,7 @@ impl Vim {
     ) {
         let text_layout_details = editor.text_layout_details(window);
         editor.change_selections(Default::default(), window, cx, |s| {
-            let map = &s.display_snapshot();
+            let map = &s.display_map();
             let mut head = s.newest_anchor().head().to_display_point(map);
             let mut tail = s.oldest_anchor().tail().to_display_point(map);
 

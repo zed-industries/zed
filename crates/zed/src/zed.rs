@@ -4072,9 +4072,7 @@ mod tests {
                     let editor = item.downcast::<Editor>().unwrap();
                     let (selections, scroll_position) = editor.update(cx, |editor, cx| {
                         (
-                            editor
-                                .selections
-                                .display_ranges(&editor.display_snapshot(cx)),
+                            editor.selections.display_ranges(cx),
                             editor.scroll_position(cx),
                         )
                     });

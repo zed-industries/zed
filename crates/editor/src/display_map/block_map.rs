@@ -63,14 +63,6 @@ pub struct BlockSnapshot {
     pub(super) excerpt_header_height: u32,
 }
 
-impl Deref for BlockSnapshot {
-    type Target = WrapSnapshot;
-
-    fn deref(&self) -> &Self::Target {
-        &self.wrap_snapshot
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CustomBlockId(pub usize);
 

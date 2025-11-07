@@ -38,7 +38,7 @@ impl Vim {
                 .map(|s| s.to_vec())
             {
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    let map = s.display_snapshot();
+                    let map = s.display_map();
                     s.select_display_ranges(selections.iter().map(|a| {
                         let point = a.to_display_point(&map);
                         point..point
