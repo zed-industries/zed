@@ -567,13 +567,13 @@ impl ActionLog {
         &mut self,
         buffer: Entity<Buffer>,
         buffer_range: Range<impl language::ToPoint>,
-        agent_telemetry_id: Option<&str>,
+        telemetry: Option<ActionLogTelemetry>,
         cx: &mut Context<Self>,
     ) {
         let mut metrics = ActionLogMetrics::default();
         self.keep_edits_in_range_impl(&buffer, buffer_range, &mut metrics, cx);
-        if let Some(agent) = agent_telemetry_id {
-            telemetry_report_accepted_edits(agent, metrics);
+        if let Some(telemetry) = telemetry {
+            telemetry_report_accepted_edits(&telemetry, metrics);
         }
     }
 
@@ -648,13 +648,13 @@ impl ActionLog {
         &mut self,
         buffer: Entity<Buffer>,
         buffer_ranges: Vec<Range<impl language::ToPoint>>,
-        agent_telemetry_id: Option<&str>,
+        telemetry: Option<ActionLogTelemetry>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let mut metrics = ActionLogMetrics::default();
         let task = self.reject_edits_in_ranges_impl(buffer, buffer_ranges, &mut metrics, cx);
-        if let Some(agent) = agent_telemetry_id {
-            telemetry_report_rejected_edits(agent, metrics);
+        if let Some(telemetry) = telemetry {
+            telemetry_report_rejected_edits(&telemetry, metrics);
         }
         task
     }
@@ -798,7 +798,11 @@ impl ActionLog {
         }
     }
 
-    pub fn keep_all_edits(&mut self, agent_telemetry_id: Option<&str>, cx: &mut Context<Self>) {
+    pub fn keep_all_edits(
+        &mut self,
+        telemetry: Option<ActionLogTelemetry>,
+        cx: &mut Context<Self>,
+    ) {
         let mut metrics = ActionLogMetrics::default();
         self.tracked_buffers.retain(|_buffer, tracked_buffer| {
             metrics.add_edits(
@@ -818,15 +822,15 @@ impl ActionLog {
                 }
             }
         });
-        if let Some(agent) = agent_telemetry_id {
-            telemetry_report_accepted_edits(agent, metrics);
+        if let Some(telemetry) = telemetry {
+            telemetry_report_accepted_edits(&telemetry, metrics);
         }
         cx.notify();
     }
 
     pub fn reject_all_edits(
         &mut self,
-        agent_telemetry_id: Option<&str>,
+        telemetry: Option<ActionLogTelemetry>,
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let mut metrics = ActionLogMetrics::default();
@@ -845,8 +849,8 @@ impl ActionLog {
 
         let task = futures::future::join_all(futures);
 
-        if let Some(agent) = agent_telemetry_id {
-            telemetry_report_rejected_edits(agent, metrics);
+        if let Some(telemetry) = telemetry {
+            telemetry_report_rejected_edits(&telemetry, metrics);
         }
         cx.background_spawn(async move {
             task.await;
@@ -878,6 +882,12 @@ impl ActionLog {
     }
 }
 
+#[derive(Clone)]
+pub struct ActionLogTelemetry {
+    pub agent_telemetry_id: &'static str,
+    pub session_id: Arc<str>,
+}
+
 #[derive(Default)]
 struct ActionLogMetrics {
     lines_removed: u32,
@@ -907,20 +917,22 @@ impl ActionLogMetrics {
     }
 }
 
-fn telemetry_report_accepted_edits(agent: &str, metrics: ActionLogMetrics) {
+fn telemetry_report_accepted_edits(telemetry: &ActionLogTelemetry, metrics: ActionLogMetrics) {
     telemetry::event!(
         "Agent Edits Accepted",
-        agent,
+        agent = telemetry.agent_telemetry_id,
+        session_id = telemetry.session_id,
         languages = metrics.languages,
         lines_added = metrics.lines_added,
         lines_removed = metrics.lines_removed
     );
 }
 
-fn telemetry_report_rejected_edits(agent: &str, metrics: ActionLogMetrics) {
+fn telemetry_report_rejected_edits(telemetry: &ActionLogTelemetry, metrics: ActionLogMetrics) {
     telemetry::event!(
         "Agent Edits Rejected",
-        agent,
+        agent = telemetry.agent_telemetry_id,
+        session_id = telemetry.session_id,
         languages = metrics.languages,
         lines_added = metrics.lines_added,
         lines_removed = metrics.lines_removed

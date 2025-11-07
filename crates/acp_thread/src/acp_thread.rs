@@ -15,7 +15,7 @@ use settings::Settings as _;
 use task::{Shell, ShellBuilder};
 pub use terminal::*;
 
-use action_log::ActionLog;
+use action_log::{ActionLog, ActionLogTelemetry};
 use agent_client_protocol::{self as acp};
 use anyhow::{Context as _, Result, anyhow};
 use editor::Bias;
@@ -818,6 +818,15 @@ pub struct AcpThread {
     terminals: HashMap<acp::TerminalId, Entity<Terminal>>,
     pending_terminal_output: HashMap<acp::TerminalId, Vec<Vec<u8>>>,
     pending_terminal_exit: HashMap<acp::TerminalId, acp::TerminalExitStatus>,
+}
+
+impl From<&AcpThread> for ActionLogTelemetry {
+    fn from(value: &AcpThread) -> Self {
+        Self {
+            agent_telemetry_id: value.connection().telemetry_id(),
+            session_id: value.session_id.0.clone(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -1879,6 +1888,7 @@ impl AcpThread {
             return Task::ready(Err(anyhow!("not supported")));
         };
 
+        let telemetry = ActionLogTelemetry::from(&*self);
         cx.spawn(async move |this, cx| {
             cx.update(|cx| truncate.run(id.clone(), cx))?.await?;
             this.update(cx, |this, cx| {
@@ -1888,7 +1898,7 @@ impl AcpThread {
                     cx.emit(AcpThreadEvent::EntriesRemoved(range));
                 }
                 this.action_log().update(cx, |action_log, cx| {
-                    action_log.reject_all_edits(Some(this.connection().telemetry_id()), cx)
+                    action_log.reject_all_edits(Some(telemetry), cx)
                 })
             })?
             .await;

@@ -4,7 +4,7 @@ use acp_thread::{
     ToolCallStatus, UserMessageId,
 };
 use acp_thread::{AgentConnection, Plan};
-use action_log::ActionLog;
+use action_log::{ActionLog, ActionLogTelemetry};
 use agent::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
 use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
@@ -3541,6 +3541,7 @@ impl AcpThreadView {
     ) -> Option<AnyElement> {
         let thread = thread_entity.read(cx);
         let action_log = thread.action_log();
+        let telemetry = ActionLogTelemetry::from(thread);
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
         let plan = thread.plan();
 
@@ -3588,6 +3589,7 @@ impl AcpThreadView {
                 .when(self.edits_expanded, |parent| {
                     parent.child(self.render_edited_files(
                         action_log,
+                        telemetry,
                         &changed_buffers,
                         pending_edits,
                         cx,
@@ -3868,6 +3870,7 @@ impl AcpThreadView {
     fn render_edited_files(
         &self,
         action_log: &Entity<ActionLog>,
+        telemetry: ActionLogTelemetry,
         changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
         pending_edits: bool,
         cx: &Context<Self>,
@@ -3987,14 +3990,14 @@ impl AcpThreadView {
                                     .on_click({
                                         let buffer = buffer.clone();
                                         let action_log = action_log.clone();
-                                        let agent_telemetry_id = self.agent.telemetry_id();
+                                        let telemetry = telemetry.clone();
                                         move |_, _, cx| {
                                             action_log.update(cx, |action_log, cx| {
                                                 action_log
                                                     .reject_edits_in_ranges(
                                                         buffer.clone(),
                                                         vec![Anchor::MIN..Anchor::MAX],
-                                                        Some(agent_telemetry_id),
+                                                        Some(telemetry.clone()),
                                                         cx,
                                                     )
                                                     .detach_and_log_err(cx);
@@ -4009,13 +4012,13 @@ impl AcpThreadView {
                                     .on_click({
                                         let buffer = buffer.clone();
                                         let action_log = action_log.clone();
-                                        let agent_telemetry_id = self.agent.telemetry_id();
+                                        let telemetry = telemetry.clone();
                                         move |_, _, cx| {
                                             action_log.update(cx, |action_log, cx| {
                                                 action_log.keep_edits_in_range(
                                                     buffer.clone(),
                                                     Anchor::MIN..Anchor::MAX,
-                                                    Some(agent_telemetry_id),
+                                                    Some(telemetry.clone()),
                                                     cx,
                                                 );
                                             })
@@ -4231,9 +4234,10 @@ impl AcpThreadView {
         let Some(thread) = self.thread() else {
             return;
         };
+        let telemetry = ActionLogTelemetry::from(thread.read(cx));
         let action_log = thread.read(cx).action_log().clone();
         action_log.update(cx, |action_log, cx| {
-            action_log.keep_all_edits(Some(self.agent.telemetry_id()), cx)
+            action_log.keep_all_edits(Some(telemetry), cx)
         });
     }
 
@@ -4241,10 +4245,11 @@ impl AcpThreadView {
         let Some(thread) = self.thread() else {
             return;
         };
+        let telemetry = ActionLogTelemetry::from(thread.read(cx));
         let action_log = thread.read(cx).action_log().clone();
         action_log
             .update(cx, |action_log, cx| {
-                action_log.reject_all_edits(Some(self.agent.telemetry_id()), cx)
+                action_log.reject_all_edits(Some(telemetry), cx)
             })
             .detach();
     }

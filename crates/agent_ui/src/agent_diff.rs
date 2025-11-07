@@ -1,5 +1,6 @@
 use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll};
 use acp_thread::{AcpThread, AcpThreadEvent};
+use action_log::ActionLogTelemetry;
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
@@ -277,10 +278,10 @@ impl AgentDiffPane {
     }
 
     fn keep_all(&mut self, _: &KeepAll, _window: &mut Window, cx: &mut Context<Self>) {
-        let agent_telemetry_id = self.thread.read(cx).connection().telemetry_id();
+        let telemetry = ActionLogTelemetry::from(self.thread.read(cx));
         let action_log = self.thread.read(cx).action_log().clone();
         action_log.update(cx, |action_log, cx| {
-            action_log.keep_all_edits(Some(agent_telemetry_id), cx)
+            action_log.keep_all_edits(Some(telemetry), cx)
         });
     }
 }
@@ -333,11 +334,12 @@ fn keep_edits_in_ranges(
         let buffer = multibuffer.read(cx).buffer(hunk.buffer_id);
         if let Some(buffer) = buffer {
             let action_log = thread.read(cx).action_log().clone();
+            let telemetry = ActionLogTelemetry::from(thread.read(cx));
             action_log.update(cx, |action_log, cx| {
                 action_log.keep_edits_in_range(
                     buffer,
                     hunk.buffer_range.clone(),
-                    Some(thread.read(cx).connection().telemetry_id()),
+                    Some(telemetry),
                     cx,
                 )
             });
@@ -372,12 +374,12 @@ fn reject_edits_in_ranges(
         }
     }
 
-    let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
     let action_log = thread.read(cx).action_log().clone();
+    let telemetry = ActionLogTelemetry::from(thread.read(cx));
     for (buffer, ranges) in ranges_by_buffer {
         action_log
             .update(cx, |action_log, cx| {
-                action_log.reject_edits_in_ranges(buffer, ranges, Some(agent_telemetry_id), cx)
+                action_log.reject_edits_in_ranges(buffer, ranges, Some(telemetry.clone()), cx)
             })
             .detach_and_log_err(cx);
     }
