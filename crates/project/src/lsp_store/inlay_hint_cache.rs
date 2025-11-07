@@ -8,6 +8,7 @@ use language::{
     row_chunk::{RowChunk, RowChunks},
 };
 use lsp::LanguageServerId;
+use text::Anchor;
 
 use crate::{InlayHint, InlayId};
 
@@ -182,10 +183,6 @@ impl BufferInlayHints {
         Some(hint)
     }
 
-    pub fn buffer_chunks_len(&self) -> usize {
-        self.chunks.len()
-    }
-
     pub(crate) fn invalidate_for_server_refresh(
         &mut self,
         for_server: LanguageServerId,
@@ -228,5 +225,9 @@ impl BufferInlayHints {
                 self.hint_resolves.remove(&hint_id);
             }
         }
+    }
+
+    pub fn chunk_range(&self, chunk: RowChunk) -> Option<Range<Anchor>> {
+        self.chunks.chunk_range(chunk)
     }
 }

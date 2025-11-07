@@ -12,10 +12,14 @@ impl Editor {
             return;
         }
 
+        if invalidate {
+            self.fetched_tree_sitter_chunks.clear();
+        }
+
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
         let bracket_matches = self.visible_excerpts(cx).into_iter().fold(
             HashMap::default(),
-            |mut acc, (excerpt_id, (buffer, _, buffer_range))| {
+            |mut acc, (excerpt_id, (buffer, buffer_version, buffer_range))| {
                 let buffer_snapshot = buffer.read(cx).snapshot();
                 if language_settings::language_settings(
                     buffer_snapshot.language().map(|language| language.name()),
@@ -24,9 +28,24 @@ impl Editor {
                 )
                 .colorize_brackets
                 {
+                    let fetched_chunks = self
+                        .fetched_tree_sitter_chunks
+                        .entry(excerpt_id)
+                        .or_default();
+
                     for (depth, open_range, close_range) in buffer_snapshot
-                        .bracket_ranges(buffer_range.start..buffer_range.end)
+                        .fetch_bracket_ranges(
+                            buffer_range.start..buffer_range.end,
+                            Some((&buffer_version, fetched_chunks)),
+                        )
                         .into_iter()
+                        .flat_map(|(chunk_range, pairs)| {
+                            if fetched_chunks.insert(chunk_range) {
+                                pairs
+                            } else {
+                                Vec::new()
+                            }
+                        })
                         .filter_map(|pair| {
                             let buffer_open_range = buffer_snapshot
                                 .anchor_before(pair.open_range.start)
@@ -63,7 +82,6 @@ impl Editor {
             self.clear_highlights::<RainbowBracketHighlight>(cx);
         }
 
-        // todo! can we skip the re-highlighting entirely, if it's not adding anything on top?
         let editor_background = cx.theme().colors().editor_background;
         for (depth, bracket_highlights) in bracket_matches {
             let bracket_color = cx.theme().accents().color_for_index(depth as u32);

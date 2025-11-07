@@ -1199,6 +1199,7 @@ pub struct Editor {
     folding_newlines: Task<()>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
     applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
+    fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
 }
 
 fn debounce_value(debounce_ms: u64) -> Option<Duration> {
@@ -2297,6 +2298,7 @@ impl Editor {
             folding_newlines: Task::ready(()),
             lookup_key: None,
             applicable_language_settings: HashMap::default(),
+            fetched_tree_sitter_chunks: HashMap::default(),
         };
 
         if is_minimap {
@@ -3248,7 +3250,6 @@ impl Editor {
             refresh_linked_ranges(self, window, cx);
 
             self.refresh_selected_text_highlights(false, window, cx);
-            self.colorize_brackets(false, cx);
             self.refresh_matching_bracket_highlights(window, cx);
             self.update_visible_edit_prediction(window, cx);
             self.edit_prediction_requires_modifier_in_indent_conflict = true;
@@ -21128,6 +21129,9 @@ impl Editor {
             multi_buffer::Event::ExcerptsExpanded { ids } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 self.refresh_document_highlights(cx);
+                for id in ids {
+                    self.fetched_tree_sitter_chunks.remove(id);
+                }
                 self.colorize_brackets(false, cx);
                 cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
             }
@@ -22429,7 +22433,6 @@ fn insert_extra_newline_tree_sitter(buffer: &MultiBufferSnapshot, range: Range<u
 
         for pair in buffer
             .all_bracket_ranges(range.clone())
-            .into_iter()
             .filter(move |pair| {
                 pair.open_range.start <= range.start && pair.close_range.end >= range.end
             })

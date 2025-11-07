@@ -4,7 +4,7 @@
 use std::{ops::Range, sync::Arc};
 
 use clock::Global;
-use text::OffsetRangeExt as _;
+use text::{Anchor, OffsetRangeExt as _, Point};
 
 use crate::BufferRow;
 
@@ -72,13 +72,30 @@ impl RowChunks {
             .filter(move |chunk| -> bool {
                 // Be lenient and yield multiple chunks if they "touch" the exclusive part of the range.
                 // This will result in LSP hints [re-]queried for more ranges, but also more hints already visible when scrolling around.
-                let chunk_range = chunk.start..=chunk.end_exclusive;
+                let chunk_range = chunk.row_range();
                 row_ranges.iter().any(|row_range| {
                     chunk_range.contains(&row_range.start())
                         || chunk_range.contains(&row_range.end())
                 })
             })
             .copied()
+    }
+
+    pub fn chunk_range(&self, chunk: RowChunk) -> Option<Range<Anchor>> {
+        if !self.chunks.contains(&chunk) {
+            return None;
+        }
+
+        let start = Point::new(chunk.start, 0);
+        let end = if self.chunks.last() == Some(&chunk) {
+            Point::new(
+                chunk.end_exclusive,
+                self.snapshot.line_len(chunk.end_exclusive),
+            )
+        } else {
+            Point::new(chunk.end_exclusive, 0)
+        };
+        Some(self.snapshot.anchor_before(start)..self.snapshot.anchor_after(end))
     }
 }
 
@@ -87,4 +104,10 @@ pub struct RowChunk {
     pub id: usize,
     pub start: BufferRow,
     pub end_exclusive: BufferRow,
+}
+
+impl RowChunk {
+    pub fn row_range(&self) -> Range<BufferRow> {
+        self.start..self.end_exclusive
+    }
 }

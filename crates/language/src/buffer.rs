@@ -21,9 +21,9 @@ pub use crate::{
     proto,
 };
 use anyhow::{Context as _, Result};
-use clock::Lamport;
 pub use clock::ReplicaId;
-use collections::HashMap;
+use clock::{Global, Lamport};
+use collections::{HashMap, HashSet};
 use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
@@ -4145,33 +4145,65 @@ impl BufferSnapshot {
         self.syntax.matches(range, self, query)
     }
 
-    /// Returns all bracket pairs that intersect with the range given.
+    /// Finds all [`RowChunks`] applicable to the given range, then returns all bracket pairs that intersect with those chunks.
+    /// Hence, may return more bracket pairs than the range contains.
     ///
-    /// The resulting collection is not ordered.
-    fn fetch_bracket_ranges(&self, range: Range<usize>) -> Vec<BracketMatch> {
+    /// Will omit known chunks.
+    /// The resulting bracket match collections are not ordered.
+    pub fn fetch_bracket_ranges(
+        &self,
+        range: Range<usize>,
+        known_chunks: Option<(&Global, &HashSet<Range<BufferRow>>)>,
+    ) -> HashMap<Range<BufferRow>, Vec<BracketMatch>> {
         let mut tree_sitter_data = self.latest_tree_sitter_data().clone();
+
+        let known_chunks = match known_chunks {
+            Some((known_version, known_chunks)) => {
+                if !tree_sitter_data
+                    .chunks
+                    .version()
+                    .changed_since(known_version)
+                {
+                    known_chunks.clone()
+                } else {
+                    HashSet::default()
+                }
+            }
+            None => HashSet::default(),
+        };
+
         let mut new_bracket_matches = HashMap::default();
-        let mut all_bracket_matches = Vec::new();
+        let mut all_bracket_matches = HashMap::default();
+
         for chunk in tree_sitter_data
             .chunks
             .applicable_chunks(&[self.anchor_before(range.start)..self.anchor_after(range.end)])
         {
-            let chunk_brackets = tree_sitter_data.brackets_by_chunks.remove(chunk.id);
-            let bracket_matches = match chunk_brackets {
+            if known_chunks.contains(&chunk.row_range()) {
+                continue;
+            }
+            let Some(chunk_range) = tree_sitter_data.chunks.chunk_range(chunk) else {
+                continue;
+            };
+            let chunk_range = chunk_range.to_offset(&tree_sitter_data.chunks.snapshot);
+
+            let bracket_matches = match tree_sitter_data.brackets_by_chunks[chunk.id].take() {
                 Some(cached_brackets) => cached_brackets,
                 None => {
-                    let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
-                        grammar.brackets_config.as_ref().map(|c| &c.query)
-                    });
+                    let mut matches =
+                        self.syntax
+                            .matches(chunk_range.clone(), &self.text, |grammar| {
+                                grammar.brackets_config.as_ref().map(|c| &c.query)
+                            });
                     let configs = matches
                         .grammars()
                         .iter()
                         .map(|grammar| grammar.brackets_config.as_ref().unwrap())
                         .collect::<Vec<_>>();
 
-                    // todo!
+                    // todo! this seems like a wrong parameter: instead, use chunk range, `Range<BufferRow>`, as a key part + add bracket_id that will be used for each bracket
                     let mut depth = 0;
-                    let range = range.clone();
+                    let chunk_range = chunk_range.clone();
                     let new_matches = iter::from_fn(move || {
                         while let Some(mat) = matches.peek() {
                             let mut open = None;
@@ -4193,7 +4225,7 @@ impl BufferSnapshot {
                             };
 
                             let bracket_range = open_range.start..=close_range.end;
-                            if !bracket_range.overlaps(&range) {
+                            if !bracket_range.overlaps(&chunk_range) {
                                 continue;
                             }
 
@@ -4214,7 +4246,7 @@ impl BufferSnapshot {
                     new_matches
                 }
             };
-            all_bracket_matches.extend(bracket_matches);
+            all_bracket_matches.insert(chunk.row_range(), bracket_matches);
         }
 
         let mut latest_tree_sitter_data = self.latest_tree_sitter_data();
@@ -4241,8 +4273,14 @@ impl BufferSnapshot {
         tree_sitter_data
     }
 
-    pub fn all_bracket_ranges(&self, range: Range<usize>) -> Vec<BracketMatch> {
-        self.fetch_bracket_ranges(range)
+    pub fn all_bracket_ranges(&self, range: Range<usize>) -> impl Iterator<Item = BracketMatch> {
+        self.fetch_bracket_ranges(range.clone(), None)
+            .into_values()
+            .flatten()
+            .filter(move |bracket_match| {
+                let bracket_range = bracket_match.open_range.start..=bracket_match.close_range.end;
+                bracket_range.overlaps(&range)
+            })
     }
 
     /// Returns bracket range pairs overlapping or adjacent to `range`
@@ -4253,7 +4291,6 @@ impl BufferSnapshot {
         // Find bracket pairs that *inclusively* contain the given range.
         let range = range.start.to_previous_offset(self)..range.end.to_next_offset(self);
         self.all_bracket_ranges(range)
-            .into_iter()
             .filter(|pair| !pair.newline_only)
     }
 

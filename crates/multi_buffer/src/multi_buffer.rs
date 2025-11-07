@@ -21,11 +21,10 @@ use gpui::{App, Context, Entity, EntityId, EventEmitter};
 use itertools::Itertools;
 use language::{
     AutoindentMode, BracketMatch, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability,
-    CharClassifier, CharKind, CharScopeContext, Chunk, CursorShape, DiagnosticEntryRef, DiskState, File,
-    IndentGuideSettings, IndentSize,
-    Language, LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16,
-    Selection, TextDimension, TextObject, ToOffset as _, ToPoint as _, TransactionId,
-    TreeSitterOptions, Unclipped,
+    CharClassifier, CharKind, CharScopeContext, Chunk, CursorShape, DiagnosticEntryRef, DiskState,
+    File, IndentGuideSettings, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16,
+    Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension, TextObject, ToOffset as _,
+    ToPoint as _, TransactionId, TreeSitterOptions, Unclipped,
     language_settings::{LanguageSettings, language_settings},
 };
 
@@ -4896,7 +4895,7 @@ impl MultiBufferSnapshot {
             .map(|matches_iter| matches_iter.map(BracketMatch::bracket_ranges))
     }
 
-    pub fn bracket_matches<T: ToOffset>(
+    fn bracket_matches<T: ToOffset>(
         &self,
         range: Range<T>,
     ) -> Option<impl Iterator<Item = BracketMatch> + '_> {
