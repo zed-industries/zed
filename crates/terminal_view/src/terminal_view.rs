@@ -95,7 +95,6 @@ actions!(
 pub fn init(cx: &mut App) {
     assistant_slash_command::init(cx);
     terminal_panel::init(cx);
-    terminal::init(cx);
 
     register_serializable_item::<TerminalView>(cx);
 
@@ -1692,10 +1691,7 @@ mod tests {
     pub async fn init_test(cx: &mut TestAppContext) -> (Entity<Project>, Entity<Workspace>) {
         let params = cx.update(AppState::test);
         cx.update(|cx| {
-            terminal::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
-            Project::init_settings(cx);
-            language::init(cx);
         });
 
         let project = Project::test(params.fs.clone(), [], cx).await;

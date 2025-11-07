@@ -409,7 +409,7 @@ pub fn main() {
             handle_settings_changed,
         );
         handle_keymap_file_changes(user_keymap_file_rx, cx);
-        client::init_settings(cx);
+
         let user_agent = format!(
             "Zed/{} ({}; {})",
             AppVersion::global(cx),
@@ -468,7 +468,6 @@ pub fn main() {
         let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
-        language::init(cx);
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
@@ -573,7 +572,6 @@ pub fn main() {
         supermaven::init(app_state.client.clone(), cx);
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
-        agent_settings::init(cx);
         acp_tools::init(cx);
         zeta2_tools::init(cx);
         web_search::init(cx);
