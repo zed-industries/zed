@@ -1207,7 +1207,7 @@ fn env_priority(kind: Option<PythonEnvironmentKind>) -> usize {
     }
 }
 
-/// Return the name of environment declared in <worktree-root/.venv>.
+/// Return the name of environment declared in <worktree-root/.venv.
 ///
 /// https://virtualfish.readthedocs.io/en/latest/plugins.html#auto-activation-auto-activation
 async fn get_worktree_venv_declaration(worktree_root: &Path) -> Option<String> {
@@ -1442,11 +1442,11 @@ impl ToolchainLister for PythonToolchainProvider {
             Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {
                 if let Some(activation_scripts) = &toolchain.activation_scripts {
                     if let Some(activate_script_path) = activation_scripts.get(&shell) {
-                    let activate_keyword = shell.activate_keyword();
+                        let activate_keyword = shell.activate_keyword();
                         if let Some(quoted) =
                             shell.try_quote(&activate_script_path.to_string_lossy())
-                    {
-                        activation_script.push(format!("{activate_keyword} {quoted}"));
+                        {
+                            activation_script.push(format!("{activate_keyword} {quoted}"));
                         }
                     }
                 }
@@ -1602,7 +1602,7 @@ impl pet_core::os_environment::Environment for EnvironmentApi<'_> {
                     .or_else(|| self.get_env_var("Path".to_string()))
                     .unwrap_or_default(),
             )
-                    .collect::<Vec<PathBuf>>();
+            .collect::<Vec<PathBuf>>();
 
             log::trace!("Env PATH: {:?}", paths);
             for p in self.pet_env.get_know_global_search_locations() {

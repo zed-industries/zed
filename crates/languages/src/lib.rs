@@ -89,8 +89,6 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     let json_context_provider = Arc::new(JsonTaskProvider);
     let json_lsp_adapter = Arc::new(json::JsonLspAdapter::new(node.clone()));
     let node_version_lsp_adapter = Arc::new(json::NodeVersionAdapter);
-
-    // Python adapters & context/toolchain
     let py_lsp_adapter = Arc::new(python::PyLspAdapter::new());
     let ty_lsp_adapter = Arc::new(python::TyLspAdapter::new(fs.clone()));
     let python_context_provider = Arc::new(python::PythonContextProvider);
@@ -99,7 +97,6 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     let ruff_lsp_adapter = Arc::new(RuffLspAdapter::new(fs.clone()));
     let pyrefly_lsp_adapter = Arc::new(python::PyreflyLspAdapter::new());
     let python_toolchain_provider = Arc::new(python::PythonToolchainProvider);
-
     let rust_context_provider = Arc::new(rust::RustContextProvider);
     let rust_lsp_adapter = Arc::new(rust::RustLspAdapter);
     let tailwind_adapter = Arc::new(tailwind::TailwindLspAdapter::new(node.clone()));
