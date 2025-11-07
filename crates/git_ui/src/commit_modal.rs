@@ -170,77 +170,77 @@ impl CommitModal {
     }
 
     fn new(
-            git_panel: Entity<GitPanel>,
-            restore_dock: RestoreDock,
-            window: &mut Window,
-            cx: &mut Context<Self>,
-        ) -> Self {
-            let panel = git_panel.read(cx);
-            let suggested_commit_message = panel.suggest_commit_message(cx);
+        git_panel: Entity<GitPanel>,
+        restore_dock: RestoreDock,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let panel = git_panel.read(cx);
+        let suggested_commit_message = panel.suggest_commit_message(cx);
 
-            let commit_editor = git_panel.update(cx, |git_panel, cx| {
-                git_panel.set_modal_open(true, cx);
-                let panel_editor = git_panel.commit_editor.clone();
-                let buffer = panel_editor.read(cx).buffer().clone();
-                let project = git_panel.project.clone();
+        let commit_editor = git_panel.update(cx, |git_panel, cx| {
+            git_panel.set_modal_open(true, cx);
+            let panel_editor = git_panel.commit_editor.clone();
+            let buffer = panel_editor.read(cx).buffer().clone();
+            let project = git_panel.project.clone();
 
-                cx.new(|cx| {
-                    let max_lines = 18;
-                    let mut editor = Editor::new(
-                        EditorMode::AutoHeight {
-                            min_lines: max_lines,
-                            max_lines: Some(max_lines),
-                        },
-                        buffer,
-                        None,
-                        window,
-                        cx,
-                    );
-                    editor.set_collaboration_hub(Box::new(project));
-                    editor.set_use_autoclose(false);
-                    editor.set_show_gutter(false, cx);
-                    editor.set_use_modal_editing(true);
-                    editor.set_show_wrap_guides(false, cx);
-                    editor.set_show_indent_guides(false, cx);
-                    editor.set_placeholder_text("Enter commit message", window, cx);
-                    editor.sync_selections(panel_editor, cx).detach();
+            cx.new(|cx| {
+                let max_lines = 18;
+                let mut editor = Editor::new(
+                    EditorMode::AutoHeight {
+                        min_lines: max_lines,
+                        max_lines: Some(max_lines),
+                    },
+                    buffer,
+                    None,
+                    window,
+                    cx,
+                );
+                editor.set_collaboration_hub(Box::new(project));
+                editor.set_use_autoclose(false);
+                editor.set_show_gutter(false, cx);
+                editor.set_use_modal_editing(true);
+                editor.set_show_wrap_guides(false, cx);
+                editor.set_show_indent_guides(false, cx);
+                editor.set_placeholder_text("Enter commit message", window, cx);
+                editor.sync_selections(panel_editor, cx).detach();
 
-                    editor
-                })
-            });
-
-            let commit_message = commit_editor.read(cx).text(cx);
-
-            if let Some(suggested_commit_message) = suggested_commit_message
-                && commit_message.is_empty()
-            {
-                commit_editor.update(cx, |editor, cx| {
-                    editor.set_placeholder_text(&suggested_commit_message, window, cx);
-                });
-            }
-
-            let focus_handle = commit_editor.focus_handle(cx);
-
-            cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
-                if !this.branch_list_handle.is_focused(window, cx)
-                    && !this.commit_menu_handle.is_focused(window, cx)
-                {
-                    cx.emit(DismissEvent);
-                }
+                editor
             })
-            .detach();
+        });
 
-            let properties = ModalContainerProperties::new(window, 50);
+        let commit_message = commit_editor.read(cx).text(cx);
 
-            Self {
-                git_panel,
-                commit_editor,
-                restore_dock,
-                properties,
-                branch_list_handle: PopoverMenuHandle::default(),
-                commit_menu_handle: PopoverMenuHandle::default(),
-            }
+        if let Some(suggested_commit_message) = suggested_commit_message
+            && commit_message.is_empty()
+        {
+            commit_editor.update(cx, |editor, cx| {
+                editor.set_placeholder_text(&suggested_commit_message, window, cx);
+            });
         }
+
+        let focus_handle = commit_editor.focus_handle(cx);
+
+        cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
+            if !this.branch_list_handle.is_focused(window, cx)
+                && !this.commit_menu_handle.is_focused(window, cx)
+            {
+                cx.emit(DismissEvent);
+            }
+        })
+        .detach();
+
+        let properties = ModalContainerProperties::new(window, 50);
+
+        Self {
+            git_panel,
+            commit_editor,
+            restore_dock,
+            properties,
+            branch_list_handle: PopoverMenuHandle::default(),
+            commit_menu_handle: PopoverMenuHandle::default(),
+        }
+    }
 
     fn commit_editor_element(&self, window: &mut Window, cx: &mut Context<Self>) -> EditorElement {
         let editor_style = panel_editor_style(true, window, cx);
