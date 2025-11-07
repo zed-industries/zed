@@ -531,7 +531,7 @@ pub trait GitRepository: Send + Sync {
 
     fn pull(
         &self,
-        branch_name: String,
+        branch_name: Option<String>,
         upstream_name: String,
         rebase: bool,
         askpass: AskPassDelegate,
@@ -1689,7 +1689,7 @@ impl GitRepository for RealGitRepository {
 
     fn pull(
         &self,
-        branch_name: String,
+        branch_name: Option<String>,
         remote_name: String,
         rebase: bool,
         ask_pass: AskPassDelegate,
@@ -1713,7 +1713,7 @@ impl GitRepository for RealGitRepository {
 
             command
                 .arg(remote_name)
-                .arg(branch_name)
+                .args(branch_name)
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
 

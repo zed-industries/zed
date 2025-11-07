@@ -717,7 +717,10 @@ impl MessageEditor {
             let mut all_tracked_buffers = Vec::new();
 
             let result = editor.update(cx, |editor, cx| {
-                let mut ix = text.chars().position(|c| !c.is_whitespace()).unwrap_or(0);
+                let (mut ix, _) = text
+                    .char_indices()
+                    .find(|(_, c)| !c.is_whitespace())
+                    .unwrap_or((0, '\0'));
                 let mut chunks: Vec<acp::ContentBlock> = Vec::new();
                 let text = editor.text(cx);
                 editor.display_map.update(cx, |map, cx| {
@@ -2879,7 +2882,7 @@ mod tests {
         cx.run_until_parked();
 
         editor.update_in(cx, |editor, window, cx| {
-            editor.set_text("  hello world  ", window, cx);
+            editor.set_text("  \u{A0}してhello world  ", window, cx);
         });
 
         let (content, _) = message_editor
@@ -2890,7 +2893,7 @@ mod tests {
         assert_eq!(
             content,
             vec![acp::ContentBlock::Text(acp::TextContent {
-                text: "hello world".into(),
+                text: "してhello world".into(),
                 annotations: None,
                 meta: None
             })]

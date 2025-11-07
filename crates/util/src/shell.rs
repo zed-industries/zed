@@ -199,7 +199,11 @@ pub fn get_windows_system_shell() -> String {
             .or_else(|| find_pwsh_in_programfiles(true, true))
             .or_else(find_pwsh_in_scoop)
             .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or("powershell.exe".to_string())
+            .inspect(|shell| log::info!("Found powershell in: {}", shell))
+            .unwrap_or_else(|| {
+                log::warn!("Powershell not found, falling back to `cmd`");
+                "cmd.exe".to_string()
+            })
     });
 
     (*SYSTEM_SHELL).clone()

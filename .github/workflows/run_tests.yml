@@ -285,40 +285,6 @@ jobs:
         rm -rf ./../.cargo
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
-  check_postgres_and_protobuf_migrations:
-    needs:
-    - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: self-mini-macos
-    steps:
-    - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      with:
-        fetch-depth: 0
-    - name: run_tests::check_postgres_and_protobuf_migrations::remove_untracked_files
-      run: git clean -df
-      shell: bash -euxo pipefail {0}
-    - name: run_tests::check_postgres_and_protobuf_migrations::ensure_fresh_merge
-      run: |
-        if [ -z "$GITHUB_BASE_REF" ];
-        then
-          echo "BUF_BASE_BRANCH=$(git merge-base origin/main HEAD)" >> "$GITHUB_ENV"
-        else
-          git checkout -B temp
-          git merge -q "origin/$GITHUB_BASE_REF" -m "merge main into temp"
-          echo "BUF_BASE_BRANCH=$GITHUB_BASE_REF" >> "$GITHUB_ENV"
-        fi
-      shell: bash -euxo pipefail {0}
-    - name: run_tests::check_postgres_and_protobuf_migrations::bufbuild_setup_action
-      uses: bufbuild/buf-setup-action@v1
-      with:
-        version: v1.29.0
-    - name: run_tests::check_postgres_and_protobuf_migrations::bufbuild_breaking_action
-      uses: bufbuild/buf-breaking-action@v1
-      with:
-        input: crates/proto/proto/
-        against: https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/
-    timeout-minutes: 60
   check_dependencies:
     needs:
     - orchestrate
@@ -518,6 +484,40 @@ jobs:
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
     continue-on-error: true
+  check_postgres_and_protobuf_migrations:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_tests == 'true'
+    runs-on: self-mini-macos
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        fetch-depth: 0
+    - name: run_tests::check_postgres_and_protobuf_migrations::remove_untracked_files
+      run: git clean -df
+      shell: bash -euxo pipefail {0}
+    - name: run_tests::check_postgres_and_protobuf_migrations::ensure_fresh_merge
+      run: |
+        if [ -z "$GITHUB_BASE_REF" ];
+        then
+          echo "BUF_BASE_BRANCH=$(git merge-base origin/main HEAD)" >> "$GITHUB_ENV"
+        else
+          git checkout -B temp
+          git merge -q "origin/$GITHUB_BASE_REF" -m "merge main into temp"
+          echo "BUF_BASE_BRANCH=$GITHUB_BASE_REF" >> "$GITHUB_ENV"
+        fi
+      shell: bash -euxo pipefail {0}
+    - name: run_tests::check_postgres_and_protobuf_migrations::bufbuild_setup_action
+      uses: bufbuild/buf-setup-action@v1
+      with:
+        version: v1.29.0
+    - name: run_tests::check_postgres_and_protobuf_migrations::bufbuild_breaking_action
+      uses: bufbuild/buf-breaking-action@v1
+      with:
+        input: crates/proto/proto/
+        against: https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/
+    timeout-minutes: 60
   tests_pass:
     needs:
     - orchestrate
@@ -527,7 +527,6 @@ jobs:
     - run_tests_mac
     - doctests
     - check_workspace_binaries
-    - check_postgres_and_protobuf_migrations
     - check_dependencies
     - check_docs
     - check_licenses
@@ -554,7 +553,6 @@ jobs:
         check_result "run_tests_mac" "${{ needs.run_tests_mac.result }}"
         check_result "doctests" "${{ needs.doctests.result }}"
         check_result "check_workspace_binaries" "${{ needs.check_workspace_binaries.result }}"
-        check_result "check_postgres_and_protobuf_migrations" "${{ needs.check_postgres_and_protobuf_migrations.result }}"
         check_result "check_dependencies" "${{ needs.check_dependencies.result }}"
         check_result "check_docs" "${{ needs.check_docs.result }}"
         check_result "check_licenses" "${{ needs.check_licenses.result }}"

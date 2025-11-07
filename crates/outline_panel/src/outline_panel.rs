@@ -5204,6 +5204,9 @@ fn subscribe_for_editor_events(
                         outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
                     }
                 }
+                EditorEvent::TitleChanged => {
+                    outline_panel.update_fs_entries(editor.clone(), debounce, window, cx);
+                }
                 _ => {}
             }
         },

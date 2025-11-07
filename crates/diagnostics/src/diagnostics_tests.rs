@@ -156,7 +156,9 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     // Cursor is at the first diagnostic
     editor.update(cx, |editor, cx| {
         assert_eq!(
-            editor.selections.display_ranges(cx),
+            editor
+                .selections
+                .display_ranges(&editor.display_snapshot(cx)),
             [DisplayPoint::new(DisplayRow(3), 8)..DisplayPoint::new(DisplayRow(3), 8)]
         );
     });
@@ -232,7 +234,9 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     // Cursor keeps its position.
     editor.update(cx, |editor, cx| {
         assert_eq!(
-            editor.selections.display_ranges(cx),
+            editor
+                .selections
+                .display_ranges(&editor.display_snapshot(cx)),
             [DisplayPoint::new(DisplayRow(8), 8)..DisplayPoint::new(DisplayRow(8), 8)]
         );
     });
@@ -769,7 +773,7 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
 
     log::info!("updating mutated diagnostics view");
     mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
-        diagnostics.update_stale_excerpts(RetainExcerpts::No, window, cx)
+        diagnostics.update_stale_excerpts(window, cx)
     });
 
     log::info!("constructing reference diagnostics view");
@@ -968,7 +972,7 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
 
     log::info!("updating mutated diagnostics view");
     mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
-        diagnostics.update_stale_excerpts(RetainExcerpts::No, window, cx)
+        diagnostics.update_stale_excerpts(window, cx)
     });
 
     cx.executor()

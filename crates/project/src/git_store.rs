@@ -1,6 +1,7 @@
 pub mod branch_diff;
 mod conflict_set;
 pub mod git_traversal;
+pub mod pending_op;
 
 use crate::{
     ProjectEnvironment, ProjectItem, ProjectPath,
@@ -16,7 +17,10 @@ pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, Conflic
 use fs::Fs;
 use futures::{
     FutureExt, StreamExt,
-    channel::{mpsc, oneshot},
+    channel::{
+        mpsc,
+        oneshot::{self, Canceled},
+    },
     future::{self, Shared},
     stream::FuturesOrdered,
 };
@@ -44,6 +48,7 @@ use language::{
     proto::{deserialize_version, serialize_version},
 };
 use parking_lot::Mutex;
+use pending_op::{PendingOp, PendingOpId, PendingOps};
 use postage::stream::Stream as _;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -248,6 +253,7 @@ pub struct MergeDetails {
 pub struct RepositorySnapshot {
     pub id: RepositoryId,
     pub statuses_by_path: SumTree<StatusEntry>,
+    pub pending_ops_by_path: SumTree<PendingOps>,
     pub work_directory_abs_path: Arc<Path>,
     pub path_style: PathStyle,
     pub branch: Option<Branch>,
@@ -311,6 +317,9 @@ pub enum RepositoryEvent {
     MergeHeadsChanged,
     BranchChanged,
     StashEntriesChanged,
+    PendingOpsChanged {
+        pending_ops: SumTree<pending_op::PendingOps>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -338,7 +347,7 @@ pub struct GitJob {
 
 #[derive(PartialEq, Eq)]
 enum GitJobKey {
-    WriteIndex(RepoPath),
+    WriteIndex(Vec<RepoPath>),
     ReloadBufferDiffBases,
     RefreshStatuses,
     ReloadGitState,
@@ -1723,7 +1732,7 @@ impl GitStore {
             &mut cx,
         );
 
-        let branch_name = envelope.payload.branch_name.into();
+        let branch_name = envelope.payload.branch_name.map(|name| name.into());
         let remote_name = envelope.payload.remote_name.into();
         let rebase = envelope.payload.rebase;
 
@@ -2161,7 +2170,7 @@ impl GitStore {
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.checkout_files(&envelope.payload.commit, paths, cx)
             })?
-            .await??;
+            .await?;
         Ok(proto::Ack {})
     }
 
@@ -2954,6 +2963,7 @@ impl RepositorySnapshot {
         Self {
             id,
             statuses_by_path: Default::default(),
+            pending_ops_by_path: Default::default(),
             work_directory_abs_path,
             branch: None,
             head_commit: None,
@@ -3077,6 +3087,12 @@ impl RepositorySnapshot {
 
     pub fn status_for_path(&self, path: &RepoPath) -> Option<StatusEntry> {
         self.statuses_by_path
+            .get(&PathKey(path.0.clone()), ())
+            .cloned()
+    }
+
+    pub fn pending_ops_for_path(&self, path: &RepoPath) -> Option<PendingOps> {
+        self.pending_ops_by_path
             .get(&PathKey(path.0.clone()), ())
             .cloned()
     }
@@ -3636,37 +3652,50 @@ impl Repository {
         &mut self,
         commit: &str,
         paths: Vec<RepoPath>,
-        _cx: &mut App,
-    ) -> oneshot::Receiver<Result<()>> {
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         let commit = commit.to_string();
         let id = self.id;
 
-        self.send_job(
-            Some(format!("git checkout {}", commit).into()),
-            move |git_repo, _| async move {
-                match git_repo {
-                    RepositoryState::Local {
-                        backend,
-                        environment,
-                        ..
-                    } => {
-                        backend
-                            .checkout_files(commit, paths, environment.clone())
-                            .await
-                    }
-                    RepositoryState::Remote { project_id, client } => {
-                        client
-                            .request(proto::GitCheckoutFiles {
-                                project_id: project_id.0,
-                                repository_id: id.to_proto(),
-                                commit,
-                                paths: paths.into_iter().map(|p| p.to_proto()).collect(),
-                            })
-                            .await?;
+        self.spawn_job_with_tracking(
+            paths.clone(),
+            pending_op::GitStatus::Reverted,
+            cx,
+            async move |this, cx| {
+                this.update(cx, |this, _cx| {
+                    this.send_job(
+                        Some(format!("git checkout {}", commit).into()),
+                        move |git_repo, _| async move {
+                            match git_repo {
+                                RepositoryState::Local {
+                                    backend,
+                                    environment,
+                                    ..
+                                } => {
+                                    backend
+                                        .checkout_files(commit, paths, environment.clone())
+                                        .await
+                                }
+                                RepositoryState::Remote { project_id, client } => {
+                                    client
+                                        .request(proto::GitCheckoutFiles {
+                                            project_id: project_id.0,
+                                            repository_id: id.to_proto(),
+                                            commit,
+                                            paths: paths
+                                                .into_iter()
+                                                .map(|p| p.to_proto())
+                                                .collect(),
+                                        })
+                                        .await?;
 
-                        Ok(())
-                    }
-                }
+                                    Ok(())
+                                }
+                            }
+                        },
+                    )
+                })?
+                .await?
             },
         )
     }
@@ -3796,7 +3825,7 @@ impl Repository {
     }
 
     pub fn stage_entries(
-        &self,
+        &mut self,
         entries: Vec<RepoPath>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
@@ -3811,54 +3840,54 @@ impl Repository {
             .collect::<Vec<_>>()
             .join(" ");
         let status = format!("git add {paths}");
-        let job_key = match entries.len() {
-            1 => Some(GitJobKey::WriteIndex(entries[0].clone())),
-            _ => None,
-        };
+        let job_key = GitJobKey::WriteIndex(entries.clone());
 
-        cx.spawn(async move |this, cx| {
-            for save_task in save_tasks {
-                save_task.await?;
-            }
+        self.spawn_job_with_tracking(
+            entries.clone(),
+            pending_op::GitStatus::Staged,
+            cx,
+            async move |this, cx| {
+                for save_task in save_tasks {
+                    save_task.await?;
+                }
 
-            this.update(cx, |this, _| {
-                this.send_keyed_job(
-                    job_key,
-                    Some(status.into()),
-                    move |git_repo, _cx| async move {
-                        match git_repo {
-                            RepositoryState::Local {
-                                backend,
-                                environment,
-                                ..
-                            } => backend.stage_paths(entries, environment.clone()).await,
-                            RepositoryState::Remote { project_id, client } => {
-                                client
-                                    .request(proto::Stage {
-                                        project_id: project_id.0,
-                                        repository_id: id.to_proto(),
-                                        paths: entries
-                                            .into_iter()
-                                            .map(|repo_path| repo_path.to_proto())
-                                            .collect(),
-                                    })
-                                    .await
-                                    .context("sending stage request")?;
+                this.update(cx, |this, _| {
+                    this.send_keyed_job(
+                        Some(job_key),
+                        Some(status.into()),
+                        move |git_repo, _cx| async move {
+                            match git_repo {
+                                RepositoryState::Local {
+                                    backend,
+                                    environment,
+                                    ..
+                                } => backend.stage_paths(entries, environment.clone()).await,
+                                RepositoryState::Remote { project_id, client } => {
+                                    client
+                                        .request(proto::Stage {
+                                            project_id: project_id.0,
+                                            repository_id: id.to_proto(),
+                                            paths: entries
+                                                .into_iter()
+                                                .map(|repo_path| repo_path.to_proto())
+                                                .collect(),
+                                        })
+                                        .await
+                                        .context("sending stage request")?;
 
-                                Ok(())
+                                    Ok(())
+                                }
                             }
-                        }
-                    },
-                )
-            })?
-            .await??;
-
-            Ok(())
-        })
+                        },
+                    )
+                })?
+                .await?
+            },
+        )
     }
 
     pub fn unstage_entries(
-        &self,
+        &mut self,
         entries: Vec<RepoPath>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
@@ -3873,66 +3902,88 @@ impl Repository {
             .collect::<Vec<_>>()
             .join(" ");
         let status = format!("git reset {paths}");
-        let job_key = match entries.len() {
-            1 => Some(GitJobKey::WriteIndex(entries[0].clone())),
-            _ => None,
-        };
+        let job_key = GitJobKey::WriteIndex(entries.clone());
 
-        cx.spawn(async move |this, cx| {
-            for save_task in save_tasks {
-                save_task.await?;
-            }
+        self.spawn_job_with_tracking(
+            entries.clone(),
+            pending_op::GitStatus::Unstaged,
+            cx,
+            async move |this, cx| {
+                for save_task in save_tasks {
+                    save_task.await?;
+                }
 
-            this.update(cx, |this, _| {
-                this.send_keyed_job(
-                    job_key,
-                    Some(status.into()),
-                    move |git_repo, _cx| async move {
-                        match git_repo {
-                            RepositoryState::Local {
-                                backend,
-                                environment,
-                                ..
-                            } => backend.unstage_paths(entries, environment).await,
-                            RepositoryState::Remote { project_id, client } => {
-                                client
-                                    .request(proto::Unstage {
-                                        project_id: project_id.0,
-                                        repository_id: id.to_proto(),
-                                        paths: entries
-                                            .into_iter()
-                                            .map(|repo_path| repo_path.to_proto())
-                                            .collect(),
-                                    })
-                                    .await
-                                    .context("sending unstage request")?;
+                this.update(cx, |this, _| {
+                    this.send_keyed_job(
+                        Some(job_key),
+                        Some(status.into()),
+                        move |git_repo, _cx| async move {
+                            match git_repo {
+                                RepositoryState::Local {
+                                    backend,
+                                    environment,
+                                    ..
+                                } => backend.unstage_paths(entries, environment).await,
+                                RepositoryState::Remote { project_id, client } => {
+                                    client
+                                        .request(proto::Unstage {
+                                            project_id: project_id.0,
+                                            repository_id: id.to_proto(),
+                                            paths: entries
+                                                .into_iter()
+                                                .map(|repo_path| repo_path.to_proto())
+                                                .collect(),
+                                        })
+                                        .await
+                                        .context("sending unstage request")?;
 
-                                Ok(())
+                                    Ok(())
+                                }
                             }
-                        }
-                    },
-                )
-            })?
-            .await??;
-
-            Ok(())
-        })
+                        },
+                    )
+                })?
+                .await?
+            },
+        )
     }
 
-    pub fn stage_all(&self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
+    pub fn stage_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
         let to_stage = self
             .cached_status()
-            .filter(|entry| !entry.status.staging().is_fully_staged())
-            .map(|entry| entry.repo_path)
+            .filter_map(|entry| {
+                if let Some(ops) = self.pending_ops_for_path(&entry.repo_path) {
+                    if ops.staging() || ops.staged() {
+                        None
+                    } else {
+                        Some(entry.repo_path)
+                    }
+                } else if entry.status.staging().has_staged() {
+                    None
+                } else {
+                    Some(entry.repo_path)
+                }
+            })
             .collect();
         self.stage_entries(to_stage, cx)
     }
 
-    pub fn unstage_all(&self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
+    pub fn unstage_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
         let to_unstage = self
             .cached_status()
-            .filter(|entry| entry.status.staging().has_staged())
-            .map(|entry| entry.repo_path)
+            .filter_map(|entry| {
+                if let Some(ops) = self.pending_ops_for_path(&entry.repo_path) {
+                    if !ops.staging() && !ops.staged() {
+                        None
+                    } else {
+                        Some(entry.repo_path)
+                    }
+                } else if entry.status.staging().has_unstaged() {
+                    None
+                } else {
+                    Some(entry.repo_path)
+                }
+            })
             .collect();
         self.unstage_entries(to_unstage, cx)
     }
@@ -4293,7 +4344,7 @@ impl Repository {
 
     pub fn pull(
         &mut self,
-        branch: SharedString,
+        branch: Option<SharedString>,
         remote: SharedString,
         rebase: bool,
         askpass: AskPassDelegate,
@@ -4303,13 +4354,16 @@ impl Repository {
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let id = self.id;
 
-        let status = if rebase {
-            Some(format!("git pull --rebase {} {}", remote, branch).into())
-        } else {
-            Some(format!("git pull {} {}", remote, branch).into())
-        };
+        let mut status = "git pull".to_string();
+        if rebase {
+            status.push_str(" --rebase");
+        }
+        status.push_str(&format!(" {}", remote));
+        if let Some(b) = &branch {
+            status.push_str(&format!(" {}", b));
+        }
 
-        self.send_job(status, move |git_repo, cx| async move {
+        self.send_job(Some(status.into()), move |git_repo, cx| async move {
             match git_repo {
                 RepositoryState::Local {
                     backend,
@@ -4318,7 +4372,7 @@ impl Repository {
                 } => {
                     backend
                         .pull(
-                            branch.to_string(),
+                            branch.as_ref().map(|b| b.to_string()),
                             remote.to_string(),
                             rebase,
                             askpass,
@@ -4339,7 +4393,7 @@ impl Repository {
                             repository_id: id.to_proto(),
                             askpass_id,
                             rebase,
-                            branch_name: branch.to_string(),
+                            branch_name: branch.as_ref().map(|b| b.to_string()),
                             remote_name: remote.to_string(),
                         })
                         .await
@@ -4365,7 +4419,7 @@ impl Repository {
         let this = cx.weak_entity();
         let git_store = self.git_store.clone();
         self.send_keyed_job(
-            Some(GitJobKey::WriteIndex(path.clone())),
+            Some(GitJobKey::WriteIndex(vec![path.clone()])),
             None,
             move |git_repo, mut cx| async move {
                 log::debug!(
@@ -5196,6 +5250,67 @@ impl Repository {
     pub fn barrier(&mut self) -> oneshot::Receiver<()> {
         self.send_job(None, |_, _| async {})
     }
+
+    fn spawn_job_with_tracking<AsyncFn>(
+        &mut self,
+        paths: Vec<RepoPath>,
+        git_status: pending_op::GitStatus,
+        cx: &mut Context<Self>,
+        f: AsyncFn,
+    ) -> Task<Result<()>>
+    where
+        AsyncFn: AsyncFnOnce(WeakEntity<Repository>, &mut AsyncApp) -> Result<()> + 'static,
+    {
+        let ids = self.new_pending_ops_for_paths(paths, git_status);
+
+        cx.spawn(async move |this, cx| {
+            let (job_status, result) = match f(this.clone(), cx).await {
+                Ok(()) => (pending_op::JobStatus::Finished, Ok(())),
+                Err(err) if err.is::<Canceled>() => (pending_op::JobStatus::Skipped, Ok(())),
+                Err(err) => (pending_op::JobStatus::Error, Err(err)),
+            };
+
+            this.update(cx, |this, _| {
+                let mut edits = Vec::with_capacity(ids.len());
+                for (id, entry) in ids {
+                    if let Some(mut ops) = this.snapshot.pending_ops_for_path(&entry) {
+                        if let Some(op) = ops.op_by_id_mut(id) {
+                            op.job_status = job_status;
+                        }
+                        edits.push(sum_tree::Edit::Insert(ops));
+                    }
+                }
+                this.snapshot.pending_ops_by_path.edit(edits, ());
+            })?;
+
+            result
+        })
+    }
+
+    fn new_pending_ops_for_paths(
+        &mut self,
+        paths: Vec<RepoPath>,
+        git_status: pending_op::GitStatus,
+    ) -> Vec<(PendingOpId, RepoPath)> {
+        let mut edits = Vec::with_capacity(paths.len());
+        let mut ids = Vec::with_capacity(paths.len());
+        for path in paths {
+            let mut ops = self
+                .snapshot
+                .pending_ops_for_path(&path)
+                .unwrap_or_else(|| PendingOps::new(&path));
+            let id = ops.max_id() + 1;
+            ops.ops.push(PendingOp {
+                id,
+                git_status,
+                job_status: pending_op::JobStatus::Running,
+            });
+            edits.push(sum_tree::Edit::Insert(ops));
+            ids.push((id, path));
+        }
+        self.snapshot.pending_ops_by_path.edit(edits, ());
+        ids
+    }
 }
 
 fn get_permalink_in_rust_registry_src(
@@ -5461,6 +5576,28 @@ async fn compute_snapshot(
         MergeDetails::load(&backend, &statuses_by_path, &prev_snapshot).await?;
     log::debug!("new merge details (changed={merge_heads_changed:?}): {merge_details:?}");
 
+    let pending_ops_by_path = SumTree::from_iter(
+        prev_snapshot.pending_ops_by_path.iter().filter_map(|ops| {
+            let inner_ops: Vec<PendingOp> =
+                ops.ops.iter().filter(|op| op.running()).cloned().collect();
+            if inner_ops.is_empty() {
+                None
+            } else {
+                Some(PendingOps {
+                    repo_path: ops.repo_path.clone(),
+                    ops: inner_ops,
+                })
+            }
+        }),
+        (),
+    );
+
+    if pending_ops_by_path != prev_snapshot.pending_ops_by_path {
+        events.push(RepositoryEvent::PendingOpsChanged {
+            pending_ops: prev_snapshot.pending_ops_by_path.clone(),
+        })
+    }
+
     if merge_heads_changed {
         events.push(RepositoryEvent::MergeHeadsChanged);
     }
@@ -5486,6 +5623,7 @@ async fn compute_snapshot(
     let snapshot = RepositorySnapshot {
         id,
         statuses_by_path,
+        pending_ops_by_path,
         work_directory_abs_path,
         path_style: prev_snapshot.path_style,
         scan_id: prev_snapshot.scan_id + 1,
