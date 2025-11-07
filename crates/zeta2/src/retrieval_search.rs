@@ -108,7 +108,6 @@ pub async fn run_retrieval_searches(
     .await
 }
 
-const MIN_EXCERPT_LEN: usize = 16;
 const MAX_EXCERPT_LEN: usize = 768;
 const MAX_RESULTS_LEN: usize = MAX_EXCERPT_LEN * 5;
 
@@ -117,6 +116,7 @@ struct SearchJob {
     snapshot: BufferSnapshot,
     ranges: Vec<Range<usize>>,
     query_ix: usize,
+    jobs_tx: channel::Sender<SearchJob>,
 }
 
 async fn run_query(
@@ -161,32 +161,30 @@ async fn run_query(
         let top_search_results_rx =
             project.update(cx, |project, cx| project.search(top_search_query, cx))?;
 
-        let top_search_task = cx.spawn({
-            let jobs_tx = jobs_tx.clone();
-            async move |cx| {
-                futures::pin_mut!(top_search_results_rx);
-                while let Some(SearchResult::Buffer { buffer, ranges }) =
-                    top_search_results_rx.next().await
-                {
-                    buffer
-                        .read_with(cx, |buffer, _| buffer.parsing_idle())?
-                        .await;
-                    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
-                    let expanded_ranges: Vec<_> = ranges
-                        .into_iter()
-                        .filter_map(|range| expand_to_parent_range(&range, &snapshot))
-                        .collect();
-                    jobs_tx
-                        .send(SearchJob {
-                            buffer,
-                            snapshot,
-                            ranges: expanded_ranges,
-                            query_ix: 0,
-                        })
-                        .await?;
-                }
-                anyhow::Ok(())
+        let top_search_task = cx.spawn(async move |cx| {
+            futures::pin_mut!(top_search_results_rx);
+            while let Some(SearchResult::Buffer { buffer, ranges }) =
+                top_search_results_rx.next().await
+            {
+                buffer
+                    .read_with(cx, |buffer, _| buffer.parsing_idle())?
+                    .await;
+                let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+                let expanded_ranges: Vec<_> = ranges
+                    .into_iter()
+                    .filter_map(|range| expand_to_parent_range(&range, &snapshot))
+                    .collect();
+                jobs_tx
+                    .send(SearchJob {
+                        buffer,
+                        snapshot,
+                        ranges: expanded_ranges,
+                        query_ix: 0,
+                        jobs_tx: jobs_tx.clone(),
+                    })
+                    .await?;
             }
+            anyhow::Ok(())
         });
 
         let n_workers = cx.background_executor().num_cpus();
@@ -194,8 +192,7 @@ async fn run_query(
             for _ in 0..n_workers {
                 scope.spawn(async {
                     while let Ok(job) = jobs_rx.recv().await {
-                        process_search_job(&results_tx, &jobs_tx, &queries, &content_query, job)
-                            .await;
+                        process_search_job(&results_tx, &queries, &content_query, job).await;
                     }
                 });
             }
@@ -238,7 +235,6 @@ async fn run_query(
 
 async fn process_search_job(
     results_tx: &UnboundedSender<(Entity<Buffer>, BufferSnapshot, Vec<(Range<Anchor>, usize)>)>,
-    jobs_tx: &channel::Sender<SearchJob>,
     queries: &Vec<SearchQuery>,
     content_query: &Option<SearchQuery>,
     job: SearchJob,
@@ -246,18 +242,20 @@ async fn process_search_job(
     if let Some(search_query) = queries.get(job.query_ix) {
         let mut subranges = Vec::new();
         for range in job.ranges {
+            let start = range.start;
             let search_results = search_query.search(&job.snapshot, Some(range)).await;
-
-            for range in search_results {
-                subranges.extend(expand_to_parent_range(&range, &job.snapshot));
+            for subrange in search_results {
+                let subrange = start + subrange.start..start + subrange.end;
+                subranges.extend(expand_to_parent_range(&subrange, &job.snapshot));
             }
         }
-        jobs_tx
+        job.jobs_tx
             .send(SearchJob {
                 buffer: job.buffer,
                 snapshot: job.snapshot,
                 ranges: subranges,
                 query_ix: job.query_ix + 1,
+                jobs_tx: job.jobs_tx.clone(),
             })
             .await
             .ok();
@@ -265,8 +263,12 @@ async fn process_search_job(
         let ranges = if let Some(content_query) = content_query {
             let mut subranges = Vec::new();
             for range in job.ranges {
+                let start = range.start;
                 let search_results = content_query.search(&job.snapshot, Some(range)).await;
-                subranges.extend(search_results);
+                for subrange in search_results {
+                    let subrange = start + subrange.start..start + subrange.end;
+                    subranges.push(subrange);
+                }
             }
             subranges
         } else {
@@ -299,10 +301,233 @@ fn expand_to_parent_range<T: ToPoint + ToOffset>(
     snapshot: &BufferSnapshot,
 ) -> Option<Range<usize>> {
     let mut line_range = range.to_point(&snapshot);
-    line_range.start.column = 0;
-    line_range.end.column = snapshot.line_len(line_range.start.row);
+    line_range.start.column = snapshot.indent_size_for_line(line_range.start.row).len;
+    line_range.end.column = snapshot.line_len(line_range.end.row);
     // todo! skip result if matched line isn't the first node line?
 
     let node = snapshot.syntax_ancestor(line_range)?;
     Some(node.byte_range())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::merge_excerpts::merge_excerpts;
+    use cloud_zeta2_prompt::write_codeblock;
+    use edit_prediction_context::Line;
+    use gpui::TestAppContext;
+    use indoc::indoc;
+    use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
+    use pretty_assertions::assert_eq;
+    use project::FakeFs;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::path::Path;
+    use util::path;
+
+    #[gpui::test]
+    async fn test_retrieval(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "user.rs": indoc!{"
+                    pub struct Organization {
+                        owner: Arc<User>,
+                    }
+
+                    pub struct User {
+                        first_name: String,
+                        last_name: String,
+                    }
+
+                    impl Organization {
+                        pub fn owner(&self) -> Arc<User> {
+                            self.owner.clone()
+                        }
+                    }
+
+                    impl User {
+                        pub fn new(first_name: String, last_name: String) -> Self {
+                            Self {
+                                first_name,
+                                last_name
+                            }
+                        }
+
+                        pub fn first_name(&self) -> String {
+                            self.first_name.clone()
+                        }
+
+                        pub fn last_name(&self) -> String {
+                            self.last_name.clone()
+                        }
+                    }
+                "},
+                "main.rs": indoc!{r#"
+                    fn main() {
+                        let user = User::new(FIRST_NAME.clone(), "doe".into());
+                        println!("user {:?}", user);
+                    }
+                "#},
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, vec![Path::new(path!("/root"))], cx).await;
+        project.update(cx, |project, _cx| {
+            project.languages().add(rust_lang().into())
+        });
+
+        assert_results(
+            &project,
+            SearchToolQuery {
+                glob: "user.rs".into(),
+                syntax_node: vec!["impl\\s+User".into(), "pub\\s+fn\\s+first_name".into()],
+                content: None,
+            },
+            indoc! {r#"
+                `````root/user.rs
+                …
+                impl User {
+                …
+                    pub fn first_name(&self) -> String {
+                        self.first_name.clone()
+                    }
+                …
+                `````
+            "#},
+            cx,
+        )
+        .await;
+
+        assert_results(
+            &project,
+            SearchToolQuery {
+                glob: "user.rs".into(),
+                syntax_node: vec!["impl\\s+User".into()],
+                content: Some("\\.clone".into()),
+            },
+            indoc! {r#"
+                `````root/user.rs
+                …
+                impl User {
+                …
+                    pub fn first_name(&self) -> String {
+                        self.first_name.clone()
+                …
+                    pub fn last_name(&self) -> String {
+                        self.last_name.clone()
+                …
+                `````
+            "#},
+            cx,
+        )
+        .await;
+
+        assert_results(
+            &project,
+            SearchToolQuery {
+                glob: "*.rs".into(),
+                syntax_node: vec![],
+                content: Some("\\.clone".into()),
+            },
+            indoc! {r#"
+                `````root/main.rs
+                fn main() {
+                    let user = User::new(FIRST_NAME.clone(), "doe".into());
+                …
+                `````
+
+                `````root/user.rs
+                …
+                impl Organization {
+                    pub fn owner(&self) -> Arc<User> {
+                        self.owner.clone()
+                …
+                impl User {
+                …
+                    pub fn first_name(&self) -> String {
+                        self.first_name.clone()
+                …
+                    pub fn last_name(&self) -> String {
+                        self.last_name.clone()
+                …
+                `````
+            "#},
+            cx,
+        )
+        .await;
+    }
+
+    async fn assert_results(
+        project: &Entity<Project>,
+        query: SearchToolQuery,
+        expected_output: &str,
+        cx: &mut TestAppContext,
+    ) {
+        let results = run_retrieval_searches(project.clone(), vec![query], &mut cx.to_async())
+            .await
+            .unwrap();
+
+        let mut results = results.into_iter().collect::<Vec<_>>();
+        results.sort_by_key(|results| {
+            results
+                .0
+                .read_with(cx, |buffer, _| buffer.file().unwrap().path().clone())
+        });
+
+        let mut output = String::new();
+        for (buffer, ranges) in results {
+            buffer.read_with(cx, |buffer, cx| {
+                let excerpts = ranges.into_iter().map(|range| {
+                    let point_range = range.to_point(buffer);
+                    if point_range.end.column > 0 {
+                        Line(point_range.start.row)..Line(point_range.end.row + 1)
+                    } else {
+                        Line(point_range.start.row)..Line(point_range.end.row)
+                    }
+                });
+
+                write_codeblock(
+                    &buffer.file().unwrap().full_path(cx),
+                    merge_excerpts(&buffer.snapshot(), excerpts).iter(),
+                    &[],
+                    Line(buffer.max_point().row),
+                    false,
+                    &mut output,
+                );
+            });
+        }
+        output.pop();
+
+        assert_eq!(output, expected_output);
+    }
+
+    fn rust_lang() -> Language {
+        Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_outline_query(include_str!("../../languages/src/rust/outline.scm"))
+        .unwrap()
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(move |cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+            zlog::init_test();
+        });
+    }
 }

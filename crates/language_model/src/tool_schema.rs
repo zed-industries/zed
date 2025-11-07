@@ -1,5 +1,4 @@
 use anyhow::Result;
-use language_model::LanguageModelToolSchemaFormat;
 use schemars::{
     JsonSchema, Schema,
     generate::SchemaSettings,
@@ -7,7 +6,16 @@ use schemars::{
 };
 use serde_json::Value;
 
-pub(crate) fn root_schema_for<T: JsonSchema>(format: LanguageModelToolSchemaFormat) -> Schema {
+/// Indicates the format used to define the input schema for a language model tool.
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+pub enum LanguageModelToolSchemaFormat {
+    /// A JSON schema, see https://json-schema.org
+    JsonSchema,
+    /// A subset of an OpenAPI 3.0 schema object supported by Google AI, see https://ai.google.dev/api/caching#Schema
+    JsonSchemaSubset,
+}
+
+pub fn root_schema_for<T: JsonSchema>(format: LanguageModelToolSchemaFormat) -> Schema {
     let mut generator = match format {
         LanguageModelToolSchemaFormat::JsonSchema => SchemaSettings::draft07().into_generator(),
         LanguageModelToolSchemaFormat::JsonSchemaSubset => SchemaSettings::openapi3()

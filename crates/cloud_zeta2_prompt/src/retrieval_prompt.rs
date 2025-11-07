@@ -70,39 +70,25 @@ pub struct SearchToolQuery {
     pub content: Option<String>,
 }
 
-pub static TOOL_SCHEMA: LazyLock<(serde_json::Value, String)> = LazyLock::new(|| {
-    let schema = schemars::schema_for!(SearchToolInput);
-
-    let description = schema
-        .get("description")
-        .and_then(|description| description.as_str())
-        .unwrap()
-        .to_string();
-
-    (schema.into(), description)
-});
-
 pub const TOOL_NAME: &str = "search";
 
 const SEARCH_INSTRUCTIONS: &str = indoc! {r#"
     You are part of an edit prediction system in a code editor.
     Your role is to search for code that will serve as context for predicting the next edit.
 
-    **Your task:**
     - Analyze the user's recent edits and current cursor context
     - Use the `search` tool to find code that is relevant for predicting the next edit
     - Focus on finding:
        - Code patterns that might need similar changes based on the recent edits
        - Functions, variables, types, and constants referenced in the current cursor context
        - Related implementations, usages, or dependencies that may require consistent updates
-
-    **Keep in mind:**
-    - You must make ALL search queries in your response via the `search` tool.
-    - The results will be combined and provided to the edit prediction model directly.
-    - You will not be able to filter results or perform subsequent queries, so keep them targeted.
+       - How items defined in the cursor excerpt are used or altered
+    - You will not be able to filter results or perform subsequent queries, so keep searches as targeted as possible
+    - Use `syntax_node` parameter whenever you're looking for a particular type, class, or function
+    - Avoid using wildcard globs if you already know the file path of the content you're looking for
 "#};
 
 const TOOL_USE_REMINDER: &str = indoc! {"
     --
-    Use the `search` tool now
+    Analyze the user's intent in one to two sentences, then call the `search` tool.
 "};

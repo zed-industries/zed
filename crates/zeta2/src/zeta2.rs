@@ -35,7 +35,7 @@ use uuid::Uuid;
 use std::ops::Range;
 use std::path::Path;
 use std::str::FromStr as _;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use util::rel_path::RelPathBuf;
@@ -87,6 +87,9 @@ pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
     file_indexing_parallelism: 1,
     buffer_change_grouping_interval: Duration::from_secs(1),
 };
+
+static MODEL_ID: LazyLock<String> =
+    LazyLock::new(|| std::env::var("ZED_ZETA2_MODEL").unwrap_or("yqvev8r3".to_string()));
 
 pub struct Zeta2FeatureFlag;
 
@@ -884,7 +887,7 @@ impl Zeta {
 
                 let (prompt, _) = prompt_result?;
                 let request = open_ai::Request {
-                    model: std::env::var("ZED_ZETA2_MODEL").unwrap_or("yqvev8r3".to_string()),
+                    model: MODEL_ID.clone(),
                     messages: vec![open_ai::RequestMessage::User {
                         content: open_ai::MessageContent::Plain(prompt),
                     }],
@@ -1227,10 +1230,24 @@ impl Zeta {
                 .ok();
         }
 
-        let (tool_schema, tool_description) = &*cloud_zeta2_prompt::retrieval_prompt::TOOL_SCHEMA;
+        pub static TOOL_SCHEMA: LazyLock<(serde_json::Value, String)> = LazyLock::new(|| {
+            let schema = language_model::tool_schema::root_schema_for::<SearchToolInput>(
+                language_model::LanguageModelToolSchemaFormat::JsonSchemaSubset,
+            );
+
+            let description = schema
+                .get("description")
+                .and_then(|description| description.as_str())
+                .unwrap()
+                .to_string();
+
+            (schema.into(), description)
+        });
+
+        let (tool_schema, tool_description) = TOOL_SCHEMA.clone();
 
         let request = open_ai::Request {
-            model: std::env::var("ZED_ZETA2_MODEL").unwrap_or("2327jz9q".to_string()),
+            model: MODEL_ID.clone(),
             messages: vec![open_ai::RequestMessage::User {
                 content: open_ai::MessageContent::Plain(prompt),
             }],
@@ -1243,8 +1260,8 @@ impl Zeta {
             tools: vec![open_ai::ToolDefinition::Function {
                 function: FunctionDefinition {
                     name: cloud_zeta2_prompt::retrieval_prompt::TOOL_NAME.to_string(),
-                    description: Some(tool_description.clone()),
-                    parameters: Some(tool_schema.clone()),
+                    description: Some(tool_description),
+                    parameters: Some(tool_schema),
                 },
             }],
             prompt_cache_key: None,
@@ -1256,7 +1273,6 @@ impl Zeta {
             let response =
                 Self::send_raw_llm_request(client, llm_token, app_version, request).await;
             let mut response = Self::handle_api_response(&this, response, cx)?;
-
             log::trace!("Got search planning response");
 
             let choice = response
@@ -1264,7 +1280,7 @@ impl Zeta {
                 .pop()
                 .context("No choices in retrieval response")?;
             let open_ai::RequestMessage::Assistant {
-                content: _,
+                content,
                 tool_calls,
             } = choice.message
             else {
