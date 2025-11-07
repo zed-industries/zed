@@ -54,10 +54,9 @@ macro_rules! serialize_property {
 }
 
 pub fn send_event(event: Event) {
-    println!("{} - {:?}", event.event_type, event.event_properties);
-    // if let Some(queue) = TELEMETRY_QUEUE.get() {
-    // queue.unbounded_send(event).ok();
-    // }
+    if let Some(queue) = TELEMETRY_QUEUE.get() {
+        queue.unbounded_send(event).ok();
+    }
 }
 
 pub fn init(tx: mpsc::UnboundedSender<Event>) {
