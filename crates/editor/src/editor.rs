@@ -5485,15 +5485,24 @@ impl Editor {
             Task::ready(Ok(Vec::new()))
         };
 
-        let load_word_completions = load_provider_completions
-            && self.word_completions_enabled
-            && (provider.is_none() || completion_settings.words != WordsCompletionMode::Disabled)
-            && (ignore_word_threshold || {
-                let words_min_length = completion_settings.words_min_length;
-                // check whether word has at least `words_min_length` characters
-                let query_chars = query.iter().flat_map(|q| q.chars());
-                query_chars.take(words_min_length).count() == words_min_length
-            });
+        let load_word_completions = if !self.word_completions_enabled {
+            false
+        } else if requested_source
+            == Some(CompletionsMenuSource::Words {
+                ignore_threshold: true,
+            })
+        {
+            true
+        } else {
+            load_provider_completions
+                && completion_settings.words != WordsCompletionMode::Disabled
+                && (ignore_word_threshold || {
+                    let words_min_length = completion_settings.words_min_length;
+                    // check whether word has at least `words_min_length` characters
+                    let query_chars = query.iter().flat_map(|q| q.chars());
+                    query_chars.take(words_min_length).count() == words_min_length
+                })
+        };
 
         let mut words = if load_word_completions {
             cx.background_spawn(async move {
