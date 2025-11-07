@@ -39,6 +39,7 @@ pub struct Record<'a> {
     pub level: log::Level,
     pub message: &'a std::fmt::Arguments<'a>,
     pub module_path: Option<&'a str>,
+    pub line: Option<u32>,
 }
 
 pub fn init_output_stdout() {
@@ -105,7 +106,11 @@ static LEVEL_ANSI_COLORS: [&str; 6] = [
 ];
 
 // PERF: batching
-pub fn submit(record: Record) {
+pub fn submit(mut record: Record) {
+    if record.module_path.is_none_or(|p| !p.ends_with(".rs")) {
+        // Only render line numbers for actual rust files emitted by `log_err` and friends
+        record.line.take();
+    }
     if ENABLED_SINKS_STDOUT.load(Ordering::Acquire) {
         let mut stdout = std::io::stdout().lock();
         _ = writeln!(
@@ -117,6 +122,7 @@ pub fn submit(record: Record) {
             SourceFmt {
                 scope: record.scope,
                 module_path: record.module_path,
+                line: record.line,
                 ansi: true,
             },
             record.message
@@ -132,6 +138,7 @@ pub fn submit(record: Record) {
             SourceFmt {
                 scope: record.scope,
                 module_path: record.module_path,
+                line: record.line,
                 ansi: true,
             },
             record.message
@@ -167,6 +174,7 @@ pub fn submit(record: Record) {
                 SourceFmt {
                     scope: record.scope,
                     module_path: record.module_path,
+                    line: record.line,
                     ansi: false,
                 },
                 record.message
@@ -202,6 +210,7 @@ pub fn flush() {
 struct SourceFmt<'a> {
     scope: Scope,
     module_path: Option<&'a str>,
+    line: Option<u32>,
     ansi: bool,
 }
 
@@ -224,6 +233,10 @@ impl std::fmt::Display for SourceFmt<'_> {
                 f.write_char(SCOPE_STRING_SEP_CHAR)?;
                 f.write_str(subscope)?;
             }
+        }
+        if let Some(line) = self.line {
+            f.write_char(':')?;
+            line.fmt(f)?;
         }
         if self.ansi {
             f.write_str(ANSI_RESET)?;

@@ -14,6 +14,8 @@ use git::{
     RemoteUrl,
 };
 
+use crate::get_host_from_git_remote_url;
+
 #[derive(Debug, Deserialize)]
 struct CommitDetails {
     #[expect(
@@ -67,31 +69,72 @@ struct User {
     pub avatar_url: String,
 }
 
-pub struct Codeberg;
+pub struct Forgejo {
+    name: String,
+    base_url: Url,
+}
 
-impl Codeberg {
-    async fn fetch_codeberg_commit_author(
+impl Forgejo {
+    pub fn new(name: impl Into<String>, base_url: Url) -> Self {
+        Self {
+            name: name.into(),
+            base_url,
+        }
+    }
+
+    pub fn public_instance() -> Self {
+        Self::new("Codeberg", Url::parse("https://codeberg.org").unwrap())
+    }
+
+    pub fn from_remote_url(remote_url: &str) -> Result<Self> {
+        let host = get_host_from_git_remote_url(remote_url)?;
+        if host == "codeberg.org" {
+            bail!("the Forgejo instance is not self-hosted");
+        }
+
+        // TODO: detecting self hosted instances by checking whether "forgejo" is in the url or not
+        // is not very reliable. See https://github.com/zed-industries/zed/issues/26393 for more
+        // information.
+        if !host.contains("forgejo") {
+            bail!("not a Forgejo URL");
+        }
+
+        Ok(Self::new(
+            "Forgejo Self-Hosted",
+            Url::parse(&format!("https://{}", host))?,
+        ))
+    }
+
+    async fn fetch_forgejo_commit_author(
         &self,
         repo_owner: &str,
         repo: &str,
         commit: &str,
         client: &Arc<dyn HttpClient>,
     ) -> Result<Option<User>> {
-        let url =
-            format!("https://codeberg.org/api/v1/repos/{repo_owner}/{repo}/git/commits/{commit}");
+        let Some(host) = self.base_url.host_str() else {
+            bail!("failed to get host from forgejo base url");
+        };
+        let url = format!(
+            "https://{host}/api/v1/repos/{repo_owner}/{repo}/git/commits/{commit}?stat=false&verification=false&files=false"
+        );
 
         let mut request = Request::get(&url)
             .header("Content-Type", "application/json")
             .follow_redirects(http_client::RedirectPolicy::FollowAll);
 
-        if let Ok(codeberg_token) = std::env::var("CODEBERG_TOKEN") {
+        // TODO: not renamed yet for compatibility reasons, may require a refactor later
+        // see https://github.com/zed-industries/zed/issues/11043#issuecomment-3480446231
+        if host == "codeberg.org"
+            && let Ok(codeberg_token) = std::env::var("CODEBERG_TOKEN")
+        {
             request = request.header("Authorization", format!("Bearer {}", codeberg_token));
         }
 
         let mut response = client
             .send(request.body(AsyncBody::default())?)
             .await
-            .with_context(|| format!("error fetching Codeberg commit details at {:?}", url))?;
+            .with_context(|| format!("error fetching Forgejo commit details at {:?}", url))?;
 
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await?;
@@ -108,18 +151,18 @@ impl Codeberg {
 
         serde_json::from_str::<CommitDetails>(body_str)
             .map(|commit| commit.author)
-            .context("failed to deserialize Codeberg commit details")
+            .context("failed to deserialize Forgejo commit details")
     }
 }
 
 #[async_trait]
-impl GitHostingProvider for Codeberg {
+impl GitHostingProvider for Forgejo {
     fn name(&self) -> String {
-        "Codeberg".to_string()
+        self.name.clone()
     }
 
     fn base_url(&self) -> Url {
-        Url::parse("https://codeberg.org").unwrap()
+        self.base_url.clone()
     }
 
     fn supports_avatars(&self) -> bool {
@@ -138,7 +181,7 @@ impl GitHostingProvider for Codeberg {
         let url = RemoteUrl::from_str(url).ok()?;
 
         let host = url.host_str()?;
-        if host != "codeberg.org" {
+        if host != self.base_url.host_str()? {
             return None;
         }
 
@@ -194,9 +237,27 @@ impl GitHostingProvider for Codeberg {
     ) -> Result<Option<Url>> {
         let commit = commit.to_string();
         let avatar_url = self
-            .fetch_codeberg_commit_author(repo_owner, repo, &commit, &http_client)
+            .fetch_forgejo_commit_author(repo_owner, repo, &commit, &http_client)
             .await?
-            .map(|author| Url::parse(&author.avatar_url))
+            .map(|author| -> Result<Url, url::ParseError> {
+                let mut url = Url::parse(&author.avatar_url)?;
+                if let Some(host) = url.host_str() {
+                    let size_query = if host.contains("gravatar") || host.contains("libravatar") {
+                        Some("s=128")
+                    } else if self
+                        .base_url
+                        .host_str()
+                        .is_some_and(|base_host| host.contains(base_host))
+                    {
+                        // This parameter exists on Codeberg but does not seem to take effect. setting it anyway
+                        Some("size=128")
+                    } else {
+                        None
+                    };
+                    url.set_query(size_query);
+                }
+                Ok(url)
+            })
             .transpose()?;
         Ok(avatar_url)
     }
@@ -211,7 +272,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_ssh_url() {
-        let parsed_remote = Codeberg
+        let parsed_remote = Forgejo::public_instance()
             .parse_remote_url("git@codeberg.org:zed-industries/zed.git")
             .unwrap();
 
@@ -226,7 +287,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_https_url() {
-        let parsed_remote = Codeberg
+        let parsed_remote = Forgejo::public_instance()
             .parse_remote_url("https://codeberg.org/zed-industries/zed.git")
             .unwrap();
 
@@ -240,8 +301,43 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_remote_url_given_self_hosted_ssh_url() {
+        let remote_url = "git@forgejo.my-enterprise.com:zed-industries/zed.git";
+
+        let parsed_remote = Forgejo::from_remote_url(remote_url)
+            .unwrap()
+            .parse_remote_url(remote_url)
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_remote_url_given_self_hosted_https_url() {
+        let remote_url = "https://forgejo.my-enterprise.com/zed-industries/zed.git";
+        let parsed_remote = Forgejo::from_remote_url(remote_url)
+            .unwrap()
+            .parse_remote_url(remote_url)
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            }
+        );
+    }
+
+    #[test]
     fn test_build_codeberg_permalink() {
-        let permalink = Codeberg.build_permalink(
+        let permalink = Forgejo::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
@@ -259,7 +355,7 @@ mod tests {
 
     #[test]
     fn test_build_codeberg_permalink_with_single_line_selection() {
-        let permalink = Codeberg.build_permalink(
+        let permalink = Forgejo::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
@@ -277,7 +373,7 @@ mod tests {
 
     #[test]
     fn test_build_codeberg_permalink_with_multi_line_selection() {
-        let permalink = Codeberg.build_permalink(
+        let permalink = Forgejo::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
@@ -290,6 +386,48 @@ mod tests {
         );
 
         let expected_url = "https://codeberg.org/zed-industries/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs#L24-L48";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_forgejo_self_hosted_permalink_from_ssh_url() {
+        let forgejo =
+            Forgejo::from_remote_url("git@forgejo.some-enterprise.com:zed-industries/zed.git")
+                .unwrap();
+        let permalink = forgejo.build_permalink(
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            },
+            BuildPermalinkParams::new(
+                "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
+                &repo_path("crates/editor/src/git/permalink.rs"),
+                None,
+            ),
+        );
+
+        let expected_url = "https://forgejo.some-enterprise.com/zed-industries/zed/src/commit/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_forgejo_self_hosted_permalink_from_https_url() {
+        let forgejo =
+            Forgejo::from_remote_url("https://forgejo-instance.big-co.com/zed-industries/zed.git")
+                .unwrap();
+        let permalink = forgejo.build_permalink(
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            },
+            BuildPermalinkParams::new(
+                "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
+                &repo_path("crates/zed/src/main.rs"),
+                None,
+            ),
+        );
+
+        let expected_url = "https://forgejo-instance.big-co.com/zed-industries/zed/src/commit/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 }

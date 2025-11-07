@@ -36,6 +36,9 @@ secret!(ZED_SENTRY_MINIDUMP_ENDPOINT);
 secret!(SLACK_APP_ZED_UNIT_EVALS_BOT_TOKEN);
 secret!(ZED_ZIPPY_APP_ID);
 secret!(ZED_ZIPPY_APP_PRIVATE_KEY);
+secret!(DISCORD_WEBHOOK_RELEASE_NOTES);
+secret!(WINGET_TOKEN);
+secret!(RELEASE_NOTES_API_TOKEN);
 
 // todo(ci) make these secrets too...
 var!(AZURE_SIGNING_ACCOUNT_NAME);
@@ -136,6 +139,15 @@ impl StepOutput {
     }
 }
 
+impl serde::Serialize for StepOutput {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
 impl std::fmt::Display for StepOutput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "${{{{ steps.{}.outputs.{} }}}}", self.step_id, self.name)
@@ -170,6 +182,15 @@ impl Input {
 impl std::fmt::Display for Input {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "${{{{ inputs.{} }}}}", self.name)
+    }
+}
+
+impl serde::Serialize for Input {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
     }
 }
 

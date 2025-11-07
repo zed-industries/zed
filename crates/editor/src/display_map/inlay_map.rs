@@ -32,6 +32,14 @@ pub struct InlaySnapshot {
     pub version: usize,
 }
 
+impl std::ops::Deref for InlaySnapshot {
+    type Target = MultiBufferSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.buffer
+    }
+}
+
 #[derive(Clone, Debug)]
 enum Transform {
     Isomorphic(TextSummary),

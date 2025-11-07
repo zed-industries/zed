@@ -1123,7 +1123,6 @@ impl Pane {
                 false
             }
         });
-
         if let Some(existing_item_index) = existing_item_index {
             // If the item already exists, move it to the desired destination and activate it
 
@@ -4130,6 +4129,20 @@ impl NavHistory {
         state
             .closed_stack
             .retain(|entry| entry.item.id() != item_id);
+    }
+
+    pub fn rename_item(
+        &mut self,
+        item_id: EntityId,
+        project_path: ProjectPath,
+        abs_path: Option<PathBuf>,
+    ) {
+        let mut state = self.0.lock();
+        let path_for_item = state.paths_by_item.get_mut(&item_id);
+        if let Some(path_for_item) = path_for_item {
+            path_for_item.0 = project_path;
+            path_for_item.1 = abs_path;
+        }
     }
 
     pub fn path_for_item(&self, item_id: EntityId) -> Option<(ProjectPath, Option<PathBuf>)> {

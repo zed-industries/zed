@@ -178,7 +178,7 @@ impl LspAdapter for VtslsLspAdapter {
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
         use lsp::CompletionItemKind as Kind;
-        let len = item.label.len();
+        let label_len = item.label.len();
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
             Kind::CLASS | Kind::INTERFACE | Kind::ENUM => grammar.highlight_id_for_name("type"),
@@ -203,8 +203,9 @@ impl LspAdapter for VtslsLspAdapter {
         };
         Some(language::CodeLabel::filtered(
             text,
+            label_len,
             item.filter_text.as_deref(),
-            vec![(0..len, highlight_id)],
+            vec![(0..label_len, highlight_id)],
         ))
     }
 

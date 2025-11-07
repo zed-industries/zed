@@ -1133,7 +1133,9 @@ impl WindowsWindowInner {
         let mut lock = self.state.borrow_mut();
         let devices = lparam.0 as *const DirectXDevices;
         let devices = unsafe { &*devices };
-        lock.renderer.handle_device_lost(&devices);
+        if let Err(err) = lock.renderer.handle_device_lost(&devices) {
+            panic!("Device lost: {err}");
+        }
         Some(0)
     }
 

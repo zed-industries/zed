@@ -167,6 +167,14 @@ pub struct TabSnapshot {
     pub version: usize,
 }
 
+impl std::ops::Deref for TabSnapshot {
+    type Target = FoldSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.fold_snapshot
+    }
+}
+
 impl TabSnapshot {
     pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
         &self.fold_snapshot.inlay_snapshot.buffer

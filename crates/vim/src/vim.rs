@@ -1210,7 +1210,7 @@ impl Vim {
                     s.select_anchor_ranges(vec![pos..pos])
                 }
 
-                let snapshot = s.display_map();
+                let snapshot = s.display_snapshot();
                 if let Some(pending) = s.pending_anchor_mut()
                     && pending.reversed
                     && mode.is_visual()

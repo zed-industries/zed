@@ -1685,7 +1685,9 @@ mod tests {
             assert_eq!(search_bar.active_match_index, Some(0));
             search_bar.select_next_match(&SelectNextMatch, window, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx))),
                 [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
@@ -1696,7 +1698,9 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.select_next_match(&SelectNextMatch, window, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx))),
                 [DisplayPoint::new(DisplayRow(3), 11)..DisplayPoint::new(DisplayRow(3), 13)]
             );
         });
@@ -1707,7 +1711,9 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.select_next_match(&SelectNextMatch, window, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx))),
                 [DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58)]
             );
         });
@@ -1718,7 +1724,9 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.select_next_match(&SelectNextMatch, window, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx))),
                 [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
@@ -1729,7 +1737,9 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.select_prev_match(&SelectPreviousMatch, window, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx))),
                 [DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58)]
             );
         });
@@ -1740,7 +1750,9 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.select_prev_match(&SelectPreviousMatch, window, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx))),
                 [DisplayPoint::new(DisplayRow(3), 11)..DisplayPoint::new(DisplayRow(3), 13)]
             );
         });
@@ -1751,7 +1763,9 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.select_prev_match(&SelectPreviousMatch, window, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx))),
                 [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
@@ -1772,7 +1786,9 @@ mod tests {
             assert_eq!(search_bar.active_match_index, Some(1));
             search_bar.select_prev_match(&SelectPreviousMatch, window, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx))),
                 [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
@@ -1793,7 +1809,9 @@ mod tests {
             assert_eq!(search_bar.active_match_index, Some(1));
             search_bar.select_next_match(&SelectNextMatch, window, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx))),
                 [DisplayPoint::new(DisplayRow(3), 11)..DisplayPoint::new(DisplayRow(3), 13)]
             );
         });
@@ -1814,7 +1832,9 @@ mod tests {
             assert_eq!(search_bar.active_match_index, Some(2));
             search_bar.select_prev_match(&SelectPreviousMatch, window, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx))),
                 [DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58)]
             );
         });
@@ -1835,7 +1855,9 @@ mod tests {
             assert_eq!(search_bar.active_match_index, Some(2));
             search_bar.select_next_match(&SelectNextMatch, window, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx))),
                 [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
@@ -1856,7 +1878,9 @@ mod tests {
             assert_eq!(search_bar.active_match_index, Some(0));
             search_bar.select_prev_match(&SelectPreviousMatch, window, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx))),
                 [DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58)]
             );
         });
@@ -1989,7 +2013,7 @@ mod tests {
                     "Initially, the editor should not be focused"
                 );
                 let initial_selections = editor.update(cx, |editor, cx| {
-                    let initial_selections = editor.selections.display_ranges(cx);
+                    let initial_selections = editor.selections.display_ranges(&editor.display_snapshot(cx));
                     assert_eq!(
                         initial_selections.len(), 1,
                         "Expected to have only one selection before adding carets to all matches, but got: {initial_selections:?}",
@@ -2008,7 +2032,7 @@ mod tests {
                 );
                 search_bar.update(cx, |search_bar, cx| {
                     let all_selections =
-                        editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+                        editor.update(cx, |editor, cx| editor.selections.display_ranges(&editor.display_snapshot(cx)));
                     assert_eq!(
                         all_selections.len(),
                         expected_query_matches_count,
@@ -2032,8 +2056,11 @@ mod tests {
                     "Should still have editor focused after SelectNextMatch"
                 );
                 search_bar.update(cx, |search_bar, cx| {
-                    let all_selections =
-                        editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+                    let all_selections = editor.update(cx, |editor, cx| {
+                        editor
+                            .selections
+                            .display_ranges(&editor.display_snapshot(cx))
+                    });
                     assert_eq!(
                         all_selections.len(),
                         1,
@@ -2062,7 +2089,7 @@ mod tests {
                 );
                 search_bar.update(cx, |search_bar, cx| {
                     let all_selections =
-                        editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+                        editor.update(cx, |editor, cx| editor.selections.display_ranges(&editor.display_snapshot(cx)));
                     assert_eq!(
                     all_selections.len(),
                     expected_query_matches_count,
@@ -2087,8 +2114,11 @@ mod tests {
                 );
 
                 search_bar.update(cx, |search_bar, cx| {
-                    let all_selections =
-                        editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+                    let all_selections = editor.update(cx, |editor, cx| {
+                        editor
+                            .selections
+                            .display_ranges(&editor.display_snapshot(cx))
+                    });
                     assert_eq!(
                         all_selections.len(),
                         1,
@@ -2130,7 +2160,7 @@ mod tests {
                 );
                 search_bar.update(cx, |search_bar, cx| {
                     let all_selections =
-                        editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+                        editor.update(cx, |editor, cx| editor.selections.display_ranges(&editor.display_snapshot(cx)));
                     assert_eq!(
                         all_selections, last_match_selections,
                         "Should not select anything new if there are no matches"
@@ -2194,8 +2224,11 @@ mod tests {
             search_bar.select_all_matches(&SelectAllMatches, window, cx);
         });
         search_bar.update(cx, |_, cx| {
-            let all_selections =
-                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+            let all_selections = editor.update(cx, |editor, cx| {
+                editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx))
+            });
             assert_eq!(
                 all_selections.len(),
                 2,
@@ -2220,8 +2253,11 @@ mod tests {
             search_bar.select_all_matches(&SelectAllMatches, window, cx);
         });
         search_bar.update(cx, |_, cx| {
-            let all_selections =
-                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+            let all_selections = editor.update(cx, |editor, cx| {
+                editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx))
+            });
             assert_eq!(
                 all_selections.len(),
                 2,

@@ -179,7 +179,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.update_editor(cx, |_, editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             editor.change_selections(Default::default(), window, cx, |s| {
-                let map = s.display_map();
+                let map = s.display_snapshot();
                 let ranges = ranges
                     .into_iter()
                     .map(|(start, end, reversed)| {
@@ -304,7 +304,7 @@ impl Vim {
     ) {
         let text_layout_details = editor.text_layout_details(window);
         editor.change_selections(Default::default(), window, cx, |s| {
-            let map = &s.display_map();
+            let map = &s.display_snapshot();
             let mut head = s.newest_anchor().head().to_display_point(map);
             let mut tail = s.oldest_anchor().tail().to_display_point(map);
 
@@ -371,12 +371,10 @@ impl Vim {
 
             loop {
                 let laid_out_line = map.layout_row(row, &text_layout_details);
-                let start = DisplayPoint::new(
-                    row,
-                    laid_out_line.closest_index_for_x(positions.start) as u32,
-                );
+                let start =
+                    DisplayPoint::new(row, laid_out_line.index_for_x(positions.start) as u32);
                 let mut end =
-                    DisplayPoint::new(row, laid_out_line.closest_index_for_x(positions.end) as u32);
+                    DisplayPoint::new(row, laid_out_line.index_for_x(positions.end) as u32);
                 if end <= start {
                     if start.column() == map.line_len(start.row()) {
                         end = start;
