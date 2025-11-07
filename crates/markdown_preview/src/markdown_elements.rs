@@ -4,6 +4,7 @@ use gpui::{
 };
 use language::HighlightId;
 use std::{fmt::Display, ops::Range, path::PathBuf};
+use urlencoding;
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
@@ -278,7 +279,12 @@ impl Link {
             return Some(Link::Web { url: text });
         }
 
-        let path = PathBuf::from(&text);
+        // URL decode the text to handle spaces and other special characters
+        let decoded_text = urlencoding::decode(&text)
+            .map(|s| s.into_owned())
+            .unwrap_or(text);
+
+        let path = PathBuf::from(&decoded_text);
         if path.is_absolute() && path.exists() {
             return Some(Link::Path {
                 display_path: path.clone(),
@@ -288,7 +294,7 @@ impl Link {
 
         if let Some(file_location_directory) = file_location_directory {
             let display_path = path;
-            let path = file_location_directory.join(text);
+            let path = file_location_directory.join(decoded_text);
             if path.exists() {
                 return Some(Link::Path { display_path, path });
             }
