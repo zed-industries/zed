@@ -992,7 +992,6 @@ impl OutlinePanel {
         if self.filter_editor.focus_handle(cx).is_focused(window) {
             cx.propagate()
         } else if let Some(selected_entry) = self.selected_entry().cloned() {
-            self.toggle_expanded(&selected_entry, window, cx);
             self.scroll_editor_to_entry(&selected_entry, true, true, window, cx);
         }
     }
