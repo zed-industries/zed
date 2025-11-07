@@ -8334,7 +8334,7 @@ impl LineWithInvisibles {
                     let fragment_end_x = fragment_start_x + shaped_line.width;
                     if x < fragment_end_x {
                         return Some(
-                            fragment_start_index + shaped_line.index_for_x(x - fragment_start_x)?,
+                            fragment_start_index + shaped_line.index_for_x(x - fragment_start_x),
                         );
                     }
                     fragment_start_x = fragment_end_x;
