@@ -156,7 +156,9 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     // Cursor is at the first diagnostic
     editor.update(cx, |editor, cx| {
         assert_eq!(
-            editor.selections.display_ranges(cx),
+            editor
+                .selections
+                .display_ranges(&editor.display_snapshot(cx)),
             [DisplayPoint::new(DisplayRow(3), 8)..DisplayPoint::new(DisplayRow(3), 8)]
         );
     });
@@ -232,7 +234,9 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     // Cursor keeps its position.
     editor.update(cx, |editor, cx| {
         assert_eq!(
-            editor.selections.display_ranges(cx),
+            editor
+                .selections
+                .display_ranges(&editor.display_snapshot(cx)),
             [DisplayPoint::new(DisplayRow(8), 8)..DisplayPoint::new(DisplayRow(8), 8)]
         );
     });

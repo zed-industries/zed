@@ -315,11 +315,15 @@ impl ProjectDiagnosticsEditor {
         cx: &mut Context<Self>,
         retain_selections: bool,
     ) {
-        let buffer_ids = self.multibuffer.read(cx).all_buffer_ids();
-        let selected_buffers = self.editor.update(cx, |editor, cx| {
+        let snapshot = self
+            .editor
+            .update(cx, |editor, cx| editor.display_snapshot(cx));
+        let buffer = self.multibuffer.read(cx);
+        let buffer_ids = buffer.all_buffer_ids();
+        let selected_buffers = self.editor.update(cx, |editor, _| {
             editor
                 .selections
-                .all_anchors(cx)
+                .all_anchors(&snapshot)
                 .iter()
                 .filter_map(|anchor| anchor.start.buffer_id)
                 .collect::<HashSet<_>>()
