@@ -4709,17 +4709,29 @@ impl AcpThreadView {
             .languages
             .language_for_name("Markdown");
 
-        let (thread_summary, markdown) = if let Some(thread) = self.thread() {
+        let (thread_title, markdown) = if let Some(thread) = self.thread() {
             let thread = thread.read(cx);
             (thread.title().to_string(), thread.to_markdown(cx))
         } else {
             return Task::ready(Ok(()));
         };
 
+        let project = workspace.read(cx).project().clone();
         window.spawn(cx, async move |cx| {
             let markdown_language = markdown_language_task.await?;
 
+            let buffer = project
+                .update(cx, |project, cx| project.create_buffer(false, cx))?
+                .await?;
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_text(markdown, cx);
+                buffer.set_language(Some(markdown_language), cx);
+                buffer.set_capability(language::Capability::ReadOnly, cx);
+            })?;
+
             workspace.update_in(cx, |workspace, window, cx| {
+<<<<<<< Updated upstream
                 let project = workspace.project().clone();
 
                 if !project.read(cx).is_local() {
@@ -4733,11 +4745,20 @@ impl AcpThreadView {
                     MultiBuffer::singleton(buffer, cx).with_title(thread_summary.clone())
                 });
 
+=======
+                let buffer = cx
+                    .new(|cx| MultiBuffer::singleton(buffer, cx).with_title(thread_title.clone()));
+
+>>>>>>> Stashed changes
                 workspace.add_item_to_active_pane(
                     Box::new(cx.new(|cx| {
                         let mut editor =
                             Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
+<<<<<<< Updated upstream
                         editor.set_breadcrumb_header(thread_summary);
+=======
+                        editor.set_breadcrumb_header(thread_title);
+>>>>>>> Stashed changes
                         editor
                     })),
                     None,
@@ -4745,9 +4766,13 @@ impl AcpThreadView {
                     window,
                     cx,
                 );
+<<<<<<< Updated upstream
 
                 anyhow::Ok(())
             })??;
+=======
+            })?;
+>>>>>>> Stashed changes
             anyhow::Ok(())
         })
     }
