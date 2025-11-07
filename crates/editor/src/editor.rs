@@ -2342,7 +2342,9 @@ impl Editor {
                                         InlayHintRefreshReason::NewLinesShown,
                                         cx,
                                     );
-                                    editor.refresh_rainbow_bracket_highlights(window, cx);
+                                    if EditorSettings::get_global(cx).rainbow_brackets {
+                                        editor.refresh_rainbow_bracket_highlights(window, cx);
+                                    }
                                 })
                                 .ok();
                         });
@@ -2435,7 +2437,9 @@ impl Editor {
             editor.report_editor_event(ReportEditorEvent::EditorOpened, None, cx);
         }
 
-        editor.refresh_rainbow_bracket_highlights(window, cx);
+        if EditorSettings::get_global(cx).rainbow_brackets {
+            editor.refresh_rainbow_bracket_highlights(window, cx);
+        }
 
         editor
     }
@@ -21225,7 +21229,7 @@ impl Editor {
             _ => {}
         };
 
-        if refresh_rainbow {
+        if refresh_rainbow && EditorSettings::get_global(cx).rainbow_brackets {
             self.refresh_rainbow_bracket_highlights(window, cx);
         }
     }
@@ -21358,8 +21362,14 @@ impl Editor {
             self.refresh_colors_for_visible_range(None, window, cx);
         }
 
-        self.rainbow_highlight_state.invalidate_all();
-        self.refresh_rainbow_bracket_highlights(window, cx);
+        let rainbow_enabled = EditorSettings::get_global(cx).rainbow_brackets;
+        if rainbow_enabled {
+            self.rainbow_highlight_state.invalidate_all();
+            self.refresh_rainbow_bracket_highlights(window, cx);
+        } else {
+            self.clear_rainbow_bracket_highlights(cx);
+            self.rainbow_highlight_state.invalidate_all();
+        }
 
         cx.notify();
     }

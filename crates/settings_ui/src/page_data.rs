@@ -970,6 +970,22 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
+                    title: "Rainbow Brackets",
+                    description: "Color matching brackets using accent colors.",
+                    field: Box::new(SettingField {
+                        json_path: Some("rainbow_brackets"),
+                        pick: |settings_content| {
+                            settings_content.editor.rainbow_brackets.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.editor.rainbow_brackets = value;
+
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
                     title: "Rounded Selection",
                     description: "Whether the text selection should have rounded corners.",
                     field: Box::new(SettingField {

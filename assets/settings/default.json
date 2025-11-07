@@ -230,6 +230,8 @@
   "current_line_highlight": "all",
   // Whether to highlight all occurrences of the selected text in an editor.
   "selection_highlight": true,
+  // Whether to enable syntax-aware coloring for matching brackets.
+  "rainbow_brackets": false,
   // Whether the text selection should have rounded corners.
   "rounded_selection": true,
   // The debounce delay before querying highlights from the language

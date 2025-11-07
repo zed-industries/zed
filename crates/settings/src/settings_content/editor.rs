@@ -39,6 +39,10 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub selection_highlight: Option<bool>,
+    /// Whether to enable syntax-aware rainbow bracket coloring in the editor.
+    ///
+    /// Default: false
+    pub rainbow_brackets: Option<bool>,
     /// Whether the text selection should have rounded corners.
     ///
     /// Default: true

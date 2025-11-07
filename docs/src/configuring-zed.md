@@ -729,6 +729,16 @@ List of `string` values
 - Setting: `selection_highlight`
 - Default: `true`
 
+## Rainbow Brackets
+
+- Description: Whether to color matching brackets using the theme's accent colors.
+- Setting: `rainbow_brackets`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ## Rounded Selection
 
 - Description: Whether the text selection should have rounded corners.

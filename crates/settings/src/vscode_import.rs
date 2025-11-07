@@ -294,6 +294,7 @@ impl VsCodeSettings {
                 },
             ),
             selection_highlight: self.read_bool("editor.selectionHighlight"),
+            rainbow_brackets: self.read_bool("editor.bracketPairColorization.enabled"),
             show_signature_help_after_edits: self.read_bool("editor.parameterHints.enabled"),
             snippet_sort_order: None,
             toolbar: None,
