@@ -603,7 +603,7 @@ impl Editor {
             scroll_position
         };
 
-        let editor_was_scrolled = self.scroll_manager.set_scroll_position(
+        self.scroll_manager.set_scroll_position(
             adjusted_position,
             &display_map,
             local,
@@ -611,22 +611,7 @@ impl Editor {
             workspace_id,
             window,
             cx,
-        );
-
-        self.post_scroll_update = cx.spawn_in(window, async move |editor, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(50))
-                .await;
-            editor
-                .update_in(cx, |editor, window, cx| {
-                    editor.register_visible_buffers(cx);
-                    editor.refresh_colors_for_visible_range(None, window, cx);
-                    editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
-                })
-                .ok();
-        });
-
-        editor_was_scrolled
+        )
     }
 
     pub fn scroll_position(&self, cx: &mut Context<Self>) -> gpui::Point<ScrollOffset> {

@@ -3,7 +3,6 @@ mod diff;
 mod mention;
 mod terminal;
 
-use ::terminal::terminal_settings::TerminalSettings;
 use agent_settings::AgentSettings;
 use collections::HashSet;
 pub use connection::*;
@@ -12,11 +11,11 @@ use language::language_settings::FormatOnSave;
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use serde::{Deserialize, Serialize};
-use settings::{Settings as _, SettingsLocation};
+use settings::Settings as _;
 use task::{Shell, ShellBuilder};
 pub use terminal::*;
 
-use action_log::ActionLog;
+use action_log::{ActionLog, ActionLogTelemetry};
 use agent_client_protocol::{self as acp};
 use anyhow::{Context as _, Result, anyhow};
 use editor::Bias;
@@ -821,6 +820,15 @@ pub struct AcpThread {
     pending_terminal_exit: HashMap<acp::TerminalId, acp::TerminalExitStatus>,
 }
 
+impl From<&AcpThread> for ActionLogTelemetry {
+    fn from(value: &AcpThread) -> Self {
+        Self {
+            agent_telemetry_id: value.connection().telemetry_id(),
+            session_id: value.session_id.0.clone(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum AcpThreadEvent {
     NewEntry,
@@ -1347,6 +1355,17 @@ impl AcpThread {
         let path_style = self.project.read(cx).path_style(cx);
         let id = update.id.clone();
 
+        let agent = self.connection().telemetry_id();
+        let session = self.session_id();
+        if let ToolCallStatus::Completed | ToolCallStatus::Failed = status {
+            let status = if matches!(status, ToolCallStatus::Completed) {
+                "completed"
+            } else {
+                "failed"
+            };
+            telemetry::event!("Agent Tool Call Completed", agent, session, status);
+        }
+
         if let Some(ix) = self.index_for_tool_call(&id) {
             let AgentThreadEntry::ToolCall(call) = &mut self.entries[ix] else {
                 unreachable!()
@@ -1870,6 +1889,7 @@ impl AcpThread {
             return Task::ready(Err(anyhow!("not supported")));
         };
 
+        let telemetry = ActionLogTelemetry::from(&*self);
         cx.spawn(async move |this, cx| {
             cx.update(|cx| truncate.run(id.clone(), cx))?.await?;
             this.update(cx, |this, cx| {
@@ -1878,8 +1898,9 @@ impl AcpThread {
                     this.entries.truncate(ix);
                     cx.emit(AcpThreadEvent::EntriesRemoved(range));
                 }
-                this.action_log()
-                    .update(cx, |action_log, cx| action_log.reject_all_edits(cx))
+                this.action_log().update(cx, |action_log, cx| {
+                    action_log.reject_all_edits(Some(telemetry), cx)
+                })
             })?
             .await;
             Ok(())
@@ -2141,17 +2162,9 @@ impl AcpThread {
     ) -> Task<Result<Entity<Terminal>>> {
         let env = match &cwd {
             Some(dir) => self.project.update(cx, |project, cx| {
-                let worktree = project.find_worktree(dir.as_path(), cx);
-                let shell = TerminalSettings::get(
-                    worktree.as_ref().map(|(worktree, path)| SettingsLocation {
-                        worktree_id: worktree.read(cx).id(),
-                        path: &path,
-                    }),
-                    cx,
-                )
-                .shell
-                .clone();
-                project.directory_environment(&shell, dir.as_path().into(), cx)
+                project.environment().update(cx, |env, cx| {
+                    env.directory_environment(dir.as_path().into(), cx)
+                })
             }),
             None => Task::ready(None).shared(),
         };
@@ -3623,6 +3636,10 @@ mod tests {
     }
 
     impl AgentConnection for FakeAgentConnection {
+        fn telemetry_id(&self) -> &'static str {
+            "fake"
+        }
+
         fn auth_methods(&self) -> &[acp::AuthMethod] {
             &self.auth_methods
         }

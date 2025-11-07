@@ -281,7 +281,7 @@ impl BackgroundExecutor {
         });
         let mut cx = std::task::Context::from_waker(&waker);
 
-        let duration = Duration::from_secs(500);
+        let duration = Duration::from_secs(180);
         let mut test_should_end_by = Instant::now() + duration;
 
         loop {
@@ -342,7 +342,7 @@ impl BackgroundExecutor {
     /// for all of them to complete before returning.
     pub async fn scoped<'scope, F>(&self, scheduler: F)
     where
-        F: for<'a> FnOnce(&'a mut Scope<'scope>),
+        F: FnOnce(&mut Scope<'scope>),
     {
         let mut scope = Scope::new(self.clone());
         (scheduler)(&mut scope);

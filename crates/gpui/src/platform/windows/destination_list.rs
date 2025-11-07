@@ -171,7 +171,9 @@ fn add_recent_folders(
             )?)?;
         }
 
-        list.AppendCategory(&HSTRING::from("Recent Folders"), &tasks)?;
+        if tasks.GetCount().unwrap_or(0) > 0 {
+            list.AppendCategory(&HSTRING::from("Recent Folders"), &tasks)?;
+        }
         Ok(())
     }
 }

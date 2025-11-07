@@ -682,8 +682,9 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                         .disjoint_anchor_ranges()
                         .collect::<Vec<_>>()
                 });
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    let end = Point::new(range.end.0, s.buffer().line_len(range.end));
+                    let end = Point::new(range.end.0, snapshot.line_len(range.end));
                     s.select_ranges([end..Point::new(range.start.0, 0)]);
                 });
                 selections
@@ -2194,21 +2195,23 @@ impl ShellExec {
 
         let Some(range) = input_range else { return };
 
-        let Some(mut process) = project.read(cx).exec_in_shell(command, cx).log_err() else {
-            return;
-        };
-        process.stdout(Stdio::piped());
-        process.stderr(Stdio::piped());
-
-        if input_snapshot.is_some() {
-            process.stdin(Stdio::piped());
-        } else {
-            process.stdin(Stdio::null());
-        };
+        let process_task = project.update(cx, |project, cx| project.exec_in_shell(command, cx));
 
         let is_read = self.is_read;
 
         let task = cx.spawn_in(window, async move |vim, cx| {
+            let Some(mut process) = process_task.await.log_err() else {
+                return;
+            };
+            process.stdout(Stdio::piped());
+            process.stderr(Stdio::piped());
+
+            if input_snapshot.is_some() {
+                process.stdin(Stdio::piped());
+            } else {
+                process.stdin(Stdio::null());
+            };
+
             let Some(mut running) = process.spawn().log_err() else {
                 vim.update_in(cx, |vim, window, cx| {
                     vim.cancel_running_command(window, cx);

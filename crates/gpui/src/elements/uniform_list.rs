@@ -251,8 +251,6 @@ impl Element for UniformList {
         None
     }
 
-    // self.max_found_width = 0.0
-    //
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,

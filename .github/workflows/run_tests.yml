@@ -66,6 +66,10 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
     - name: steps::setup_pnpm
       uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
       with:
@@ -145,6 +149,10 @@ jobs:
     - name: steps::install_mold
       run: ./script/install-mold
       shell: bash -euxo pipefail {0}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -156,7 +164,7 @@ jobs:
       run: cargo install cargo-nextest --locked
       shell: bash -euxo pipefail {0}
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than 100
+      run: ./script/clear-target-dir-if-larger-than 250
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
@@ -214,10 +222,10 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: steps::cache_rust_dependencies
-      uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
       with:
-        save-if: ${{ github.ref == 'refs/heads/main' }}
+        cache: rust
     - name: steps::setup_linux
       run: ./script/linux
       shell: bash -euxo pipefail {0}
@@ -261,6 +269,10 @@ jobs:
     - name: steps::install_mold
       run: ./script/install-mold
       shell: bash -euxo pipefail {0}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
     - name: cargo build -p collab
       run: cargo build -p collab
       shell: bash -euxo pipefail {0}
@@ -273,40 +285,6 @@ jobs:
         rm -rf ./../.cargo
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
-  check_postgres_and_protobuf_migrations:
-    needs:
-    - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: self-mini-macos
-    steps:
-    - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      with:
-        fetch-depth: 0
-    - name: run_tests::check_postgres_and_protobuf_migrations::remove_untracked_files
-      run: git clean -df
-      shell: bash -euxo pipefail {0}
-    - name: run_tests::check_postgres_and_protobuf_migrations::ensure_fresh_merge
-      run: |
-        if [ -z "$GITHUB_BASE_REF" ];
-        then
-          echo "BUF_BASE_BRANCH=$(git merge-base origin/main HEAD)" >> "$GITHUB_ENV"
-        else
-          git checkout -B temp
-          git merge -q "origin/$GITHUB_BASE_REF" -m "merge main into temp"
-          echo "BUF_BASE_BRANCH=$GITHUB_BASE_REF" >> "$GITHUB_ENV"
-        fi
-      shell: bash -euxo pipefail {0}
-    - name: run_tests::check_postgres_and_protobuf_migrations::bufbuild_setup_action
-      uses: bufbuild/buf-setup-action@v1
-      with:
-        version: v1.29.0
-    - name: run_tests::check_postgres_and_protobuf_migrations::bufbuild_breaking_action
-      uses: bufbuild/buf-breaking-action@v1
-      with:
-        input: crates/proto/proto/
-        against: https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/
-    timeout-minutes: 60
   check_dependencies:
     needs:
     - orchestrate
@@ -317,6 +295,10 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
     - name: run_tests::check_dependencies::install_cargo_machete
       uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386
       with:
@@ -350,10 +332,10 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
       shell: bash -euxo pipefail {0}
-    - name: steps::cache_rust_dependencies
-      uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
       with:
-        save-if: ${{ github.ref == 'refs/heads/main' }}
+        cache: rust
     - name: run_tests::check_docs::lychee_link_check
       uses: lycheeverse/lychee-action@82202e5e9c2f4ef1a55a3d02563e1cb6041e5332
       with:
@@ -392,6 +374,10 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
     - name: ./script/check-licenses
       run: ./script/check-licenses
       shell: bash -euxo pipefail {0}
@@ -444,18 +430,18 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: nix_build::install_nix
+    - name: nix_build::build_nix::install_nix
       uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
       with:
         github_access_token: ${{ secrets.GITHUB_TOKEN }}
-    - name: nix_build::cachix_action
+    - name: nix_build::build_nix::cachix_action
       uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
       with:
         name: zed
         authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
         cachixArgs: -v
         pushFilter: -zed-editor-[0-9.]*-nightly
-    - name: nix_build::build
+    - name: nix_build::build_nix::build
       run: nix build .#debug -L --accept-flake-config
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
@@ -475,22 +461,22 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: nix_build::set_path
+    - name: nix_build::build_nix::set_path
       run: |
         echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
         echo "/Users/administrator/.nix-profile/bin" >> "$GITHUB_PATH"
       shell: bash -euxo pipefail {0}
-    - name: nix_build::cachix_action
+    - name: nix_build::build_nix::cachix_action
       uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
       with:
         name: zed
         authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
         cachixArgs: -v
         pushFilter: -zed-editor-[0-9.]*-nightly
-    - name: nix_build::build
+    - name: nix_build::build_nix::build
       run: nix build .#debug -L --accept-flake-config
       shell: bash -euxo pipefail {0}
-    - name: nix_build::limit_store
+    - name: nix_build::build_nix::limit_store
       run: |-
         if [ "$(du -sm /nix/store | cut -f1)" -gt 50000 ]; then
             nix-collect-garbage -d || true
@@ -498,6 +484,40 @@ jobs:
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
     continue-on-error: true
+  check_postgres_and_protobuf_migrations:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_tests == 'true'
+    runs-on: self-mini-macos
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        fetch-depth: 0
+    - name: run_tests::check_postgres_and_protobuf_migrations::remove_untracked_files
+      run: git clean -df
+      shell: bash -euxo pipefail {0}
+    - name: run_tests::check_postgres_and_protobuf_migrations::ensure_fresh_merge
+      run: |
+        if [ -z "$GITHUB_BASE_REF" ];
+        then
+          echo "BUF_BASE_BRANCH=$(git merge-base origin/main HEAD)" >> "$GITHUB_ENV"
+        else
+          git checkout -B temp
+          git merge -q "origin/$GITHUB_BASE_REF" -m "merge main into temp"
+          echo "BUF_BASE_BRANCH=$GITHUB_BASE_REF" >> "$GITHUB_ENV"
+        fi
+      shell: bash -euxo pipefail {0}
+    - name: run_tests::check_postgres_and_protobuf_migrations::bufbuild_setup_action
+      uses: bufbuild/buf-setup-action@v1
+      with:
+        version: v1.29.0
+    - name: run_tests::check_postgres_and_protobuf_migrations::bufbuild_breaking_action
+      uses: bufbuild/buf-breaking-action@v1
+      with:
+        input: crates/proto/proto/
+        against: https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/
+    timeout-minutes: 60
   tests_pass:
     needs:
     - orchestrate
@@ -507,7 +527,6 @@ jobs:
     - run_tests_mac
     - doctests
     - check_workspace_binaries
-    - check_postgres_and_protobuf_migrations
     - check_dependencies
     - check_docs
     - check_licenses
@@ -534,7 +553,6 @@ jobs:
         check_result "run_tests_mac" "${{ needs.run_tests_mac.result }}"
         check_result "doctests" "${{ needs.doctests.result }}"
         check_result "check_workspace_binaries" "${{ needs.check_workspace_binaries.result }}"
-        check_result "check_postgres_and_protobuf_migrations" "${{ needs.check_postgres_and_protobuf_migrations.result }}"
         check_result "check_dependencies" "${{ needs.check_dependencies.result }}"
         check_result "check_docs" "${{ needs.check_docs.result }}"
         check_result "check_licenses" "${{ needs.check_licenses.result }}"

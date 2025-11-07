@@ -861,7 +861,7 @@ mod tests {
             .fs
             .save(
                 Path::new(file1_path),
-                &Rope::from_str("content1", cx.background_executor()),
+                &Rope::from("content1"),
                 LineEnding::Unix,
             )
             .await
@@ -875,7 +875,7 @@ mod tests {
             .fs
             .save(
                 Path::new(file2_path),
-                &Rope::from_str("content2", cx.background_executor()),
+                &Rope::from("content2"),
                 LineEnding::Unix,
             )
             .await
