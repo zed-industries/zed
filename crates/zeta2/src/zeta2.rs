@@ -1216,6 +1216,10 @@ impl Zeta {
             return Task::ready(Ok(()));
         };
 
+        let app_version = AppVersion::global(cx);
+        let client = self.client.clone();
+        let llm_token = self.llm_token.clone();
+        let debug_tx = self.debug_tx.clone();
         let current_file_path: Arc<Path> = snapshot
             .file()
             .map(|f| f.full_path(cx).into())
@@ -1240,10 +1244,17 @@ impl Zeta {
             }
         };
 
-        let app_version = AppVersion::global(cx);
-        let client = self.client.clone();
-        let llm_token = self.llm_token.clone();
-        let debug_tx = self.debug_tx.clone();
+        if let Some(debug_tx) = &debug_tx {
+            debug_tx
+                .unbounded_send(ZetaDebugInfo::ContextRetrievalStarted(
+                    ZetaContextRetrievalStartedDebugInfo {
+                        project: project.clone(),
+                        timestamp: Instant::now(),
+                        search_prompt: prompt.clone(),
+                    },
+                ))
+                .ok();
+        }
 
         let (tool_schema, tool_description) = &*cloud_zeta2_prompt::retrieval_prompt::TOOL_SCHEMA;
 
