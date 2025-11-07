@@ -416,13 +416,32 @@ impl FilterMap {
                 push_isomorphic(&mut new_transforms, suffix_range, &buffer_snapshot);
             }
 
+            // postcondition: new_transforms.summary().output.len == buffer_edit.new.end
+            //                   v buffer_edit.old.end
+            //            v transform_cursor.start()
+            //            |--A---|-------B---|
+            //            |---------i--------|
+            //     <-buffer_edit->
+            //     <------------->----------->     // goal
+            //     <------------->---->
+            //
+            //
+            //              |-------------transform-----------|
+            // case 1:   <-------->
+            // case 2:   <-------->        <---------->
+            // case 3:   <-------->        <---------->  <---------->
+            // case 4:   <-------->                      <---------->
+            // case 5:   <--------><----------------------------------------->
+
             transform_cursor.seek(&buffer_edit.old.end, Bias::Right);
-            let mut edit_old_end = transform_cursor.end().1;
+            let mut edit_old_end = transform_cursor.start().1;
             let edit_new_end = FilterOffset(new_transforms.summary().output.len);
             if buffer_edit.old.end > transform_cursor.start().0 {
                 match transform_cursor.item() {
                     Some(FilterTransform::Isomorphic { .. }) => {
-                        edit_old_end.0 += buffer_edit.old.end - transform_cursor.start().0;
+                        let overshoot = buffer_edit.old.end - transform_cursor.start().0;
+                        log::info!("adjusting edit old end based on overshoot {overshoot}");
+                        edit_old_end.0 += overshoot;
                     }
                     Some(FilterTransform::Filter { .. }) => {}
                     None => {}
@@ -460,10 +479,10 @@ impl FilterMap {
                 }
             }
 
-            output_edits.push(text::Edit {
+            output_edits.push(dbg!(text::Edit {
                 old: edit_old_start..edit_old_end,
                 new: edit_new_start..edit_new_end,
-            })
+            }));
         }
 
         log::info!("append old transforms after last edit");
@@ -500,7 +519,6 @@ fn check_edits(
     output_edits: &[text::Edit<FilterOffset>],
     new_snapshot: &FilterSnapshot,
 ) {
-    use collections::HashSet;
     use itertools::Itertools as _;
 
     println!("old transforms: ");
@@ -509,38 +527,21 @@ fn check_edits(
     println!("new transforms: ");
     new_snapshot.print_transforms();
 
-    let output_edits_set: HashSet<_> = output_edits.iter().collect();
-    assert_eq!(
-        output_edits.len(),
-        output_edits_set.len(),
-        "output_edits contained duplicate edits"
-    );
-
-    for e1 in output_edits {
-        for e2 in output_edits {
-            if e1 == e2 {
-                continue;
-            }
-
-            assert!(
-                !e1.old.overlaps(&e2.old),
-                "old ranges overlap for {e1:?} and {e2:?}",
-            );
-            assert!(
-                !e1.new.overlaps(&e2.new),
-                "new ranges overlap for {e1:?} and {e2:?}",
-            );
-        }
+    for (left, right) in output_edits
+        .iter()
+        .flat_map(|edit| [edit.old.start, edit.old.end])
+        .tuple_windows()
+    {
+        assert!(left <= right);
+    }
+    for (left, right) in output_edits
+        .iter()
+        .flat_map(|edit| [edit.new.start, edit.new.end])
+        .tuple_windows()
+    {
+        assert!(left <= right);
     }
 
-    for edit in output_edits {
-        assert!(edit.old.start.0 <= edit.old.end.0, "inverted old range");
-        assert!(edit.new.start.0 <= edit.new.end.0, "inverted new range");
-    }
-    for (l, r) in output_edits.iter().tuple_windows() {
-        assert!(l.old.end.0 <= r.old.start.0, "overlapping old ranges");
-        assert!(l.new.end.0 <= r.new.start.0, "overlapping new ranges");
-    }
     let mut edited_old_text = old_snapshot.text();
     let new_text = new_snapshot.text();
 
@@ -565,6 +566,16 @@ fn check_edits(
         );
         edited_old_text.replace_range(edit_old_range, &new_text[edit_new_range]);
     }
+
+    // Point {
+    //   x: 1,
+    //   y: 2,
+    // }..Point{
+    //   x: 3,
+    //   y: 4,
+    // }
+    //
+    // Point(1:2)
 
     pretty_assertions::assert_eq!(
         edited_old_text,
