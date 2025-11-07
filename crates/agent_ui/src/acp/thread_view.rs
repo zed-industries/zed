@@ -1133,8 +1133,6 @@ impl AcpThreadView {
             message_editor.contents(full_mention_content, cx)
         });
 
-        let agent_telemetry_id = self.agent.telemetry_id();
-
         self.thread_error.take();
         self.editing_message.take();
         self.thread_feedback.clear();
@@ -1142,6 +1140,8 @@ impl AcpThreadView {
         let Some(thread) = self.thread() else {
             return;
         };
+        let agent_telemetry_id = self.agent.telemetry_id();
+        let session_id = thread.read(cx).session_id().clone();
         let thread = thread.downgrade();
         if self.should_be_following {
             self.workspace
@@ -1186,6 +1186,7 @@ impl AcpThreadView {
                 telemetry::event!(
                     "Agent Message Sent",
                     agent = agent_telemetry_id,
+                    session = session_id,
                     model = model_id
                 );
 
@@ -1197,6 +1198,7 @@ impl AcpThreadView {
             telemetry::event!(
                 "Agent Turn Completed",
                 agent = agent_telemetry_id,
+                session = session_id,
                 model = model_id,
                 status,
                 turn_time_ms,
@@ -1821,6 +1823,7 @@ impl AcpThreadView {
         telemetry::event!(
             "Agent Tool Call Authorized",
             agent = self.agent.telemetry_id(),
+            session = thread.read(cx).session_id(),
             option = option_kind
         );
 

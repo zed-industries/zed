@@ -1356,13 +1356,14 @@ impl AcpThread {
         let id = update.id.clone();
 
         let agent = self.connection().telemetry_id();
+        let session = self.session_id();
         if let ToolCallStatus::Completed | ToolCallStatus::Failed = status {
             let status = if matches!(status, ToolCallStatus::Completed) {
                 "completed"
             } else {
                 "failed"
             };
-            telemetry::event!("Agent Tool Call Completed", agent, status);
+            telemetry::event!("Agent Tool Call Completed", agent, session, status);
         }
 
         if let Some(ix) = self.index_for_tool_call(&id) {
