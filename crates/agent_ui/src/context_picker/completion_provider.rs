@@ -42,7 +42,7 @@ use super::{
     ContextPickerAction, ContextPickerEntry, ContextPickerMode, MentionLink, RecentEntry,
     available_context_picker_entries, recent_context_picker_entries_with_store, selection_ranges,
 };
-use crate::message_editor::ContextCreasesAddon;
+use crate::inline_prompt_editor::ContextCreasesAddon;
 
 pub(crate) enum Match {
     File(FileMatch),
