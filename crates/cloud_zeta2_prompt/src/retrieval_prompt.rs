@@ -3,7 +3,7 @@ use cloud_llm_client::predict_edits_v3::{self, Excerpt};
 use indoc::indoc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Write, sync::LazyLock};
+use std::fmt::Write;
 
 use crate::{push_events, write_codeblock};
 

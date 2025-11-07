@@ -1280,7 +1280,7 @@ impl Zeta {
                 .pop()
                 .context("No choices in retrieval response")?;
             let open_ai::RequestMessage::Assistant {
-                content,
+                content: _,
                 tool_calls,
             } = choice.message
             else {
