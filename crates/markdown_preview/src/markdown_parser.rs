@@ -1570,67 +1570,47 @@ mod tests {
                 (
                     10..21,
                     MarkdownHighlight::Style(MarkdownHighlightStyle {
-                        italic: false,
-                        underline: false,
-                        strikethrough: false,
-                        weight: FontWeight(700.0,),
-                        link: false,
-                        oblique: false,
+                        weight: FontWeight(700.0),
+                        ..Default::default()
                     },),
                 ),
                 (
                     32..41,
                     MarkdownHighlight::Style(MarkdownHighlightStyle {
-                        italic: false,
-                        underline: false,
-                        strikethrough: false,
-                        weight: FontWeight(700.0,),
-                        link: false,
-                        oblique: false,
+                        weight: FontWeight(700.0),
+                        ..Default::default()
                     },),
                 ),
                 (
                     52..63,
                     MarkdownHighlight::Style(MarkdownHighlightStyle {
                         italic: true,
-                        underline: false,
-                        strikethrough: false,
-                        weight: FontWeight(400.0,),
-                        link: false,
-                        oblique: false,
+                        weight: FontWeight(400.0),
+                        ..Default::default()
                     },),
                 ),
                 (
                     74..89,
                     MarkdownHighlight::Style(MarkdownHighlightStyle {
-                        italic: false,
-                        underline: false,
-                        strikethrough: false,
-                        weight: FontWeight(400.0,),
-                        link: false,
+                        weight: FontWeight(400.0),
                         oblique: true,
+                        ..Default::default()
                     },),
                 ),
                 (
                     100..112,
                     MarkdownHighlight::Style(MarkdownHighlightStyle {
-                        italic: false,
-                        underline: false,
                         strikethrough: true,
-                        weight: FontWeight(400.0,),
-                        link: false,
-                        oblique: false,
+                        weight: FontWeight(400.0),
+                        ..Default::default()
                     },),
                 ),
                 (
                     123..136,
                     MarkdownHighlight::Style(MarkdownHighlightStyle {
-                        italic: false,
                         underline: true,
-                        strikethrough: false,
                         weight: FontWeight(400.0,),
-                        link: false,
-                        oblique: false,
+                        ..Default::default()
                     },),
                 ),
             ],
