@@ -1711,7 +1711,15 @@ impl AgentPanel {
 
         match view {
             ActiveView::ExternalAgentThread { thread_view } => {
-                Label::new(thread_view.read(cx).title(cx))
+                let text = thread_view
+                    .read(cx)
+                    .title_editor()
+                    .as_ref()
+                    .map(|editor| editor.read(cx).text(cx))
+                    .filter(|text| !text.is_empty())
+                    .unwrap_or_else(|| thread_view.read(cx).title(cx).to_string());
+
+                Label::new(text)
                     .color(Color::Muted)
                     .truncate()
                     .into_any_element()
