@@ -521,10 +521,6 @@ impl AgentPanel {
                         }
                         cx.notify();
                     });
-                } else {
-                    panel.update(cx, |panel, cx| {
-                        panel.new_agent_thread(AgentType::NativeAgent, window, cx);
-                    });
                 }
                 panel.as_mut(cx).loading = false;
                 panel
@@ -576,15 +572,18 @@ impl AgentPanel {
         .detach();
 
         let panel_type = AgentSettings::get_global(cx).default_view;
-        let active_view = match panel_type {
-            DefaultView::Thread => ActiveView::native_agent(
-                fs.clone(),
-                prompt_store.clone(),
-                history_store.clone(),
-                project.clone(),
-                workspace.clone(),
-                window,
-                cx,
+        let (active_view, selected_agent) = match panel_type {
+            DefaultView::Thread => (
+                ActiveView::native_agent(
+                    fs.clone(),
+                    prompt_store.clone(),
+                    history_store.clone(),
+                    project.clone(),
+                    workspace.clone(),
+                    window,
+                    cx,
+                ),
+                AgentType::NativeAgent,
             ),
             DefaultView::TextThread => {
                 let context = text_thread_store.update(cx, |store, cx| store.create(cx));
@@ -602,12 +601,15 @@ impl AgentPanel {
                     editor.insert_default_prompt(window, cx);
                     editor
                 });
-                ActiveView::text_thread(
-                    text_thread_editor,
-                    history_store.clone(),
-                    language_registry.clone(),
-                    window,
-                    cx,
+                (
+                    ActiveView::text_thread(
+                        text_thread_editor,
+                        history_store.clone(),
+                        language_registry.clone(),
+                        window,
+                        cx,
+                    ),
+                    AgentType::TextThread,
                 )
             }
         };
@@ -699,7 +701,7 @@ impl AgentPanel {
             onboarding,
             acp_history,
             history_store,
-            selected_agent: AgentType::default(),
+            selected_agent,
             loading: false,
         };
 
