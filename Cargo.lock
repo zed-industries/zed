@@ -9032,6 +9032,7 @@ dependencies = [
  "settings",
  "smol",
  "task",
+ "terminal",
  "text",
  "theme",
  "toml 0.8.23",
