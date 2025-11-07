@@ -209,7 +209,6 @@ async fn run_query(
         while let Some(SearchResult::Buffer { buffer, ranges }) = results_rx.next().await {
             let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
 
-            // todo! expand
             let ranges = ranges
                 .into_iter()
                 .map(|range| {
@@ -303,7 +302,7 @@ fn expand_to_parent_range<T: ToPoint + ToOffset>(
     let mut line_range = range.to_point(&snapshot);
     line_range.start.column = snapshot.indent_size_for_line(line_range.start.row).len;
     line_range.end.column = snapshot.line_len(line_range.end.row);
-    // todo! skip result if matched line isn't the first node line?
+    // TODO skip result if matched line isn't the first node line?
 
     let node = snapshot.syntax_ancestor(line_range)?;
     Some(node.byte_range())

@@ -183,7 +183,6 @@ pub struct ZetaEditPredictionDebugInfo {
 pub struct ZetaSearchQueryDebugInfo {
     pub project: Entity<Project>,
     pub timestamp: Instant,
-    // todo!
     pub regex_by_glob: HashMap<String, String>,
 }
 
@@ -1766,8 +1765,7 @@ mod tests {
                                         queries: Box::new([SearchToolQuery {
                                             glob: "root/2.txt".to_string(),
                                             syntax_node: vec![],
-                                            // todo!
-                                            content: None,
+                                            content: Some(".".into()),
                                         }]),
                                     })
                                     .unwrap(),
