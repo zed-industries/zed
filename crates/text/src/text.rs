@@ -486,7 +486,7 @@ struct Edits<'a, D: TextDimension, F: FnMut(&FragmentSummary) -> bool> {
     buffer_id: BufferId,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub struct Edit<D> {
     pub old: Range<D>,
     pub new: Range<D>,

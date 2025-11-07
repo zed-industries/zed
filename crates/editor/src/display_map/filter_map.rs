@@ -35,6 +35,11 @@ impl FilterTransform {
             Self::Filter { text, .. } => text,
         }
     }
+
+    #[cfg(test)]
+    fn text_escaped(&self) -> String {
+        self.text().replace("\n", r"\n").replace("\t", r"\t")
+    }
 }
 
 impl sum_tree::Item for FilterTransform {
@@ -107,7 +112,7 @@ struct FilterSnapshot {
 }
 
 /// A byte index into the buffer (after ignored diff hunk lines are deleted)
-#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
 struct FilterOffset(usize);
 
 impl FilterOffset {
@@ -483,8 +488,6 @@ impl FilterMap {
         #[cfg(test)]
         check_edits(&self.snapshot, &output_edits, &new_snapshot);
         self.snapshot = new_snapshot;
-        #[cfg(test)]
-        self.snapshot.print_transforms();
         #[cfg(debug_assertions)]
         self.check_invariants();
         (self.snapshot.clone(), output_edits)
@@ -497,7 +500,38 @@ fn check_edits(
     output_edits: &[text::Edit<FilterOffset>],
     new_snapshot: &FilterSnapshot,
 ) {
+    use collections::HashSet;
     use itertools::Itertools as _;
+
+    println!("old transforms: ");
+    old_snapshot.print_transforms();
+
+    println!("new transforms: ");
+    new_snapshot.print_transforms();
+
+    let output_edits_set: HashSet<_> = output_edits.iter().collect();
+    assert_eq!(
+        output_edits.len(),
+        output_edits_set.len(),
+        "output_edits contained duplicate edits"
+    );
+
+    for e1 in output_edits {
+        for e2 in output_edits {
+            if e1 == e2 {
+                continue;
+            }
+
+            assert!(
+                !e1.old.overlaps(&e2.old),
+                "old ranges overlap for {e1:?} and {e2:?}",
+            );
+            assert!(
+                !e1.new.overlaps(&e2.new),
+                "new ranges overlap for {e1:?} and {e2:?}",
+            );
+        }
+    }
 
     for edit in output_edits {
         assert!(edit.old.start.0 <= edit.old.end.0, "inverted old range");
@@ -509,23 +543,29 @@ fn check_edits(
     }
     let mut edited_old_text = old_snapshot.text();
     let new_text = new_snapshot.text();
+
     for edit in output_edits.iter().rev() {
         let edit_old_range = edit.old.start.0..edit.old.end.0;
         let edit_new_range = edit.new.start.0..edit.new.end.0;
         assert!(
             edited_old_text.get(edit_old_range.clone()).is_some(),
-            "invalid old range ({:?} vs {})",
+            "old range too large for old text (range is {:?}, old length {}, new length: {}, old text:\n{})",
             edit_old_range,
             edited_old_text.len(),
+            new_text.len(),
+            edited_old_text,
         );
         assert!(
             new_text.get(edit_new_range.clone()).is_some(),
-            "invalid new range ({:?} vs {})",
+            "new range too large for old text (range is {:?}, old length {}, new length: {}, new text: \n{})",
             edit_new_range,
+            edited_old_text.len(),
             new_text.len(),
+            new_text,
         );
         edited_old_text.replace_range(edit_old_range, &new_text[edit_new_range]);
     }
+
     pretty_assertions::assert_eq!(
         edited_old_text,
         new_text,
@@ -591,6 +631,10 @@ impl FilterSnapshot {
 
     #[cfg(test)]
     fn print_transforms(&self) {
+        if self.transforms.is_empty() {
+            println!("<empty>");
+            return;
+        }
         let mut offset = 0;
 
         for transform in self.transforms.iter() {
@@ -601,7 +645,7 @@ impl FilterSnapshot {
             };
             println!(
                 "{offset:0>3}->{new_offset:0>3} ({ty}): {}",
-                transform.text()
+                transform.text_escaped(),
             );
             offset = new_offset;
         }

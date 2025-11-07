@@ -1,13 +1,19 @@
 use std::{
-    cmp::Ordering,
-    ops::{Add, AddAssign, Range, Sub},
+    cmp::Ordering, fmt::Debug, ops::{Add, AddAssign, Range, Sub}
 };
 
 /// A zero-indexed point in a text buffer consisting of a row and column.
-#[derive(Clone, Copy, Default, Eq, PartialEq, Debug, Hash)]
+#[derive(Clone, Copy, Default, Eq, PartialEq, Hash)]
 pub struct Point {
     pub row: u32,
     pub column: u32,
+}
+
+impl Debug for Point {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { row, column } = self;
+        write!(f, "Point({row}:{column})")
+    }
 }
 
 impl Point {
