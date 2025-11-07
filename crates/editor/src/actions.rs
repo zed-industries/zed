@@ -521,9 +521,9 @@ actions!(
         /// Goes to the previous diff hunk.
         GoToPreviousHunk,
         /// Goes to the implementation of the symbol at cursor.
-        GoToImplementation,
+        FindAllImplementations,
         /// Goes to implementation in a split pane.
-        GoToImplementationSplit,
+        FindAllImplementationsSplit,
         /// Goes to the next change in the file.
         GoToNextChange,
         /// Goes to the parent module of the current file.
