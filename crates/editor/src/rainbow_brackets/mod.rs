@@ -486,7 +486,7 @@ mod tests {
         )
         .with_queries(LanguageQueries {
             rainbow: Some(Cow::from(include_str!(
-                "../../languages/src/javascript/rainbow.scm"
+                "../../languages/src/javascript/brackets.scm"
             ))),
             ..LanguageQueries::default()
         })

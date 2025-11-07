@@ -428,5 +428,12 @@ fn load_queries(name: &str) -> LanguageQueries {
             }
         }
     }
+
+    if result.rainbow.is_none()
+        && let Some(brackets) = result.brackets.as_ref()
+        && brackets.contains("@rainbow.")
+    {
+        result.rainbow = Some(brackets.clone());
+    }
     result
 }
