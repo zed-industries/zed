@@ -2457,6 +2457,7 @@ impl MultiBuffer {
             .cursor::<Dimensions<ExcerptOffset, usize>>(());
         let mut new_diff_transforms = SumTree::default();
         let mut old_expanded_hunks = HashSet::default();
+        let mut processed_invalidated_hunks = HashSet::default();
         let mut output_edits = Vec::new();
         let mut output_delta = 0_isize;
         let mut at_transform_boundary = true;
@@ -2505,26 +2506,28 @@ impl MultiBuffer {
                     &mut new_diff_transforms,
                     &mut end_of_current_insert,
                     &mut old_expanded_hunks,
+                    &mut processed_invalidated_hunks,
                     snapshot,
                     change_kind,
                 );
 
-            // n = 4: edit
-            // n = 5: additional_edit
-            // n = 6: edit (next time round the loop)
-
             if let Some(mut additional_edit) = additional_edit {
-                dbg!(&additional_edit, &edit);
+                let mut last_overlapping_edit = None;
                 while let Some(next_edit) = excerpt_edits.front()
-                    && next_edit.old.overlaps(&additional_edit.old)
+                    && next_edit.new.overlaps(&additional_edit.new)
                 {
-                    dbg!(&next_edit);
-                    additional_edit.old.end = next_edit.old.end.max(additional_edit.old.end);
-                    additional_edit.new.end = next_edit.new.end.max(additional_edit.new.end);
+                    last_overlapping_edit = Some(next_edit.clone());
                     excerpt_edits.pop_front();
                 }
-
-                excerpt_edits.push_front(dbg!(additional_edit));
+                if let Some(last_overlapping_edit) = last_overlapping_edit {
+                    additional_edit.old.end = last_overlapping_edit.old.end;
+                    if additional_edit.new.end > last_overlapping_edit.new.end {
+                        let overshoot = additional_edit.new.end - last_overlapping_edit.new.end;
+                        additional_edit.new.end = last_overlapping_edit.new.end;
+                        additional_edit.old.end += overshoot;
+                    }
+                }
+                excerpt_edits.push_front(additional_edit);
             }
 
             // Compute the end of the edit in output coordinates.
@@ -2542,7 +2545,7 @@ impl MultiBuffer {
             output_delta -= (output_edit.old.end - output_edit.old.start) as isize;
             if changed_diff_hunks || matches!(change_kind, DiffChangeKind::BufferEdited) {
                 let pushing_output_edit = output_edit;
-                output_edits.push(dbg!(pushing_output_edit));
+                output_edits.push(pushing_output_edit);
             }
 
             // If this is the last edit that intersects the current diff transform,
@@ -2604,10 +2607,6 @@ impl MultiBuffer {
         output_edits
     }
 
-    // - for old expanded hunks, track a range
-    // - in recompute_diff_transforms_for_edit, in the loop over hunks, check whether the hunk was previously expanded + is now invalid + extends past the end of the edit
-    // - if so, record that we want to issue an edit for the remaining added portion (just extend the edit? unclear)
-    // - caller is responsible for reconciling the the original edits with these additional edits (how? probably just do a merge loop)
     fn recompute_diff_transforms_for_edit(
         edit: &Edit<TypedOffset<Excerpt>>,
         excerpts: &mut Cursor<Excerpt, TypedOffset<Excerpt>>,
@@ -2615,6 +2614,7 @@ impl MultiBuffer {
         new_diff_transforms: &mut SumTree<DiffTransform>,
         end_of_current_insert: &mut Option<(TypedOffset<Excerpt>, DiffTransformHunkInfo)>,
         old_expanded_hunks: &mut HashSet<DiffTransformHunkInfo>,
+        processed_invalidated_hunks: &mut HashSet<DiffTransformHunkInfo>,
         snapshot: &MultiBufferSnapshot,
         change_kind: DiffChangeKind,
     ) -> (bool, Option<Edit<TypedOffset<Excerpt>>>) {
@@ -2669,8 +2669,8 @@ impl MultiBuffer {
                 let edit_anchor_range =
                     buffer.anchor_before(edit_buffer_start)..buffer.anchor_after(edit_buffer_end);
 
-                for hunk in
-                    diff.valid_and_invalid_hunks_intersecting_range(edit_anchor_range, buffer)
+                for hunk in diff
+                    .valid_and_invalid_hunks_intersecting_range(edit_anchor_range.clone(), buffer)
                 {
                     if hunk.is_created_file() && !all_diff_hunks_expanded {
                         continue;
@@ -2699,8 +2699,10 @@ impl MultiBuffer {
 
                     if !hunk.buffer_range.start.is_valid(buffer) {
                         if old_expanded_hunks.contains(&hunk_info)
+                            && !processed_invalidated_hunks.contains(&hunk_info)
                             && hunk_buffer_range.end > edit_buffer_end
                         {
+                            processed_invalidated_hunks.insert(hunk_info);
                             let overshoot = hunk_excerpt_end - edit.new.end;
                             additional_edit = Some(Edit {
                                 old: edit.old.end..edit.old.end + overshoot,

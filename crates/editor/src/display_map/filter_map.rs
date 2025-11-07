@@ -5,12 +5,12 @@ use multi_buffer::{
     AnchorRangeExt as _, MultiBufferDiffHunk, MultiBufferSnapshot, ToOffset as _, ToPoint as _,
 };
 use rope::{Point, TextSummary};
-use sum_tree::{Dimensions, SumTree};
+use sum_tree::{Dimensions, Item, SumTree};
 use text::Bias;
 use util::{RangeExt as _, debug_panic};
 
 #[derive(Debug, Clone)]
-enum Transform {
+enum FilterTransform {
     Isomorphic {
         summary: TextSummary,
         #[cfg(test)]
@@ -23,9 +23,9 @@ enum Transform {
     },
 }
 
-impl Transform {
+impl FilterTransform {
     fn is_isomorphic(&self) -> bool {
-        matches!(self, Transform::Isomorphic { .. })
+        matches!(self, FilterTransform::Isomorphic { .. })
     }
 
     #[cfg(test)]
@@ -37,7 +37,7 @@ impl Transform {
     }
 }
 
-impl sum_tree::Item for Transform {
+impl sum_tree::Item for FilterTransform {
     type Summary = TransformSummary;
 
     fn summary(&self, cx: <Self::Summary as sum_tree::Summary>::Context<'_>) -> Self::Summary {
@@ -102,7 +102,7 @@ impl FilterMode {
 
 #[derive(Clone)]
 struct FilterSnapshot {
-    transforms: SumTree<Transform>,
+    transforms: SumTree<FilterTransform>,
     buffer_snapshot: MultiBufferSnapshot,
 }
 
@@ -173,7 +173,7 @@ impl FilterMap {
             snapshot: FilterSnapshot {
                 buffer_snapshot: buffer_snapshot.clone(),
                 transforms: SumTree::from_item(
-                    Transform::Isomorphic {
+                    FilterTransform::Isomorphic {
                         summary: buffer_snapshot.text_summary(),
                         #[cfg(test)]
                         text: buffer_snapshot.text(),
@@ -200,7 +200,8 @@ impl FilterMap {
         #[cfg(test)]
         pretty_assertions::assert_eq!(
             self.snapshot.input_text(),
-            self.snapshot.buffer_snapshot.text()
+            self.snapshot.buffer_snapshot.text(),
+            "wrong input text"
         );
 
         pretty_assertions::assert_eq!(
@@ -301,7 +302,7 @@ impl FilterMap {
             // unchanged and we only need one isomorphic transform.
             self.snapshot.buffer_snapshot = buffer_snapshot.clone();
             self.snapshot.transforms = SumTree::from_item(
-                Transform::Isomorphic {
+                FilterTransform::Isomorphic {
                     summary: buffer_snapshot.text_summary(),
                     #[cfg(test)]
                     text: buffer_snapshot.text(),
@@ -320,7 +321,9 @@ impl FilterMap {
             );
         };
 
-        let mut new_transforms: SumTree<Transform> = SumTree::new(());
+        dbg!(&buffer_edits);
+
+        let mut new_transforms: SumTree<FilterTransform> = SumTree::new(());
         let mut transform_cursor = self
             .snapshot
             .transforms
@@ -354,39 +357,7 @@ impl FilterMap {
         // with a hunk in the same way edit 2 does). In this case, we need to
         // repeat the process until we get a clean hunk end.
         while let Some(mut buffer_edit) = buffer_edits.next() {
-            //                         hunk buffer range start
-            //                         v
-            //         |-deleted range-|-added range-| hunk
-            //                            <------>
-            //  <------------------------->            buffer_edit.old (what we currently invalidate)
-            //                             <-------------------------->
-            //
-            //
-            //                 <------------------------------->
-
-            // while let Some(prev_diff_hunk_start) = self
-            //     .snapshot
-            //     .buffer_snapshot
-            //     .diff_hunk_before(buffer_edit.old.end)
-            //     && buffer_edit
-            //         .old
-            //         .contains(&prev_diff_hunk_start.to_offset(&self.snapshot.buffer_snapshot))
-            // {
-            //     let mut revised_edit_old_end: usize = prev_diff_hunk.end;
-            //     let mut revised_edit_new_end: usize =
-            //         buffer_edit.new.end + (revised_edit_old_end - buffer_edit.old.end);
-            //     while let Some(next_edit) = buffer_edits.peek()
-            //         && next_edit.old.start < revised_edit_old_end
-            //     {
-            //         revised_edit_old_end = revised_edit_old_end.max(next_edit.old.end);
-            //         revised_edit_new_end = revised_edit_new_end.max(next_edit.new.end);
-            //         buffer_edits.next();
-            //     }
-            //     buffer_edit.old.end = revised_edit_old_end;
-            //     buffer_edit.new.end = revised_edit_new_end;
-            // }
-
-            debug_assert!(transform_cursor.start().0 <= buffer_edit.old.end);
+            dbg!(&buffer_edit);
 
             // Reuse any old transforms that strictly precede the start of the edit.
             log::info!(
@@ -416,13 +387,15 @@ impl FilterMap {
             // If the edit starts in the middle of a transform, split the transform and push the unaffected portion.
             if buffer_edit.new.start > new_transforms.summary().input.len {
                 let range = new_transforms.summary().input.len..buffer_edit.new.start;
-                match transform_cursor.item() {
-                    Some(Transform::Isomorphic { .. }) => {
+                match dbg!(transform_cursor.item()) {
+                    Some(FilterTransform::Isomorphic { .. }) => {
+                        dbg!();
                         let summary = push_isomorphic(&mut new_transforms, range, &buffer_snapshot);
                         edit_old_start.0 += summary.len;
                         edit_new_start.0 += summary.len;
                     }
-                    Some(Transform::Filter { .. }) => {
+                    Some(FilterTransform::Filter { .. }) => {
+                        dbg!();
                         push_filter(&mut new_transforms, range, &buffer_snapshot);
                     }
                     None => {}
@@ -436,15 +409,20 @@ impl FilterMap {
                 let addition_range = addition_range.clamp(buffer_edit.new.clone());
                 // Push an isomorphic transform for any content preceding this hunk.
                 let prefix_range = new_transforms.summary().input.len..deletion_range.start;
+                dbg!();
                 push_isomorphic(&mut new_transforms, prefix_range, &buffer_snapshot);
 
                 match mode {
                     FilterMode::RemoveDeletions => {
+                        dbg!();
                         push_filter(&mut new_transforms, deletion_range, &buffer_snapshot);
+                        dbg!();
                         push_isomorphic(&mut new_transforms, addition_range, &buffer_snapshot);
                     }
                     FilterMode::RemoveInsertions => {
+                        dbg!();
                         push_isomorphic(&mut new_transforms, deletion_range, &buffer_snapshot);
+                        dbg!();
                         push_filter(&mut new_transforms, addition_range, &buffer_snapshot);
                     }
                 }
@@ -453,6 +431,7 @@ impl FilterMap {
             // Push any non-hunk content after the last hunk.
             if buffer_edit.new.end > new_transforms.summary().input.len {
                 let suffix_range = new_transforms.summary().input.len..buffer_edit.new.end;
+                dbg!();
                 push_isomorphic(&mut new_transforms, suffix_range, &buffer_snapshot);
             }
 
@@ -460,11 +439,12 @@ impl FilterMap {
             let mut edit_old_end = transform_cursor.end().1;
             let edit_new_end = FilterOffset(new_transforms.summary().output.len);
             if buffer_edit.old.end > transform_cursor.start().0 {
+                dbg!();
                 match transform_cursor.item() {
-                    Some(Transform::Isomorphic { .. }) => {
+                    Some(FilterTransform::Isomorphic { .. }) => {
                         edit_old_end.0 += buffer_edit.old.end - transform_cursor.start().0;
                     }
-                    Some(Transform::Filter { .. }) => {}
+                    Some(FilterTransform::Filter { .. }) => {}
                     None => {}
                 }
             }
@@ -476,7 +456,8 @@ impl FilterMap {
                 let suffix_start = new_transforms.summary().input.len;
                 let suffix_len = transform_cursor.end().0 - buffer_edit.old.end;
                 match transform_cursor.item() {
-                    Some(Transform::Isomorphic { .. }) => {
+                    Some(FilterTransform::Isomorphic { .. }) => {
+                        dbg!();
                         push_isomorphic(
                             &mut new_transforms,
                             suffix_start
@@ -485,7 +466,8 @@ impl FilterMap {
                         );
                         transform_cursor.next();
                     }
-                    Some(Transform::Filter { .. }) => {
+                    Some(FilterTransform::Filter { .. }) => {
+                        dbg!();
                         push_filter(
                             &mut new_transforms,
                             suffix_start
@@ -522,6 +504,8 @@ impl FilterMap {
 
         self.snapshot.transforms = new_transforms;
         self.snapshot.buffer_snapshot = buffer_snapshot;
+        #[cfg(test)]
+        self.snapshot.print_transforms();
         #[cfg(debug_assertions)]
         self.check_invariants();
         // TODO assert that the output edits are well-formed and that applying them transforms the old snapshot into the new snapshot
@@ -574,8 +558,8 @@ impl FilterSnapshot {
         self.transforms
             .iter()
             .filter_map(|t| match t {
-                Transform::Isomorphic { text, .. } => Some(text.as_str()),
-                Transform::Filter { .. } => None,
+                FilterTransform::Isomorphic { text, .. } => Some(text.as_str()),
+                FilterTransform::Filter { .. } => None,
             })
             .collect()
     }
@@ -584,10 +568,28 @@ impl FilterSnapshot {
     fn input_text(&self) -> String {
         self.transforms.iter().map(|t| t.text()).collect()
     }
+
+    #[cfg(test)]
+    fn print_transforms(&self) {
+        let mut offset = 0;
+
+        for transform in self.transforms.iter() {
+            let new_offset = offset + transform.summary(()).input.len;
+            let ty = match transform {
+                FilterTransform::Filter { .. } => "F",
+                FilterTransform::Isomorphic { .. } => "I",
+            };
+            println!(
+                "{offset:0>3}->{new_offset:0>3} ({ty}): {}",
+                transform.text()
+            );
+            offset = new_offset;
+        }
+    }
 }
 
 fn push_isomorphic(
-    transforms: &mut SumTree<Transform>,
+    transforms: &mut SumTree<FilterTransform>,
     range: Range<usize>,
     snapshot: &MultiBufferSnapshot,
 ) -> TextSummary {
@@ -600,12 +602,12 @@ fn push_isomorphic(
     let text_to_add = snapshot.text_for_range(range).collect::<String>();
 
     #[cfg(test)]
-    log::info!("push_isomorphic, pushing:\n{text_to_add:?}",);
+    log::info!("push_isomorphic({text_to_add:?})");
 
     let mut merged = false;
     transforms.update_last(
         |transform| {
-            if let Transform::Isomorphic {
+            if let FilterTransform::Isomorphic {
                 summary,
                 #[cfg(test)]
                 text,
@@ -621,7 +623,7 @@ fn push_isomorphic(
     );
     if !merged {
         transforms.push(
-            Transform::Isomorphic {
+            FilterTransform::Isomorphic {
                 summary: summary_to_add,
                 #[cfg(test)]
                 text: text_to_add,
@@ -633,7 +635,7 @@ fn push_isomorphic(
 }
 
 fn push_filter(
-    transforms: &mut SumTree<Transform>,
+    transforms: &mut SumTree<FilterTransform>,
     range: Range<usize>,
     snapshot: &MultiBufferSnapshot,
 ) {
@@ -646,12 +648,12 @@ fn push_filter(
     let text_to_add = snapshot.text_for_range(range).collect::<String>();
 
     #[cfg(test)]
-    log::info!("push_filter, pushing:\n{text_to_add:?}",);
+    log::info!("push_filter({text_to_add:?})");
 
     let mut merged = false;
     transforms.update_last(
         |transform| {
-            if let Transform::Filter {
+            if let FilterTransform::Filter {
                 summary,
                 #[cfg(test)]
                 text,
@@ -667,7 +669,7 @@ fn push_filter(
     );
     if !merged {
         transforms.push(
-            Transform::Filter {
+            FilterTransform::Filter {
                 summary: summary_to_add,
                 #[cfg(test)]
                 text: text_to_add,
@@ -688,7 +690,7 @@ impl FilterSnapshot {
 
         let overshoot = range.start.0 - cursor.start().0.0;
         match cursor.item() {
-            Some(Transform::Isomorphic { .. }) => {
+            Some(FilterTransform::Isomorphic { .. }) => {
                 let buffer_start = cursor.start().1;
                 let suffix_start = buffer_start + overshoot;
                 let suffix_end =
@@ -698,7 +700,7 @@ impl FilterSnapshot {
                     .text_summary_for_range(suffix_start..suffix_end);
                 cursor.next();
             }
-            Some(Transform::Filter { .. }) | None => {}
+            Some(FilterTransform::Filter { .. }) | None => {}
         }
 
         if range.end > cursor.start().0 {
@@ -708,14 +710,14 @@ impl FilterSnapshot {
 
             let overshoot = range.end.0 - cursor.start().0.0;
             match cursor.item() {
-                Some(Transform::Isomorphic { .. }) => {
+                Some(FilterTransform::Isomorphic { .. }) => {
                     let prefix_start = cursor.start().1;
                     let prefix_end = prefix_start + overshoot;
                     summary += self
                         .buffer_snapshot
                         .text_summary_for_range::<TextSummary, _>(prefix_start..prefix_end);
                 }
-                Some(Transform::Filter { .. }) | None => {}
+                Some(FilterTransform::Filter { .. }) | None => {}
             }
         }
 
@@ -728,14 +730,14 @@ impl FilterSnapshot {
             .find::<Dimensions<FilterOffset, FilterPoint, usize>, _>((), &offset, Bias::Right);
         let overshoot = offset.0 - start.0.0;
         match item {
-            Some(Transform::Isomorphic { .. }) => {
+            Some(FilterTransform::Isomorphic { .. }) => {
                 let buffer_offset_start = start.2;
                 let buffer_offset_end = buffer_offset_start + overshoot;
                 let buffer_start = self.buffer_snapshot.offset_to_point(buffer_offset_start);
                 let buffer_end = self.buffer_snapshot.offset_to_point(buffer_offset_end);
                 FilterPoint(start.1.0 + (buffer_end - buffer_start))
             }
-            Some(Transform::Filter { .. }) | None => self.max_point(),
+            Some(FilterTransform::Filter { .. }) | None => self.max_point(),
         }
     }
 

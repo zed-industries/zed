@@ -39,9 +39,7 @@ fn publish(
     subscriptions.retain(|subscription| {
         if let Some(subscription) = subscription.upgrade() {
             let mut patch = subscription.lock();
-            dbg!(&edits.clone().into_iter().collect::<Vec<_>>());
             *patch = patch.compose(edits.clone());
-            dbg!(&patch);
             true
         } else {
             false
