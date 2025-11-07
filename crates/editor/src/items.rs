@@ -1,7 +1,7 @@
 use crate::{
-    Anchor, Autoscroll, Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, FormatTarget,
-    MultiBuffer, MultiBufferSnapshot, NavigationData, ReportEditorEvent, SearchWithinRange,
-    SelectionEffects, ToPoint as _,
+    Anchor, Autoscroll, BufferSerialization, Editor, EditorEvent, EditorSettings, ExcerptId,
+    ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot, NavigationData,
+    ReportEditorEvent, SearchWithinRange, SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
     persistence::{DB, SerializedEditor},
@@ -1256,17 +1256,15 @@ impl SerializableItem for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
-        if self.mode.is_minimap() {
-            return None;
-        }
-        let mut serialize_dirty_buffers = self.serialize_dirty_buffers;
-
+        let buffer_serialization = self.buffer_serialization?;
         let project = self.project.clone()?;
-        if project.read(cx).visible_worktrees(cx).next().is_none() {
+
+        let serialize_dirty_buffers = match buffer_serialization {
             // If we don't have a worktree, we don't serialize, because
             // projects without worktrees aren't deserialized.
-            serialize_dirty_buffers = false;
-        }
+            BufferSerialization::All => project.read(cx).visible_worktrees(cx).next().is_some(),
+            BufferSerialization::NonDirtyBuffers => false,
+        };
 
         if closing && !serialize_dirty_buffers {
             return None;
@@ -1323,10 +1321,11 @@ impl SerializableItem for Editor {
     }
 
     fn should_serialize(&self, event: &Self::Event) -> bool {
-        matches!(
-            event,
-            EditorEvent::Saved | EditorEvent::DirtyChanged | EditorEvent::BufferEdited
-        )
+        self.should_serialize_buffer()
+            && matches!(
+                event,
+                EditorEvent::Saved | EditorEvent::DirtyChanged | EditorEvent::BufferEdited
+            )
     }
 }
 

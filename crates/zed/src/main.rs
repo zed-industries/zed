@@ -190,6 +190,15 @@ pub fn main() {
         }
     }
 
+    #[cfg(all(not(debug_assertions), target_os = "windows"))]
+    unsafe {
+        use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+
+        if args.foreground {
+            let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+
     // `zed --printenv` Outputs environment variables as JSON to stdout
     if args.printenv {
         util::shell_env::print_env();
@@ -204,15 +213,6 @@ pub fn main() {
     // Set custom data directory.
     if let Some(dir) = &args.user_data_dir {
         paths::set_custom_data_dir(dir);
-    }
-
-    #[cfg(all(not(debug_assertions), target_os = "windows"))]
-    unsafe {
-        use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
-
-        if args.foreground {
-            let _ = AttachConsole(ATTACH_PARENT_PROCESS);
-        }
     }
 
     #[cfg(target_os = "windows")]
@@ -859,15 +859,19 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 // zed://settings/languages/Rust/tab_size  - SUPPORT
                 // languages.$(language).tab_size
                 // [ languages $(language) tab_size]
-                workspace::with_active_or_new_workspace(cx, |_workspace, window, cx| {
-                    match setting_path {
+                cx.spawn(async move |cx| {
+                    let workspace =
+                        workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+
+                    workspace.update(cx, |_, window, cx| match setting_path {
                         None => window.dispatch_action(Box::new(zed_actions::OpenSettings), cx),
                         Some(setting_path) => window.dispatch_action(
                             Box::new(zed_actions::OpenSettingsAt { path: setting_path }),
                             cx,
                         ),
-                    }
-                });
+                    })
+                })
+                .detach_and_log_err(cx);
             }
         }
 
