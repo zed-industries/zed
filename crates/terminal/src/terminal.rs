@@ -426,7 +426,7 @@ impl TerminalBuilder {
         activation_script: Vec<String>,
     ) -> Task<Result<TerminalBuilder>> {
         let version = release_channel::AppVersion::global(cx);
-        cx.background_spawn(async move {
+        let fut = async move {
             // If the parent environment doesn't have a locale set
             // (As is the case when launched from a .app on MacOS),
             // and the Project doesn't have a locale set, then
@@ -648,7 +648,13 @@ impl TerminalBuilder {
                 terminal,
                 events_rx,
             })
-        })
+        };
+        // the thread we spawn things on has an effect on signal handling
+        if cfg!(target_os = "unix") {
+            cx.spawn(async move |_| fut.await)
+        } else {
+            cx.background_spawn(fut)
+        }
     }
 
     pub fn subscribe(mut self, cx: &Context<Terminal>) -> Terminal {
