@@ -1,7 +1,7 @@
 //! A row chunk is an exclusive range of rows, [`BufferRow`] within a buffer of a certain version, [`Global`].
 //! All but the last chunk are of a constant, given size.
 
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
 use clock::Global;
 use text::OffsetRangeExt as _;
@@ -16,9 +16,10 @@ use crate::BufferRow;
 /// Together, chunks form entire document at a particular version [`Global`].
 /// Each chunk is queried for inlays as `(start_row, 0)..(end_exclusive, 0)` via
 /// <https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#inlayHintParams>
+#[derive(Clone)]
 pub struct RowChunks {
     pub snapshot: text::BufferSnapshot,
-    pub chunks: Vec<RowChunk>,
+    pub chunks: Arc<[RowChunk]>,
 }
 
 impl std::fmt::Debug for RowChunks {
@@ -42,8 +43,11 @@ impl RowChunks {
                 start: chunk_start,
                 end_exclusive: (chunk_start + max_rows_per_chunk).min(last_row),
             })
-            .collect();
-        Self { snapshot, chunks }
+            .collect::<Vec<_>>();
+        Self {
+            snapshot,
+            chunks: Arc::from(chunks),
+        }
     }
 
     pub fn version(&self) -> &Global {

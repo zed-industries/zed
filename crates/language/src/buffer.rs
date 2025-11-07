@@ -32,7 +32,7 @@ use gpui::{
 };
 
 use lsp::{LanguageServerId, NumberOrString};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RawMutex, lock_api::MutexGuard};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::WorktreeId;
@@ -132,7 +132,7 @@ pub struct Buffer {
     tree_sitter_data: Arc<Mutex<TreeSitterData>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TreeSitterData {
     chunks: RowChunks,
     brackets_by_chunks: Vec<Option<Vec<BracketMatch>>>,
@@ -4149,23 +4149,16 @@ impl BufferSnapshot {
     ///
     /// The resulting collection is not ordered.
     fn fetch_bracket_ranges(&self, range: Range<usize>) -> Vec<BracketMatch> {
-        let mut tree_sitter_data = self.tree_sitter_data.lock();
-        if self
-            .version
-            .changed_since(&tree_sitter_data.chunks.version())
-        {
-            *tree_sitter_data = TreeSitterData::new(self.text.clone());
-        }
-
+        let mut tree_sitter_data = self.latest_tree_sitter_data().clone();
+        let mut new_bracket_matches = HashMap::default();
         let mut all_bracket_matches = Vec::new();
         for chunk in tree_sitter_data
             .chunks
             .applicable_chunks(&[self.anchor_before(range.start)..self.anchor_after(range.end)])
-            .collect::<Vec<_>>()
         {
-            let chunk_brackets = &mut tree_sitter_data.brackets_by_chunks[chunk.id];
+            let chunk_brackets = tree_sitter_data.brackets_by_chunks.remove(chunk.id);
             let bracket_matches = match chunk_brackets {
-                Some(cached_brackets) => cached_brackets.clone(),
+                Some(cached_brackets) => cached_brackets,
                 None => {
                     let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
                         grammar.brackets_config.as_ref().map(|c| &c.query)
@@ -4216,14 +4209,36 @@ impl BufferSnapshot {
                         None
                     })
                     .collect::<Vec<_>>();
-                    *chunk_brackets = Some(new_matches.clone());
+
+                    new_bracket_matches.insert(chunk.id, new_matches.clone());
                     new_matches
                 }
             };
             all_bracket_matches.extend(bracket_matches);
         }
 
+        let mut latest_tree_sitter_data = self.latest_tree_sitter_data();
+        if latest_tree_sitter_data.chunks.version() == &self.version {
+            for (chunk_id, new_matches) in new_bracket_matches {
+                let old_chunks = &mut latest_tree_sitter_data.brackets_by_chunks[chunk_id];
+                if old_chunks.is_none() {
+                    *old_chunks = Some(new_matches);
+                }
+            }
+        }
+
         all_bracket_matches
+    }
+
+    fn latest_tree_sitter_data(&self) -> MutexGuard<'_, RawMutex, TreeSitterData> {
+        let mut tree_sitter_data = self.tree_sitter_data.lock();
+        if self
+            .version
+            .changed_since(tree_sitter_data.chunks.version())
+        {
+            *tree_sitter_data = TreeSitterData::new(self.text.clone());
+        }
+        tree_sitter_data
     }
 
     pub fn all_bracket_ranges(&self, range: Range<usize>) -> Vec<BracketMatch> {
