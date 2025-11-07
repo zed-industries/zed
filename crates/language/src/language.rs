@@ -1174,6 +1174,7 @@ pub struct Grammar {
     pub(crate) error_query: Option<Query>,
     pub highlights_config: Option<HighlightsConfig>,
     pub(crate) brackets_config: Option<BracketsConfig>,
+    pub(crate) rainbow_config: Option<RainbowConfig>,
     pub(crate) redactions_config: Option<RedactionConfig>,
     pub(crate) runnable_config: Option<RunnableConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
@@ -1331,6 +1332,19 @@ struct BracketsPatternConfig {
     newline_only: bool,
 }
 
+#[derive(Debug)]
+pub struct RainbowConfig {
+    pub query: Query,
+    pub bracket_capture_ix: u32,
+    pub scope_capture_ix: Option<u32>,
+    pub patterns: Vec<RainbowPatternConfig>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RainbowPatternConfig {
+    pub include_children: bool,
+}
+
 pub struct DebugVariablesConfig {
     pub query: Query,
     pub objects_by_capture_ix: Vec<(u32, DebuggerTextObject)>,
@@ -1369,6 +1383,7 @@ impl Language {
                     id: GrammarId::new(),
                     highlights_config: None,
                     brackets_config: None,
+                    rainbow_config: None,
                     outline_config: None,
                     text_object_config: None,
                     embedding_config: None,
@@ -1415,6 +1430,11 @@ impl Language {
             self = self
                 .with_brackets_query(query.as_ref())
                 .context("Error loading brackets query")?;
+        }
+        if let Some(query) = queries.rainbow {
+            self = self
+                .with_rainbow_query(query.as_ref())
+                .context("Error loading rainbow query")?;
         }
         if let Some(query) = queries.indents {
             self = self
@@ -1702,6 +1722,43 @@ impl Language {
                 query,
                 open_capture_ix,
                 close_capture_ix,
+                patterns,
+            });
+        }
+        Ok(self)
+    }
+
+    pub fn with_rainbow_query(mut self, source: &str) -> Result<Self> {
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
+        let mut bracket_capture_ix = 0;
+        let mut scope_capture_ix = None;
+        if populate_capture_indices(
+            &query,
+            &self.config.name,
+            "rainbow",
+            &["rainbow."],
+            &mut [
+                Capture::Required("rainbow.bracket", &mut bracket_capture_ix),
+                Capture::Optional("rainbow.scope", &mut scope_capture_ix),
+            ],
+        ) {
+            let patterns = (0..query.pattern_count())
+                .map(|ix| {
+                    let mut config = RainbowPatternConfig::default();
+                    for setting in query.property_settings(ix) {
+                        if setting.key.as_ref() == "rainbow.include_children"
+                            && matches!(setting.value.as_deref(), Some("true"))
+                        {
+                            config.include_children = true;
+                        }
+                    }
+                    config
+                })
+                .collect();
+            self.grammar_mut()?.rainbow_config = Some(RainbowConfig {
+                query,
+                bracket_capture_ix,
+                scope_capture_ix,
                 patterns,
             });
         }
@@ -2190,6 +2247,10 @@ impl Debug for Language {
 impl Grammar {
     pub fn id(&self) -> GrammarId {
         self.id
+    }
+
+    pub fn rainbow_config(&self) -> Option<&RainbowConfig> {
+        self.rainbow_config.as_ref()
     }
 
     fn parse_text(&self, text: &Rope, old_tree: Option<Tree>) -> Tree {

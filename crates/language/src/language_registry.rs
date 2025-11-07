@@ -220,6 +220,7 @@ pub const QUERY_FILENAME_PREFIXES: &[(
 )] = &[
     ("highlights", |q| &mut q.highlights),
     ("brackets", |q| &mut q.brackets),
+    ("rainbow", |q| &mut q.rainbow),
     ("outline", |q| &mut q.outline),
     ("indents", |q| &mut q.indents),
     ("embedding", |q| &mut q.embedding),
@@ -237,6 +238,7 @@ pub const QUERY_FILENAME_PREFIXES: &[(
 pub struct LanguageQueries {
     pub highlights: Option<Cow<'static, str>>,
     pub brackets: Option<Cow<'static, str>>,
+    pub rainbow: Option<Cow<'static, str>>,
     pub indents: Option<Cow<'static, str>>,
     pub outline: Option<Cow<'static, str>>,
     pub embedding: Option<Cow<'static, str>>,

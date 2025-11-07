@@ -32,6 +32,7 @@ mod lsp_ext;
 mod mouse_context_menu;
 pub mod movement;
 mod persistence;
+mod rainbow_brackets;
 mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
@@ -47,6 +48,7 @@ mod signature_help;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+use self::rainbow_brackets::RainbowHighlightState;
 pub(crate) use actions::*;
 pub use display_map::{ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder};
 pub use edit_prediction::Direction;
@@ -1076,6 +1078,7 @@ pub struct Editor {
     show_indent_guides: Option<bool>,
     highlight_order: usize,
     highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
+    rainbow_highlight_state: RainbowHighlightState,
     background_highlights: HashMap<HighlightKey, BackgroundHighlight>,
     gutter_highlights: HashMap<TypeId, GutterHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
@@ -2142,6 +2145,7 @@ impl Editor {
             show_indent_guides,
             highlight_order: 0,
             highlighted_rows: HashMap::default(),
+            rainbow_highlight_state: RainbowHighlightState::default(),
             background_highlights: HashMap::default(),
             gutter_highlights: HashMap::default(),
             scrollbar_marker_state: ScrollbarMarkerState::default(),
@@ -2338,6 +2342,7 @@ impl Editor {
                                         InlayHintRefreshReason::NewLinesShown,
                                         cx,
                                     );
+                                    editor.refresh_rainbow_bracket_highlights(window, cx);
                                 })
                                 .ok();
                         });
@@ -2429,6 +2434,8 @@ impl Editor {
             editor.update_lsp_data(None, window, cx);
             editor.report_editor_event(ReportEditorEvent::EditorOpened, None, cx);
         }
+
+        editor.refresh_rainbow_bracket_highlights(window, cx);
 
         editor
     }
@@ -20905,6 +20912,15 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn clear_highlight_key<T: 'static>(&mut self, key: usize, cx: &mut Context<Self>) {
+        let cleared = self
+            .display_map
+            .update(cx, |map, _| map.clear_highlight_key(TypeId::of::<T>(), key));
+        if cleared {
+            cx.notify();
+        }
+    }
+
     pub fn highlight_text<T: 'static>(
         &mut self,
         ranges: Vec<Range<Anchor>>,
@@ -21054,6 +21070,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let mut refresh_rainbow = false;
         match event {
             multi_buffer::Event::Edited { edited_buffer } => {
                 self.scrollbar_marker_state.dirty = true;
@@ -21063,17 +21080,23 @@ impl Editor {
                 self.refresh_selected_text_highlights(true, window, cx);
                 self.refresh_single_line_folds(window, cx);
                 self.refresh_matching_bracket_highlights(window, cx);
+                refresh_rainbow = true;
                 if self.has_active_edit_prediction() {
                     self.update_visible_edit_prediction(window, cx);
                 }
 
                 if let Some(buffer) = edited_buffer {
-                    if buffer.read(cx).file().is_none() {
+                    let (buffer_id, file_is_none) = {
+                        let buffer = buffer.read(cx);
+                        (buffer.remote_id(), buffer.file().is_none())
+                    };
+                    self.rainbow_highlight_state.invalidate_buffer(buffer_id);
+
+                    if file_is_none {
                         cx.emit(EditorEvent::TitleChanged);
                     }
 
                     if self.project.is_some() {
-                        let buffer_id = buffer.read(cx).remote_id();
                         self.register_buffer(buffer_id, cx);
                         self.update_lsp_data(Some(buffer_id), window, cx);
                         self.refresh_inlay_hints(
@@ -21081,19 +21104,22 @@ impl Editor {
                             cx,
                         );
                     }
+                } else {
+                    self.rainbow_highlight_state.invalidate_all();
                 }
 
                 cx.emit(EditorEvent::BufferEdited);
                 cx.emit(SearchEvent::MatchesInvalidated);
 
-                let Some(project) = &self.project else { return };
-                let (telemetry, is_via_ssh) = {
-                    let project = project.read(cx);
-                    let telemetry = project.client().telemetry().clone();
-                    let is_via_ssh = project.is_via_remote_server();
-                    (telemetry, is_via_ssh)
-                };
-                telemetry.log_edit_event("editor", is_via_ssh);
+                if let Some(project) = &self.project {
+                    let (telemetry, is_via_ssh) = {
+                        let project = project.read(cx);
+                        let telemetry = project.client().telemetry().clone();
+                        let is_via_ssh = project.is_via_remote_server();
+                        (telemetry, is_via_ssh)
+                    };
+                    telemetry.log_edit_event("editor", is_via_ssh);
+                }
             }
             multi_buffer::Event::ExcerptsAdded {
                 buffer,
@@ -21102,6 +21128,8 @@ impl Editor {
             } => {
                 self.tasks_update_task = Some(self.refresh_runnables(window, cx));
                 let buffer_id = buffer.read(cx).remote_id();
+                self.rainbow_highlight_state.invalidate_buffer(buffer_id);
+                refresh_rainbow = true;
                 if self.buffer.read(cx).diff_for(buffer_id).is_none()
                     && let Some(project) = &self.project
                 {
@@ -21133,6 +21161,8 @@ impl Editor {
                 for buffer_id in removed_buffer_ids {
                     self.registered_buffers.remove(buffer_id);
                 }
+                self.rainbow_highlight_state.invalidate_excerpts(ids);
+                refresh_rainbow = true;
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::ExcerptsRemoved {
                     ids: ids.clone(),
@@ -21146,6 +21176,12 @@ impl Editor {
                 self.display_map.update(cx, |map, cx| {
                     map.unfold_buffers(buffer_ids.iter().copied(), cx)
                 });
+                self.rainbow_highlight_state
+                    .invalidate_excerpts(excerpt_ids);
+                for buffer_id in buffer_ids {
+                    self.rainbow_highlight_state.invalidate_buffer(*buffer_id);
+                }
+                refresh_rainbow = true;
                 cx.emit(EditorEvent::ExcerptsEdited {
                     ids: excerpt_ids.clone(),
                 });
@@ -21153,20 +21189,28 @@ impl Editor {
             multi_buffer::Event::ExcerptsExpanded { ids } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 self.refresh_document_highlights(cx);
+                self.rainbow_highlight_state.invalidate_excerpts(ids);
+                refresh_rainbow = true;
                 cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
             }
             multi_buffer::Event::Reparsed(buffer_id) => {
                 self.tasks_update_task = Some(self.refresh_runnables(window, cx));
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
+                self.rainbow_highlight_state.invalidate_buffer(*buffer_id);
+                refresh_rainbow = true;
 
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
             }
             multi_buffer::Event::DiffHunksToggled => {
                 self.tasks_update_task = Some(self.refresh_runnables(window, cx));
+                self.rainbow_highlight_state.invalidate_all();
+                refresh_rainbow = true;
             }
             multi_buffer::Event::LanguageChanged(buffer_id) => {
                 self.registered_buffers.remove(&buffer_id);
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
+                self.rainbow_highlight_state.invalidate_buffer(*buffer_id);
+                refresh_rainbow = true;
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
                 cx.notify();
             }
@@ -21180,6 +21224,10 @@ impl Editor {
             }
             _ => {}
         };
+
+        if refresh_rainbow {
+            self.refresh_rainbow_bracket_highlights(window, cx);
+        }
     }
 
     fn update_diagnostics_state(&mut self, window: &mut Window, cx: &mut Context<'_, Editor>) {
@@ -21309,6 +21357,9 @@ impl Editor {
             }
             self.refresh_colors_for_visible_range(None, window, cx);
         }
+
+        self.rainbow_highlight_state.invalidate_all();
+        self.refresh_rainbow_bracket_highlights(window, cx);
 
         cx.notify();
     }

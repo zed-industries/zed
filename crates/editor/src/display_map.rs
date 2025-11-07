@@ -528,6 +528,12 @@ impl DisplayMap {
         cleared
     }
 
+    pub fn clear_highlight_key(&mut self, type_id: TypeId, key: usize) -> bool {
+        self.text_highlights
+            .remove(&HighlightKey::TypePlus(type_id, key))
+            .is_some()
+    }
+
     pub fn set_font(&self, font: Font, font_size: Pixels, cx: &mut Context<Self>) -> bool {
         self.wrap_map
             .update(cx, |map, cx| map.set_font_with_size(font, font_size, cx))
