@@ -11,9 +11,9 @@ use editor::{
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::{
-    Action, Animation, AnimationExt, App, AsyncWindowContext, Corner, Entity, FocusHandle,
-    Focusable, IntoElement, ParentElement, Render, Subscription, WeakEntity, actions, div,
-    ease_in_out, pulsating_between,
+    Action, Animation, AnimationExt, App, AsyncWindowContext, Corner, ElementId, Entity,
+    FocusHandle, Focusable, IntoElement, ParentElement, Render, SharedString, Subscription,
+    WeakEntity, actions, div, ease_in_out, pulsating_between,
 };
 use indoc::indoc;
 use language::{
@@ -146,6 +146,12 @@ impl Render for EditPredictionButton {
                 div().child(
                     PopoverMenu::new("copilot")
                         .menu(move |window, cx| {
+                            if let Some(copilot) = Copilot::global(cx) {
+                                copilot.update(cx, |copilot, cx| {
+                                    copilot.update_usage(cx);
+                                });
+                            }
+
                             let current_status = Copilot::global(cx)?.read(cx).status();
                             match current_status {
                                 Status::Authorized => this.update(cx, |this, cx| {
@@ -1033,6 +1039,51 @@ impl EditPredictionButton {
         menu
     }
 
+    fn build_usage_bar(
+        label: impl Into<SharedString>,
+        id: impl Into<ElementId>,
+        used: u32,
+        total: u32,
+        unlimited: bool,
+    ) -> impl Fn(&mut Window, &mut App) -> AnyElement {
+        let label: SharedString = label.into();
+        let id: ElementId = id.into();
+
+        move |_window, cx| {
+            let used_percentage = if unlimited {
+                Some(0.0)
+            } else if total > 0 {
+                Some((used as f32 / total as f32) * 100.)
+            } else {
+                Some(0.0)
+            };
+
+            v_flex()
+                .w_full()
+                .child(Label::new(label.clone()))
+                .child(
+                    h_flex()
+                        .flex_1()
+                        .gap_1p5()
+                        .children(
+                            used_percentage
+                                .map(|percent| ProgressBar::new(id.clone(), percent, 100., cx)),
+                        )
+                        .child(
+                            Label::new(if unlimited {
+                                "∞".to_string()
+                            } else {
+                                format!("{:.0}%", used_percentage.unwrap_or(0.0))
+                            })
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                        )
+                        .into_any_element(),
+                )
+                .into_any_element()
+        }
+    }
+
     fn build_copilot_context_menu(
         &self,
         window: &mut Window,
@@ -1048,7 +1099,79 @@ impl EditPredictionButton {
         };
         let settings_url = copilot_settings_url(copilot_config.enterprise_uri.as_deref());
 
-        ContextMenu::build(window, cx, |menu, window, cx| {
+        ContextMenu::build(window, cx, |mut menu, window, cx| {
+            if let Some(copilot) = Copilot::global(cx) {
+                if let Some(usage) = copilot.read(cx).usage(cx) {
+                    menu = menu.header("Usage");
+
+                    // Add completions usage
+                    let used = usage
+                        .completions
+                        .entitlement
+                        .saturating_sub(usage.completions.remaining);
+                    menu = menu.custom_entry(
+                        Self::build_usage_bar(
+                            "Completions",
+                            "copilot-usage-completions",
+                            used,
+                            usage.completions.entitlement,
+                            usage.completions.unlimited,
+                        ),
+                        |_, cx| {
+                            cx.open_url(COPILOT_SETTINGS_URL);
+                        },
+                    );
+
+                    // Add chat usage
+                    let used = usage.chat.entitlement.saturating_sub(usage.chat.remaining);
+                    menu = menu.custom_entry(
+                        Self::build_usage_bar(
+                            "Chat",
+                            "copilot-usage-chat",
+                            used,
+                            usage.chat.entitlement,
+                            usage.chat.unlimited,
+                        ),
+                        |_, cx| {
+                            cx.open_url(COPILOT_SETTINGS_URL);
+                        },
+                    );
+
+                    // Add premium interactions usage
+                    let used = usage
+                        .premium_interactions
+                        .entitlement
+                        .saturating_sub(usage.premium_interactions.remaining);
+                    menu = menu.custom_entry(
+                        Self::build_usage_bar(
+                            "Premium Interactions",
+                            "copilot-usage-premium",
+                            used,
+                            usage.premium_interactions.entitlement,
+                            usage.premium_interactions.unlimited,
+                        ),
+                        |_, cx| {
+                            cx.open_url(COPILOT_SETTINGS_URL);
+                        },
+                    );
+
+                    // Check for any overage
+                    let has_overage = (usage.completions.overage_count > 0
+                        && !usage.completions.overage_permitted)
+                        || (usage.chat.overage_count > 0 && !usage.chat.overage_permitted)
+                        || (usage.premium_interactions.overage_count > 0
+                            && !usage.premium_interactions.overage_permitted);
+
+                    if has_overage {
+                        menu = menu.entry("Usage limit exceeded", None, |_window, cx| {
+                            cx.open_url(COPILOT_SETTINGS_URL);
+                        });
+                    }
+
+                    menu = menu.separator();
+                }
+            }
+
             let menu = self.build_language_settings_menu(menu, window, cx);
             let menu =
                 self.add_provider_switching_section(menu, EditPredictionProvider::Copilot, cx);

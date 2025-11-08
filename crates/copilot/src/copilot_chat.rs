@@ -48,6 +48,15 @@ impl CopilotChatConfiguration {
         format!("{}/chat/completions", endpoint)
     }
 
+    pub fn usage_url_from_endpoint(&self) -> String {
+        if let Some(enterprise_uri) = &self.enterprise_uri {
+            let domain = Self::parse_domain(enterprise_uri);
+            format!("https://api.{}/copilot_internal/user", domain)
+        } else {
+            "https://api.github.com/copilot_internal/user".to_string()
+        }
+    }
+
     pub fn responses_url_from_endpoint(&self, endpoint: &str) -> String {
         format!("{}/responses", endpoint)
     }
@@ -89,6 +98,31 @@ pub enum ModelSupportedEndpoint {
 struct ModelSchema {
     #[serde(deserialize_with = "deserialize_models_skip_errors")]
     data: Vec<Model>,
+}
+
+#[derive(Deserialize)]
+struct UsageSchema {
+    quota_snapshots: QuotaSnapshots,
+}
+
+#[derive(Clone, Deserialize, Debug)]
+pub struct CopilotUsage {
+    pub entitlement: u32,
+    pub overage_count: u32,
+    pub overage_permitted: bool,
+    pub percent_remaining: f64,
+    pub quota_id: String,
+    pub quota_remaining: f64,
+    pub remaining: u32,
+    pub unlimited: bool,
+    pub timestamp_utc: String,
+}
+
+#[derive(Clone, Deserialize, Debug)]
+pub struct QuotaSnapshots {
+    pub chat: CopilotUsage,
+    pub completions: CopilotUsage,
+    pub premium_interactions: CopilotUsage,
 }
 
 fn deserialize_models_skip_errors<'de, D>(deserializer: D) -> Result<Vec<Model>, D::Error>
@@ -458,6 +492,7 @@ pub struct CopilotChat {
     api_token: Option<ApiToken>,
     configuration: CopilotChatConfiguration,
     models: Option<Vec<Model>>,
+    usage: Option<QuotaSnapshots>,
     client: Arc<dyn HttpClient>,
 }
 
@@ -526,6 +561,7 @@ impl CopilotChat {
 
                 if oauth_token.is_some() {
                     Self::update_models(&this, cx).await?;
+                    Self::update_usage(&this, cx).await?;
                 }
             }
             anyhow::Ok(())
@@ -536,13 +572,17 @@ impl CopilotChat {
             oauth_token: std::env::var(COPILOT_OAUTH_ENV_VAR).ok(),
             api_token: None,
             models: None,
+            usage: None,
             configuration,
             client,
         };
 
         if this.oauth_token.is_some() {
-            cx.spawn(async move |this, cx| Self::update_models(&this, cx).await)
-                .detach_and_log_err(cx);
+            cx.spawn(async move |this, cx| {
+                Self::update_models(&this, cx).await?;
+                Self::update_usage(&this, cx).await
+            })
+            .detach_and_log_err(cx);
         }
 
         this
@@ -583,6 +623,10 @@ impl CopilotChat {
         self.models.as_deref()
     }
 
+    pub fn usage(&self) -> Option<&QuotaSnapshots> {
+        self.usage.as_ref()
+    }
+
     pub async fn stream_completion(
         request: Request,
         is_user_initiated: bool,
@@ -617,6 +661,25 @@ impl CopilotChat {
             is_user_initiated,
         )
         .await
+    }
+
+    pub async fn update_usage(this: &WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
+        let (client, _, configuration) = Self::get_auth_details(cx).await?;
+        let oauth_token = this
+            .read_with(cx, |this, _| this.oauth_token.clone())?
+            .context("No OAuth token available")?;
+
+        let usage_url = configuration.usage_url_from_endpoint();
+        let usage = get_usage(usage_url.into(), oauth_token, client.clone()).await?;
+
+        log::warn!("Usage: {:?}", usage);
+
+        this.update(cx, |this, cx| {
+            this.usage = Some(usage);
+            cx.notify();
+        })
+        .unwrap();
+        anyhow::Ok(())
     }
 
     async fn get_auth_details(
@@ -700,6 +763,37 @@ async fn get_models(
     }
 
     Ok(models)
+}
+
+async fn get_usage(
+    usage_url: Arc<str>,
+    api_token: String,
+    client: Arc<dyn HttpClient>,
+) -> Result<QuotaSnapshots> {
+    let request_builder = HttpRequest::builder()
+        .method(Method::GET)
+        .uri(usage_url.as_ref())
+        .header("Authorization", format!("Bearer {}", api_token))
+        .header("Content-Type", "application/json")
+        .header("x-github-api-version", "2025-05-01");
+
+    let request = request_builder.body(AsyncBody::empty())?;
+
+    let mut response = client.send(request).await?;
+
+    anyhow::ensure!(
+        response.status().is_success(),
+        "Failed to request usage: {}",
+        response.status()
+    );
+    let mut body = Vec::new();
+    response.body_mut().read_to_end(&mut body).await?;
+
+    let body_str = std::str::from_utf8(&body)?;
+
+    let usage = serde_json::from_str::<UsageSchema>(body_str)?.quota_snapshots;
+
+    Ok(usage)
 }
 
 async fn request_models(
