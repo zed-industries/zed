@@ -521,18 +521,20 @@ impl DisplayMap {
     }
 
     pub fn clear_highlights(&mut self, type_id: TypeId) -> bool {
-        let mut cleared = false;
-
+        let mut cleared = self
+            .text_highlights
+            .remove(HighlightKey::Type(type_id))
+            .is_some();
         self.text_highlights.retain(|key, _| {
-            let retain = match key {
-                HighlightKey::Type(key_type_id) => key_type_id != &type_id,
-                HighlightKey::TypePlus(key_type_id, _) => key_type_id != &type_id,
+            let retain = if let HighlightKey::TypePlus(key_type_id, _) = key {
+                key_type_id != &type_id
+            } else {
+                true
             };
             cleared |= !retain;
             retain
         });
         cleared |= self.inlay_highlights.remove(&type_id).is_some();
-
         cleared
     }
 

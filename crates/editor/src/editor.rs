@@ -20935,7 +20935,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.display_map.update(cx, |map, _| {
-            map.highlight_text(HighlightKey::Type(TypeId::of::<T>()), ranges, style)
+            map.highlight_text(HighlightKey::Type(TypeId::of::<T>()), ranges, style, false)
         });
         cx.notify();
     }
