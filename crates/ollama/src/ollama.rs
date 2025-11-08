@@ -444,6 +444,7 @@ mod tests {
                 "content": "",
                 "tool_calls": [
                     {
+                        "id": "call_llama3.2:3b_145155",
                         "function": {
                             "name": "weather",
                             "arguments": {
