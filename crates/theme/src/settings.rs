@@ -12,7 +12,7 @@ use refineable::Refineable;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub use settings::{FontFamilyName, IconThemeName, ThemeMode, ThemeName};
-use settings::{Settings, SettingsContent};
+use settings::{RegisterSetting, Settings, SettingsContent};
 use std::sync::Arc;
 
 const MIN_FONT_SIZE: Pixels = px(6.0);
@@ -94,7 +94,7 @@ impl From<settings::UiDensity> for UiDensity {
 }
 
 /// Customizable settings for the UI and theme system.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, RegisterSetting)]
 pub struct ThemeSettings {
     /// The UI font size. Determines the size of text in the UI,
     /// as well as the size of a [gpui::Rems] unit.

@@ -63,6 +63,14 @@ pub struct BlockSnapshot {
     pub(super) excerpt_header_height: u32,
 }
 
+impl Deref for BlockSnapshot {
+    type Target = WrapSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.wrap_snapshot
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CustomBlockId(pub usize);
 
@@ -453,6 +461,7 @@ pub struct BlockChunks<'a> {
     input_chunk: Chunk<'a>,
     output_row: BlockRow,
     max_output_row: BlockRow,
+    line_count_overflow: RowDelta,
     masked: bool,
 }
 
@@ -1352,6 +1361,7 @@ impl BlockSnapshot {
             input_chunk: Default::default(),
             transforms: cursor,
             output_row: rows.start,
+            line_count_overflow: RowDelta(0),
             max_output_row,
             masked,
         }
@@ -1743,6 +1753,17 @@ impl<'a> Iterator for BlockChunks<'a> {
             return None;
         }
 
+        if self.line_count_overflow > RowDelta(0) {
+            let lines = self.line_count_overflow.0.min(u128::BITS);
+            self.line_count_overflow.0 -= lines;
+            self.output_row += RowDelta(lines);
+            return Some(Chunk {
+                text: unsafe { std::str::from_utf8_unchecked(&NEWLINES[..lines as usize]) },
+                chars: 1u128.unbounded_shl(lines).wrapping_sub(1),
+                ..Default::default()
+            });
+        }
+
         let transform = self.transforms.item()?;
         if transform.block.is_some() {
             let block_start = self.transforms.start().0;
@@ -1754,13 +1775,14 @@ impl<'a> Iterator for BlockChunks<'a> {
 
             let start_in_block = self.output_row - block_start;
             let end_in_block = cmp::min(self.max_output_row, block_end) - block_start;
-            // todo: We need to split the chunk here instead of taking min
-            let line_count = cmp::min(end_in_block - start_in_block, RowDelta(u128::BITS));
-            self.output_row += line_count;
+            let line_count = end_in_block - start_in_block;
+            let lines = RowDelta(line_count.0.min(u128::BITS));
+            self.line_count_overflow = line_count - lines;
+            self.output_row += lines;
 
             return Some(Chunk {
-                text: unsafe { std::str::from_utf8_unchecked(&NEWLINES[..line_count.0 as usize]) },
-                chars: 1u128.unbounded_shl(line_count.0) - 1,
+                text: unsafe { std::str::from_utf8_unchecked(&NEWLINES[..lines.0 as usize]) },
+                chars: 1u128.unbounded_shl(lines.0).wrapping_sub(1),
                 ..Default::default()
             });
         }
@@ -3042,7 +3064,7 @@ mod tests {
                                 _ => BlockPlacement::Below(buffer.anchor_after(offset)),
                             };
 
-                            let height = rng.random_range(min_height..5);
+                            let height = rng.random_range(min_height..512);
                             BlockProperties {
                                 style: BlockStyle::Fixed,
                                 placement,

@@ -527,14 +527,6 @@ impl From<WorkspaceId> for i64 {
     }
 }
 
-pub fn init_settings(cx: &mut App) {
-    WorkspaceSettings::register(cx);
-    ItemSettings::register(cx);
-    PreviewTabsSettings::register(cx);
-    TabBarSettings::register(cx);
-    StatusBarSettings::register(cx);
-}
-
 fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, cx: &mut App) {
     let paths = cx.prompt_for_paths(options);
     cx.spawn(
@@ -568,7 +560,6 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
 }
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
-    init_settings(cx);
     component::init();
     theme_preview::init(cx);
     toast_layer::init(cx);
@@ -987,7 +978,6 @@ impl AppState {
 
         theme::init(theme::LoadThemes::JustBase, cx);
         client::init(&client, cx);
-        crate::init_settings(cx);
 
         Arc::new(Self {
             client,
@@ -11341,9 +11331,6 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
-            language::init(cx);
-            crate::init_settings(cx);
-            Project::init_settings(cx);
         });
     }
 

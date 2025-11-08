@@ -1,8 +1,9 @@
 //! Zeta2 prompt planning and generation code shared with cloud.
+pub mod retrieval_prompt;
 
 use anyhow::{Context as _, Result, anyhow};
 use cloud_llm_client::predict_edits_v3::{
-    self, Excerpt, Line, Point, PromptFormat, ReferencedDeclaration,
+    self, DiffPathFmt, Excerpt, Line, Point, PromptFormat, ReferencedDeclaration,
 };
 use indoc::indoc;
 use ordered_float::OrderedFloat;
@@ -212,7 +213,7 @@ pub fn write_codeblock<'a>(
     include_line_numbers: bool,
     output: &'a mut String,
 ) {
-    writeln!(output, "`````{}", path.display()).unwrap();
+    writeln!(output, "`````{}", DiffPathFmt(path)).unwrap();
     write_excerpts(
         excerpts,
         sorted_insertions,
@@ -275,7 +276,7 @@ pub fn write_excerpts<'a>(
     }
 }
 
-fn push_events(output: &mut String, events: &[predict_edits_v3::Event]) {
+pub fn push_events(output: &mut String, events: &[predict_edits_v3::Event]) {
     if events.is_empty() {
         return;
     };

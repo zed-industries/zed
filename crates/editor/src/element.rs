@@ -4093,7 +4093,17 @@ impl EditorElement {
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(window.listener_for(&self.editor, {
                                 let buffer_id = for_excerpt.buffer_id;
-                                move |editor, _e: &ClickEvent, _window, cx| {
+                                move |editor, e: &ClickEvent, window, cx| {
+                                    if e.modifiers().alt {
+                                        editor.open_excerpts_common(
+                                            Some(jump_data.clone()),
+                                            e.modifiers().secondary(),
+                                            window,
+                                            cx,
+                                        );
+                                        return;
+                                    }
+
                                     if is_folded {
                                         editor.unfold_buffer(buffer_id, cx);
                                     } else {
@@ -8334,7 +8344,7 @@ impl LineWithInvisibles {
                     let fragment_end_x = fragment_start_x + shaped_line.width;
                     if x < fragment_end_x {
                         return Some(
-                            fragment_start_index + shaped_line.index_for_x(x - fragment_start_x)?,
+                            fragment_start_index + shaped_line.index_for_x(x - fragment_start_x),
                         );
                     }
                     fragment_start_x = fragment_end_x;

@@ -720,7 +720,7 @@ impl EditPreview {
     pub fn highlight_edits(
         &self,
         current_snapshot: &BufferSnapshot,
-        edits: &[(Range<Anchor>, String)],
+        edits: &[(Range<Anchor>, impl AsRef<str>)],
         include_deletions: bool,
         cx: &App,
     ) -> HighlightedText {
@@ -747,7 +747,8 @@ impl EditPreview {
                 .end
                 .bias_right(&self.old_snapshot)
                 .to_offset(&self.applied_edits_snapshot);
-            let edit_start_in_preview_snapshot = edit_new_end_in_preview_snapshot - edit_text.len();
+            let edit_start_in_preview_snapshot =
+                edit_new_end_in_preview_snapshot - edit_text.as_ref().len();
 
             let unchanged_range_in_preview_snapshot =
                 offset_in_preview_snapshot..edit_start_in_preview_snapshot;
@@ -772,7 +773,7 @@ impl EditPreview {
                 );
             }
 
-            if !edit_text.is_empty() {
+            if !edit_text.as_ref().is_empty() {
                 highlighted_text.add_text_from_buffer_range(
                     edit_start_in_preview_snapshot..edit_new_end_in_preview_snapshot,
                     &self.applied_edits_snapshot,
@@ -796,7 +797,7 @@ impl EditPreview {
         highlighted_text.build()
     }
 
-    fn compute_visible_range(&self, edits: &[(Range<Anchor>, String)]) -> Option<Range<usize>> {
+    fn compute_visible_range<T>(&self, edits: &[(Range<Anchor>, T)]) -> Option<Range<usize>> {
         let (first, _) = edits.first()?;
         let (last, _) = edits.last()?;
 
@@ -1130,7 +1131,7 @@ impl Buffer {
 
     pub fn preview_edits(
         &self,
-        edits: Arc<[(Range<Anchor>, String)]>,
+        edits: Arc<[(Range<Anchor>, Arc<str>)]>,
         cx: &App,
     ) -> Task<EditPreview> {
         let registry = self.language_registry();
@@ -1615,6 +1616,18 @@ impl Buffer {
 
     pub fn parse_status(&self) -> watch::Receiver<ParseStatus> {
         self.parse_status.1.clone()
+    }
+
+    /// Wait until the buffer is no longer parsing
+    pub fn parsing_idle(&self) -> impl Future<Output = ()> + use<> {
+        let mut parse_status = self.parse_status();
+        async move {
+            while *parse_status.borrow() != ParseStatus::Idle {
+                if parse_status.changed().await.is_err() {
+                    break;
+                }
+            }
+        }
     }
 
     /// Assign to the buffer a set of diagnostics created by a given language server.
