@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 pub use settings::AlternateScroll;
 use settings::{
-    ShowScrollbar, TerminalBlink, TerminalDockPosition, TerminalLineHeight, VenvSettings,
-    WorkingDirectory, merge_from::MergeFrom,
+    RegisterSetting, ShowScrollbar, TerminalBlink, TerminalDockPosition, TerminalLineHeight,
+    VenvSettings, WorkingDirectory, merge_from::MergeFrom,
 };
 use task::Shell;
 use theme::FontFamilyName;
@@ -19,7 +19,7 @@ pub struct Toolbar {
     pub breadcrumbs: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, RegisterSetting)]
 pub struct TerminalSettings {
     pub shell: Shell,
     pub working_directory: WorkingDirectory,

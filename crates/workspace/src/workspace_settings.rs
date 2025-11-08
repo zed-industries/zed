@@ -3,13 +3,12 @@ use std::num::NonZeroUsize;
 use crate::DockPosition;
 use collections::HashMap;
 use serde::Deserialize;
-pub use settings::AutosaveSetting;
 pub use settings::{
-    BottomDockLayout, PaneSplitDirectionHorizontal, PaneSplitDirectionVertical,
-    RestoreOnStartupBehavior,
+    AutosaveSetting, BottomDockLayout, InactiveOpacity, PaneSplitDirectionHorizontal,
+    PaneSplitDirectionVertical, RegisterSetting, RestoreOnStartupBehavior, Settings,
 };
-use settings::{InactiveOpacity, Settings};
 
+#[derive(RegisterSetting)]
 pub struct WorkspaceSettings {
     pub active_pane_modifiers: ActivePanelModifiers,
     pub bottom_dock_layout: settings::BottomDockLayout,
@@ -53,7 +52,7 @@ pub struct ActivePanelModifiers {
     pub inactive_opacity: Option<InactiveOpacity>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, RegisterSetting)]
 pub struct TabBarSettings {
     pub show: bool,
     pub show_nav_history_buttons: bool,
@@ -121,7 +120,7 @@ impl Settings for TabBarSettings {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, RegisterSetting)]
 pub struct StatusBarSettings {
     pub show: bool,
     pub active_language_button: bool,

@@ -1102,9 +1102,6 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
-            language::init(cx);
-            project::Project::init_settings(cx);
-            workspace::init_settings(cx);
         });
 
         let fs = FakeFs::new(cx.executor());

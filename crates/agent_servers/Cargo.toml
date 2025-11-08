@@ -21,7 +21,6 @@ acp_tools.workspace = true
 acp_thread.workspace = true
 action_log.workspace = true
 agent-client-protocol.workspace = true
-agent_settings.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 client.workspace = true
@@ -33,7 +32,6 @@ gpui.workspace = true
 gpui_tokio = { workspace = true, optional = true }
 http_client.workspace = true
 indoc.workspace = true
-language.workspace = true
 language_model.workspace = true
 language_models.workspace = true
 log.workspace = true

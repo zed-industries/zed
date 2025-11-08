@@ -18,10 +18,10 @@ use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, TextBufferSn
 use project::Project;
 
 pub async fn parse_diff<'a>(
-    diff: &'a str,
+    diff_str: &'a str,
     get_buffer: impl Fn(&Path) -> Option<(&'a BufferSnapshot, &'a [Range<Anchor>])> + Send,
 ) -> Result<(&'a BufferSnapshot, Vec<(Range<Anchor>, Arc<str>)>)> {
-    let mut diff = DiffParser::new(diff);
+    let mut diff = DiffParser::new(diff_str);
     let mut edited_buffer = None;
     let mut edits = Vec::new();
 
@@ -41,7 +41,10 @@ pub async fn parse_diff<'a>(
                     Some(ref current) => current,
                 };
 
-                edits.extend(resolve_hunk_edits_in_buffer(hunk, &buffer.text, ranges)?);
+                edits.extend(
+                    resolve_hunk_edits_in_buffer(hunk, &buffer.text, ranges)
+                        .with_context(|| format!("Diff:\n{diff_str}"))?,
+                );
             }
             DiffEvent::FileEnd { renamed_to } => {
                 let (buffer, _) = edited_buffer
@@ -69,13 +72,13 @@ pub struct OpenedBuffers<'a>(#[allow(unused)] HashMap<Cow<'a, str>, Entity<Buffe
 
 #[must_use]
 pub async fn apply_diff<'a>(
-    diff: &'a str,
+    diff_str: &'a str,
     project: &Entity<Project>,
     cx: &mut AsyncApp,
 ) -> Result<OpenedBuffers<'a>> {
     let mut included_files = HashMap::default();
 
-    for line in diff.lines() {
+    for line in diff_str.lines() {
         let diff_line = DiffLine::parse(line);
 
         if let DiffLine::OldPath { path } = diff_line {
@@ -97,7 +100,7 @@ pub async fn apply_diff<'a>(
 
     let ranges = [Anchor::MIN..Anchor::MAX];
 
-    let mut diff = DiffParser::new(diff);
+    let mut diff = DiffParser::new(diff_str);
     let mut current_file = None;
     let mut edits = vec![];
 
@@ -120,7 +123,10 @@ pub async fn apply_diff<'a>(
                 };
 
                 buffer.read_with(cx, |buffer, _| {
-                    edits.extend(resolve_hunk_edits_in_buffer(hunk, buffer, ranges)?);
+                    edits.extend(
+                        resolve_hunk_edits_in_buffer(hunk, buffer, ranges)
+                            .with_context(|| format!("Diff:\n{diff_str}"))?,
+                    );
                     anyhow::Ok(())
                 })??;
             }
@@ -328,13 +334,7 @@ fn resolve_hunk_edits_in_buffer(
                 offset = Some(range.start + ix);
             }
         }
-        offset.ok_or_else(|| {
-            anyhow!(
-                "Failed to match context:\n{}\n\nBuffer:\n{}",
-                hunk.context,
-                buffer.text(),
-            )
-        })
+        offset.ok_or_else(|| anyhow!("Failed to match context:\n{}", hunk.context))
     }?;
     let iter = hunk.edits.into_iter().flat_map(move |edit| {
         let old_text = buffer
@@ -1015,8 +1015,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            Project::init_settings(cx);
-            language::init(cx);
         });
 
         FakeFs::new(cx.background_executor.clone())

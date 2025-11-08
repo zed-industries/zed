@@ -1851,7 +1851,6 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     // Initialize language model system with test provider
     cx.update(|cx| {
         gpui_tokio::init(cx);
-        client::init_settings(cx);
 
         let http_client = FakeHttpClient::with_404_response();
         let clock = Arc::new(clock::FakeSystemClock::new());
@@ -1859,9 +1858,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         language_model::init(client.clone(), cx);
         language_models::init(user_store, client.clone(), cx);
-        Project::init_settings(cx);
         LanguageModelRegistry::test(cx);
-        agent_settings::init(cx);
     });
     cx.executor().forbid_parking();
 
@@ -2395,8 +2392,6 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
 
     cx.update(|cx| {
         settings::init(cx);
-        Project::init_settings(cx);
-        agent_settings::init(cx);
 
         match model {
             TestModel::Fake => {}
@@ -2404,7 +2399,6 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                 gpui_tokio::init(cx);
                 let http_client = ReqwestClient::user_agent("agent tests").unwrap();
                 cx.set_http_client(Arc::new(http_client));
-                client::init_settings(cx);
                 let client = Client::production(cx);
                 let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
                 language_model::init(client.clone(), cx);
