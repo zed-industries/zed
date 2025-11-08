@@ -145,9 +145,7 @@ fn search(
             }
         }
 
-        Some(ContextPickerMode::Diagnostics) => {
-            Task::ready(Vec::new())
-        }
+        Some(ContextPickerMode::Diagnostics) => Task::ready(Vec::new()),
 
         None => {
             if query.is_empty() {
