@@ -12947,8 +12947,9 @@ impl Editor {
         let weak_editor = cx.entity().downgrade();
         let workspace_for_task = workspace;
 
-        cx.spawn_in(window, async move |_, cx| {
-            match Self::persist_markdown_clipboard_images(
+        cx.spawn_in(
+            window,
+            async move |_, cx| match Self::persist_markdown_clipboard_images(
                 fs,
                 markdown_dir,
                 base_name,
@@ -12977,8 +12978,8 @@ impl Editor {
                         cx,
                     );
                 }
-            }
-        })
+            },
+        )
         .detach();
 
         true
