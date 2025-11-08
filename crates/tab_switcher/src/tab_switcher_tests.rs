@@ -4,6 +4,7 @@ use gpui::{TestAppContext, VisualTestContext};
 use menu::SelectPrevious;
 use project::{Project, ProjectPath};
 use serde_json::json;
+
 use util::{path, rel_path::rel_path};
 use workspace::{AppState, Workspace};
 
@@ -363,6 +364,160 @@ fn assert_match_at_position(
         .get(match_index)
         .unwrap_or_else(|| panic!("Tab Switcher has no match for index {match_index}"));
     assert_eq!(match_item.item.item_id(), expected_item.item_id());
+}
+
+#[gpui::test]
+async fn test_tab_switcher_search_functionality(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "main.rs": "Main Rust file",
+                "component.tsx": "React component",
+                "readme.md": "Documentation",
+                "test_file.js": "JavaScript test",
+                "lib_utils.rs": "Utility library",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (workspace, cx) =
+        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+    // Open files in specific order to test search behavior
+    let main_rs = open_buffer("main.rs", &workspace, cx).await;
+    let component_tsx = open_buffer("component.tsx", &workspace, cx).await;
+    let readme_md = open_buffer("readme.md", &workspace, cx).await;
+    let test_js = open_buffer("test_file.js", &workspace, cx).await;
+    let lib_rs = open_buffer("lib_utils.rs", &workspace, cx).await;
+
+    let tab_switcher = open_tab_switcher(false, &workspace, cx);
+
+    // Test initial searchable state
+    tab_switcher.update_in(cx, |tab_switcher, window, cx| {
+        let query = tab_switcher.query(cx);
+        assert_eq!(query, "");
+
+        // Should show all tabs initially (5 files)
+        assert_eq!(tab_switcher.delegate.matches.len(), 5);
+
+        // Verify placeholder text
+        let placeholder = tab_switcher.delegate.placeholder_text(window, cx);
+        assert_eq!(placeholder.as_ref(), "Search tabs…");
+    });
+
+    // Test search for Rust files
+    test_search_query(
+        &tab_switcher,
+        "rs",
+        &[main_rs.as_ref(), lib_rs.as_ref()],
+        cx,
+    )
+    .await;
+
+    // Test search for specific filename
+    test_search_query(&tab_switcher, "component", &[component_tsx.as_ref()], cx).await;
+
+    // Test search with no results
+    test_search_query(&tab_switcher, "nonexistent", &[], cx).await;
+
+    // Test search that matches multiple files
+    test_search_query(
+        &tab_switcher,
+        "e",
+        &[readme_md.as_ref(), test_js.as_ref(), component_tsx.as_ref()],
+        cx,
+    )
+    .await;
+
+    // Test clearing search returns all results
+    test_search_query(
+        &tab_switcher,
+        "",
+        &[
+            lib_rs.as_ref(),
+            test_js.as_ref(),
+            readme_md.as_ref(),
+            component_tsx.as_ref(),
+            main_rs.as_ref(),
+        ],
+        cx,
+    )
+    .await;
+}
+
+async fn test_search_query(
+    tab_switcher: &Entity<Picker<TabSwitcherDelegate>>,
+    query: &str,
+    expected_matches: &[&dyn ItemHandle],
+    cx: &mut VisualTestContext,
+) {
+    // Set the search query
+    tab_switcher.update_in(cx, |tab_switcher, window, cx| {
+        tab_switcher.set_query(query, window, cx);
+    });
+
+    // Allow time for updates to process
+    cx.executor().run_until_parked();
+
+    // Verify results
+    tab_switcher.update(cx, |tab_switcher, cx| {
+        let query_result = tab_switcher.query(cx);
+        assert_eq!(query_result, query, "Query should be set correctly");
+
+        assert_eq!(
+            tab_switcher.delegate.matches.len(),
+            expected_matches.len(),
+            "Should have {} matches for query '{}'",
+            expected_matches.len(),
+            query
+        );
+
+        // Verify all expected items are present (order may vary due to scoring)
+        for expected_item in expected_matches {
+            let found = tab_switcher
+                .delegate
+                .matches
+                .iter()
+                .any(|match_item| match_item.item.item_id() == expected_item.item_id());
+            assert!(
+                found,
+                "Expected item should be found in search results for query '{}'",
+                query
+            );
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_global_tab_switcher_placeholder(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(path!("/root"), json!({"test.txt": "content"}))
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (workspace, cx) =
+        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+    let _tab = open_buffer("test.txt", &workspace, cx).await;
+
+    // Test global tab switcher (all panes mode)
+    cx.dispatch_action(ToggleAll);
+
+    let tab_switcher = get_active_tab_switcher(&workspace, cx);
+    tab_switcher.update_in(cx, |tab_switcher, window, cx| {
+        let placeholder = tab_switcher.delegate.placeholder_text(window, cx);
+        assert_eq!(placeholder.as_ref(), "Search all tabs…");
+    });
 }
 
 #[track_caller]

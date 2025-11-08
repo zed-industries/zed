@@ -16903,7 +16903,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
  "theme",
  "ui",
  "util",

@@ -23,7 +23,6 @@ project.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
-smol.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true

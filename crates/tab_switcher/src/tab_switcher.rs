@@ -5,7 +5,7 @@ use collections::HashMap;
 use editor::items::{
     entry_diagnostic_aware_icon_decoration_and_color, entry_git_aware_label_color,
 };
-use fuzzy::StringMatchCandidate;
+use fuzzy::StringMatch;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement, Point,
@@ -18,8 +18,8 @@ use serde::Deserialize;
 use settings::Settings;
 use std::{cmp::Reverse, sync::Arc};
 use ui::{
-    DecoratedIcon, IconDecoration, IconDecorationKind, ListItem, ListItemSpacing, Tooltip,
-    prelude::*,
+    DecoratedIcon, HighlightedLabel, IconDecoration, IconDecorationKind, ListItem, ListItemSpacing,
+    Tooltip, prelude::*,
 };
 use util::ResultExt;
 use workspace::{
@@ -157,7 +157,7 @@ impl TabSwitcher {
                 if is_global {
                     Picker::list(delegate, window, cx)
                 } else {
-                    Picker::nonsearchable_list(delegate, window, cx)
+                    Picker::list(delegate, window, cx)
                 }
             }),
             init_modifiers,
@@ -223,6 +223,7 @@ struct TabMatch {
     item: Box<dyn ItemHandle>,
     detail: usize,
     preview: bool,
+    string_match: Option<StringMatch>,
 }
 
 pub struct TabSwitcherDelegate {
@@ -386,44 +387,24 @@ impl TabSwitcherDelegate {
                     item: item.clone(),
                     detail,
                     preview: pane.is_active_preview_item(item.item_id()),
+                    string_match: None,
                 });
                 item_index += 1;
             }
         }
 
-        let matches = if query.is_empty() {
+        let selected_item_id = self.selected_item_id();
+
+        if query.is_empty() {
             let history = workspace.read(cx).recently_activated_items(cx);
             all_items
                 .sort_by_key(|tab| (Reverse(history.get(&tab.item.item_id())), tab.item_index));
-            all_items
+            self.matches = all_items;
+            self.selected_index = self.compute_selected_index(selected_item_id, window, cx);
         } else {
-            let candidates = all_items
-                .iter()
-                .enumerate()
-                .flat_map(|(ix, tab_match)| {
-                    Some(StringMatchCandidate::new(
-                        ix,
-                        &tab_match.item.tab_content_text(0, cx),
-                    ))
-                })
-                .collect::<Vec<_>>();
-            smol::block_on(fuzzy::match_strings(
-                &candidates,
-                &query,
-                true,
-                true,
-                10000,
-                &Default::default(),
-                cx.background_executor().clone(),
-            ))
-            .into_iter()
-            .map(|m| all_items[m.candidate_id].clone())
-            .collect()
-        };
-
-        let selected_item_id = self.selected_item_id();
-        self.matches = matches;
-        self.selected_index = self.compute_selected_index(selected_item_id, window, cx);
+            self.matches = self.filter_matches(all_items, &query, cx);
+            self.selected_index = self.compute_selected_index(selected_item_id, window, cx);
+        }
     }
 
     fn update_matches(
@@ -458,7 +439,7 @@ impl TabSwitcherDelegate {
         );
 
         let items: Vec<Box<dyn ItemHandle>> = pane.items().map(|item| item.boxed_clone()).collect();
-        items
+        let mut tab_matches: Vec<TabMatch> = items
             .iter()
             .enumerate()
             .zip(tab_details(&items, window, cx))
@@ -468,21 +449,53 @@ impl TabSwitcherDelegate {
                 item: item.boxed_clone(),
                 detail,
                 preview: pane.is_active_preview_item(item.item_id()),
+                string_match: None,
             })
-            .for_each(|tab_match| self.matches.push(tab_match));
+            .collect();
 
-        let non_history_base = history_indices.len();
-        self.matches.sort_by(move |a, b| {
-            let a_score = *history_indices
-                .get(&a.item.item_id())
-                .unwrap_or(&(a.item_index + non_history_base));
-            let b_score = *history_indices
-                .get(&b.item.item_id())
-                .unwrap_or(&(b.item_index + non_history_base));
-            a_score.cmp(&b_score)
+        // Filter and sort based on query
+        if query.is_empty() {
+            // No query, use original history-based sorting
+            let non_history_base = history_indices.len();
+            tab_matches.sort_by(move |a, b| {
+                let a_score = *history_indices
+                    .get(&a.item.item_id())
+                    .unwrap_or(&(a.item_index + non_history_base));
+                let b_score = *history_indices
+                    .get(&b.item.item_id())
+                    .unwrap_or(&(b.item_index + non_history_base));
+                a_score.cmp(&b_score)
+            });
+            self.matches = tab_matches;
+        } else {
+            self.matches = self.filter_matches(tab_matches, &query, cx);
+        }
+        self.selected_index = self.compute_selected_index(selected_item_id, window, cx);
+    }
+
+    fn filter_matches(&self, mut matches: Vec<TabMatch>, query: &str, cx: &App) -> Vec<TabMatch> {
+        if query.is_empty() {
+            return matches;
+        }
+
+        let query_lower = query.to_lowercase();
+
+        // Filter matches that contain the query
+        matches.retain(|tab_match| {
+            let text = tab_match.item.tab_content_text(tab_match.detail, cx);
+            text.to_lowercase().contains(&query_lower)
         });
 
-        self.selected_index = self.compute_selected_index(selected_item_id, window, cx);
+        // Sort by relevance: earlier matches in filename are more relevant
+        matches.sort_by(|a, b| {
+            let a_text = a.item.tab_content_text(a.detail, cx).to_lowercase();
+            let b_text = b.item.tab_content_text(b.detail, cx).to_lowercase();
+            let a_pos = a_text.find(&query_lower).unwrap_or(usize::MAX);
+            let b_pos = b_text.find(&query_lower).unwrap_or(usize::MAX);
+            a_pos.cmp(&b_pos)
+        });
+
+        matches
     }
 
     fn selected_item_id(&self) -> Option<EntityId> {
@@ -551,7 +564,11 @@ impl PickerDelegate for TabSwitcherDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search all tabs…".into()
+        if self.is_all_panes {
+            "Search all tabs…".into()
+        } else {
+            "Search tabs…".into()
+        }
     }
 
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
@@ -651,13 +668,23 @@ impl PickerDelegate for TabSwitcherDelegate {
     ) -> Option<Self::ListItem> {
         let tab_match = self.matches.get(ix)?;
 
-        let params = TabContentParams {
-            detail: Some(tab_match.detail),
-            selected: true,
-            preview: tab_match.preview,
-            deemphasized: false,
+        let label = if let Some(string_match) = &tab_match.string_match {
+            // Use highlighted label for fuzzy matches
+            HighlightedLabel::new(
+                tab_match.item.tab_content_text(tab_match.detail, cx),
+                string_match.positions.clone(),
+            )
+            .into_any_element()
+        } else {
+            // Use regular tab content when no fuzzy match
+            let params = TabContentParams {
+                detail: Some(tab_match.detail),
+                selected: true,
+                preview: tab_match.preview,
+                deemphasized: false,
+            };
+            tab_match.item.tab_content(params, window, cx)
         };
-        let label = tab_match.item.tab_content(params, window, cx);
 
         let icon = tab_match.icon(&self.project, selected, window, cx);
 
