@@ -1681,6 +1681,51 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_html_href_element() {
+        let parsed =
+            parse("<p>Some text <a href=\"https://example.com\">link</a> more text</p>").await;
+
+        assert_eq!(1, parsed.children.len());
+        let chunks = if let ParsedMarkdownElement::Paragraph(chunks) = &parsed.children[0] {
+            chunks
+        } else {
+            panic!("Expected a paragraph");
+        };
+
+        assert_eq!(1, chunks.len());
+        let text = if let MarkdownParagraphChunk::Text(text) = &chunks[0] {
+            text
+        } else {
+            panic!("Expected a paragraph");
+        };
+
+        assert_eq!(0..65, text.source_range);
+        assert_eq!("Some text link more text", text.contents.as_str(),);
+        assert_eq!(
+            vec![(
+                10..14,
+                MarkdownHighlight::Style(MarkdownHighlightStyle {
+                    link: true,
+                    ..Default::default()
+                },),
+            )],
+            text.highlights
+        );
+        assert_eq!(
+            vec![(
+                10..14,
+                ParsedRegion {
+                    code: false,
+                    link: Some(Link::Web {
+                        url: "https://example.com".into()
+                    })
+                }
+            )],
+            text.regions
+        )
+    }
+
+    #[gpui::test]
     async fn test_text_with_inline_html() {
         let parsed = parse("This is a paragraph with an inline HTML <sometag>tag</sometag>.").await;
 
