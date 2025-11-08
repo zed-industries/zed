@@ -2943,7 +2943,7 @@ mod tests {
                     meta: None
                 }),
                 acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                    uri: main_rs_uri,
+                    uri: main_rs_uri.clone(),
                     name: "main.rs".to_string(),
                     annotations: None,
                     meta: None,
