@@ -240,6 +240,7 @@ impl Console {
                             start_offset,
                             vec![range],
                             style,
+                            false,
                             cx,
                         );
                     }

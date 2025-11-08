@@ -485,8 +485,17 @@ impl DisplayMap {
         key: HighlightKey,
         ranges: Vec<Range<Anchor>>,
         style: HighlightStyle,
+        merge: bool,
     ) {
-        self.text_highlights.insert(key, Arc::new((style, ranges)));
+        let to_insert = match self.text_highlights.remove(&key).filter(|_| merge) {
+            Some(previous) => {
+                let mut merged_ranges = previous.1.clone();
+                merged_ranges.extend(ranges);
+                Arc::new((style, merged_ranges))
+            }
+            None => Arc::new((style, ranges)),
+        };
+        self.text_highlights.insert(key, to_insert);
     }
 
     pub(crate) fn highlight_inlays(
@@ -523,7 +532,7 @@ impl DisplayMap {
     pub fn clear_highlights(&mut self, type_id: TypeId) -> bool {
         let mut cleared = self
             .text_highlights
-            .remove(HighlightKey::Type(type_id))
+            .remove(&HighlightKey::Type(type_id))
             .is_some();
         self.text_highlights.retain(|key, _| {
             let retain = if let HighlightKey::TypePlus(key_type_id, _) = key {
@@ -2402,6 +2411,7 @@ pub mod tests {
                         ..buffer_snapshot.anchor_after(Point::new(3, 18)),
                 ],
                 red.into(),
+                false,
             );
             map.insert_blocks(
                 [BlockProperties {
@@ -2724,6 +2734,7 @@ pub mod tests {
                     })
                     .collect(),
                 style,
+                false,
             );
         });
 

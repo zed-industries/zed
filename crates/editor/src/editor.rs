@@ -20916,6 +20916,7 @@ impl Editor {
         key: usize,
         ranges: Vec<Range<Anchor>>,
         style: HighlightStyle,
+        merge: bool,
         cx: &mut Context<Self>,
     ) {
         self.display_map.update(cx, |map, _| {
@@ -20923,6 +20924,7 @@ impl Editor {
                 HighlightKey::TypePlus(TypeId::of::<T>(), key),
                 ranges,
                 style,
+                merge,
             );
         });
         cx.notify();

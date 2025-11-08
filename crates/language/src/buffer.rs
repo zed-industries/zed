@@ -4202,7 +4202,8 @@ impl BufferSnapshot {
                         .map(|grammar| grammar.brackets_config.as_ref().unwrap())
                         .collect::<Vec<_>>();
 
-                    // todo! this seems like a wrong parameter: instead, use chunk range, `Range<BufferRow>`, as a key part + add bracket_id that will be used for each bracket
+                    // todo! this seems like a wrong parameter: add bracket_id that will be used for each bracket
+                    // this will require changing `depth` treatment during style application, we'll need to group brackets by their hsla
                     let mut depth = 0;
                     let chunk_range = chunk_range.clone();
                     let new_matches = iter::from_fn(move || {

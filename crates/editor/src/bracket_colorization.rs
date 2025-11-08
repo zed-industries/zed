@@ -95,6 +95,7 @@ impl Editor {
                 depth,
                 bracket_highlights,
                 style,
+                true,
                 cx,
             );
         }
