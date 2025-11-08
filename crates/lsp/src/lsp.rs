@@ -47,9 +47,9 @@ const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 
 pub const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 #[cfg(target_os = "windows")]
-const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
-#[cfg(not(target_os = "windows"))]
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
+#[cfg(not(target_os = "windows"))]
+const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, &mut AsyncApp)>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
