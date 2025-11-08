@@ -2927,6 +2927,12 @@ mod tests {
             .unwrap()
             .0;
 
+        let main_rs_uri = if cfg!(windows) {
+            "file:///C:/project/src/main.rs".to_string()
+        } else {
+            "file:///project/src/main.rs".to_string()
+        };
+
         // When embedded context is `false` we should get a resource link
         pretty_assertions::assert_eq!(
             content,
@@ -2937,7 +2943,7 @@ mod tests {
                     meta: None
                 }),
                 acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                    uri: "file:///project/src/main.rs".to_string(),
+                    uri: main_rs_uri,
                     name: "main.rs".to_string(),
                     annotations: None,
                     meta: None,
@@ -2975,7 +2981,7 @@ mod tests {
                     resource: acp::EmbeddedResourceResource::TextResourceContents(
                         acp::TextResourceContents {
                             text: file_content.to_string(),
-                            uri: "file:///project/src/main.rs".to_string(),
+                            uri: main_rs_uri,
                             mime_type: None,
                             meta: None
                         }
