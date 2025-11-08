@@ -759,11 +759,10 @@ impl WasmExtension {
     ) -> Result<Self> {
         let path = extension_dir.join("extension.wasm");
 
-        let mut wasm_file = wasm_host
-            .fs
-            .open_sync(&path)
-            .await
-            .context(format!("failed to open wasm file, path: {}", path.display()))?;
+        let mut wasm_file = wasm_host.fs.open_sync(&path).await.context(format!(
+            "failed to open wasm file, path: {}",
+            path.display()
+        ))?;
 
         let mut wasm_bytes = Vec::new();
         wasm_file
