@@ -646,16 +646,14 @@ impl ContextPickerCompletionProvider {
         cx: &mut App,
     ) -> Vec<ContextPickerEntry> {
         let embedded_context = self.prompt_capabilities.borrow().embedded_context;
-        let mut entries = if embedded_context {
-            vec![
-                ContextPickerEntry::Mode(ContextPickerMode::File),
-                ContextPickerEntry::Mode(ContextPickerMode::Symbol),
-                ContextPickerEntry::Mode(ContextPickerMode::Thread),
-            ]
-        } else {
-            // File is always available, but we don't need a mode entry
-            vec![]
-        };
+        let mut entries = vec![
+            ContextPickerEntry::Mode(ContextPickerMode::File),
+            ContextPickerEntry::Mode(ContextPickerMode::Symbol),
+        ];
+
+        if embedded_context {
+            entries.push(ContextPickerEntry::Mode(ContextPickerMode::Thread));
+        }
 
         let has_selection = workspace
             .read(cx)
