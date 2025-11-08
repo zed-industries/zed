@@ -12898,7 +12898,7 @@ impl Editor {
 
         if self.read_only(cx) {
             Self::show_markdown_image_toast(
-                workspace.clone(),
+                workspace,
                 "Cannot paste images into a read-only editor.",
                 cx,
             );
@@ -12907,7 +12907,7 @@ impl Editor {
 
         let Some(markdown_file) = self.target_file(cx) else {
             Self::show_markdown_image_toast(
-                workspace.clone(),
+                workspace,
                 "Save the Markdown file before pasting images so Zed knows where to store them.",
                 cx,
             );
@@ -12922,7 +12922,7 @@ impl Editor {
 
         let Some(markdown_dir) = markdown_path.parent().map(|parent| parent.to_path_buf()) else {
             Self::show_markdown_image_toast(
-                workspace.clone(),
+                workspace,
                 "Unable to determine where to store pasted images for this file.",
                 cx,
             );
@@ -12931,7 +12931,7 @@ impl Editor {
 
         let Some(project) = self.project().cloned() else {
             Self::show_markdown_image_toast(
-                workspace.clone(),
+                workspace,
                 "Unable to access the project for this editor.",
                 cx,
             );
@@ -12945,7 +12945,7 @@ impl Editor {
             .unwrap_or_default()
             .as_secs();
         let weak_editor = cx.entity().downgrade();
-        let workspace_for_task = workspace.clone();
+        let workspace_for_task = workspace;
 
         cx.spawn_in(window, async move |_, cx| {
             match Self::persist_markdown_clipboard_images(
