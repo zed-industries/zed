@@ -270,7 +270,7 @@ impl ExtensionManifest {
             let manifest_content = fs
                 .load(&extension_manifest_path)
                 .await
-                .with_context(|| format!("failed to load {extension_name} extension.json"))?;
+                .with_context(|| format!("failed to load {extension_name} extension.json, {:?}", extension_manifest_path))?;
             let manifest_json = serde_json::from_str::<OldExtensionManifest>(&manifest_content)
                 .with_context(|| {
                     format!("invalid extension.json for extension {extension_name}")
@@ -282,7 +282,7 @@ impl ExtensionManifest {
             let manifest_content = fs
                 .load(&extension_manifest_path)
                 .await
-                .with_context(|| format!("failed to load {extension_name} extension.toml"))?;
+                .with_context(|| format!("failed to load {extension_name} extension.toml, {:?}", extension_manifest_path))?;
             toml::from_str(&manifest_content).map_err(|err| {
                 anyhow!("Invalid extension.toml for extension {extension_name}:\n{err}")
             })

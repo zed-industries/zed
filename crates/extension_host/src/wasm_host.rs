@@ -763,12 +763,12 @@ impl WasmExtension {
             .fs
             .open_sync(&path)
             .await
-            .context("failed to open wasm file")?;
+            .context(format!("failed to open wasm file, path: {}", path.display()))?;
 
         let mut wasm_bytes = Vec::new();
         wasm_file
             .read_to_end(&mut wasm_bytes)
-            .context("failed to read wasm")?;
+            .context(format!("failed to read wasm, path: {}", path.display()))?;
 
         wasm_host
             .load_extension(wasm_bytes, manifest, cx)
