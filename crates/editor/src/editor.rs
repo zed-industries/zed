@@ -102,8 +102,8 @@ use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
     DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
-    Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
-    MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, ScrollHandle,
+    Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, Image, ImageFormat, KeyContext,
+    Modifiers, MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, ScrollHandle,
     SharedString, Size, Stateful, Styled, Subscription, Task, TextStyle, TextStyleRefinement,
     UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
     div, point, prelude::*, pulsating_between, px, relative, size,
@@ -181,7 +181,7 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use task::{ResolvedTask, RunnableTag, TaskTemplate, TaskVariables};
 use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _};
@@ -309,6 +309,8 @@ pub enum HideMouseCursorOrigin {
     TypingAction,
     MovementAction,
 }
+
+struct MarkdownImagePasteToast;
 
 pub fn init(cx: &mut App) {
     cx.set_global(GlobalBlameRenderer(Arc::new(())));
@@ -12851,6 +12853,10 @@ impl Editor {
     pub fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         if let Some(item) = cx.read_from_clipboard() {
+            if self.try_paste_markdown_images(&item, window, cx) {
+                return;
+            }
+
             let entries = item.entries();
 
             match entries.first() {
@@ -12866,6 +12872,227 @@ impl Editor {
                     ),
                 _ => self.do_paste(&item.text().unwrap_or_default(), None, true, window, cx),
             }
+        }
+    }
+
+    fn try_paste_markdown_images(
+        &mut self,
+        item: &ClipboardItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let images: Vec<Image> = item
+            .entries()
+            .iter()
+            .filter_map(|entry| match entry {
+                ClipboardEntry::Image(image) => Some(image.clone()),
+                _ => None,
+            })
+            .collect();
+
+        if images.is_empty() {
+            return false;
+        }
+
+        let workspace = self.workspace();
+
+        if self.read_only(cx) {
+            Self::show_markdown_image_toast(
+                workspace.clone(),
+                "Cannot paste images into a read-only editor.",
+                cx,
+            );
+            return true;
+        }
+
+        let Some(markdown_file) = self.target_file(cx) else {
+            Self::show_markdown_image_toast(
+                workspace.clone(),
+                "Save the Markdown file before pasting images so Zed knows where to store them.",
+                cx,
+            );
+            return true;
+        };
+
+        let markdown_path = markdown_file.abs_path(cx);
+
+        if !Self::is_markdown_path(&markdown_path) {
+            return false;
+        }
+
+        let Some(markdown_dir) = markdown_path.parent().map(|parent| parent.to_path_buf()) else {
+            Self::show_markdown_image_toast(
+                workspace.clone(),
+                "Unable to determine where to store pasted images for this file.",
+                cx,
+            );
+            return true;
+        };
+
+        let Some(project) = self.project().cloned() else {
+            Self::show_markdown_image_toast(
+                workspace.clone(),
+                "Unable to access the project for this editor.",
+                cx,
+            );
+            return true;
+        };
+
+        let fs = project.read(cx).fs().clone();
+        let base_name = Self::markdown_image_base_name(&markdown_path);
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let weak_editor = cx.entity().downgrade();
+        let workspace_for_task = workspace.clone();
+
+        cx.spawn_in(window, async move |_, cx| {
+            match Self::persist_markdown_clipboard_images(
+                fs,
+                markdown_dir,
+                base_name,
+                timestamp,
+                images,
+            )
+            .await
+            {
+                Ok(file_names) => {
+                    if file_names.is_empty() {
+                        return;
+                    }
+
+                    if let Some(editor) = weak_editor.upgrade() {
+                        let snippet = Self::markdown_image_links(&file_names);
+                        let _ = editor.update_in(cx, |editor, window, cx| {
+                            editor.do_paste(&snippet, None, true, window, cx);
+                        });
+                    }
+                }
+                Err(err) => {
+                    log::error!("Failed to save pasted image(s): {err:?}");
+                    Self::show_markdown_image_toast(
+                        workspace_for_task,
+                        format!("Failed to save pasted image: {err}"),
+                        cx,
+                    );
+                }
+            }
+        })
+        .detach();
+
+        true
+    }
+
+    async fn persist_markdown_clipboard_images(
+        fs: Arc<dyn fs::Fs>,
+        markdown_dir: PathBuf,
+        base_name: String,
+        timestamp: u64,
+        images: Vec<Image>,
+    ) -> Result<Vec<String>> {
+        let prefix = format!("{base_name}-{timestamp}");
+        let mut saved = Vec::with_capacity(images.len());
+
+        let image_count = images.len();
+        for (ix, image) in images.into_iter().enumerate() {
+            let ext = Self::image_extension(&image.format);
+            let mut attempt = 0;
+
+            loop {
+                let mut candidate = if image_count == 1 {
+                    prefix.clone()
+                } else {
+                    format!("{prefix}-{suffix}", suffix = ix + 1)
+                };
+
+                if attempt > 0 {
+                    candidate.push_str(&format!("-{attempt}"));
+                }
+
+                candidate.push('.');
+                candidate.push_str(ext);
+
+                let path = markdown_dir.join(&candidate);
+
+                if fs.is_file(path.as_path()).await {
+                    attempt += 1;
+                    continue;
+                }
+
+                fs.write(path.as_path(), &image.bytes)
+                    .await
+                    .with_context(|| format!("writing {candidate}"))?;
+
+                saved.push(candidate);
+                break;
+            }
+        }
+
+        Ok(saved)
+    }
+
+    fn markdown_image_links(file_names: &[String]) -> String {
+        file_names
+            .iter()
+            .map(|name| {
+                let alt = Path::new(name)
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .filter(|stem| !stem.is_empty())
+                    .unwrap_or("pasted-image");
+                format!("![{alt}](./{name})")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn markdown_image_base_name(_path: &Path) -> String {
+        "image".to_string()
+    }
+
+    fn image_extension(format: &ImageFormat) -> &'static str {
+        match format {
+            ImageFormat::Png => "png",
+            ImageFormat::Jpeg => "jpg",
+            ImageFormat::Webp => "webp",
+            ImageFormat::Gif => "gif",
+            ImageFormat::Svg => "svg",
+            ImageFormat::Bmp => "bmp",
+            ImageFormat::Tiff => "tiff",
+            ImageFormat::Ico => "ico",
+        }
+    }
+
+    fn is_markdown_path(path: &Path) -> bool {
+        let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
+            return false;
+        };
+
+        match ext.to_ascii_lowercase().as_str() {
+            "md" | "markdown" | "mdown" | "mkd" | "mdx" => true,
+            _ => false,
+        }
+    }
+
+    fn show_markdown_image_toast<C: gpui::AppContext>(
+        workspace: Option<Entity<Workspace>>,
+        message: impl Into<String>,
+        cx: &mut C,
+    ) {
+        let message = message.into();
+        if let Some(workspace) = workspace {
+            let _ = workspace.update(cx, |workspace, cx| {
+                workspace.show_toast(
+                    Toast::new(
+                        NotificationId::unique::<MarkdownImagePasteToast>(),
+                        message.clone(),
+                    ),
+                    cx,
+                );
+            });
+        } else {
+            log::warn!("{message}");
         }
     }
 
