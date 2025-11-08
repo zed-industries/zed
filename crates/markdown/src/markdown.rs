@@ -787,7 +787,6 @@ impl Element for MarkdownElement {
         };
         let mut code_block_ids = HashSet::default();
 
-        let mut current_code_block_metadata = None;
         let mut current_img_block_range: Option<Range<usize>> = None;
         for (range, event) in parsed_markdown.events.iter() {
             // Skip alt text for images that rendered
@@ -849,7 +848,7 @@ impl Element for MarkdownElement {
                                 markdown_end,
                             );
                         }
-                        MarkdownTag::CodeBlock { kind, metadata } => {
+                        MarkdownTag::CodeBlock { kind, .. } => {
                             let language = match kind {
                                 CodeBlockKind::Fenced => None,
                                 CodeBlockKind::FencedLang(language) => {
@@ -861,8 +860,6 @@ impl Element for MarkdownElement {
                                     .cloned(),
                                 _ => None,
                             };
-
-                            current_code_block_metadata = Some(metadata.clone());
 
                             let is_indented = matches!(kind, CodeBlockKind::Indented);
                             let scroll_handle = if self.style.code_block_overflow_x_scroll {
@@ -935,64 +932,7 @@ impl Element for MarkdownElement {
                                     builder.push_code_block(language);
                                     builder.push_div(code_block, range, markdown_end);
                                 }
-                                (CodeBlockRenderer::Custom { render, .. }, _) => {
-                                    let parent_container = render(
-                                        kind,
-                                        &parsed_markdown,
-                                        range.clone(),
-                                        metadata.clone(),
-                                        window,
-                                        cx,
-                                    );
-
-                                    let mut parent_container: AnyDiv = if let Some(scroll_handle) =
-                                        scroll_handle.as_ref()
-                                    {
-                                        let scrollbars = Scrollbars::new(ScrollAxes::Horizontal)
-                                            .id(("markdown-code-block-scrollbar", range.start))
-                                            .tracked_scroll_handle(scroll_handle.clone())
-                                            .with_track_along(
-                                                ScrollAxes::Horizontal,
-                                                cx.theme().colors().editor_background,
-                                            )
-                                            .notify_content();
-
-                                        parent_container
-                                            .rounded_b_lg()
-                                            .custom_scrollbars(scrollbars, window, cx)
-                                            .into()
-                                    } else {
-                                        parent_container.into()
-                                    };
-
-                                    parent_container.style().refine(&self.style.code_block);
-                                    builder.push_div(parent_container, range, markdown_end);
-
-                                    let code_block = div()
-                                        .id(("code-block", range.start))
-                                        .rounded_b_lg()
-                                        .map(|mut code_block| {
-                                            if let Some(scroll_handle) = scroll_handle.as_ref() {
-                                                code_block.style().restrict_scroll_to_axis =
-                                                    Some(true);
-                                                code_block
-                                                    .flex()
-                                                    .overflow_x_scroll()
-                                                    .overflow_y_hidden()
-                                                    .track_scroll(scroll_handle)
-                                            } else {
-                                                code_block.w_full().overflow_hidden()
-                                            }
-                                        });
-
-                                    if let Some(code_block_text_style) = &self.style.code_block.text
-                                    {
-                                        builder.push_text_style(code_block_text_style.to_owned());
-                                    }
-
-                                    builder.push_code_block(language);
-                                    builder.push_div(code_block, range, markdown_end);
-                                }
+                                (CodeBlockRenderer::Custom { .. }, _) => {}
                             }
                         }
                         MarkdownTag::HtmlBlock => builder.push_div(div(), range, markdown_end),
@@ -1129,24 +1069,6 @@ impl Element for MarkdownElement {
                         builder.pop_code_block();
                         if self.style.code_block.text.is_some() {
                             builder.pop_text_style();
-                        }
-
-                        let metadata = current_code_block_metadata.take();
-
-                        if let CodeBlockRenderer::Custom {
-                            transform: Some(transform),
-                            ..
-                        } = &self.code_block_renderer
-                        {
-                            builder.modify_current_div(|el| {
-                                transform(
-                                    el,
-                                    range.clone(),
-                                    metadata.clone().unwrap_or_default(),
-                                    window,
-                                    cx,
-                                )
-                            });
                         }
 
                         if let CodeBlockRenderer::Default {
