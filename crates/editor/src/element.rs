@@ -3852,7 +3852,7 @@ impl EditorElement {
         is_folded: bool,
         is_selected: bool,
         is_sticky: bool,
-        jump_data: JumpData,
+        _jump_data: JumpData,
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
