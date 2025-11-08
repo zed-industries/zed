@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use acp_thread::AcpThread;
 use agent::{ContextServerRegistry, DbThreadMetadata, HistoryEntry, HistoryStore};
+use agent_client_protocol as acp;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::{
     ExternalAgentServerName,
@@ -251,6 +252,12 @@ impl AgentPanelTab {
     fn agent(&self) -> &AgentType {
         &self.agent
     }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum AgentPanelTabIdentity {
+    AcpThread(acp::SessionId),
+    TextThread(Arc<Path>),
 }
 
 enum WhichFontSize {
@@ -810,6 +817,42 @@ impl AgentPanel {
         }
     }
 
+    fn view_identity(view: &ActiveView, cx: &mut Context<Self>) -> Option<AgentPanelTabIdentity> {
+        match view {
+            ActiveView::ExternalAgentThread { thread_view, .. } => thread_view
+                .read(cx)
+                .session_id(cx)
+                .map(AgentPanelTabIdentity::AcpThread),
+            ActiveView::TextThread {
+                text_thread_editor, ..
+            } => {
+                let text_thread = {
+                    let editor = text_thread_editor.read(cx);
+                    editor.text_thread().clone()
+                };
+                text_thread
+                    .read(cx)
+                    .path()
+                    .cloned()
+                    .map(AgentPanelTabIdentity::TextThread)
+            }
+            ActiveView::History | ActiveView::Configuration => None,
+        }
+    }
+
+    fn find_tab_by_identity(
+        &self,
+        identity: &AgentPanelTabIdentity,
+        cx: &mut Context<Self>,
+    ) -> Option<TabId> {
+        for (index, tab) in self.tabs.iter().enumerate() {
+            if Self::view_identity(tab.view(), cx).is_some_and(|existing| existing == *identity) {
+                return Some(index);
+            }
+        }
+        None
+    }
+
     fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
         self.new_agent_thread(AgentType::NativeAgent, window, cx);
     }
@@ -1087,6 +1130,7 @@ impl AgentPanel {
             ActiveView::Configuration | ActiveView::History => {
                 if let Some(previous_tab_id) = self.overlay_previous_tab_id.take() {
                     self.active_tab_id = previous_tab_id;
+                    self.overlay_view = None;
 
                     match self.active_view() {
                         ActiveView::ExternalAgentThread { thread_view } => {
@@ -1545,10 +1589,19 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let view_identity = Self::view_identity(&new_view, cx);
+
+        if let Some(identity) = view_identity.as_ref() {
+            if let Some(existing_id) = self.find_tab_by_identity(identity, cx) {
+                self.set_active_tab_by_id(existing_id, window, cx);
+                return;
+            }
+        }
+
         match &new_view {
             ActiveView::TextThread { .. } | ActiveView::ExternalAgentThread { .. } => {
                 self.tabs.push(AgentPanelTab::new(new_view, agent));
-                let new_id = self.active_tab_id + 1;
+                let new_id = self.tabs.len() - 1;
                 self.set_active_tab_by_id(new_id, window, cx);
 
                 if let Some(pending_id) = self.pending_tab_removal.take() {
@@ -1706,7 +1759,7 @@ impl Panel for AgentPanel {
 }
 
 impl AgentPanel {
-    fn render_view_label(&self, view: &ActiveView, cx: &mut Context<Self>) -> AnyElement {
+    fn render_tab_label(&self, view: &ActiveView, cx: &mut Context<Self>) -> AnyElement {
         const LOADING_SUMMARY_PLACEHOLDER: &str = "Loading Summary…";
 
         match view {
@@ -2276,7 +2329,7 @@ impl AgentPanel {
                 .px(DynamicSpacing::Base04.px(cx))
                 .gap(DynamicSpacing::Base04.rems(cx))
                 .child(self.render_toolbar_back_button(cx).into_any_element())
-                .child(self.render_view_label(&overlay_view, cx))
+                .child(self.render_tab_label(&overlay_view, cx))
                 .into_any_element();
 
             return tab_bar.child(overlay_title).into_any_element();
@@ -2307,7 +2360,7 @@ impl AgentPanel {
                 .on_click(cx.listener(move |this: &mut Self, _, window, cx| {
                     this.set_active_tab_by_id(index, window, cx);
                 }))
-                .child(self.render_view_label(tab.view(), cx))
+                .child(self.render_tab_label(tab.view(), cx))
                 .start_slot(self.render_tab_agent_icon(index, tab.agent(), &agent_server_store, cx))
                 .end_slot(
                     IconButton::new(("close-agent-tab", index), IconName::Close)

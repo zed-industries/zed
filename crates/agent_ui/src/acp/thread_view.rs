@@ -827,6 +827,16 @@ impl AcpThreadView {
         }
     }
 
+    pub fn session_id(&self, cx: &App) -> Option<acp::SessionId> {
+        if let Some(thread) = self.thread() {
+            Some(thread.read(cx).session_id().clone())
+        } else {
+            self.resume_thread_metadata
+                .as_ref()
+                .map(|metadata| metadata.id.clone())
+        }
+    }
+
     pub fn mode_selector(&self) -> Option<&Entity<ModeSelector>> {
         match &self.thread_state {
             ThreadState::Ready { mode_selector, .. } => mode_selector.as_ref(),
