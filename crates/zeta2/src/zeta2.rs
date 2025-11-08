@@ -183,7 +183,7 @@ pub struct ZetaEditPredictionDebugInfo {
 pub struct ZetaSearchQueryDebugInfo {
     pub project: Entity<Project>,
     pub timestamp: Instant,
-    pub regex_by_glob: HashMap<String, String>,
+    pub search_queries: Vec<SearchToolQuery>,
 }
 
 pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
@@ -1308,7 +1308,7 @@ impl Zeta {
                         ZetaSearchQueryDebugInfo {
                             project: project.clone(),
                             timestamp: Instant::now(),
-                            regex_by_glob: Default::default(),
+                            search_queries: queries.clone(),
                         },
                     ))
                     .ok();

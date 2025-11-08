@@ -124,7 +124,7 @@ pub async fn zeta2_predict(
                         search_queries_generated_at = Some(info.timestamp);
                         fs::write(
                             LOGS_DIR.join("search_queries.json"),
-                            serde_json::to_string_pretty(&info.regex_by_glob).unwrap(),
+                            serde_json::to_string_pretty(&info.search_queries).unwrap(),
                         )?;
                     }
                     zeta2::ZetaDebugInfo::SearchQueriesExecuted(info) => {
