@@ -2205,6 +2205,8 @@ mod tests {
                     format!("seven.txt b{slash}"),
                     format!("six.txt b{slash}"),
                     format!("five.txt b{slash}"),
+                    "Files & Directories".into(),
+                    "Symbols".into()
                 ]
             );
             editor.set_text("", window, cx);
