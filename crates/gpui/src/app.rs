@@ -694,7 +694,7 @@ impl App {
     }
 
     /// Quit the application gracefully. Handlers registered with [`Context::on_app_quit`]
-    /// will be given up to 5 seconds to complete before exiting.
+    /// will be given up to `SHUTDOWN_TIMEOUT` to complete before exiting.
     pub fn shutdown(&mut self) {
         let mut futures = Vec::new();
 
