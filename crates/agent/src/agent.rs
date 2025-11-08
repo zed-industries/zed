@@ -6,7 +6,6 @@ mod native_agent_server;
 pub mod outline;
 mod templates;
 mod thread;
-mod tool_schema;
 mod tools;
 
 #[cfg(test)]
