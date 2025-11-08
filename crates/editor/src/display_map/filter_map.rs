@@ -327,13 +327,15 @@ impl FilterMap {
         };
 
         dbg!(&buffer_edits);
+        #[cfg(test)]
+        self.snapshot.print_transforms();
 
         let mut new_transforms: SumTree<FilterTransform> = SumTree::new(());
         let mut transform_cursor = self
             .snapshot
             .transforms
             .cursor::<Dimensions<usize, FilterOffset>>(());
-        let mut output_edits = Vec::new();
+        let mut output_edits: Vec<text::Edit<FilterOffset>> = Vec::new();
 
         // TODO in what follows we repeatedly call text_summary_for_range,
         // could use a persistent usize cursor over buffer_snapshot instead.
@@ -368,16 +370,18 @@ impl FilterMap {
             );
 
             let mut edit_old_start = transform_cursor.start().1;
-            let mut edit_new_start = FilterOffset(new_transforms.summary().output.len);
+            if buffer_edit.old.start > transform_cursor.start().0
+                && let Some(FilterTransform::Isomorphic { .. }) = transform_cursor.item()
+            {
+                edit_old_start.0 += buffer_edit.old.start - transform_cursor.start().0;
+            }
 
-            // If the edit starts in the middle of a transform, split the transform and push the unaffected portion.
+            let mut edit_new_start = FilterOffset(new_transforms.summary().output.len);
             if buffer_edit.new.start > new_transforms.summary().input.len {
-                log::info!("split transform at edit start");
                 let range = new_transforms.summary().input.len..buffer_edit.new.start;
                 match transform_cursor.item() {
                     Some(FilterTransform::Isomorphic { .. }) => {
                         let summary = push_isomorphic(&mut new_transforms, range, &buffer_snapshot);
-                        edit_old_start.0 += summary.len;
                         edit_new_start.0 += summary.len;
                     }
                     Some(FilterTransform::Filter { .. }) => {
@@ -415,23 +419,6 @@ impl FilterMap {
                 let suffix_range = new_transforms.summary().input.len..buffer_edit.new.end;
                 push_isomorphic(&mut new_transforms, suffix_range, &buffer_snapshot);
             }
-
-            // postcondition: new_transforms.summary().output.len == buffer_edit.new.end
-            //                   v buffer_edit.old.end
-            //            v transform_cursor.start()
-            //            |--A---|-------B---|
-            //            |---------i--------|
-            //     <-buffer_edit->
-            //     <------------->----------->     // goal
-            //     <------------->---->
-            //
-            //
-            //              |-------------transform-----------|
-            // case 1:   <-------->
-            // case 2:   <-------->        <---------->
-            // case 3:   <-------->        <---------->  <---------->
-            // case 4:   <-------->                      <---------->
-            // case 5:   <--------><----------------------------------------->
 
             transform_cursor.seek(&buffer_edit.old.end, Bias::Right);
             let mut edit_old_end = transform_cursor.start().1;
@@ -479,10 +466,21 @@ impl FilterMap {
                 }
             }
 
-            output_edits.push(dbg!(text::Edit {
+            let edit = text::Edit {
                 old: edit_old_start..edit_old_end,
                 new: edit_new_start..edit_new_end,
-            }));
+            };
+            debug_assert!(
+                edit.old.start <= edit_old_end && edit.new.start <= edit_new_end,
+                "inverted edit: {edit:?}",
+            );
+            if let Some(prev_edit) = output_edits.last() {
+                debug_assert!(
+                    prev_edit.old.end <= edit.old.start && prev_edit.new.end <= edit.new.start,
+                    "unordered edits: {prev_edit:?}, {edit:?}"
+                );
+            }
+            output_edits.push(edit);
         }
 
         log::info!("append old transforms after last edit");
@@ -519,31 +517,10 @@ fn check_edits(
     output_edits: &[text::Edit<FilterOffset>],
     new_snapshot: &FilterSnapshot,
 ) {
-    use itertools::Itertools as _;
-
-    println!("old transforms: ");
-    old_snapshot.print_transforms();
-
-    println!("new transforms: ");
-    new_snapshot.print_transforms();
-
-    for (left, right) in output_edits
-        .iter()
-        .flat_map(|edit| [edit.old.start, edit.old.end])
-        .tuple_windows()
-    {
-        assert!(left <= right);
-    }
-    for (left, right) in output_edits
-        .iter()
-        .flat_map(|edit| [edit.new.start, edit.new.end])
-        .tuple_windows()
-    {
-        assert!(left <= right);
-    }
-
     let mut edited_old_text = old_snapshot.text();
     let new_text = new_snapshot.text();
+
+    dbg!(&output_edits);
 
     for edit in output_edits.iter().rev() {
         let edit_old_range = edit.old.start.0..edit.old.end.0;
@@ -566,16 +543,6 @@ fn check_edits(
         );
         edited_old_text.replace_range(edit_old_range, &new_text[edit_new_range]);
     }
-
-    // Point {
-    //   x: 1,
-    //   y: 2,
-    // }..Point{
-    //   x: 3,
-    //   y: 4,
-    // }
-    //
-    // Point(1:2)
 
     pretty_assertions::assert_eq!(
         edited_old_text,
