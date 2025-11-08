@@ -5,7 +5,7 @@
 Text threads in the [Agent Panel](./agent-panel.md) function similarly to any other editor.
 You can use custom key bindings and work with multiple cursors, allowing for seamless transitions between coding and engaging in discussions with the language models.
 
-However, the text threads differ with the inclusion of message blocks.
+However, the text threads differ in the inclusion of message blocks.
 These blocks serve as containers for text that correspond to different roles within the context.
 These roles include:
 
@@ -116,7 +116,7 @@ Examples:
 ### `/now`
 
 The `/now` command inserts the current date and time into the context.
-This can be useful letting the language model know the current time (and by extension, how old their current knowledge base is).
+This can be useful for letting the language model know the current time (and by extension, how old their current knowledge base is).
 
 Usage: `/now`
 
@@ -159,7 +159,7 @@ This is useful for referencing recent command outputs or logs.
 
 Usage: `/terminal [<number>]`
 
-- `<number>`: Optional parameter to specify the number of lines to insert (default is a 50).
+- `<number>`: Optional parameter to specify the number of lines to insert (default is 50).
 
 ### `/selection`
 
@@ -191,7 +191,7 @@ Here is some information about their project:
 /file Cargo.toml
 ```
 
-In the above example, the `@file` command is used to insert the contents of the `Cargo.toml` file (or all `Cargo.toml` files present in the project) into the rule.
+In the above example, the `/file` command is used to insert the contents of the `Cargo.toml` file (or all `Cargo.toml` files present in the project) into the rule.
 
 ## Nesting Rules
 
@@ -236,7 +236,7 @@ See [Extension: Slash Commands](../extensions/slash-commands.md) to learn how to
 ## Text Threads vs. Threads
 
 For a while, text threads were the only way to interact with AI in Zed.
-We have since introduced, back in May 2025, a new take on the agent panel, which as opposed to being editor-driven, it optimizes for readability.
+We have since introduced, back in May 2025, a new take on the agent panel, which, as opposed to being editor-driven, optimizes for readability.
 You can read more about it in [the Agent Panel page](./agent-panel.md).
 
 However, aside from many interaction differences, the major difference between one vs. the other is that tool calls don't work in Text Threads.
