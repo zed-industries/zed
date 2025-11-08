@@ -618,53 +618,6 @@ impl PyreflyLspAdapter {
         None
     }
 
-    fn build_python_env_value(env: &PythonEnvironment) -> Value {
-        let executable_uri = env
-            .executable
-            .as_ref()
-            .and_then(|p| url::Url::from_file_path(p).ok())
-            .map(|u| u.to_string())
-            .unwrap_or_default();
-
-        let sys_prefix = env
-            .prefix
-            .as_ref()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default();
-
-        let environment_name = env
-            .name
-            .clone()
-            .unwrap_or_else(|| "System".to_string());
-
-        let environment_type = match env.kind {
-            Some(PythonEnvironmentKind::Venv) => "Venv",
-            Some(PythonEnvironmentKind::Conda) => "Conda",
-            Some(PythonEnvironmentKind::Poetry) => "Poetry",
-            Some(PythonEnvironmentKind::Pyenv) => "Pyenv",
-            Some(PythonEnvironmentKind::Pipenv) => "Pipenv",
-            Some(PythonEnvironmentKind::VirtualEnv) => "virtualenv",
-            Some(PythonEnvironmentKind::VirtualEnvWrapper) => "virtualenvwrapper",
-            Some(PythonEnvironmentKind::Pixi) => "pixi",
-            Some(PythonEnvironmentKind::Homebrew) => "Homebrew",
-            Some(PythonEnvironmentKind::GlobalPaths) => "global",
-            Some(PythonEnvironmentKind::MacPythonOrg) => "global",
-            Some(PythonEnvironmentKind::MacCommandLineTools) => "global",
-            Some(PythonEnvironmentKind::LinuxGlobal) => "global",
-            Some(PythonEnvironmentKind::MacXCode) => "global",
-            Some(PythonEnvironmentKind::WindowsStore) => "global",
-            Some(PythonEnvironmentKind::WindowsRegistry) => "global",
-            Some(PythonEnvironmentKind::PyenvVirtualEnv) => "Pyenv",
-            None => "Unknown",
-        };
-
-        json!({
-            "executableUri": executable_uri,
-            "sysPrefix": sys_prefix,
-            "environmentName": environment_name,
-            "environmentType": environment_type,
-        })
-    }
 }
 
 #[async_trait(?Send)]
@@ -686,31 +639,22 @@ impl LspAdapter for PyreflyLspAdapter {
             })?
             .unwrap_or_else(|| json!({}));
 
-        if !root.is_object() {
-            root = json!({});
-        }
-
-        if let Some(toolchain) = toolchain.and_then(|tc| {
-            serde_json::from_value::<PythonEnvironment>(tc.as_json).ok()
+        if let Some(toolchain) = toolchain.and_then(|toolchain| {
+            serde_json::from_value::<PythonToolchainData>(toolchain.as_json).ok()
         }) {
-            let interpreter = toolchain
-                .executable
-                .as_ref()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| "python3".to_string());
-
             _ = maybe!({
-                let env_val = Self::build_python_env_value(&toolchain);
+                let uri =
+                    url::Url::from_file_path(toolchain.environment.executable.as_ref()?).ok()?;
+                let sys_prefix = toolchain.environment.prefix.clone()?;
+                let environment = json!({
+                    "executable": {
+                        "uri": uri,
+                        "sysPrefix": sys_prefix
+                    }
+                });
                 let obj = root.as_object_mut()?;
                 obj.entry("pythonExtension")
-                    .or_insert(json!({}))
-                    .as_object_mut()?
-                    .insert("activeEnvironment".to_string(), env_val);
-                obj.insert("python".to_string(), json!({ "pythonPath": interpreter.clone() }));
-                obj.insert(
-                    "pyrefly".to_string(),
-                    json!({ "python_interpreter": interpreter }),
-                );
+                    .or_insert_with(|| json!({ "activeEnvironment": environment }));
                 Some(())
             });
         }
