@@ -13,18 +13,10 @@ use crate::{DisplayPoint, DisplayRow, Editor};
 
 const ROW_OVERSCAN: u32 = 64;
 
+#[derive(Default)]
 pub(super) struct RainbowHighlightState {
     cache: RainbowHighlightCache,
     active_color_keys: Vec<usize>,
-}
-
-impl Default for RainbowHighlightState {
-    fn default() -> Self {
-        Self {
-            cache: RainbowHighlightCache::default(),
-            active_color_keys: Vec::new(),
-        }
-    }
 }
 
 impl RainbowHighlightState {
@@ -617,7 +609,7 @@ mod tests {
         rope: Rope,
     ) -> BufferSnapshot {
         let mut app = cx.app.borrow_mut();
-        Buffer::build_snapshot_sync(rope, Some(language), None, &mut *app)
+        Buffer::build_snapshot_sync(rope, Some(language), None, &mut app)
     }
 
     #[gpui::test]
@@ -724,7 +716,7 @@ mod tests {
                 ("alpha()\n", vec![Point::new(0, 0)..Point::new(1, 0)]),
                 ("beta[]\n", vec![Point::new(0, 0)..Point::new(1, 0)]),
             ],
-            &mut *app,
+            &mut app,
         );
         drop(app);
 
@@ -737,12 +729,12 @@ mod tests {
             .collect();
         assert_eq!(visible_ranges.len(), expected.len());
 
-        for (excerpt_id, buffer_len) in expected.iter().copied() {
+        for (excerpt_id, buffer_len) in expected.iter() {
             let ranges = visible_ranges
-                .get(&excerpt_id)
+                .get(excerpt_id)
                 .expect("missing ranges for excerpt");
             let total_len: usize = ranges.iter().map(|r| r.end - r.start).sum();
-            assert_eq!(total_len, buffer_len);
+            assert_eq!(total_len, *buffer_len);
         }
 
         let query_entries = collect_query_excerpts(&snapshot, Point::new(0, 0)..Point::MAX);
@@ -799,7 +791,7 @@ mod tests {
             "expected deepest levels to wrap back to the first color"
         );
         assert!(
-            ranges.iter().flat_map(|r| r).count() > 3,
+            ranges.iter().flatten().count() > 3,
             "expected more highlights than available colors to verify wrapping"
         );
     }
