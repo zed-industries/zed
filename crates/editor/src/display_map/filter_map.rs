@@ -391,8 +391,14 @@ impl FilterMap {
                 }
             }
 
-            // Process the edited range based on diff hunks.
-            for hunk in buffer_snapshot.diff_hunks_in_range(buffer_edit.new.clone()) {
+            // Process the edited range based on diff hunks. Extend the range of iteration a bit
+            // to catch hunks before the start of the edit that nonetheless affect the diff status
+            // of that row.
+            let buffer_edit_start_row = buffer_edit.new.start.to_point(&buffer_snapshot).row;
+            let query_range_start =
+                Point::new(buffer_edit_start_row, 0).to_offset(&buffer_snapshot);
+            for hunk in buffer_snapshot.diff_hunks_in_range(query_range_start..buffer_edit.new.end)
+            {
                 let (deletion_range, addition_range) = diff_hunk_bounds(&hunk, &buffer_snapshot);
                 let deletion_range = deletion_range.clamp(buffer_edit.new.clone());
                 let addition_range = addition_range.clamp(buffer_edit.new.clone());
