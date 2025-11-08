@@ -4036,6 +4036,7 @@ impl EditorElement {
                                             .on_click(window.listener_for(&self.editor, {
                                                 let jump_data = jump_data.clone();
                                                 move |editor, e: &ClickEvent, window, cx| {
+                                                    cx.stop_propagation();
                                                     editor.open_excerpts_common(
                                                         Some(jump_data.clone()),
                                                         e.modifiers().secondary(),
@@ -4074,6 +4075,7 @@ impl EditorElement {
                                             .on_click(window.listener_for(
                                                 &self.editor,
                                                 move |editor, e: &ClickEvent, window, cx| {
+                                                    cx.stop_propagation();
                                                     editor.open_excerpts_common(
                                                         None,
                                                         e.modifiers().secondary(),
