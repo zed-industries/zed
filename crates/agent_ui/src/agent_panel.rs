@@ -479,6 +479,7 @@ pub struct AgentPanel {
     agent_panel_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_navigation_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_navigation_menu: Option<Entity<ContextMenu>>,
+    panel_focus_handle: FocusHandle,
     _extension_subscription: Option<Subscription>,
     width: Option<Pixels>,
     height: Option<Pixels>,
@@ -715,6 +716,16 @@ impl AgentPanel {
             None
         };
 
+        let panel_focus_handle = cx.focus_handle();
+        cx.on_focus_in(&panel_focus_handle, window, |_, _, cx| {
+            cx.notify();
+        })
+        .detach();
+        cx.on_focus_out(&panel_focus_handle, window, |_, _, _, cx| {
+            cx.notify();
+        })
+        .detach();
+
         let mut panel = Self {
             overlay_view: None,
             workspace,
@@ -733,6 +744,7 @@ impl AgentPanel {
             agent_panel_menu_handle: PopoverMenuHandle::default(),
             agent_navigation_menu_handle: PopoverMenuHandle::default(),
             agent_navigation_menu: None,
+            panel_focus_handle,
             _extension_subscription: extension_subscription,
             width: None,
             height: None,
@@ -2018,6 +2030,13 @@ impl AgentPanel {
             })
     }
 
+    fn should_show_tab_bar_controls(&self, window: &Window, cx: &App) -> bool {
+        self.panel_focus_handle.contains_focused(window, cx)
+            || self.new_thread_menu_handle.is_focused(window, cx)
+            || self.agent_navigation_menu_handle.is_focused(window, cx)
+            || self.agent_panel_menu_handle.is_focused(window, cx)
+    }
+
     fn render_toolbar_back_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
@@ -2086,6 +2105,7 @@ impl AgentPanel {
         };
 
         let new_thread_menu_store = agent_server_store.clone();
+        let show_tab_bar_controls = self.should_show_tab_bar_controls(window, cx);
         let new_thread_menu = PopoverMenu::new("new_thread_menu")
             .trigger_with_tooltip(
                 IconButton::new("new_thread_menu_btn", IconName::Plus).icon_size(IconSize::Small),
@@ -2372,8 +2392,11 @@ impl AgentPanel {
             .child(self.render_panel_options_menu(window, cx));
 
         let mut tab_bar = TabBar::new("agent-tab-bar")
-            .track_scroll(self.tab_bar_scroll_handle.clone())
-            .end_child(end_slot);
+            .track_scroll(self.tab_bar_scroll_handle.clone());
+
+        if show_tab_bar_controls {
+            tab_bar = tab_bar.end_child(end_slot);
+        }
 
         if let Some(overlay_view) = &self.overlay_view {
             let TabLabelRender {
@@ -2797,6 +2820,7 @@ impl Render for AgentPanel {
             .size_full()
             .justify_between()
             .key_context(self.key_context())
+            .track_focus(&self.panel_focus_handle)
             .on_action(cx.listener(|this, action: &NewThread, window, cx| {
                 this.new_thread(action, window, cx);
             }))
