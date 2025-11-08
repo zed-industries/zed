@@ -334,7 +334,7 @@ fn resolve_hunk_edits_in_buffer(
                 offset = Some(range.start + ix);
             }
         }
-        offset.ok_or_else(|| anyhow!("Failed to match context:\n{}", hunk.context,))
+        offset.ok_or_else(|| anyhow!("Failed to match context:\n{}", hunk.context))
     }?;
     let iter = hunk.edits.into_iter().flat_map(move |edit| {
         let old_text = buffer

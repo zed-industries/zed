@@ -8,7 +8,7 @@ use futures::{
     channel::mpsc::{self, UnboundedSender},
 };
 use gpui::{AppContext, AsyncApp, Entity};
-use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt, ToOffset, ToPoint};
+use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt, Point, ToOffset, ToPoint};
 use project::{
     Project, WorktreeSettings,
     search::{SearchQuery, SearchResult},
@@ -143,9 +143,9 @@ async fn run_query(
         )
     };
 
-    if let Some(top_search_regex) = input_query.syntax_node.first() {
-        let top_search_query = make_search(top_search_regex)?;
-        let queries = input_query
+    if let Some(outer_syntax_regex) = input_query.syntax_node.first() {
+        let outer_syntax_query = make_search(outer_syntax_regex)?;
+        let nested_syntax_queries = input_query
             .syntax_node
             .into_iter()
             .skip(1)
@@ -158,13 +158,13 @@ async fn run_query(
 
         let (jobs_tx, jobs_rx) = channel::unbounded();
 
-        let top_search_results_rx =
-            project.update(cx, |project, cx| project.search(top_search_query, cx))?;
+        let outer_search_results_rx =
+            project.update(cx, |project, cx| project.search(outer_syntax_query, cx))?;
 
-        let top_search_task = cx.spawn(async move |cx| {
-            futures::pin_mut!(top_search_results_rx);
+        let outer_search_task = cx.spawn(async move |cx| {
+            futures::pin_mut!(outer_search_results_rx);
             while let Some(SearchResult::Buffer { buffer, ranges }) =
-                top_search_results_rx.next().await
+                outer_search_results_rx.next().await
             {
                 buffer
                     .read_with(cx, |buffer, _| buffer.parsing_idle())?
@@ -192,14 +192,20 @@ async fn run_query(
             for _ in 0..n_workers {
                 scope.spawn(async {
                     while let Ok(job) = jobs_rx.recv().await {
-                        process_search_job(&results_tx, &queries, &content_query, job).await;
+                        process_nested_search_job(
+                            &results_tx,
+                            &nested_syntax_queries,
+                            &content_query,
+                            job,
+                        )
+                        .await;
                     }
                 });
             }
         });
 
         search_job_task.await;
-        top_search_task.await?;
+        outer_search_task.await?;
     } else if let Some(content_regex) = &input_query.content {
         let search_query = make_search(&content_regex)?;
 
@@ -212,7 +218,11 @@ async fn run_query(
             let ranges = ranges
                 .into_iter()
                 .map(|range| {
-                    let size = range.to_offset(&snapshot).len();
+                    let range = range.to_offset(&snapshot);
+                    let range = expand_to_entire_lines(range, &snapshot);
+                    let size = range.len();
+                    let range =
+                        snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end);
                     (range, size)
                 })
                 .collect();
@@ -232,7 +242,7 @@ async fn run_query(
     anyhow::Ok(())
 }
 
-async fn process_search_job(
+async fn process_nested_search_job(
     results_tx: &UnboundedSender<(Entity<Buffer>, BufferSnapshot, Vec<(Range<Anchor>, usize)>)>,
     queries: &Vec<SearchQuery>,
     content_query: &Option<SearchQuery>,
@@ -277,11 +287,11 @@ async fn process_search_job(
         let matches = ranges
             .into_iter()
             .map(|range| {
+                let snapshot = &job.snapshot;
+                let range = expand_to_entire_lines(range, snapshot);
                 let size = range.len();
-                (
-                    job.snapshot.anchor_before(range.start)..job.snapshot.anchor_after(range.end),
-                    size,
-                )
+                let range = snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end);
+                (range, size)
             })
             .collect();
 
@@ -293,6 +303,15 @@ async fn process_search_job(
             log::error!("{err}");
         }
     }
+}
+
+fn expand_to_entire_lines(range: Range<usize>, snapshot: &BufferSnapshot) -> Range<usize> {
+    let mut point_range = range.to_point(snapshot);
+    point_range.start.column = 0;
+    if point_range.end.column > 0 {
+        point_range.end = snapshot.max_point().min(point_range.end + Point::new(1, 0));
+    }
+    point_range.to_offset(snapshot)
 }
 
 fn expand_to_parent_range<T: ToPoint + ToOffset>(
@@ -524,8 +543,6 @@ mod tests {
         cx.update(move |cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
             zlog::init_test();
         });
     }
