@@ -166,30 +166,16 @@ See [Python Language Server Configuration](https://github.com/python-lsp/python-
 
 #### Showing Type Errors
 
-To see type errors in Zed, you have two options:
+To see type errors in Zed:
 
-1. **Create a configuration file** (recommended): Add a `pyrefly.toml` or configure `[tool.pyrefly]` in your `pyproject.toml` at the root of your project. This is the standard way to use Pyrefly and allows you to customize its behavior.
+**Create a configuration file** (recommended): Add a `pyrefly.toml` or configure `[tool.pyrefly]` in your `pyproject.toml` at the root of your project. This is the standard way to use Pyrefly and allows you to customize its behavior.
 
-   Example minimal `pyrefly.toml`:
+Example minimal `pyrefly.toml`:
 
-   ```toml
-   # Check all Python files in your project
-   project-includes = ["**/*.py"]
-   ```
-
-2. **Force type errors to display**: If you want to see type errors without creating a configuration file, you can override this behavior in your Zed settings:
-
-   ```json [settings]
-   {
-     "lsp": {
-       "pyrefly": {
-         "settings": {
-           "displayTypeErrors": "force-on"
-         }
-       }
-     }
-   }
-   ```
+```toml
+# Check all Python files in your project
+project-includes = ["**/*.py"]
+```
 
 For comprehensive configuration options, see the [Pyrefly configuration documentation](https://pyrefly.org/docs/configuration).
 
