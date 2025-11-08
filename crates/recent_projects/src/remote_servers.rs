@@ -2077,11 +2077,8 @@ impl RemoteServerProjects {
                             .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
                             .child(Label::new(label))
                             .on_click(cx.listener(move |this, _, window, cx| {
-                                this.mode = Mode::EditNickname(EditNicknameState::new(
-                                    index,
-                                    window,
-                                    cx,
-                                ));
+                                this.mode =
+                                    Mode::EditNickname(EditNicknameState::new(index, window, cx));
                                 cx.notify();
                             })),
                     )
