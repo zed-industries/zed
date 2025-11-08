@@ -26,7 +26,7 @@ struct Pkce;
 
 impl Pkce {
     pub fn code_verifier() -> String {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut verifier_bytes = [0u8; 32];
         rng.fill(&mut verifier_bytes);
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifier_bytes)
