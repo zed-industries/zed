@@ -281,7 +281,7 @@ impl BackgroundExecutor {
         });
         let mut cx = std::task::Context::from_waker(&waker);
 
-        let duration = Duration::from_secs(500);
+        let duration = Duration::from_secs(180);
         let mut test_should_end_by = Instant::now() + duration;
 
         loop {

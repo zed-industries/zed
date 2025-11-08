@@ -12,7 +12,6 @@ mod context_strip;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
-mod message_editor;
 mod profile_selector;
 mod slash_command;
 mod slash_command_picker;
@@ -248,8 +247,6 @@ pub fn init(
     is_eval: bool,
     cx: &mut App,
 ) {
-    AgentSettings::register(cx);
-
     assistant_text_thread::init(client.clone(), cx);
     rules_library::init(cx);
     if !is_eval {

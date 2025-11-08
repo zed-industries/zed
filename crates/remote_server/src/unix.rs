@@ -397,8 +397,6 @@ pub fn execute_run(
         log::info!("gpui app started, initializing server");
         let session = start_server(listeners, log_rx, cx);
 
-        client::init_settings(cx);
-
         GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
         git_hosting_providers::init(cx);
         dap_adapters::init(cx);

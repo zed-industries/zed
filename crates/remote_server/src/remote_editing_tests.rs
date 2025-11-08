@@ -1493,10 +1493,7 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
         .await
         .unwrap();
     let buffer_id = cx.update(|cx| buffer.read(cx).remote_id());
-    cx.update(|cx| {
-        workspace::init_settings(cx);
-        editor::init_settings(cx);
-    });
+
     let cx = cx.add_empty_window();
     let editor = cx.new_window_entity(|window, cx| {
         Editor::for_buffer(buffer, Some(project.clone()), window, cx)
@@ -1853,8 +1850,6 @@ pub async fn init_test(
     let proxy = Arc::new(ExtensionHostProxy::new());
     server_cx.update(HeadlessProject::init);
     let headless = server_cx.new(|cx| {
-        client::init_settings(cx);
-
         HeadlessProject::new(
             crate::HeadlessAppState {
                 session: ssh_server_client,
@@ -1906,7 +1901,6 @@ fn build_project(ssh: Entity<RemoteClient>, cx: &mut TestAppContext) -> Entity<P
 
     cx.update(|cx| {
         Project::init(&client, cx);
-        language::init(cx);
     });
 
     cx.update(|cx| Project::remote(ssh, client, node, user_store, languages, fs, cx))

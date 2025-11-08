@@ -152,8 +152,8 @@ impl Render for ProjectDiagnosticsEditor {
 
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
 enum RetainExcerpts {
-    Yes,
-    No,
+    All,
+    Dirty,
 }
 
 impl ProjectDiagnosticsEditor {
@@ -207,17 +207,7 @@ impl ProjectDiagnosticsEditor {
                         "diagnostics updated for server {language_server_id}, \
                         paths {paths:?}. updating excerpts"
                     );
-                    let focused = this.editor.focus_handle(cx).contains_focused(window, cx)
-                        || this.focus_handle.contains_focused(window, cx);
-                    this.update_stale_excerpts(
-                        if focused {
-                            RetainExcerpts::Yes
-                        } else {
-                            RetainExcerpts::No
-                        },
-                        window,
-                        cx,
-                    );
+                    this.update_stale_excerpts(window, cx);
                 }
                 _ => {}
             },
@@ -280,8 +270,7 @@ impl ProjectDiagnosticsEditor {
                     cx,
                 )
             });
-            this.diagnostics.clear();
-            this.update_all_excerpts(window, cx);
+            this.refresh(window, cx);
         })
         .detach();
 
@@ -301,25 +290,29 @@ impl ProjectDiagnosticsEditor {
             diagnostic_summary_update: Task::ready(()),
             _subscription: project_event_subscription,
         };
-        this.update_all_excerpts(window, cx);
+        this.refresh(window, cx);
         this
     }
 
     /// Closes all excerpts of buffers that:
     ///  - have no diagnostics anymore
     ///  - are saved (not dirty)
-    ///  - and, if `reatin_selections` is true, do not have selections within them
+    ///  - and, if `retain_selections` is true, do not have selections within them
     fn close_diagnosticless_buffers(
         &mut self,
         _window: &mut Window,
         cx: &mut Context<Self>,
         retain_selections: bool,
     ) {
-        let buffer_ids = self.multibuffer.read(cx).all_buffer_ids();
-        let selected_buffers = self.editor.update(cx, |editor, cx| {
+        let snapshot = self
+            .editor
+            .update(cx, |editor, cx| editor.display_snapshot(cx));
+        let buffer = self.multibuffer.read(cx);
+        let buffer_ids = buffer.all_buffer_ids();
+        let selected_buffers = self.editor.update(cx, |editor, _| {
             editor
                 .selections
-                .all_anchors(cx)
+                .all_anchors(&snapshot)
                 .iter()
                 .filter_map(|anchor| anchor.start.buffer_id)
                 .collect::<HashSet<_>>()
@@ -328,19 +321,19 @@ impl ProjectDiagnosticsEditor {
             if retain_selections && selected_buffers.contains(&buffer_id) {
                 continue;
             }
-            let has_blocks = self
+            let has_no_blocks = self
                 .blocks
                 .get(&buffer_id)
                 .is_none_or(|blocks| blocks.is_empty());
-            if !has_blocks {
+            if !has_no_blocks {
                 continue;
             }
             let is_dirty = self
                 .multibuffer
                 .read(cx)
                 .buffer(buffer_id)
-                .is_some_and(|buffer| buffer.read(cx).is_dirty());
-            if !is_dirty {
+                .is_none_or(|buffer| buffer.read(cx).is_dirty());
+            if is_dirty {
                 continue;
             }
             self.multibuffer.update(cx, |b, cx| {
@@ -349,17 +342,9 @@ impl ProjectDiagnosticsEditor {
         }
     }
 
-    fn update_stale_excerpts(
-        &mut self,
-        mut retain_excerpts: RetainExcerpts,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn update_stale_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.update_excerpts_task.is_some() {
             return;
-        }
-        if self.multibuffer.read(cx).is_dirty(cx) {
-            retain_excerpts = RetainExcerpts::Yes;
         }
 
         let project_handle = self.project.clone();
@@ -386,6 +371,13 @@ impl ProjectDiagnosticsEditor {
                     .log_err()
                 {
                     this.update_in(cx, |this, window, cx| {
+                        let focused = this.editor.focus_handle(cx).contains_focused(window, cx)
+                            || this.focus_handle.contains_focused(window, cx);
+                        let retain_excerpts = if focused {
+                            RetainExcerpts::All
+                        } else {
+                            RetainExcerpts::Dirty
+                        };
                         this.update_excerpts(buffer, retain_excerpts, window, cx)
                     })?
                     .await?;
@@ -441,7 +433,7 @@ impl ProjectDiagnosticsEditor {
         if self.update_excerpts_task.is_some() {
             self.update_excerpts_task = None;
         } else {
-            self.update_all_excerpts(window, cx);
+            self.refresh(window, cx);
         }
         cx.notify();
     }
@@ -459,31 +451,26 @@ impl ProjectDiagnosticsEditor {
         }
     }
 
-    /// Enqueue an update of all excerpts. Updates all paths that either
-    /// currently have diagnostics or are currently present in this view.
-    fn update_all_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Clears all diagnostics in this view, and refetches them from the project.
+    fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.diagnostics.clear();
+        self.editor.update(cx, |editor, cx| {
+            for (_, block_ids) in self.blocks.drain() {
+                editor.display_map.update(cx, |display_map, cx| {
+                    display_map.remove_blocks(block_ids.into_iter().collect(), cx)
+                });
+            }
+        });
+        self.multibuffer
+            .update(cx, |multibuffer, cx| multibuffer.clear(cx));
         self.project.update(cx, |project, cx| {
-            let mut project_paths = project
+            self.paths_to_update = project
                 .diagnostic_summaries(false, cx)
                 .map(|(project_path, _, _)| project_path)
                 .collect::<BTreeSet<_>>();
-
-            self.multibuffer.update(cx, |multibuffer, cx| {
-                for buffer in multibuffer.all_buffers() {
-                    if let Some(file) = buffer.read(cx).file() {
-                        project_paths.insert(ProjectPath {
-                            path: file.path().clone(),
-                            worktree_id: file.worktree_id(cx),
-                        });
-                    }
-                }
-                multibuffer.clear(cx);
-            });
-
-            self.paths_to_update = project_paths;
         });
 
-        self.update_stale_excerpts(RetainExcerpts::No, window, cx);
+        self.update_stale_excerpts(window, cx);
     }
 
     fn diagnostics_are_unchanged(
@@ -576,21 +563,24 @@ impl ProjectDiagnosticsEditor {
                 blocks.extend(more);
             }
 
-            let mut excerpt_ranges: Vec<ExcerptRange<Point>> = match retain_excerpts {
-                RetainExcerpts::No => Vec::new(),
-                RetainExcerpts::Yes => this.update(cx, |this, cx| {
-                    this.multibuffer.update(cx, |multi_buffer, cx| {
-                        multi_buffer
+            let mut excerpt_ranges: Vec<ExcerptRange<Point>> = this.update(cx, |this, cx| {
+                this.multibuffer.update(cx, |multi_buffer, cx| {
+                    let is_dirty = multi_buffer
+                        .buffer(buffer_id)
+                        .is_none_or(|buffer| buffer.read(cx).is_dirty());
+                    match retain_excerpts {
+                        RetainExcerpts::Dirty if !is_dirty => Vec::new(),
+                        RetainExcerpts::All | RetainExcerpts::Dirty => multi_buffer
                             .excerpts_for_buffer(buffer_id, cx)
                             .into_iter()
                             .map(|(_, range)| ExcerptRange {
                                 context: range.context.to_point(&buffer_snapshot),
                                 primary: range.primary.to_point(&buffer_snapshot),
                             })
-                            .collect()
-                    })
-                })?,
-            };
+                            .collect(),
+                    }
+                })
+            })?;
             let mut result_blocks = vec![None; excerpt_ranges.len()];
             let context_lines = cx.update(|_, cx| multibuffer_context_lines(cx))?;
             for b in blocks {
@@ -946,7 +936,7 @@ impl DiagnosticsToolbarEditor for WeakEntity<ProjectDiagnosticsEditor> {
 
     fn refresh_diagnostics(&self, window: &mut Window, cx: &mut App) {
         let _ = self.update(cx, |project_diagnostics_editor, cx| {
-            project_diagnostics_editor.update_all_excerpts(window, cx);
+            project_diagnostics_editor.refresh(window, cx);
         });
     }
 

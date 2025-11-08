@@ -929,6 +929,8 @@ List of `string` values
 - Setting: `cursors`
 - Default: `true`
 
+Cursor indicators appear as small marks on the scrollbar showing where other collaborators' cursors are positioned in the file.
+
 **Options**
 
 `boolean` values
@@ -938,6 +940,8 @@ List of `string` values
 - Description: Whether to show git diff indicators in the scrollbar.
 - Setting: `git_diff`
 - Default: `true`
+
+Git diff indicators appear as colored marks showing lines that have been added, modified, or deleted compared to the git HEAD.
 
 **Options**
 
@@ -949,6 +953,8 @@ List of `string` values
 - Setting: `search_results`
 - Default: `true`
 
+Search result indicators appear as marks showing all locations in the file where your current search query matches.
+
 **Options**
 
 `boolean` values
@@ -958,6 +964,8 @@ List of `string` values
 - Description: Whether to show selected text occurrences in the scrollbar.
 - Setting: `selected_text`
 - Default: `true`
+
+Selected text indicators appear as marks showing all occurrences of the currently selected text throughout the file.
 
 **Options**
 
@@ -969,6 +977,8 @@ List of `string` values
 - Setting: `selected_symbol`
 - Default: `true`
 
+Selected symbol indicators appear as marks showing all occurrences of the currently selected symbol (like a function or variable name) throughout the file.
+
 **Options**
 
 `boolean` values
@@ -978,6 +988,8 @@ List of `string` values
 - Description: Which diagnostic indicators to show in the scrollbar.
 - Setting: `diagnostics`
 - Default: `all`
+
+Diagnostic indicators appear as colored marks showing errors, warnings, and other language server diagnostics at their corresponding line positions in the file.
 
 **Options**
 

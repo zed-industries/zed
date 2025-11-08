@@ -1,6 +1,5 @@
 use std::any::Any;
 
-use ::settings::Settings;
 use command_palette_hooks::CommandPaletteFilter;
 use commit_modal::CommitModal;
 use editor::{Editor, actions::DiffClipboardWithSelectionData};
@@ -15,7 +14,6 @@ use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
-use git_panel_settings::GitPanelSettings;
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
     Window, actions,
@@ -57,8 +55,6 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    GitPanelSettings::register(cx);
-
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
     commit_view::init(cx);
 

@@ -1082,10 +1082,7 @@ mod tests {
     };
     use gpui::TestAppContext;
     use indoc::indoc;
-    use language::{
-        Buffer, Language, LanguageConfig, LanguageMatcher, Point, language_settings,
-        tree_sitter_rust,
-    };
+    use language::{Buffer, Language, LanguageConfig, LanguageMatcher, Point, tree_sitter_rust};
     use language_model::{LanguageModelRegistry, TokenUsage};
     use rand::prelude::*;
     use settings::SettingsStore;
@@ -1465,8 +1462,6 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) {
         cx.update(LanguageModelRegistry::test);
         cx.set_global(cx.update(SettingsStore::test));
-        cx.update(Project::init_settings);
-        cx.update(language_settings::init);
     }
 
     fn simulate_response_stream(

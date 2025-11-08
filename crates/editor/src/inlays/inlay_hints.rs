@@ -266,7 +266,7 @@ impl Editor {
         reason: InlayHintRefreshReason,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode.is_full() || self.inlay_hints.is_none() {
+        if self.ignore_lsp_data() || self.inlay_hints.is_none() {
             return;
         }
         let Some(semantics_provider) = self.semantics_provider() else {
@@ -3951,10 +3951,6 @@ let c = 3;"#
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(SemanticVersion::default(), cx);
-            client::init_settings(cx);
-            language::init(cx);
-            Project::init_settings(cx);
-            workspace::init_settings(cx);
             crate::init(cx);
         });
 

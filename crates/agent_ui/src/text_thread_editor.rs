@@ -3223,11 +3223,7 @@ mod tests {
         prompt_store::init(cx);
         LanguageModelRegistry::test(cx);
         cx.set_global(settings_store);
-        language::init(cx);
-        agent_settings::init(cx);
-        Project::init_settings(cx);
+
         theme::init(theme::LoadThemes::JustBase, cx);
-        workspace::init_settings(cx);
-        editor::init_settings(cx);
     }
 }

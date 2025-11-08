@@ -90,12 +90,7 @@ pub struct FileFinder {
     init_modifiers: Option<Modifiers>,
 }
 
-pub fn init_settings(cx: &mut App) {
-    FileFinderSettings::register(cx);
-}
-
 pub fn init(cx: &mut App) {
-    init_settings(cx);
     cx.observe_new(FileFinder::register).detach();
     cx.observe_new(OpenPathPrompt::register).detach();
     cx.observe_new(OpenPathPrompt::register_new_path).detach();

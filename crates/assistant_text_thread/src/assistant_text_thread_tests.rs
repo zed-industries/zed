@@ -22,7 +22,6 @@ use language_model::{
 };
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
-use project::Project;
 use prompt_store::PromptBuilder;
 use rand::prelude::*;
 use serde_json::json;
@@ -1411,9 +1410,6 @@ fn init_test(cx: &mut App) {
     prompt_store::init(cx);
     LanguageModelRegistry::test(cx);
     cx.set_global(settings_store);
-    language::init(cx);
-    agent_settings::init(cx);
-    Project::init_settings(cx);
 }
 
 #[derive(Clone)]
