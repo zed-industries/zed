@@ -309,7 +309,7 @@ impl ProjectPicker {
         let data = match &connection {
             RemoteConnectionOptions::Ssh(connection) => ProjectPickerData::Ssh {
                 connection_string: connection.connection_string().into(),
-                nickname: connection.nickname.clone().map(|nick| nick.into()),
+                nickname: connection.nickname.as_ref().map(|nick| nick.into()),
             },
             RemoteConnectionOptions::Wsl(connection) => ProjectPickerData::Wsl {
                 distro_name: connection.distro_name.clone().into(),
@@ -1178,7 +1178,7 @@ impl RemoteServerProjects {
                                     workspace.update(cx, |workspace, cx| {
                                         workspace.show_toast(Toast::new(
                                             NotificationId::composite::<Self>("invalid_port_format"),
-                                            format!("Invalid port format. Expected 'remote_port:local_port' with valid numbers."),
+                                            "Invalid port format. Expected 'remote_port:local_port' with valid numbers.".to_string(),
                                         ), cx);
                                         anyhow::Ok(())
                                     }).log_err();
@@ -1194,7 +1194,7 @@ impl RemoteServerProjects {
                             workspace.update(cx, |workspace, cx| {
                                 workspace.show_toast(Toast::new(
                                     NotificationId::composite::<Self>("invalid_port_forward_format"),
-                                    format!("Invalid port forward format. Expected 'remote_port:local_port'."),
+                                    "Invalid port forward format. Expected 'remote_port:local_port'.".to_string(),
                                 ), cx);
                                 anyhow::Ok(())
                             }).log_err();
@@ -1272,7 +1272,7 @@ impl RemoteServerProjects {
                                     workspace.update(cx, |workspace, cx| {
                                                     workspace.show_toast(Toast::new(
                                                         NotificationId::composite::<Self>("invalid_port_format"),
-                                                        format!("Invalid port format. Expected 'remote_port:local_port' with valid numbers."),
+                                                        "Invalid port format. Expected 'remote_port:local_port' with valid numbers.".to_string(),
                                                     ), cx);
                                                     anyhow::Ok(())
                                                 }).log_err();
@@ -1288,7 +1288,7 @@ impl RemoteServerProjects {
                             workspace.update(cx, |workspace, cx| {
                                             workspace.show_toast(Toast::new(
                                                 NotificationId::composite::<Self>("invalid_port_forward_format"),
-                                                format!("Invalid port forward format. Expected 'remote_port:local_port'."),
+                                                "Invalid port forward format. Expected 'remote_port:local_port'.".to_string(),
                                             ), cx);
                                             anyhow::Ok(())
                                         }).log_err();
@@ -1892,7 +1892,7 @@ impl RemoteServerProjects {
                     ViewServerOptionsState::Ssh { connection, .. } => SshConnectionHeader {
                         connection_string: connection.host.clone().into(),
                         paths: Default::default(),
-                        nickname: connection.nickname.clone().map(|s| s.into()),
+                        nickname: connection.nickname.as_ref().map(|s| s.into()),
                         is_wsl: false,
                     }
                     .render(window, cx)
@@ -2078,7 +2078,7 @@ impl RemoteServerProjects {
                             .child(Label::new(label))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.mode = Mode::EditNickname(EditNicknameState::new(
-                                    index.into(),
+                                    index,
                                     window,
                                     cx,
                                 ));
@@ -2442,9 +2442,9 @@ impl RemoteServerProjects {
                 .size_full()
                 .child(
                     SshConnectionHeader {
-                        connection_string: connection_string.clone(),
+                        connection_string: connection_string,
                         paths: Default::default(),
-                        nickname: connection.nickname.clone().map(|s| s.into()),
+                        nickname: connection.nickname.as_ref().map(|s| s.into()),
                         is_wsl: false,
                     }
                     .render(window, cx),
@@ -2600,20 +2600,21 @@ impl RemoteServerProjects {
                         })
                         .detach_and_log_err(cx);
                     }
-                    let port_forward_display = port_forward_display.clone();
+                    let pf_arc = Arc::new(port_forward_display);
+                    let pf_for_action = pf_arc.clone();
+
                     v_flex()
                         .child(
                             div()
                                 .id("options-remove-port-forward")
                                 .track_focus(&state.entries[0].focus_handle)
                                 .on_action(cx.listener({
-                                    let port_forward_display = port_forward_display.clone();
                                     move |_, _: &menu::Confirm, window, cx| {
                                         remove_port_forward(
                                             cx.entity(),
                                             index,
                                             port_index,
-                                            port_forward_display.clone(),
+                                            pf_for_action.as_str().to_string(),
                                             window,
                                             cx,
                                         );
@@ -2632,13 +2633,12 @@ impl RemoteServerProjects {
                                         .start_slot(Icon::new(IconName::Trash).color(Color::Error))
                                         .child(Label::new("Remove Forward").color(Color::Error))
                                         .on_click(cx.listener({
-                                            let port_forward_display = port_forward_display.clone();
                                             move |_, _, window, cx| {
                                                 remove_port_forward(
                                                     cx.entity(),
                                                     index,
                                                     port_index,
-                                                    port_forward_display.clone(),
+                                                    pf_arc.as_str().to_string(),
                                                     window,
                                                     cx,
                                                 );
