@@ -16,8 +16,9 @@ impl Editor {
             self.fetched_tree_sitter_chunks.clear();
         }
 
+        let accents_count = cx.theme().accents().0.len();
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        let bracket_matches = self.visible_excerpts(cx).into_iter().fold(
+        let bracket_matches_by_accent = self.visible_excerpts(cx).into_iter().fold(
             HashMap::default(),
             |mut acc, (excerpt_id, (buffer, buffer_version, buffer_range))| {
                 let buffer_snapshot = buffer.read(cx).snapshot();
@@ -33,7 +34,7 @@ impl Editor {
                         .entry(excerpt_id)
                         .or_default();
 
-                    for (depth, open_range, close_range) in buffer_snapshot
+                    let brackets_by_accent = buffer_snapshot
                         .fetch_bracket_ranges(
                             buffer_range.start..buffer_range.end,
                             Some((&buffer_version, fetched_chunks)),
@@ -61,14 +62,18 @@ impl Editor {
                                 .anchor_in_excerpt(excerpt_id, buffer_close_range.start)?
                                 ..multi_buffer_snapshot
                                     .anchor_in_excerpt(excerpt_id, buffer_close_range.end)?;
+
+                            let accent_number = pair.id % accents_count;
+
                             Some((
-                                pair.depth,
+                                accent_number,
                                 multi_buffer_open_range,
                                 multi_buffer_close_range,
                             ))
-                        })
-                    {
-                        let ranges = acc.entry(depth).or_insert_with(Vec::new);
+                        });
+
+                    for (accent_number, open_range, close_range) in brackets_by_accent {
+                        let ranges = acc.entry(accent_number).or_insert_with(Vec::new);
                         ranges.push(open_range);
                         ranges.push(close_range);
                     }
@@ -83,8 +88,8 @@ impl Editor {
         }
 
         let editor_background = cx.theme().colors().editor_background;
-        for (depth, bracket_highlights) in bracket_matches {
-            let bracket_color = cx.theme().accents().color_for_index(depth as u32);
+        for (accent_number, bracket_highlights) in bracket_matches_by_accent {
+            let bracket_color = cx.theme().accents().color_for_index(accent_number as u32);
             let adjusted_color = ensure_minimum_contrast(bracket_color, editor_background, 55.0);
             let style = HighlightStyle {
                 color: Some(adjusted_color),
@@ -92,7 +97,7 @@ impl Editor {
             };
 
             self.highlight_text_key::<RainbowBracketHighlight>(
-                depth,
+                accent_number,
                 bracket_highlights,
                 style,
                 true,

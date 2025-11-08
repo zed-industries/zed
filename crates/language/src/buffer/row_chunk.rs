@@ -97,6 +97,14 @@ impl RowChunks {
         };
         Some(self.snapshot.anchor_before(start)..self.snapshot.anchor_after(end))
     }
+
+    pub fn previous_chunk(&self, chunk: RowChunk) -> Option<RowChunk> {
+        if chunk.id == 0 {
+            None
+        } else {
+            self.chunks.get(chunk.id - 1).copied()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -67,7 +67,7 @@ pub use text::{
 use theme::{ActiveTheme as _, SyntaxTheme};
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
-use util::{RangeExt, debug_panic, maybe, paths::PathStyle, rel_path::RelPath};
+use util::{RangeExt, debug_panic, maybe, paths::PathStyle, post_inc, rel_path::RelPath};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_python, tree_sitter_rust, tree_sitter_typescript};
@@ -850,7 +850,7 @@ pub struct BracketMatch {
     pub open_range: Range<usize>,
     pub close_range: Range<usize>,
     pub newline_only: bool,
-    pub depth: usize,
+    pub id: usize,
 }
 
 impl BracketMatch {
@@ -4191,6 +4191,23 @@ impl BufferSnapshot {
             let bracket_matches = match tree_sitter_data.brackets_by_chunks[chunk.id].take() {
                 Some(cached_brackets) => cached_brackets,
                 None => {
+                    // Sequential IDs are needed to determine the color of the bracket pair.
+                    let mut next_id = match tree_sitter_data.chunks.previous_chunk(chunk) {
+                        Some(previous_chunk) => tree_sitter_data.brackets_by_chunks
+                            [previous_chunk.id]
+                            .as_ref()
+                            .and_then(|previous_brackets| previous_brackets.last())
+                            // Try to continue previous sequence of IDs.
+                            .map(|bracket| bracket.id + 1)
+                            // If not possible, start another sequence: pick it far enough to avoid overlaps.
+                            //
+                            // This for sure will introduce the gaps between chunks' bracket IDs,
+                            // but this will only potentially skip `mod(accents_number)` colors between chunks.
+                            .unwrap_or_else(|| {
+                                (usize::MAX / tree_sitter_data.chunks.len()) * chunk.id + 1
+                            }),
+                        None => 0,
+                    };
                     let mut matches =
                         self.syntax
                             .matches(chunk_range.clone(), &self.text, |grammar| {
@@ -4202,9 +4219,6 @@ impl BufferSnapshot {
                         .map(|grammar| grammar.brackets_config.as_ref().unwrap())
                         .collect::<Vec<_>>();
 
-                    // todo! this seems like a wrong parameter: add bracket_id that will be used for each bracket
-                    // this will require changing `depth` treatment during style application, we'll need to group brackets by their hsla
-                    let mut depth = 0;
                     let chunk_range = chunk_range.clone();
                     let new_matches = iter::from_fn(move || {
                         while let Some(mat) = matches.peek() {
@@ -4231,13 +4245,11 @@ impl BufferSnapshot {
                                 continue;
                             }
 
-                            depth += 1;
-
                             return Some(BracketMatch {
                                 open_range,
                                 close_range,
                                 newline_only: pattern.newline_only,
-                                depth,
+                                id: post_inc(&mut next_id),
                             });
                         }
                         None
