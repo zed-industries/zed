@@ -203,7 +203,7 @@ You might want to nest rules to:
 - Break collections like docs or references into smaller, mix-and-matchable parts
 - Create variants of a similar rule (e.g., `Async Rust - Tokio` vs. `Async Rust - Async-std`)
 
-### Example:
+### Example
 
 ```plaintext
 Title: Zed-Flavored Rust
@@ -232,6 +232,17 @@ By using nested rules, you can create modular and reusable rule components that 
 Additional slash commands can be provided by extensions.
 
 See [Extension: Slash Commands](../extensions/slash-commands.md) to learn how to create your own.
+
+## Text Threads vs. Threads
+
+For a while, text threads were the only way to interact with AI in Zed.
+We have since introduced, back in May 2025, a new take on the agent panel, which as opposed to being editor-driven, it optimizes for readability.
+You can read more about it in [the Agent Panel page](./agent-panel.md).
+
+However, aside from many interaction differences, the major difference between one vs. the other is that tool calls don't work in Text Threads.
+So, it's accurate to say that Text Threads aren't necessarily "agentic", as they can't perform any action on your behalf.
+Think of it more like a regular and "traditional" AI chat, where what you'll get out of the model is simply just text.
+Consequently, [external agents](./external-agents.md) are also not available in Text Threads.
 
 ## Advanced Concepts
 
