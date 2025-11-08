@@ -7,14 +7,17 @@ use cloud_llm_client::CompletionIntent;
 use collections::HashMap;
 use copilot::copilot_chat::{
     ChatMessage, ChatMessageContent, ChatMessagePart, CopilotChat, ImageUrl,
-    Model as CopilotChatModel, ModelVendor, Request as CopilotChatRequest, ResponseEvent, Tool,
-    ToolCall,
+    Model as CopilotChatModel, ModelVendor, QuotaSnapshots, Request as CopilotChatRequest,
+    ResponseEvent, Tool, ToolCall,
 };
 use copilot::{Copilot, Status};
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, Stream, StreamExt};
-use gpui::{Action, AnyView, App, AsyncApp, Entity, Render, Subscription, Task, svg};
+use gpui::{
+    Action, AnyView, App, AsyncApp, ElementId, Entity, Render, SharedString, Subscription, Task,
+    svg,
+};
 use http_client::StatusCode;
 use language::language_settings::all_language_settings;
 use language_model::{
@@ -26,7 +29,7 @@ use language_model::{
     StopReason, TokenUsage,
 };
 use settings::SettingsStore;
-use ui::{CommonAnimationExt, prelude::*};
+use ui::{CommonAnimationExt, Divider, ProgressBar, prelude::*};
 use util::debug_panic;
 
 use crate::ui::ConfiguredApiCard;
@@ -1476,6 +1479,7 @@ mod tests {
 }
 struct ConfigurationView {
     copilot_status: Option<copilot::Status>,
+    usage: Option<QuotaSnapshots>,
     state: Entity<State>,
     _subscription: Option<Subscription>,
 }
@@ -1484,26 +1488,145 @@ impl ConfigurationView {
     pub fn new(state: Entity<State>, cx: &mut Context<Self>) -> Self {
         let copilot = Copilot::global(cx);
 
+        if let Some(copilot) = copilot.as_ref() {
+            copilot.update(cx, |copilot, cx| {
+                copilot.update_usage(cx);
+            });
+        }
+
+        let usage = copilot
+            .as_ref()
+            .and_then(|copilot| copilot.read(cx).usage(cx));
+
         Self {
             copilot_status: copilot.as_ref().map(|copilot| copilot.read(cx).status()),
+            usage,
             state,
             _subscription: copilot.as_ref().map(|copilot| {
                 cx.observe(copilot, |this, model, cx| {
                     this.copilot_status = Some(model.read(cx).status());
+                    this.usage = model.read(cx).usage(cx);
                     cx.notify();
                 })
             }),
         }
+    }
+
+    fn build_usage_bar(
+        label: impl Into<SharedString>,
+        id: impl Into<ElementId>,
+        used: u32,
+        total: u32,
+        unlimited: bool,
+        cx: &App,
+    ) -> impl IntoElement {
+        let label: SharedString = label.into();
+        let id: ElementId = id.into();
+
+        let used_percentage = if unlimited {
+            0.0
+        } else if total > 0 {
+            (used as f32 / total as f32) * 100.
+        } else {
+            0.0
+        };
+
+        v_flex()
+            .w_full()
+            .gap_1()
+            .child(Label::new(label).size(LabelSize::Small))
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_1p5()
+                    .child(
+                        div().flex_1().child(
+                            ProgressBar::new(id, used_percentage, 100., cx)
+                                .bg_color(Color::Disabled.color(cx)),
+                        ),
+                    )
+                    .child(
+                        Label::new(if unlimited {
+                            "∞".to_string()
+                        } else {
+                            format!("{:.0}%", used_percentage)
+                        })
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                    ),
+            )
     }
 }
 
 impl Render for ConfigurationView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.state.read(cx).is_authenticated(cx) {
-            ConfiguredApiCard::new("Authorized")
-                .button_label("Sign Out")
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(copilot::SignOut.boxed_clone(), cx);
+            div()
+                .child(
+                    ConfiguredApiCard::new("Authorized")
+                        .button_label("Sign Out")
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(copilot::SignOut.boxed_clone(), cx);
+                        })
+                        .into_any_element(),
+                )
+                .when_some(self.usage.clone(), |this, usage| {
+                    let chat_used = usage.chat.entitlement.saturating_sub(usage.chat.remaining);
+                    let completions_used = usage
+                        .completions
+                        .entitlement
+                        .saturating_sub(usage.completions.remaining);
+                    let premium_used = usage
+                        .premium_interactions
+                        .entitlement
+                        .saturating_sub(usage.premium_interactions.remaining);
+
+                    let has_overage = (usage.completions.overage_count > 0
+                        && !usage.completions.overage_permitted)
+                        || (usage.chat.overage_count > 0 && !usage.chat.overage_permitted)
+                        || (usage.premium_interactions.overage_count > 0
+                            && !usage.premium_interactions.overage_permitted);
+
+                    this.child(Divider::horizontal()).child(
+                        v_flex()
+                            .gap_2()
+                            .child(
+                                Label::new("Usage")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(Self::build_usage_bar(
+                                "Completions",
+                                "copilot-chat-usage-completions",
+                                completions_used,
+                                usage.completions.entitlement,
+                                usage.completions.unlimited,
+                                cx,
+                            ))
+                            .child(Self::build_usage_bar(
+                                "Chat",
+                                "copilot-chat-usage-chat",
+                                chat_used,
+                                usage.chat.entitlement,
+                                usage.chat.unlimited,
+                                cx,
+                            ))
+                            .child(Self::build_usage_bar(
+                                "Premium Interactions",
+                                "copilot-chat-usage-premium",
+                                premium_used,
+                                usage.premium_interactions.entitlement,
+                                usage.premium_interactions.unlimited,
+                                cx,
+                            ))
+                            .when(has_overage, |this| {
+                                this.child(
+                                    Label::new("Usage limit exceeded")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Error),
+                                )
+                            }),
+                    )
                 })
                 .into_any_element()
         } else {
