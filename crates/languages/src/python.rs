@@ -35,10 +35,10 @@ use parking_lot::Mutex;
 use std::str::FromStr;
 use std::{
     borrow::Cow,
+    ffi::OsString,
     fmt::Write,
     path::{Path, PathBuf},
     sync::Arc,
-    ffi::OsString,
 };
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
@@ -601,7 +601,6 @@ impl PyreflyLspAdapter {
             .await
             .clone()
     }
-
 }
 
 #[async_trait(?Send)]
@@ -629,7 +628,8 @@ impl LspAdapter for PyreflyLspAdapter {
                 let object = user_settings.as_object_mut().unwrap();
 
                 let interpreter_path = toolchain.path.to_string();
-                object.entry("python-interpreter-path".to_string())
+                object
+                    .entry("python-interpreter-path".to_string())
                     .or_insert_with(|| Value::String(interpreter_path));
             }
 
@@ -660,9 +660,7 @@ impl LspInstaller for PyreflyLspAdapter {
         }
 
         if let Some(toolchain) = toolchain {
-            let pyrefly_path = Path::new(toolchain.path.as_ref())
-                .parent()?
-                .join("pyrefly");
+            let pyrefly_path = Path::new(toolchain.path.as_ref()).parent()?.join("pyrefly");
             if pyrefly_path.exists() {
                 return Some(LanguageServerBinary {
                     path: pyrefly_path,
