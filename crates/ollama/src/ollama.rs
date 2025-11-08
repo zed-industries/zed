@@ -2,8 +2,9 @@ use anyhow::{Context as _, Result};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Number, Value};
 pub use settings::KeepAlive;
+use log::info;
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
 
@@ -103,12 +104,14 @@ pub enum ChatMessage {
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
-pub enum OllamaToolCall {
-    Function(OllamaFunctionCall),
+pub struct OllamaToolCall {
+    pub function: OllamaFunctionCall,
+    pub id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct OllamaFunctionCall {
+    pub index: Option<Number>,
     pub name: String,
     pub arguments: Value,
 }
@@ -281,24 +284,37 @@ pub async fn stream_chat_completion(
     request: ChatRequest,
 ) -> Result<BoxStream<'static, Result<ChatResponseDelta>>> {
     let uri = format!("{api_url}/api/chat");
+    info!("Chat request: {:?}", serde_json::to_string(&request).unwrap());
     let request = HttpRequest::builder()
         .method(Method::POST)
-        .uri(uri)
+        .uri(&uri)
         .header("Content-Type", "application/json")
         .when_some(api_key, |builder, api_key| {
             builder.header("Authorization", format!("Bearer {api_key}"))
         })
         .body(AsyncBody::from(serde_json::to_string(&request)?))?;
-
+    info!("Sending request to Ollama: {}", uri);
     let mut response = client.send(request).await?;
+    info!("Received response from Ollama: status = {}", response.status());
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
 
         Ok(reader
             .lines()
-            .map(|line| match line {
-                Ok(line) => serde_json::from_str(&line).context("Unable to parse chat response"),
-                Err(e) => Err(e.into()),
+            .map(|line| {
+                match line {
+                    Ok(line) => {
+                        log::info!("Received line from Ollama: {}", line);
+                        match serde_json::from_str::<ChatResponseDelta>(&line) {
+                            Ok(parsed) => Ok(parsed), // Successfully parsed
+                            Err(parse_error) => {
+                                log::error!("Unable to parse chat response: {:?}", parse_error);
+                                Err(parse_error.into()) // Handle parsing error
+                            }
+                        }
+                    }
+                    Err(e) => Err(e.into()),
+                }
             })
             .boxed())
     } else {

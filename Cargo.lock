@@ -10892,6 +10892,7 @@ dependencies = [
  "anyhow",
  "futures 0.3.31",
  "http_client",
+ "log",
  "schemars 1.0.4",
  "serde",
  "serde_json",
