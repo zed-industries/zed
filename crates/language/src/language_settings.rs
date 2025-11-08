@@ -529,7 +529,7 @@ impl settings::Settings for AllLanguageSettings {
                 tab_size: settings.tab_size.unwrap(),
                 hard_tabs: settings.hard_tabs.unwrap(),
                 soft_wrap: settings.soft_wrap.unwrap(),
-                syntax_highlight: settings.highlight_syntax.unwrap_or(true),
+                syntax_highlight: settings.highlight_syntax.unwrap(),
                 preferred_line_length: settings.preferred_line_length.unwrap(),
                 show_wrap_guides: settings.show_wrap_guides.unwrap(),
                 wrap_guides: settings.wrap_guides.unwrap(),

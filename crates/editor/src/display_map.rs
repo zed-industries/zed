@@ -979,14 +979,14 @@ impl DisplaySnapshot {
             },
         )
         .flat_map(|chunk| {
-            let highlight_style;
-            if !self.syntax_highlight {
-                highlight_style = None;
-            } else {
-                highlight_style = chunk
+            let highlight_style = if self.syntax_highlight {
+                chunk
                     .syntax_highlight_id
-                    .and_then(|id| id.style(&editor_style.syntax));
-            }
+                    .and_then(|id| id.style(&editor_style.syntax))
+            } else {
+                None
+            };
+            
             let chunk_highlight = chunk.highlight_style.map(|chunk_highlight| {
                 HighlightStyle {
                     // For color inlays, blend the color with the editor background

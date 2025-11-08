@@ -223,14 +223,14 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: none
     pub soft_wrap: Option<SoftWrap>,
-    /// The column at which to soft-wrap lines, for buffers where soft-wrap
-    /// is enabled.
-    ///
-    /// Default: 80
     /// Whether to include syntax highlighting in the editor.
     ///
     /// Default: true
     pub highlight_syntax: Option<bool>,
+    /// The column at which to soft-wrap lines, for buffers where soft-wrap
+    /// is enabled.
+    ///
+    /// Default: 80
     pub preferred_line_length: Option<u32>,
     /// Whether to show wrap guides in the editor. Setting this to true will
     /// show a guide at the 'preferred_line_length' value if softwrap is set to

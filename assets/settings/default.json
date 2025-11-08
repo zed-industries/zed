@@ -1167,7 +1167,7 @@
   // How many columns a tab should occupy.
   "tab_size": 4,
   // Whether syntax should be highlighted or not.
-  "highlight_syntax": false,
+  "highlight_syntax": true,
   // What debuggers are preferred by default for all languages.
   "debuggers": [],
   // Control what info is collected by Zed.

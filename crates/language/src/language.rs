@@ -764,6 +764,7 @@ pub struct LanguageConfig {
     /// How to soft-wrap long lines of text.
     #[serde(default)]
     pub soft_wrap: Option<SoftWrap>,
+    // Whether to highlight the syntax or not.
     #[serde(default)]
     pub syntax_highlight: Option<bool>,
     /// When set, selections can be wrapped using prefix/suffix pairs on both sides.

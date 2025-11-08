@@ -5979,7 +5979,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
             files: USER | PROJECT,
         }),
-        SettingsPageItem::SectionHeader("A"),
+        SettingsPageItem::SectionHeader("Appearance"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Syntax Highlighting",
             description: "Whether syntax should be highlighted or not.",
