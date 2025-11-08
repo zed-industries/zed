@@ -38,6 +38,10 @@ pub enum MentionUri {
         id: PromptId,
         name: String,
     },
+    Diagnostics {
+        #[serde(default)]
+        include_warnings: bool,
+    },
     Selection {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         abs_path: Option<PathBuf>,
@@ -124,6 +128,13 @@ impl MentionUri {
                         id: rule_id.into(),
                         name,
                     })
+                } else if path == "/agent/diagnostics" {
+                    let include_warnings = url
+                        .query_pairs()
+                        .find(|(key, _)| key == "include_warnings")
+                        .map(|(_, value)| value == "true")
+                        .unwrap_or(false);
+                    Ok(Self::Diagnostics { include_warnings })
                 } else if path.starts_with("/agent/pasted-image") {
                     Ok(Self::PastedImage)
                 } else if path.starts_with("/agent/untitled-buffer") {
@@ -189,6 +200,7 @@ impl MentionUri {
             MentionUri::Thread { name, .. } => name.clone(),
             MentionUri::TextThread { name, .. } => name.clone(),
             MentionUri::Rule { name, .. } => name.clone(),
+            MentionUri::Diagnostics { .. } => "Diagnostics".to_string(),
             MentionUri::Selection {
                 abs_path: path,
                 line_range,
@@ -210,6 +222,7 @@ impl MentionUri {
             MentionUri::Thread { .. } => IconName::Thread.path().into(),
             MentionUri::TextThread { .. } => IconName::Thread.path().into(),
             MentionUri::Rule { .. } => IconName::Reader.path().into(),
+            MentionUri::Diagnostics { .. } => IconName::Warning.path().into(),
             MentionUri::Selection { .. } => IconName::Reader.path().into(),
             MentionUri::Fetch { .. } => IconName::ToolWeb.path().into(),
         }
@@ -286,6 +299,15 @@ impl MentionUri {
                 let mut url = Url::parse("zed:///").unwrap();
                 url.set_path(&format!("/agent/rule/{id}"));
                 url.query_pairs_mut().append_pair("name", name);
+                url
+            }
+            MentionUri::Diagnostics { include_warnings } => {
+                let mut url = Url::parse("zed:///").unwrap();
+                url.set_path("/agent/diagnostics");
+                if *include_warnings {
+                    url.query_pairs_mut()
+                        .append_pair("include_warnings", "true");
+                }
                 url
             }
             MentionUri::Fetch { url } => url.clone(),
@@ -478,6 +500,19 @@ mod tests {
             _ => panic!("Expected Fetch variant"),
         }
         assert_eq!(parsed.to_uri().to_string(), https_uri);
+    }
+
+    #[test]
+    fn test_parse_diagnostics_uri() {
+        let uri = "zed:///agent/diagnostics?include_warnings=true";
+        let parsed = MentionUri::parse(uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Diagnostics { include_warnings } => {
+                assert!(include_warnings);
+            }
+            _ => panic!("Expected Diagnostics variant"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), uri);
     }
 
     #[test]

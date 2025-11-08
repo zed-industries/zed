@@ -102,6 +102,9 @@ impl ContextPickerCompletionProvider {
         cx: &mut App,
     ) -> Option<Completion> {
         match entry {
+            ContextPickerEntry::Mode(ContextPickerMode::Diagnostics) => {
+                Self::completion_for_diagnostics(source_range, message_editor, cx)
+            }
             ContextPickerEntry::Mode(mode) => Some(Completion {
                 replace_range: source_range,
                 new_text: format!("@{} ", mode.keyword()),
@@ -392,6 +395,35 @@ impl ContextPickerCompletionProvider {
         })
     }
 
+    fn completion_for_diagnostics(
+        source_range: Range<Anchor>,
+        message_editor: WeakEntity<MessageEditor>,
+        cx: &mut App,
+    ) -> Option<Completion> {
+        let uri = MentionUri::Diagnostics {
+            include_warnings: false,
+        };
+        let new_text = format!("{} ", uri.as_link());
+        let new_text_len = new_text.len();
+        let icon_path = uri.icon_path(cx);
+        Some(Completion {
+            replace_range: source_range.clone(),
+            new_text,
+            label: CodeLabel::plain("Diagnostics".to_string(), None),
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            icon_path: Some(icon_path),
+            insert_text_mode: None,
+            confirm: Some(confirm_completion_callback(
+                "Diagnostics".into(),
+                source_range.start,
+                new_text_len - 1,
+                message_editor,
+                uri,
+            )),
+        })
+    }
+
     fn search_slash_commands(
         &self,
         query: String,
@@ -495,6 +527,8 @@ impl ContextPickerCompletionProvider {
                     Task::ready(Vec::new())
                 }
             }
+
+            Some(ContextPickerMode::Diagnostics) => Task::ready(Vec::new()),
 
             None if query.is_empty() => {
                 let mut matches = self.recent_context_picker_entries(&workspace, cx);
@@ -678,6 +712,7 @@ impl ContextPickerCompletionProvider {
             }
 
             entries.push(ContextPickerEntry::Mode(ContextPickerMode::Fetch));
+            entries.push(ContextPickerEntry::Mode(ContextPickerMode::Diagnostics));
         }
 
         entries
@@ -816,6 +851,22 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                 })
             }
             ContextCompletion::Mention(MentionCompletion { mode, argument, .. }) => {
+                if let Some(ContextPickerMode::Diagnostics) = mode {
+                    if argument.is_some() {
+                        return Task::ready(Ok(Vec::new()));
+                    }
+
+                    if let Some(completion) =
+                        Self::completion_for_diagnostics(source_range.clone(), editor.clone(), cx)
+                    {
+                        return Task::ready(Ok(vec![CompletionResponse {
+                            completions: vec![completion],
+                            display_options: CompletionDisplayOptions::default(),
+                            is_incomplete: false,
+                        }]));
+                    }
+                }
+
                 let query = argument.unwrap_or_default();
                 let search_task =
                     self.search_mentions(mode, query, Arc::<AtomicBool>::default(), cx);
@@ -1313,6 +1364,15 @@ mod tests {
                 source_range: 6..18,
                 mode: Some(ContextPickerMode::Symbol),
                 argument: Some("main".to_string()),
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(true, "Lorem @diagnostics", 0),
+            Some(MentionCompletion {
+                source_range: 6..19,
+                mode: Some(ContextPickerMode::Diagnostics),
+                argument: None,
             })
         );
 

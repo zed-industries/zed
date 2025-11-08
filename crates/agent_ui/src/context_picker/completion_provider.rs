@@ -145,6 +145,10 @@ fn search(
             }
         }
 
+        Some(ContextPickerMode::Diagnostics) => {
+            Task::ready(Vec::new())
+        }
+
         None => {
             if query.is_empty() {
                 let mut matches = recent_entries

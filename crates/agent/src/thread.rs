@@ -190,6 +190,7 @@ impl UserMessage {
         const OPEN_FETCH_TAG: &str = "<fetched_urls>";
         const OPEN_RULES_TAG: &str =
             "<rules>\nThe user has specified the following rules that should be applied:\n";
+        const OPEN_DIAGNOSTICS_TAG: &str = "<diagnostics>";
 
         let mut file_context = OPEN_FILES_TAG.to_string();
         let mut directory_context = OPEN_DIRECTORIES_TAG.to_string();
@@ -198,6 +199,7 @@ impl UserMessage {
         let mut thread_context = OPEN_THREADS_TAG.to_string();
         let mut fetch_context = OPEN_FETCH_TAG.to_string();
         let mut rules_context = OPEN_RULES_TAG.to_string();
+        let mut diagnostics_context = OPEN_DIAGNOSTICS_TAG.to_string();
 
         for chunk in &self.content {
             let chunk = match chunk {
@@ -279,6 +281,9 @@ impl UserMessage {
                         MentionUri::Fetch { url } => {
                             write!(&mut fetch_context, "\nFetch: {}\n\n{}", url, content).ok();
                         }
+                        MentionUri::Diagnostics { .. } => {
+                            write!(&mut diagnostics_context, "\n{}\n", content).ok();
+                        }
                     }
 
                     language_model::MessageContent::Text(uri.as_link().to_string())
@@ -337,6 +342,13 @@ impl UserMessage {
             message
                 .content
                 .push(language_model::MessageContent::Text(rules_context));
+        }
+
+        if diagnostics_context.len() > OPEN_DIAGNOSTICS_TAG.len() {
+            diagnostics_context.push_str("</diagnostics>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(diagnostics_context));
         }
 
         if message.content.len() > len_before_context {

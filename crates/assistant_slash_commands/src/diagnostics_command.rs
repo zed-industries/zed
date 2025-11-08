@@ -228,6 +228,21 @@ impl Options {
     }
 }
 
+pub fn collect_default_diagnostics_output(
+    project: Entity<Project>,
+    include_warnings: bool,
+    cx: &mut App,
+) -> Task<Result<Option<SlashCommandOutput>>> {
+    collect_diagnostics(
+        project,
+        Options {
+            include_warnings,
+            path_matcher: None,
+        },
+        cx,
+    )
+}
+
 fn collect_diagnostics(
     project: Entity<Project>,
     options: Options,
