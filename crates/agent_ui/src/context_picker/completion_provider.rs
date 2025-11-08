@@ -1326,7 +1326,8 @@ mod tests {
                     format!("four.txt a{slash}"),
                     "Files & Directories".into(),
                     "Symbols".into(),
-                    "Fetch".into()
+                    "Fetch".into(),
+                    "Diagnostics".into()
                 ]
             );
         });

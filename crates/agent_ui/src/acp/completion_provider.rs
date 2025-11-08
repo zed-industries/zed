@@ -1370,7 +1370,7 @@ mod tests {
         assert_eq!(
             MentionCompletion::try_parse(true, "Lorem @diagnostics", 0),
             Some(MentionCompletion {
-                source_range: 6..19,
+                source_range: 6..18,
                 mode: Some(ContextPickerMode::Diagnostics),
                 argument: None,
             })
