@@ -55,8 +55,8 @@ use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Corner, DismissEvent, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels, ScrollHandle, Subscription, Task,
-    UpdateGlobal, WeakEntity, prelude::*,
+    ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels, ScrollHandle, SharedString,
+    Subscription, Task, UpdateGlobal, WeakEntity, prelude::*,
 };
 use language::LanguageRegistry;
 use language_model::{ConfigurationError, LanguageModelRegistry};
@@ -252,6 +252,11 @@ impl AgentPanelTab {
     fn agent(&self) -> &AgentType {
         &self.agent
     }
+}
+
+struct TabLabelRender {
+    element: AnyElement,
+    tooltip: Option<SharedString>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -1650,6 +1655,22 @@ impl AgentPanel {
             log::info!("View id is not valid.");
         }
     }
+
+    fn display_tab_label(
+        title: impl Into<SharedString>,
+        is_active: bool,
+    ) -> (SharedString, Option<SharedString>) {
+        const MAX_CHARS: usize = 20;
+
+        let title: SharedString = title.into();
+
+        if is_active || title.chars().count() <= MAX_CHARS {
+            (title, None)
+        } else {
+            let preview: String = title.chars().take(MAX_CHARS).collect();
+            (format!("{preview}...").into(), Some(title))
+        }
+    }
 }
 
 impl Focusable for AgentPanel {
@@ -1759,7 +1780,12 @@ impl Panel for AgentPanel {
 }
 
 impl AgentPanel {
-    fn render_tab_label(&self, view: &ActiveView, cx: &mut Context<Self>) -> AnyElement {
+    fn render_tab_label(
+        &self,
+        view: &ActiveView,
+        is_active: bool,
+        cx: &mut Context<Self>,
+    ) -> TabLabelRender {
         const LOADING_SUMMARY_PLACEHOLDER: &str = "Loading Summary…";
 
         match view {
@@ -1770,12 +1796,17 @@ impl AgentPanel {
                     .as_ref()
                     .map(|editor| editor.read(cx).text(cx))
                     .filter(|text| !text.is_empty())
-                    .unwrap_or_else(|| thread_view.read(cx).title(cx).to_string());
+                    .unwrap_or_else(|| thread_view.read(cx).title(cx).to_string().into());
 
-                Label::new(text)
-                    .color(Color::Muted)
-                    .truncate()
-                    .into_any_element()
+                let (label_text, tooltip) = Self::display_tab_label(text, is_active);
+
+                TabLabelRender {
+                    element: Label::new(label_text)
+                        .color(Color::Muted)
+                        .truncate()
+                        .into_any_element(),
+                    tooltip,
+                }
             }
             ActiveView::TextThread {
                 title_editor,
@@ -1785,35 +1816,57 @@ impl AgentPanel {
                 let summary = text_thread_editor.read(cx).text_thread().read(cx).summary();
 
                 match summary {
-                    TextThreadSummary::Pending => Label::new(TextThreadSummary::DEFAULT)
-                        .color(Color::Muted)
-                        .truncate()
-                        .into_any_element(),
+                    TextThreadSummary::Pending => TabLabelRender {
+                        element: Label::new(TextThreadSummary::DEFAULT)
+                            .color(Color::Muted)
+                            .truncate()
+                            .into_any_element(),
+                        tooltip: None,
+                    },
                     TextThreadSummary::Content(summary) => {
                         if summary.done {
                             let mut text = title_editor.read(cx).text(cx);
                             if text.is_empty() {
-                                text = summary.text.clone();
+                                text = summary.text.clone().into();
                             }
-                            Label::new(text).truncate().into_any_element()
+                            let (label_text, tooltip) = Self::display_tab_label(text, is_active);
+
+                            TabLabelRender {
+                                element: Label::new(label_text).truncate().into_any_element(),
+                                tooltip,
+                            }
                         } else {
-                            Label::new(LOADING_SUMMARY_PLACEHOLDER)
-                                .truncate()
-                                .color(Color::Muted)
-                                .into_any_element()
+                            TabLabelRender {
+                                element: Label::new(LOADING_SUMMARY_PLACEHOLDER)
+                                    .truncate()
+                                    .color(Color::Muted)
+                                    .into_any_element(),
+                                tooltip: None,
+                            }
                         }
                     }
                     TextThreadSummary::Error => {
                         let text = title_editor.read(cx).text(cx);
-                        Label::new(text)
-                            .color(Color::Muted)
-                            .truncate()
-                            .into_any_element()
+                        let (label_text, tooltip) = Self::display_tab_label(text, is_active);
+
+                        TabLabelRender {
+                            element: Label::new(label_text)
+                                .color(Color::Muted)
+                                .truncate()
+                                .into_any_element(),
+                            tooltip,
+                        }
                     }
                 }
             }
-            ActiveView::History => Label::new("History").truncate().into_any_element(),
-            ActiveView::Configuration => Label::new("Settings").truncate().into_any_element(),
+            ActiveView::History => TabLabelRender {
+                element: Label::new("History").truncate().into_any_element(),
+                tooltip: None,
+            },
+            ActiveView::Configuration => TabLabelRender {
+                element: Label::new("Settings").truncate().into_any_element(),
+                tooltip: None,
+            },
         }
     }
 
@@ -2323,13 +2376,18 @@ impl AgentPanel {
             .end_child(end_slot);
 
         if let Some(overlay_view) = &self.overlay_view {
+            let TabLabelRender {
+                element: overlay_label,
+                ..
+            } = self.render_tab_label(&overlay_view, true, cx);
+
             let overlay_title = h_flex()
                 .flex_grow()
                 .h(Tab::content_height(cx))
                 .px(DynamicSpacing::Base04.px(cx))
                 .gap(DynamicSpacing::Base04.rems(cx))
                 .child(self.render_toolbar_back_button(cx).into_any_element())
-                .child(self.render_tab_label(&overlay_view, cx))
+                .child(overlay_label)
                 .into_any_element();
 
             return tab_bar.child(overlay_title).into_any_element();
@@ -2353,14 +2411,19 @@ impl AgentPanel {
                 TabPosition::Middle(ordering)
             };
 
-            let tab_component = Tab::new(("agent-tab", index))
+            let TabLabelRender {
+                element: tab_label,
+                tooltip,
+            } = self.render_tab_label(tab.view(), is_active, cx);
+
+            let mut tab_component = Tab::new(("agent-tab", index))
                 .position(position)
                 .close_side(TabCloseSide::End)
                 .toggle_state(is_active)
                 .on_click(cx.listener(move |this: &mut Self, _, window, cx| {
                     this.set_active_tab_by_id(index, window, cx);
                 }))
-                .child(self.render_tab_label(tab.view(), cx))
+                .child(tab_label)
                 .start_slot(self.render_tab_agent_icon(index, tab.agent(), &agent_server_store, cx))
                 .end_slot(
                     IconButton::new(("close-agent-tab", index), IconName::Close)
@@ -2372,6 +2435,9 @@ impl AgentPanel {
                         .tooltip(|_window, cx| cx.new(|_| Tooltip::new("Close Thread")).into()),
                 );
 
+            if let Some(tooltip_text) = tooltip {
+                tab_component = tab_component.tooltip(Tooltip::text(tooltip_text));
+            }
             tab_bar = tab_bar.child(tab_component);
         }
 
