@@ -8,6 +8,7 @@ use std::{
 
 use anyhow::Result;
 use client::{Client, UserStore};
+use cloud_zeta2_prompt::retrieval_prompt::SearchToolQuery;
 use editor::{Editor, PathKey};
 use futures::StreamExt as _;
 use gpui::{
@@ -41,17 +42,11 @@ pub struct Zeta2ContextView {
 #[derive(Debug)]
 struct RetrievalRun {
     editor: Entity<Editor>,
-    search_queries: Vec<GlobQueries>,
+    search_queries: Vec<SearchToolQuery>,
     started_at: Instant,
     search_results_generated_at: Option<Instant>,
     search_results_executed_at: Option<Instant>,
     finished_at: Option<Instant>,
-}
-
-#[derive(Debug)]
-struct GlobQueries {
-    glob: String,
-    alternations: Vec<String>,
 }
 
 actions!(
@@ -210,23 +205,7 @@ impl Zeta2ContextView {
         };
 
         run.search_results_generated_at = Some(info.timestamp);
-        run.search_queries = info
-            .regex_by_glob
-            .into_iter()
-            .map(|(glob, regex)| {
-                let mut regex_parser = regex_syntax::ast::parse::Parser::new();
-
-                GlobQueries {
-                    glob,
-                    alternations: match regex_parser.parse(&regex) {
-                        Ok(regex_syntax::ast::Ast::Alternation(ref alt)) => {
-                            alt.asts.iter().map(|ast| ast.to_string()).collect()
-                        }
-                        _ => vec![regex],
-                    },
-                }
-            })
-            .collect();
+        run.search_queries = info.search_queries;
         cx.notify();
     }
 
@@ -292,18 +271,28 @@ impl Zeta2ContextView {
                         .enumerate()
                         .flat_map(|(ix, query)| {
                             std::iter::once(ListHeader::new(query.glob.clone()).into_any_element())
-                                .chain(query.alternations.iter().enumerate().map(
-                                    move |(alt_ix, alt)| {
-                                        ListItem::new(ix * 100 + alt_ix)
+                                .chain(query.syntax_node.iter().enumerate().map(
+                                    move |(regex_ix, regex)| {
+                                        ListItem::new(ix * 100 + regex_ix)
                                             .start_slot(
                                                 Icon::new(IconName::MagnifyingGlass)
                                                     .color(Color::Muted)
                                                     .size(IconSize::Small),
                                             )
-                                            .child(alt.clone())
+                                            .child(regex.clone())
                                             .into_any_element()
                                     },
                                 ))
+                                .chain(query.content.as_ref().map(move |regex| {
+                                    ListItem::new(ix * 100 + query.syntax_node.len())
+                                        .start_slot(
+                                            Icon::new(IconName::MagnifyingGlass)
+                                                .color(Color::Muted)
+                                                .size(IconSize::Small),
+                                        )
+                                        .child(regex.clone())
+                                        .into_any_element()
+                                }))
                         }),
                 ),
             )

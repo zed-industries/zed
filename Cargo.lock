@@ -250,7 +250,6 @@ dependencies = [
  "acp_tools",
  "action_log",
  "agent-client-protocol",
- "agent_settings",
  "anyhow",
  "async-trait",
  "client",
@@ -3203,7 +3202,6 @@ dependencies = [
  "rustc-hash 2.1.1",
  "schemars 1.0.4",
  "serde",
- "serde_json",
  "strum 0.27.2",
 ]
 
@@ -8868,6 +8866,7 @@ dependencies = [
  "open_router",
  "parking_lot",
  "proto",
+ "schemars 1.0.4",
  "serde",
  "serde_json",
  "settings",
@@ -16218,7 +16217,6 @@ dependencies = [
  "log",
  "menu",
  "picker",
- "project",
  "reqwest_client",
  "rust-embed",
  "settings",
@@ -16228,7 +16226,6 @@ dependencies = [
  "theme",
  "title_bar",
  "ui",
- "workspace",
 ]
 
 [[package]]
@@ -18814,7 +18811,6 @@ dependencies = [
 name = "vim_mode_setting"
 version = "0.1.0"
 dependencies = [
- "gpui",
  "settings",
 ]
 
@@ -21689,6 +21685,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "smol",
  "thiserror 2.0.17",
  "util",
  "uuid",
@@ -21706,6 +21703,7 @@ dependencies = [
  "clap",
  "client",
  "cloud_llm_client",
+ "cloud_zeta2_prompt",
  "collections",
  "edit_prediction_context",
  "editor",
@@ -21719,7 +21717,6 @@ dependencies = [
  "ordered-float 2.10.1",
  "pretty_assertions",
  "project",
- "regex-syntax",
  "serde",
  "serde_json",
  "settings",

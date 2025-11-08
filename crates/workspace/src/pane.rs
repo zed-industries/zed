@@ -6873,8 +6873,6 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(LoadThemes::JustBase, cx);
-            crate::init_settings(cx);
-            Project::init_settings(cx);
         });
     }
 
