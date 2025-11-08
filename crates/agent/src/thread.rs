@@ -2139,7 +2139,7 @@ where
 
     /// Returns the JSON schema that describes the tool's input.
     fn input_schema(format: LanguageModelToolSchemaFormat) -> Schema {
-        crate::tool_schema::root_schema_for::<Self::Input>(format)
+        language_model::tool_schema::root_schema_for::<Self::Input>(format)
     }
 
     /// Some tools rely on a provider for the underlying billing or other reasons.
@@ -2226,7 +2226,7 @@ where
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         let mut json = serde_json::to_value(T::input_schema(format))?;
-        crate::tool_schema::adapt_schema_to_format(&mut json, format)?;
+        language_model::tool_schema::adapt_schema_to_format(&mut json, format)?;
         Ok(json)
     }
 
