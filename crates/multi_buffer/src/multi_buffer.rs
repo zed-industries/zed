@@ -3616,10 +3616,10 @@ impl MultiBufferSnapshot {
         })
     }
 
-    pub fn excerpt_ids_for_range<T: ToOffset>(
+    fn excerpts_for_range<T: ToOffset>(
         &self,
         range: Range<T>,
-    ) -> impl Iterator<Item = ExcerptId> + '_ {
+    ) -> impl Iterator<Item = &Excerpt> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut cursor = self.cursor::<MultiBufferOffset, BufferOffset>();
         cursor.seek(&range.start);
@@ -3631,27 +3631,23 @@ impl MultiBufferSnapshot {
                 return None;
             }
             cursor.next_excerpt();
-            Some(region.excerpt.id)
+            Some(region.excerpt)
         })
+    }
+
+    pub fn excerpt_ids_for_range<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = ExcerptId> + '_ {
+        self.excerpts_for_range(range).map(|excerpt| excerpt.id)
     }
 
     pub fn buffer_ids_for_range<T: ToOffset>(
         &self,
         range: Range<T>,
     ) -> impl Iterator<Item = BufferId> + '_ {
-        let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let mut cursor = self.cursor::<MultiBufferOffset, BufferOffset>();
-        cursor.seek(&range.start);
-        std::iter::from_fn(move || {
-            let region = cursor.region()?;
-            if region.range.start > range.end
-                || region.range.start == range.end && region.range.start > range.start
-            {
-                return None;
-            }
-            cursor.next_excerpt();
-            Some(region.excerpt.buffer_id)
-        })
+        self.excerpts_for_range(range)
+            .map(|excerpt| excerpt.buffer_id)
     }
 
     pub fn ranges_to_buffer_ranges<T: ToOffset>(
