@@ -484,6 +484,7 @@ mod tests {
             "eval_count": 16,
             "eval_duration": 302561917,
         });
+    }
 
     #[test]
     fn parse_tool_call_ollama_0_10_12() {
