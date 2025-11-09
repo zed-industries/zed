@@ -683,7 +683,7 @@ mod test {
         .await;
 
         cx.simulate_shared_keystrokes(": % s / \\ $ B a s e / \\ $ B a s e N e w / g")
-        .await;
+            .await;
         cx.simulate_shared_keystrokes("enter").await;
 
         cx.shared_state().await.assert_eq(indoc! {
