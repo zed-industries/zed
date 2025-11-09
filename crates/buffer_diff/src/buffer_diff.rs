@@ -721,12 +721,20 @@ impl BufferDiffInner {
                 }
                 (Some(new_hunk), None) => {
                     start.get_or_insert(new_hunk.buffer_range.start);
-                    end.replace(new_hunk.buffer_range.end);
+                    if end
+                        .is_none_or(|end| end.cmp(&new_hunk.buffer_range.end, new_snapshot).is_lt())
+                    {
+                        end.replace(new_hunk.buffer_range.end);
+                    }
                     new_cursor.next();
                 }
                 (None, Some(old_hunk)) => {
                     start.get_or_insert(old_hunk.buffer_range.start);
-                    end.replace(old_hunk.buffer_range.end);
+                    if end
+                        .is_none_or(|end| end.cmp(&old_hunk.buffer_range.end, new_snapshot).is_lt())
+                    {
+                        end.replace(old_hunk.buffer_range.end);
+                    }
                     old_cursor.next();
                 }
                 (None, None) => break,
