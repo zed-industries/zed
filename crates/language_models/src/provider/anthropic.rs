@@ -22,7 +22,7 @@ use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
 use ui_input::InputField;
-use util::{ResultExt, truncate_and_trailoff};
+use util::ResultExt;
 use zed_env_vars::{EnvVar, env_var};
 
 use crate::api_key::ApiKeyState;
@@ -953,30 +953,42 @@ impl Render for ConfigurationView {
                 .bg(cx.theme().colors().background)
                 .child(
                     h_flex()
+                        .flex_1()
+                        .min_w_0()
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(Label::new(if env_var_set {
-                            format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable")
-                        } else {
-                            let api_url = AnthropicLanguageModelProvider::api_url(cx);
-                            if api_url == ANTHROPIC_API_URL {
-                                "API key configured".to_string()
-                            } else {
-                                format!("API key configured for {}", truncate_and_trailoff(&api_url, 32))
-                            }
-                        })),
+                        .child(
+                            div()
+                                .w_full()
+                                .overflow_x_hidden()
+                                .text_ellipsis()
+                                .child(Label::new(if env_var_set {
+                                    format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable")
+                                } else {
+                                    let api_url = AnthropicLanguageModelProvider::api_url(cx);
+                                    if api_url == ANTHROPIC_API_URL {
+                                        "API key configured".to_string()
+                                    } else {
+                                        format!("API key configured for {}", api_url)
+                                    }
+                                }))
+                        ),
                 )
                 .child(
-                    Button::new("reset-key", "Reset Key")
-                        .label_size(LabelSize::Small)
-                        .icon(Some(IconName::Trash))
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
-                        .disabled(env_var_set)
-                        .when(env_var_set, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your API key, unset the {API_KEY_ENV_VAR_NAME} environment variable.")))
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
+                    h_flex()
+                        .flex_shrink_0()
+                        .child(
+                            Button::new("reset-key", "Reset Key")
+                                .label_size(LabelSize::Small)
+                                .icon(Some(IconName::Trash))
+                                .icon_size(IconSize::Small)
+                                .icon_position(IconPosition::Start)
+                                .disabled(env_var_set)
+                                .when(env_var_set, |this| {
+                                    this.tooltip(Tooltip::text(format!("To reset your API key, unset the {API_KEY_ENV_VAR_NAME} environment variable.")))
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
+                        ),
                 )
                 .into_any()
         }
