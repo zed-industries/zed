@@ -1,7 +1,6 @@
+use agent::{AgentTool, OpenTool, TerminalTool};
 use agent_settings::AgentProfileId;
 use anyhow::Result;
-use assistant_tool::Tool;
-use assistant_tools::{OpenTool, TerminalTool};
 use async_trait::async_trait;
 
 use crate::example::{Example, ExampleContext, ExampleMetadata, JudgeAssertion};
@@ -24,23 +23,22 @@ impl Example for Planets {
     }
 
     async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
-        cx.push_user_message(
-            r#"
+        let response = cx
+            .prompt(
+                r#"
             Make a plain JavaScript web page which renders an animated 3D solar system.
             Let me drag to rotate the camera around.
             Do not use npm.
-            "#
-            .to_string(),
-        );
-
-        let response = cx.run_to_end().await?;
+            "#,
+            )
+            .await?;
         let mut open_tool_uses = 0;
         let mut terminal_tool_uses = 0;
 
-        for tool_use in response.tool_uses() {
-            if tool_use.name == OpenTool.name() {
+        for tool_use in response.tool_calls() {
+            if tool_use.name == OpenTool::name() {
                 open_tool_uses += 1;
-            } else if tool_use.name == TerminalTool::NAME {
+            } else if tool_use.name == TerminalTool::name() {
                 terminal_tool_uses += 1;
             }
         }

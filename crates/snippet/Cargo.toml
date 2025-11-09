@@ -15,4 +15,3 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 smallvec.workspace = true
-workspace-hack.workspace = true

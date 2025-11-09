@@ -15,6 +15,7 @@
 //! You only need to write replacement logic for x-1 to x because you can be certain that, internally, every user will be at x-1, regardless of their on disk state.
 
 use anyhow::{Context as _, Result};
+use settings_json::{infer_json_indent_size, parse_json_with_comments, update_value_in_json_text};
 use std::{cmp::Reverse, ops::Range, sync::LazyLock};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Query, QueryMatch};
@@ -74,7 +75,7 @@ fn run_migrations(text: &str, migrations: &[MigrationType]) -> Result<Option<Str
 
     let mut current_text = text.to_string();
     let mut result: Option<String> = None;
-    let json_indent_size = settings::infer_json_indent_size(&current_text);
+    let json_indent_size = infer_json_indent_size(&current_text);
     for migration in migrations.iter() {
         let migrated_text = match migration {
             MigrationType::TreeSitter(patterns, query) => migrate(&current_text, patterns, query)?,
@@ -83,14 +84,14 @@ fn run_migrations(text: &str, migrations: &[MigrationType]) -> Result<Option<Str
                     return Ok(None);
                 }
                 let old_content: serde_json_lenient::Value =
-                    settings::parse_json_with_comments(&current_text)?;
+                    parse_json_with_comments(&current_text)?;
                 let old_value = serde_json::to_value(&old_content).unwrap();
                 let mut new_value = old_value.clone();
                 callback(&mut new_value)?;
                 if new_value != old_value {
                     let mut current = current_text.clone();
                     let mut edits = vec![];
-                    settings::update_value_in_json_text(
+                    update_value_in_json_text(
                         &mut current,
                         &mut vec![],
                         json_indent_size,
@@ -211,7 +212,9 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2025_10_03::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_10_03,
         ),
-        MigrationType::Json(migrations::m_2025_10_10::remove_code_actions_on_format),
+        MigrationType::Json(migrations::m_2025_10_16::restore_code_actions_on_format),
+        MigrationType::Json(migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum),
+        MigrationType::Json(migrations::m_2025_10_21::make_relative_line_numbers_an_enum),
     ];
     run_migrations(text, migrations)
 }
@@ -362,9 +365,16 @@ mod tests {
         pretty_assertions::assert_eq!(migrated.as_deref(), output);
     }
 
+    #[track_caller]
     fn assert_migrate_settings(input: &str, output: Option<&str>) {
         let migrated = migrate_settings(input).unwrap();
-        assert_migrated_correctly(migrated, output);
+        assert_migrated_correctly(migrated.clone(), output);
+
+        // expect that rerunning the migration does not result in another migration
+        if let Some(migrated) = migrated {
+            let rerun = migrate_settings(&migrated).unwrap();
+            assert_migrated_correctly(rerun, None);
+        }
     }
 
     #[track_caller]
@@ -374,7 +384,13 @@ mod tests {
         output: Option<&str>,
     ) {
         let migrated = run_migrations(input, migrations).unwrap();
-        assert_migrated_correctly(migrated, output);
+        assert_migrated_correctly(migrated.clone(), output);
+
+        // expect that rerunning the migration does not result in another migration
+        if let Some(migrated) = migrated {
+            let rerun = run_migrations(&migrated, migrations).unwrap();
+            assert_migrated_correctly(rerun, None);
+        }
     }
 
     #[test]
@@ -1337,7 +1353,10 @@ mod tests {
 
     #[test]
     fn test_flatten_code_action_formatters_basic_array() {
-        assert_migrate_settings(
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_01::flatten_code_actions_formatters,
+            )],
             &r#"{
         "formatter": [
           {
@@ -1368,7 +1387,10 @@ mod tests {
 
     #[test]
     fn test_flatten_code_action_formatters_basic_object() {
-        assert_migrate_settings(
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_01::flatten_code_actions_formatters,
+            )],
             &r#"{
         "formatter": {
           "code_actions": {
@@ -1522,7 +1544,10 @@ mod tests {
     #[test]
     fn test_flatten_code_action_formatters_array_with_multiple_action_blocks_in_defaults_and_multiple_languages()
      {
-        assert_migrate_settings(
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_01::flatten_code_actions_formatters,
+            )],
             &r#"{
         "formatter": {
           "code_actions": {
@@ -1990,274 +2015,108 @@ mod tests {
     }
 
     #[test]
-    fn test_code_actions_on_format_migration_basic() {
+    fn test_restore_code_actions_on_format() {
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
-                migrations::m_2025_10_10::remove_code_actions_on_format,
+                migrations::m_2025_10_16::restore_code_actions_on_format,
             )],
             &r#"{
-                "code_actions_on_format": {
-                    "source.organizeImports": true,
-                    "source.fixAll": true
+                "formatter": {
+                    "code_action": "foo"
                 }
             }"#
             .unindent(),
             Some(
                 &r#"{
-                    "formatter": [
-                        {
-                            "code_action": "source.organizeImports"
-                        },
-                        {
-                            "code_action": "source.fixAll"
-                        }
-                    ]
-                }
-                "#
-                .unindent(),
-            ),
-        );
-    }
-
-    #[test]
-    fn test_code_actions_on_format_migration_filters_false_values() {
-        assert_migrate_settings_with_migrations(
-            &[MigrationType::Json(
-                migrations::m_2025_10_10::remove_code_actions_on_format,
-            )],
-            &r#"{
-        "code_actions_on_format": {
-          "a": true,
-          "b": false,
-          "c": true
-        }
-      }"#
-            .unindent(),
-            Some(
-                &r#"{
-          "formatter": [
-            {
-              "code_action": "a"
-            },
-            {
-              "code_action": "c"
-            }
-          ]
-        }
-        "#
-                .unindent(),
-            ),
-        );
-    }
-
-    #[test]
-    fn test_code_actions_on_format_migration_with_existing_formatter_object() {
-        assert_migrate_settings_with_migrations(
-            &[MigrationType::Json(
-                migrations::m_2025_10_10::remove_code_actions_on_format,
-            )],
-            &r#"{
-              "formatter": "prettier",
-              "code_actions_on_format": {
-                "source.organizeImports": true
-              }
-            }"#
-            .unindent(),
-            Some(
-                &r#"{
-                  "formatter": [
-                    {
-                      "code_action": "source.organizeImports"
+                    "code_actions_on_format": {
+                        "foo": true
                     },
-                    "prettier"
-                  ]
+                    "formatter": []
                 }"#
                 .unindent(),
             ),
         );
-    }
 
-    #[test]
-    fn test_code_actions_on_format_migration_with_existing_formatter_array() {
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
-                migrations::m_2025_10_10::remove_code_actions_on_format,
+                migrations::m_2025_10_16::restore_code_actions_on_format,
             )],
             &r#"{
-              "formatter": ["prettier", {"language_server": "eslint"}],
-              "code_actions_on_format": {
-                "source.organizeImports": true,
-                "source.fixAll": true
-              }
+                "formatter": [
+                    { "code_action": "foo" },
+                    "auto"
+                ]
             }"#
             .unindent(),
-            Some(
-                &r#"{
-                  "formatter": [
-                    {
-                      "code_action": "source.organizeImports"
-                    },
-                    {
-                      "code_action": "source.fixAll"
-                    },
-                    "prettier",
-                    {
-                      "language_server": "eslint"
-                    }
-                  ]
-                }"#
-                .unindent(),
-            ),
+            None,
         );
-    }
 
-    #[test]
-    fn test_code_actions_on_format_migration_in_languages() {
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
-                migrations::m_2025_10_10::remove_code_actions_on_format,
+                migrations::m_2025_10_16::restore_code_actions_on_format,
             )],
             &r#"{
-                "languages": {
-                    "JavaScript": {
-                        "code_actions_on_format": {
-                            "source.fixAll.eslint": true
-                        }
-                    },
-                    "Go": {
-                        "code_actions_on_format": {
-                            "source.organizeImports": true
-                        }
-                    }
-                }
-            }"#
-            .unindent(),
-            Some(
-                &r#"{
-                    "languages": {
-                        "JavaScript": {
-                            "formatter": [
-                                {
-                                    "code_action": "source.fixAll.eslint"
-                                }
-                            ]
-                        },
-                        "Go": {
-                            "formatter": [
-                                {
-                                    "code_action": "source.organizeImports"
-                                }
-                            ]
-                        }
-                    }
-                }"#
-                .unindent(),
-            ),
-        );
-    }
-
-    #[test]
-    fn test_code_actions_on_format_migration_in_languages_with_existing_formatter() {
-        assert_migrate_settings_with_migrations(
-            &[MigrationType::Json(
-                migrations::m_2025_10_10::remove_code_actions_on_format,
-            )],
-            &r#"{
-              "languages": {
-                "JavaScript": {
-                  "formatter": "prettier",
-                  "code_actions_on_format": {
-                    "source.fixAll.eslint": true,
-                    "source.organizeImports": false
-                  }
-                }
-              }
-            }"#
-            .unindent(),
-            Some(
-                &r#"{
-                  "languages": {
-                    "JavaScript": {
-                      "formatter": [
-                        {
-                          "code_action": "source.fixAll.eslint"
-                        },
-                        "prettier"
-                      ]
-                    }
-                  }
-                }"#
-                .unindent(),
-            ),
-        );
-    }
-
-    #[test]
-    fn test_code_actions_on_format_migration_mixed_global_and_languages() {
-        assert_migrate_settings_with_migrations(
-            &[MigrationType::Json(
-                migrations::m_2025_10_10::remove_code_actions_on_format,
-            )],
-            &r#"{
-              "formatter": "prettier",
-              "code_actions_on_format": {
-                "source.fixAll": true
-              },
-              "languages": {
-                "Rust": {
-                  "formatter": "rust-analyzer",
-                  "code_actions_on_format": {
-                    "source.organizeImports": true
-                  }
+                "formatter": {
+                    "code_action": "foo"
                 },
-                "Python": {
-                  "code_actions_on_format": {
-                    "source.organizeImports": true,
-                    "source.fixAll": false
-                  }
+                "code_actions_on_format": {
+                    "bar": true,
+                    "baz": false
                 }
-              }
             }"#
             .unindent(),
             Some(
                 &r#"{
-                  "formatter": [
-                    {
-                      "code_action": "source.fixAll"
-                    },
-                    "prettier"
-                  ],
-                  "languages": {
-                    "Rust": {
-                      "formatter": [
-                        {
-                          "code_action": "source.organizeImports"
-                        },
-                        "rust-analyzer"
-                      ]
-                    },
-                    "Python": {
-                      "formatter": [
-                        {
-                          "code_action": "source.organizeImports"
-                        }
-                      ]
+                    "formatter": [],
+                    "code_actions_on_format": {
+                        "foo": true,
+                        "bar": true,
+                        "baz": false
                     }
-                  }
                 }"#
                 .unindent(),
             ),
         );
-    }
 
-    #[test]
-    fn test_code_actions_on_format_no_migration_when_not_present() {
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
-                migrations::m_2025_10_10::remove_code_actions_on_format,
+                migrations::m_2025_10_16::restore_code_actions_on_format,
             )],
             &r#"{
-              "formatter": ["prettier"]
+                "formatter": [
+                    { "code_action": "foo" },
+                    { "code_action": "qux" },
+                ],
+                "code_actions_on_format": {
+                    "bar": true,
+                    "baz": false
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "formatter": [],
+                    "code_actions_on_format": {
+                        "foo": true,
+                        "qux": true,
+                        "bar": true,
+                        "baz": false
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_16::restore_code_actions_on_format,
+            )],
+            &r#"{
+                "formatter": [],
+                "code_actions_on_format": {
+                    "bar": true,
+                    "baz": false
+                }
             }"#
             .unindent(),
             None,
@@ -2265,72 +2124,71 @@ mod tests {
     }
 
     #[test]
-    fn test_code_actions_on_format_migration_all_false_values() {
+    fn test_make_file_finder_include_ignored_an_enum() {
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
-                migrations::m_2025_10_10::remove_code_actions_on_format,
+                migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
+            )],
+            &r#"{ }"#.unindent(),
+            None,
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
             )],
             &r#"{
-                "code_actions_on_format": {
-                    "a": false,
-                    "b": false
-                },
-                "formatter": "prettier"
+                "file_finder": {
+                    "include_ignored": true
+                }
             }"#
             .unindent(),
             Some(
                 &r#"{
-                    "formatter": "prettier"
+                    "file_finder": {
+                        "include_ignored": "all"
+                    }
                 }"#
                 .unindent(),
             ),
         );
-    }
 
-    #[test]
-    fn test_code_action_formatters_issue() {
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
-                migrations::m_2025_10_01::flatten_code_actions_formatters,
+                migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
             )],
-            &r#"
-    {
-      "languages": {
-        "Python": {
-          "language_servers": ["ruff"],
-          "format_on_save": "on",
-          "formatter": [
-            {
-              "code_actions": {
-                // Fix all auto-fixable lint violations
-                "source.fixAll.ruff": true,
-                // Organize imports
-                "source.organizeImports.ruff": true
-              }
-            }
-          ]
-        }
-      }
-    }"#
+            &r#"{
+                "file_finder": {
+                    "include_ignored": false
+                }
+            }"#
             .unindent(),
             Some(
-                &r#"
-    {
-      "languages": {
-        "Python": {
-          "language_servers": ["ruff"],
-          "format_on_save": "on",
-          "formatter": [
-            {
-              "code_action": "source.fixAll.ruff"
-            },
-            {
-              "code_action": "source.organizeImports.ruff"
-            }
-          ]
-        }
-      }
-    }"#
+                &r#"{
+                    "file_finder": {
+                        "include_ignored": "indexed"
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
+            )],
+            &r#"{
+                "file_finder": {
+                    "include_ignored": null
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "file_finder": {
+                        "include_ignored": "smart"
+                    }
+                }"#
                 .unindent(),
             ),
         );

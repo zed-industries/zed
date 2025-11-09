@@ -3,6 +3,7 @@ use codestral::CodestralCompletionProvider;
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::Editor;
+use feature_flags::FeatureFlagAppExt;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 use language_models::MistralLanguageModelProvider;
@@ -11,6 +12,7 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 use ui::Window;
 use zeta::ZetaEditPredictionProvider;
+use zeta2::Zeta2FeatureFlag;
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
@@ -217,7 +219,7 @@ fn assign_edit_prediction_provider(
                 }
 
                 if let Some(project) = editor.project() {
-                    if std::env::var("ZED_ZETA2").is_ok() {
+                    if cx.has_flag::<Zeta2FeatureFlag>() {
                         let zeta = zeta2::Zeta::global(client, &user_store, cx);
                         let provider = cx.new(|cx| {
                             zeta2::ZetaEditPredictionProvider::new(

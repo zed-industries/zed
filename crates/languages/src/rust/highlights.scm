@@ -41,6 +41,9 @@
       name: (identifier) @function.special)
   ])
 
+(macro_invocation
+  "!" @function.special)
+
 (macro_definition
   name: (identifier) @function.special.definition)
 
@@ -83,29 +86,20 @@
   "as"
   "async"
   "await"
-  "break"
   "const"
-  "continue"
   "default"
   "dyn"
-  "else"
   "enum"
   "extern"
   "fn"
-  "for"
-  "if"
   "impl"
-  "in"
   "let"
-  "loop"
   "macro_rules!"
-  "match"
   "mod"
   "move"
   "pub"
   "raw"
   "ref"
-  "return"
   "static"
   "struct"
   "trait"
@@ -114,12 +108,24 @@
   "unsafe"
   "use"
   "where"
-  "while"
-  "yield"
   (crate)
   (mutable_specifier)
   (super)
 ] @keyword
+
+[
+  "break"
+  "continue"
+  "else"
+  "for"
+  "if"
+  "in"
+  "loop"
+  "match"
+  "return"
+  "while"
+  "yield"
+] @keyword.control
 
 [
   (string_literal)

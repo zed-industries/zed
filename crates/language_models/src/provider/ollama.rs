@@ -23,7 +23,7 @@ use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, sync::Arc};
 use ui::{ButtonLike, ElevationIndex, List, Tooltip, prelude::*};
-use ui_input::SingleLineInput;
+use ui_input::InputField;
 use zed_env_vars::{EnvVar, env_var};
 
 use crate::AllLanguageModelSettings;
@@ -623,18 +623,17 @@ fn map_to_language_model_completion_events(
 }
 
 struct ConfigurationView {
-    api_key_editor: Entity<SingleLineInput>,
-    api_url_editor: Entity<SingleLineInput>,
+    api_key_editor: Entity<InputField>,
+    api_url_editor: Entity<InputField>,
     state: Entity<State>,
 }
 
 impl ConfigurationView {
     pub fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let api_key_editor =
-            cx.new(|cx| SingleLineInput::new(window, cx, "63e02e...").label("API key"));
+        let api_key_editor = cx.new(|cx| InputField::new(window, cx, "63e02e...").label("API key"));
 
         let api_url_editor = cx.new(|cx| {
-            let input = SingleLineInput::new(window, cx, OLLAMA_API_URL).label("API URL");
+            let input = InputField::new(window, cx, OLLAMA_API_URL).label("API URL");
             input.set_text(OllamaLanguageModelProvider::api_url(cx), window, cx);
             input
         });
@@ -907,6 +906,16 @@ impl Render for ConfigurationView {
                                             .child(Icon::new(IconName::Check).color(Color::Success))
                                             .child(Label::new("Connected"))
                                             .into_any_element(),
+                                    )
+                                    .child(
+                                        IconButton::new("refresh-models", IconName::RotateCcw)
+                                            .tooltip(Tooltip::text("Refresh models"))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.state.update(cx, |state, _| {
+                                                    state.fetched_models.clear();
+                                                });
+                                                this.retry_connection(cx);
+                                            })),
                                     ),
                             )
                         } else {

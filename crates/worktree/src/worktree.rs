@@ -236,7 +236,7 @@ pub struct LocalSnapshot {
     /// All of the git repositories in the worktree, indexed by the project entry
     /// id of their parent directory.
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
-    /// The file handle of the worktree root. `None` if the worktree is a directory.
+    /// The file handle of the worktree root
     /// (so we can find it after it's been moved)
     root_file_handle: Option<Arc<dyn fs::FileHandle>>,
     executor: BackgroundExecutor,
@@ -438,12 +438,9 @@ impl Worktree {
                         && let Ok(path) = RelPath::unix(file_name)
                     {
                         entry.is_private = !share_private_files && settings.is_path_private(path);
+                        entry.is_hidden = settings.is_path_hidden(path);
                     }
                 }
-                entry.is_hidden = abs_path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .map_or(false, |name| is_path_hidden(name));
                 snapshot.insert_entry(entry, fs.as_ref());
             }
 
@@ -505,7 +502,7 @@ impl Worktree {
                 project_id,
                 replica_id,
                 snapshot,
-                file_scan_inclusions: settings.file_scan_inclusions.clone(),
+                file_scan_inclusions: settings.parent_dir_scan_inclusions.clone(),
                 background_snapshot: background_snapshot.clone(),
                 updates_tx: Some(background_updates_tx),
                 update_observer: None,
@@ -520,8 +517,10 @@ impl Worktree {
                 while let Some(update) = background_updates_rx.next().await {
                     {
                         let mut lock = background_snapshot.lock();
-                        lock.0
-                            .apply_remote_update(update.clone(), &settings.file_scan_inclusions);
+                        lock.0.apply_remote_update(
+                            update.clone(),
+                            &settings.parent_dir_scan_inclusions,
+                        );
                         lock.1.push(update);
                     }
                     snapshot_updated_tx.send(()).await.ok();
@@ -656,7 +655,7 @@ impl Worktree {
 
     pub fn replica_id(&self) -> ReplicaId {
         match self {
-            Worktree::Local(_) => 0,
+            Worktree::Local(_) => ReplicaId::LOCAL,
             Worktree::Remote(worktree) => worktree.replica_id,
         }
     }
@@ -1318,7 +1317,8 @@ impl LocalWorktree {
         let entry = self.refresh_entry(path.clone(), None, cx);
         let is_private = self.is_path_private(path.as_ref());
 
-        cx.spawn(async move |this, _cx| {
+        let this = cx.weak_entity();
+        cx.background_spawn(async move {
             // WARN: Temporary workaround for #27283.
             //       We are not efficient with our memory usage per file, and use in excess of 64GB for a 10GB file
             //       Therefore, as a temporary workaround to prevent system freezes, we just bail before opening a file
@@ -1702,13 +1702,14 @@ impl LocalWorktree {
         };
         let t0 = Instant::now();
         let mut refresh = self.refresh_entries_for_paths(paths);
+        // todo(lw): Hot foreground spawn
         cx.spawn(async move |this, cx| {
             refresh.recv().await;
             log::trace!("refreshed entry {path:?} in {:?}", t0.elapsed());
             let new_entry = this.read_with(cx, |this, _| {
-                this.entry_for_path(&path)
-                    .cloned()
-                    .context("reading path after update")
+                this.entry_for_path(&path).cloned().with_context(|| {
+                    format!("Could not find entry in worktree for {path:?} after refresh")
+                })
             })??;
             Ok(Some(new_entry))
         })
@@ -2681,7 +2682,6 @@ impl BackgroundScannerState {
                     scan_queue: scan_job_tx.clone(),
                     ancestor_inodes,
                     is_external: entry.is_external,
-                    is_hidden: entry.is_hidden,
                 })
                 .unwrap();
         }
@@ -3614,25 +3614,32 @@ impl BackgroundScanner {
 
         log::trace!("containing git repository: {containing_git_repository:?}");
 
-        let mut global_gitignore_events =
-            if let Some(global_gitignore_path) = &paths::global_gitignore_path() {
-                self.state.lock().await.snapshot.global_gitignore =
-                    if self.fs.is_file(&global_gitignore_path).await {
-                        build_gitignore(global_gitignore_path, self.fs.as_ref())
-                            .await
-                            .ok()
-                            .map(Arc::new)
-                    } else {
-                        None
-                    };
+        let mut global_gitignore_events = if let Some(global_gitignore_path) =
+            &paths::global_gitignore_path()
+        {
+            let is_file = self.fs.is_file(&global_gitignore_path).await;
+            self.state.lock().await.snapshot.global_gitignore = if is_file {
+                build_gitignore(global_gitignore_path, self.fs.as_ref())
+                    .await
+                    .ok()
+                    .map(Arc::new)
+            } else {
+                None
+            };
+            if is_file
+                || matches!(global_gitignore_path.parent(), Some(path) if self.fs.is_dir(path).await)
+            {
                 self.fs
                     .watch(global_gitignore_path, FS_WATCH_LATENCY)
                     .await
                     .0
             } else {
-                self.state.lock().await.snapshot.global_gitignore = None;
-                Box::pin(futures::stream::empty())
-            };
+                Box::pin(futures::stream::pending())
+            }
+        } else {
+            self.state.lock().await.snapshot.global_gitignore = None;
+            Box::pin(futures::stream::pending())
+        };
 
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         {
@@ -3740,7 +3747,7 @@ impl BackgroundScanner {
                         Some([event, ..]) => {
                             self.update_global_gitignore(&event.path).await;
                         }
-                        _ => {},
+                        _ => (),
                     }
                 }
             }
@@ -3823,7 +3830,7 @@ impl BackgroundScanner {
                         .unbounded_send(ScanState::RootUpdated { new_path })
                         .ok();
                 } else {
-                    log::warn!("root path could not be canonicalized: {}", err);
+                    log::warn!("root path could not be canonicalized: {:#}", err);
                 }
                 return;
             }
@@ -4274,14 +4281,10 @@ impl BackgroundScanner {
                 child_entry.canonical_path = Some(canonical_path.into());
             }
 
-            child_entry.is_hidden = job.is_hidden
-                || child_name
-                    .to_str()
-                    .map_or(false, |name| is_path_hidden(name));
-
             if child_entry.is_dir() {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
-                child_entry.is_always_included = self.settings.is_path_always_included(&child_path);
+                child_entry.is_always_included =
+                    self.settings.is_path_always_included(&child_path, true);
 
                 // Avoid recursing until crash in the case of a recursive symlink
                 if job.ancestor_inodes.contains(&child_entry.inode) {
@@ -4294,7 +4297,6 @@ impl BackgroundScanner {
                         abs_path: child_abs_path.clone(),
                         path: child_path,
                         is_external: child_entry.is_external,
-                        is_hidden: child_entry.is_hidden,
                         ignore_stack: if child_entry.is_ignored {
                             IgnoreStack::all()
                         } else {
@@ -4306,7 +4308,8 @@ impl BackgroundScanner {
                 }
             } else {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, false);
-                child_entry.is_always_included = self.settings.is_path_always_included(&child_path);
+                child_entry.is_always_included =
+                    self.settings.is_path_always_included(&child_path, false);
             }
 
             {
@@ -4316,6 +4319,10 @@ impl BackgroundScanner {
                 if self.is_path_private(&relative_path) {
                     log::debug!("detected private file: {relative_path:?}");
                     child_entry.is_private = true;
+                }
+                if self.settings.is_path_hidden(&relative_path) {
+                    log::debug!("detected hidden file: {relative_path:?}");
+                    child_entry.is_hidden = true;
                 }
             }
 
@@ -4441,14 +4448,9 @@ impl BackgroundScanner {
                     fs_entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, is_dir);
                     fs_entry.is_external = is_external;
                     fs_entry.is_private = self.is_path_private(path);
-                    fs_entry.is_always_included = self.settings.is_path_always_included(path);
-
-                    let parent_is_hidden = path
-                        .parent()
-                        .and_then(|parent| state.snapshot.entry_for_path(parent))
-                        .map_or(false, |parent_entry| parent_entry.is_hidden);
-                    fs_entry.is_hidden = parent_is_hidden
-                        || path.file_name().map_or(false, |name| is_path_hidden(name));
+                    fs_entry.is_always_included =
+                        self.settings.is_path_always_included(path, is_dir);
+                    fs_entry.is_hidden = self.settings.is_path_hidden(path);
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, is_dir) {
                         if state.should_scan_directory(&fs_entry)
@@ -5021,10 +5023,6 @@ fn char_bag_for_path(root_char_bag: CharBag, path: &RelPath) -> CharBag {
     result
 }
 
-fn is_path_hidden(name: &str) -> bool {
-    name.starts_with('.')
-}
-
 #[derive(Debug)]
 struct ScanJob {
     abs_path: Arc<Path>,
@@ -5033,7 +5031,6 @@ struct ScanJob {
     scan_queue: Sender<ScanJob>,
     ancestor_inodes: TreeSet<u64>,
     is_external: bool,
-    is_hidden: bool,
 }
 
 struct UpdateIgnoreStatusJob {

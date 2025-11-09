@@ -118,8 +118,20 @@ pub(crate) mod m_2025_10_03 {
     pub(crate) use settings::SETTINGS_PATTERNS;
 }
 
-pub(crate) mod m_2025_10_10 {
+pub(crate) mod m_2025_10_16 {
     mod settings;
 
-    pub(crate) use settings::remove_code_actions_on_format;
+    pub(crate) use settings::restore_code_actions_on_format;
+}
+
+pub(crate) mod m_2025_10_17 {
+    mod settings;
+
+    pub(crate) use settings::make_file_finder_include_ignored_an_enum;
+}
+
+pub(crate) mod m_2025_10_21 {
+    mod settings;
+
+    pub(crate) use settings::make_relative_line_numbers_an_enum;
 }

@@ -30,10 +30,7 @@ use gpui::{
     Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
-use project::{
-    Project, WorktreeSettings,
-    git_store::{GitStoreEvent, RepositoryEvent},
-};
+use project::{Project, WorktreeSettings, git_store::GitStoreEvent};
 use remote::RemoteConnectionOptions;
 use settings::{Settings, SettingsLocation};
 use std::sync::Arc;
@@ -69,7 +66,6 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    TitleBarSettings::register(cx);
     SystemWindowTabs::init(cx);
 
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
@@ -287,9 +283,7 @@ impl TitleBar {
         subscriptions.push(
             cx.subscribe(&git_store, move |_, _, event, cx| match event {
                 GitStoreEvent::ActiveRepositoryChanged(_)
-                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, _)
-                | GitStoreEvent::RepositoryAdded(_)
-                | GitStoreEvent::RepositoryRemoved(_) => {
+                | GitStoreEvent::RepositoryUpdated(_, _, true) => {
                     cx.notify();
                 }
                 _ => {}
@@ -379,7 +373,7 @@ impl TitleBar {
                         )
                         .child(Label::new(nickname).size(LabelSize::Small).truncate()),
                 )
-                .tooltip(move |window, cx| {
+                .tooltip(move |_window, cx| {
                     Tooltip::with_meta(
                         "Remote Project",
                         Some(&OpenRemote {
@@ -387,7 +381,6 @@ impl TitleBar {
                             create_new_window: false,
                         }),
                         meta.clone(),
-                        window,
                         cx,
                     )
                 })
@@ -481,13 +474,12 @@ impl TitleBar {
             .when(!is_project_selected, |b| b.color(Color::Muted))
             .style(ButtonStyle::Subtle)
             .label_size(LabelSize::Small)
-            .tooltip(move |window, cx| {
+            .tooltip(move |_window, cx| {
                 Tooltip::for_action(
                     "Recent Projects",
                     &zed_actions::OpenRecent {
                         create_new_window: false,
                     },
-                    window,
                     cx,
                 )
             })
@@ -527,12 +519,11 @@ impl TitleBar {
                 .color(Color::Muted)
                 .style(ButtonStyle::Subtle)
                 .label_size(LabelSize::Small)
-                .tooltip(move |window, cx| {
+                .tooltip(move |_window, cx| {
                     Tooltip::with_meta(
                         "Recent Branches",
                         Some(&zed_actions::git::Branch),
                         "Local branches only",
-                        window,
                         cx,
                     )
                 })
@@ -761,15 +752,10 @@ impl TitleBar {
                 .into()
             })
             .map(|this| {
-                if is_signed_in {
+                if is_signed_in && TitleBarSettings::get_global(cx).show_user_picture {
                     this.trigger_with_tooltip(
-                        ButtonLike::new("user-menu").children(
-                            TitleBarSettings::get_global(cx)
-                                .show_user_picture
-                                .then(|| user_avatar.clone())
-                                .flatten()
-                                .map(|avatar| Avatar::new(avatar)),
-                        ),
+                        ButtonLike::new("user-menu")
+                            .children(user_avatar.clone().map(|avatar| Avatar::new(avatar))),
                         Tooltip::text("Toggle User Menu"),
                     )
                 } else {

@@ -12,7 +12,7 @@ use refineable::Refineable;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub use settings::{FontFamilyName, IconThemeName, ThemeMode, ThemeName};
-use settings::{Settings, SettingsContent};
+use settings::{RegisterSetting, Settings, SettingsContent};
 use std::sync::Arc;
 
 const MIN_FONT_SIZE: Pixels = px(6.0);
@@ -94,7 +94,7 @@ impl From<settings::UiDensity> for UiDensity {
 }
 
 /// Customizable settings for the UI and theme system.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, RegisterSetting)]
 pub struct ThemeSettings {
     /// The UI font size. Determines the size of text in the UI,
     /// as well as the size of a [gpui::Rems] unit.
@@ -726,16 +726,5 @@ impl settings::Settings for ThemeSettings {
             ui_density: content.ui_density.unwrap_or_default().into(),
             unnecessary_code_fade: content.unnecessary_code_fade.unwrap().0.clamp(0.0, 0.9),
         }
-    }
-
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
-        vscode.from_f32_setting("editor.fontWeight", &mut current.theme.buffer_font_weight);
-        vscode.from_f32_setting("editor.fontSize", &mut current.theme.buffer_font_size);
-        vscode.font_family_setting(
-            "editor.fontFamily",
-            &mut current.theme.buffer_font_family,
-            &mut current.theme.buffer_font_fallbacks,
-        )
-        // TODO: possibly map editor.fontLigatures to buffer_font_features?
     }
 }

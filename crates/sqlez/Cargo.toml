@@ -21,4 +21,3 @@ sqlformat.workspace = true
 thread_local = "1.1.4"
 util.workspace = true
 uuid.workspace = true
-workspace-hack.workspace = true

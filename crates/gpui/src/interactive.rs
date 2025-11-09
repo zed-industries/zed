@@ -25,6 +25,10 @@ pub struct KeyDownEvent {
 
     /// Whether the key is currently held down.
     pub is_held: bool,
+
+    /// Whether to prefer character input over keybindings for this keystroke.
+    /// In some cases, like AltGr on Windows, modifiers are significant for character input.
+    pub prefer_character_input: bool,
 }
 
 impl Sealed for KeyDownEvent {}
@@ -115,6 +119,16 @@ impl InputEvent for MouseDownEvent {
 }
 impl MouseEvent for MouseDownEvent {}
 
+impl MouseDownEvent {
+    /// Returns true if this mouse up event should focus the element.
+    pub fn is_focusing(&self) -> bool {
+        match self.button {
+            MouseButton::Left => true,
+            _ => false,
+        }
+    }
+}
+
 /// A mouse up event from the platform
 #[derive(Clone, Debug, Default)]
 pub struct MouseUpEvent {
@@ -137,7 +151,18 @@ impl InputEvent for MouseUpEvent {
         PlatformInput::MouseUp(self)
     }
 }
+
 impl MouseEvent for MouseUpEvent {}
+
+impl MouseUpEvent {
+    /// Returns true if this mouse up event should focus the element.
+    pub fn is_focusing(&self) -> bool {
+        match self.button {
+            MouseButton::Left => true,
+            _ => false,
+        }
+    }
+}
 
 /// A click event, generated when a mouse button is pressed and released.
 #[derive(Clone, Debug, Default)]
@@ -364,7 +389,7 @@ impl Default for NavigationDirection {
     }
 }
 
-/// A mouse move event from the platform
+/// A mouse move event from the platform.
 #[derive(Clone, Debug, Default)]
 pub struct MouseMoveEvent {
     /// The position of the mouse on the window.
@@ -392,7 +417,7 @@ impl MouseMoveEvent {
     }
 }
 
-/// A mouse wheel event from the platform
+/// A mouse wheel event from the platform.
 #[derive(Clone, Debug, Default)]
 pub struct ScrollWheelEvent {
     /// The position of the mouse on the window.
@@ -516,6 +541,7 @@ impl InputEvent for MouseExitEvent {
         PlatformInput::MouseExited(self)
     }
 }
+
 impl MouseEvent for MouseExitEvent {}
 
 impl Deref for MouseExitEvent {

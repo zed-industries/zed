@@ -21,7 +21,7 @@ use std::str::FromStr as _;
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
 use ui::{ElevationIndex, List, Tooltip, prelude::*};
-use ui_input::SingleLineInput;
+use ui_input::InputField;
 use util::{ResultExt, truncate_and_trailoff};
 use zed_env_vars::{EnvVar, env_var};
 
@@ -356,11 +356,13 @@ pub fn into_open_ai(
         for content in message.content {
             match content {
                 MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
-                    add_message_content_part(
-                        open_ai::MessagePart::Text { text },
-                        message.role,
-                        &mut messages,
-                    )
+                    if !text.trim().is_empty() {
+                        add_message_content_part(
+                            open_ai::MessagePart::Text { text },
+                            message.role,
+                            &mut messages,
+                        );
+                    }
                 }
                 MessageContent::RedactedThinking(_) => {}
                 MessageContent::Image(image) => {
@@ -538,27 +540,27 @@ impl OpenAiEventMapper {
             return events;
         };
 
-        if let Some(content) = choice.delta.content.clone() {
-            if !content.is_empty() {
+        if let Some(delta) = choice.delta.as_ref() {
+            if let Some(content) = delta.content.clone() {
                 events.push(Ok(LanguageModelCompletionEvent::Text(content)));
             }
-        }
 
-        if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
-            for tool_call in tool_calls {
-                let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
+            if let Some(tool_calls) = delta.tool_calls.as_ref() {
+                for tool_call in tool_calls {
+                    let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
 
-                if let Some(tool_id) = tool_call.id.clone() {
-                    entry.id = tool_id;
-                }
-
-                if let Some(function) = tool_call.function.as_ref() {
-                    if let Some(name) = function.name.clone() {
-                        entry.name = name;
+                    if let Some(tool_id) = tool_call.id.clone() {
+                        entry.id = tool_id;
                     }
 
-                    if let Some(arguments) = function.arguments.clone() {
-                        entry.arguments.push_str(&arguments);
+                    if let Some(function) = tool_call.function.as_ref() {
+                        if let Some(name) = function.name.clone() {
+                            entry.name = name;
+                        }
+
+                        if let Some(arguments) = function.arguments.clone() {
+                            entry.arguments.push_str(&arguments);
+                        }
                     }
                 }
             }
@@ -675,7 +677,7 @@ pub fn count_open_ai_tokens(
 }
 
 struct ConfigurationView {
-    api_key_editor: Entity<SingleLineInput>,
+    api_key_editor: Entity<InputField>,
     state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
@@ -683,7 +685,7 @@ struct ConfigurationView {
 impl ConfigurationView {
     fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let api_key_editor = cx.new(|cx| {
-            SingleLineInput::new(
+            InputField::new(
                 window,
                 cx,
                 "sk-000000000000000000000000000000000000000000000000",

@@ -63,6 +63,7 @@ impl AgentServer for Codex {
         cx: &mut App,
     ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
         let name = self.name();
+        let telemetry_id = self.telemetry_id();
         let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().into_owned());
         let is_remote = delegate.project.read(cx).is_via_remote_server();
         let store = delegate.store.downgrade();
@@ -79,8 +80,6 @@ impl AgentServer for Codex {
                         root_dir.as_deref(),
                         extra_env,
                         delegate.status_tx,
-                        // For now, report that there are no updates.
-                        // (A future PR will use the GitHub Releases API to fetch them.)
                         delegate.new_version_available,
                         &mut cx.to_async(),
                     ))
@@ -89,6 +88,7 @@ impl AgentServer for Codex {
 
             let connection = crate::acp::connect(
                 name,
+                telemetry_id,
                 command,
                 root_dir.as_ref(),
                 default_mode,

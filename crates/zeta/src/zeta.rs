@@ -133,7 +133,7 @@ pub struct EditPrediction {
     path: Arc<Path>,
     excerpt_range: Range<usize>,
     cursor_offset: usize,
-    edits: Arc<[(Range<Anchor>, String)]>,
+    edits: Arc<[(Range<Anchor>, Arc<str>)]>,
     snapshot: BufferSnapshot,
     edit_preview: EditPreview,
     input_outline: Arc<str>,
@@ -150,7 +150,7 @@ impl EditPrediction {
             .duration_since(self.buffer_snapshotted_at)
     }
 
-    fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, String)>> {
+    fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, Arc<str>)>> {
         edit_prediction::interpolate_edits(&self.snapshot, new_snapshot, &self.edits)
     }
 }
@@ -711,7 +711,7 @@ impl Zeta {
         cx.spawn(async move |cx| {
             let output_excerpt: Arc<str> = output_excerpt.into();
 
-            let edits: Arc<[(Range<Anchor>, String)]> = cx
+            let edits: Arc<[(Range<Anchor>, Arc<str>)]> = cx
                 .background_spawn({
                     let output_excerpt = output_excerpt.clone();
                     let editable_range = editable_range.clone();
@@ -725,7 +725,7 @@ impl Zeta {
                 let edits = edits.clone();
                 move |buffer, cx| {
                     let new_snapshot = buffer.snapshot();
-                    let edits: Arc<[(Range<Anchor>, String)]> =
+                    let edits: Arc<[(Range<Anchor>, Arc<str>)]> =
                         edit_prediction::interpolate_edits(&snapshot, &new_snapshot, &edits)?
                             .into();
                     Some((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
@@ -759,7 +759,7 @@ impl Zeta {
         output_excerpt: Arc<str>,
         editable_range: Range<usize>,
         snapshot: &BufferSnapshot,
-    ) -> Result<Vec<(Range<Anchor>, String)>> {
+    ) -> Result<Vec<(Range<Anchor>, Arc<str>)>> {
         let content = output_excerpt.replace(CURSOR_MARKER, "");
 
         let start_markers = content
@@ -817,7 +817,7 @@ impl Zeta {
         new_text: &str,
         offset: usize,
         snapshot: &BufferSnapshot,
-    ) -> Vec<(Range<Anchor>, String)> {
+    ) -> Vec<(Range<Anchor>, Arc<str>)> {
         text_diff(&old_text, new_text)
             .into_iter()
             .map(|(mut old_range, new_text)| {
@@ -836,7 +836,7 @@ impl Zeta {
                 );
                 old_range.end = old_range.end.saturating_sub(suffix_len);
 
-                let new_text = new_text[prefix_len..new_text.len() - suffix_len].to_string();
+                let new_text = new_text[prefix_len..new_text.len() - suffix_len].into();
                 let range = if old_range.is_empty() {
                     let anchor = snapshot.anchor_after(old_range.start);
                     anchor..anchor
@@ -1183,7 +1183,7 @@ impl CurrentEditPrediction {
         if old_edits.len() == 1 && new_edits.len() == 1 {
             let (old_range, old_text) = &old_edits[0];
             let (new_range, new_text) = &new_edits[0];
-            new_range == old_range && new_text.starts_with(old_text)
+            new_range == old_range && new_text.starts_with(old_text.as_ref())
         } else {
             true
         }
@@ -1581,7 +1581,7 @@ fn guess_token_count(bytes: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use client::test::FakeServer;
-    use clock::FakeSystemClock;
+    use clock::{FakeSystemClock, ReplicaId};
     use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
@@ -1599,13 +1599,8 @@ mod tests {
     #[gpui::test]
     async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         let buffer = cx.new(|cx| Buffer::local("Lorem ipsum dolor", cx));
-        let edits: Arc<[(Range<Anchor>, String)]> = cx.update(|cx| {
-            to_completion_edits(
-                [(2..5, "REM".to_string()), (9..11, "".to_string())],
-                &buffer,
-                cx,
-            )
-            .into()
+        let edits: Arc<[(Range<Anchor>, Arc<str>)]> = cx.update(|cx| {
+            to_completion_edits([(2..5, "REM".into()), (9..11, "".into())], &buffer, cx).into()
         });
 
         let edit_preview = cx
@@ -1635,7 +1630,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
+                vec![(2..5, "REM".into()), (9..11, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "")], None, cx));
@@ -1645,7 +1640,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(2..2, "REM".to_string()), (6..8, "".to_string())]
+                vec![(2..2, "REM".into()), (6..8, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.undo(cx));
@@ -1655,7 +1650,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
+                vec![(2..5, "REM".into()), (9..11, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "R")], None, cx));
@@ -1665,7 +1660,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(3..3, "EM".to_string()), (7..9, "".to_string())]
+                vec![(3..3, "EM".into()), (7..9, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(3..3, "E")], None, cx));
@@ -1675,7 +1670,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(4..4, "M".to_string()), (8..10, "".to_string())]
+                vec![(4..4, "M".into()), (8..10, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "M")], None, cx));
@@ -1685,7 +1680,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(9..11, "".to_string())]
+                vec![(9..11, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "")], None, cx));
@@ -1695,7 +1690,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(4..4, "M".to_string()), (8..10, "".to_string())]
+                vec![(4..4, "M".into()), (8..10, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(8..10, "")], None, cx));
@@ -1705,7 +1700,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(4..4, "M".to_string())]
+                vec![(4..4, "M".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(4..6, "")], None, cx));
@@ -1839,7 +1834,7 @@ mod tests {
         let buffer = cx.new(|_cx| {
             Buffer::remote(
                 language::BufferId::new(1).unwrap(),
-                1,
+                ReplicaId::new(1),
                 language::Capability::ReadWrite,
                 "fn main() {\n    println!(\"Hello\");\n}",
             )
@@ -2084,9 +2079,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            client::init_settings(cx);
-            Project::init_settings(cx);
         });
     }
 
@@ -2211,10 +2203,10 @@ mod tests {
     }
 
     fn to_completion_edits(
-        iterator: impl IntoIterator<Item = (Range<usize>, String)>,
+        iterator: impl IntoIterator<Item = (Range<usize>, Arc<str>)>,
         buffer: &Entity<Buffer>,
         cx: &App,
-    ) -> Vec<(Range<Anchor>, String)> {
+    ) -> Vec<(Range<Anchor>, Arc<str>)> {
         let buffer = buffer.read(cx);
         iterator
             .into_iter()
@@ -2228,10 +2220,10 @@ mod tests {
     }
 
     fn from_completion_edits(
-        editor_edits: &[(Range<Anchor>, String)],
+        editor_edits: &[(Range<Anchor>, Arc<str>)],
         buffer: &Entity<Buffer>,
         cx: &App,
-    ) -> Vec<(Range<usize>, String)> {
+    ) -> Vec<(Range<usize>, Arc<str>)> {
         let buffer = buffer.read(cx);
         editor_edits
             .iter()

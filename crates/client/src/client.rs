@@ -30,7 +30,7 @@ use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsContent};
+use settings::{RegisterSetting, Settings, SettingsContent};
 use std::{
     any::TypeId,
     convert::TryFrom,
@@ -95,7 +95,7 @@ actions!(
     ]
 );
 
-#[derive(Deserialize)]
+#[derive(Deserialize, RegisterSetting)]
 pub struct ClientSettings {
     pub server_url: String,
 }
@@ -113,7 +113,7 @@ impl Settings for ClientSettings {
     }
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, RegisterSetting)]
 pub struct ProxySettings {
     pub proxy: Option<String>,
 }
@@ -138,16 +138,6 @@ impl Settings for ProxySettings {
             proxy: content.proxy.clone(),
         }
     }
-
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
-        vscode.string_setting("http.proxy", &mut current.proxy);
-    }
-}
-
-pub fn init_settings(cx: &mut App) {
-    TelemetrySettings::register(cx);
-    ClientSettings::register(cx);
-    ProxySettings::register(cx);
 }
 
 pub fn init(client: &Arc<Client>, cx: &mut App) {
@@ -512,7 +502,7 @@ impl<T: 'static> Drop for PendingEntitySubscription<T> {
     }
 }
 
-#[derive(Copy, Clone, Deserialize, Debug)]
+#[derive(Copy, Clone, Deserialize, Debug, RegisterSetting)]
 pub struct TelemetrySettings {
     pub diagnostics: bool,
     pub metrics: bool,
@@ -523,27 +513,6 @@ impl settings::Settings for TelemetrySettings {
         Self {
             diagnostics: content.telemetry.as_ref().unwrap().diagnostics.unwrap(),
             metrics: content.telemetry.as_ref().unwrap().metrics.unwrap(),
-        }
-    }
-
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
-        let mut telemetry = settings::TelemetrySettingsContent::default();
-        vscode.enum_setting("telemetry.telemetryLevel", &mut telemetry.metrics, |s| {
-            Some(s == "all")
-        });
-        vscode.enum_setting(
-            "telemetry.telemetryLevel",
-            &mut telemetry.diagnostics,
-            |s| Some(matches!(s, "all" | "error" | "crash")),
-        );
-        // we could translate telemetry.telemetryLevel, but just because users didn't want
-        // to send microsoft telemetry doesn't mean they don't want to send it to zed. their
-        // all/error/crash/off correspond to combinations of our "diagnostics" and "metrics".
-        if let Some(diagnostics) = telemetry.diagnostics {
-            current.telemetry.get_or_insert_default().diagnostics = Some(diagnostics)
-        }
-        if let Some(metrics) = telemetry.metrics {
-            current.telemetry.get_or_insert_default().metrics = Some(metrics)
         }
     }
 }
@@ -2202,7 +2171,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            init_settings(cx);
         });
     }
 }

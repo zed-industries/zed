@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
 };
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
 use collections::{HashMap, HashSet};
 use fs::{Fs, copy_recursive};
 use futures::{
@@ -551,7 +551,7 @@ impl WorktreeStore {
             let worktree = cx.update(|cx| {
                 Worktree::remote(
                     REMOTE_SERVER_PROJECT_ID,
-                    0,
+                    ReplicaId::REMOTE_SERVER,
                     proto::WorktreeMetadata {
                         id: response.worktree_id,
                         root_name,
@@ -1203,6 +1203,16 @@ impl WorktreeStore {
             RelPath::from_proto(&envelope.payload.new_path)?,
         );
         let (scan_id, entry) = this.update(&mut cx, |this, cx| {
+            let Some((_, project_id)) = this.downstream_client else {
+                bail!("no downstream client")
+            };
+            let Some(entry) = this.entry_for_id(entry_id, cx) else {
+                bail!("no such entry");
+            };
+            if entry.is_private && project_id != REMOTE_SERVER_PROJECT_ID {
+                bail!("entry is private")
+            }
+
             let new_worktree = this
                 .worktree_for_id(new_worktree_id, cx)
                 .context("no such worktree")?;
@@ -1226,6 +1236,15 @@ impl WorktreeStore {
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
         let worktree = this.update(&mut cx, |this, cx| {
+            let Some((_, project_id)) = this.downstream_client else {
+                bail!("no downstream client")
+            };
+            let Some(entry) = this.entry_for_id(entry_id, cx) else {
+                bail!("no entry")
+            };
+            if entry.is_private && project_id != REMOTE_SERVER_PROJECT_ID {
+                bail!("entry is private")
+            }
             this.worktree_for_entry(entry_id, cx)
                 .context("worktree not found")
         })??;
@@ -1246,6 +1265,18 @@ impl WorktreeStore {
             let worktree = this
                 .worktree_for_entry(entry_id, cx)
                 .context("no such worktree")?;
+
+            let Some((_, project_id)) = this.downstream_client else {
+                bail!("no downstream client")
+            };
+            let entry = worktree
+                .read(cx)
+                .entry_for_id(entry_id)
+                .ok_or_else(|| anyhow!("missing entry"))?;
+            if entry.is_private && project_id != REMOTE_SERVER_PROJECT_ID {
+                bail!("entry is private")
+            }
+
             let scan_id = worktree.read(cx).scan_id();
             anyhow::Ok((
                 scan_id,

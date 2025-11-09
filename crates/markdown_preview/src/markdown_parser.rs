@@ -12,6 +12,7 @@ use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
 use std::{
     cell::RefCell, collections::HashMap, mem, ops::Range, path::PathBuf, rc::Rc, sync::Arc, vec,
 };
+use ui::SharedString;
 
 pub async fn parse_markdown(
     markdown_input: &str,
@@ -59,6 +60,17 @@ struct MarkdownParser<'a> {
     parsed: Vec<ParsedMarkdownElement>,
     file_location_directory: Option<PathBuf>,
     language_registry: Option<Arc<LanguageRegistry>>,
+}
+
+#[derive(Debug)]
+struct ParseHtmlNodeContext {
+    list_item_depth: u16,
+}
+
+impl Default for ParseHtmlNodeContext {
+    fn default() -> Self {
+        Self { list_item_depth: 1 }
+    }
 }
 
 struct MarkdownListItem {
@@ -462,11 +474,14 @@ impl<'a> MarkdownParser<'a> {
     fn parse_table(&mut self, alignment: Vec<Alignment>) -> ParsedMarkdownTable {
         let (_event, source_range) = self.previous().unwrap();
         let source_range = source_range.clone();
-        let mut header = ParsedMarkdownTableRow::new();
+        let mut header = vec![];
         let mut body = vec![];
-        let mut current_row = vec![];
+        let mut row_columns = vec![];
         let mut in_header = true;
-        let column_alignments = alignment.iter().map(Self::convert_alignment).collect();
+        let column_alignments = alignment
+            .iter()
+            .map(Self::convert_alignment)
+            .collect::<Vec<_>>();
 
         loop {
             if self.eof() {
@@ -484,17 +499,25 @@ impl<'a> MarkdownParser<'a> {
                 Event::Start(Tag::TableCell) => {
                     self.cursor += 1;
                     let cell_contents = self.parse_text(false, Some(source_range));
-                    current_row.push(cell_contents);
+                    row_columns.push(ParsedMarkdownTableColumn {
+                        col_span: 1,
+                        row_span: 1,
+                        is_header: in_header,
+                        children: cell_contents,
+                        alignment: column_alignments
+                            .get(row_columns.len())
+                            .copied()
+                            .unwrap_or_default(),
+                    });
                 }
                 Event::End(TagEnd::TableHead) | Event::End(TagEnd::TableRow) => {
                     self.cursor += 1;
-                    let new_row = std::mem::take(&mut current_row);
+                    let columns = std::mem::take(&mut row_columns);
                     if in_header {
-                        header.children = new_row;
+                        header.push(ParsedMarkdownTableRow { columns: columns });
                         in_header = false;
                     } else {
-                        let row = ParsedMarkdownTableRow::with_children(new_row);
-                        body.push(row);
+                        body.push(ParsedMarkdownTableRow::with_columns(columns));
                     }
                 }
                 Event::End(TagEnd::Table) => {
@@ -511,7 +534,7 @@ impl<'a> MarkdownParser<'a> {
             source_range,
             header,
             body,
-            column_alignments,
+            caption: None,
         }
     }
 
@@ -636,6 +659,7 @@ impl<'a> MarkdownParser<'a> {
                             content: list_item.content,
                             depth,
                             item_type: list_item.item_type,
+                            nested: false,
                         });
 
                         if let Some(index) = insertion_indices.get(&depth) {
@@ -818,7 +842,12 @@ impl<'a> MarkdownParser<'a> {
             .read_from(&mut cursor)
             && let Some((start, end)) = html_source_range_start.zip(html_source_range_end)
         {
-            self.parse_html_node(start..end, &dom.document, &mut elements);
+            self.parse_html_node(
+                start..end,
+                &dom.document,
+                &mut elements,
+                &ParseHtmlNodeContext::default(),
+            );
         }
 
         elements
@@ -829,10 +858,11 @@ impl<'a> MarkdownParser<'a> {
         source_range: Range<usize>,
         node: &Rc<markup5ever_rcdom::Node>,
         elements: &mut Vec<ParsedMarkdownElement>,
+        context: &ParseHtmlNodeContext,
     ) {
         match &node.data {
             markup5ever_rcdom::NodeData::Document => {
-                self.consume_children(source_range, node, elements);
+                self.consume_children(source_range, node, elements, context);
             }
             markup5ever_rcdom::NodeData::Text { contents } => {
                 elements.push(ParsedMarkdownElement::Paragraph(vec![
@@ -847,13 +877,21 @@ impl<'a> MarkdownParser<'a> {
             }
             markup5ever_rcdom::NodeData::Comment { .. } => {}
             markup5ever_rcdom::NodeData::Element { name, attrs, .. } => {
+                let mut styles = if let Some(styles) = Self::markdown_style_from_html_styles(
+                    Self::extract_styles_from_attributes(attrs),
+                ) {
+                    vec![MarkdownHighlight::Style(styles)]
+                } else {
+                    Vec::default()
+                };
+
                 if local_name!("img") == name.local {
                     if let Some(image) = self.extract_image(source_range, attrs) {
                         elements.push(ParsedMarkdownElement::Image(image));
                     }
                 } else if local_name!("p") == name.local {
                     let mut paragraph = MarkdownParagraph::new();
-                    self.parse_paragraph(source_range, node, &mut paragraph);
+                    self.parse_paragraph(source_range, node, &mut paragraph, &mut styles);
 
                     if !paragraph.is_empty() {
                         elements.push(ParsedMarkdownElement::Paragraph(paragraph));
@@ -868,7 +906,7 @@ impl<'a> MarkdownParser<'a> {
                         | local_name!("h6")
                 ) {
                     let mut paragraph = MarkdownParagraph::new();
-                    self.consume_paragraph(source_range.clone(), node, &mut paragraph);
+                    self.consume_paragraph(source_range.clone(), node, &mut paragraph, &mut styles);
 
                     if !paragraph.is_empty() {
                         elements.push(ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
@@ -885,6 +923,15 @@ impl<'a> MarkdownParser<'a> {
                             contents: paragraph,
                         }));
                     }
+                } else if local_name!("ul") == name.local || local_name!("ol") == name.local {
+                    if let Some(list_items) = self.extract_html_list(
+                        node,
+                        local_name!("ol") == name.local,
+                        context.list_item_depth,
+                        source_range,
+                    ) {
+                        elements.extend(list_items);
+                    }
                 } else if local_name!("blockquote") == name.local {
                     if let Some(blockquote) = self.extract_html_blockquote(node, source_range) {
                         elements.push(ParsedMarkdownElement::BlockQuote(blockquote));
@@ -894,7 +941,7 @@ impl<'a> MarkdownParser<'a> {
                         elements.push(ParsedMarkdownElement::Table(table));
                     }
                 } else {
-                    self.consume_children(source_range, node, elements);
+                    self.consume_children(source_range, node, elements, context);
                 }
             }
             _ => {}
@@ -906,24 +953,90 @@ impl<'a> MarkdownParser<'a> {
         source_range: Range<usize>,
         node: &Rc<markup5ever_rcdom::Node>,
         paragraph: &mut MarkdownParagraph,
+        highlights: &mut Vec<MarkdownHighlight>,
     ) {
+        fn add_highlight_range(
+            text: &String,
+            start: usize,
+            highlights: Vec<MarkdownHighlight>,
+        ) -> Vec<(Range<usize>, MarkdownHighlight)> {
+            highlights
+                .into_iter()
+                .map(|style| (start..text.len(), style))
+                .collect()
+        }
+
         match &node.data {
             markup5ever_rcdom::NodeData::Text { contents } => {
-                paragraph.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
-                    source_range,
-                    regions: Vec::default(),
-                    region_ranges: Vec::default(),
-                    highlights: Vec::default(),
-                    contents: contents.borrow().to_string().into(),
-                }));
+                // append the text to the last chunk, so we can have a hacky version
+                // of inline text with highlighting
+                if let Some(text) = paragraph.iter_mut().last().and_then(|p| match p {
+                    MarkdownParagraphChunk::Text(text) => Some(text),
+                    _ => None,
+                }) {
+                    let mut new_text = text.contents.to_string();
+                    new_text.push_str(&contents.borrow());
+                    let highlights = add_highlight_range(
+                        &new_text,
+                        text.contents.len(),
+                        std::mem::take(highlights),
+                    );
+
+                    text.contents = SharedString::from(new_text);
+                    text.highlights.extend(highlights);
+                } else {
+                    let contents = contents.borrow().to_string();
+                    paragraph.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range,
+                        highlights: add_highlight_range(&contents, 0, std::mem::take(highlights)),
+                        regions: Vec::default(),
+                        contents: contents.into(),
+                        region_ranges: Vec::default(),
+                    }));
+                }
             }
             markup5ever_rcdom::NodeData::Element { name, attrs, .. } => {
                 if local_name!("img") == name.local {
                     if let Some(image) = self.extract_image(source_range, attrs) {
                         paragraph.push(MarkdownParagraphChunk::Image(image));
                     }
+                } else if local_name!("b") == name.local || local_name!("strong") == name.local {
+                    highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        weight: FontWeight::BOLD,
+                        ..Default::default()
+                    }));
+
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
+                } else if local_name!("i") == name.local {
+                    highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        italic: true,
+                        ..Default::default()
+                    }));
+
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
+                } else if local_name!("em") == name.local {
+                    highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        oblique: true,
+                        ..Default::default()
+                    }));
+
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
+                } else if local_name!("del") == name.local {
+                    highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        strikethrough: true,
+                        ..Default::default()
+                    }));
+
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
+                } else if local_name!("ins") == name.local {
+                    highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        underline: true,
+                        ..Default::default()
+                    }));
+
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
                 } else {
-                    self.consume_paragraph(source_range, node, paragraph);
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
                 }
             }
             _ => {}
@@ -935,9 +1048,90 @@ impl<'a> MarkdownParser<'a> {
         source_range: Range<usize>,
         node: &Rc<markup5ever_rcdom::Node>,
         paragraph: &mut MarkdownParagraph,
+        highlights: &mut Vec<MarkdownHighlight>,
     ) {
         for node in node.children.borrow().iter() {
-            self.parse_paragraph(source_range.clone(), node, paragraph);
+            self.parse_paragraph(source_range.clone(), node, paragraph, highlights);
+        }
+    }
+
+    fn parse_table_row(
+        &self,
+        source_range: Range<usize>,
+        node: &Rc<markup5ever_rcdom::Node>,
+    ) -> Option<ParsedMarkdownTableRow> {
+        let mut columns = Vec::new();
+
+        match &node.data {
+            markup5ever_rcdom::NodeData::Element { name, .. } => {
+                if local_name!("tr") != name.local {
+                    return None;
+                }
+
+                for node in node.children.borrow().iter() {
+                    if let Some(column) = self.parse_table_column(source_range.clone(), node) {
+                        columns.push(column);
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        if columns.is_empty() {
+            None
+        } else {
+            Some(ParsedMarkdownTableRow { columns })
+        }
+    }
+
+    fn parse_table_column(
+        &self,
+        source_range: Range<usize>,
+        node: &Rc<markup5ever_rcdom::Node>,
+    ) -> Option<ParsedMarkdownTableColumn> {
+        match &node.data {
+            markup5ever_rcdom::NodeData::Element { name, attrs, .. } => {
+                if !matches!(name.local, local_name!("th") | local_name!("td")) {
+                    return None;
+                }
+
+                let mut children = MarkdownParagraph::new();
+                self.consume_paragraph(source_range, node, &mut children, &mut Vec::new());
+
+                let is_header = matches!(name.local, local_name!("th"));
+
+                Some(ParsedMarkdownTableColumn {
+                    col_span: std::cmp::max(
+                        Self::attr_value(attrs, local_name!("colspan"))
+                            .and_then(|span| span.parse().ok())
+                            .unwrap_or(1),
+                        1,
+                    ),
+                    row_span: std::cmp::max(
+                        Self::attr_value(attrs, local_name!("rowspan"))
+                            .and_then(|span| span.parse().ok())
+                            .unwrap_or(1),
+                        1,
+                    ),
+                    is_header,
+                    children,
+                    alignment: Self::attr_value(attrs, local_name!("align"))
+                        .and_then(|align| match align.as_str() {
+                            "left" => Some(ParsedMarkdownTableAlignment::Left),
+                            "center" => Some(ParsedMarkdownTableAlignment::Center),
+                            "right" => Some(ParsedMarkdownTableAlignment::Right),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| {
+                            if is_header {
+                                ParsedMarkdownTableAlignment::Center
+                            } else {
+                                ParsedMarkdownTableAlignment::default()
+                            }
+                        }),
+                })
+            }
+            _ => None,
         }
     }
 
@@ -946,9 +1140,10 @@ impl<'a> MarkdownParser<'a> {
         source_range: Range<usize>,
         node: &Rc<markup5ever_rcdom::Node>,
         elements: &mut Vec<ParsedMarkdownElement>,
+        context: &ParseHtmlNodeContext,
     ) {
         for node in node.children.borrow().iter() {
-            self.parse_html_node(source_range.clone(), node, elements);
+            self.parse_html_node(source_range.clone(), node, elements, context);
         }
     }
 
@@ -963,6 +1158,58 @@ impl<'a> MarkdownParser<'a> {
                 None
             }
         })
+    }
+
+    fn markdown_style_from_html_styles(
+        styles: HashMap<String, String>,
+    ) -> Option<MarkdownHighlightStyle> {
+        let mut markdown_style = MarkdownHighlightStyle::default();
+
+        if let Some(text_decoration) = styles.get("text-decoration") {
+            match text_decoration.to_lowercase().as_str() {
+                "underline" => {
+                    markdown_style.underline = true;
+                }
+                "line-through" => {
+                    markdown_style.strikethrough = true;
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(font_style) = styles.get("font-style") {
+            match font_style.to_lowercase().as_str() {
+                "italic" => {
+                    markdown_style.italic = true;
+                }
+                "oblique" => {
+                    markdown_style.oblique = true;
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(font_weight) = styles.get("font-weight") {
+            match font_weight.to_lowercase().as_str() {
+                "bold" => {
+                    markdown_style.weight = FontWeight::BOLD;
+                }
+                "lighter" => {
+                    markdown_style.weight = FontWeight::THIN;
+                }
+                _ => {
+                    if let Some(weight) = font_weight.parse::<f32>().ok() {
+                        markdown_style.weight = FontWeight(weight);
+                    }
+                }
+            }
+        }
+
+        if markdown_style != MarkdownHighlightStyle::default() {
+            Some(markdown_style)
+        } else {
+            None
+        }
     }
 
     fn extract_styles_from_attributes(
@@ -1017,6 +1264,57 @@ impl<'a> MarkdownParser<'a> {
         Some(image)
     }
 
+    fn extract_html_list(
+        &self,
+        node: &Rc<markup5ever_rcdom::Node>,
+        ordered: bool,
+        depth: u16,
+        source_range: Range<usize>,
+    ) -> Option<Vec<ParsedMarkdownElement>> {
+        let mut list_items = Vec::with_capacity(node.children.borrow().len());
+
+        for (index, node) in node.children.borrow().iter().enumerate() {
+            match &node.data {
+                markup5ever_rcdom::NodeData::Element { name, .. } => {
+                    if local_name!("li") != name.local {
+                        continue;
+                    }
+
+                    let mut content = Vec::new();
+                    self.consume_children(
+                        source_range.clone(),
+                        node,
+                        &mut content,
+                        &ParseHtmlNodeContext {
+                            list_item_depth: depth + 1,
+                        },
+                    );
+
+                    if !content.is_empty() {
+                        list_items.push(ParsedMarkdownElement::ListItem(ParsedMarkdownListItem {
+                            depth,
+                            source_range: source_range.clone(),
+                            item_type: if ordered {
+                                ParsedMarkdownListItemType::Ordered(index as u64 + 1)
+                            } else {
+                                ParsedMarkdownListItemType::Unordered
+                            },
+                            content,
+                            nested: true,
+                        }));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if list_items.is_empty() {
+            None
+        } else {
+            Some(list_items)
+        }
+    }
+
     fn parse_html_element_dimension(value: &str) -> Option<DefiniteLength> {
         if value.ends_with("%") {
             value
@@ -1039,7 +1337,12 @@ impl<'a> MarkdownParser<'a> {
         source_range: Range<usize>,
     ) -> Option<ParsedMarkdownBlockQuote> {
         let mut children = Vec::new();
-        self.consume_children(source_range.clone(), node, &mut children);
+        self.consume_children(
+            source_range.clone(),
+            node,
+            &mut children,
+            &ParseHtmlNodeContext::default(),
+        );
 
         if children.is_empty() {
             None
@@ -1056,31 +1359,37 @@ impl<'a> MarkdownParser<'a> {
         node: &Rc<markup5ever_rcdom::Node>,
         source_range: Range<usize>,
     ) -> Option<ParsedMarkdownTable> {
-        let mut header_columns = Vec::new();
+        let mut header_rows = Vec::new();
         let mut body_rows = Vec::new();
+        let mut caption = None;
 
-        // node should be a thead or tbody element
+        // node should be a thead, tbody or caption element
         for node in node.children.borrow().iter() {
             match &node.data {
                 markup5ever_rcdom::NodeData::Element { name, .. } => {
+                    if local_name!("caption") == name.local {
+                        let mut paragraph = MarkdownParagraph::new();
+                        self.parse_paragraph(
+                            source_range.clone(),
+                            node,
+                            &mut paragraph,
+                            &mut Vec::new(),
+                        );
+                        caption = Some(paragraph);
+                    }
                     if local_name!("thead") == name.local {
                         // node should be a tr element
                         for node in node.children.borrow().iter() {
-                            let mut paragraph = MarkdownParagraph::new();
-                            self.consume_paragraph(source_range.clone(), node, &mut paragraph);
-
-                            for paragraph in paragraph.into_iter() {
-                                header_columns.push(vec![paragraph]);
+                            if let Some(row) = self.parse_table_row(source_range.clone(), node) {
+                                header_rows.push(row);
                             }
                         }
                     } else if local_name!("tbody") == name.local {
                         // node should be a tr element
                         for node in node.children.borrow().iter() {
-                            let mut row = MarkdownParagraph::new();
-                            self.consume_paragraph(source_range.clone(), node, &mut row);
-                            body_rows.push(ParsedMarkdownTableRow::with_children(
-                                row.into_iter().map(|column| vec![column]).collect(),
-                            ));
+                            if let Some(row) = self.parse_table_row(source_range.clone(), node) {
+                                body_rows.push(row);
+                            }
                         }
                     }
                 }
@@ -1088,12 +1397,12 @@ impl<'a> MarkdownParser<'a> {
             }
         }
 
-        if !header_columns.is_empty() || !body_rows.is_empty() {
+        if !header_rows.is_empty() || !body_rows.is_empty() {
             Some(ParsedMarkdownTable {
                 source_range,
                 body: body_rows,
-                column_alignments: Vec::default(),
-                header: ParsedMarkdownTableRow::with_children(header_columns),
+                header: header_rows,
+                caption,
             })
         } else {
             None
@@ -1229,6 +1538,83 @@ mod tests {
                     }),
                 ),
             ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_inline_style_elements() {
+        let parsed =
+                parse("<p>Some text <strong>strong text</strong> more text <b>bold text</b> more text <i>italic text</i> more text <em>emphasized text</em> more text <del>deleted text</del> more text <ins>inserted text</ins></p>").await;
+
+        assert_eq!(1, parsed.children.len());
+        let chunks = if let ParsedMarkdownElement::Paragraph(chunks) = &parsed.children[0] {
+            chunks
+        } else {
+            panic!("Expected a paragraph");
+        };
+
+        assert_eq!(1, chunks.len());
+        let text = if let MarkdownParagraphChunk::Text(text) = &chunks[0] {
+            text
+        } else {
+            panic!("Expected a paragraph");
+        };
+
+        assert_eq!(0..205, text.source_range);
+        assert_eq!(
+            "Some text strong text more text bold text more text italic text more text emphasized text more text deleted text more text inserted text",
+            text.contents.as_str(),
+        );
+        assert_eq!(
+            vec![
+                (
+                    10..21,
+                    MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        weight: FontWeight(700.0),
+                        ..Default::default()
+                    },),
+                ),
+                (
+                    32..41,
+                    MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        weight: FontWeight(700.0),
+                        ..Default::default()
+                    },),
+                ),
+                (
+                    52..63,
+                    MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        italic: true,
+                        weight: FontWeight(400.0),
+                        ..Default::default()
+                    },),
+                ),
+                (
+                    74..89,
+                    MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        weight: FontWeight(400.0),
+                        oblique: true,
+                        ..Default::default()
+                    },),
+                ),
+                (
+                    100..112,
+                    MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        strikethrough: true,
+                        weight: FontWeight(400.0),
+                        ..Default::default()
+                    },),
+                ),
+                (
+                    123..136,
+                    MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        underline: true,
+                        weight: FontWeight(400.0,),
+                        ..Default::default()
+                    },),
+                ),
+            ],
+            text.highlights
         );
     }
 
@@ -1469,6 +1855,168 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_html_unordered_list() {
+        let parsed = parse(
+            "<ul>
+              <li>Item 1</li>
+              <li>Item 2</li>
+            </ul>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![
+                    nested_list_item(
+                        0..82,
+                        1,
+                        ParsedMarkdownListItemType::Unordered,
+                        vec![ParsedMarkdownElement::Paragraph(text("Item 1", 0..82))]
+                    ),
+                    nested_list_item(
+                        0..82,
+                        1,
+                        ParsedMarkdownListItemType::Unordered,
+                        vec![ParsedMarkdownElement::Paragraph(text("Item 2", 0..82))]
+                    ),
+                ]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_ordered_list() {
+        let parsed = parse(
+            "<ol>
+              <li>Item 1</li>
+              <li>Item 2</li>
+            </ol>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![
+                    nested_list_item(
+                        0..82,
+                        1,
+                        ParsedMarkdownListItemType::Ordered(1),
+                        vec![ParsedMarkdownElement::Paragraph(text("Item 1", 0..82))]
+                    ),
+                    nested_list_item(
+                        0..82,
+                        1,
+                        ParsedMarkdownListItemType::Ordered(2),
+                        vec![ParsedMarkdownElement::Paragraph(text("Item 2", 0..82))]
+                    ),
+                ]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_nested_ordered_list() {
+        let parsed = parse(
+            "<ol>
+              <li>Item 1</li>
+              <li>Item 2
+                <ol>
+                  <li>Sub-Item 1</li>
+                  <li>Sub-Item 2</li>
+                </ol>
+              </li>
+            </ol>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![
+                    nested_list_item(
+                        0..216,
+                        1,
+                        ParsedMarkdownListItemType::Ordered(1),
+                        vec![ParsedMarkdownElement::Paragraph(text("Item 1", 0..216))]
+                    ),
+                    nested_list_item(
+                        0..216,
+                        1,
+                        ParsedMarkdownListItemType::Ordered(2),
+                        vec![
+                            ParsedMarkdownElement::Paragraph(text("Item 2", 0..216)),
+                            nested_list_item(
+                                0..216,
+                                2,
+                                ParsedMarkdownListItemType::Ordered(1),
+                                vec![ParsedMarkdownElement::Paragraph(text("Sub-Item 1", 0..216))]
+                            ),
+                            nested_list_item(
+                                0..216,
+                                2,
+                                ParsedMarkdownListItemType::Ordered(2),
+                                vec![ParsedMarkdownElement::Paragraph(text("Sub-Item 2", 0..216))]
+                            ),
+                        ]
+                    ),
+                ]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_nested_unordered_list() {
+        let parsed = parse(
+            "<ul>
+              <li>Item 1</li>
+              <li>Item 2
+                <ul>
+                  <li>Sub-Item 1</li>
+                  <li>Sub-Item 2</li>
+                </ul>
+              </li>
+            </ul>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![
+                    nested_list_item(
+                        0..216,
+                        1,
+                        ParsedMarkdownListItemType::Unordered,
+                        vec![ParsedMarkdownElement::Paragraph(text("Item 1", 0..216))]
+                    ),
+                    nested_list_item(
+                        0..216,
+                        1,
+                        ParsedMarkdownListItemType::Unordered,
+                        vec![
+                            ParsedMarkdownElement::Paragraph(text("Item 2", 0..216)),
+                            nested_list_item(
+                                0..216,
+                                2,
+                                ParsedMarkdownListItemType::Unordered,
+                                vec![ParsedMarkdownElement::Paragraph(text("Sub-Item 1", 0..216))]
+                            ),
+                            nested_list_item(
+                                0..216,
+                                2,
+                                ParsedMarkdownListItemType::Unordered,
+                                vec![ParsedMarkdownElement::Paragraph(text("Sub-Item 2", 0..216))]
+                            ),
+                        ]
+                    ),
+                ]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
     async fn test_inline_html_image_tag() {
         let parsed =
             parse("<p>Some text<img src=\"http://example.com/foo.png\" /> some more text</p>")
@@ -1510,7 +2058,7 @@ mod tests {
     async fn test_html_block_quote() {
         let parsed = parse(
             "<blockquote>
-              <p>some description</p>
+                <p>some description</p>
             </blockquote>",
         )
         .await;
@@ -1520,9 +2068,9 @@ mod tests {
                 children: vec![block_quote(
                     vec![ParsedMarkdownElement::Paragraph(text(
                         "some description",
-                        0..76
+                        0..78
                     ))],
-                    0..76,
+                    0..78,
                 )]
             },
             parsed
@@ -1533,10 +2081,10 @@ mod tests {
     async fn test_html_nested_block_quote() {
         let parsed = parse(
             "<blockquote>
-              <p>some description</p>
-              <blockquote>
+                <p>some description</p>
+                <blockquote>
                 <p>second description</p>
-              </blockquote>
+                </blockquote>
             </blockquote>",
         )
         .await;
@@ -1545,16 +2093,16 @@ mod tests {
             ParsedMarkdown {
                 children: vec![block_quote(
                     vec![
-                        ParsedMarkdownElement::Paragraph(text("some description", 0..173)),
+                        ParsedMarkdownElement::Paragraph(text("some description", 0..179)),
                         block_quote(
                             vec![ParsedMarkdownElement::Paragraph(text(
                                 "second description",
-                                0..173
+                                0..179
                             ))],
-                            0..173,
+                            0..179,
                         )
                     ],
-                    0..173,
+                    0..179,
                 )]
             },
             parsed
@@ -1589,10 +2137,127 @@ mod tests {
             ParsedMarkdown {
                 children: vec![ParsedMarkdownElement::Table(table(
                     0..366,
-                    row(vec![text("Id", 0..366), text("Name ", 0..366)]),
+                    None,
+                    vec![row(vec![
+                        column(
+                            1,
+                            1,
+                            true,
+                            text("Id", 0..366),
+                            ParsedMarkdownTableAlignment::Center
+                        ),
+                        column(
+                            1,
+                            1,
+                            true,
+                            text("Name ", 0..366),
+                            ParsedMarkdownTableAlignment::Center
+                        )
+                    ])],
                     vec![
-                        row(vec![text("1", 0..366), text("Chris", 0..366)]),
-                        row(vec![text("2", 0..366), text("Dennis", 0..366)]),
+                        row(vec![
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("1", 0..366),
+                                ParsedMarkdownTableAlignment::None
+                            ),
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("Chris", 0..366),
+                                ParsedMarkdownTableAlignment::None
+                            )
+                        ]),
+                        row(vec![
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("2", 0..366),
+                                ParsedMarkdownTableAlignment::None
+                            ),
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("Dennis", 0..366),
+                                ParsedMarkdownTableAlignment::None
+                            )
+                        ]),
+                    ],
+                ))],
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_table_with_caption() {
+        let parsed = parse(
+            "<table>
+            <caption>My Table</caption>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>Chris</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>Dennis</td>
+            </tr>
+          </tbody>
+        </table>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![ParsedMarkdownElement::Table(table(
+                    0..280,
+                    Some(vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range: 0..280,
+                        contents: "My Table".into(),
+                        highlights: Default::default(),
+                        region_ranges: Default::default(),
+                        regions: Default::default()
+                    })]),
+                    vec![],
+                    vec![
+                        row(vec![
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("1", 0..280),
+                                ParsedMarkdownTableAlignment::None
+                            ),
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("Chris", 0..280),
+                                ParsedMarkdownTableAlignment::None
+                            )
+                        ]),
+                        row(vec![
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("2", 0..280),
+                                ParsedMarkdownTableAlignment::None
+                            ),
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("Dennis", 0..280),
+                                ParsedMarkdownTableAlignment::None
+                            )
+                        ]),
                     ],
                 ))],
             },
@@ -1622,10 +2287,41 @@ mod tests {
             ParsedMarkdown {
                 children: vec![ParsedMarkdownElement::Table(table(
                     0..240,
-                    row(vec![]),
+                    None,
+                    vec![],
                     vec![
-                        row(vec![text("1", 0..240), text("Chris", 0..240)]),
-                        row(vec![text("2", 0..240), text("Dennis", 0..240)]),
+                        row(vec![
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("1", 0..240),
+                                ParsedMarkdownTableAlignment::None
+                            ),
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("Chris", 0..240),
+                                ParsedMarkdownTableAlignment::None
+                            )
+                        ]),
+                        row(vec![
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("2", 0..240),
+                                ParsedMarkdownTableAlignment::None
+                            ),
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("Dennis", 0..240),
+                                ParsedMarkdownTableAlignment::None
+                            )
+                        ]),
                     ],
                 ))],
             },
@@ -1651,7 +2347,23 @@ mod tests {
             ParsedMarkdown {
                 children: vec![ParsedMarkdownElement::Table(table(
                     0..150,
-                    row(vec![text("Id", 0..150), text("Name", 0..150)]),
+                    None,
+                    vec![row(vec![
+                        column(
+                            1,
+                            1,
+                            true,
+                            text("Id", 0..150),
+                            ParsedMarkdownTableAlignment::Center
+                        ),
+                        column(
+                            1,
+                            1,
+                            true,
+                            text("Name", 0..150),
+                            ParsedMarkdownTableAlignment::Center
+                        )
+                    ])],
                     vec![],
                 ))],
             },
@@ -1833,7 +2545,23 @@ Some other content
 
         let expected_table = table(
             0..48,
-            row(vec![text("Header 1", 1..11), text("Header 2", 12..22)]),
+            None,
+            vec![row(vec![
+                column(
+                    1,
+                    1,
+                    true,
+                    text("Header 1", 1..11),
+                    ParsedMarkdownTableAlignment::None,
+                ),
+                column(
+                    1,
+                    1,
+                    true,
+                    text("Header 2", 12..22),
+                    ParsedMarkdownTableAlignment::None,
+                ),
+            ])],
             vec![],
         );
 
@@ -1853,10 +2581,56 @@ Some other content
 
         let expected_table = table(
             0..95,
-            row(vec![text("Header 1", 1..11), text("Header 2", 12..22)]),
+            None,
+            vec![row(vec![
+                column(
+                    1,
+                    1,
+                    true,
+                    text("Header 1", 1..11),
+                    ParsedMarkdownTableAlignment::None,
+                ),
+                column(
+                    1,
+                    1,
+                    true,
+                    text("Header 2", 12..22),
+                    ParsedMarkdownTableAlignment::None,
+                ),
+            ])],
             vec![
-                row(vec![text("Cell 1", 49..59), text("Cell 2", 60..70)]),
-                row(vec![text("Cell 3", 73..83), text("Cell 4", 84..94)]),
+                row(vec![
+                    column(
+                        1,
+                        1,
+                        false,
+                        text("Cell 1", 49..59),
+                        ParsedMarkdownTableAlignment::None,
+                    ),
+                    column(
+                        1,
+                        1,
+                        false,
+                        text("Cell 2", 60..70),
+                        ParsedMarkdownTableAlignment::None,
+                    ),
+                ]),
+                row(vec![
+                    column(
+                        1,
+                        1,
+                        false,
+                        text("Cell 3", 73..83),
+                        ParsedMarkdownTableAlignment::None,
+                    ),
+                    column(
+                        1,
+                        1,
+                        false,
+                        text("Cell 4", 84..94),
+                        ParsedMarkdownTableAlignment::None,
+                    ),
+                ]),
             ],
         );
 
@@ -2308,24 +3082,57 @@ fn main() {
             item_type,
             depth,
             content,
+            nested: false,
+        })
+    }
+
+    fn nested_list_item(
+        source_range: Range<usize>,
+        depth: u16,
+        item_type: ParsedMarkdownListItemType,
+        content: Vec<ParsedMarkdownElement>,
+    ) -> ParsedMarkdownElement {
+        ParsedMarkdownElement::ListItem(ParsedMarkdownListItem {
+            source_range,
+            item_type,
+            depth,
+            content,
+            nested: true,
         })
     }
 
     fn table(
         source_range: Range<usize>,
-        header: ParsedMarkdownTableRow,
+        caption: Option<MarkdownParagraph>,
+        header: Vec<ParsedMarkdownTableRow>,
         body: Vec<ParsedMarkdownTableRow>,
     ) -> ParsedMarkdownTable {
         ParsedMarkdownTable {
-            column_alignments: Vec::new(),
             source_range,
             header,
             body,
+            caption,
         }
     }
 
-    fn row(children: Vec<MarkdownParagraph>) -> ParsedMarkdownTableRow {
-        ParsedMarkdownTableRow { children }
+    fn row(columns: Vec<ParsedMarkdownTableColumn>) -> ParsedMarkdownTableRow {
+        ParsedMarkdownTableRow { columns }
+    }
+
+    fn column(
+        col_span: usize,
+        row_span: usize,
+        is_header: bool,
+        children: MarkdownParagraph,
+        alignment: ParsedMarkdownTableAlignment,
+    ) -> ParsedMarkdownTableColumn {
+        ParsedMarkdownTableColumn {
+            col_span,
+            row_span,
+            is_header,
+            children,
+            alignment,
+        }
     }
 
     impl PartialEq for ParsedMarkdownTable {
