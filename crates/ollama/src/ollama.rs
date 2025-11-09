@@ -485,6 +485,38 @@ mod tests {
             "eval_duration": 302561917,
         });
 
+    #[test]
+    fn parse_tool_call_ollama_0_10_12() {
+        // Tool call response as of 2025-11: https://github.com/ollama/ollama/pull/12956
+        let response = serde_json::json!({
+            "model": "llama3.2:3b",
+            "created_at": "2025-04-28T20:02:02.140489Z",
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_f5kqwpjg",
+                        "function": {
+                            "index": 0,
+                            "name": "weather",
+                            "arguments": {
+                                "city": "london",
+                            }
+                        }
+                    }
+                ]
+            },
+            "done_reason": "stop",
+            "done": true,
+            "total_duration": 2758629166u64,
+            "load_duration": 1770059875,
+            "prompt_eval_count": 147,
+            "prompt_eval_duration": 684637583,
+            "eval_count": 16,
+            "eval_duration": 302561917,
+        });
+
         let result: ChatResponseDelta = serde_json::from_value(response).unwrap();
         match result.message {
             ChatMessage::Assistant {
