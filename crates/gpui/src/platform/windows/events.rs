@@ -1419,7 +1419,10 @@ fn process_key(vkey: VIRTUAL_KEY, scan_code: u16) -> (Option<String>, bool) {
     };
 
     let c_no_modifiers = &buffer_c_no_modifiers[..result_c_no_modifiers.abs() as usize];
-    (key_char, c != c_no_modifiers)
+    (
+        key_char,
+        result_c != result_c_no_modifiers || c != c_no_modifiers,
+    )
 }
 
 fn parse_ime_composition_string(ctx: HIMC, comp_type: IME_COMPOSITION_STRING) -> Option<String> {
