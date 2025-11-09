@@ -39,8 +39,8 @@ impl DiagnosticRenderer {
         let group_id = primary.diagnostic.group_id;
         let mut results = vec![];
         for entry in diagnostic_group.iter() {
+            let mut markdown = Self::markdown(&entry.diagnostic);
             if entry.diagnostic.is_primary {
-                let mut markdown = Self::markdown(&entry.diagnostic);
                 let diagnostic = &primary.diagnostic;
                 if diagnostic.source.is_some() || diagnostic.code.is_some() {
                     markdown.push_str(" (");
@@ -81,21 +81,12 @@ impl DiagnosticRenderer {
                     diagnostics_editor: diagnostics_editor.clone(),
                     markdown: cx.new(|cx| Markdown::new(markdown.into(), None, None, cx)),
                 });
-            } else if entry.range.start.row.abs_diff(primary.range.start.row) < 5 {
-                let markdown = Self::markdown(&entry.diagnostic);
-
-                results.push(DiagnosticBlock {
-                    initial_range: entry.range.clone(),
-                    severity: entry.diagnostic.severity,
-                    diagnostics_editor: diagnostics_editor.clone(),
-                    markdown: cx.new(|cx| Markdown::new(markdown.into(), None, None, cx)),
-                });
             } else {
-                let mut markdown = Self::markdown(&entry.diagnostic);
-                markdown.push_str(&format!(
-                    " ([back](file://#diagnostic-{buffer_id}-{group_id}-{primary_ix}))"
-                ));
-
+                if entry.range.start.row.abs_diff(primary.range.start.row) >= 5 {
+                    markdown.push_str(&format!(
+                        " ([back](file://#diagnostic-{buffer_id}-{group_id}-{primary_ix}))"
+                    ));
+                }
                 results.push(DiagnosticBlock {
                     initial_range: entry.range.clone(),
                     severity: entry.diagnostic.severity,
