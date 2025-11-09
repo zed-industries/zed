@@ -581,7 +581,7 @@ fn map_to_language_model_completion_events(
                     if let Some(tool_call) = tool_calls.and_then(|v| v.into_iter().next()) {
                         // Directly access the struct fields
                         let function = tool_call.function; // Accessing the function field
-                        let tool_id = tool_call.id.clone().unwrap_or_else(|| {
+                        let tool_id = tool_call.id.unwrap_or_else(|| {
                             format!(
                                 "{}-{}",
                                 &function.name, // Assuming `function` has a `name` field
