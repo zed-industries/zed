@@ -651,8 +651,6 @@ async fn test_edits_invalidating_diff_hunks(cx: &mut TestAppContext) {
         },
     );
 
-    dbg!("----------------------------");
-
     // Make an edit to the buffer that invalidates the added hunk, but does not cover the whole added region.
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.edit([(Point::new(1, 1)..Point::new(4, 2), "")], None, cx);

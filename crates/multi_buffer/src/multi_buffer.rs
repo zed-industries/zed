@@ -2488,26 +2488,16 @@ impl MultiBuffer {
             let edit_old_start = old_diff_transforms.start().1 + edit_start_overshoot;
             let edit_new_start = (edit_old_start as isize + output_delta) as usize;
 
-            // buffer            |--------unchanged--------|--------deleted--------|--------added----------|
-            //
-            // case 1. edits     |          <-1->   <-----------------2-------------->                            <------------3--------->
-            // case 1. output    |          <-1->   <-----------------2--------------><---------3---------->      <------------4--------->
-            //
-            // case 2. edits     |          <-1->   <-----------------2-------------->               <------------3--------->
-            // case 2. output    |          <-1->   <-----------------2--------------><---------3----------><-------4------->
-
-            let (changed_diff_hunks, additional_edit) =
-                // invariant: every previous time we call this function, all edits are non-overlapping
-                Self::recompute_diff_transforms_for_edit(
-                    &edit,
-                    &mut excerpts,
-                    &mut old_diff_transforms,
-                    &mut new_diff_transforms,
-                    &mut end_of_current_insert,
-                    &mut old_expanded_hunks,
-                    snapshot,
-                    change_kind,
-                );
+            let (changed_diff_hunks, additional_edit) = Self::recompute_diff_transforms_for_edit(
+                &edit,
+                &mut excerpts,
+                &mut old_diff_transforms,
+                &mut new_diff_transforms,
+                &mut end_of_current_insert,
+                &mut old_expanded_hunks,
+                snapshot,
+                change_kind,
+            );
 
             if let Some(mut additional_edit) = additional_edit {
                 let mut last_overlapping_edit = None;
@@ -2521,7 +2511,6 @@ impl MultiBuffer {
                     additional_edit.old.end = last_overlapping_edit.old.end;
                     if additional_edit.new.end > last_overlapping_edit.new.end {
                         let overshoot = additional_edit.new.end - last_overlapping_edit.new.end;
-                        // additional_edit.new.end = last_overlapping_edit.new.end;
                         additional_edit.old.end += overshoot;
                     } else {
                         additional_edit.new.end = last_overlapping_edit.new.end;
@@ -2859,7 +2848,7 @@ impl MultiBuffer {
                 new_transforms.push(
                     DiffTransform::BufferContent {
                         summary: summary_to_add,
-                        inserted_hunk_info,
+                        inserted_hunk_info: inserted_hunk_info,
                     },
                     (),
                 )
@@ -7442,7 +7431,6 @@ pub fn randomly_mutate_multibuffer_with_diffs(
         let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
         let actual_boundary_rows = snapshot
             .excerpt_boundaries_in_range(0..)
-            // needle
             .map(|b| b.row)
             .collect::<HashSet<_>>();
         log::info!(
@@ -7453,6 +7441,6 @@ pub fn randomly_mutate_multibuffer_with_diffs(
                 &actual_boundary_rows,
                 Some(true)
             )
-        )
+        );
     }
 }

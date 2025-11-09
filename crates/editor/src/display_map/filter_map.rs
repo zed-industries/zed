@@ -2,11 +2,12 @@ use std::{cmp, ops::Range};
 
 use buffer_diff::DiffHunkStatusKind;
 use multi_buffer::{
-    AnchorRangeExt as _, MultiBufferDiffHunk, MultiBufferSnapshot, ToOffset as _, ToPoint as _,
+    AnchorRangeExt as _, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow,
+    MultiBufferSnapshot, ToOffset as _, ToPoint as _,
 };
 use rope::{Point, TextSummary};
 use sum_tree::{Dimensions, Item, SumTree};
-use text::Bias;
+use text::{Bias, OffsetRangeExt as _};
 use util::{RangeExt as _, debug_panic};
 
 #[derive(Debug, Clone)]
@@ -45,7 +46,7 @@ impl FilterTransform {
 impl sum_tree::Item for FilterTransform {
     type Summary = TransformSummary;
 
-    fn summary(&self, cx: <Self::Summary as sum_tree::Summary>::Context<'_>) -> Self::Summary {
+    fn summary(&self, _: <Self::Summary as sum_tree::Summary>::Context<'_>) -> Self::Summary {
         match self {
             Self::Isomorphic { summary, .. } => TransformSummary {
                 input: *summary,
@@ -125,22 +126,22 @@ impl FilterOffset {
 }
 
 impl sum_tree::Dimension<'_, TransformSummary> for FilterOffset {
-    fn zero(cx: <TransformSummary as sum_tree::Summary>::Context<'_>) -> Self {
+    fn zero(_: <TransformSummary as sum_tree::Summary>::Context<'_>) -> Self {
         FilterOffset(0)
     }
 
     fn add_summary(
         &mut self,
         summary: &'_ TransformSummary,
-        cx: <TransformSummary as sum_tree::Summary>::Context<'_>,
+        _: <TransformSummary as sum_tree::Summary>::Context<'_>,
     ) {
         self.0 += summary.output.len;
     }
 }
 
-impl sum_tree::Dimension<'_, TransformSummary> for usize {
-    fn zero(cx: <TransformSummary as sum_tree::Summary>::Context<'_>) -> Self {
-        0
+impl sum_tree::Dimension<'_, TransformSummary> for MultiBufferPoint {
+    fn zero(_: <TransformSummary as sum_tree::Summary>::Context<'_>) -> Self {
+        MultiBufferPoint::zero()
     }
 
     fn add_summary(
@@ -148,7 +149,7 @@ impl sum_tree::Dimension<'_, TransformSummary> for usize {
         summary: &'_ TransformSummary,
         cx: <TransformSummary as sum_tree::Summary>::Context<'_>,
     ) {
-        *self += summary.input.len;
+        *self += &summary.input.lines;
     }
 }
 
@@ -330,11 +331,49 @@ impl FilterMap {
         #[cfg(test)]
         self.snapshot.print_transforms();
 
+        let buffer_edits = {
+            let mut buffer_point_edits = buffer_edits
+                .into_iter()
+                .map(|buffer_edit| text::Edit {
+                    old: buffer_edit
+                        .old
+                        .start
+                        .to_point(&self.snapshot.buffer_snapshot)
+                        ..buffer_edit.old.end.to_point(&self.snapshot.buffer_snapshot),
+                    new: buffer_edit.new.start.to_point(&buffer_snapshot)
+                        ..buffer_edit.new.end.to_point(&buffer_snapshot),
+                })
+                .peekable();
+            let mut merged_buffer_point_edits = Vec::new();
+            while let Some(mut buffer_edit) = buffer_point_edits.next() {
+                let start_of_next_line =
+                    Point::new(buffer_edit.new.end.row + 1, 0).min(buffer_snapshot.max_point());
+                if start_of_next_line > buffer_edit.new.end {
+                    let mut last_overlapping_buffer_edit = buffer_edit.clone();
+                    while let Some(next_buffer_edit) = buffer_point_edits.peek()
+                        && next_buffer_edit.new.start < start_of_next_line
+                    {
+                        last_overlapping_buffer_edit = next_buffer_edit.clone();
+                        buffer_point_edits.next();
+                    }
+                    buffer_edit.old.end = last_overlapping_buffer_edit.old.end;
+                    buffer_edit.new.end = last_overlapping_buffer_edit.new.end;
+                    if start_of_next_line > buffer_edit.new.end {
+                        buffer_edit.old.end += start_of_next_line - buffer_edit.new.end;
+                        buffer_edit.new.end = start_of_next_line;
+                    }
+                }
+                merged_buffer_point_edits.push(buffer_edit);
+            }
+            merged_buffer_point_edits
+        };
+
         let mut new_transforms: SumTree<FilterTransform> = SumTree::new(());
-        let mut transform_cursor = self
-            .snapshot
-            .transforms
-            .cursor::<Dimensions<usize, FilterOffset>>(());
+        // TODO might be worth having a usize dimension here too to help with overshoot calculations
+        let mut transform_cursor =
+            self.snapshot
+                .transforms
+                .cursor::<Dimensions<MultiBufferPoint, FilterPoint, FilterOffset>>(());
         let mut output_edits: Vec<text::Edit<FilterOffset>> = Vec::new();
 
         // TODO in what follows we repeatedly call text_summary_for_range,
@@ -369,16 +408,25 @@ impl FilterMap {
                 new_transforms.summary().output.len
             );
 
-            let mut edit_old_start = transform_cursor.start().1;
+            let mut edit_old_start = transform_cursor.start().2;
             if buffer_edit.old.start > transform_cursor.start().0
                 && let Some(FilterTransform::Isomorphic { .. }) = transform_cursor.item()
             {
-                edit_old_start.0 += buffer_edit.old.start - transform_cursor.start().0;
+                // TODO perf
+                let buffer_edit_old_start_offset = buffer_edit
+                    .old
+                    .start
+                    .to_offset(&self.snapshot.buffer_snapshot);
+                let transform_cursor_start_offset = transform_cursor
+                    .start()
+                    .0
+                    .to_offset(&self.snapshot.buffer_snapshot);
+                edit_old_start.0 += buffer_edit_old_start_offset - transform_cursor_start_offset;
             }
 
             let mut edit_new_start = FilterOffset(new_transforms.summary().output.len);
-            if buffer_edit.new.start > new_transforms.summary().input.len {
-                let range = new_transforms.summary().input.len..buffer_edit.new.start;
+            if buffer_edit.new.start > new_transforms.summary().input.lines {
+                let range = new_transforms.summary().input.lines..buffer_edit.new.start;
                 match transform_cursor.item() {
                     Some(FilterTransform::Isomorphic { .. }) => {
                         let summary = push_isomorphic(&mut new_transforms, range, &buffer_snapshot);
@@ -394,15 +442,14 @@ impl FilterMap {
             // Process the edited range based on diff hunks. Extend the range of iteration a bit
             // to catch hunks before the start of the edit that nonetheless affect the diff status
             // of that row.
-            let buffer_edit_start_row = buffer_edit.new.start.to_point(&buffer_snapshot).row;
-            let query_range_start =
-                Point::new(buffer_edit_start_row, 0).to_offset(&buffer_snapshot);
+            let mut query_range_start = buffer_edit.new.start;
+            query_range_start.column = 0;
             for hunk in buffer_snapshot.diff_hunks_in_range(query_range_start..buffer_edit.new.end)
             {
                 let (deletion_range, addition_range) = diff_hunk_bounds(&hunk, &buffer_snapshot);
                 let deletion_range = deletion_range.clamp(buffer_edit.new.clone());
                 let addition_range = addition_range.clamp(buffer_edit.new.clone());
-                let prefix_range = new_transforms.summary().input.len..deletion_range.start;
+                let prefix_range = new_transforms.summary().input.lines..deletion_range.start;
                 log::info!("push isomorphic content before hunk");
                 push_isomorphic(&mut new_transforms, prefix_range, &buffer_snapshot);
 
@@ -421,20 +468,28 @@ impl FilterMap {
             }
 
             log::info!("push isomorphic content after last hunk");
-            if buffer_edit.new.end > new_transforms.summary().input.len {
-                let suffix_range = new_transforms.summary().input.len..buffer_edit.new.end;
+            if buffer_edit.new.end > new_transforms.summary().input.lines {
+                let suffix_range = new_transforms.summary().input.lines..buffer_edit.new.end;
                 push_isomorphic(&mut new_transforms, suffix_range, &buffer_snapshot);
             }
 
             transform_cursor.seek(&buffer_edit.old.end, Bias::Right);
-            let mut edit_old_end = transform_cursor.start().1;
+            let mut edit_old_end = transform_cursor.start().2;
             let edit_new_end = FilterOffset(new_transforms.summary().output.len);
             if buffer_edit.old.end > transform_cursor.start().0 {
                 match transform_cursor.item() {
                     Some(FilterTransform::Isomorphic { .. }) => {
-                        let overshoot = buffer_edit.old.end - transform_cursor.start().0;
-                        log::info!("adjusting edit old end based on overshoot {overshoot}");
-                        edit_old_end.0 += overshoot;
+                        // TODO perf
+                        let buffer_edit_old_end_offset = buffer_edit
+                            .old
+                            .end
+                            .to_offset(&self.snapshot.buffer_snapshot);
+                        let transform_cursor_start_offset = transform_cursor
+                            .start()
+                            .0
+                            .to_offset(&self.snapshot.buffer_snapshot);
+                        edit_old_end.0 +=
+                            buffer_edit_old_end_offset - transform_cursor_start_offset;
                     }
                     Some(FilterTransform::Filter { .. }) => {}
                     None => {}
@@ -447,14 +502,17 @@ impl FilterMap {
                 log::info!(
                     "consume remainder of old transform since this is the last intersecting edit"
                 );
-                let suffix_start = new_transforms.summary().input.len;
+                let suffix_start = new_transforms.summary().input.lines;
                 let suffix_len = transform_cursor.end().0 - buffer_edit.old.end;
                 match transform_cursor.item() {
                     Some(FilterTransform::Isomorphic { .. }) => {
                         push_isomorphic(
                             &mut new_transforms,
                             suffix_start
-                                ..std::cmp::min(suffix_start + suffix_len, buffer_snapshot.len()),
+                                ..std::cmp::min(
+                                    suffix_start + suffix_len,
+                                    buffer_snapshot.max_point(),
+                                ),
                             &buffer_snapshot,
                         );
                         transform_cursor.next();
@@ -463,7 +521,10 @@ impl FilterMap {
                         push_filter(
                             &mut new_transforms,
                             suffix_start
-                                ..std::cmp::min(suffix_start + suffix_len, buffer_snapshot.len()),
+                                ..std::cmp::min(
+                                    suffix_start + suffix_len,
+                                    buffer_snapshot.max_point(),
+                                ),
                             &buffer_snapshot,
                         );
                         transform_cursor.next();
@@ -560,18 +621,14 @@ fn check_edits(
 fn diff_hunk_bounds(
     hunk: &MultiBufferDiffHunk,
     buffer_snapshot: &MultiBufferSnapshot,
-) -> (Range<usize>, Range<usize>) {
-    let start_of_hunk = hunk
-        .multi_buffer_range()
-        .start
-        .bias_left(&buffer_snapshot)
-        .to_offset(&buffer_snapshot);
+) -> (Range<MultiBufferPoint>, Range<MultiBufferPoint>) {
+    let start_of_hunk = Point::new(hunk.row_range.start.0, 0);
     let switch_point = hunk
         .multi_buffer_range()
         .start
         .bias_right(&buffer_snapshot)
-        .to_offset(&buffer_snapshot);
-    let end_of_hunk = buffer_snapshot.point_to_offset(Point::new(hunk.row_range.end.0, 0));
+        .to_point(&buffer_snapshot);
+    let end_of_hunk = MultiBufferPoint::new(hunk.row_range.end.0, 0);
     (start_of_hunk..switch_point, switch_point..end_of_hunk)
 }
 
@@ -638,7 +695,7 @@ impl FilterSnapshot {
 
 fn push_isomorphic(
     transforms: &mut SumTree<FilterTransform>,
-    range: Range<usize>,
+    range: Range<MultiBufferPoint>,
     snapshot: &MultiBufferSnapshot,
 ) -> TextSummary {
     if range.is_empty() {
@@ -684,7 +741,7 @@ fn push_isomorphic(
 
 fn push_filter(
     transforms: &mut SumTree<FilterTransform>,
-    range: Range<usize>,
+    range: Range<MultiBufferPoint>,
     snapshot: &MultiBufferSnapshot,
 ) {
     if range.is_empty() {
@@ -728,69 +785,73 @@ fn push_filter(
 }
 
 impl FilterSnapshot {
-    fn text_summary_for_range(&self, range: Range<FilterOffset>) -> TextSummary {
-        let mut summary = TextSummary::default();
+    // fn text_summary_for_range(&self, range: Range<FilterOffset>) -> TextSummary {
+    //     let mut summary = TextSummary::default();
 
-        let mut cursor = self
-            .transforms
-            .cursor::<Dimensions<FilterOffset, usize>>(());
-        cursor.seek(&range.start, Bias::Right);
+    //     let mut cursor = self
+    //         .transforms
+    //         .cursor::<Dimensions<FilterOffset, usize>>(());
+    //     cursor.seek(&range.start, Bias::Right);
 
-        let overshoot = range.start.0 - cursor.start().0.0;
-        match cursor.item() {
-            Some(FilterTransform::Isomorphic { .. }) => {
-                let buffer_start = cursor.start().1;
-                let suffix_start = buffer_start + overshoot;
-                let suffix_end =
-                    buffer_start + (cmp::min(cursor.end().0, range.end).0 - cursor.start().0.0);
-                summary = self
-                    .buffer_snapshot
-                    .text_summary_for_range(suffix_start..suffix_end);
-                cursor.next();
-            }
-            Some(FilterTransform::Filter { .. }) | None => {}
-        }
+    //     let overshoot = range.start.0 - cursor.start().0.0;
+    //     match cursor.item() {
+    //         Some(FilterTransform::Isomorphic { .. }) => {
+    //             let buffer_start = cursor.start().1;
+    //             let suffix_start = buffer_start + overshoot;
+    //             let suffix_end =
+    //                 buffer_start + (cmp::min(cursor.end().0, range.end).0 - cursor.start().0.0);
+    //             summary = self
+    //                 .buffer_snapshot
+    //                 .text_summary_for_range(suffix_start..suffix_end);
+    //             cursor.next();
+    //         }
+    //         Some(FilterTransform::Filter { .. }) | None => {}
+    //     }
 
-        if range.end > cursor.start().0 {
-            summary += cursor
-                .summary::<_, TransformSummary>(&range.end, Bias::Right)
-                .output;
+    //     if range.end > cursor.start().0 {
+    //         summary += cursor
+    //             .summary::<_, TransformSummary>(&range.end, Bias::Right)
+    //             .output;
 
-            let overshoot = range.end.0 - cursor.start().0.0;
-            match cursor.item() {
-                Some(FilterTransform::Isomorphic { .. }) => {
-                    let prefix_start = cursor.start().1;
-                    let prefix_end = prefix_start + overshoot;
-                    summary += self
-                        .buffer_snapshot
-                        .text_summary_for_range::<TextSummary, _>(prefix_start..prefix_end);
-                }
-                Some(FilterTransform::Filter { .. }) | None => {}
-            }
-        }
+    //         let overshoot = range.end.0 - cursor.start().0.0;
+    //         match cursor.item() {
+    //             Some(FilterTransform::Isomorphic { .. }) => {
+    //                 let prefix_start = cursor.start().1;
+    //                 let prefix_end = prefix_start + overshoot;
+    //                 summary += self
+    //                     .buffer_snapshot
+    //                     .text_summary_for_range::<TextSummary, _>(prefix_start..prefix_end);
+    //             }
+    //             Some(FilterTransform::Filter { .. }) | None => {}
+    //         }
+    //     }
+    //
+    //     summary
+    // }
 
-        summary
-    }
-
-    fn to_point(&self, offset: FilterOffset) -> FilterPoint {
-        let (start, _, item) = self
-            .transforms
-            .find::<Dimensions<FilterOffset, FilterPoint, usize>, _>((), &offset, Bias::Right);
-        let overshoot = offset.0 - start.0.0;
-        match item {
-            Some(FilterTransform::Isomorphic { .. }) => {
-                let buffer_offset_start = start.2;
-                let buffer_offset_end = buffer_offset_start + overshoot;
-                let buffer_start = self.buffer_snapshot.offset_to_point(buffer_offset_start);
-                let buffer_end = self.buffer_snapshot.offset_to_point(buffer_offset_end);
-                FilterPoint(start.1.0 + (buffer_end - buffer_start))
-            }
-            Some(FilterTransform::Filter { .. }) | None => self.max_point(),
-        }
-    }
+    // fn to_point(&self, offset: FilterOffset) -> FilterPoint {
+    //     let (start, _, item) = self
+    //         .transforms
+    //         .find::<Dimensions<FilterOffset, FilterPoint, usize>, _>((), &offset, Bias::Right);
+    //     let overshoot = offset.0 - start.0.0;
+    //     match item {
+    //         Some(FilterTransform::Isomorphic { .. }) => {
+    //             let buffer_offset_start = start.2;
+    //             let buffer_offset_end = buffer_offset_start + overshoot;
+    //             let buffer_start = self.buffer_snapshot.offset_to_point(buffer_offset_start);
+    //             let buffer_end = self.buffer_snapshot.offset_to_point(buffer_offset_end);
+    //             FilterPoint(start.1.0 + (buffer_end - buffer_start))
+    //         }
+    //         Some(FilterTransform::Filter { .. }) | None => self.max_point(),
+    //     }
+    // }
 
     fn max_point(&self) -> FilterPoint {
         FilterPoint(self.transforms.summary().output.lines)
+    }
+
+    fn point_to_offset(&self, point: FilterPoint) -> FilterOffset {
+        todo!()
     }
 }
 
