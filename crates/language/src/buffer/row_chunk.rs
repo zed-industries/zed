@@ -67,7 +67,8 @@ impl RowChunks {
             .iter()
             .map(|range| range.to_point(&self.snapshot))
             // Be lenient and yield multiple chunks if they "touch" the exclusive part of the range.
-            // This will result in LSP hints [re-]queried for more ranges, but also more hints already visible when scrolling around.            .map(|point_range| point_range.start.row..point_range.end.row + 1)
+            // This will result in LSP hints [re-]queried for more ranges, but also more hints already visible when scrolling around.
+            .map(|point_range| point_range.start.row..point_range.end.row + 1)
             .collect::<Vec<_>>();
         self.chunks
             .iter()
@@ -75,7 +76,7 @@ impl RowChunks {
                 let chunk_range = chunk.row_range();
                 row_ranges
                     .iter()
-                    .any(|row_range| chunk_range.overlaps(row_range))
+                    .any(|row_range| chunk_range.overlaps(&row_range))
             })
             .copied()
     }

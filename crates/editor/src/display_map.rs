@@ -486,11 +486,20 @@ impl DisplayMap {
         ranges: Vec<Range<Anchor>>,
         style: HighlightStyle,
         merge: bool,
+        cx: &App,
     ) {
+        let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let to_insert = match self.text_highlights.remove(&key).filter(|_| merge) {
             Some(previous) => {
                 let mut merged_ranges = previous.1.clone();
-                merged_ranges.extend(ranges);
+                for new_range in ranges {
+                    let i = merged_ranges
+                        .binary_search_by(|probe| {
+                            probe.start.cmp(&new_range.start, &multi_buffer_snapshot)
+                        })
+                        .unwrap_or_else(|i| i);
+                    merged_ranges.insert(i, new_range);
+                }
                 Arc::new((style, merged_ranges))
             }
             None => Arc::new((style, ranges)),
@@ -2412,6 +2421,7 @@ pub mod tests {
                 ],
                 red.into(),
                 false,
+                cx,
             );
             map.insert_blocks(
                 [BlockProperties {
@@ -2723,7 +2733,7 @@ pub mod tests {
             ..Default::default()
         };
 
-        map.update(cx, |map, _cx| {
+        map.update(cx, |map, cx| {
             map.highlight_text(
                 HighlightKey::Type(TypeId::of::<MyType>()),
                 highlighted_ranges
@@ -2735,6 +2745,7 @@ pub mod tests {
                     .collect(),
                 style,
                 false,
+                cx,
             );
         });
 

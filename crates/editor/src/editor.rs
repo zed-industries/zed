@@ -20919,12 +20919,13 @@ impl Editor {
         merge: bool,
         cx: &mut Context<Self>,
     ) {
-        self.display_map.update(cx, |map, _| {
+        self.display_map.update(cx, |map, cx| {
             map.highlight_text(
                 HighlightKey::TypePlus(TypeId::of::<T>(), key),
                 ranges,
                 style,
                 merge,
+                cx,
             );
         });
         cx.notify();
@@ -20936,8 +20937,14 @@ impl Editor {
         style: HighlightStyle,
         cx: &mut Context<Self>,
     ) {
-        self.display_map.update(cx, |map, _| {
-            map.highlight_text(HighlightKey::Type(TypeId::of::<T>()), ranges, style, false)
+        self.display_map.update(cx, |map, cx| {
+            map.highlight_text(
+                HighlightKey::Type(TypeId::of::<T>()),
+                ranges,
+                style,
+                false,
+                cx,
+            )
         });
         cx.notify();
     }
