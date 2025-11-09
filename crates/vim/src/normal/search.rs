@@ -658,7 +658,6 @@ impl Replacement {
 mod test {
     use std::time::Duration;
 
-    use super::Replacement;
     use crate::{
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
@@ -669,10 +668,27 @@ mod test {
     use search::BufferSearchBar;
     use settings::SettingsStore;
 
-    #[test]
-    fn replacement_parse_literal_dollar() {
-        let replacement = Replacement::parse("/\\$Base/\\$BaseNew/".chars().peekable()).unwrap();
-        assert_eq!(replacement.replacement, "$$BaseNew");
+    #[gpui::test]
+    async fn test_replace_literal_dollar(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {
+            "ˇ$Base one
+            $Base two
+            $Base three"
+        })
+        .await;
+
+        cx.simulate_shared_keystrokes(
+            ": % s / \\ shift-4 shift-b a s e / \\ shift-4 shift-b a s e shift-n e w / g",
+        )
+        .await;
+        cx.simulate_shared_keystrokes("enter").await;
+
+        cx.shared_state().await.assert_eq(indoc! {
+            "$BaseNew one
+            $BaseNew two
+            ˇ$BaseNew three"
+        });
     }
 
     #[gpui::test]
