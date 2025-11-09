@@ -74,6 +74,7 @@ pub struct EditPredictionButton {
     fs: Arc<dyn Fs>,
     user_store: Entity<UserStore>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
+    _copilot_subscription: Option<Subscription>,
 }
 
 enum SupermavenButtonStatus {
@@ -497,9 +498,8 @@ impl EditPredictionButton {
         client: Arc<Client>,
         cx: &mut Context<Self>,
     ) -> Self {
-        if let Some(copilot) = Copilot::global(cx) {
-            cx.observe(&copilot, |_, _, cx| cx.notify()).detach()
-        }
+        let copilot_subscription =
+            Copilot::global(cx).map(|copilot| cx.observe(&copilot, |_, _, cx| cx.notify()));
 
         cx.observe_global::<SettingsStore>(move |_, cx| cx.notify())
             .detach();
@@ -517,6 +517,7 @@ impl EditPredictionButton {
             user_store,
             popover_menu_handle,
             fs,
+            _copilot_subscription: copilot_subscription,
         }
     }
 
@@ -1051,11 +1052,11 @@ impl EditPredictionButton {
 
         move |_window, cx| {
             let used_percentage = if unlimited {
-                Some(0.0)
+                0.0
             } else if total > 0 {
-                Some((used as f32 / total as f32) * 100.)
+                (used as f32 / total as f32) * 100.
             } else {
-                Some(0.0)
+                0.0
             };
 
             v_flex()
@@ -1065,15 +1066,12 @@ impl EditPredictionButton {
                     h_flex()
                         .flex_1()
                         .gap_1p5()
-                        .children(
-                            used_percentage
-                                .map(|percent| ProgressBar::new(id.clone(), percent, 100., cx)),
-                        )
+                        .child(ProgressBar::new(id.clone(), used_percentage, 100., cx))
                         .child(
                             Label::new(if unlimited {
                                 "∞".to_string()
                             } else {
-                                format!("{:.0}%", used_percentage.unwrap_or(0.0))
+                                format!("{:.0}%", used_percentage)
                             })
                             .size(LabelSize::Small)
                             .color(Color::Muted),

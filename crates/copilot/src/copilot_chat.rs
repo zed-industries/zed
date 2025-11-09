@@ -48,7 +48,7 @@ impl CopilotChatConfiguration {
         format!("{}/chat/completions", endpoint)
     }
 
-    pub fn usage_url_from_endpoint(&self) -> String {
+    pub fn usage_url(&self) -> String {
         if let Some(enterprise_uri) = &self.enterprise_uri {
             let domain = Self::parse_domain(enterprise_uri);
             format!("https://api.{}/copilot_internal/user", domain)
@@ -664,21 +664,24 @@ impl CopilotChat {
     }
 
     pub async fn update_usage(this: &WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
-        let (client, _, configuration) = Self::get_auth_details(cx).await?;
-        let oauth_token = this
-            .read_with(cx, |this, _| this.oauth_token.clone())?
-            .context("No OAuth token available")?;
+        let (oauth_token, client, configuration) = this.read_with(cx, |this, _| {
+            (
+                this.oauth_token.clone(),
+                this.client.clone(),
+                this.configuration.clone(),
+            )
+        })?;
 
-        let usage_url = configuration.usage_url_from_endpoint();
+        let oauth_token = oauth_token
+            .ok_or_else(|| anyhow!("OAuth token is missing while updating Copilot Chat usage"))?;
+
+        let usage_url = configuration.usage_url();
         let usage = get_usage(usage_url.into(), oauth_token, client.clone()).await?;
-
-        log::warn!("Usage: {:?}", usage);
 
         this.update(cx, |this, cx| {
             this.usage = Some(usage);
             cx.notify();
-        })
-        .unwrap();
+        })?;
         anyhow::Ok(())
     }
 
