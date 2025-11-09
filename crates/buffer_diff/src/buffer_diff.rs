@@ -679,7 +679,7 @@ impl BufferDiffInner {
         old_cursor.next();
         new_cursor.next();
         let mut start = None;
-        let mut end = None;
+        let mut end: Option<Anchor> = None;
 
         loop {
             match (new_cursor.item(), old_cursor.item()) {
@@ -691,7 +691,11 @@ impl BufferDiffInner {
                     {
                         Ordering::Less => {
                             start.get_or_insert(new_hunk.buffer_range.start);
-                            end.replace(new_hunk.buffer_range.end);
+                            if end.is_none_or(|end| {
+                                end.cmp(&new_hunk.buffer_range.end, new_snapshot).is_lt()
+                            }) {
+                                end.replace(new_hunk.buffer_range.end);
+                            }
                             new_cursor.next();
                         }
                         Ordering::Equal => {
@@ -703,8 +707,14 @@ impl BufferDiffInner {
                                     .cmp(&new_hunk.buffer_range.end, new_snapshot)
                                     .is_ge()
                                 {
+                                    debug_assert!(end.is_none_or(|end| {
+                                        end.cmp(&old_hunk.buffer_range.end, new_snapshot).is_le()
+                                    }));
                                     end.replace(old_hunk.buffer_range.end);
                                 } else {
+                                    debug_assert!(end.is_none_or(|end| {
+                                        end.cmp(&new_hunk.buffer_range.end, new_snapshot).is_le()
+                                    }));
                                     end.replace(new_hunk.buffer_range.end);
                                 }
                             }
@@ -714,7 +724,11 @@ impl BufferDiffInner {
                         }
                         Ordering::Greater => {
                             start.get_or_insert(old_hunk.buffer_range.start);
-                            end.replace(old_hunk.buffer_range.end);
+                            if end.is_none_or(|end| {
+                                end.cmp(&old_hunk.buffer_range.end, new_snapshot).is_lt()
+                            }) {
+                                end.replace(old_hunk.buffer_range.end);
+                            }
                             old_cursor.next();
                         }
                     }
