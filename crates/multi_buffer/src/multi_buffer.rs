@@ -1148,9 +1148,9 @@ impl MultiBuffer {
         let mut counts: Vec<usize> = Vec::new();
         for range in expanded_ranges {
             if let Some(last_range) = merged_ranges.last_mut() {
-                debug_assert!(
+                assert!(
                     last_range.context.start <= range.context.start,
-                    "Last range: {last_range:?} Range: {range:?}"
+                    "ranges must be sorted: {last_range:?} <= {range:?}"
                 );
                 if last_range.context.end >= range.context.start
                     || last_range.context.end.row + 1 == range.context.start.row

@@ -4060,7 +4060,7 @@ impl Project {
         result_rx
     }
 
-    fn find_search_candidate_buffers(
+    pub fn find_search_candidate_buffers(
         &mut self,
         query: &SearchQuery,
         limit: usize,

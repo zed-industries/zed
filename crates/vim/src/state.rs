@@ -310,8 +310,8 @@ impl MarksState {
 
     fn load(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
-            let Some(workspace_id) = this.update(cx, |this, cx| this.workspace_id(cx))? else {
-                return Ok(());
+            let Some(workspace_id) = this.update(cx, |this, cx| this.workspace_id(cx)).ok()? else {
+                return None;
             };
             let (marks, paths) = cx
                 .background_spawn(async move {
@@ -319,10 +319,12 @@ impl MarksState {
                     let paths = DB.get_global_marks_paths(workspace_id)?;
                     anyhow::Ok((marks, paths))
                 })
-                .await?;
+                .await
+                .log_err()?;
             this.update(cx, |this, cx| this.loaded(marks, paths, cx))
+                .ok()
         })
-        .detach_and_log_err(cx);
+        .detach();
     }
 
     fn loaded(
