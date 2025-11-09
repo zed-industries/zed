@@ -4,7 +4,6 @@ use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as Http
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
 pub use settings::KeepAlive;
-use log::info;
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
 
@@ -484,6 +483,21 @@ mod tests {
             "eval_count": 16,
             "eval_duration": 302561917,
         });
+
+        let result: ChatResponseDelta = serde_json::from_value(response).unwrap();
+        match result.message {
+            ChatMessage::Assistant {
+                content,
+                tool_calls,
+                images: _,
+                thinking,
+            } => {
+                assert!(content.is_empty());
+                assert!(tool_calls.is_some_and(|v| !v.is_empty()));
+                assert!(thinking.is_none());
+            }
+            _ => panic!("Deserialized wrong role"),
+        }
     }
 
     #[test]
