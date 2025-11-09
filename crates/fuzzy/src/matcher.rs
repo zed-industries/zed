@@ -121,7 +121,11 @@ impl<'a> Matcher<'a> {
             // If we have word-based query, check if all words exist in the path
             let use_word_matching = !query_words.is_empty();
             if use_word_matching {
-                if !Self::check_words_match(query_words, lowercase_prefix, &lowercase_candidate_chars) {
+                if !Self::check_words_match(
+                    query_words,
+                    lowercase_prefix,
+                    &lowercase_candidate_chars,
+                ) {
                     continue;
                 }
             } else {
@@ -537,25 +541,57 @@ mod tests {
         let results = match_single_path_query("page manager", false, &paths);
         assert!(results.iter().any(|(path, _)| *path == "manager/page.tsx"));
         assert!(results.iter().any(|(path, _)| *path == "page/manager.tsx"));
-        assert!(results.iter().any(|(path, _)| *path == "apps/web/manager/page.tsx"));
-        assert!(results.iter().any(|(path, _)| *path == "apps/web/page/manager.tsx"));
+        assert!(
+            results
+                .iter()
+                .any(|(path, _)| *path == "apps/web/manager/page.tsx")
+        );
+        assert!(
+            results
+                .iter()
+                .any(|(path, _)| *path == "apps/web/page/manager.tsx")
+        );
 
         // Test "manager page" should also find the same paths
         let results = match_single_path_query("manager page", false, &paths);
         assert!(results.iter().any(|(path, _)| *path == "manager/page.tsx"));
         assert!(results.iter().any(|(path, _)| *path == "page/manager.tsx"));
-        assert!(results.iter().any(|(path, _)| *path == "apps/web/manager/page.tsx"));
-        assert!(results.iter().any(|(path, _)| *path == "apps/web/page/manager.tsx"));
+        assert!(
+            results
+                .iter()
+                .any(|(path, _)| *path == "apps/web/manager/page.tsx")
+        );
+        assert!(
+            results
+                .iter()
+                .any(|(path, _)| *path == "apps/web/page/manager.tsx")
+        );
 
         // Test "user controller" should find user/controller paths
         let results = match_single_path_query("user controller", false, &paths);
-        assert!(results.iter().any(|(path, _)| *path == "controller/user.rs"));
-        assert!(results.iter().any(|(path, _)| *path == "user/controller.rs"));
+        assert!(
+            results
+                .iter()
+                .any(|(path, _)| *path == "controller/user.rs")
+        );
+        assert!(
+            results
+                .iter()
+                .any(|(path, _)| *path == "user/controller.rs")
+        );
 
         // Test "controller user" should also find the same paths
         let results = match_single_path_query("controller user", false, &paths);
-        assert!(results.iter().any(|(path, _)| *path == "controller/user.rs"));
-        assert!(results.iter().any(|(path, _)| *path == "user/controller.rs"));
+        assert!(
+            results
+                .iter()
+                .any(|(path, _)| *path == "controller/user.rs")
+        );
+        assert!(
+            results
+                .iter()
+                .any(|(path, _)| *path == "user/controller.rs")
+        );
     }
 
     #[test]
@@ -740,12 +776,18 @@ mod tests {
         };
 
         let query_for_processing = if has_spaces {
-            query.chars().filter(|c| !c.is_whitespace()).collect::<String>()
+            query
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>()
         } else {
             query.to_string()
         };
 
-        let lowercase_query = query_for_processing.to_lowercase().chars().collect::<Vec<_>>();
+        let lowercase_query = query_for_processing
+            .to_lowercase()
+            .chars()
+            .collect::<Vec<_>>();
         let query = query_for_processing.chars().collect::<Vec<_>>();
         let query_chars = CharBag::from(&lowercase_query[..]);
 

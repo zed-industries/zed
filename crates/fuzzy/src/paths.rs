@@ -103,12 +103,18 @@ pub fn match_fixed_path_set(
     };
 
     let query_without_spaces = if has_spaces {
-        query.chars().filter(|c| !c.is_whitespace()).collect::<String>()
+        query
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
     } else {
         query.to_string()
     };
 
-    let lowercase_query = query_without_spaces.to_lowercase().chars().collect::<Vec<_>>();
+    let lowercase_query = query_without_spaces
+        .to_lowercase()
+        .chars()
+        .collect::<Vec<_>>();
     let query = query_without_spaces.chars().collect::<Vec<_>>();
     let query_char_bag = CharBag::from(&lowercase_query[..]);
 
@@ -183,7 +189,10 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
 
     // For word-based queries, concatenate words for char bag but keep words separate for matching
     let query_for_processing = if has_spaces {
-        query.chars().filter(|c| !c.is_whitespace()).collect::<String>()
+        query
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
     } else {
         query.to_string()
     };
