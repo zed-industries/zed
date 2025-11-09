@@ -136,7 +136,7 @@ impl AcpConnection {
             while let Ok(n) = stderr.read_line(&mut line).await
                 && n > 0
             {
-                log::warn!("agent stderr: {}", &line);
+                log::warn!("agent stderr: {}", line.trim());
                 line.clear();
             }
             Ok(())

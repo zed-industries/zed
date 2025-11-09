@@ -7937,7 +7937,7 @@ async fn test_staging_random_hunks(
 
     log::info!(
         "index text:\n{}",
-        repo.load_index_text(rel_path("file.txt").into())
+        repo.load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
             .await
             .unwrap()
     );
@@ -8523,7 +8523,7 @@ async fn test_repository_pending_ops_staging(
     assert_eq!(
         pending_ops_all
             .lock()
-            .get(&worktree::PathKey(repo_path("a.txt").0), ())
+            .get(&worktree::PathKey(repo_path("a.txt").as_ref().clone()), ())
             .unwrap()
             .ops,
         vec![
@@ -8644,7 +8644,7 @@ async fn test_repository_pending_ops_long_running_staging(
     assert_eq!(
         pending_ops_all
             .lock()
-            .get(&worktree::PathKey(repo_path("a.txt").0), ())
+            .get(&worktree::PathKey(repo_path("a.txt").as_ref().clone()), ())
             .unwrap()
             .ops,
         vec![
@@ -8752,7 +8752,7 @@ async fn test_repository_pending_ops_stage_all(
     assert_eq!(
         pending_ops_all
             .lock()
-            .get(&worktree::PathKey(repo_path("a.txt").0), ())
+            .get(&worktree::PathKey(repo_path("a.txt").as_ref().clone()), ())
             .unwrap()
             .ops,
         vec![
@@ -8771,7 +8771,7 @@ async fn test_repository_pending_ops_stage_all(
     assert_eq!(
         pending_ops_all
             .lock()
-            .get(&worktree::PathKey(repo_path("b.txt").0), ())
+            .get(&worktree::PathKey(repo_path("b.txt").as_ref().clone()), ())
             .unwrap()
             .ops,
         vec![
@@ -9309,11 +9309,9 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     repository.read_with(cx, |repository, _cx| {
         assert_eq!(
             repository
-                .status_for_path(
-                    &rel_path(renamed_dir_name)
-                        .join(rel_path(RENAMED_FILE))
-                        .into()
-                )
+                .status_for_path(&RepoPath::from_rel_path(
+                    &rel_path(renamed_dir_name).join(rel_path(RENAMED_FILE))
+                ))
                 .unwrap()
                 .status,
             FileStatus::Untracked,
@@ -9337,11 +9335,9 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     repository.read_with(cx, |repository, _cx| {
         assert_eq!(
             repository
-                .status_for_path(
-                    &rel_path(renamed_dir_name)
-                        .join(rel_path(RENAMED_FILE))
-                        .into()
-                )
+                .status_for_path(&RepoPath::from_rel_path(
+                    &rel_path(renamed_dir_name).join(rel_path(RENAMED_FILE))
+                ))
                 .unwrap()
                 .status,
             FileStatus::Untracked,
