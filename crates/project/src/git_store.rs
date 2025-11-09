@@ -4365,7 +4365,7 @@ impl Repository {
                 let executable = match fs.metadata(&abs_path).await {
                     Ok(Some(meta)) => meta.is_executable,
                     Ok(None) => false,
-                    Err(err) => false,
+                    Err(_err) => false,
                 };
                 match git_repo {
                     RepositoryState::Local {
