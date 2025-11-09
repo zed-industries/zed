@@ -1372,7 +1372,7 @@ fn process_key(vkey: VIRTUAL_KEY, scan_code: u16) -> (Option<String>, bool) {
         return (None, false);
     }
 
-    let c = &buffer_c[..result_c.abs() as usize];
+    let c = &buffer_c[..result_c.unsigned_abs() as usize];
     let key_char = String::from_utf16(c)
         .ok()
         .filter(|s| !s.is_empty() && !s.chars().next().unwrap().is_control());
@@ -1418,7 +1418,7 @@ fn process_key(vkey: VIRTUAL_KEY, scan_code: u16) -> (Option<String>, bool) {
         )
     };
 
-    let c_no_modifiers = &buffer_c_no_modifiers[..result_c_no_modifiers.abs() as usize];
+    let c_no_modifiers = &buffer_c_no_modifiers[..result_c_no_modifiers.unsigned_abs() as usize];
     (
         key_char,
         result_c != result_c_no_modifiers || c != c_no_modifiers,
