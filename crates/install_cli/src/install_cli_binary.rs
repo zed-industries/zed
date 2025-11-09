@@ -16,8 +16,46 @@ actions!(
     ]
 );
 
-async fn install_script(cx: &AsyncApp) -> Result<PathBuf> {
-    let cli_path = cx.update(|cx| cx.path_for_auxiliary_executable("cli"))?;
+async fn is_user_admin() -> bool {
+    let output = smol::process::Command::new("groups").output().await.ok();
+    if let Some(output) = output {
+        if output.status.success() {
+            let groups = String::from_utf8_lossy(&output.stdout);
+            return groups.split_whitespace().any(|g| g == "admin");
+        }
+    }
+    false
+}
+
+async fn install_to_local_bin(cx: &AsyncApp) -> Result<PathBuf> {
+    let cli_path = cx.update(|cx| cx.path_for_auxiliary_executable("cli"))??;
+    let home_dir = std::env::var("HOME").context("Failed to get HOME environment variable")?;
+    let local_bin = PathBuf::from(home_dir).join(".local/bin");
+    let link_path = local_bin.join("zed");
+
+    // Ensure ~/.local/bin directory exists
+    smol::fs::create_dir_all(&local_bin)
+        .await
+        .context("Failed to create ~/.local/bin directory")?;
+
+    // Don't re-create symlink if it points to the same CLI binary.
+    if smol::fs::read_link(&link_path).await.ok().as_ref() == Some(&cli_path) {
+        return Ok(link_path);
+    }
+
+    // Remove old symlink if exists
+    smol::fs::remove_file(&link_path).await.log_err();
+
+    // Create new symlink
+    smol::fs::unix::symlink(&cli_path, &link_path)
+        .await
+        .context("Failed to create symlink to ~/.local/bin/zed")?;
+
+    Ok(link_path)
+}
+
+async fn install_to_system_bin(cx: &AsyncApp) -> Result<PathBuf> {
+    let cli_path = cx.update(|cx| cx.path_for_auxiliary_executable("cli"))??;
     let link_path = Path::new("/usr/local/bin/zed");
     let bin_dir_path = link_path.parent().unwrap();
 
@@ -57,8 +95,28 @@ async fn install_script(cx: &AsyncApp) -> Result<PathBuf> {
         .output()
         .await?
         .status;
+
     anyhow::ensure!(status.success(), "error running osascript");
     Ok(link_path.into())
+}
+
+async fn install_script(cx: &AsyncApp) -> Result<PathBuf> {
+    let has_admin = is_user_admin().await;
+
+    if !has_admin {
+        return install_to_local_bin(cx).await;
+    }
+
+    match install_to_system_bin(cx).await {
+        Ok(path) => Ok(path),
+        Err(err) => {
+            eprintln!(
+                "Failed to install to system bin: {}. Falling back to local bin.",
+                err
+            );
+            install_to_local_bin(cx).await
+        }
+    }
 }
 
 pub fn install_cli_binary(window: &mut Window, cx: &mut Context<Workspace>) {
@@ -82,14 +140,25 @@ pub fn install_cli_binary(window: &mut Window, cx: &mut Context<Workspace>) {
         workspace.update_in(cx, |workspace, _, cx| {
             struct InstalledZedCli;
 
+            let message = if path.starts_with("/usr/local/bin") {
+                format!(
+                    "Installed `zed` to {}. You can launch {} from your terminal.",
+                    path.to_string_lossy(),
+                    ReleaseChannel::global(cx).display_name()
+                )
+            } else {
+                format!(
+                    "Installed `zed` to {}. Make sure {} is in your PATH to launch from your terminal.",
+                    path.to_string_lossy(),
+                    path.parent().unwrap().to_string_lossy()
+                )
+            };
+
+
             workspace.show_toast(
                 Toast::new(
                     NotificationId::unique::<InstalledZedCli>(),
-                    format!(
-                        "Installed `zed` to {}. You can launch {} from your terminal.",
-                        path.to_string_lossy(),
-                        ReleaseChannel::global(cx).display_name()
-                    ),
+                    message,
                 ),
                 cx,
             )
