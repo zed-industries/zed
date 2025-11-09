@@ -284,7 +284,10 @@ pub async fn stream_chat_completion(
     request: ChatRequest,
 ) -> Result<BoxStream<'static, Result<ChatResponseDelta>>> {
     let uri = format!("{api_url}/api/chat");
-    info!("Chat request: {:?}", serde_json::to_string(&request).unwrap());
+    log::info!(
+        "Chat request: {:?}",
+        serde_json::to_string(&request).unwrap()
+    );
     let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(&uri)
@@ -293,9 +296,12 @@ pub async fn stream_chat_completion(
             builder.header("Authorization", format!("Bearer {api_key}"))
         })
         .body(AsyncBody::from(serde_json::to_string(&request)?))?;
-    info!("Sending request to Ollama: {}", uri);
+    log::info!("Sending request to Ollama: {}", uri);
     let mut response = client.send(request).await?;
-    info!("Received response from Ollama: status = {}", response.status());
+    log::info!(
+        "Received response from Ollama: status = {}",
+        response.status()
+    );
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
 

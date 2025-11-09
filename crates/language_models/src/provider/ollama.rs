@@ -387,7 +387,7 @@ impl OllamaLanguageModel {
                                         index: None,
                                         name: tool_use.name.to_string(),
                                         arguments: tool_use.input,
-                                    }
+                                    },
                                 });
                             }
                             _ => (),
@@ -581,20 +581,21 @@ fn map_to_language_model_completion_events(
                     if let Some(tool_call) = tool_calls.and_then(|v| v.into_iter().next()) {
                         // Directly access the struct fields
                         let function = tool_call.function; // Accessing the function field
-                        let tool_id = tool_call.id.clone().unwrap_or_else(|| format!(
-                            "{}-{}",
-                            &function.name, // Assuming `function` has a `name` field
-                            TOOL_CALL_COUNTER.fetch_add(1, Ordering::Relaxed)
-                        )); // Access id, handle Option
+                        let tool_id = tool_call.id.clone().unwrap_or_else(|| {
+                            format!(
+                                "{}-{}",
+                                &function.name, // Assuming `function` has a `name` field
+                                TOOL_CALL_COUNTER.fetch_add(1, Ordering::Relaxed)
+                            )
+                        }); // Access id, handle Option
 
-                        let event =
-                            LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
-                                id: LanguageModelToolUseId::from(tool_id),
-                                name: Arc::from(function.name),
-                                raw_input: function.arguments.to_string(),
-                                input: function.arguments,
-                                is_input_complete: true,
-                            });
+                        let event = LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                            id: LanguageModelToolUseId::from(tool_id),
+                            name: Arc::from(function.name),
+                            raw_input: function.arguments.to_string(),
+                            input: function.arguments,
+                            is_input_complete: true,
+                        });
                         events.push(Ok(event));
                         state.used_tools = true;
                     } else if !content.is_empty() {
