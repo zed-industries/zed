@@ -71,6 +71,8 @@ use util::{
 };
 pub use worktree_settings::WorktreeSettings;
 
+use crate::ignore::IgnoreKind;
+
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
 /// A set of local or remote files that are being opened as part of a project.
@@ -233,6 +235,9 @@ impl Default for WorkDirectory {
 pub struct LocalSnapshot {
     snapshot: Snapshot,
     global_gitignore: Option<Arc<Gitignore>>,
+    /// Exclude files for all git repositories in the worktree, indexed by their absolute path.
+    /// The boolean indicates whether the repository exclude needs to be updated.
+    repo_exclude_by_work_dir_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, bool)>,
     /// All of the gitignore files in the worktree, indexed by their absolute path.
     /// The boolean indicates whether the gitignore needs to be updated.
     ignores_by_parent_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, bool)>,
@@ -393,6 +398,7 @@ impl Worktree {
             let mut snapshot = LocalSnapshot {
                 ignores_by_parent_abs_path: Default::default(),
                 global_gitignore: Default::default(),
+                repo_exclude_by_work_dir_abs_path: Default::default(),
                 git_repositories: Default::default(),
                 snapshot: Snapshot::new(
                     cx.entity_id().as_u64(),
@@ -2565,13 +2571,21 @@ impl LocalSnapshot {
         } else {
             IgnoreStack::none()
         };
+
+        if let Some((repo_exclude, _)) = repo_root
+            .as_ref()
+            .and_then(|repo_root_path| self.repo_exclude_by_work_dir_abs_path.get(repo_root_path))
+        {
+            ignore_stack = ignore_stack.append(IgnoreKind::RepoExclude, repo_exclude.clone());
+        }
         ignore_stack.repo_root = repo_root;
         for (parent_abs_path, ignore) in new_ignores.into_iter().rev() {
             if ignore_stack.is_abs_path_ignored(parent_abs_path, true) {
                 ignore_stack = IgnoreStack::all();
                 break;
             } else if let Some(ignore) = ignore {
-                ignore_stack = ignore_stack.append(parent_abs_path.into(), ignore);
+                ignore_stack =
+                    ignore_stack.append(IgnoreKind::Gitignore(parent_abs_path.into()), ignore);
             }
         }
 
@@ -4295,11 +4309,25 @@ impl BackgroundScanner {
                         self.watcher.as_ref(),
                     )
                     .await;
+
+                let repo_exclude_abs_path = child_abs_path.join("info").join("exclude");
+                if self.fs.is_file(&repo_exclude_abs_path).await {
+                    match build_gitignore(&repo_exclude_abs_path, self.fs.as_ref()).await {
+                        Ok(exclude) => {
+                            let exclude = Arc::new(exclude);
+                            ignore_stack = ignore_stack.append(IgnoreKind::RepoExclude, exclude);
+                        }
+                        Err(error) => {
+                            log::error!("error loading .git/info/exclude: {:?}", error);
+                        }
+                    }
+                }
             } else if child_name == GITIGNORE {
                 match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
                     Ok(ignore) => {
                         let ignore = Arc::new(ignore);
-                        ignore_stack = ignore_stack.append(job.abs_path.clone(), ignore.clone());
+                        ignore_stack = ignore_stack
+                            .append(IgnoreKind::Gitignore(job.abs_path.clone()), ignore.clone());
                         new_ignore = Some(ignore);
                     }
                     Err(error) => {
@@ -4684,6 +4712,20 @@ impl BackgroundScanner {
                     }
                     true
                 });
+
+            snapshot.repo_exclude_by_work_dir_abs_path.retain(
+                |work_dir_abs_path, (_, needs_update)| {
+                    if *needs_update {
+                        *needs_update = false;
+                        ignores_to_update.push(work_dir_abs_path.clone());
+                    }
+
+                    snapshot
+                        .git_repositories
+                        .iter()
+                        .any(|(_, r)| &r.work_directory_abs_path == work_dir_abs_path)
+                },
+            );
         }
 
         ignores_to_update
@@ -4717,7 +4759,8 @@ impl BackgroundScanner {
 
         let mut ignore_stack = job.ignore_stack;
         if let Some((ignore, _)) = snapshot.ignores_by_parent_abs_path.get(&job.abs_path) {
-            ignore_stack = ignore_stack.append(job.abs_path.clone(), ignore.clone());
+            ignore_stack =
+                ignore_stack.append(IgnoreKind::Gitignore(job.abs_path.clone()), ignore.clone());
         }
 
         let mut entries_by_id_edits = Vec::new();
@@ -4859,6 +4902,31 @@ impl BackgroundScanner {
                             entry.git_dir_scan_id = scan_id;
                         },
                     );
+
+                    let repo_exclude_path = local_repository
+                        .common_dir_abs_path
+                        .join("info")
+                        .join("exclude");
+                    if self.fs.is_file(&repo_exclude_path).await {
+                        let repo_exclude = build_gitignore(&repo_exclude_path, self.fs.as_ref())
+                            .await
+                            .log_err()
+                            .map(Arc::new);
+
+                        if let Some(repo_exclude) = repo_exclude {
+                            state.snapshot.repo_exclude_by_work_dir_abs_path.insert(
+                                local_repository.work_directory_abs_path.clone(),
+                                (repo_exclude, true),
+                            );
+                        }
+                    } else {
+                        state
+                            .snapshot
+                            .repo_exclude_by_work_dir_abs_path
+                            .remove(&local_repository.work_directory_abs_path);
+                    }
+
+                    affected_repo_roots.push(local_repository.work_directory_abs_path.clone());
                 }
             };
         }
@@ -4892,6 +4960,9 @@ impl BackgroundScanner {
                 let preserve = ids_to_preserve.contains(work_directory_id);
                 if !preserve {
                     affected_repo_roots.push(entry.dot_git_abs_path.parent().unwrap().into());
+                    snapshot
+                        .repo_exclude_by_work_dir_abs_path
+                        .remove(&entry.work_directory_abs_path);
                 }
                 preserve
             });
