@@ -4351,6 +4351,8 @@ impl Repository {
         let id = self.id;
         let this = cx.weak_entity();
         let git_store = self.git_store.clone();
+        let abs_path = self.snapshot.repo_path_to_abs_path(&path);
+        let fs = fs::RealFs::new(None, cx.background_executor().clone());
         self.send_keyed_job(
             Some(GitJobKey::WriteIndex(path.clone())),
             None,
@@ -4359,6 +4361,12 @@ impl Repository {
                     "start updating index text for buffer {}",
                     path.as_unix_str()
                 );
+
+                let executable = match fs.metadata(&abs_path).await {
+                    Ok(Some(meta)) => meta.is_executable,
+                    Ok(None) => false,
+                    Err(err) => false,
+                };
                 match git_repo {
                     RepositoryState::Local {
                         backend,
@@ -4366,7 +4374,7 @@ impl Repository {
                         ..
                     } => {
                         backend
-                            .set_index_text(path.clone(), content, environment.clone())
+                            .set_index_text(path.clone(), content, environment.clone(), executable)
                             .await?;
                     }
                     RepositoryState::Remote { project_id, client } => {

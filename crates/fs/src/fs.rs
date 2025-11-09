@@ -203,6 +203,7 @@ pub struct Metadata {
     pub is_dir: bool,
     pub len: u64,
     pub is_fifo: bool,
+    pub is_executable: bool,
 }
 
 /// Filesystem modification time. The purpose of this newtype is to discourage use of operations
@@ -763,6 +764,17 @@ impl Fs for RealFs {
         #[cfg(unix)]
         let is_fifo = metadata.file_type().is_fifo();
 
+        #[cfg(unix)]
+        let is_executable = {
+            use std::os::unix::fs::PermissionsExt;
+            metadata.permissions().mode() & 0o111 != 0
+        };
+
+        #[cfg(windows)]
+        let is_executable = path
+            .extension()
+            .is_some_and(|ext| matches!(ext.to_str(), Some("exe" | "bat")));
+
         Ok(Some(Metadata {
             inode,
             mtime: MTime(metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH)),
@@ -770,6 +782,7 @@ impl Fs for RealFs {
             is_symlink,
             is_dir: metadata.file_type().is_dir(),
             is_fifo,
+            is_executable,
         }))
     }
 
@@ -2453,6 +2466,7 @@ impl Fs for FakeFs {
                     is_dir: false,
                     is_symlink,
                     is_fifo: false,
+                    is_executable: false,
                 },
                 FakeFsEntry::Dir {
                     inode, mtime, len, ..
@@ -2463,6 +2477,7 @@ impl Fs for FakeFs {
                     is_dir: true,
                     is_symlink,
                     is_fifo: false,
+                    is_executable: false,
                 },
                 FakeFsEntry::Symlink { .. } => unreachable!(),
             }))
