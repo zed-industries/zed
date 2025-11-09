@@ -599,6 +599,10 @@ impl Replacement {
                 escaped = false;
                 if phase == 1 && c.is_ascii_digit() {
                     buffer.push('$')
+                } else if phase == 1 && c == '$' {
+                    buffer.push('$');
+                    buffer.push('$');
+                    continue;
                 // unescape escaped parens
                 } else if phase == 0 && (c == '(' || c == ')') {
                 } else if c != delimiter {
@@ -654,6 +658,7 @@ impl Replacement {
 mod test {
     use std::time::Duration;
 
+    use super::Replacement;
     use crate::{
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
@@ -663,6 +668,12 @@ mod test {
     use indoc::indoc;
     use search::BufferSearchBar;
     use settings::SettingsStore;
+
+    #[test]
+    fn replacement_parse_literal_dollar() {
+        let replacement = Replacement::parse("/\\$Base/\\$BaseNew/".chars().peekable()).unwrap();
+        assert_eq!(replacement.replacement, "$$BaseNew");
+    }
 
     #[gpui::test]
     async fn test_move_to_next(cx: &mut gpui::TestAppContext) {
