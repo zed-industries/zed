@@ -5,6 +5,7 @@ use std::{ops::Range, sync::Arc};
 
 use clock::Global;
 use text::{Anchor, OffsetRangeExt as _, Point};
+use util::RangeExt;
 
 use crate::BufferRow;
 
@@ -65,18 +66,16 @@ impl RowChunks {
         let row_ranges = ranges
             .iter()
             .map(|range| range.to_point(&self.snapshot))
-            .map(|point_range| point_range.start.row..=point_range.end.row)
+            // Be lenient and yield multiple chunks if they "touch" the exclusive part of the range.
+            // This will result in LSP hints [re-]queried for more ranges, but also more hints already visible when scrolling around.            .map(|point_range| point_range.start.row..point_range.end.row + 1)
             .collect::<Vec<_>>();
         self.chunks
             .iter()
             .filter(move |chunk| -> bool {
-                // Be lenient and yield multiple chunks if they "touch" the exclusive part of the range.
-                // This will result in LSP hints [re-]queried for more ranges, but also more hints already visible when scrolling around.
                 let chunk_range = chunk.row_range();
-                row_ranges.iter().any(|row_range| {
-                    chunk_range.contains(&row_range.start())
-                        || chunk_range.contains(&row_range.end())
-                })
+                row_ranges
+                    .iter()
+                    .any(|row_range| chunk_range.overlaps(row_range))
             })
             .copied()
     }

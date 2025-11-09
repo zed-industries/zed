@@ -21087,7 +21087,6 @@ impl Editor {
                 self.refresh_code_actions(window, cx);
                 self.refresh_selected_text_highlights(true, window, cx);
                 self.refresh_single_line_folds(window, cx);
-                self.colorize_brackets(true, cx);
                 self.refresh_matching_bracket_highlights(window, cx);
                 if self.has_active_edit_prediction() {
                     self.update_visible_edit_prediction(window, cx);
