@@ -1171,22 +1171,20 @@ impl Render for ConfigurationView {
         };
 
         let tooltip_label = if env_var_set {
-            format!(
+            Some(format!(
                 "To reset your credentials, unset the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, and {ZED_BEDROCK_REGION_VAR} environment variables."
-            )
+            ))
         } else if bedrock_method.is_some() {
-            "You cannot reset credentials as they're being derived, check Zed settings to understand how.".to_string()
+            Some("You cannot reset credentials as they're being derived, check Zed settings to understand how.".to_string())
         } else {
-            String::new()
+            None
         };
 
         if self.should_render_editor(cx) {
             return ConfiguredApiCard::new(configured_label)
                 .disabled(env_var_set || bedrock_method.is_some())
                 .on_click(cx.listener(|this, _, window, cx| this.reset_credentials(window, cx)))
-                .when(!tooltip_label.is_empty(), |this| {
-                    this.tooltip_label(tooltip_label)
-                })
+                .when_some(tooltip_label, |this, label| this.tooltip_label(label))
                 .into_any_element();
         }
 
