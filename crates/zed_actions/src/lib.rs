@@ -302,22 +302,7 @@ pub mod settings_profile_selector {
 }
 
 pub mod agent {
-    use gpui::{Action, actions};
-    use schemars::JsonSchema;
-    use serde::Deserialize;
-
-    /// Switches the active agent profile to the given profile id.
-    #[derive(Clone, PartialEq, Default, Deserialize, JsonSchema, Action)]
-    #[action(namespace = agent)]
-    #[serde(deny_unknown_fields)]
-    pub struct SwitchToProfile {
-        /// The ID of the profile to activate.
-        #[serde(default)]
-        pub profile_id: String,
-        /// Optional display name, used for presenting the action in UI.
-        #[serde(default)]
-        pub profile_name: Option<String>,
-    }
+    use gpui::actions;
 
     actions!(
         agent,

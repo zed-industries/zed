@@ -3527,7 +3527,6 @@ dependencies = [
 name = "command_palette"
 version = "0.1.0"
 dependencies = [
- "agent_settings",
  "anyhow",
  "client",
  "collections",
