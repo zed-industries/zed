@@ -15,7 +15,7 @@ use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, UpdateGlobal as _};
+use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, QuitMode, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
@@ -87,31 +87,33 @@ fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
         .collect::<Vec<_>>().join("\n\n");
 
     eprintln!("{message}: {error_details}");
-    Application::new().run(move |cx| {
-        if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |_, cx| {
-            cx.new(|_| gpui::Empty)
-        }) {
-            window
-                .update(cx, |_, window, cx| {
-                    let response = window.prompt(
-                        gpui::PromptLevel::Critical,
-                        message,
-                        Some(&error_details),
-                        &["Exit"],
-                        cx,
-                    );
+    Application::new()
+        .with_quit_mode(QuitMode::Explicit)
+        .run(move |cx| {
+            if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |_, cx| {
+                cx.new(|_| gpui::Empty)
+            }) {
+                window
+                    .update(cx, |_, window, cx| {
+                        let response = window.prompt(
+                            gpui::PromptLevel::Critical,
+                            message,
+                            Some(&error_details),
+                            &["Exit"],
+                            cx,
+                        );
 
-                    cx.spawn_in(window, async move |_, cx| {
-                        response.await?;
-                        cx.update(|_, cx| cx.quit())
+                        cx.spawn_in(window, async move |_, cx| {
+                            response.await?;
+                            cx.update(|_, cx| cx.quit())
+                        })
+                        .detach_and_log_err(cx);
                     })
-                    .detach_and_log_err(cx);
-                })
-                .log_err();
-        } else {
-            fail_to_open_window(anyhow::anyhow!("{message}: {error_details}"), cx)
-        }
-    })
+                    .log_err();
+            } else {
+                fail_to_open_window(anyhow::anyhow!("{message}: {error_details}"), cx)
+            }
+        })
 }
 
 fn fail_to_open_window_async(e: anyhow::Error, cx: &mut AsyncApp) {
