@@ -60,7 +60,7 @@ const NUMBERED_LINES_INSTRUCTIONS: &str = indoc! {r#"
     Your job is to predict the next edit that the user will make,
     based on their last few edits and their current cursor location.
 
-    # Output Format
+    ## Output Format
 
     You must briefly explain your understanding of the user's goal, in one
     or two sentences, and then specify their next edit in the form of a
@@ -70,16 +70,19 @@ const NUMBERED_LINES_INSTRUCTIONS: &str = indoc! {r#"
     --- a/src/myapp/cli.py
     +++ b/src/myapp/cli.py
     @@ ... @@
+     import os
+     import time
      import sys
     +from constants import LOG_LEVEL_WARNING
     @@ ... @@
      config.headless()
+     config.set_interactive(false)
     -config.set_log_level(LOG_L)
     +config.set_log_level(LOG_LEVEL_WARNING)
      config.set_use_color(True)
     ```
 
-    # Edit History:
+    ## Edit History
 
 "#};
 
@@ -89,10 +92,12 @@ const UNIFIED_DIFF_REMINDER: &str = indoc! {"
     Analyze the edit history and the files, then provide the unified diff for your predicted edits.
     Do not include the cursor marker in your output.
     Your diff should include edited file paths in its file headers (lines beginning with `---` and `+++`).
+    Do not include line numbers in the hunk headers, use `@@ ... @@`.
     Removed lines begin with `-`.
     Added lines begin with `+`.
-    Other lines begin with an extra space.
-    There's no need to include actual line numbers in the hunk headers - `@@ ... @@` is fine.
+    Context lines begin with an extra space.
+    Context and removed lines are used to match the target edit location, so make sure to include enough of them
+    to uniquely identify it amongst all excerpts of code provided.
 "};
 
 pub fn build_prompt(
