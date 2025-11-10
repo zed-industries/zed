@@ -15,6 +15,7 @@ path = "src/git_hosting_providers.rs"
 anyhow.workspace = true
 async-trait.workspace = true
 futures.workspace = true
+itertools.workspace = true
 git.workspace = true
 gpui.workspace = true
 http_client.workspace = true

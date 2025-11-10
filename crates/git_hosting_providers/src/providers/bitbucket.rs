@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use futures::AsyncReadExt;
 use gpui::SharedString;
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request};
+use itertools::Itertools as _;
 use regex::Regex;
 use serde::Deserialize;
 use url::Url;
@@ -192,9 +193,15 @@ impl GitHostingProvider for Bitbucket {
             return None;
         }
 
-        let mut path_segments = url.path_segments()?;
-        let owner = path_segments.next()?;
-        let repo = path_segments.next()?.trim_end_matches(".git");
+        let mut path_segments = url.path_segments()?.collect::<Vec<_>>();
+        let repo = path_segments.pop()?.trim_end_matches(".git");
+        let owner = if path_segments.get(0).is_some_and(|v| *v == "scm") && path_segments.len() > 1
+        {
+            // Skip the "scm" segment if it's not the only segment
+            path_segments.into_iter().skip(1).join("/")
+        } else {
+            path_segments.into_iter().join("/")
+        };
 
         Some(ParsedGitRemote {
             owner: owner.into(),
@@ -371,6 +378,38 @@ mod tests {
             parsed_remote,
             ParsedGitRemote {
                 owner: "zed-industries".into(),
+                repo: "zed".into(),
+            }
+        );
+
+        // Test with "scm" in the path
+        let remote_url = "https://bitbucket.company.com/scm/zed-industries/zed.git";
+
+        let parsed_remote = Bitbucket::from_remote_url(remote_url)
+            .unwrap()
+            .parse_remote_url(remote_url)
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            }
+        );
+
+        // Test with only "scm" as owner
+        let remote_url = "https://bitbucket.company.com/scm/zed.git";
+
+        let parsed_remote = Bitbucket::from_remote_url(remote_url)
+            .unwrap()
+            .parse_remote_url(remote_url)
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "scm".into(),
                 repo: "zed".into(),
             }
         );
