@@ -108,7 +108,7 @@ pub struct WorktreeSettingsContent {
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
     pub binary: Option<BinarySettings>,
-    /// Options passed to the language server at startup
+    /// Options passed to the language server at startup.
     ///
     /// Consult the documentation for the specific LSP to see what settings
     /// are supported
