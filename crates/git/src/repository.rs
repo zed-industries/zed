@@ -491,6 +491,7 @@ pub trait GitRepository: Send + Sync {
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
+        askpass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
@@ -1630,41 +1631,39 @@ impl GitRepository for RealGitRepository {
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
+        ask_pass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
-        self.executor
-            .spawn(async move {
-                let mut cmd = new_smol_command(git_binary_path);
-                cmd.current_dir(&working_directory?)
-                    .envs(env.iter())
-                    .args(["commit", "--quiet", "-m"])
-                    .arg(&message.to_string())
-                    .arg("--cleanup=strip");
+        let executor = self.executor.clone();
+        async move {
+            let mut cmd = new_smol_command(git_binary_path);
+            cmd.current_dir(&working_directory?)
+                .envs(env.iter())
+                .args(["commit", "--quiet", "-m"])
+                .arg(&message.to_string())
+                .arg("--cleanup=strip")
+                .stdout(smol::process::Stdio::piped())
+                .stderr(smol::process::Stdio::piped());
 
-                if options.amend {
-                    cmd.arg("--amend");
-                }
+            if options.amend {
+                cmd.arg("--amend");
+            }
 
-                if options.signoff {
-                    cmd.arg("--signoff");
-                }
+            if options.signoff {
+                cmd.arg("--signoff");
+            }
 
-                if let Some((name, email)) = name_and_email {
-                    cmd.arg("--author").arg(&format!("{name} <{email}>"));
-                }
+            if let Some((name, email)) = name_and_email {
+                cmd.arg("--author").arg(&format!("{name} <{email}>"));
+            }
 
-                let output = cmd.output().await?;
+            run_git_command(env, ask_pass, cmd, &executor).await?;
 
-                anyhow::ensure!(
-                    output.status.success(),
-                    "Failed to commit:\n{}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-                Ok(())
-            })
-            .boxed()
+            Ok(())
+        }
+        .boxed()
     }
 
     fn push(
@@ -2469,8 +2468,17 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
 
+    fn disable_git_global_config() {
+        unsafe {
+            std::env::set_var("GIT_CONFIG_GLOBAL", "");
+            std::env::set_var("GIT_CONFIG_SYSTEM", "");
+        }
+    }
+
     #[gpui::test]
     async fn test_checkpoint_basic(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
         cx.executor().allow_parking();
 
         let repo_dir = tempfile::tempdir().unwrap();
@@ -2486,6 +2494,7 @@ mod tests {
             cx.executor(),
         )
         .unwrap();
+
         repo.stage_paths(vec![repo_path("file")], Arc::new(HashMap::default()))
             .await
             .unwrap();
@@ -2493,6 +2502,7 @@ mod tests {
             "Initial commit".into(),
             None,
             CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
             Arc::new(checkpoint_author_envs()),
         )
         .await
@@ -2519,6 +2529,7 @@ mod tests {
             "Commit after checkpoint".into(),
             None,
             CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
             Arc::new(checkpoint_author_envs()),
         )
         .await
@@ -2556,6 +2567,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_checkpoint_empty_repo(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
         cx.executor().allow_parking();
 
         let repo_dir = tempfile::tempdir().unwrap();
@@ -2600,6 +2613,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_compare_checkpoints(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
         cx.executor().allow_parking();
 
         let repo_dir = tempfile::tempdir().unwrap();
@@ -2639,6 +2654,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_checkpoint_exclude_binary_files(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
         cx.executor().allow_parking();
 
         let repo_dir = tempfile::tempdir().unwrap();
@@ -2669,6 +2686,7 @@ mod tests {
             "Initial commit".into(),
             None,
             CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
             Arc::new(checkpoint_author_envs()),
         )
         .await

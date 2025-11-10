@@ -526,6 +526,7 @@ impl GitRepository for FakeGitRepository {
         _message: gpui::SharedString,
         _name_and_email: Option<(gpui::SharedString, gpui::SharedString)>,
         _options: CommitOptions,
+        _askpass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         unimplemented!()

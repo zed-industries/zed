@@ -1585,6 +1585,7 @@ impl GitPanel {
             return;
         }
 
+        let askpass = self.askpass_delegate("git commit", window, cx);
         let commit_message = self.custom_or_suggested_commit_message(window, cx);
 
         let Some(mut message) = commit_message else {
@@ -1599,7 +1600,7 @@ impl GitPanel {
         let task = if self.has_staged_changes() {
             // Repository serializes all git operations, so we can just send a commit immediately
             let commit_task = active_repository.update(cx, |repo, cx| {
-                repo.commit(message.into(), None, options, cx)
+                repo.commit(message.into(), None, options, askpass, cx)
             });
             cx.background_spawn(async move { commit_task.await? })
         } else {
@@ -1621,7 +1622,7 @@ impl GitPanel {
             cx.spawn(async move |_, cx| {
                 stage_task.await?;
                 let commit_task = active_repository.update(cx, |repo, cx| {
-                    repo.commit(message.into(), None, options, cx)
+                    repo.commit(message.into(), None, options, askpass, cx)
                 })?;
                 commit_task.await?
             })
