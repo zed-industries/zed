@@ -10,7 +10,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use crate::{Pixels, px};
+use crate::Pixels;
 
 /// Convert an RGB hex color code number to a color type
 pub fn rgb(hex: u32) -> Rgba {
@@ -696,10 +696,12 @@ pub enum Background {
     },
     /// A slash pattern background.
     PatternSlash {
+        /// The width of the pattern.
+        width: Pixels,
+        /// The interval between the pattern lines.
+        interval: f32,
         /// The solid color for the pattern.
         color: Hsla,
-        /// The height of the pattern.
-        height: Pixels,
     },
 }
 
@@ -849,13 +851,23 @@ impl From<Background> for BackgroundColor {
                 pad: 0,
                 ..Default::default()
             },
-            Background::PatternSlash { color, height } => BackgroundColor {
-                tag: BackgroundTag::PatternSlash,
-                solid: color,
-                gradient_angle_or_pattern_height: height.0,
-                pad: 0,
-                ..Default::default()
-            },
+            Background::PatternSlash {
+                color,
+                width,
+                interval,
+            } => {
+                let width_scaled = (width.0 * 255.0) as u32;
+                let interval_scaled = (interval * 255.0) as u32;
+                let height = ((width_scaled * 0xFFFF) + interval_scaled) as f32;
+
+                BackgroundColor {
+                    tag: BackgroundTag::PatternSlash,
+                    solid: color,
+                    gradient_angle_or_pattern_height: height,
+                    pad: 0,
+                    ..Default::default()
+                }
+            }
         }
     }
 }
@@ -876,14 +888,10 @@ impl Default for BackgroundColor {
 
 /// Creates a hash pattern background
 pub fn pattern_slash(color: Hsla, width: impl Into<Pixels>, interval: f32) -> Background {
-    let width: Pixels = width.into();
-    let width_scaled = (width.0 * 255.0) as u32;
-    let interval_scaled = (interval * 255.0) as u32;
-    let height = ((width_scaled * 0xFFFF) + interval_scaled) as f32;
-
     Background::PatternSlash {
         color,
-        height: px(height),
+        width: width.into(),
+        interval,
     }
 }
 
@@ -999,13 +1007,12 @@ mod tests {
         let mut background = Background::from(color);
         assert_eq!(background, Background::Solid { color });
         assert_eq!(background.fill(), color);
+        assert!(!background.is_transparent());
+        assert_eq!(background.opacity(0.5).fill(), color.opacity(0.5));
 
         let background_color: BackgroundColor = background.into();
         assert_eq!(background_color.tag, BackgroundTag::Solid);
         assert_eq!(background_color.solid, color);
-
-        assert_eq!(background.opacity(0.5).fill(), color.opacity(0.5));
-        assert!(!background.is_transparent());
 
         let background = Background::from(hsla(0.0, 0.0, 0.0, 0.0));
         assert!(background.is_transparent());
@@ -1041,14 +1048,42 @@ mod tests {
         assert_eq!(background_color.colors[0], from);
         assert_eq!(background_color.colors[1], to);
 
-        let background = Background::LinearGradient {
-            color_space: ColorSpace::default(),
-            angle: 90.0,
-            colors: [
-                linear_color_stop(hsla(0.0, 0.0, 0.0, 0.0), 0.0),
-                linear_color_stop(hsla(0.0, 0.0, 0.0, 0.0), 1.0),
-            ],
-        };
+        let background = linear_gradient(
+            0.,
+            linear_color_stop(gpui::transparent_white(), 0.0),
+            linear_color_stop(gpui::transparent_white(), 1.0),
+        );
+        assert!(background.is_transparent());
+    }
+
+    #[test]
+    fn test_background_pattern_slash() {
+        let color = Hsla::from(rgba(0xff0099ff));
+        let width = Pixels(4.0);
+        let interval = 2.0;
+        let background = pattern_slash(color, width, interval);
+        assert_eq!(
+            background,
+            Background::PatternSlash {
+                color,
+                width,
+                interval
+            }
+        );
+        assert_eq!(background.fill(), color);
+        assert!(!background.is_transparent());
+
+        let background_color: BackgroundColor = background.into();
+        assert_eq!(background_color.tag, BackgroundTag::PatternSlash);
+        assert_eq!(background_color.solid, color);
+        assert_eq!(
+            background_color.gradient_angle_or_pattern_height,
+            66846210.0
+        );
+
+        assert_eq!(background.opacity(0.5).fill(), color.opacity(0.5));
+
+        let background = pattern_slash(gpui::transparent_white(), width, interval);
         assert!(background.is_transparent());
     }
 }
