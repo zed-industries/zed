@@ -27333,6 +27333,7 @@ async fn test_next_prev_reference(cx: &mut TestAppContext) {
     cx.assert_editor_state(CYCLE_POSITIONS[1]);
 }
 
+#[gpui::test]
 async fn test_multibuffer_selections_with_folding(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

@@ -18869,7 +18869,8 @@ impl Editor {
             display_map.fold_buffers([buffer_id], cx)
         });
 
-        self.selections.change_with(cx, |selections| {
+        let snapshot = self.display_snapshot(cx);
+        self.selections.change_with(&snapshot, |selections| {
             selections.remove_selections_from_buffer(buffer_id);
         });
 
