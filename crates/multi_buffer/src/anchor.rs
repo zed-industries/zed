@@ -1,7 +1,7 @@
-use crate::{MultiBufferOffset, MultiBufferOffsetUtf16};
+use crate::{MultiBufferDimension, MultiBufferOffset, MultiBufferOffsetUtf16};
 
 use super::{ExcerptId, MultiBufferSnapshot, ToOffset, ToPoint};
-use language::{Point, TextDimension};
+use language::Point;
 use std::{
     cmp::Ordering,
     ops::{AddAssign, Range, Sub},
@@ -162,9 +162,14 @@ impl Anchor {
         *self
     }
 
-    pub fn summary<D, R>(&self, snapshot: &MultiBufferSnapshot) -> D
+    pub fn summary<D>(&self, snapshot: &MultiBufferSnapshot) -> D
     where
-        D: TextDimension + Ord + Sub<D, Output = R> + AddAssign<R> + Default,
+        D: MultiBufferDimension
+            + Ord
+            + Sub<D, Output = D::TextDimension>
+            + AddAssign<D::TextDimension>
+            + Default,
+        D::TextDimension: Sub<Output = D::TextDimension> + Ord,
     {
         snapshot.summary_for_anchor(self)
     }

@@ -1549,21 +1549,6 @@ where
     }
 }
 
-impl<R, R2, K, V> ops::Add for DimensionPair<K, V>
-where
-    K: ops::Add<K, Output = R>,
-    V: ops::Add<V, Output = R2>,
-{
-    type Output = DimensionPair<R, R2>;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        DimensionPair {
-            key: self.key + rhs.key,
-            value: self.value.zip(rhs.value).map(|(a, b)| a + b),
-        }
-    }
-}
-
 impl<R, R2, K, V> ops::AddAssign<DimensionPair<R, R2>> for DimensionPair<K, V>
 where
     K: ops::AddAssign<R>,
@@ -1571,15 +1556,13 @@ where
 {
     fn add_assign(&mut self, rhs: DimensionPair<R, R2>) {
         self.key += rhs.key;
-        self.value.as_mut().zip(rhs.value).map(|(a, b)| *a += b);
-    }
-}
-
-impl<D> std::ops::Add<DimensionPair<Point, D>> for Point {
-    type Output = Point;
-
-    fn add(self, rhs: DimensionPair<Point, D>) -> Self::Output {
-        self + rhs.key
+        if let Some(value) = &mut self.value {
+            if let Some(other_value) = rhs.value {
+                *value += other_value;
+            } else {
+                self.value.take();
+            }
+        }
     }
 }
 
@@ -1588,20 +1571,6 @@ impl<D> std::ops::AddAssign<DimensionPair<Point, D>> for Point {
         *self += rhs.key;
     }
 }
-
-// impl<R, K, V> ops::Sub<R> for DimensionPair<K, V>
-// where
-//     K: ops::Sub<R, Output = K>,
-// {
-//     type Output = Self;
-
-//     fn sub(self, rhs: R) -> Self::Output {
-//         Self {
-//             key: self.key - r,
-//             value: self.value,
-//         }
-//     }
-// }
 
 impl<K, V> cmp::Eq for DimensionPair<K, V> where K: cmp::Eq {}
 

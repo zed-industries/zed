@@ -43,13 +43,13 @@ use std::{
     io,
     iter::{self, FromIterator},
     mem,
-    ops::{Add, AddAssign, Range, RangeBounds, Sub},
+    ops::{AddAssign, Range, RangeBounds, Sub},
     rc::Rc,
     str,
     sync::Arc,
     time::Duration,
 };
-use sum_tree::{Bias, Cursor, Dimension, Dimensions, SumTree, Summary, TreeMap};
+use sum_tree::{Bias, Cursor, Dimension, Dimensions, SumTree, TreeMap};
 use text::{
     BufferId, Edit, LineIndent, TextSummary,
     locator::Locator,
@@ -191,23 +191,85 @@ impl std::ops::Add<usize> for MultiBufferRow {
     }
 }
 
+pub trait MultiBufferDimension: Copy + Default + 'static {
+    type TextDimension: TextDimension;
+    fn from_summary(summary: &MBTextSummary) -> Self;
+
+    fn add_text_dim(&mut self, summary: &Self::TextDimension);
+
+    fn add_mb_text_summary(&mut self, summary: &MBTextSummary);
+}
+
+impl MultiBufferDimension for Point {
+    type TextDimension = Point;
+    fn from_summary(summary: &MBTextSummary) -> Self {
+        summary.lines
+    }
+
+    fn add_text_dim(&mut self, other: &Self::TextDimension) {
+        *self += *other;
+    }
+
+    fn add_mb_text_summary(&mut self, summary: &MBTextSummary) {
+        *self += summary.lines;
+    }
+}
+// impl MultiBufferDimension for MultiBufferPointUtf16 {}
+impl MultiBufferDimension for PointUtf16 {
+    type TextDimension = PointUtf16;
+    fn from_summary(summary: &MBTextSummary) -> Self {
+        summary.lines_utf16()
+    }
+
+    fn add_text_dim(&mut self, other: &Self::TextDimension) {
+        *self += *other;
+    }
+
+    fn add_mb_text_summary(&mut self, summary: &MBTextSummary) {
+        *self += summary.lines_utf16();
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq, Hash, serde::Deserialize)]
 pub struct MultiBufferOffset(pub usize);
 
-impl TextDimension for MultiBufferOffset {
-    fn from_text_summary(summary: &TextSummary) -> Self {
-        MultiBufferOffset(usize::from_text_summary(summary))
+impl fmt::Display for MultiBufferOffset {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
-    fn from_chunk(chunk: rope::ChunkSlice) -> Self {
-        MultiBufferOffset(usize::from_chunk(chunk))
+}
+
+impl MultiBufferDimension for MultiBufferOffset {
+    type TextDimension = usize;
+    fn from_summary(summary: &MBTextSummary) -> Self {
+        MultiBufferOffset(summary.len)
     }
-    fn add_assign(&mut self, other: &Self) {
-        TextDimension::add_assign(&mut self.0, &other.0);
+
+    fn add_text_dim(&mut self, other: &Self::TextDimension) {
+        self.0 += *other;
+    }
+
+    fn add_mb_text_summary(&mut self, summary: &MBTextSummary) {
+        self.0 += summary.len;
+    }
+}
+impl MultiBufferDimension for MultiBufferOffsetUtf16 {
+    type TextDimension = OffsetUtf16;
+    fn from_summary(summary: &MBTextSummary) -> Self {
+        MultiBufferOffsetUtf16(summary.len_utf16)
+    }
+
+    fn add_text_dim(&mut self, other: &Self::TextDimension) {
+        self.0 += *other;
+    }
+
+    fn add_mb_text_summary(&mut self, summary: &MBTextSummary) {
+        self.0 += summary.len_utf16;
     }
 }
 
 impl Dimension<'_, ChunkSummary> for MultiBufferOffsetUtf16 {
-    fn zero(cx: ()) -> Self {
+    fn zero((): ()) -> Self {
         MultiBufferOffsetUtf16(OffsetUtf16(0))
     }
 
@@ -215,20 +277,9 @@ impl Dimension<'_, ChunkSummary> for MultiBufferOffsetUtf16 {
         self.0.add_summary(summary, cx);
     }
 }
-impl TextDimension for MultiBufferOffsetUtf16 {
-    fn from_text_summary(summary: &TextSummary) -> Self {
-        MultiBufferOffsetUtf16(OffsetUtf16::from_text_summary(summary))
-    }
-    fn from_chunk(chunk: rope::ChunkSlice) -> Self {
-        MultiBufferOffsetUtf16(OffsetUtf16::from_chunk(chunk))
-    }
-    fn add_assign(&mut self, other: &Self) {
-        TextDimension::add_assign(&mut self.0, &other.0);
-    }
-}
 
 impl Dimension<'_, ChunkSummary> for MultiBufferOffset {
-    fn zero(cx: ()) -> Self {
+    fn zero((): ()) -> Self {
         MultiBufferOffset(0)
     }
 
@@ -269,11 +320,6 @@ impl Sub for BufferOffset {
     }
 }
 
-impl AddAssign<DimensionPair<usize, Point>> for MultiBufferOffset {
-    fn add_assign(&mut self, other: DimensionPair<usize, Point>) {
-        self.0 += other.key;
-    }
-}
 impl AddAssign<DimensionPair<usize, Point>> for BufferOffset {
     fn add_assign(&mut self, other: DimensionPair<usize, Point>) {
         self.0 += other.key;
@@ -430,7 +476,7 @@ pub struct MultiBufferSnapshot {
 #[derive(Debug, Clone)]
 enum DiffTransform {
     BufferContent {
-        summary: TextSummary,
+        summary: MBTextSummary,
         inserted_hunk_info: Option<DiffTransformHunkInfo>,
     },
     DeletedHunk {
@@ -548,7 +594,7 @@ pub struct MultiBufferExcerpt<'a> {
     diff_transforms:
         sum_tree::Cursor<'a, 'static, DiffTransform, DiffTransforms<MultiBufferOffset>>,
     offset: MultiBufferOffset,
-    // unsure about this
+    // todo unsure about this
     excerpt_offset: MultiBufferOffset,
     buffer_offset: BufferOffset,
 }
@@ -585,13 +631,117 @@ pub struct ExcerptSummary {
     /// The location of the last [`Excerpt`] being summarized
     excerpt_locator: Locator,
     widest_line_number: u32,
-    text: TextSummary,
+    text: MBTextSummary,
 }
 
 #[derive(Debug, Clone)]
 pub struct DiffTransformSummary {
-    input: TextSummary,
-    output: TextSummary,
+    input: MBTextSummary,
+    output: MBTextSummary,
+}
+
+/// Summary of a string of text.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub struct MBTextSummary {
+    /// Length in bytes.
+    pub len: usize,
+    /// Length in UTF-8.
+    pub chars: usize,
+    /// Length in UTF-16 code units
+    pub len_utf16: OffsetUtf16,
+    /// A point representing the number of lines and the length of the last line.
+    ///
+    /// In other words, it marks the point after the last byte in the text, (if
+    /// EOF was a character, this would be its position).
+    pub lines: Point,
+    /// How many `char`s are in the first line
+    pub first_line_chars: u32,
+    /// How many `char`s are in the last line
+    pub last_line_chars: u32,
+    /// How many UTF-16 code units are in the last line
+    pub last_line_len_utf16: u32,
+    /// The row idx of the longest row
+    pub longest_row: u32,
+    /// How many `char`s are in the longest row
+    pub longest_row_chars: u32,
+}
+
+impl From<TextSummary> for MBTextSummary {
+    fn from(summary: TextSummary) -> Self {
+        MBTextSummary {
+            len: summary.len,
+            chars: summary.chars,
+            len_utf16: summary.len_utf16,
+            lines: summary.lines,
+            first_line_chars: summary.first_line_chars,
+            last_line_chars: summary.last_line_chars,
+            last_line_len_utf16: summary.last_line_len_utf16,
+            longest_row: summary.longest_row,
+            longest_row_chars: summary.longest_row_chars,
+        }
+    }
+}
+
+impl MultiBufferDimension for MBTextSummary {
+    type TextDimension = TextSummary;
+
+    fn from_summary(summary: &MBTextSummary) -> Self {
+        *summary
+    }
+
+    fn add_text_dim(&mut self, summary: &Self::TextDimension) {
+        *self += *summary;
+    }
+
+    fn add_mb_text_summary(&mut self, summary: &MBTextSummary) {
+        *self += *summary;
+    }
+}
+
+impl AddAssign for MBTextSummary {
+    fn add_assign(&mut self, other: MBTextSummary) {
+        let joined_chars = self.last_line_chars + other.first_line_chars;
+        if joined_chars > self.longest_row_chars {
+            self.longest_row = self.lines.row;
+            self.longest_row_chars = joined_chars;
+        }
+        if other.longest_row_chars > self.longest_row_chars {
+            self.longest_row = self.lines.row + other.longest_row;
+            self.longest_row_chars = other.longest_row_chars;
+        }
+
+        if self.lines.row == 0 {
+            self.first_line_chars += other.first_line_chars;
+        }
+
+        if other.lines.row == 0 {
+            self.last_line_chars += other.first_line_chars;
+            self.last_line_len_utf16 += other.last_line_len_utf16;
+        } else {
+            self.last_line_chars = other.last_line_chars;
+            self.last_line_len_utf16 = other.last_line_len_utf16;
+        }
+
+        self.chars += other.chars;
+        self.len += other.len;
+        self.len_utf16 += other.len_utf16;
+        self.lines += other.lines;
+    }
+}
+
+impl AddAssign<TextSummary> for MBTextSummary {
+    fn add_assign(&mut self, other: TextSummary) {
+        *self += MBTextSummary::from(other);
+    }
+}
+
+impl MBTextSummary {
+    pub fn lines_utf16(&self) -> PointUtf16 {
+        PointUtf16 {
+            row: self.lines.row,
+            column: self.last_line_len_utf16,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -2985,7 +3135,7 @@ impl MultiBuffer {
                 continue;
             }
             let summary_to_add = old_snapshot
-                .text_summary_for_excerpt_offset_range::<TextSummary>(start_offset..end_offset);
+                .text_summary_for_excerpt_offset_range::<MBTextSummary>(start_offset..end_offset);
 
             if !Self::extend_last_buffer_content_transform(
                 new_transforms,
@@ -3006,7 +3156,7 @@ impl MultiBuffer {
     fn extend_last_buffer_content_transform(
         new_transforms: &mut SumTree<DiffTransform>,
         new_inserted_hunk_info: Option<DiffTransformHunkInfo>,
-        summary_to_add: TextSummary,
+        summary_to_add: MBTextSummary,
     ) -> bool {
         let mut did_extend = false;
         new_transforms.update_last(
@@ -3507,33 +3657,32 @@ impl MultiBufferSnapshot {
     ///
     /// The returned iterator yields each of these metadata items, paired with its range in
     /// multi-buffer coordinates.
-    fn lift_buffer_metadata<'a, MBR, BR, R, M, I>(
+    fn lift_buffer_metadata<'a, MBR, M, I>(
         &'a self,
         query_range: Range<MBR>,
-        get_buffer_metadata: impl 'a + Fn(&'a BufferSnapshot, Range<BR>) -> Option<I>,
+        get_buffer_metadata: impl 'a + Fn(&'a BufferSnapshot, Range<MBR::TextDimension>) -> Option<I>,
     ) -> impl Iterator<Item = (Range<MBR>, M, &'a Excerpt)> + 'a
     where
-        I: Iterator<Item = (Range<BR>, M)> + 'a,
-        MBR: Dimension<'a, ExcerptSummary>
+        I: Iterator<Item = (Range<MBR::TextDimension>, M)> + 'a,
+        MBR: MultiBufferDimension
+            + Dimension<'a, ExcerptSummary>
             + Dimension<'a, DiffTransformSummary>
             + Ord
-            + Sub<Output = R>
-            + std::ops::Add<R, Output = MBR>
-            + std::ops::AddAssign<R>
+            + Sub<Output = MBR::TextDimension>
+            + std::ops::Add<MBR::TextDimension, Output = MBR>
+            + std::ops::AddAssign<MBR::TextDimension>
             + Default
             + Copy
             + 'a,
-        BR: Sub<Output = R>
-            + std::ops::Add<R, Output = BR>
-            + AddAssign<R>
+        MBR::TextDimension: Sub<Output = MBR::TextDimension>
+            + std::ops::Add<Output = MBR::TextDimension>
+            + AddAssign<MBR::TextDimension>
             + TextDimension
             + Ord
             + Copy,
-        R: Default,
-        MBR: TextDimension,
     {
         let mut current_excerpt_metadata: Option<(ExcerptId, I)> = None;
-        let mut cursor = self.cursor::<MBR, BR, _>();
+        let mut cursor = self.cursor::<MBR, MBR::TextDimension, MBR::TextDimension>();
 
         // Find the excerpt and buffer offset where the given range ends.
         cursor.seek(&query_range.end);
@@ -3544,7 +3693,7 @@ impl MultiBufferSnapshot {
                 let overshoot = if query_range.end > region.range.start {
                     query_range.end - region.range.start
                 } else {
-                    R::default()
+                    <MBR::TextDimension>::default()
                 };
                 buffer_end = buffer_end + overshoot;
                 range_end = Some((region.excerpt.id, buffer_end));
@@ -3587,7 +3736,11 @@ impl MultiBufferSnapshot {
                     } else {
                         buffer_start = cursor.main_buffer_position()?;
                     };
-                    let mut buffer_end = excerpt.range.context.end.summary::<BR>(&excerpt.buffer);
+                    let mut buffer_end = excerpt
+                        .range
+                        .context
+                        .end
+                        .summary::<MBR::TextDimension>(&excerpt.buffer);
                     if let Some((end_excerpt_id, end_buffer_offset)) = range_end
                         && excerpt.id == end_excerpt_id
                     {
@@ -3605,7 +3758,7 @@ impl MultiBufferSnapshot {
                 {
                     // Find the multibuffer regions that contain the start and end of
                     // the metadata item's range.
-                    if metadata_buffer_range.start > BR::default() {
+                    if metadata_buffer_range.start > <MBR::TextDimension>::default() {
                         while let Some(region) = cursor.region() {
                             if region.is_main_buffer
                                 && (region.buffer_range.end >= metadata_buffer_range.start
@@ -3811,12 +3964,12 @@ impl MultiBufferSnapshot {
         MultiBufferOffset(self.diff_transforms.summary().output.len)
     }
 
-    pub fn max_position<MBR: TextDimension>(&self) -> MBR {
-        MBR::from_text_summary(&self.text_summary())
+    pub fn max_position<MBR: MultiBufferDimension>(&self) -> MBR {
+        MBR::from_summary(&self.text_summary())
     }
 
     pub fn is_empty(&self) -> bool {
-        self.excerpts.summary().text.len == 0
+        self.diff_transforms.summary().output.len == 0
     }
 
     pub fn widest_line_number(&self) -> u32 {
@@ -3985,7 +4138,7 @@ impl MultiBufferSnapshot {
             + Copy
             + Clone,
         BR: TextDimension + Sub<Output = R> + Copy + AddAssign<R>,
-        MBR: TextDimension,
+        MBR: MultiBufferDimension,
     {
         let mut cursor = self.cursor::<MBR, BR, R>();
         cursor.seek(&position);
@@ -4028,7 +4181,7 @@ impl MultiBufferSnapshot {
             + Copy
             + Clone,
         BR2: TextDimension + Sub<Output = R2> + Copy + AddAssign<R2>,
-        MBR2: TextDimension,
+        MBR2: MultiBufferDimension,
     {
         let mut cursor = self.cursor::<DimensionPair<MBR1, MBR2>, DimensionPair<BR1, BR2>, _>();
         cursor.seek(&DimensionPair { key, value: None });
@@ -4041,7 +4194,7 @@ impl MultiBufferSnapshot {
             let buffer_start_key = region.buffer_range.start.key;
             let buffer_start_value = region.buffer_range.start.value.unwrap();
             let mut buffer_key = buffer_start_key;
-            buffer_key += (key - start_key);
+            buffer_key += key - start_key;
             let buffer_value = convert_buffer_dimension(region.buffer, buffer_key);
             let mut result = start_value;
             result += buffer_value - buffer_start_value;
@@ -4262,13 +4415,13 @@ impl MultiBufferSnapshot {
         MultiBufferRow(self.text_summary().lines.row)
     }
 
-    pub fn text_summary(&self) -> TextSummary {
+    pub fn text_summary(&self) -> MBTextSummary {
         self.diff_transforms.summary().output
     }
 
     pub fn text_summary_for_range<D, O>(&self, range: Range<O>) -> D
     where
-        D: TextDimension,
+        D: MultiBufferDimension + AddAssign,
         O: ToOffset,
     {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
@@ -4278,7 +4431,7 @@ impl MultiBufferSnapshot {
         cursor.seek(&range.start, Bias::Right);
 
         let Some(first_transform) = cursor.item() else {
-            return D::from_text_summary(&TextSummary::default());
+            return D::from_summary(&MBTextSummary::default());
         };
 
         let diff_transform_start = cursor.start().0;
@@ -4311,14 +4464,18 @@ impl MultiBufferSnapshot {
                     buffer_end -= 1;
                 }
 
-                let mut summary =
-                    base_text.text_summary_for_range::<D, _>(buffer_start..buffer_end);
+                let mut summary = base_text
+                    .text_summary_for_range::<D::TextDimension, _>(buffer_start..buffer_end);
 
                 if include_trailing_newline {
-                    summary.add_assign(&D::from_text_summary(&TextSummary::newline()))
+                    summary.add_assign(&<D::TextDimension>::from_text_summary(
+                        &TextSummary::newline(),
+                    ))
                 }
 
-                summary
+                let mut result = D::default();
+                result.add_text_dim(&summary);
+                result
             }
         };
         if range.end < diff_transform_end {
@@ -4326,9 +4483,7 @@ impl MultiBufferSnapshot {
         }
 
         cursor.next();
-        result.add_assign(&D::from_text_summary(
-            &cursor.summary(&range.end, Bias::Right),
-        ));
+        result.add_mb_text_summary(&cursor.summary(&range.end, Bias::Right));
 
         let Some(last_transform) = cursor.item() else {
             return result;
@@ -4351,24 +4506,30 @@ impl MultiBufferSnapshot {
                     panic!("{:?} is in non-existent deleted hunk", range.end)
                 };
 
-                let mut suffix = base_text
-                    .text_summary_for_range::<D, _>(base_text_byte_range.start..buffer_end);
+                let mut suffix = base_text.text_summary_for_range::<D::TextDimension, _>(
+                    base_text_byte_range.start..buffer_end,
+                );
                 if *has_trailing_newline && buffer_end == base_text_byte_range.end + 1 {
-                    suffix.add_assign(&D::from_text_summary(&TextSummary::newline()))
+                    suffix.add_assign(&<D::TextDimension>::from_text_summary(&TextSummary::from(
+                        "\n",
+                    )))
                 }
-                suffix
+
+                let mut result = D::default();
+                result.add_text_dim(&suffix);
+                result
             }
         };
 
-        result.add_assign(&suffix);
+        result += suffix;
         result
     }
 
     fn text_summary_for_excerpt_offset_range<D>(&self, mut range: Range<ExcerptOffset>) -> D
     where
-        D: TextDimension,
+        D: MultiBufferDimension + AddAssign,
     {
-        let mut summary = D::zero(());
+        let mut summary = D::default();
         let mut cursor = self.excerpts.cursor::<ExcerptOffset>(());
         cursor.seek(&range.start, Bias::Right);
         if let Some(excerpt) = cursor.item() {
@@ -4381,34 +4542,36 @@ impl MultiBufferSnapshot {
             let start_in_excerpt = excerpt_start + (range.start - *cursor.start()).value;
             let end_in_excerpt =
                 excerpt_start + (cmp::min(end_before_newline, range.end) - *cursor.start()).value;
-            summary.add_assign(
+            summary.add_text_dim(
                 &excerpt
                     .buffer
-                    .text_summary_for_range(start_in_excerpt..end_in_excerpt),
+                    .text_summary_for_range::<D::TextDimension, _>(
+                        start_in_excerpt..end_in_excerpt,
+                    ),
             );
 
             if range.end > end_before_newline {
-                summary.add_assign(&D::from_text_summary(&TextSummary::from("\n")));
+                summary.add_mb_text_summary(&MBTextSummary::from(TextSummary::newline()));
             }
 
             cursor.next();
         }
 
         if range.end > *cursor.start() {
-            summary.add_assign(
-                &cursor
-                    .summary::<_, ExcerptDimension<D>>(&range.end, Bias::Right)
-                    .0,
-            );
+            summary += cursor
+                .summary::<_, ExcerptDimension<D>>(&range.end, Bias::Right)
+                .0;
             if let Some(excerpt) = cursor.item() {
                 range.end = cmp::max(*cursor.start(), range.end);
 
                 let excerpt_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
                 let end_in_excerpt = excerpt_start + (range.end - *cursor.start()).value;
-                summary.add_assign(
+                summary.add_text_dim(
                     &excerpt
                         .buffer
-                        .text_summary_for_range(excerpt_start..end_in_excerpt),
+                        .text_summary_for_range::<D::TextDimension, _>(
+                            excerpt_start..end_in_excerpt,
+                        ),
                 );
             }
         }
@@ -4416,9 +4579,14 @@ impl MultiBufferSnapshot {
         summary
     }
 
-    pub fn summary_for_anchor<D, R>(&self, anchor: &Anchor) -> D
+    pub fn summary_for_anchor<D>(&self, anchor: &Anchor) -> D
     where
-        D: TextDimension + Ord + Sub<D, Output = R> + AddAssign<R> + Default,
+        D: MultiBufferDimension
+            + Ord
+            + Sub<D, Output = D::TextDimension>
+            + AddAssign<D::TextDimension>
+            + Default,
+        D::TextDimension: Sub<Output = D::TextDimension> + Ord,
     {
         self.summaries_for_anchors([anchor])[0]
     }
@@ -4433,7 +4601,7 @@ impl MultiBufferSnapshot {
         >,
     ) -> D
     where
-        D: TextDimension + Ord + Sub<D, Output = R> + AddAssign<R> + Default,
+        D: MultiBufferDimension + Ord + Sub<D, Output = R> + AddAssign<R> + Default,
     {
         loop {
             let transform_end_position = diff_transforms.end().0.0;
@@ -4460,11 +4628,11 @@ impl MultiBufferSnapshot {
                         if base_text_offset >= base_text_byte_range.start
                             && base_text_offset <= base_text_byte_range.end
                         {
-                            let position_in_hunk = base_text.text_summary_for_range::<D, _>(
-                                base_text_byte_range.start..base_text_offset,
-                            );
-                            // fixme
-                            position += position_in_hunk - D::default();
+                            let position_in_hunk = base_text
+                                .text_summary_for_range::<D::TextDimension, _>(
+                                    base_text_byte_range.start..base_text_offset,
+                                );
+                            position.add_text_dim(&position_in_hunk);
                         } else if at_transform_end {
                             diff_transforms.next();
                             continue;
@@ -4522,9 +4690,14 @@ impl MultiBufferSnapshot {
         excerpt_id
     }
 
-    pub fn summaries_for_anchors<'a, D, R, I>(&'a self, anchors: I) -> Vec<D>
+    pub fn summaries_for_anchors<'a, D, I>(&'a self, anchors: I) -> Vec<D>
     where
-        D: TextDimension + Ord + Sub<D, Output = R> + AddAssign<R> + Default,
+        D: MultiBufferDimension
+            + Ord
+            + Sub<D, Output = D::TextDimension>
+            + AddAssign<D::TextDimension>
+            + Default,
+        D::TextDimension: Sub<Output = D::TextDimension> + Ord,
         I: 'a + IntoIterator<Item = &'a Anchor>,
     {
         let mut anchors = anchors.into_iter().peekable();
@@ -4548,7 +4721,7 @@ impl MultiBufferSnapshot {
                 cursor.prev();
             }
 
-            let excerpt_start_position = D::from_text_summary(&cursor.start().text);
+            let excerpt_start_position = D::from_summary(&cursor.start().text);
             if let Some(excerpt) = cursor.item() {
                 if excerpt.id != excerpt_id && excerpt_id != ExcerptId::max() {
                     let position = self.resolve_summary_for_anchor(
@@ -4559,12 +4732,19 @@ impl MultiBufferSnapshot {
                     summaries.extend(excerpt_anchors.map(|_| position));
                     continue;
                 }
-                let excerpt_buffer_start =
-                    excerpt.range.context.start.summary::<D>(&excerpt.buffer);
-                let excerpt_buffer_end = excerpt.range.context.end.summary::<D>(&excerpt.buffer);
+                let excerpt_buffer_start = excerpt
+                    .range
+                    .context
+                    .start
+                    .summary::<D::TextDimension>(&excerpt.buffer);
+                let excerpt_buffer_end = excerpt
+                    .range
+                    .context
+                    .end
+                    .summary::<D::TextDimension>(&excerpt.buffer);
                 for (buffer_summary, anchor) in excerpt
                     .buffer
-                    .summaries_for_anchors_with_payload::<D, _, _>(
+                    .summaries_for_anchors_with_payload::<D::TextDimension, _, _>(
                         excerpt_anchors.map(|a| (&a.text_anchor, a)),
                     )
                 {
@@ -4605,7 +4785,7 @@ impl MultiBufferSnapshot {
         points: impl 'a + IntoIterator<Item = Point>,
     ) -> impl 'a + Iterator<Item = D>
     where
-        D: TextDimension + Sub<D, Output = D> + Default + Copy,
+        D: MultiBufferDimension + Sub<D, Output = D> + Default + Copy + AddAssign,
     {
         let mut cursor = self.cursor::<DimensionPair<Point, ExcerptDimension<D>>, Point, _>();
         cursor.seek(&DimensionPair {
@@ -4625,7 +4805,7 @@ impl MultiBufferSnapshot {
                 let overshoot = point - region.range.start.key;
                 let buffer_point = region.buffer_range.start + overshoot;
                 let mut position = region.range.start.value.unwrap();
-                position.0.add_assign(
+                position.0.add_text_dim(
                     &region
                         .buffer
                         .text_summary_for_range(region.buffer_range.start..buffer_point),
@@ -4633,11 +4813,11 @@ impl MultiBufferSnapshot {
                 if point == region.range.end.key && region.has_trailing_newline {
                     position
                         .0
-                        .add_assign(&D::from_text_summary(&TextSummary::newline()));
+                        .add_mb_text_summary(&MBTextSummary::from(TextSummary::newline()));
                 }
                 Some(position.0)
             } else {
-                Some(D::from_text_summary(&self.text_summary()))
+                Some(D::from_summary(&self.text_summary()))
             }
         })
     }
@@ -4893,7 +5073,7 @@ impl MultiBufferSnapshot {
             .map(|excerpt| (excerpt.id, &excerpt.buffer, excerpt.range.clone()))
     }
 
-    fn cursor<'a, MBR, BR, R>(&'a self) -> MultiBufferCursor<'_, MBR, BR>
+    fn cursor<'a, MBR, BR, R>(&'a self) -> MultiBufferCursor<'a, MBR, BR>
     where
         MBR: Dimension<'a, ExcerptSummary>
             + Dimension<'a, DiffTransformSummary>
@@ -5613,7 +5793,7 @@ impl MultiBufferSnapshot {
         buffer_id: BufferId,
         group_id: usize,
     ) -> impl Iterator<Item = DiagnosticEntryRef<'_, Point>> + '_ {
-        self.lift_buffer_metadata::<Point, Point, _, _, _>(
+        self.lift_buffer_metadata::<Point, _, _>(
             Point::zero()..self.max_point(),
             move |buffer, range| {
                 if buffer.remote_id() != buffer_id {
@@ -5630,35 +5810,34 @@ impl MultiBufferSnapshot {
         .map(|(range, diagnostic, _)| DiagnosticEntryRef { diagnostic, range })
     }
 
-    pub fn diagnostics_in_range<'a, MBR, BR, R>(
+    pub fn diagnostics_in_range<'a, MBR>(
         &'a self,
         range: Range<MBR>,
     ) -> impl Iterator<Item = DiagnosticEntryRef<'a, MBR>> + 'a
     where
-        BR: 'a
+        MBR::TextDimension: 'a
             + text::ToOffset
             + text::FromAnchor
             + TextDimension
             + Ord
-            + Sub<Output = R>
+            + Sub<Output = MBR::TextDimension>
             + fmt::Debug
-            + std::ops::Add<R, Output = BR>
-            + std::ops::AddAssign<R>
+            + std::ops::Add<Output = MBR::TextDimension>
+            + std::ops::AddAssign
             + TextDimension
             + Ord,
-        MBR: Dimension<'a, ExcerptSummary>
+        MBR: MultiBufferDimension
+            + Dimension<'a, ExcerptSummary>
             + Dimension<'a, DiffTransformSummary>
             + Ord
-            + Sub<Output = R>
-            + std::ops::Add<R, Output = MBR>
-            + std::ops::AddAssign<R>
+            + Sub<Output = MBR::TextDimension>
+            + std::ops::Add<MBR::TextDimension, Output = MBR>
+            + std::ops::AddAssign<MBR::TextDimension>
             + Default
             + Copy
             + 'a,
-        R: Default,
-        MBR: TextDimension,
     {
-        self.lift_buffer_metadata::<MBR, BR, R, _, _>(range, move |buffer, buffer_range| {
+        self.lift_buffer_metadata::<MBR, _, _>(range, move |buffer, buffer_range| {
             Some(
                 buffer
                     .diagnostics_in_range(buffer_range.start..buffer_range.end, false)
@@ -5668,35 +5847,31 @@ impl MultiBufferSnapshot {
         .map(|(range, diagnostic, _)| DiagnosticEntryRef { diagnostic, range })
     }
 
-    pub fn diagnostics_with_buffer_ids_in_range<'a, MBR, BR, R>(
+    pub fn diagnostics_with_buffer_ids_in_range<'a, MBR>(
         &'a self,
         range: Range<MBR>,
     ) -> impl Iterator<Item = (BufferId, DiagnosticEntryRef<'a, MBR>)> + 'a
     where
-        BR: 'a
-            + text::ToOffset
-            + text::FromAnchor
-            + TextDimension
-            + Ord
-            + Sub<Output = R>
-            + fmt::Debug
-            + std::ops::Add<R, Output = BR>
-            + std::ops::AddAssign<R>
-            + TextDimension
-            + Ord,
-        MBR: Dimension<'a, ExcerptSummary>
+        MBR: MultiBufferDimension
+            + Dimension<'a, ExcerptSummary>
             + Dimension<'a, DiffTransformSummary>
             + Ord
-            + Sub<Output = R>
-            + std::ops::Add<R, Output = MBR>
-            + std::ops::AddAssign<R>
+            + Sub<Output = MBR::TextDimension>
+            + std::ops::Add<MBR::TextDimension, Output = MBR>
+            + std::ops::AddAssign<MBR::TextDimension>
             + Default
             + Copy
             + 'a,
-        R: Default,
-        MBR: TextDimension,
+        MBR::TextDimension: Sub<Output = MBR::TextDimension>
+            + std::ops::Add<Output = MBR::TextDimension>
+            + text::ToOffset
+            + text::FromAnchor
+            + AddAssign<MBR::TextDimension>
+            + TextDimension
+            + Ord
+            + Copy,
     {
-        self.lift_buffer_metadata::<MBR, BR, R, _, _>(range, move |buffer, buffer_range| {
+        self.lift_buffer_metadata::<MBR, _, _>(range, move |buffer, buffer_range| {
             Some(
                 buffer
                     .diagnostics_in_range(buffer_range.start..buffer_range.end, false)
@@ -6102,7 +6277,7 @@ impl MultiBufferSnapshot {
         if self.diff_transforms.summary().input != self.excerpts.summary().text {
             panic!(
                 "incorrect input summary. expected {:?}, got {:?}. transforms: {:+?}",
-                self.excerpts.summary().text.len,
+                self.excerpts.summary().text,
                 self.diff_transforms.summary().input,
                 self.diff_transforms.items(()),
             );
@@ -6159,7 +6334,7 @@ where
         let mut excerpt_position = self.diff_transforms.start().excerpt_dimension;
         if let Some(DiffTransform::BufferContent { .. }) = self.diff_transforms.item() {
             let overshoot = *position - self.diff_transforms.start().output_dimension;
-            excerpt_position.add_assign(overshoot);
+            excerpt_position += overshoot;
         }
 
         self.excerpts.seek(&excerpt_position, Bias::Right);
@@ -6181,7 +6356,7 @@ where
         let overshoot = *position - self.diff_transforms.start().output_dimension;
         let mut excerpt_position = self.diff_transforms.start().excerpt_dimension;
         if let Some(DiffTransform::BufferContent { .. }) = self.diff_transforms.item() {
-            excerpt_position.add_assign(overshoot);
+            excerpt_position += overshoot;
         }
 
         self.excerpts.seek_forward(&excerpt_position, Bias::Right);
@@ -6202,7 +6377,6 @@ where
 
     fn seek_to_start_of_current_excerpt(&mut self) {
         self.cached_region.take();
-        // this seeked by excerpt dimension
         self.diff_transforms
             .seek(&ExcerptDimension(*self.excerpts.start()), Bias::Left);
         if self.diff_transforms.end().excerpt_dimension == *self.excerpts.start()
@@ -6331,9 +6505,7 @@ where
                 let buffer_start = rope_cursor.summary::<BR>(base_text_byte_range.start);
                 let buffer_range_len = rope_cursor.summary::<BR>(base_text_byte_range.end);
                 let mut buffer_end = buffer_start;
-                // FIXME: This does not seem right???
-                // buffer_end += buffer_range_len;
-                panic!();
+                TextDimension::add_assign(&mut buffer_end, &buffer_range_len);
                 let start = self.diff_transforms.start().output_dimension;
                 let end = self.diff_transforms.end().output_dimension;
                 Some(MultiBufferRegion {
@@ -6586,7 +6758,7 @@ impl<'a> MultiBufferExcerpt<'a> {
                 "Attempting to map a range from a buffer offset that starts before the current buffer offset"
             );
             // return buffer_range;
-            panic!()
+            todo!()
         }
         let overshoot = buffer_range.start - self.buffer_offset;
         let excerpt_offset = self.excerpt_offset + overshoot;
@@ -6597,7 +6769,7 @@ impl<'a> MultiBufferExcerpt<'a> {
                 "Attempting to map a range from a buffer offset that starts before the current buffer offset"
             );
             // return buffer_range;
-            panic!()
+            todo!()
         }
         let overshoot = excerpt_offset - self.diff_transforms.start().excerpt_dimension;
         let start = self.diff_transforms.start().output_dimension + overshoot;
@@ -6683,7 +6855,7 @@ impl sum_tree::Item for Excerpt {
             excerpt_id: self.id,
             excerpt_locator: self.locator.clone(),
             widest_line_number: self.max_buffer_row,
-            text,
+            text: text.into(),
         }
     }
 }
@@ -6724,9 +6896,9 @@ impl sum_tree::Item for DiffTransform {
                 input: *summary,
                 output: *summary,
             },
-            DiffTransform::DeletedHunk { summary, .. } => DiffTransformSummary {
-                input: TextSummary::default(),
-                output: *summary,
+            &DiffTransform::DeletedHunk { summary, .. } => DiffTransformSummary {
+                input: MBTextSummary::default(),
+                output: summary.into(),
             },
         }
     }
@@ -6741,8 +6913,8 @@ impl DiffTransformSummary {
 impl sum_tree::ContextLessSummary for DiffTransformSummary {
     fn zero() -> Self {
         DiffTransformSummary {
-            input: TextSummary::default(),
-            output: TextSummary::default(),
+            input: MBTextSummary::default(),
+            output: MBTextSummary::default(),
         }
     }
 
@@ -6770,7 +6942,7 @@ impl sum_tree::ContextLessSummary for ExcerptSummary {
     fn add_summary(&mut self, summary: &Self) {
         debug_assert!(summary.excerpt_locator > self.excerpt_locator);
         self.excerpt_locator = summary.excerpt_locator.clone();
-        Summary::add_summary(&mut self.text, &summary.text, ());
+        self.text += summary.text;
         self.widest_line_number = cmp::max(self.widest_line_number, summary.widest_line_number);
     }
 }
@@ -6857,7 +7029,7 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Point {
     }
 }
 
-impl<'a, D: TextDimension + Default> sum_tree::Dimension<'a, ExcerptSummary>
+impl<'a, D: MultiBufferDimension + Default> sum_tree::Dimension<'a, ExcerptSummary>
     for ExcerptDimension<D>
 {
     fn zero(_: ()) -> Self {
@@ -6865,20 +7037,9 @@ impl<'a, D: TextDimension + Default> sum_tree::Dimension<'a, ExcerptSummary>
     }
 
     fn add_summary(&mut self, summary: &'a ExcerptSummary, _: ()) {
-        self.0.add_assign(&D::from_text_summary(&summary.text))
+        MultiBufferDimension::add_mb_text_summary(&mut self.0, &summary.text)
     }
 }
-// impl<'a, MBR: sum_tree::Dimension<'a, ExcerptSummary>> sum_tree::Dimension<'a, ExcerptSummary>
-//     for ExcerptDimension<MBR>
-// {
-//     fn zero(cx: ()) -> Self {
-//         ExcerptDimension(MBR::zero(cx))
-//     }
-
-//     fn add_summary(&mut self, summary: &'a ExcerptSummary, cx: ()) {
-//         self.0.add_summary(summary, cx)
-//     }
-// }
 
 impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Option<&'a Locator> {
     fn zero(_cx: ()) -> Self {
@@ -6914,9 +7075,12 @@ where
     }
 }
 
-impl<T> AddAssign for ExcerptDimension<T> {
+impl<T> AddAssign for ExcerptDimension<T>
+where
+    T: AddAssign,
+{
     fn add_assign(&mut self, other: Self) {
-        // self.0 += other.0;
+        self.0 += other.0;
     }
 }
 
@@ -6939,7 +7103,7 @@ impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for MultiBufferOffset {
     }
 
     fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: ()) {
-        self.0 += summary.input.len;
+        self.0 += summary.output.len;
     }
 }
 
@@ -6949,7 +7113,7 @@ impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for MultiBufferOffsetUtf1
     }
 
     fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: ()) {
-        self.0 += summary.input.len_utf16;
+        self.0 += summary.output.len_utf16;
     }
 }
 
@@ -6965,10 +7129,10 @@ impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for ExcerptPoint {
 
 impl<D> sum_tree::SeekTarget<'_, DiffTransformSummary, DiffTransformSummary> for ExcerptDimension<D>
 where
-    D: TextDimension + Ord,
+    D: MultiBufferDimension + Ord,
 {
     fn cmp(&self, cursor_location: &DiffTransformSummary, _: ()) -> cmp::Ordering {
-        Ord::cmp(&self.0, &D::from_text_summary(&cursor_location.input))
+        Ord::cmp(&self.0, &D::from_summary(&cursor_location.input))
     }
 }
 
@@ -6980,13 +7144,15 @@ impl<'a, D: Dimension<'a, DiffTransformSummary> + Ord>
     }
 }
 
-impl<'a, D: TextDimension> sum_tree::Dimension<'a, DiffTransformSummary> for ExcerptDimension<D> {
+impl<'a, D: MultiBufferDimension> sum_tree::Dimension<'a, DiffTransformSummary>
+    for ExcerptDimension<D>
+{
     fn zero(_: ()) -> Self {
         ExcerptDimension(D::default())
     }
 
     fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: ()) {
-        self.0.add_assign(&D::from_text_summary(&summary.input))
+        self.0.add_mb_text_summary(&summary.input)
     }
 }
 
@@ -6998,19 +7164,21 @@ impl<'a, D: Dimension<'a, DiffTransformSummary> + Ord>
     }
 }
 
-impl<'a, D: TextDimension> sum_tree::Dimension<'a, DiffTransformSummary> for OutputDimension<D> {
+impl<'a, D: MultiBufferDimension> sum_tree::Dimension<'a, DiffTransformSummary>
+    for OutputDimension<D>
+{
     fn zero(_: ()) -> Self {
         OutputDimension(D::default())
     }
 
     fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: ()) {
-        self.0.add_assign(&D::from_text_summary(&summary.output))
+        self.0.add_mb_text_summary(&summary.output)
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for TextSummary {
+impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for MBTextSummary {
     fn zero(_: ()) -> Self {
-        TextSummary::default()
+        MBTextSummary::default()
     }
 
     fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: ()) {
@@ -7288,9 +7456,10 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
         let diff_transform_end = self.diff_transforms.end().0;
         debug_assert!(
             self.range.start < diff_transform_end,
-            "{:?} < {:?}",
+            "{:?} < {:?} of ({1:?}..{2:?})",
             self.range.start,
-            diff_transform_end
+            diff_transform_end,
+            diff_transform_start
         );
 
         let diff_transform = self.diff_transforms.item()?;

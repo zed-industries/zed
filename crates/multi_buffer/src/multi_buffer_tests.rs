@@ -386,7 +386,7 @@ fn test_diff_boundary_anchors(cx: &mut TestAppContext) {
         assert_eq!(after.to_point(&snapshot), Point::new(2, 0));
         assert_eq!(
             vec![Point::new(1, 0), Point::new(2, 0),],
-            snapshot.summaries_for_anchors::<Point, _, _>(&[before, after]),
+            snapshot.summaries_for_anchors::<Point, _>(&[before, after]),
         )
     })
 }
@@ -1067,19 +1067,19 @@ fn test_multibuffer_anchors(cx: &mut App) {
         old_snapshot
             .anchor_after(MultiBufferOffset(1))
             .to_offset(&new_snapshot),
-        MultiBufferOffset(3)
+        MultiBufferOffset(2)
     );
     assert_eq!(
         old_snapshot
             .anchor_before(MultiBufferOffset(2))
             .to_offset(&new_snapshot),
-        MultiBufferOffset(4)
+        MultiBufferOffset(3)
     );
     assert_eq!(
         old_snapshot
             .anchor_after(MultiBufferOffset(2))
             .to_offset(&new_snapshot),
-        MultiBufferOffset(5)
+        MultiBufferOffset(3)
     );
     assert_eq!(
         old_snapshot
@@ -1152,15 +1152,17 @@ fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut App) {
     // The current excerpts are from a different buffer, so we don't attempt to
     // resolve the old text anchor in the new buffer.
     assert_eq!(
-        snapshot_2.summary_for_anchor::<usize, _>(&snapshot_1.anchor_before(MultiBufferOffset(2))),
-        0
+        snapshot_2.summary_for_anchor::<MultiBufferOffset>(
+            &snapshot_1.anchor_before(MultiBufferOffset(2))
+        ),
+        MultiBufferOffset(0)
     );
     assert_eq!(
-        snapshot_2.summaries_for_anchors::<usize, _, _>(&[
+        snapshot_2.summaries_for_anchors::<MultiBufferOffset, _>(&[
             snapshot_1.anchor_before(MultiBufferOffset(2)),
             snapshot_1.anchor_after(MultiBufferOffset(3))
         ]),
-        vec![0, 0]
+        vec![MultiBufferOffset(0), MultiBufferOffset(0)]
     );
 
     // Refresh anchors from the old snapshot. The return value indicates that both
@@ -1206,8 +1208,13 @@ fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut App) {
         snapshot_2.anchor_after(MultiBufferOffset(14)),
     ];
     assert_eq!(
-        snapshot_3.summaries_for_anchors::<usize, _, _>(&anchors),
-        &[0, 2, 9, 13]
+        snapshot_3.summaries_for_anchors::<MultiBufferOffset, _>(&anchors),
+        &[
+            MultiBufferOffset(0),
+            MultiBufferOffset(2),
+            MultiBufferOffset(9),
+            MultiBufferOffset(13)
+        ]
     );
 
     let new_anchors = snapshot_3.refresh_anchors(&anchors);
@@ -1216,8 +1223,13 @@ fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut App) {
         &[(0, true), (1, true), (2, true), (3, true)]
     );
     assert_eq!(
-        snapshot_3.summaries_for_anchors::<usize, _, _>(new_anchors.iter().map(|a| &a.1)),
-        &[0, 2, 7, 13]
+        snapshot_3.summaries_for_anchors::<MultiBufferOffset, _>(new_anchors.iter().map(|a| &a.1)),
+        &[
+            MultiBufferOffset(0),
+            MultiBufferOffset(2),
+            MultiBufferOffset(7),
+            MultiBufferOffset(13)
+        ]
     );
 }
 
@@ -3001,9 +3013,10 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                 start_ix..end_ix
             );
 
-            let expected_summary = TextSummary::from(&expected_text[start_ix..end_ix]);
+            let expected_summary =
+                MBTextSummary::from(TextSummary::from(&expected_text[start_ix..end_ix]));
             assert_eq!(
-                snapshot.text_summary_for_range::<TextSummary, _>(
+                snapshot.text_summary_for_range::<MBTextSummary, _>(
                     MultiBufferOffset(start_ix)..MultiBufferOffset(end_ix)
                 ),
                 expected_summary,
@@ -3013,12 +3026,12 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
         }
 
         // Anchor resolution
-        let summaries = snapshot.summaries_for_anchors::<usize, _, _>(&anchors);
+        let summaries = snapshot.summaries_for_anchors::<MultiBufferOffset, _>(&anchors);
         assert_eq!(anchors.len(), summaries.len());
         for (anchor, resolved_offset) in anchors.iter().zip(summaries) {
-            assert!(resolved_offset <= snapshot.len().0);
+            assert!(resolved_offset <= snapshot.len());
             assert_eq!(
-                snapshot.summary_for_anchor::<usize, _>(anchor),
+                snapshot.summary_for_anchor::<MultiBufferOffset>(anchor),
                 resolved_offset,
                 "anchor: {:?}",
                 anchor
@@ -3387,11 +3400,11 @@ fn test_summaries_for_anchors(cx: &mut TestAppContext) {
     let id_2 = buffer_2.read_with(cx, |buffer, _| buffer.remote_id());
 
     let anchor_1 = Anchor::in_buffer(ids[0], id_1, text::Anchor::MIN);
-    let point_1 = snapshot.summaries_for_anchors::<Point, _, _>([&anchor_1])[0];
+    let point_1 = snapshot.summaries_for_anchors::<Point, _>([&anchor_1])[0];
     assert_eq!(point_1, Point::new(0, 0));
 
     let anchor_2 = Anchor::in_buffer(ids[1], id_2, text::Anchor::MIN);
-    let point_2 = snapshot.summaries_for_anchors::<Point, _, _>([&anchor_2])[0];
+    let point_2 = snapshot.summaries_for_anchors::<Point, _>([&anchor_2])[0];
     assert_eq!(point_2, Point::new(3, 0));
 }
 
@@ -3672,7 +3685,7 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
         );
         left_anchors.push(anchor_before);
         right_anchors.push(anchor_after);
-        offsets.push(clipped_left.0);
+        offsets.push(clipped_left);
         points.push(text.offset_to_point(clipped_left.0));
     }
 
@@ -3705,29 +3718,29 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
     }
 
     assert_eq!(
-        snapshot.summaries_for_anchors::<usize, _, _>(&left_anchors),
+        snapshot.summaries_for_anchors::<MultiBufferOffset, _>(&left_anchors),
         offsets,
         "left_anchors <-> offsets"
     );
     assert_eq!(
-        snapshot.summaries_for_anchors::<Point, _, _>(&left_anchors),
+        snapshot.summaries_for_anchors::<Point, _>(&left_anchors),
         points,
         "left_anchors <-> points"
     );
     assert_eq!(
-        snapshot.summaries_for_anchors::<usize, _, _>(&right_anchors),
+        snapshot.summaries_for_anchors::<MultiBufferOffset, _>(&right_anchors),
         offsets,
         "right_anchors <-> offsets"
     );
     assert_eq!(
-        snapshot.summaries_for_anchors::<Point, _, _>(&right_anchors),
+        snapshot.summaries_for_anchors::<Point, _>(&right_anchors),
         points,
         "right_anchors <-> points"
     );
 
     for (anchors, bias) in [(&left_anchors, Bias::Left), (&right_anchors, Bias::Right)] {
         for (ix, (offset, anchor)) in offsets.iter().zip(anchors).enumerate() {
-            if ix > 0 && *offset == 252 && offset > &offsets[ix - 1] {
+            if ix > 0 && *offset == MultiBufferOffset(252) && offset > &offsets[ix - 1] {
                 let prev_anchor = left_anchors[ix - 1];
                 assert!(
                     anchor.cmp(&prev_anchor, snapshot).is_gt(),
