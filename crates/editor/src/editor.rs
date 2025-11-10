@@ -3457,14 +3457,8 @@ impl Editor {
             .disjoint_anchor_ranges()
             .flat_map(|range| snapshot.buffer_ids_for_range(range))
             .collect();
-        let buffers_to_unfold: Vec<BufferId> = buffer_ids
-            .into_iter()
-            .filter(|buffer_id| self.is_buffer_folded(*buffer_id, cx))
-            .collect();
-        if !buffers_to_unfold.is_empty() {
-            self.display_map.update(cx, |display_map, cx| {
-                display_map.unfold_buffers(buffers_to_unfold, cx);
-            });
+        for buffer_id in buffer_ids {
+            self.unfold_buffer(buffer_id, cx);
         }
     }
 
