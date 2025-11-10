@@ -31,7 +31,7 @@ const MARKED_EXCERPT_INSTRUCTIONS: &str = indoc! {"
 
     Other code is provided for context, and `…` indicates when code has been skipped.
 
-    # Edit History:
+    ## Edit History
 
 "};
 
@@ -49,7 +49,7 @@ const LABELED_SECTIONS_INSTRUCTIONS: &str = indoc! {r#"
         println!("{i}");
     }
 
-    # Edit History:
+    ## Edit History
 
 "#};
 
@@ -89,7 +89,7 @@ const NUMBERED_LINES_INSTRUCTIONS: &str = indoc! {r#"
 const STUDENT_MODEL_INSTRUCTIONS: &str = indoc! {r#"
     You are a code completion assistant that analyzes edit history to identify and systematically complete incomplete refactorings or patterns across the entire codebase.
 
-    # Edit History:
+    ## Edit History
 
     "#};
 
@@ -122,7 +122,7 @@ const XML_TAGS_INSTRUCTIONS: &str = indoc! {r#"
     Your job is to predict the next edit that the user will make,
     based on their last few edits and their current cursor location.
 
-    # Output Format
+    ## Output Format
 
     You must briefly explain your understanding of the user's goal, in one
     or two sentences, and then specify their next edit, using the following
@@ -152,15 +152,14 @@ const XML_TAGS_INSTRUCTIONS: &str = indoc! {r#"
     - Always close all tags properly
     - Don't include the <|user_cursor|> marker in your output.
 
-    # Edit History:
+    ## Edit History
 
 "#};
 
 const OLD_TEXT_NEW_TEXT_REMINDER: &str = indoc! {r#"
     ---
 
-    Remember that the edits in the edit history have already been deployed.
-    The files are currently as shown in the Code Excerpts section.
+    Remember that the edits in the edit history have already been applied.
 "#};
 
 pub fn build_prompt(
@@ -216,23 +215,32 @@ pub fn build_prompt(
 
     let excerpts_preamble = match request.prompt_format {
         PromptFormat::Minimal => indoc! {"
-            # Part of the file under the cursor:
+             ## Part of the file under the cursor
 
-            (The cursor marker <|user_cursor|> indicates the current user cursor position.
-            The file is in current state, edits from edit history has been applied.
-            We only show part of the file around the cursor.
-            You can only edit exactly this part of the file.
-            We prepend line numbers (e.g., `123|<actual line>`); they are not part of the file.)
-            "},
-        PromptFormat::NumLinesUniDiff => indoc! {"
-            # Code Excerpts
+             (The cursor marker <|user_cursor|> indicates the current user cursor position.
+             The file is in current state, edits from edit history has been applied.
+             We only show part of the file around the cursor.
+             You can only edit exactly this part of the file.
+             We prepend line numbers (e.g., `123|<actual line>`); they are not part of the file.)
+             "},
+        PromptFormat::NumLinesUniDiff | PromptFormat::OldTextNewText => indoc! {"
+            ## Code Excerpts
 
-            The cursor marker <|user_cursor|> indicates the current user cursor position.
-            The file is in current state, edits from edit history have been applied.
-            We prepend line numbers (e.g., `123|<actual line>`); they are not part of the file.
-            "},
+            Here is some excerpts of code that you should take into account to predict the next edit.
+
+            The cursor position is marked by `<|user_cursor|>` as it stands after the last edit in the history.
+
+            In addition other excerpts are included to better understand what the edit will be, including the declaration
+            or references of symbols around the cursor, or other similar code snippets that may need to be updated
+            following patterns that appear in the edit history.
+
+            Consider each of them carefully in relation to the edit history, and that the user may not have navigated
+            to the next place they want to edit yet.
+
+            Lines starting with `…` indicate omitted line ranges. These may appear inside multi-line code constructs.
+        "},
         _ => indoc! {"
-            # Code Excerpts
+            ## Code Excerpts
 
             The cursor marker <|user_cursor|> indicates the current user cursor position.
             The file is in current state, edits from edit history have been applied.
