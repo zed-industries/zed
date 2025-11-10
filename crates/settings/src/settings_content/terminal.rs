@@ -30,13 +30,41 @@ pub struct ProjectTerminalSettingsContent {
     ///
     /// Default: on
     pub detect_venv: Option<VenvSettings>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
-#[serde(untagged)]
-pub enum PathHyperlinkRegex {
-    SingleLine(String),
-    MultiLine(Vec<String>),
+    /// Regexes used to identify paths for hyperlink navigation.
+    ///
+    /// Default: [
+    ///   // Python-style diagnostics
+    ///   "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
+    ///   // Common path syntax with optional line, column, description, trailing punctuation, or
+    ///   // surrounding symbols or quotes
+    ///   [
+    ///     "(?x)",
+    ///     "# optionally starts with 0-2 opening prefix symbols",
+    ///     "[({\\[<]{0,2}",
+    ///     "# which may be followed by an opening quote",
+    ///     "(?<quote>[\"'`])?",
+    ///     "# `path` is the shortest sequence of any non-space character",
+    ///     "(?<path>[^ ]+?",
+    ///     "    # which may end with a line and optionally a column,",
+    ///     "    (?<line_column>:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))?",
+    ///     ")",
+    ///     "# which must be followed by a matching quote",
+    ///     "(?(<quote>)\\k<quote>)",
+    ///     "# and optionally a single closing symbol",
+    ///     "[)}\\]>]?",
+    ///     "# if line/column matched, may be followed by a description",
+    ///     "(?(<line_column>):[^ 0-9][^ ]*)?",
+    ///     "# which may be followed by trailing punctuation",
+    ///     "[.,:)}\\]>]*",
+    ///     "# and always includes trailing whitespace or end of line",
+    ///     "([ ]+|$)"
+    ///   ]
+    /// ]
+    pub path_hyperlink_regexes: Option<Vec<PathHyperlinkRegex>>,
+    /// Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
+    ///
+    /// Default: 1
+    pub path_hyperlink_timeout_ms: Option<u64>,
 }
 
 #[skip_serializing_none]
@@ -143,41 +171,6 @@ pub struct TerminalSettingsContent {
     /// Default: 45
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub minimum_contrast: Option<f32>,
-    /// Regexes used to identify paths for hyperlink navigation.
-    ///
-    /// Default: [
-    ///   // Python-style diagnostics
-    ///   "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
-    ///   // Common path syntax with optional line, column, description, trailing punctuation, or
-    ///   // surrounding symbols or quotes
-    ///   [
-    ///     "(?x)",
-    ///     "# optionally starts with 0-2 opening prefix symbols",
-    ///     "[({\\[<]{0,2}",
-    ///     "# which may be followed by an opening quote",
-    ///     "(?<quote>[\"'`])?",
-    ///     "# `path` is the shortest sequence of any non-space character",
-    ///     "(?<path>[^ ]+?",
-    ///     "    # which may end with a line and optionally a column,",
-    ///     "    (?<line_column>:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))?",
-    ///     ")",
-    ///     "# which must be followed by a matching quote",
-    ///     "(?(<quote>)\\k<quote>)",
-    ///     "# and optionally a single closing symbol",
-    ///     "[)}\\]>]?",
-    ///     "# if line/column matched, may be followed by a description",
-    ///     "(?(<line_column>):[^ 0-9][^ ]*)?",
-    ///     "# which may be followed by trailing punctuation",
-    ///     "[.,:)}\\]>]*",
-    ///     "# and always includes trailing whitespace or end of line",
-    ///     "([ ]+|$)"
-    ///   ]
-    /// ]
-    pub path_hyperlink_regexes: Option<Vec<PathHyperlinkRegex>>,
-    /// Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
-    ///
-    /// Default: 1
-    pub path_hyperlink_timeout_ms: Option<u64>,
 }
 
 /// Shell configuration to open the terminal with.
@@ -449,6 +442,13 @@ impl VenvSettings {
             }),
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+#[serde(untagged)]
+pub enum PathHyperlinkRegex {
+    SingleLine(String),
+    MultiLine(Vec<String>),
 }
 
 #[derive(

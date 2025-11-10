@@ -115,7 +115,7 @@ impl settings::Settings for TerminalSettings {
                 show: user_content.scrollbar.unwrap().show,
             },
             minimum_contrast: user_content.minimum_contrast.unwrap(),
-            path_hyperlink_regexes: user_content
+            path_hyperlink_regexes: project_content
                 .path_hyperlink_regexes
                 .unwrap()
                 .into_iter()
@@ -124,7 +124,7 @@ impl settings::Settings for TerminalSettings {
                     PathHyperlinkRegex::MultiLine(regex) => regex.join("\n"),
                 })
                 .collect(),
-            path_hyperlink_timeout_ms: user_content.path_hyperlink_timeout_ms.unwrap(),
+            path_hyperlink_timeout_ms: project_content.path_hyperlink_timeout_ms.unwrap(),
         }
     }
 }

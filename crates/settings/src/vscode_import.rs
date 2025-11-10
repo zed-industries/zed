@@ -738,8 +738,6 @@ impl VsCodeSettings {
             project: self.project_terminal_settings_content(),
             scrollbar: None,
             toolbar: None,
-            path_hyperlink_regexes: None,
-            path_hyperlink_timeout_ms: None,
         })
     }
 
@@ -765,6 +763,8 @@ impl VsCodeSettings {
             working_directory: None,
             env,
             detect_venv: None,
+            path_hyperlink_regexes: None,
+            path_hyperlink_timeout_ms: None,
         }
     }
 
