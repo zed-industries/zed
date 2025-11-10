@@ -495,7 +495,7 @@ pub enum DiagnosticSeverityContent {
 pub struct GitHostingProviderConfig {
     /// The type of the provider.
     ///
-    /// Must be one of `github`, `gitlab`, or `bitbucket`.
+    /// Must be one of `github`, `gitlab`, `bitbucket`, `gitea`, `forgejo`, or `source_hut`.
     pub provider: GitHostingProviderKind,
 
     /// The base URL for the provider (e.g., "https://code.corp.big.com").
