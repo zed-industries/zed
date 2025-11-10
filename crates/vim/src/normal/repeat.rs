@@ -213,17 +213,18 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = Vim::take_count(cx);
-        Vim::take_forced_motion(cx);
         if self.active_operator().is_some() {
-            self.clear_operator(window, cx);
             Vim::update_globals(cx, |globals, _| {
                 globals.recording_actions.clear();
                 globals.dot_recording = false;
                 globals.stop_recording_after_next_action = false;
             });
+            self.clear_operator(window, cx);
             return;
         }
+
+        Vim::take_forced_motion(cx);
+        let count = Vim::take_count(cx);
 
         let Some((mut actions, selection, mode)) = Vim::update_globals(cx, |globals, _| {
             let actions = globals.recorded_actions.clone();
