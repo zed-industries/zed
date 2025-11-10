@@ -525,7 +525,7 @@ mod tests {
                 assert!(thinking.is_none());
 
                 // When the `Option` around `id` is removed, this test should complain
-                // and subsequently deleted in favor of `parse_tool_call()`
+                // and be subsequently deleted in favor of `parse_tool_call()`
                 assert!(tool_calls.first().is_some_and(|call| call.id.is_none()))
             }
             _ => panic!("Deserialized wrong role"),
