@@ -205,7 +205,7 @@ fn path_match<T>(
     path_hyperlink_regexes: &mut Vec<Regex>,
     path_hyperlink_timeout: Duration,
 ) -> Option<(String, Match)> {
-    if path_hyperlink_regexes.is_empty() {
+    if path_hyperlink_regexes.is_empty() || path_hyperlink_timeout.as_millis() == 0 {
         return None;
     }
 

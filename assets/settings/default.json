@@ -1600,8 +1600,9 @@
         "([ ]+|$)"
       ]
     ],
-    // Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
-    "path_hyperlink_timeout_ms": 10
+    // Timeout for hover and Cmd-click path hyperlink discovery in milliseconds. Specifying a
+    // timeout of `0` will disable path hyperlinking in terminal.
+    "path_hyperlink_timeout_ms": 1
   },
   "code_actions_on_format": {},
   // Settings related to running tasks.

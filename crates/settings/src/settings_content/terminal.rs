@@ -176,7 +176,7 @@ pub struct TerminalSettingsContent {
     pub path_hyperlink_regexes: Option<Vec<PathHyperlinkRegex>>,
     /// Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
     ///
-    /// Default: 10
+    /// Default: 1
     pub path_hyperlink_timeout_ms: Option<u64>,
 }
 
