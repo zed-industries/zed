@@ -162,7 +162,7 @@ struct GlobalAutoUpdate(Option<Entity<AutoUpdater>>);
 
 impl Global for GlobalAutoUpdate {}
 
-pub fn init(http_client: Arc<Client>, cx: &mut App) {
+pub fn init(client: Arc<Client>, cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|_, action, window, cx| check(action, window, cx));
 
@@ -499,7 +499,7 @@ impl AutoUpdater {
     ) -> Result<ReleaseAsset> {
         let client = this.read_with(cx, |this, _| this.client.clone())?;
 
-        let (system_id, metrics_id, is_staff) = if dbg!(client.telemetry().metrics_enabled()) {
+        let (system_id, metrics_id, is_staff) = if client.telemetry().metrics_enabled() {
             (
                 client.telemetry().system_id(),
                 client.telemetry().metrics_id(),
@@ -1022,7 +1022,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_auto_update_end_to_end(cx: &mut TestAppContext) {
+    async fn test_auto_update_downloads(cx: &mut TestAppContext) {
         cx.background_executor.allow_parking();
         zlog::init_test();
         let release_available = Arc::new(AtomicBool::new(false));
@@ -1035,7 +1035,6 @@ mod tests {
             let current_version = SemanticVersion::new(0, 100, 0);
             release_channel::init_test(current_version, ReleaseChannel::Stable, cx);
 
-            client::init_settings(cx);
             let clock = Arc::new(FakeSystemClock::new());
             let release_available = Arc::clone(&release_available);
             let dmg_rx = Arc::new(parking_lot::Mutex::new(Some(dmg_rx)));
