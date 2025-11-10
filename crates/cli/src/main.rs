@@ -131,28 +131,31 @@ struct Args {
 
 fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
     let canonicalized = match Path::new(argument_str).canonicalize() {
+        // CASE 1: Path exists (Success) - Keep existing logic
         Ok(existing_path) => PathWithPosition::from_path(existing_path),
+
+        // CASE 2: Path does not exist (Error) - Implement new logic
         Err(_) => {
-            let path = PathWithPosition::parse_str(argument_str);
+            // 1. Parse the path to check for line/column information
+            let path_with_pos = PathWithPosition::parse_str(argument_str);
+            let path_argument = path_with_pos.path;
+
+            // 2. Resolve the path relative to the current directory without canonicalizing
             let curdir = env::current_dir().context("retrieving current directory")?;
-            path.map_path(|path| match fs::canonicalize(&path) {
-                Ok(path) => Ok(path),
-                Err(e) => {
-                    if let Some(mut parent) = path.parent() {
-                        if parent == Path::new("") {
-                            parent = &curdir
-                        }
-                        match fs::canonicalize(parent) {
-                            Ok(parent) => Ok(parent.join(path.file_name().unwrap())),
-                            Err(_) => Err(e),
-                        }
-                    } else {
-                        Err(e)
-                    }
-                }
-            })
+            let absolute_path = if path_argument.is_absolute() {
+                path_argument
+            } else {
+                curdir.join(path_argument)
+            };
+
+            // 3. Construct PathWithPosition using this non-canonicalized absolute path
+            PathWithPosition {
+                path: absolute_path,
+                // retain row/column info if present
+                row: path_with_pos.row,
+                column: path_with_pos.column,
+            }
         }
-        .with_context(|| format!("parsing as path with position {argument_str}"))?,
     };
     Ok(canonicalized.to_string(|path| path.to_string_lossy().into_owned()))
 }
