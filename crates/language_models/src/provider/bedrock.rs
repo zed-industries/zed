@@ -1236,7 +1236,10 @@ impl Render for ConfigurationView {
 
         let configured_label = if env_var_set {
             format!(
-                "Access Key ID is set in {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, Secret Key is set in {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, Region is set in {ZED_BEDROCK_REGION_VAR} environment variables."
+                "Access Key ID is set in {}, Secret Key is set in {}, Region is set in {} environment variables.",
+                ZED_BEDROCK_ACCESS_KEY_ID_VAR.name,
+                ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name,
+                ZED_BEDROCK_REGION_VAR.name
             )
         } else {
             match bedrock_method {
@@ -1251,7 +1254,10 @@ impl Render for ConfigurationView {
 
         let tooltip_label = if env_var_set {
             Some(format!(
-                "To reset your credentials, unset the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, and {ZED_BEDROCK_REGION_VAR} environment variables."
+                "To reset your credentials, unset the {}, {}, and {} environment variables.",
+                ZED_BEDROCK_ACCESS_KEY_ID_VAR.name,
+                ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name,
+                ZED_BEDROCK_REGION_VAR.name
             ))
         } else if bedrock_method.is_some() {
             Some("You cannot reset credentials as they're being derived, check Zed settings to understand how.".to_string())
