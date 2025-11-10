@@ -46,15 +46,14 @@ jobs:
       run: cargo build --package=eval
       shell: bash -euxo pipefail {0}
     - name: run_agent_evals::agent_evals::run_eval
-      run: cargo run --package=eval -- --repetitions=8 --concurrency=1 --model ${MODEL_NAME}
+      run: cargo run --package=eval -- --repetitions=8 --concurrency=1 --model "${MODEL_NAME}"
       shell: bash -euxo pipefail {0}
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
         rm -rf ./../.cargo
       shell: bash -euxo pipefail {0}
-    timeout-minutes: 60
+    timeout-minutes: 600
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
   cancel-in-progress: true
-timeout-minutes: 720

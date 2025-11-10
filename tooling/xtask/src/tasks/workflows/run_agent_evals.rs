@@ -11,7 +11,6 @@ pub(crate) fn run_agent_evals() -> Workflow {
     let model_name = Input::string("model_name", None);
 
     named::workflow()
-        .timeout_minutes(12u32 * 60)
         .on(Event::default().workflow_dispatch(
             WorkflowDispatch::default().add_input(model_name.name, model_name.input()),
         ))
@@ -29,14 +28,14 @@ pub(crate) fn run_agent_evals() -> Workflow {
 fn agent_evals() -> NamedJob {
     fn run_eval() -> Step<Run> {
         named::bash(
-            "cargo run --package=eval -- --repetitions=8 --concurrency=1 --model ${MODEL_NAME}",
+            "cargo run --package=eval -- --repetitions=8 --concurrency=1 --model \"${MODEL_NAME}\"",
         )
     }
 
     named::job(
         Job::default()
             .runs_on(runners::LINUX_DEFAULT)
-            .timeout_minutes(60_u32)
+            .timeout_minutes(60_u32 * 10)
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
