@@ -1954,7 +1954,7 @@ impl GitStore {
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::Commit>,
         mut cx: AsyncApp,
-    ) -> Result<proto::RemoteMessageResponse> {
+    ) -> Result<proto::Ack> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let askpass_id = envelope.payload.askpass_id;
@@ -1972,7 +1972,7 @@ impl GitStore {
         let email = envelope.payload.email.map(SharedString::from);
         let options = envelope.payload.options.unwrap_or_default();
 
-        let remote_output = repository_handle
+        repository_handle
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.commit(
                     message,
@@ -1986,11 +1986,7 @@ impl GitStore {
                 )
             })?
             .await??;
-
-        Ok(proto::RemoteMessageResponse {
-            stdout: remote_output.stdout,
-            stderr: remote_output.stderr,
-        })
+        Ok(proto::Ack {})
     }
 
     async fn handle_get_remotes(
@@ -4232,7 +4228,7 @@ impl Repository {
         options: CommitOptions,
         askpass: AskPassDelegate,
         _cx: &mut App,
-    ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
+    ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
@@ -4255,7 +4251,7 @@ impl Repository {
                         debug_assert!(askpass_delegate.is_some());
                     });
                     let (name, email) = name_and_email.unzip();
-                    let response = client
+                    client
                         .request(proto::Commit {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
@@ -4271,10 +4267,7 @@ impl Repository {
                         .await
                         .context("sending commit request")?;
 
-                    Ok(RemoteCommandOutput {
-                        stdout: response.stdout,
-                        stderr: response.stderr,
-                    })
+                    Ok(())
                 }
             }
         })

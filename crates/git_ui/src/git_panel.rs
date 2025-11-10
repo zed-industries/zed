@@ -1632,11 +1632,10 @@ impl GitPanel {
             this.update_in(cx, |this, window, cx| {
                 this.pending_commit.take();
                 match result {
-                    Ok(remote_message) => {
+                    Ok(()) => {
                         this.commit_editor
                             .update(cx, |editor, cx| editor.clear(window, cx));
                         this.original_commit_message = None;
-                        this.show_remote_output(RemoteAction::Commit, remote_message, cx);
                     }
                     Err(e) => this.show_error_toast("commit", e, cx),
                 }

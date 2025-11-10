@@ -347,7 +347,7 @@ request_messages!(
     ),
     (Call, Ack),
     (CancelCall, Ack),
-    (Commit, RemoteMessageResponse),
+    (Commit, Ack),
     (CopyProjectEntry, ProjectEntryResponse),
     (CreateChannel, CreateChannelResponse),
     (CreateProjectEntry, ProjectEntryResponse),

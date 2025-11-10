@@ -493,7 +493,7 @@ pub trait GitRepository: Send + Sync {
         options: CommitOptions,
         askpass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<'_, Result<RemoteCommandOutput>>;
+    ) -> BoxFuture<'_, Result<()>>;
 
     fn stash_paths(
         &self,
@@ -1633,7 +1633,7 @@ impl GitRepository for RealGitRepository {
         options: CommitOptions,
         ask_pass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
+    ) -> BoxFuture<'_, Result<()>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
         let executor = self.executor.clone();
@@ -1659,7 +1659,9 @@ impl GitRepository for RealGitRepository {
                 cmd.arg("--author").arg(&format!("{name} <{email}>"));
             }
 
-            run_git_command(env, ask_pass, cmd, &executor).await
+            run_git_command(env, ask_pass, cmd, &executor).await?;
+
+            Ok(())
         }
         .boxed()
     }

@@ -528,7 +528,7 @@ impl GitRepository for FakeGitRepository {
         _options: CommitOptions,
         _askpass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<'_, Result<git::repository::RemoteCommandOutput>> {
+    ) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
     }
 
