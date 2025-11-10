@@ -235,12 +235,9 @@ impl AgentTool for ReadFileTool {
                         Ok(formatdoc! {"
                             The requested line contains {} bytes of content, which exceeds the maximum size of {} bytes.
 
-                            This appears to be a minified or single-line file. Use the terminal tool to run: `head -c 4096 {}`
-
-                            This will read the first 4096 bytes to help you understand the file structure.",
+                            This appears to be a minified or single-line file. Use head tool to get first few bytes to help you understand the file structure.",
                             result.len(),
-                            MAX_LINE_RANGE_SIZE,
-                            abs_path.display()
+                            MAX_LINE_RANGE_SIZE
                         }
                         .into())
                     } else {

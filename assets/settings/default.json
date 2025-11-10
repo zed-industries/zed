@@ -923,6 +923,7 @@
           "read_file": true,
           "open": true,
           "grep": true,
+          "head": true,
           "terminal": true,
           "thinking": true,
           "web_search": true
@@ -942,6 +943,7 @@
           "read_file": true,
           "open": true,
           "grep": true,
+          "head": true,
           "thinking": true,
           "web_search": true
         }
