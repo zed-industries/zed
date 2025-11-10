@@ -111,6 +111,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        DisplayPoint,
         display_map::{DisplayRow, ToDisplayPoint},
         editor_tests::init_test,
         test::{
@@ -122,6 +123,7 @@ mod tests {
     use language::{BracketPair, BracketPairConfig, Language, LanguageConfig, LanguageMatcher};
     use multi_buffer::AnchorRangeExt as _;
     use rope::Point;
+    use text::OffsetRangeExt;
 
     #[gpui::test]
     async fn test_rainbow_bracket_highlights(cx: &mut gpui::TestAppContext) {
@@ -488,6 +490,42 @@ mod tests {
                         || current_highlighted_bracket_set.contains(&highlight_range.end),
                     "Should not lose highlights while scrolling in the visible range!"
                 );
+            }
+
+            let buffer_snapshot = snapshot.buffer().as_singleton().unwrap().2;
+            for (start, end) in snapshot
+                .bracket_ranges(
+                    DisplayPoint::new(visible_range.start, Default::default()).to_point(&snapshot)
+                        ..DisplayPoint::new(
+                            visible_range.end,
+                            snapshot.line_len(visible_range.end),
+                        )
+                        .to_point(&snapshot),
+                )
+                .into_iter()
+                .flatten()
+            {
+                let start_bracket = colored_brackets
+                    .iter()
+                    .find(|(_, range)| range.to_offset(buffer_snapshot) == start);
+                assert!(
+                    start_bracket.is_some(),
+                    "Existing bracket start in the visible range should be highlighted"
+                );
+
+                let end_bracket = colored_brackets
+                    .iter()
+                    .find(|(_, range)| range.to_offset(buffer_snapshot) == end);
+                assert!(
+                    end_bracket.is_some(),
+                    "Existing bracket end in the visible range should be highlighted"
+                );
+
+                assert_eq!(
+                    start_bracket.unwrap().0,
+                    end_bracket.unwrap().0,
+                    "Bracket pair should be highlighted the same color!"
+                )
             }
         }
 
