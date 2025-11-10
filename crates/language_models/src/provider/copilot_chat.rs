@@ -29,7 +29,7 @@ use language_model::{
     StopReason, TokenUsage,
 };
 use settings::SettingsStore;
-use ui::{CommonAnimationExt, Divider, ProgressBar, prelude::*};
+use ui::{CommonAnimationExt, ProgressBar, prelude::*};
 use util::debug_panic;
 
 use crate::ui::ConfiguredApiCard;
@@ -1587,8 +1587,14 @@ impl Render for ConfigurationView {
                         || (usage.premium_interactions.overage_count > 0
                             && !usage.premium_interactions.overage_permitted);
 
-                    this.child(Divider::horizontal()).child(
+                    this.child(
                         v_flex()
+                            .mt_0p5()
+                            .p_2()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(cx.theme().colors().border)
+                            .bg(cx.theme().colors().background)
                             .gap_2()
                             .child(
                                 Label::new("Usage")
