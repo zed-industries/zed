@@ -1701,6 +1701,7 @@ mod tests {
                     trigger_kind: CompletionTriggerKind::TRIGGER_CHARACTER,
                     trigger_character: Some("@".into()),
                 },
+                Some("@"),
                 window,
                 cx,
             )
