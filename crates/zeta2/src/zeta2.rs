@@ -6,8 +6,8 @@ use cloud_llm_client::{
     AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
     ZED_VERSION_HEADER_NAME,
 };
-use cloud_zeta2_prompt::DEFAULT_MAX_PROMPT_BYTES;
 use cloud_zeta2_prompt::retrieval_prompt::{SearchToolInput, SearchToolQuery};
+use cloud_zeta2_prompt::{CURSOR_MARKER, DEFAULT_MAX_PROMPT_BYTES};
 use collections::HashMap;
 use edit_prediction_context::{
     DeclarationId, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
@@ -943,9 +943,14 @@ impl Zeta {
 
                 let (res, usage) = response?;
                 let request_id = EditPredictionId(res.id.clone().into());
-                let Some(output_text) = text_from_response(res) else {
+                let Some(mut output_text) = text_from_response(res) else {
                     return Ok((None, usage))
                 };
+
+                if output_text.contains(CURSOR_MARKER) {
+                    log::trace!("Stripping out {CURSOR_MARKER} from response");
+                    output_text = output_text.replace(CURSOR_MARKER, "");
+                }
 
                 let (edited_buffer_snapshot, edits) = match options.prompt_format {
                     PromptFormat::NumLinesUniDiff => {
