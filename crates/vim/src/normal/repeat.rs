@@ -834,6 +834,11 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {
             "ˇthe lazy dog"
         });
+    }
+
+    #[gpui::test]
+    async fn test_repeat_clear_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state(indoc! {
             "ˇthe quick brown
@@ -854,6 +859,35 @@ mod test {
         cx.simulate_shared_keystrokes(".").await;
         cx.shared_state().await.assert_eq(indoc! {
             "ˇthe lazy dog"
+        });
+
+        cx.set_shared_state(indoc! {
+            "ˇthe quick brown
+            fox jumps over
+            the lazy dog
+            the quick brown
+            fox jumps over
+            the lazy dog"
+        })
+        .await;
+        cx.simulate_shared_keystrokes("2 d d").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇthe lazy dog
+            the quick brown
+            fox jumps over
+            the lazy dog"
+        });
+        cx.simulate_shared_keystrokes("5 d .").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇthe lazy dog
+            the quick brown
+            fox jumps over
+            the lazy dog"
+        });
+        cx.simulate_shared_keystrokes(".").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇfox jumps over
+            the lazy dog"
         });
     }
 }
