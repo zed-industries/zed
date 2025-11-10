@@ -48,6 +48,7 @@ impl Editor {
                             }
                         })
                         .filter_map(|pair| {
+                            let id = pair.id?;
                             let buffer_open_range = buffer_snapshot
                                 .anchor_before(pair.open_range.start)
                                 ..buffer_snapshot.anchor_after(pair.open_range.end);
@@ -62,16 +63,11 @@ impl Editor {
                                 .anchor_in_excerpt(excerpt_id, buffer_close_range.start)?
                                 ..multi_buffer_snapshot
                                     .anchor_in_excerpt(excerpt_id, buffer_close_range.end)?;
-
-                            pair.id.map(|id| {
-                                let accent_number = id % accents_count;
-
-                                (
-                                    accent_number,
-                                    multi_buffer_open_range,
-                                    multi_buffer_close_range,
-                                )
-                            })
+                            Some((
+                                id % accents_count,
+                                multi_buffer_open_range,
+                                multi_buffer_close_range,
+                            ))
                         });
 
                     for (accent_number, open_range, close_range) in brackets_by_accent {
@@ -463,12 +459,9 @@ mod tests {
             cx.executor().run_until_parked();
 
             let colored_brackets = collect_colored_brackets(&mut cx);
-            for (color, range) in colored_brackets.iter().cloned() {
+            for (color, range) in colored_brackets.clone() {
                 assert!(
-                    highlighted_brackets
-                        .entry(range.clone())
-                        .or_insert(color.clone())
-                        == &color,
+                    highlighted_brackets.entry(range).or_insert(color) == &color,
                     "Colors should stay consistent while scrolling!"
                 );
             }
@@ -486,17 +479,10 @@ mod tests {
                     .flat_map(|(_, range)| [range.start, range.end]),
             );
 
-            for highlight_range in
-                highlighted_brackets
-                    .iter()
-                    .map(|(range, _)| range)
-                    .filter(|bracket_range| {
-                        visible_range
-                            .contains(&bracket_range.start.to_display_point(&snapshot).row())
-                            || visible_range
-                                .contains(&bracket_range.end.to_display_point(&snapshot).row())
-                    })
-            {
+            for highlight_range in highlighted_brackets.keys().filter(|bracket_range| {
+                visible_range.contains(&bracket_range.start.to_display_point(&snapshot).row())
+                    || visible_range.contains(&bracket_range.end.to_display_point(&snapshot).row())
+            }) {
                 assert!(
                     current_highlighted_bracket_set.contains(&highlight_range.start)
                         || current_highlighted_bracket_set.contains(&highlight_range.end),
