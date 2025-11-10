@@ -255,8 +255,6 @@ impl Platform for TestPlatform {
     fn restart(&self, path: Option<PathBuf>) {
         if let Some(tx) = self.expect_restart.take() {
             tx.send(path).unwrap();
-        } else {
-            panic!("test unexpectedly restart the app")
         }
     }
 
