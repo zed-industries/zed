@@ -201,16 +201,10 @@ use workspace::{
 };
 
 use crate::{
-    code_context_menus::CompletionsMenuSource,
-    editor_settings::MultiCursorModifier,
-    hover_links::{find_url, find_url_from_range},
-    inlays::{
+    code_context_menus::CompletionsMenuSource, editor_settings::MultiCursorModifier, git::word_diff::Cache, hover_links::{find_url, find_url_from_range}, inlays::{
         InlineValueCache,
         inlay_hints::{LspInlayHintData, inlay_hint_settings},
-    },
-    scroll::{ScrollOffset, ScrollPixelOffset},
-    selections_collection::resolve_selections_wrapping_blocks,
-    signature_help::{SignatureHelpHiddenBy, SignatureHelpState},
+    }, scroll::{ScrollOffset, ScrollPixelOffset}, selections_collection::resolve_selections_wrapping_blocks, signature_help::{SignatureHelpHiddenBy, SignatureHelpState}
 };
 
 pub const FILE_HEADER_HEIGHT: u32 = 2;
@@ -2039,6 +2033,7 @@ impl Editor {
 
         let mut editor = Self {
             focus_handle,
+            word_diff_cache: git::word_diff::Cache::default(),
             show_cursor_when_unfocused: false,
             last_focused_descendant: None,
             buffer: multi_buffer.clone(),
@@ -22069,19 +22064,19 @@ impl Editor {
 
     fn update_word_diff(&mut self, row_infos: &[RowInfo], cx: &mut Context<Editor>) {
         let display_snapshot = self.display_snapshot(cx);
-        self.word_diff_cache.update(row_infos, )
-
+        // self.word_diff_cache.update(row_infos, )
     }
 
     fn word_diff_highlights(
         &mut self,
         row_infos: &[RowInfo],
     ) -> impl Iterator<Item = (Range<DisplayPoint>, Hsla)> {
-        self.word_diff_cache.color_ranges(
-            row_infos
-                .iter()
-                .filter(|RowInfo { diff_status }| diff_status.is_some()),
-        )
+        // self.word_diff_cache.color_ranges(
+        //     row_infos
+        //         .iter()
+        //         .filter(|RowInfo { diff_status }| diff_status.is_some()),
+        // )
+        Vec::new().into_iter()
     }
 }
 
