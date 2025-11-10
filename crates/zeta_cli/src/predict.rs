@@ -1,7 +1,7 @@
 use crate::PromptFormat;
 use crate::example::{ActualExcerpt, NamedExample};
 use crate::headless::ZetaCliAppState;
-use crate::paths::LOGS_DIR;
+use crate::paths::{CACHE_DIR, LOGS_DIR};
 use ::serde::Serialize;
 use anyhow::{Result, anyhow};
 use clap::Args;
@@ -26,6 +26,8 @@ pub struct PredictArguments {
     #[clap(long, short, value_enum, default_value_t = PredictionsOutputFormat::Md)]
     format: PredictionsOutputFormat,
     example_path: PathBuf,
+    #[clap(long)]
+    re_run: bool,
 }
 
 #[derive(clap::ValueEnum, Debug, Clone)]
@@ -40,7 +42,7 @@ pub async fn run_zeta2_predict(
     cx: &mut AsyncApp,
 ) {
     let example = NamedExample::load(args.example_path).unwrap();
-    let result = zeta2_predict(example, args.prompt_format, &app_state, cx)
+    let result = zeta2_predict(example, args.re_run, args.prompt_format, &app_state, cx)
         .await
         .unwrap();
     result.write(args.format, std::io::stdout()).unwrap();
@@ -52,10 +54,23 @@ thread_local! {
 
 pub async fn zeta2_predict(
     example: NamedExample,
+    re_run: bool,
     prompt_format: PromptFormat,
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) -> Result<PredictionDetails> {
+    let example_cache_path = CACHE_DIR.join(&example.name);
+
+    if !re_run && example_cache_path.exists() {
+        let file_contents = fs::read_to_string(&example_cache_path)?;
+        log::debug!(
+            "Loaded predictions from cache: {}",
+            example_cache_path.display()
+        );
+        let result = serde_json::from_str::<PredictionDetails>(&file_contents)?;
+        return Ok(result);
+    }
+
     fs::create_dir_all(&*LOGS_DIR)?;
     let worktree_path = example.setup_worktree().await?;
 
@@ -229,6 +244,9 @@ pub async fn zeta2_predict(
             language::unified_diff(&old_text, &new_text)
         })
         .unwrap_or_default();
+
+    fs::create_dir_all(&*CACHE_DIR).unwrap();
+    fs::write(example_cache_path, serde_json::to_string(&result).unwrap()).unwrap();
 
     anyhow::Ok(result)
 }

@@ -164,7 +164,7 @@ fn syntax_args_to_options(
     }
 }
 
-#[derive(clap::ValueEnum, Default, Debug, Clone)]
+#[derive(clap::ValueEnum, Default, Debug, Clone, Copy)]
 enum PromptFormat {
     MarkedExcerpt,
     LabeledSections,
