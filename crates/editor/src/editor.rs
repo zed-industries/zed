@@ -81,7 +81,7 @@ use ::git::{
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, BuildError};
 use anyhow::{Context as _, Result, anyhow};
 use blink_manager::BlinkManager;
-use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
+use buffer_diff::DiffHunkStatus;
 use client::{Collaborator, ParticipantIndex, parse_zed_link};
 use clock::ReplicaId;
 use code_context_menus::{
@@ -20619,51 +20619,57 @@ impl Editor {
                 buffer_ranges.last()
             }?;
 
-            let selection = text::ToPoint::to_point(&range.start, buffer).row
-                ..text::ToPoint::to_point(&range.end, buffer).row;
+            let Some(buffer_diff) = multi_buffer.diff_for(buffer.remote_id()) else {
+                let selection = text::ToPoint::to_point(&range.start, buffer).row
+                    ..text::ToPoint::to_point(&range.end, buffer).row;
 
-            let end_line_start_point = Point::new(selection.end, 0);
-            let end_line_start_anchor = multi_buffer_snapshot.anchor_before(end_line_start_point);
+                return Some((multi_buffer.buffer(buffer.remote_id()).unwrap(), selection));
+            };
 
-            let ranges = [Anchor::min()..end_line_start_anchor];
+            let buffer_diff_snapshot = buffer_diff.read(cx).snapshot(cx);
 
-            let diff_hunks = self
-                .diff_hunks_in_ranges(&ranges, &multi_buffer_snapshot)
-                .filter(|hunk| hunk.row_range.start.0 < selection.end);
+            let beginning_anchor = buffer.anchor_before(Point::new(0, 0));
+            let start_anchor = buffer.anchor_before(&range.start);
+            let end_anchor = buffer.anchor_before(&range.end);
 
             struct Offsets {
                 start: isize,
                 end: isize,
             }
 
-            let offsets = diff_hunks.fold(Offsets { start: 0, end: 0 }, |mut acc, h| {
-                let hunk_offset = match h.status() {
-                    DiffHunkStatus {
-                        kind: DiffHunkStatusKind::Added,
-                        secondary: _,
-                    } => -(h.row_range.len() as isize),
-                    DiffHunkStatus {
-                        kind: DiffHunkStatusKind::Deleted,
-                        secondary: _,
-                    } => h.row_range.len() as isize,
-                    _ => 0,
-                };
+            let mut delta = Offsets { start: 0, end: 0 };
 
-                if h.row_range.start.0 < selection.start {
-                    acc.start += hunk_offset;
+            for hunk in
+                buffer_diff_snapshot.hunks_intersecting_range(beginning_anchor..end_anchor, buffer)
+            {
+                let initial_size = hunk.diff_base_byte_range.end as isize
+                    - hunk.diff_base_byte_range.start as isize;
+
+                let buffer_range = hunk.buffer_range.to_offset(&buffer);
+                let changed_size =
+                    (cmp::min(buffer_range.end, range.end) as isize) - buffer_range.start as isize;
+
+                if hunk.buffer_range.start.cmp(&start_anchor, buffer).is_le() {
+                    delta.start += initial_size;
+                    delta.start -= changed_size;
                 }
-                acc.end += hunk_offset;
-                acc
-            });
 
-            let diff_aware_selection = Range {
-                start: selection.start.saturating_add_signed(offsets.start as i32),
-                end: selection.end.saturating_add_signed(offsets.end as i32),
-            };
+                delta.end += initial_size;
+                delta.end -= changed_size;
+            }
+
+            let start_row_in_base_buffer = buffer_diff_snapshot
+                .base_text()
+                .offset_to_point((range.start as isize + delta.start) as usize)
+                .row;
+            let end_row_in_base_buffer = buffer_diff_snapshot
+                .base_text()
+                .offset_to_point((range.end as isize + delta.end) as usize)
+                .row;
 
             Some((
                 multi_buffer.buffer(buffer.remote_id()).unwrap(),
-                diff_aware_selection,
+                start_row_in_base_buffer..end_row_in_base_buffer,
             ))
         });
 
