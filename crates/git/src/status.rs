@@ -203,6 +203,13 @@ impl FileStatus {
         matches!(self, FileStatus::Untracked)
     }
 
+    pub fn is_renamed(self) -> bool {
+        let FileStatus::Tracked(tracked) = self else {
+            return false;
+        };
+        tracked.index_status == StatusCode::Renamed || tracked.worktree_status == StatusCode::Renamed
+    }
+
     pub fn summary(self) -> GitSummary {
         match self {
             FileStatus::Ignored => GitSummary::UNCHANGED,
@@ -436,28 +443,62 @@ impl FromStr for GitStatus {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        let mut entries = s
-            .split('\0')
-            .filter_map(|entry| {
-                let sep = entry.get(2..3)?;
-                if sep != " " {
-                    return None;
-                };
-                let path = &entry[3..];
-                // The git status output includes untracked directories as well as untracked files.
-                // We do our own processing to compute the "summary" status of each directory,
-                // so just skip any directories in the output, since they'll otherwise interfere
-                // with our handling of nested repositories.
-                if path.ends_with('/') {
-                    return None;
+        let mut parts = s.split('\0').peekable();
+        let mut entries = Vec::new();
+        
+        while let Some(entry) = parts.next() {
+            if entry.is_empty() {
+                continue;
+            }
+            
+            let sep = match entry.get(2..3) {
+                Some(s) if s == " " => s,
+                _ => continue,
+            };
+            
+            let path_or_old_path = &entry[3..];
+            
+            if path_or_old_path.ends_with('/') {
+                continue;
+            }
+            
+            let status = match entry.as_bytes()[0..2].try_into() {
+                Ok(bytes) => match FileStatus::from_bytes(bytes).log_err() {
+                    Some(s) => s,
+                    None => continue,
+                },
+                Err(_) => continue,
+            };
+            
+            let path = if matches!(
+                status,
+                FileStatus::Tracked(TrackedStatus {
+                    index_status: StatusCode::Renamed | StatusCode::Copied,
+                    ..
+                }) | FileStatus::Tracked(TrackedStatus {
+                    worktree_status: StatusCode::Renamed | StatusCode::Copied,
+                    ..
+                })
+            ) {
+                match parts.next() {
+                    Some(new_path) if !new_path.is_empty() => new_path,
+                    _ => continue,
                 }
-                let status = entry.as_bytes()[0..2].try_into().unwrap();
-                let status = FileStatus::from_bytes(status).log_err()?;
-                // git-status outputs `/`-delimited repo paths, even on Windows.
-                let path = RepoPath::from_rel_path(RelPath::unix(path).log_err()?);
-                Some((path, status))
-            })
-            .collect::<Vec<_>>();
+            } else {
+                path_or_old_path
+            };
+            
+            if path.ends_with('/') {
+                continue;
+            }
+            
+            let path = match RelPath::unix(path).log_err() {
+                Some(p) => RepoPath::from_rel_path(p),
+                None => continue,
+            };
+            
+            entries.push((path, status));
+        }
         entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
         // When a file exists in HEAD, is deleted in the index, and exists again in the working copy,
         // git produces two lines for it, one reading `D ` (deleted in index, unmodified in working copy)
