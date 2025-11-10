@@ -31,6 +31,7 @@ use gpui::{
     Task, TaskLabel, TextStyle,
 };
 
+use itertools::Itertools;
 use lsp::{LanguageServerId, NumberOrString};
 use parking_lot::{Mutex, RawMutex, lock_api::MutexGuard};
 use serde::{Deserialize, Serialize};
@@ -67,7 +68,7 @@ pub use text::{
 use theme::{ActiveTheme as _, SyntaxTheme};
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
-use util::{RangeExt, debug_panic, maybe, paths::PathStyle, post_inc, rel_path::RelPath};
+use util::{RangeExt, debug_panic, maybe, paths::PathStyle, rel_path::RelPath};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_python, tree_sitter_rust, tree_sitter_typescript};
@@ -850,7 +851,7 @@ pub struct BracketMatch {
     pub open_range: Range<usize>,
     pub close_range: Range<usize>,
     pub newline_only: bool,
-    pub id: Option<usize>,
+    pub color_index: Option<usize>,
 }
 
 impl BracketMatch {
@@ -4203,23 +4204,7 @@ impl BufferSnapshot {
             let bracket_matches = match tree_sitter_data.brackets_by_chunks[chunk.id].take() {
                 Some(cached_brackets) => cached_brackets,
                 None => {
-                    // Sequential IDs are needed to determine the color of the bracket pair.
-                    let mut next_id = match tree_sitter_data.chunks.previous_chunk(chunk) {
-                        Some(previous_chunk) => tree_sitter_data.brackets_by_chunks
-                            [previous_chunk.id]
-                            .as_ref()
-                            .and_then(|previous_brackets| previous_brackets.last())
-                            // Try to continue previous sequence of IDs.
-                            .and_then(|bracket| bracket.id.map(|id| id + 1))
-                            // If not possible, start another sequence: pick it far enough to avoid overlaps.
-                            //
-                            // This for sure will introduce the gaps between chunks' bracket IDs,
-                            // but this will only potentially skip `mod(accents_number)` colors between chunks.
-                            .unwrap_or_else(|| {
-                                (usize::MAX / tree_sitter_data.chunks.len()) * chunk.id + 1
-                            }),
-                        None => 0,
-                    };
+                    let mut bracket_pairs_ends = Vec::new();
                     let mut matches =
                         self.syntax
                             .matches(chunk_range.clone(), &self.text, |grammar| {
@@ -4257,17 +4242,29 @@ impl BufferSnapshot {
                                 continue;
                             }
 
-                            return Some(BracketMatch {
-                                open_range,
-                                close_range,
-                                newline_only: pattern.newline_only,
-                                id: pattern
-                                    .rainbow_exclude
-                                    .not()
-                                    .then(|| post_inc(&mut next_id)),
-                            });
+                            return Some((open_range, close_range, pattern));
                         }
                         None
+                    })
+                    .sorted_by_key(|(open_range, _, _)| open_range.start)
+                    .map(|(open_range, close_range, pattern)| {
+                        while let Some(&last_bracket_end) = bracket_pairs_ends.last() {
+                            if last_bracket_end <= open_range.start {
+                                bracket_pairs_ends.pop();
+                            } else {
+                                break;
+                            }
+                        }
+
+                        let depth = bracket_pairs_ends.len();
+                        bracket_pairs_ends.push(close_range.end);
+
+                        BracketMatch {
+                            open_range,
+                            close_range,
+                            newline_only: pattern.newline_only,
+                            color_index: pattern.rainbow_exclude.not().then_some(depth),
+                        }
                     })
                     .collect::<Vec<_>>();
 

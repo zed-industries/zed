@@ -154,7 +154,7 @@ This query identifies opening and closing brackets, braces, and quotation marks.
 | @open   | Captures opening brackets, braces, and quotes |
 | @close  | Captures closing brackets, braces, and quotes |
 
-Later, Zed will use those to highlight matching brackets: painting each bracket pair with a different color ("rainbow brackets") and highlighting the brackets if the cursor is inside the bracket pair.
+Zed uses these to highlight matching brackets: painting each bracket pair with a different color ("rainbow brackets") and highlighting the brackets if the cursor is inside the bracket pair.
 
 To opt out of rainbow brackets colorization, add the following to the corresponding `brackets.scm` entry:
 

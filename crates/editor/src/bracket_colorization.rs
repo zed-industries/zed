@@ -48,7 +48,7 @@ impl Editor {
                             }
                         })
                         .filter_map(|pair| {
-                            let id = pair.id?;
+                            let id = pair.color_index?;
                             let buffer_open_range = buffer_snapshot
                                 .anchor_before(pair.open_range.start)
                                 ..buffer_snapshot.anchor_after(pair.open_range.end);
