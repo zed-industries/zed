@@ -272,7 +272,7 @@ impl GitRepository for FakeGitRepository {
                     .ok()
                     .map(|content| String::from_utf8(content).unwrap())?;
                 let repo_path = RelPath::new(repo_path, PathStyle::local()).ok()?;
-                Some((repo_path.into(), (content, is_ignored)))
+                Some((RepoPath::from_rel_path(&repo_path), (content, is_ignored)))
             })
             .collect();
 
@@ -436,7 +436,7 @@ impl GitRepository for FakeGitRepository {
             state
                 .blames
                 .get(&path)
-                .with_context(|| format!("failed to get blame for {:?}", path.0))
+                .with_context(|| format!("failed to get blame for {:?}", path))
                 .cloned()
         })
     }
