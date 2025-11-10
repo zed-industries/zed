@@ -78,6 +78,7 @@ impl CommitView {
         repo: WeakEntity<Repository>,
         workspace: WeakEntity<Workspace>,
         stash: Option<usize>,
+        file_filter: Option<RepoPath>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -91,8 +92,14 @@ impl CommitView {
         window
             .spawn(cx, async move |cx| {
                 let (commit_diff, commit_details) = futures::join!(commit_diff?, commit_details?);
-                let commit_diff = commit_diff.log_err()?.log_err()?;
+                let mut commit_diff = commit_diff.log_err()?.log_err()?;
                 let commit_details = commit_details.log_err()?.log_err()?;
+                
+                // Filter to specific file if requested
+                if let Some(ref filter_path) = file_filter {
+                    commit_diff.files.retain(|f| &f.path == filter_path);
+                }
+                
                 let repo = repo.upgrade()?;
 
                 workspace

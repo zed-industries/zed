@@ -1009,6 +1009,26 @@ impl GitStore {
         cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
 
+    pub fn file_history(
+        &self,
+        repo: &Entity<Repository>,
+        path: RepoPath,
+        cx: &mut App,
+    ) -> Task<Result<git::repository::FileHistory>> {
+        let rx = repo.update(cx, |repo, _| {
+            repo.send_job(None, move |state, _| async move {
+                match state {
+                    RepositoryState::Local { backend, .. } => backend.file_history(path).await,
+                    RepositoryState::Remote { .. } => {
+                        Err(anyhow!("file history not supported for remote repositories yet"))
+                    }
+                }
+            })
+        });
+
+        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
+    }
+
     pub fn get_permalink_to_line(
         &self,
         buffer: &Entity<Buffer>,

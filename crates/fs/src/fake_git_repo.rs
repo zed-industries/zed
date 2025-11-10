@@ -441,6 +441,16 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<git::repository::FileHistory>> {
+        async move {
+            Ok(git::repository::FileHistory {
+                entries: Vec::new(),
+                path,
+            })
+        }
+        .boxed()
+    }
+
     fn stage_paths(
         &self,
         paths: Vec<RepoPath>,

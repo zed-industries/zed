@@ -323,6 +323,7 @@ impl Render for CommitTooltip {
                                                         repo.downgrade(),
                                                         workspace.clone(),
                                                         None,
+                                                        None,
                                                         window,
                                                         cx,
                                                     );
