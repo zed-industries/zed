@@ -31,21 +31,15 @@ pub async fn parse_xml_edits<'a>(
     while let Some(old_text_tag) = parse_tag(&mut input, "old_text")? {
         let new_text_tag =
             parse_tag(&mut input, "new_text")?.context("no new_text tag following old_text")?;
-        let old_text = trim_leading_newline(old_text_tag.body);
-        let new_text = trim_leading_newline(new_text_tag.body);
         edits.extend(resolve_new_text_old_text_in_buffer(
-            new_text,
-            old_text,
+            new_text_tag.body,
+            old_text_tag.body,
             buffer,
             context_ranges,
         )?);
     }
 
     Ok((buffer, edits))
-}
-
-fn trim_leading_newline(text: &str) -> &str {
-    text.strip_prefix('\n').unwrap_or(text)
 }
 
 fn resolve_new_text_old_text_in_buffer(
@@ -105,6 +99,7 @@ fn parse_tag<'a>(input: &mut &'a str, tag: &str) -> Result<Option<ParsedTag<'a>>
             .find(&close_tag)
             .with_context(|| format!("no `{close_tag}` tag"))?;
     let body = &input[closing_bracket_ix + '>'.len_utf8()..end_ix];
+    let body = body.strip_prefix('\n').unwrap_or(body);
     *input = &input[end_ix + close_tag.len()..];
     Ok(Some(ParsedTag { attributes, body }))
 }
