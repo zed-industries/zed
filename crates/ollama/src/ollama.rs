@@ -482,6 +482,56 @@ mod tests {
         }
     }
 
+    // Backwards compatibility with Ollama versions prior to v0.12.10 November 2025
+    // This test is a copy of `parse_tool_call()` with the `id` field omitted.
+    #[test]
+    fn parse_tool_call_pre_0_12_10() {
+        let response = serde_json::json!({
+            "model": "llama3.2:3b",
+            "created_at": "2025-04-28T20:02:02.140489Z",
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "weather",
+                            "arguments": {
+                                "city": "london",
+                            }
+                        }
+                    }
+                ]
+            },
+            "done_reason": "stop",
+            "done": true,
+            "total_duration": 2758629166u64,
+            "load_duration": 1770059875,
+            "prompt_eval_count": 147,
+            "prompt_eval_duration": 684637583,
+            "eval_count": 16,
+            "eval_duration": 302561917,
+        });
+
+        let result: ChatResponseDelta = serde_json::from_value(response).unwrap();
+        match result.message {
+            ChatMessage::Assistant {
+                content,
+                tool_calls: Some(tool_calls),
+                images: _,
+                thinking,
+            } => {
+                assert!(content.is_empty());
+                assert!(thinking.is_none());
+
+                // When the `Option` around `id` is removed, this test should complain
+                // and subsequently deleted in favor of `parse_tool_call()`
+                assert!(tool_calls.first().is_some_and(|call| call.id.is_none()))
+            }
+            _ => panic!("Deserialized wrong role"),
+        }
+    }
+
     #[test]
     fn parse_show_model() {
         let response = serde_json::json!({
