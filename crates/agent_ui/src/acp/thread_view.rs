@@ -125,8 +125,9 @@ impl ProfileProvider for Entity<agent::Thread> {
     }
 
     fn set_profile(&self, profile_id: AgentProfileId, cx: &mut App) {
-        self.update(cx, |thread, _cx| {
-            thread.set_profile(profile_id);
+        self.update(cx, |thread, cx| {
+            // Apply the profile and let the thread swap to its default model.
+            thread.set_profile(profile_id, cx);
         });
     }
 
