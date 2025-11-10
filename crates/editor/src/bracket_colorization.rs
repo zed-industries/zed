@@ -111,10 +111,11 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
-    use std::{ops::Range, time::Duration};
+    use std::{collections::HashSet, ops::Range, time::Duration};
 
     use super::*;
     use crate::{
+        display_map::{DisplayRow, ToDisplayPoint},
         editor_tests::init_test,
         test::{
             editor_lsp_test_context::EditorLspTestContext, editor_test_context::EditorTestContext,
@@ -461,13 +462,45 @@ mod tests {
             });
             cx.executor().run_until_parked();
 
-            for (color, range) in collect_colored_brackets(&mut cx) {
+            let colored_brackets = collect_colored_brackets(&mut cx);
+            for (color, range) in colored_brackets.iter().cloned() {
                 assert!(
                     highlighted_brackets
                         .entry(range.clone())
                         .or_insert(color.clone())
                         == &color,
                     "Colors should stay consistent while scrolling!"
+                );
+            }
+
+            let snapshot = cx.update_editor(|editor, window, cx| editor.snapshot(window, cx));
+            let scroll_position = snapshot.scroll_position();
+            let visible_lines =
+                cx.update_editor(|editor, _, _| editor.visible_line_count().unwrap());
+            let visible_range = DisplayRow(scroll_position.y as u32)
+                ..DisplayRow((scroll_position.y + visible_lines) as u32);
+
+            let current_highlighted_bracket_set: HashSet<Point> = HashSet::from_iter(
+                colored_brackets
+                    .iter()
+                    .flat_map(|(_, range)| [range.start, range.end]),
+            );
+
+            for highlight_range in
+                highlighted_brackets
+                    .iter()
+                    .map(|(range, _)| range)
+                    .filter(|bracket_range| {
+                        visible_range
+                            .contains(&bracket_range.start.to_display_point(&snapshot).row())
+                            || visible_range
+                                .contains(&bracket_range.end.to_display_point(&snapshot).row())
+                    })
+            {
+                assert!(
+                    current_highlighted_bracket_set.contains(&highlight_range.start)
+                        || current_highlighted_bracket_set.contains(&highlight_range.end),
+                    "Should not lose highlights while scrolling in the visible range!"
                 );
             }
         }
