@@ -719,9 +719,8 @@ impl Fs for RealFs {
         {
             Ok(metadata) => metadata,
             Err(err) => {
-                return match (err.kind(), err.raw_os_error()) {
-                    (io::ErrorKind::NotFound, _) => Ok(None),
-                    (io::ErrorKind::Other, Some(libc::ENOTDIR)) => Ok(None),
+                return match err.kind() {
+                    io::ErrorKind::NotFound | io::ErrorKind::NotADirectory => Ok(None),
                     _ => Err(anyhow::Error::new(err)),
                 };
             }
