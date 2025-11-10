@@ -246,7 +246,6 @@ impl X11ClientStatePtr {
             state.keyboard_focused_window = None;
         }
         state.cursor_styles.remove(&x_window);
-
     }
 
     pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
