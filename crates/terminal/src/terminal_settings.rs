@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 pub use settings::AlternateScroll;
 use settings::{
-    RegisterSetting, ShowScrollbar, TerminalBlink, TerminalDockPosition, TerminalLineHeight,
-    VenvSettings, WorkingDirectory, merge_from::MergeFrom,
+    PathHyperlinkRegex, RegisterSetting, ShowScrollbar, TerminalBlink, TerminalDockPosition,
+    TerminalLineHeight, VenvSettings, WorkingDirectory, merge_from::MergeFrom,
 };
 use task::Shell;
 use theme::FontFamilyName;
@@ -119,7 +119,10 @@ impl settings::Settings for TerminalSettings {
                 .path_hyperlink_regexes
                 .unwrap()
                 .into_iter()
-                .map(|regex| regex.join("\n"))
+                .map(|regex| match regex {
+                    PathHyperlinkRegex::SingleLine(regex) => regex,
+                    PathHyperlinkRegex::MultiLine(regex) => regex.join("\n"),
+                })
                 .collect(),
             path_hyperlink_timeout_ms: user_content.path_hyperlink_timeout_ms.unwrap(),
         }

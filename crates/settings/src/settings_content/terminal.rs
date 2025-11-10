@@ -32,6 +32,13 @@ pub struct ProjectTerminalSettingsContent {
     pub detect_venv: Option<VenvSettings>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+#[serde(untagged)]
+pub enum PathHyperlinkRegex {
+    SingleLine(String),
+    MultiLine(Vec<String>),
+}
+
 #[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct TerminalSettingsContent {
@@ -140,7 +147,7 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: [
     ///   // Python-style diagnostics
-    ///   ["File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)"],
+    ///   "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
     ///   // Common path syntax with optional line, column, description, trailing punctuation, or
     ///   // surrounding symbols or quotes
     ///   [
@@ -166,7 +173,7 @@ pub struct TerminalSettingsContent {
     ///     "([ ]+|$)"
     ///   ]
     /// ]
-    pub path_hyperlink_regexes: Option<Vec<Vec<String>>>,
+    pub path_hyperlink_regexes: Option<Vec<PathHyperlinkRegex>>,
     /// Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
     ///
     /// Default: 10
