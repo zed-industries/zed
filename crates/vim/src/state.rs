@@ -226,6 +226,7 @@ pub struct VimGlobals {
     pub forced_motion: bool,
     pub stop_recording_after_next_action: bool,
     pub ignore_current_insertion: bool,
+    pub recording_count: Option<usize>,
     pub recorded_count: Option<usize>,
     pub recording_actions: Vec<ReplayableAction>,
     pub recorded_actions: Vec<ReplayableAction>,
@@ -905,6 +906,7 @@ impl VimGlobals {
             if self.stop_recording_after_next_action {
                 self.dot_recording = false;
                 self.recorded_actions = std::mem::take(&mut self.recording_actions);
+                self.recorded_count = self.recording_count.take();
                 self.stop_recording_after_next_action = false;
             }
         }
@@ -931,6 +933,7 @@ impl VimGlobals {
             if self.stop_recording_after_next_action {
                 self.dot_recording = false;
                 self.recorded_actions = std::mem::take(&mut self.recording_actions);
+                self.recorded_count = self.recording_count.take();
                 self.stop_recording_after_next_action = false;
             }
         }

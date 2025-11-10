@@ -216,6 +216,7 @@ impl Vim {
         if self.active_operator().is_some() {
             Vim::update_globals(cx, |globals, _| {
                 globals.recording_actions.clear();
+                globals.recording_count = None;
                 globals.dot_recording = false;
                 globals.stop_recording_after_next_action = false;
             });
