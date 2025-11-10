@@ -1,7 +1,10 @@
 use crate::PromptFormat;
 use crate::example::{ActualExcerpt, ExpectedExcerpt, NamedExample};
 use crate::headless::ZetaCliAppState;
-use crate::paths::{CACHE_DIR, LOGS_DIR};
+use crate::paths::{
+    CACHE_DIR, LOGS_DIR, LOGS_PREDICTION_PROMPT, LOGS_PREDICTION_RESPONSE, LOGS_SEARCH_PROMPT,
+    LOGS_SEARCH_QUERIES,
+};
 use ::serde::Serialize;
 use anyhow::{Result, anyhow};
 use clap::Args;
@@ -61,6 +64,15 @@ pub async fn run_zeta2_predict(
     .await
     .unwrap();
     result.write(args.format, std::io::stdout()).unwrap();
+
+    println!("## Logs\n");
+    println!("Search prompt: {}", LOGS_SEARCH_PROMPT.display());
+    println!("Search queries: {}", LOGS_SEARCH_QUERIES.display());
+    println!("Prediction prompt: {}", LOGS_PREDICTION_PROMPT.display());
+    println!(
+        "Prediction response: {}",
+        LOGS_PREDICTION_RESPONSE.display()
+    );
 }
 
 thread_local! {
@@ -147,12 +159,12 @@ pub async fn zeta2_predict(
                 match event {
                     zeta2::ZetaDebugInfo::ContextRetrievalStarted(info) => {
                         start_time = Some(info.timestamp);
-                        fs::write(LOGS_DIR.join("search_prompt.md"), &info.search_prompt)?;
+                        fs::write(&*LOGS_SEARCH_PROMPT, &info.search_prompt)?;
                     }
                     zeta2::ZetaDebugInfo::SearchQueriesGenerated(info) => {
                         search_queries_generated_at = Some(info.timestamp);
                         fs::write(
-                            LOGS_DIR.join("search_queries.json"),
+                            &*LOGS_SEARCH_QUERIES,
                             serde_json::to_string_pretty(&info.search_queries).unwrap(),
                         )?;
                     }
@@ -164,7 +176,7 @@ pub async fn zeta2_predict(
                         let prediction_started_at = Instant::now();
                         start_time.get_or_insert(prediction_started_at);
                         fs::write(
-                            LOGS_DIR.join("prediction_prompt.md"),
+                            &*LOGS_PREDICTION_PROMPT,
                             &request.local_prompt.unwrap_or_default(),
                         )?;
 
@@ -198,7 +210,7 @@ pub async fn zeta2_predict(
                         let response = request.response_rx.await?.0.map_err(|err| anyhow!(err))?;
                         let response = zeta2::text_from_response(response).unwrap_or_default();
                         let prediction_finished_at = Instant::now();
-                        fs::write(LOGS_DIR.join("prediction_response.md"), &response)?;
+                        fs::write(&*LOGS_PREDICTION_RESPONSE, &response)?;
 
                         let mut result = result.lock().unwrap();
 
