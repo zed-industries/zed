@@ -70,6 +70,7 @@ const NUMBERED_LINES_INSTRUCTIONS: &str = indoc! {r#"
     --- a/src/myapp/cli.py
     +++ b/src/myapp/cli.py
     @@ ... @@
+     import os
      import time
      import sys
     +from constants import LOG_LEVEL_WARNING
