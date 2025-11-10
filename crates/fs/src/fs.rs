@@ -152,6 +152,7 @@ pub trait Fs: Send + Sync {
     async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
+    fn subscribe_to_jobs(&self) -> JobEventReceiver;
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> Arc<FakeFs> {
@@ -237,42 +238,34 @@ pub enum JobEvent {
 pub type JobEventSender = futures::channel::mpsc::UnboundedSender<JobEvent>;
 pub type JobEventReceiver = futures::channel::mpsc::UnboundedReceiver<JobEvent>;
 
-type JobEventBroadcast = Vec<JobEventSender>;
-
-static GLOBAL_JOB_EVENTS_SUBSCRIBERS: std::sync::Mutex<JobEventBroadcast> =
-    std::sync::Mutex::new(Vec::new());
-
-pub fn subscribe_to_job_events() -> JobEventReceiver {
-    let (sender, receiver) = futures::channel::mpsc::unbounded();
-
-    if let Ok(mut subscribers) = GLOBAL_JOB_EVENTS_SUBSCRIBERS.lock() {
-        subscribers.push(sender);
-    }
-
-    receiver
-}
-
-fn send_job_event(event: JobEvent) {
-    if let Ok(mut subscribers) = GLOBAL_JOB_EVENTS_SUBSCRIBERS.lock() {
-        subscribers.retain(|sender| sender.unbounded_send(event.clone()).is_ok());
-    }
-}
-
 struct JobTracker {
     id: JobId,
+    subscribers: Arc<Mutex<Vec<JobEventSender>>>,
 }
 
 impl JobTracker {
-    fn new(info: JobInfo) -> Self {
+    fn new(info: JobInfo, subscribers: Arc<Mutex<Vec<JobEventSender>>>) -> Self {
         let id = info.id;
-        send_job_event(JobEvent::Started { info });
-        Self { id }
+        {
+            let mut subs = subscribers.lock();
+            subs.retain(|sender| {
+                sender
+                    .unbounded_send(JobEvent::Started { info: info.clone() })
+                    .is_ok()
+            });
+        }
+        Self { id, subscribers }
     }
 }
 
 impl Drop for JobTracker {
     fn drop(&mut self) {
-        send_job_event(JobEvent::Completed { id: self.id });
+        let mut subs = self.subscribers.lock();
+        subs.retain(|sender| {
+            sender
+                .unbounded_send(JobEvent::Completed { id: self.id })
+                .is_ok()
+        });
     }
 }
 
@@ -319,6 +312,7 @@ pub struct RealFs {
     bundled_git_binary_path: Option<PathBuf>,
     executor: BackgroundExecutor,
     next_job_id: Arc<AtomicUsize>,
+    job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
 }
 
 pub trait FileHandle: Send + Sync + std::fmt::Debug {
@@ -424,6 +418,7 @@ impl RealFs {
             bundled_git_binary_path: git_binary_path,
             executor,
             next_job_id: Arc::new(AtomicUsize::new(0)),
+            job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -1028,7 +1023,7 @@ impl Fs for RealFs {
             message: SharedString::from(format!("Cloning {}", repo_url)),
         };
 
-        let _job_tracker = JobTracker::new(job_info);
+        let _job_tracker = JobTracker::new(job_info, self.job_event_subscribers.clone());
 
         let output = new_smol_command("git")
             .current_dir(abs_work_directory)
@@ -1048,6 +1043,12 @@ impl Fs for RealFs {
 
     fn is_fake(&self) -> bool {
         false
+    }
+
+    fn subscribe_to_jobs(&self) -> JobEventReceiver {
+        let (sender, receiver) = futures::channel::mpsc::unbounded();
+        self.job_event_subscribers.lock().push(sender);
+        receiver
     }
 
     /// Checks whether the file system is case sensitive by attempting to create two files
@@ -1120,6 +1121,7 @@ struct FakeFsState {
     read_dir_call_count: usize,
     path_write_counts: std::collections::HashMap<PathBuf, usize>,
     moves: std::collections::HashMap<u64, PathBuf>,
+    job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1404,6 +1406,7 @@ impl FakeFs {
                 metadata_call_count: 0,
                 path_write_counts: Default::default(),
                 moves: Default::default(),
+                job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
             })),
         });
 
@@ -2658,6 +2661,12 @@ impl Fs for FakeFs {
         Ok(true)
     }
 
+    fn subscribe_to_jobs(&self) -> JobEventReceiver {
+        let (sender, receiver) = futures::channel::mpsc::unbounded();
+        self.state.lock().job_event_subscribers.lock().push(sender);
+        receiver
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> Arc<FakeFs> {
         self.this.upgrade().unwrap()
@@ -3273,6 +3282,7 @@ mod tests {
             bundled_git_binary_path: None,
             executor,
             next_job_id: Arc::new(AtomicUsize::new(0)),
+            job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
         };
         let temp_dir = TempDir::new().unwrap();
         let file_to_be_replaced = temp_dir.path().join("file.txt");
@@ -3292,6 +3302,7 @@ mod tests {
             bundled_git_binary_path: None,
             executor,
             next_job_id: Arc::new(AtomicUsize::new(0)),
+            job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
         };
         let temp_dir = TempDir::new().unwrap();
         let file_to_be_replaced = temp_dir.path().join("file.txt");

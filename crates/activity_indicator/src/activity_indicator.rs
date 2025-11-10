@@ -100,8 +100,8 @@ impl ActivityIndicator {
             })
             .detach();
 
-            // Handle fs job events
-            let mut job_events = fs::subscribe_to_job_events();
+            let fs = project.read(cx).fs().clone();
+            let mut job_events = fs.subscribe_to_jobs();
             cx.spawn(async move |this, cx| {
                 while let Some(job_event) = job_events.next().await {
                     this.update(cx, |this: &mut ActivityIndicator, cx| {
