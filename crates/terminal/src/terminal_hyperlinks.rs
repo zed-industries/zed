@@ -239,7 +239,7 @@ fn path_match<T>(
     }
     let line = line.trim_ascii_end();
 
-    let found_from_range = |path_range: Range<usize>, row: Option<u32>, column: Option<u32>| {
+    let found_from_range = |path_range: Range<usize>, position: Option<(u32, Option<u32>)>| {
         let advance_point_by_str = |mut point: AlacPoint, s: &str| {
             for _ in s.chars() {
                 point = term
@@ -269,8 +269,10 @@ fn path_match<T>(
         Some((
             {
                 let mut path = line[path_range].to_string();
-                row.inspect(|line| path += &format!(":{line}"));
-                column.inspect(|column| path += &format!(":{column}"));
+                position.inspect(|(line, column)| {
+                    path += &format!(":{line}");
+                    column.inspect(|column| path += &format!(":{column}"));
+                });
                 path
             },
             path_match,
@@ -300,10 +302,12 @@ fn path_match<T>(
                         .and_then(|capture| capture.as_str().parse().ok())
                 };
 
-                let line = parse("line");
-                found_from_range(path.range(), parse("line"), line.and(parse("column")))
+                found_from_range(
+                    path.range(),
+                    parse("line").map(|line| (line, parse("column"))),
+                )
             } else {
-                found_from_range(captures.get(0).unwrap().range(), None, None)
+                found_from_range(captures.get(0).unwrap().range(), None)
             };
 
             if let Some(found) = found {
