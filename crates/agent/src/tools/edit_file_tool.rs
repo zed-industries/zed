@@ -44,8 +44,16 @@ pub struct EditFileToolInput {
     ///
     /// NEVER mention the file path in this description.
     ///
+    /// IMPORTANT: Do NOT include markdown code fences (```) or other markdown formatting in this description.
+    /// Just describe what should be done - another model will generate the actual content.
+    ///
     /// <example>Fix API endpoint URLs</example>
     /// <example>Update copyright year in `page_footer`</example>
+    /// <example>Create a Python script that prints hello world</example>
+    ///
+    /// INCORRECT examples (do not do this):
+    /// <example>Create a file with:\n```python\nprint('hello')\n```</example>
+    /// <example>Add this code:\n```\nif err:\n  return\n```</example>
     ///
     /// Make sure to include this field before all the others in the input object so that we can display it immediately.
     pub display_description: String,
