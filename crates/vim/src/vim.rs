@@ -930,29 +930,6 @@ impl Vim {
                 },
             );
 
-            Vim::action(
-                editor,
-                cx,
-                |vim, action: &editor::actions::SortLinesCaseSensitive, window, cx| {
-                    vim.update_editor(cx, |_, editor, cx| {
-                        // If there's no selection in the editor, select the
-                        // whole buffer's content so as to sort the entire
-                        // buffer.
-                        let snapshot = editor.display_snapshot(cx);
-                        if !editor.has_non_empty_selection(&snapshot) {
-                            editor.select_all(&Default::default(), window, cx);
-                        }
-
-                        editor.sort_lines_case_sensitive(action, window, cx);
-
-                        // Reset selections after lines are sorted.
-                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                            s.select_ranges([Point::new(0, 0)..Point::new(0, 0)]);
-                        })
-                    });
-                },
-            );
-
             normal::register(editor, cx);
             insert::register(editor, cx);
             helix::register(editor, cx);

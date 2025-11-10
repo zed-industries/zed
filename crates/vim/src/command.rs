@@ -725,6 +725,8 @@ struct VimCommand {
     args: Option<
         Box<dyn Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static>,
     >,
+    /// Optional range Range to use if no range is specified.
+    default_range: Option<CommandRange>,
     range: Option<
         Box<
             dyn Fn(Box<dyn Action>, &CommandRange) -> Option<Box<dyn Action>>
@@ -790,6 +792,11 @@ impl VimCommand {
         f: impl Fn(Box<dyn Action>, &CommandRange) -> Option<Box<dyn Action>> + Send + Sync + 'static,
     ) -> Self {
         self.range = Some(Box::new(f));
+        self
+    }
+
+    fn default_range(mut self, range: CommandRange) -> Self {
+        self.default_range = Some(range);
         self
     }
 
@@ -923,6 +930,7 @@ impl VimCommand {
             self.args.as_ref()?(action, args)?
         };
 
+        let range = range.as_ref().or(self.default_range.as_ref());
         if let Some(range) = range {
             self.range.as_ref().and_then(|f| f(action, range))
         } else {
@@ -1121,6 +1129,7 @@ impl CommandRange {
         self.end.as_ref().unwrap_or(&self.start)
     }
 
+    /// Convert the `CommandRange` into a `Range<MultiBufferRow>`.
     pub(crate) fn buffer_range(
         &self,
         vim: &Vim,
@@ -1150,6 +1159,14 @@ impl CommandRange {
             Some(*row)
         } else {
             None
+        }
+    }
+
+    /// The `CommandRange` representing the entire buffer.
+    fn buffer() -> Self {
+        Self {
+            start: Position::Line { row: 1, offset: 0 },
+            end: Some(Position::LastLine { offset: 0 }),
         }
     }
 }
@@ -1421,8 +1438,12 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("delm", "arks"), ArgumentRequired)
             .bang(DeleteMarks::AllLocal)
             .args(|_, args| Some(DeleteMarks::Marks(args).boxed_clone())),
-        VimCommand::new(("sor", "t"), SortLinesCaseSensitive).range(select_range),
-        VimCommand::new(("sort i", ""), SortLinesCaseInsensitive).range(select_range),
+        VimCommand::new(("sor", "t"), SortLinesCaseSensitive)
+            .range(select_range)
+            .default_range(CommandRange::buffer()),
+        VimCommand::new(("sort i", ""), SortLinesCaseInsensitive)
+            .range(select_range)
+            .default_range(CommandRange::buffer()),
         VimCommand::str(("E", "xplore"), "project_panel::ToggleFocus"),
         VimCommand::str(("H", "explore"), "project_panel::ToggleFocus"),
         VimCommand::str(("L", "explore"), "project_panel::ToggleFocus"),
