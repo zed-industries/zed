@@ -48,7 +48,7 @@ use std::{
     iter::{self, Iterator, Peekable},
     mem,
     num::NonZeroU32,
-    ops::{Deref, Range},
+    ops::{Deref, Not, Range},
     path::PathBuf,
     rc,
     sync::{Arc, LazyLock},
@@ -850,7 +850,7 @@ pub struct BracketMatch {
     pub open_range: Range<usize>,
     pub close_range: Range<usize>,
     pub newline_only: bool,
-    pub id: usize,
+    pub id: Option<usize>,
 }
 
 impl BracketMatch {
@@ -4210,7 +4210,7 @@ impl BufferSnapshot {
                             .as_ref()
                             .and_then(|previous_brackets| previous_brackets.last())
                             // Try to continue previous sequence of IDs.
-                            .map(|bracket| bracket.id + 1)
+                            .and_then(|bracket| bracket.id.map(|id| id + 1))
                             // If not possible, start another sequence: pick it far enough to avoid overlaps.
                             //
                             // This for sure will introduce the gaps between chunks' bracket IDs,
@@ -4261,7 +4261,10 @@ impl BufferSnapshot {
                                 open_range,
                                 close_range,
                                 newline_only: pattern.newline_only,
-                                id: post_inc(&mut next_id),
+                                id: pattern
+                                    .rainbow_exclude
+                                    .not()
+                                    .then(|| post_inc(&mut next_id)),
                             });
                         }
                         None

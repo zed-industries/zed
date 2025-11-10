@@ -63,13 +63,15 @@ impl Editor {
                                 ..multi_buffer_snapshot
                                     .anchor_in_excerpt(excerpt_id, buffer_close_range.end)?;
 
-                            let accent_number = pair.id % accents_count;
+                            pair.id.map(|id| {
+                                let accent_number = id % accents_count;
 
-                            Some((
-                                accent_number,
-                                multi_buffer_open_range,
-                                multi_buffer_close_range,
-                            ))
+                                (
+                                    accent_number,
+                                    multi_buffer_open_range,
+                                    multi_buffer_close_range,
+                                )
+                            })
                         });
 
                     for (accent_number, open_range, close_range) in brackets_by_accent {
@@ -109,16 +111,40 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{ops::Range, time::Duration};
 
     use super::*;
-    use crate::{editor_tests::init_test, test::editor_lsp_test_context::EditorLspTestContext};
+    use crate::{
+        editor_tests::init_test,
+        test::{
+            editor_lsp_test_context::EditorLspTestContext, editor_test_context::EditorTestContext,
+        },
+    };
+    use gpui::Hsla;
     use indoc::indoc;
     use language::{BracketPair, BracketPairConfig, Language, LanguageConfig, LanguageMatcher};
     use multi_buffer::AnchorRangeExt as _;
+    use rope::Point;
 
     #[gpui::test]
     async fn test_rainbow_bracket_highlights(cx: &mut gpui::TestAppContext) {
+        fn collect_colored_brackets(
+            cx: &mut EditorTestContext,
+        ) -> Vec<(Option<Hsla>, Range<Point>)> {
+            cx.update_editor(|editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                snapshot
+                    .all_text_highlight_ranges::<RainbowBracketHighlight>()
+                    .iter()
+                    .flat_map(|ranges| {
+                        ranges.1.iter().map(|range| {
+                            (ranges.0.color, range.to_point(&snapshot.buffer_snapshot()))
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+        }
+
         init_test(cx, |language_settings| {
             language_settings.defaults.colorize_brackets = Some(true);
         });
@@ -163,6 +189,8 @@ mod tests {
             cx,
         )
         .await;
+
+        let mut highlighted_brackets = HashMap::default();
 
         // taken from r-a https://github.com/rust-lang/rust-analyzer/blob/d733c07552a2dc0ec0cc8f4df3f0ca969a93fd90/crates/ide/src/inlay_hints.rs#L81-L297
         cx.set_state(indoc! {r#"ˇ
@@ -387,19 +415,12 @@ mod tests {
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
 
-        let actual_ranges = cx.update_editor(|editor, window, cx| {
-            let snapshot = editor.snapshot(window, cx);
-            snapshot
-                .all_text_highlight_ranges::<RainbowBracketHighlight>()
-                .iter()
-                .flat_map(|ranges| {
-                    ranges
-                        .1
-                        .iter()
-                        .map(|range| (ranges.0.color, range.to_point(&snapshot.buffer_snapshot())))
-                })
-                .collect::<Vec<_>>()
-        });
+        let actual_ranges = collect_colored_brackets(&mut cx);
+
+        for (color, range) in actual_ranges.iter().cloned() {
+            highlighted_brackets.insert(range, color);
+        }
+
         let last_bracket = actual_ranges
             .iter()
             .max_by_key(|(_, p)| p.end.row)
@@ -417,28 +438,40 @@ mod tests {
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
 
-        let ranges_after_scrolling = cx.update_editor(|editor, window, cx| {
-            let snapshot = editor.snapshot(window, cx);
-            snapshot
-                .all_text_highlight_ranges::<RainbowBracketHighlight>()
-                .iter()
-                .flat_map(|ranges| {
-                    ranges
-                        .1
-                        .iter()
-                        .map(|range| (ranges.0.color, range.to_point(&snapshot.buffer_snapshot())))
-                })
-                .collect::<Vec<_>>()
-        });
+        let ranges_after_scrolling = collect_colored_brackets(&mut cx);
         let new_last_bracket = ranges_after_scrolling
             .iter()
             .max_by_key(|(_, p)| p.end.row)
             .unwrap()
             .clone();
-        // todo! more tests, check consistency of the colors picked also, settings toggle
+
         assert_ne!(
             last_bracket, new_last_bracket,
             "After scrolling down, we should have highlighted more brackets"
         );
+
+        cx.update_editor(|editor, window, cx| {
+            let was_scrolled = editor.set_scroll_position(gpui::Point::default(), window, cx);
+            assert!(was_scrolled.0);
+        });
+
+        for _ in 0..200 {
+            cx.update_editor(|editor, window, cx| {
+                editor.apply_scroll_delta(gpui::Point::new(0.0, 0.25), window, cx);
+            });
+            cx.executor().run_until_parked();
+
+            for (color, range) in collect_colored_brackets(&mut cx) {
+                assert!(
+                    highlighted_brackets
+                        .entry(range.clone())
+                        .or_insert(color.clone())
+                        == &color,
+                    "Colors should stay consistent while scrolling!"
+                );
+            }
+        }
+
+        // todo! more tests, check no brackets missing in range, settings toggle
     }
 }

@@ -1322,6 +1322,7 @@ struct BracketsConfig {
 #[derive(Clone, Debug, Default)]
 struct BracketsPatternConfig {
     newline_only: bool,
+    rainbow_exclude: bool,
 }
 
 pub struct DebugVariablesConfig {
@@ -1684,8 +1685,12 @@ impl Language {
                 .map(|ix| {
                     let mut config = BracketsPatternConfig::default();
                     for setting in query.property_settings(ix) {
-                        if setting.key.as_ref() == "newline.only" {
+                        let setting_key = setting.key.as_ref();
+                        if setting_key == "newline.only" {
                             config.newline_only = true
+                        }
+                        if setting_key == "rainbow.exclude" {
+                            config.rainbow_exclude = true
                         }
                     }
                     config
