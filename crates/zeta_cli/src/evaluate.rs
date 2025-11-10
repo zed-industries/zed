@@ -1,5 +1,4 @@
 use std::{
-    fs,
     io::IsTerminal,
     path::{Path, PathBuf},
     sync::Arc,
@@ -7,11 +6,12 @@ use std::{
 
 use anyhow::Result;
 use clap::Args;
-use cloud_llm_client::udiff::DiffLine;
 use collections::HashSet;
 use gpui::AsyncApp;
+use zeta2::udiff::DiffLine;
 
 use crate::{
+    PromptFormat,
     example::{Example, NamedExample},
     headless::ZetaCliAppState,
     predict::{PredictionDetails, zeta2_predict},
@@ -21,7 +21,9 @@ use crate::{
 pub struct EvaluateArguments {
     example_paths: Vec<PathBuf>,
     #[clap(long)]
-    re_run: bool,
+    skip_cache: bool,
+    #[arg(long, value_enum, default_value_t = PromptFormat::default())]
+    prompt_format: PromptFormat,
 }
 
 pub async fn run_evaluate(
@@ -32,7 +34,16 @@ pub async fn run_evaluate(
     let example_len = args.example_paths.len();
     let all_tasks = args.example_paths.into_iter().map(|path| {
         let app_state = app_state.clone();
-        cx.spawn(async move |cx| run_evaluate_one(&path, args.re_run, app_state.clone(), cx).await)
+        cx.spawn(async move |cx| {
+            run_evaluate_one(
+                &path,
+                args.skip_cache,
+                args.prompt_format,
+                app_state.clone(),
+                cx,
+            )
+            .await
+        })
     });
     let all_results = futures::future::try_join_all(all_tasks).await.unwrap();
 
@@ -50,45 +61,18 @@ pub async fn run_evaluate(
 
 pub async fn run_evaluate_one(
     example_path: &Path,
-    re_run: bool,
+    skip_cache: bool,
+    prompt_format: PromptFormat,
     app_state: Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) -> Result<EvaluationResult> {
-    let cache_dir = Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default())
-        .join("../../target/zeta-prediction-cache");
     let example = NamedExample::load(&example_path).unwrap();
-    let example_cache_path = cache_dir.join(&example_path.file_name().unwrap());
-
-    let predictions = if !re_run && example_cache_path.exists() {
-        let file_contents = fs::read_to_string(&example_cache_path)?;
-        let as_json = serde_json::from_str::<PredictionDetails>(&file_contents)?;
-        log::debug!(
-            "Loaded predictions from cache: {}",
-            example_cache_path.display()
-        );
-        as_json
-    } else {
-        zeta2_predict(example.clone(), &app_state, cx)
-            .await
-            .unwrap()
-    };
-
-    if !example_cache_path.exists() {
-        fs::create_dir_all(&cache_dir).unwrap();
-        fs::write(
-            example_cache_path,
-            serde_json::to_string(&predictions).unwrap(),
-        )
+    let predictions = zeta2_predict(example.clone(), skip_cache, prompt_format, &app_state, cx)
+        .await
         .unwrap();
-    }
 
     let evaluation_result = evaluate(&example.example, &predictions);
 
-    println!("# {}\n", example.name);
-    println!(
-        "## Expected Context: \n\n```\n{}\n```\n\n",
-        compare_context(&example.example, &predictions)
-    );
     println!(
         "## Expected edit prediction:\n\n```diff\n{}\n```\n",
         compare_diffs(&example.example.expected_patch, &predictions.diff)
@@ -105,21 +89,30 @@ pub async fn run_evaluate_one(
 
 #[derive(Debug, Default)]
 pub struct EvaluationResult {
-    pub context: Scores,
     pub edit_prediction: Scores,
+    pub context: Scores,
 }
 
 #[derive(Default, Debug)]
 pub struct Scores {
-    pub precision: f64,
-    pub recall: f64,
-    pub f1_score: f64,
     pub true_positives: usize,
     pub false_positives: usize,
     pub false_negatives: usize,
 }
 
 impl Scores {
+    pub fn new(expected: &HashSet<String>, actual: &HashSet<String>) -> Scores {
+        let true_positives = expected.intersection(actual).count();
+        let false_positives = actual.difference(expected).count();
+        let false_negatives = expected.difference(actual).count();
+
+        Scores {
+            true_positives,
+            false_positives,
+            false_negatives,
+        }
+    }
+
     pub fn to_markdown(&self) -> String {
         format!(
             "
@@ -129,17 +122,15 @@ F1 Score        : {:.4}
 True Positives  : {}
 False Positives : {}
 False Negatives : {}",
-            self.precision,
-            self.recall,
-            self.f1_score,
+            self.precision(),
+            self.recall(),
+            self.f1_score(),
             self.true_positives,
             self.false_positives,
             self.false_negatives
         )
     }
-}
 
-impl Scores {
     pub fn aggregate<'a>(scores: impl Iterator<Item = &'a Scores>) -> Scores {
         let mut true_positives = 0;
         let mut false_positives = 0;
@@ -151,20 +142,36 @@ impl Scores {
             false_negatives += score.false_negatives;
         }
 
-        let precision = true_positives as f64 / (true_positives + false_positives) as f64;
-        let recall = true_positives as f64 / (true_positives + false_negatives) as f64;
-        let mut f1_score = 2.0 * precision * recall / (precision + recall);
-        if f1_score.is_nan() {
-            f1_score = 0.0;
-        }
-
         Scores {
-            precision,
-            recall,
-            f1_score,
             true_positives,
             false_positives,
             false_negatives,
+        }
+    }
+
+    pub fn precision(&self) -> f64 {
+        if self.true_positives + self.false_positives == 0 {
+            0.0
+        } else {
+            self.true_positives as f64 / (self.true_positives + self.false_positives) as f64
+        }
+    }
+
+    pub fn recall(&self) -> f64 {
+        if self.true_positives + self.false_negatives == 0 {
+            0.0
+        } else {
+            self.true_positives as f64 / (self.true_positives + self.false_negatives) as f64
+        }
+    }
+
+    pub fn f1_score(&self) -> f64 {
+        let recall = self.recall();
+        let precision = self.precision();
+        if precision + recall == 0.0 {
+            0.0
+        } else {
+            2.0 * precision * recall / (precision + recall)
         }
     }
 }
@@ -186,19 +193,9 @@ impl EvaluationResult {
 }
 
 pub fn evaluate(example: &Example, preds: &PredictionDetails) -> EvaluationResult {
-    let mut result = EvaluationResult::default();
+    let mut eval_result = EvaluationResult::default();
 
-    let expected_context_lines = example
-        .expected_excerpts
-        .iter()
-        .flat_map(|excerpt| {
-            excerpt
-                .text
-                .lines()
-                .map(|line| format!("{}: {line}", excerpt.path.display()))
-        })
-        .collect();
-    let actual_context_lines = preds
+    let actual_context_lines: HashSet<_> = preds
         .excerpts
         .iter()
         .flat_map(|excerpt| {
@@ -209,8 +206,39 @@ pub fn evaluate(example: &Example, preds: &PredictionDetails) -> EvaluationResul
         })
         .collect();
 
-    result.context = precision_recall(&expected_context_lines, &actual_context_lines);
+    let mut false_positive_lines = actual_context_lines.clone();
 
+    for entry in &example.expected_context {
+        let mut best_alternative_score = Scores::default();
+
+        for alternative in &entry.alternatives {
+            let expected: HashSet<_> = alternative
+                .excerpts
+                .iter()
+                .flat_map(|excerpt| {
+                    excerpt
+                        .text
+                        .lines()
+                        .map(|line| format!("{}: {line}", excerpt.path.display()))
+                })
+                .collect();
+
+            let scores = Scores::new(&expected, &actual_context_lines);
+
+            false_positive_lines.retain(|line| !actual_context_lines.contains(line));
+
+            if scores.recall() > best_alternative_score.recall() {
+                best_alternative_score = scores;
+            }
+        }
+
+        eval_result.context.false_negatives += best_alternative_score.false_negatives;
+        eval_result.context.true_positives += best_alternative_score.true_positives;
+    }
+
+    eval_result.context.false_positives = false_positive_lines.len();
+
+    // todo: alternatives for patches
     let expected_patch_lines = example
         .expected_patch
         .lines()
@@ -227,86 +255,8 @@ pub fn evaluate(example: &Example, preds: &PredictionDetails) -> EvaluationResul
         .map(|line| line.to_string())
         .collect();
 
-    result.edit_prediction = precision_recall(&expected_patch_lines, &actual_patch_lines);
-
-    result
-}
-
-fn precision_recall(expected: &HashSet<String>, actual: &HashSet<String>) -> Scores {
-    let true_positives = expected.intersection(actual).count();
-    let false_positives = actual.difference(expected).count();
-    let false_negatives = expected.difference(actual).count();
-
-    let precision = if true_positives + false_positives == 0 {
-        0.0
-    } else {
-        true_positives as f64 / (true_positives + false_positives) as f64
-    };
-    let recall = if true_positives + false_negatives == 0 {
-        0.0
-    } else {
-        true_positives as f64 / (true_positives + false_negatives) as f64
-    };
-    let f1_score = if precision + recall == 0.0 {
-        0.0
-    } else {
-        2.0 * precision * recall / (precision + recall)
-    };
-
-    Scores {
-        precision,
-        recall,
-        f1_score,
-        true_positives,
-        false_positives,
-        false_negatives,
-    }
-}
-
-/// Compare actual and expected context.
-///
-/// Return expected context annotated with these markers:
-///
-/// `✓ context line`  -- line was correctly predicted
-/// `✗ context line`  -- line is missing from predictions
-pub fn compare_context(example: &Example, preds: &PredictionDetails) -> String {
-    let use_color = std::io::stdout().is_terminal();
-    let green = if use_color { "\x1b[32m" } else { "" };
-    let red = if use_color { "\x1b[31m" } else { "" };
-    let reset = if use_color { "\x1b[0m" } else { "" };
-    let expected: Vec<_> = example
-        .expected_excerpts
-        .iter()
-        .flat_map(|excerpt| {
-            excerpt
-                .text
-                .lines()
-                .map(|line| (excerpt.path.clone(), line))
-        })
-        .collect();
-    let actual: HashSet<_> = preds
-        .excerpts
-        .iter()
-        .flat_map(|excerpt| {
-            excerpt
-                .text
-                .lines()
-                .map(|line| (excerpt.path.clone(), line))
-        })
-        .collect();
-
-    let annotated = expected
-        .iter()
-        .map(|(path, line)| {
-            if actual.contains(&(path.to_path_buf(), line)) {
-                format!("{green}✓ {line}{reset}")
-            } else {
-                format!("{red}✗ {line}{reset}")
-            }
-        })
-        .collect::<Vec<String>>();
-
-    annotated.join("\n")
+    eval_result.edit_prediction = Scores::new(&expected_patch_lines, &actual_patch_lines);
+    eval_result
 }
 
 /// Return annotated `patch_a` so that:

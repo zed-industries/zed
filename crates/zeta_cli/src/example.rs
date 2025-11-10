@@ -1,34 +1,38 @@
 use std::{
     borrow::Cow,
     cell::RefCell,
-    env,
     fmt::{self, Display},
     fs,
     io::Write,
     mem,
-    ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use clap::ValueEnum;
-use collections::{HashMap, HashSet};
+use cloud_zeta2_prompt::CURSOR_MARKER;
+use collections::HashMap;
+use edit_prediction_context::Line;
 use futures::{
     AsyncWriteExt as _,
     lock::{Mutex, OwnedMutexGuard},
 };
 use gpui::{AsyncApp, Entity, http_client::Url};
-use language::Buffer;
+use language::{Anchor, Buffer};
 use project::{Project, ProjectPath};
 use pulldown_cmark::CowStr;
 use serde::{Deserialize, Serialize};
+use util::{paths::PathStyle, rel_path::RelPath};
+use zeta2::udiff::OpenedBuffers;
+
+use crate::paths::{REPOS_DIR, WORKTREES_DIR};
 
 const UNCOMMITTED_DIFF_HEADING: &str = "Uncommitted Diff";
 const EDIT_HISTORY_HEADING: &str = "Edit History";
 const CURSOR_POSITION_HEADING: &str = "Cursor Position";
 const EXPECTED_PATCH_HEADING: &str = "Expected Patch";
-const EXPECTED_EXCERPTS_HEADING: &str = "Expected Excerpts";
+const EXPECTED_CONTEXT_HEADING: &str = "Expected Context";
 const REPOSITORY_URL_FIELD: &str = "repository_url";
 const REVISION_FIELD: &str = "revision";
 
@@ -47,16 +51,34 @@ pub struct Example {
     pub cursor_position: String,
     pub edit_history: String,
     pub expected_patch: String,
-    pub expected_excerpts: Vec<ExpectedExcerpt>,
+    pub expected_context: Vec<ExpectedContextEntry>,
 }
 
-pub type ExpectedExcerpt = Excerpt;
 pub type ActualExcerpt = Excerpt;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Excerpt {
     pub path: PathBuf,
     pub text: String,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
+pub struct ExpectedContextEntry {
+    pub heading: String,
+    pub alternatives: Vec<ExpectedExcerptSet>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
+pub struct ExpectedExcerptSet {
+    pub heading: String,
+    pub excerpts: Vec<ExpectedExcerpt>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExpectedExcerpt {
+    pub path: PathBuf,
+    pub text: String,
+    pub required_lines: Vec<Line>,
 }
 
 #[derive(ValueEnum, Debug, Clone)]
@@ -108,13 +130,24 @@ impl NamedExample {
                 cursor_position: String::new(),
                 edit_history: String::new(),
                 expected_patch: String::new(),
-                expected_excerpts: Vec::new(),
+                expected_context: Vec::new(),
             },
         };
 
         let mut text = String::new();
-        let mut current_section = String::new();
         let mut block_info: CowStr = "".into();
+
+        #[derive(PartialEq)]
+        enum Section {
+            UncommittedDiff,
+            EditHistory,
+            CursorPosition,
+            ExpectedExcerpts,
+            ExpectedPatch,
+            Other,
+        }
+
+        let mut current_section = Section::Other;
 
         for event in parser {
             match event {
@@ -122,7 +155,7 @@ impl NamedExample {
                     text.push_str(&line);
 
                     if !named.name.is_empty()
-                        && current_section.is_empty()
+                        && current_section == Section::Other
                         // in h1 section
                         && let Some((field, value)) = line.split_once('=')
                     {
@@ -133,9 +166,7 @@ impl NamedExample {
                             REVISION_FIELD => {
                                 named.example.revision = value.trim().to_string();
                             }
-                            _ => {
-                                eprintln!("Warning: Unrecognized field `{field}`");
-                            }
+                            _ => {}
                         }
                     }
                 }
@@ -148,7 +179,46 @@ impl NamedExample {
                     named.name = mem::take(&mut text);
                 }
                 Event::End(TagEnd::Heading(HeadingLevel::H2)) => {
-                    current_section = mem::take(&mut text);
+                    let title = mem::take(&mut text);
+                    current_section = if title.eq_ignore_ascii_case(UNCOMMITTED_DIFF_HEADING) {
+                        Section::UncommittedDiff
+                    } else if title.eq_ignore_ascii_case(EDIT_HISTORY_HEADING) {
+                        Section::EditHistory
+                    } else if title.eq_ignore_ascii_case(CURSOR_POSITION_HEADING) {
+                        Section::CursorPosition
+                    } else if title.eq_ignore_ascii_case(EXPECTED_PATCH_HEADING) {
+                        Section::ExpectedPatch
+                    } else if title.eq_ignore_ascii_case(EXPECTED_CONTEXT_HEADING) {
+                        Section::ExpectedExcerpts
+                    } else {
+                        Section::Other
+                    };
+                }
+                Event::End(TagEnd::Heading(HeadingLevel::H3)) => {
+                    let heading = mem::take(&mut text);
+                    match current_section {
+                        Section::ExpectedExcerpts => {
+                            named.example.expected_context.push(ExpectedContextEntry {
+                                heading,
+                                alternatives: Vec::new(),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+                Event::End(TagEnd::Heading(HeadingLevel::H4)) => {
+                    let heading = mem::take(&mut text);
+                    match current_section {
+                        Section::ExpectedExcerpts => {
+                            let expected_context = &mut named.example.expected_context;
+                            let last_entry = expected_context.last_mut().unwrap();
+                            last_entry.alternatives.push(ExpectedExcerptSet {
+                                heading,
+                                excerpts: Vec::new(),
+                            })
+                        }
+                        _ => {}
+                    }
                 }
                 Event::End(TagEnd::Heading(level)) => {
                     anyhow::bail!("Unexpected heading level: {level}");
@@ -169,23 +239,53 @@ impl NamedExample {
                 }
                 Event::End(TagEnd::CodeBlock) => {
                     let block_info = block_info.trim();
-                    if current_section.eq_ignore_ascii_case(UNCOMMITTED_DIFF_HEADING) {
-                        named.example.uncommitted_diff = mem::take(&mut text);
-                    } else if current_section.eq_ignore_ascii_case(EDIT_HISTORY_HEADING) {
-                        named.example.edit_history.push_str(&mem::take(&mut text));
-                    } else if current_section.eq_ignore_ascii_case(CURSOR_POSITION_HEADING) {
-                        named.example.cursor_path = block_info.into();
-                        named.example.cursor_position = mem::take(&mut text);
-                    } else if current_section.eq_ignore_ascii_case(EXPECTED_PATCH_HEADING) {
-                        named.example.expected_patch = mem::take(&mut text);
-                    } else if current_section.eq_ignore_ascii_case(EXPECTED_EXCERPTS_HEADING) {
-                        // TODO: "…" should not be a part of the excerpt
-                        named.example.expected_excerpts.push(ExpectedExcerpt {
-                            path: block_info.into(),
-                            text: mem::take(&mut text),
-                        });
-                    } else {
-                        eprintln!("Warning: Unrecognized section `{current_section:?}`")
+                    match current_section {
+                        Section::UncommittedDiff => {
+                            named.example.uncommitted_diff = mem::take(&mut text);
+                        }
+                        Section::EditHistory => {
+                            named.example.edit_history.push_str(&mem::take(&mut text));
+                        }
+                        Section::CursorPosition => {
+                            named.example.cursor_path = block_info.into();
+                            named.example.cursor_position = mem::take(&mut text);
+                        }
+                        Section::ExpectedExcerpts => {
+                            let text = mem::take(&mut text);
+                            for excerpt in text.split("\n…\n") {
+                                let (mut text, required_lines) = extract_required_lines(&excerpt);
+                                if !text.ends_with('\n') {
+                                    text.push('\n');
+                                }
+                                let alternatives = &mut named
+                                    .example
+                                    .expected_context
+                                    .last_mut()
+                                    .unwrap()
+                                    .alternatives;
+
+                                if alternatives.is_empty() {
+                                    alternatives.push(ExpectedExcerptSet {
+                                        heading: String::new(),
+                                        excerpts: vec![],
+                                    });
+                                }
+
+                                alternatives
+                                    .last_mut()
+                                    .unwrap()
+                                    .excerpts
+                                    .push(ExpectedExcerpt {
+                                        path: block_info.into(),
+                                        text,
+                                        required_lines,
+                                    });
+                            }
+                        }
+                        Section::ExpectedPatch => {
+                            named.example.expected_patch = mem::take(&mut text);
+                        }
+                        Section::Other => {}
                     }
                 }
                 _ => {}
@@ -215,12 +315,10 @@ impl NamedExample {
         let (repo_owner, repo_name) = self.repo_name()?;
         let file_name = self.file_name();
 
-        let worktrees_dir = env::current_dir()?.join("target").join("zeta-worktrees");
-        let repos_dir = env::current_dir()?.join("target").join("zeta-repos");
-        fs::create_dir_all(&repos_dir)?;
-        fs::create_dir_all(&worktrees_dir)?;
+        fs::create_dir_all(&*REPOS_DIR)?;
+        fs::create_dir_all(&*WORKTREES_DIR)?;
 
-        let repo_dir = repos_dir.join(repo_owner.as_ref()).join(repo_name.as_ref());
+        let repo_dir = REPOS_DIR.join(repo_owner.as_ref()).join(repo_name.as_ref());
         let repo_lock = lock_repo(&repo_dir).await;
 
         if !repo_dir.is_dir() {
@@ -251,7 +349,7 @@ impl NamedExample {
         };
 
         // Create the worktree for this example if needed.
-        let worktree_path = worktrees_dir.join(&file_name);
+        let worktree_path = WORKTREES_DIR.join(&file_name);
         if worktree_path.is_dir() {
             run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
             run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
@@ -309,7 +407,6 @@ impl NamedExample {
             .collect()
     }
 
-    #[allow(unused)]
     fn repo_name(&self) -> Result<(Cow<'_, str>, Cow<'_, str>)> {
         // git@github.com:owner/repo.git
         if self.example.repository_url.contains('@') {
@@ -344,14 +441,105 @@ impl NamedExample {
         }
     }
 
+    pub async fn cursor_position(
+        &self,
+        project: &Entity<Project>,
+        cx: &mut AsyncApp,
+    ) -> Result<(Entity<Buffer>, Anchor)> {
+        let worktree = project.read_with(cx, |project, cx| {
+            project.visible_worktrees(cx).next().unwrap()
+        })?;
+        let cursor_path = RelPath::new(&self.example.cursor_path, PathStyle::Posix)?.into_arc();
+        let cursor_buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer(
+                    ProjectPath {
+                        worktree_id: worktree.read(cx).id(),
+                        path: cursor_path,
+                    },
+                    cx,
+                )
+            })?
+            .await?;
+        let cursor_offset_within_excerpt = self
+            .example
+            .cursor_position
+            .find(CURSOR_MARKER)
+            .ok_or_else(|| anyhow!("missing cursor marker"))?;
+        let mut cursor_excerpt = self.example.cursor_position.clone();
+        cursor_excerpt.replace_range(
+            cursor_offset_within_excerpt..(cursor_offset_within_excerpt + CURSOR_MARKER.len()),
+            "",
+        );
+        let excerpt_offset = cursor_buffer.read_with(cx, |buffer, _cx| {
+            let text = buffer.text();
+
+            let mut matches = text.match_indices(&cursor_excerpt);
+            let Some((excerpt_offset, _)) = matches.next() else {
+                anyhow::bail!(
+                    "Cursor excerpt did not exist in buffer.\nExcerpt:\n\n{cursor_excerpt}\nBuffer text:\n{text}\n"
+                );
+            };
+            assert!(matches.next().is_none());
+
+            Ok(excerpt_offset)
+        })??;
+
+        let cursor_offset = excerpt_offset + cursor_offset_within_excerpt;
+        let cursor_anchor =
+            cursor_buffer.read_with(cx, |buffer, _| buffer.anchor_after(cursor_offset))?;
+        Ok((cursor_buffer, cursor_anchor))
+    }
+
     #[must_use]
     pub async fn apply_edit_history(
         &self,
         project: &Entity<Project>,
         cx: &mut AsyncApp,
-    ) -> Result<HashSet<Entity<Buffer>>> {
-        apply_diff(&self.example.edit_history, project, cx).await
+    ) -> Result<OpenedBuffers<'_>> {
+        zeta2::udiff::apply_diff(&self.example.edit_history, project, cx).await
     }
+}
+
+fn extract_required_lines(text: &str) -> (String, Vec<Line>) {
+    const MARKER: &str = "[ZETA]";
+    let mut new_text = String::new();
+    let mut required_lines = Vec::new();
+    let mut skipped_lines = 0_u32;
+
+    for (row, mut line) in text.split('\n').enumerate() {
+        if let Some(marker_column) = line.find(MARKER) {
+            let mut strip_column = marker_column;
+
+            while strip_column > 0 {
+                let prev_char = line[strip_column - 1..].chars().next().unwrap();
+                if prev_char.is_whitespace() || ['/', '#'].contains(&prev_char) {
+                    strip_column -= 1;
+                } else {
+                    break;
+                }
+            }
+
+            let metadata = &line[marker_column + MARKER.len()..];
+            if metadata.contains("required") {
+                required_lines.push(Line(row as u32 - skipped_lines));
+            }
+
+            if strip_column == 0 {
+                skipped_lines += 1;
+                continue;
+            }
+
+            line = &line[..strip_column];
+        }
+
+        new_text.push_str(line);
+        new_text.push('\n');
+    }
+
+    new_text.pop();
+
+    (new_text, required_lines)
 }
 
 async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
@@ -408,21 +596,34 @@ impl Display for NamedExample {
             )?;
         }
 
-        if !self.example.expected_excerpts.is_empty() {
-            write!(f, "\n## {EXPECTED_EXCERPTS_HEADING}\n\n")?;
+        if !self.example.expected_context.is_empty() {
+            write!(f, "\n## {EXPECTED_CONTEXT_HEADING}\n\n")?;
 
-            for excerpt in &self.example.expected_excerpts {
-                write!(
-                    f,
-                    "`````{}{}\n{}`````\n\n",
-                    excerpt
-                        .path
-                        .extension()
-                        .map(|ext| format!("{} ", ext.to_string_lossy()))
-                        .unwrap_or_default(),
-                    excerpt.path.display(),
-                    excerpt.text
-                )?;
+            for entry in &self.example.expected_context {
+                write!(f, "\n### {}\n\n", entry.heading)?;
+
+                let skip_h4 =
+                    entry.alternatives.len() == 1 && entry.alternatives[0].heading.is_empty();
+
+                for excerpt_set in &entry.alternatives {
+                    if !skip_h4 {
+                        write!(f, "\n#### {}\n\n", excerpt_set.heading)?;
+                    }
+
+                    for excerpt in &excerpt_set.excerpts {
+                        write!(
+                            f,
+                            "`````{}{}\n{}`````\n\n",
+                            excerpt
+                                .path
+                                .extension()
+                                .map(|ext| format!("{} ", ext.to_string_lossy()))
+                                .unwrap_or_default(),
+                            excerpt.path.display(),
+                            excerpt.text
+                        )?;
+                    }
+                }
             }
         }
 
@@ -447,403 +648,37 @@ pub async fn lock_repo(path: impl AsRef<Path>) -> OwnedMutexGuard<()> {
         .await
 }
 
-#[must_use]
-pub async fn apply_diff(
-    diff: &str,
-    project: &Entity<Project>,
-    cx: &mut AsyncApp,
-) -> Result<HashSet<Entity<Buffer>>> {
-    use cloud_llm_client::udiff::DiffLine;
-    use std::fmt::Write;
-
-    #[derive(Debug, Default)]
-    struct HunkState {
-        context: String,
-        edits: Vec<Edit>,
-    }
-
-    #[derive(Debug)]
-    struct Edit {
-        range: Range<usize>,
-        text: String,
-    }
-
-    let mut old_path = None;
-    let mut new_path = None;
-    let mut hunk = HunkState::default();
-    let mut diff_lines = diff.lines().map(DiffLine::parse).peekable();
-    let mut open_buffers = HashSet::default();
-
-    while let Some(diff_line) = diff_lines.next() {
-        match diff_line {
-            DiffLine::OldPath { path } => old_path = Some(path),
-            DiffLine::NewPath { path } => {
-                if old_path.is_none() {
-                    anyhow::bail!(
-                        "Found a new path header (`+++`) before an (`---`) old path header"
-                    );
-                }
-                new_path = Some(path)
-            }
-            DiffLine::Context(ctx) => {
-                writeln!(&mut hunk.context, "{ctx}")?;
-            }
-            DiffLine::Deletion(del) => {
-                let range = hunk.context.len()..hunk.context.len() + del.len() + '\n'.len_utf8();
-                if let Some(last_edit) = hunk.edits.last_mut()
-                    && last_edit.range.end == range.start
-                {
-                    last_edit.range.end = range.end;
-                } else {
-                    hunk.edits.push(Edit {
-                        range,
-                        text: String::new(),
-                    });
-                }
-                writeln!(&mut hunk.context, "{del}")?;
-            }
-            DiffLine::Addition(add) => {
-                let range = hunk.context.len()..hunk.context.len();
-                if let Some(last_edit) = hunk.edits.last_mut()
-                    && last_edit.range.end == range.start
-                {
-                    writeln!(&mut last_edit.text, "{add}").unwrap();
-                } else {
-                    hunk.edits.push(Edit {
-                        range,
-                        text: format!("{add}\n"),
-                    });
-                }
-            }
-            DiffLine::HunkHeader(_) | DiffLine::Garbage(_) => {}
-        }
-
-        let at_hunk_end = match diff_lines.peek() {
-            Some(DiffLine::OldPath { .. }) | Some(DiffLine::HunkHeader(_)) | None => true,
-            _ => false,
-        };
-
-        if at_hunk_end {
-            let hunk = mem::take(&mut hunk);
-
-            let Some(old_path) = old_path.as_deref() else {
-                anyhow::bail!("Missing old path (`---`) header")
-            };
-
-            let Some(new_path) = new_path.as_deref() else {
-                anyhow::bail!("Missing new path (`+++`) header")
-            };
-
-            let buffer = project
-                .update(cx, |project, cx| {
-                    let project_path = project
-                        .find_project_path(old_path, cx)
-                        .context("Failed to find old_path in project")?;
-
-                    anyhow::Ok(project.open_buffer(project_path, cx))
-                })??
-                .await?;
-            open_buffers.insert(buffer.clone());
-
-            if old_path != new_path {
-                project
-                    .update(cx, |project, cx| {
-                        let project_file = project::File::from_dyn(buffer.read(cx).file()).unwrap();
-                        let new_path = ProjectPath {
-                            worktree_id: project_file.worktree_id(cx),
-                            path: project_file.path.clone(),
-                        };
-                        project.rename_entry(project_file.entry_id.unwrap(), new_path, cx)
-                    })?
-                    .await?;
-            }
-
-            // TODO is it worth using project search?
-            buffer.update(cx, |buffer, cx| {
-                let context_offset = if hunk.context.is_empty() {
-                    0
-                } else {
-                    let text = buffer.text();
-                    if let Some(offset) = text.find(&hunk.context) {
-                        if text[offset + 1..].contains(&hunk.context) {
-                            anyhow::bail!("Context is not unique enough:\n{}", hunk.context);
-                        }
-                        offset
-                    } else {
-                        anyhow::bail!(
-                            "Failed to match context:\n{}\n\nBuffer:\n{}",
-                            hunk.context,
-                            text
-                        );
-                    }
-                };
-
-                buffer.edit(
-                    hunk.edits.into_iter().map(|edit| {
-                        (
-                            context_offset + edit.range.start..context_offset + edit.range.end,
-                            edit.text,
-                        )
-                    }),
-                    None,
-                    cx,
-                );
-
-                anyhow::Ok(())
-            })??;
-        }
-    }
-
-    anyhow::Ok(open_buffers)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ::fs::FakeFs;
-    use gpui::TestAppContext;
     use indoc::indoc;
     use pretty_assertions::assert_eq;
-    use project::Project;
-    use serde_json::json;
-    use settings::SettingsStore;
-    use util::path;
 
-    #[gpui::test]
-    async fn test_apply_diff_successful(cx: &mut TestAppContext) {
-        let buffer_1_text = indoc! {r#"
+    #[test]
+    fn test_extract_required_lines() {
+        let input = indoc! {"
+            zero
+            one // [ZETA] required
+            two
+            // [ZETA] something
+            three
+            four # [ZETA] required
+            five
+        "};
+
+        let expected_updated_input = indoc! {"
+            zero
             one
             two
             three
             four
             five
-        "# };
+        "};
 
-        let buffer_1_text_final = indoc! {r#"
-            3
-            4
-            5
-        "# };
+        let expected_required_lines = vec![Line(1), Line(4)];
 
-        let buffer_2_text = indoc! {r#"
-            six
-            seven
-            eight
-            nine
-            ten
-        "# };
-
-        let buffer_2_text_final = indoc! {r#"
-            5
-            six
-            seven
-            7.5
-            eight
-            nine
-            ten
-            11
-        "# };
-
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            Project::init_settings(cx);
-            language::init(cx);
-        });
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            path!("/root"),
-            json!({
-                "file1": buffer_1_text,
-                "file2": buffer_2_text,
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
-
-        let diff = indoc! {r#"
-            --- a/root/file1
-            +++ b/root/file1
-             one
-             two
-            -three
-            +3
-             four
-             five
-            --- a/root/file1
-            +++ b/root/file1
-             3
-            -four
-            -five
-            +4
-            +5
-            --- a/root/file1
-            +++ b/root/file1
-            -one
-            -two
-             3
-             4
-            --- a/root/file2
-            +++ b/root/file2
-            +5
-             six
-            --- a/root/file2
-            +++ b/root/file2
-             seven
-            +7.5
-             eight
-            --- a/root/file2
-            +++ b/root/file2
-             ten
-            +11
-        "#};
-
-        let _buffers = apply_diff(diff, &project, &mut cx.to_async())
-            .await
-            .unwrap();
-        let buffer_1 = project
-            .update(cx, |project, cx| {
-                let project_path = project.find_project_path(path!("/root/file1"), cx).unwrap();
-                project.open_buffer(project_path, cx)
-            })
-            .await
-            .unwrap();
-
-        buffer_1.read_with(cx, |buffer, _cx| {
-            assert_eq!(buffer.text(), buffer_1_text_final);
-        });
-        let buffer_2 = project
-            .update(cx, |project, cx| {
-                let project_path = project.find_project_path(path!("/root/file2"), cx).unwrap();
-                project.open_buffer(project_path, cx)
-            })
-            .await
-            .unwrap();
-
-        buffer_2.read_with(cx, |buffer, _cx| {
-            assert_eq!(buffer.text(), buffer_2_text_final);
-        });
-    }
-
-    #[gpui::test]
-    async fn test_apply_diff_non_unique(cx: &mut TestAppContext) {
-        let buffer_1_text = indoc! {r#"
-            one
-            two
-            three
-            four
-            five
-            one
-            two
-            three
-            four
-            five
-        "# };
-
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            Project::init_settings(cx);
-            language::init(cx);
-        });
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            path!("/root"),
-            json!({
-                "file1": buffer_1_text,
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
-
-        let diff = indoc! {r#"
-            --- a/root/file1
-            +++ b/root/file1
-             one
-             two
-            -three
-            +3
-             four
-             five
-        "#};
-
-        apply_diff(diff, &project, &mut cx.to_async())
-            .await
-            .expect_err("Non-unique edits should fail");
-    }
-
-    #[gpui::test]
-    async fn test_apply_diff_unique_via_previous_context(cx: &mut TestAppContext) {
-        let start = indoc! {r#"
-            one
-            two
-            three
-            four
-            five
-
-            four
-            five
-        "# };
-
-        let end = indoc! {r#"
-            one
-            two
-            3
-            four
-            5
-
-            four
-            five
-        "# };
-
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            Project::init_settings(cx);
-            language::init(cx);
-        });
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            path!("/root"),
-            json!({
-                "file1": start,
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
-
-        let diff = indoc! {r#"
-            --- a/root/file1
-            +++ b/root/file1
-             one
-             two
-            -three
-            +3
-             four
-            -five
-            +5
-        "#};
-
-        let _buffers = apply_diff(diff, &project, &mut cx.to_async())
-            .await
-            .unwrap();
-
-        let buffer_1 = project
-            .update(cx, |project, cx| {
-                let project_path = project.find_project_path(path!("/root/file1"), cx).unwrap();
-                project.open_buffer(project_path, cx)
-            })
-            .await
-            .unwrap();
-
-        buffer_1.read_with(cx, |buffer, _cx| {
-            assert_eq!(buffer.text(), end);
-        });
+        let (updated_input, required_lines) = extract_required_lines(input);
+        assert_eq!(updated_input, expected_updated_input);
+        assert_eq!(required_lines, expected_required_lines);
     }
 }

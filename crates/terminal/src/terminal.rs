@@ -182,10 +182,6 @@ impl EventListener for ZedListener {
     }
 }
 
-pub fn init(cx: &mut App) {
-    TerminalSettings::register(cx);
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalBounds {
     pub cell_width: Pixels,
@@ -426,7 +422,7 @@ impl TerminalBuilder {
         activation_script: Vec<String>,
     ) -> Task<Result<TerminalBuilder>> {
         let version = release_channel::AppVersion::global(cx);
-        cx.background_spawn(async move {
+        let fut = async move {
             // If the parent environment doesn't have a locale set
             // (As is the case when launched from a .app on MacOS),
             // and the Project doesn't have a locale set, then
@@ -648,7 +644,13 @@ impl TerminalBuilder {
                 terminal,
                 events_rx,
             })
-        })
+        };
+        // the thread we spawn things on has an effect on signal handling
+        if cfg!(target_os = "unix") {
+            cx.spawn(async move |_| fut.await)
+        } else {
+            cx.background_spawn(fut)
+        }
     }
 
     pub fn subscribe(mut self, cx: &Context<Terminal>) -> Terminal {
@@ -1488,14 +1490,14 @@ impl Terminal {
         }
     }
 
-    pub fn try_keystroke(&mut self, keystroke: &Keystroke, alt_is_meta: bool) -> bool {
+    pub fn try_keystroke(&mut self, keystroke: &Keystroke, option_as_meta: bool) -> bool {
         if self.vi_mode_enabled {
             self.vi_motion(keystroke);
             return true;
         }
 
         // Keep default terminal behavior
-        let esc = to_esc_str(keystroke, &self.last_content.mode, alt_is_meta);
+        let esc = to_esc_str(keystroke, &self.last_content.mode, option_as_meta);
         if let Some(esc) = esc {
             match esc {
                 Cow::Borrowed(string) => self.input(string.as_bytes()),

@@ -28,14 +28,14 @@ use std::sync::{
     atomic::{self, AtomicU64},
 };
 use strum::IntoEnumIterator;
-use ui::{Icon, IconName, List, Tooltip, prelude::*};
+use ui::{List, prelude::*};
 use ui_input::InputField;
-use util::{ResultExt, truncate_and_trailoff};
+use util::ResultExt;
 use zed_env_vars::EnvVar;
 
 use crate::api_key::ApiKey;
 use crate::api_key::ApiKeyState;
-use crate::ui::InstructionListItem;
+use crate::ui::{ConfiguredApiCard, InstructionListItem};
 
 const PROVIDER_ID: LanguageModelProviderId = language_model::GOOGLE_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = language_model::GOOGLE_PROVIDER_NAME;
@@ -835,9 +835,24 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let env_var_set = self.state.read(cx).api_key_state.is_from_env_var();
+        let configured_card_label = if env_var_set {
+            format!(
+                "API key set in {} environment variable",
+                API_KEY_ENV_VAR.name
+            )
+        } else {
+            let api_url = GoogleLanguageModelProvider::api_url(cx);
+            if api_url == google_ai::API_URL {
+                "API key configured".to_string()
+            } else {
+                format!("API key configured for {}", api_url)
+            }
+        };
 
         if self.load_credentials_task.is_some() {
-            div().child(Label::new("Loading credentials...")).into_any()
+            div()
+                .child(Label::new("Loading credentials..."))
+                .into_any_element()
         } else if self.should_render_editor(cx) {
             v_flex()
                 .size_full()
@@ -864,44 +879,15 @@ impl Render for ConfigurationView {
                     )
                     .size(LabelSize::Small).color(Color::Muted),
                 )
-                .into_any()
+                .into_any_element()
         } else {
-            h_flex()
-                .mt_1()
-                .p_1()
-                .justify_between()
-                .rounded_md()
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().background)
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(Label::new(if env_var_set {
-                            format!("API key set in {} environment variable", API_KEY_ENV_VAR.name)
-                        } else {
-                            let api_url = GoogleLanguageModelProvider::api_url(cx);
-                            if api_url == google_ai::API_URL {
-                                "API key configured".to_string()
-                            } else {
-                                format!("API key configured for {}", truncate_and_trailoff(&api_url, 32))
-                            }
-                        })),
-                )
-                .child(
-                    Button::new("reset-key", "Reset Key")
-                        .label_size(LabelSize::Small)
-                        .icon(Some(IconName::Trash))
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
-                        .disabled(env_var_set)
-                        .when(env_var_set, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your API key, make sure {GEMINI_API_KEY_VAR_NAME} and {GOOGLE_AI_API_KEY_VAR_NAME} environment variables are unset.")))
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
-                )
-                .into_any()
+            ConfiguredApiCard::new(configured_card_label)
+                .disabled(env_var_set)
+                .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)))
+                .when(env_var_set, |this| {
+                    this.tooltip_label(format!("To reset your API key, make sure {GEMINI_API_KEY_VAR_NAME} and {GOOGLE_AI_API_KEY_VAR_NAME} environment variables are unset."))
+                })
+                .into_any_element()
         }
     }
 }

@@ -127,11 +127,17 @@ impl WindowsPlatform {
                 Some(HWND_MESSAGE),
                 None,
                 None,
-                Some(&context as *const _ as *const _),
+                Some(&raw const context as *const _),
             )
         };
-        let inner = context.inner.take().unwrap()?;
-        let dispatcher = context.dispatcher.take().unwrap();
+        let inner = context
+            .inner
+            .take()
+            .context("CreateWindowExW did not run correctly")??;
+        let dispatcher = context
+            .dispatcher
+            .take()
+            .context("CreateWindowExW did not run correctly")?;
         let handle = result?;
 
         let disable_direct_composition = std::env::var(DISABLE_DIRECT_COMPOSITION)
@@ -697,14 +703,24 @@ impl Platform for WindowsPlatform {
 impl WindowsPlatformInner {
     fn new(context: &mut PlatformWindowCreateContext) -> Result<Rc<Self>> {
         let state = RefCell::new(WindowsPlatformState::new(
-            context.directx_devices.take().unwrap(),
+            context
+                .directx_devices
+                .take()
+                .context("missing directx devices")?,
         ));
         Ok(Rc::new(Self {
             state,
             raw_window_handles: context.raw_window_handles.clone(),
-            dispatcher: context.dispatcher.as_ref().unwrap().clone(),
+            dispatcher: context
+                .dispatcher
+                .as_ref()
+                .context("missing dispatcher")?
+                .clone(),
             validation_number: context.validation_number,
-            main_receiver: context.main_receiver.take().unwrap(),
+            main_receiver: context
+                .main_receiver
+                .take()
+                .context("missing main receiver")?,
         }))
     }
 
@@ -737,9 +753,7 @@ impl WindowsPlatformInner {
         }
         match message {
             WM_GPUI_CLOSE_ONE_WINDOW => {
-                if self.close_one_window(HWND(lparam.0 as _)) {
-                    unsafe { PostQuitMessage(0) };
-                }
+                self.close_one_window(HWND(lparam.0 as _));
                 Some(0)
             }
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
@@ -1135,13 +1149,16 @@ unsafe extern "system" fn window_procedure(
     lparam: LPARAM,
 ) -> LRESULT {
     if msg == WM_NCCREATE {
-        let params = lparam.0 as *const CREATESTRUCTW;
-        let params = unsafe { &*params };
+        let params = unsafe { &*(lparam.0 as *const CREATESTRUCTW) };
         let creation_context = params.lpCreateParams as *mut PlatformWindowCreateContext;
         let creation_context = unsafe { &mut *creation_context };
 
+        let Some(main_sender) = creation_context.main_sender.take() else {
+            creation_context.inner = Some(Err(anyhow!("missing main sender")));
+            return LRESULT(0);
+        };
         creation_context.dispatcher = Some(Arc::new(WindowsDispatcher::new(
-            creation_context.main_sender.take().unwrap(),
+            main_sender,
             hwnd,
             creation_context.validation_number,
         )));

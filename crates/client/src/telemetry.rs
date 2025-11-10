@@ -179,8 +179,6 @@ impl Telemetry {
         let release_channel =
             ReleaseChannel::try_global(cx).map(|release_channel| release_channel.display_name());
 
-        TelemetrySettings::register(cx);
-
         let state = Arc::new(Mutex::new(TelemetryState {
             settings: *TelemetrySettings::get_global(cx),
             architecture: env::consts::ARCH,

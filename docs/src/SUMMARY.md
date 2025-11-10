@@ -75,6 +75,7 @@
 - [Overview](./extensions.md)
 - [Installing Extensions](./extensions/installing-extensions.md)
 - [Developing Extensions](./extensions/developing-extensions.md)
+- [Extension Capabilities](./extensions/capabilities.md)
 - [Language Extensions](./extensions/languages.md)
 - [Debugger Extensions](./extensions/debugger-extensions.md)
 - [Theme Extensions](./extensions/themes.md)

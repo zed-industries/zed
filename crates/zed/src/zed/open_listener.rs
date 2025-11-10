@@ -665,9 +665,6 @@ mod tests {
     #[gpui::test]
     fn test_parse_ssh_url(cx: &mut TestAppContext) {
         let _app_state = init_test(cx);
-        cx.update(|cx| {
-            SshSettings::register(cx);
-        });
         let request = cx.update(|cx| {
             OpenRequest::parse(
                 RawOpenRequest {
