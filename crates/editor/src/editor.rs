@@ -117,8 +117,8 @@ use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
     DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
-    IndentSize, Language, OffsetRangeExt, Point, Runnable, RunnableRange, Selection, SelectionGoal,
-    TextObject, TransactionId, TreeSitterOptions, WordsQuery,
+    IndentSize, Language, OffsetRangeExt, OutlineItem, Point, Runnable, RunnableRange, Selection,
+    SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, LspInsertMode, RewrapBehavior, WordsCompletionMode, all_language_settings,
         language_settings,
@@ -1183,6 +1183,7 @@ pub struct Editor {
     hide_mouse_mode: HideMouseMode,
     pub change_list: ChangeList,
     inline_value_cache: InlineValueCache,
+
     selection_drag_state: SelectionDragState,
     colors: Option<LspColorData>,
     post_scroll_update: Task<()>,
@@ -1762,6 +1763,51 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Self {
         Editor::new_internal(mode, buffer, project, None, window, cx)
+    }
+
+    pub fn sticky_headers(&self, cx: &App) -> Option<Vec<OutlineItem<Anchor>>> {
+        let multi_buffer = self.buffer().read(cx);
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+        let multi_buffer_visible_start = self
+            .scroll_manager
+            .anchor()
+            .anchor
+            .to_point(&multi_buffer_snapshot);
+        let max_row = multi_buffer_snapshot.max_point().row;
+
+        let start_row = (multi_buffer_visible_start.row).min(max_row);
+        let end_row = (multi_buffer_visible_start.row + 10).min(max_row);
+
+        if let Some((excerpt_id, buffer_id, buffer)) = multi_buffer.read(cx).as_singleton() {
+            let outline_items = buffer
+                .outline_items_containing(
+                    Point::new(start_row, 0)..Point::new(end_row, 0),
+                    true,
+                    self.style().map(|style| style.syntax.as_ref()),
+                )
+                .into_iter()
+                .map(|outline_item| OutlineItem {
+                    depth: outline_item.depth,
+                    range: Anchor::range_in_buffer(*excerpt_id, buffer_id, outline_item.range),
+                    source_range_for_text: Anchor::range_in_buffer(
+                        *excerpt_id,
+                        buffer_id,
+                        outline_item.source_range_for_text,
+                    ),
+                    text: outline_item.text,
+                    highlight_ranges: outline_item.highlight_ranges,
+                    name_ranges: outline_item.name_ranges,
+                    body_range: outline_item
+                        .body_range
+                        .map(|range| Anchor::range_in_buffer(*excerpt_id, buffer_id, range)),
+                    annotation_range: outline_item
+                        .annotation_range
+                        .map(|range| Anchor::range_in_buffer(*excerpt_id, buffer_id, range)),
+                });
+            return Some(outline_items.collect());
+        }
+
+        None
     }
 
     fn new_internal(

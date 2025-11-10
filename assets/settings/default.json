@@ -605,6 +605,10 @@
   // to both the horizontal and vertical delta values while scrolling. Fast scrolling
   // happens when a user holds the alt or option key while scrolling.
   "fast_scroll_sensitivity": 4.0,
+  "sticky_scroll": {
+    // Whether to stick scopes to the top of the editor.
+    "enabled": false
+  },
   "relative_line_numbers": "disabled",
   // If 'search_wrap' is disabled, search result do not wrap around the end of the file.
   "search_wrap": true,
