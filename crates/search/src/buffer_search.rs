@@ -10,7 +10,7 @@ use any_vec::AnyVec;
 use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
-    DisplayPoint, Editor, EditorSettings, SelectNextCaseSensitive, VimFlavor,
+    DisplayPoint, Editor, EditorSettings, VimFlavor,
     actions::{Backtab, Tab},
     vim_flavor,
 };
@@ -922,7 +922,6 @@ impl BufferSearchBar {
         drop(self.update_matches(false, false, window, cx));
         self.adjust_query_regex_language(cx);
         self.sync_select_next_case_sensitivity(cx);
-
         cx.notify();
     }
 
@@ -1539,7 +1538,9 @@ impl BufferSearchBar {
             false => Some(self.search_options.contains(SearchOptions::CASE_SENSITIVE)),
         };
 
-        cx.update_global::<SelectNextCaseSensitive, _>(|global, _| global.0 = case_sensitive);
+        if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
+            active_searchable_item.set_search_is_case_sensitive(case_sensitive, cx);
+        }
     }
 }
 

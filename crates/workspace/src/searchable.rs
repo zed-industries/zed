@@ -166,6 +166,7 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize>;
+    fn set_search_is_case_sensitive(&mut self, _: Option<bool>, _: &mut Context<Self>) {}
 }
 
 pub trait SearchableItemHandle: ItemHandle {
@@ -234,6 +235,8 @@ pub trait SearchableItemHandle: ItemHandle {
         window: &mut Window,
         cx: &mut App,
     );
+
+    fn set_search_is_case_sensitive(&self, is_case_sensitive: Option<bool>, cx: &mut App);
 }
 
 impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
@@ -388,6 +391,11 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
     ) {
         self.update(cx, |this, cx| {
             this.toggle_filtered_search_ranges(enabled, window, cx)
+        });
+    }
+    fn set_search_is_case_sensitive(&self, enabled: Option<bool>, cx: &mut App) {
+        self.update(cx, |this, cx| {
+            this.set_search_is_case_sensitive(enabled, cx)
         });
     }
 }

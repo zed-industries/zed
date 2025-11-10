@@ -318,7 +318,6 @@ pub fn init(cx: &mut App) {
     init_settings(cx);
 
     cx.set_global(GlobalBlameRenderer(Arc::new(())));
-    cx.set_global(SelectNextCaseSensitive(None));
 
     workspace::register_project_item::<Editor>(cx);
     workspace::FollowableViewRegistry::register::<Editor>(cx);
@@ -1196,6 +1195,7 @@ pub struct Editor {
     refresh_colors_task: Task<()>,
     inlay_hints: Option<LspInlayHintData>,
     folding_newlines: Task<()>,
+    select_next_is_case_sensitive: Option<bool>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
 }
 
@@ -1507,10 +1507,6 @@ struct AddSelectionsGroup {
     above: bool,
     stack: Vec<usize>,
 }
-
-/// Global override for case sensitivity in `select_*` methods.
-pub struct SelectNextCaseSensitive(pub Option<bool>);
-impl Global for SelectNextCaseSensitive {}
 
 #[derive(Clone)]
 struct SelectNextState {
@@ -2298,6 +2294,7 @@ impl Editor {
             selection_drag_state: SelectionDragState::None,
             folding_newlines: Task::ready(()),
             lookup_key: None,
+            select_next_is_case_sensitive: None,
         };
 
         if is_minimap {
@@ -14600,7 +14597,7 @@ impl Editor {
                         .collect::<String>();
                     let is_empty = query.is_empty();
                     let select_state = SelectNextState {
-                        query: Self::build_query(cx, &[query])?,
+                        query: self.build_query(&[query], cx)?,
                         wordwise: true,
                         done: is_empty,
                     };
@@ -14610,7 +14607,7 @@ impl Editor {
                 }
             } else if let Some(selected_text) = selected_text {
                 self.select_next_state = Some(SelectNextState {
-                    query: Self::build_query(cx, &[selected_text])?,
+                    query: self.build_query(&[selected_text], cx)?,
                     wordwise: false,
                     done: false,
                 });
@@ -14818,7 +14815,7 @@ impl Editor {
                         .collect::<String>();
                     let is_empty = query.is_empty();
                     let select_state = SelectNextState {
-                        query: Self::build_query(cx, &[query.chars().rev().collect::<String>()])?,
+                        query: self.build_query(&[query.chars().rev().collect::<String>()], cx)?,
                         wordwise: true,
                         done: is_empty,
                     };
@@ -14828,10 +14825,8 @@ impl Editor {
                 }
             } else if let Some(selected_text) = selected_text {
                 self.select_prev_state = Some(SelectNextState {
-                    query: Self::build_query(
-                        cx,
-                        &[selected_text.chars().rev().collect::<String>()],
-                    )?,
+                    query: self
+                        .build_query(&[selected_text.chars().rev().collect::<String>()], cx)?,
                     wordwise: false,
                     done: false,
                 });
@@ -14845,19 +14840,15 @@ impl Editor {
     /// setting the case sensitivity based on the global
     /// `SelectNextCaseSensitive` setting, if set, otherwise based on the
     /// editor's settings.
-    fn build_query<I, P>(cx: &Context<Self>, patterns: I) -> Result<AhoCorasick, BuildError>
+    fn build_query<I, P>(&self, patterns: I, cx: &Context<Self>) -> Result<AhoCorasick, BuildError>
     where
         I: IntoIterator<Item = P>,
         P: AsRef<[u8]>,
     {
-        let case_sensitive = cx
-            .try_global::<SelectNextCaseSensitive>()
-            .or(Some(&SelectNextCaseSensitive(None)))
-            .map_or(None, |global| global.0)
-            .map_or_else(
-                || EditorSettings::get_global(cx).search.case_sensitive,
-                |value| value,
-            );
+        let case_sensitive = self.select_next_is_case_sensitive.map_or_else(
+            || EditorSettings::get_global(cx).search.case_sensitive,
+            |value| value,
+        );
 
         let mut builder = AhoCorasickBuilder::new();
         builder.ascii_case_insensitive(!case_sensitive);
