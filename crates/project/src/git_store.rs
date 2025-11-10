@@ -55,9 +55,10 @@ use rpc::{
     proto::{self, git_reset, split_repository_update},
 };
 use serde::Deserialize;
+use settings::WorktreeId;
 use std::{
     cmp::Ordering,
-    collections::{BTreeSet, VecDeque},
+    collections::{BTreeSet, HashSet, VecDeque},
     future::Future,
     mem,
     ops::Range,
@@ -89,6 +90,7 @@ pub struct GitStore {
     buffer_store: Entity<BufferStore>,
     worktree_store: Entity<WorktreeStore>,
     repositories: HashMap<RepositoryId, Entity<Repository>>,
+    worktree_ids: HashMap<RepositoryId, HashSet<WorktreeId>>,
     active_repo_id: Option<RepositoryId>,
     #[allow(clippy::type_complexity)]
     loading_diffs:
@@ -409,6 +411,7 @@ impl GitStore {
             buffer_store,
             worktree_store,
             repositories: HashMap::default(),
+            worktree_ids: HashMap::default(),
             active_repo_id: None,
             _subscriptions,
             loading_diffs: HashMap::default(),
@@ -1167,6 +1170,7 @@ impl GitStore {
                     return;
                 }
                 self.update_repositories_from_worktree(
+                    *worktree_id,
                     project_environment.clone(),
                     next_repository_id.clone(),
                     downstream
@@ -1177,6 +1181,45 @@ impl GitStore {
                     cx,
                 );
                 self.local_worktree_git_repos_changed(worktree, changed_repos, cx);
+            }
+            WorktreeStoreEvent::WorktreeRemoved(_entity_id, worktree_id) => {
+                let repos_without_worktree: Vec<RepositoryId> = self
+                    .worktree_ids
+                    .iter_mut()
+                    .filter_map(|(repo_id, worktree_ids)| {
+                        worktree_ids.remove(worktree_id);
+                        if worktree_ids.is_empty() {
+                            Some(*repo_id)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                let is_active_repo_removed = repos_without_worktree
+                    .iter()
+                    .any(|repo_id| self.active_repo_id == Some(*repo_id));
+
+                for repo_id in repos_without_worktree {
+                    self.repositories.remove(&repo_id);
+                    self.worktree_ids.remove(&repo_id);
+                    if let Some(updates_tx) =
+                        downstream.as_ref().map(|downstream| &downstream.updates_tx)
+                    {
+                        updates_tx
+                            .unbounded_send(DownstreamUpdate::RemoveRepository(repo_id))
+                            .ok();
+                    }
+                }
+
+                if is_active_repo_removed {
+                    if let Some((&repo_id, _)) = self.repositories.iter().next() {
+                        self.active_repo_id = Some(repo_id);
+                        cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(repo_id)));
+                    } else {
+                        self.active_repo_id = None;
+                        cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
+                    }
+                }
             }
             _ => {}
         }
@@ -1228,6 +1271,7 @@ impl GitStore {
     /// Update our list of repositories and schedule git scans in response to a notification from a worktree,
     fn update_repositories_from_worktree(
         &mut self,
+        worktree_id: WorktreeId,
         project_environment: Entity<ProjectEnvironment>,
         next_repository_id: Arc<AtomicU64>,
         updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
@@ -1245,15 +1289,25 @@ impl GitStore {
                     || Some(&existing_work_directory_abs_path)
                         == update.new_work_directory_abs_path.as_ref()
             }) {
+                let repo_id = *id;
                 if let Some(new_work_directory_abs_path) =
                     update.new_work_directory_abs_path.clone()
                 {
+                    self.worktree_ids
+                        .entry(repo_id)
+                        .or_insert_with(HashSet::new)
+                        .insert(worktree_id);
                     existing.update(cx, |existing, cx| {
                         existing.snapshot.work_directory_abs_path = new_work_directory_abs_path;
                         existing.schedule_scan(updates_tx.clone(), cx);
                     });
                 } else {
-                    removed_ids.push(*id);
+                    if let Some(worktree_ids) = self.worktree_ids.get_mut(&repo_id) {
+                        worktree_ids.remove(&worktree_id);
+                        if worktree_ids.is_empty() {
+                            removed_ids.push(repo_id);
+                        }
+                    }
                 }
             } else if let UpdatedGitRepository {
                 new_work_directory_abs_path: Some(work_directory_abs_path),
@@ -1291,6 +1345,7 @@ impl GitStore {
                 self._subscriptions
                     .push(cx.subscribe(&repo, Self::on_jobs_updated));
                 self.repositories.insert(id, repo);
+                self.worktree_ids.insert(id, HashSet::from([worktree_id]));
                 cx.emit(GitStoreEvent::RepositoryAdded);
                 self.active_repo_id.get_or_insert_with(|| {
                     cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));

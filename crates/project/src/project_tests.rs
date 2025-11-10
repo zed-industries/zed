@@ -10477,3 +10477,116 @@ async fn test_find_project_path_abs(
         );
     });
 }
+
+#[gpui::test]
+async fn test_git_worktree_remove(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "a": {
+                ".git": {},
+                "src": {
+                    "main.rs": "fn main() {}",
+                }
+            },
+            "b": {
+                ".git": {},
+                "src": {
+                    "main.rs": "fn main() {}",
+                },
+                "script": {
+                    "run.sh": "#!/bin/bash"
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(
+        fs.clone(),
+        [
+            path!("/root/a").as_ref(),
+            path!("/root/b/script").as_ref(),
+            path!("/root/b").as_ref(),
+        ],
+        cx,
+    )
+    .await;
+    let scan_complete = project.update(cx, |project, cx| project.git_scans_complete(cx));
+    scan_complete.await;
+
+    let worktrees = project.update(cx, |project, cx| project.worktrees(cx).collect::<Vec<_>>());
+    assert_eq!(worktrees.len(), 3);
+
+    let worktree_id_by_abs_path = worktrees
+        .into_iter()
+        .map(|worktree| worktree.read_with(cx, |w, _| (w.abs_path(), w.id())))
+        .collect::<HashMap<_, _>>();
+    let worktree_id = worktree_id_by_abs_path
+        .get(Path::new(path!("/root/b/script")))
+        .unwrap();
+
+    let repos = project.update(cx, |p, cx| p.git_store().read(cx).repositories().clone());
+    assert_eq!(repos.len(), 2);
+
+    project.update(cx, |project, cx| {
+        project.remove_worktree(*worktree_id, cx);
+    });
+    cx.run_until_parked();
+
+    let mut repo_paths = project
+        .update(cx, |p, cx| p.git_store().read(cx).repositories().clone())
+        .values()
+        .map(|repo| repo.read_with(cx, |r, _| r.work_directory_abs_path.clone()))
+        .collect::<Vec<_>>();
+    repo_paths.sort();
+
+    pretty_assertions::assert_eq!(
+        repo_paths,
+        [
+            Path::new(path!("/root/a")).into(),
+            Path::new(path!("/root/b")).into(),
+        ]
+    );
+
+    let active_repo_path = project
+        .read_with(cx, |p, cx| {
+            p.active_repository(cx)
+                .map(|r| r.read(cx).work_directory_abs_path.clone())
+        })
+        .unwrap();
+    assert_eq!(active_repo_path.as_ref(), Path::new(path!("/root/a")));
+
+    let worktree_id = worktree_id_by_abs_path
+        .get(Path::new(path!("/root/a")))
+        .unwrap();
+    project.update(cx, |project, cx| {
+        project.remove_worktree(*worktree_id, cx);
+    });
+    cx.run_until_parked();
+
+    let active_repo_path = project
+        .read_with(cx, |p, cx| {
+            p.active_repository(cx)
+                .map(|r| r.read(cx).work_directory_abs_path.clone())
+        })
+        .unwrap();
+    assert_eq!(active_repo_path.as_ref(), Path::new(path!("/root/b")));
+
+    let worktree_id = worktree_id_by_abs_path
+        .get(Path::new(path!("/root/b")))
+        .unwrap();
+    project.update(cx, |project, cx| {
+        project.remove_worktree(*worktree_id, cx);
+    });
+    cx.run_until_parked();
+
+    let active_repo_path = project.read_with(cx, |p, cx| {
+        p.active_repository(cx)
+            .map(|r| r.read(cx).work_directory_abs_path.clone())
+    });
+    assert!(active_repo_path.is_none());
+}
