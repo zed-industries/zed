@@ -1118,7 +1118,7 @@ impl CompletionsMenu {
                     matches,
                     Some(&query), // used for non-snippets only
                     snippet_sort_order,
-                    &*completions_ref,
+                    &completions_ref,
                 );
             }
 
