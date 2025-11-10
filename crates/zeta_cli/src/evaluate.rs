@@ -21,7 +21,7 @@ use crate::{
 pub struct EvaluateArguments {
     example_paths: Vec<PathBuf>,
     #[clap(long)]
-    re_run: bool,
+    skip_cache: bool,
     #[arg(long, value_enum, default_value_t = PromptFormat::default())]
     prompt_format: PromptFormat,
 }
@@ -37,7 +37,7 @@ pub async fn run_evaluate(
         cx.spawn(async move |cx| {
             run_evaluate_one(
                 &path,
-                args.re_run,
+                args.skip_cache,
                 args.prompt_format,
                 app_state.clone(),
                 cx,
@@ -61,13 +61,13 @@ pub async fn run_evaluate(
 
 pub async fn run_evaluate_one(
     example_path: &Path,
-    re_run: bool,
+    skip_cache: bool,
     prompt_format: PromptFormat,
     app_state: Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) -> Result<EvaluationResult> {
     let example = NamedExample::load(&example_path).unwrap();
-    let predictions = zeta2_predict(example.clone(), re_run, prompt_format, &app_state, cx)
+    let predictions = zeta2_predict(example.clone(), skip_cache, prompt_format, &app_state, cx)
         .await
         .unwrap();
 
