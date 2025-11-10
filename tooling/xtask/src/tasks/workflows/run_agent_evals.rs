@@ -6,11 +6,12 @@ use gh_workflow::{
 use crate::tasks::workflows::{
     runners::{self, Platform},
     steps::{self, FluentBuilder as _, NamedJob, named, setup_cargo_config},
-    vars,
+    vars::{self, Input},
 };
 
 pub(crate) fn run_agent_evals() -> Workflow {
     let agent_evals = agent_evals();
+    let model_name = Input::string("model_name", None);
 
     named::workflow()
         .on(Event::default()
@@ -20,7 +21,9 @@ pub(crate) fn run_agent_evals() -> Workflow {
                 PullRequestType::Reopened,
                 PullRequestType::Labeled,
             ]))
-            .workflow_dispatch(WorkflowDispatch::default()))
+            .workflow_dispatch(
+                WorkflowDispatch::default().add_input(model_name.name, model_name.input()),
+            ))
         .concurrency(vars::one_workflow_per_non_main_branch())
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("CARGO_INCREMENTAL", 0))
@@ -28,6 +31,7 @@ pub(crate) fn run_agent_evals() -> Workflow {
         .add_env(("ANTHROPIC_API_KEY", vars::ANTHROPIC_API_KEY))
         .add_env(("ZED_CLIENT_CHECKSUM_SEED", vars::ZED_CLIENT_CHECKSUM_SEED))
         .add_env(("ZED_EVAL_TELEMETRY", 1))
+        .add_env(("MODEL_NAME", model_name.to_string()))
         .add_job(agent_evals.name, agent_evals.job)
 }
 
