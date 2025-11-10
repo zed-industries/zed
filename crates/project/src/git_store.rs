@@ -21,12 +21,12 @@ use futures::{
     stream::FuturesOrdered,
 };
 use git::{
-    BuildPermalinkParams, GitHostingProviderRegistry, Oid,
+    BuildPermalinkParams, GitHostingProviderRegistry, Oid, Remote, RemoteUrl,
     blame::Blame,
     parse_git_remote_url,
     repository::{
         Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
-        GitRepository, GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath,
+        GitRepository, GitRepositoryCheckpoint, PushOptions, RemoteCommandOutput, RepoPath,
         ResetMode, UpstreamTrackingStatus, Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
@@ -67,6 +67,7 @@ use std::{
 use sum_tree::{Edit, SumTree, TreeSet};
 use task::Shell;
 use text::{Bias, BufferId};
+use url::Url;
 use util::{
     ResultExt, debug_panic,
     paths::{PathStyle, SanitizedPath},
@@ -251,6 +252,7 @@ pub struct RepositorySnapshot {
     pub work_directory_abs_path: Arc<Path>,
     pub path_style: PathStyle,
     pub branch: Option<Branch>,
+    pub remote: Option<Remote>,
     pub head_commit: Option<CommitDetails>,
     pub scan_id: u64,
     pub merge: MergeDetails,
@@ -2963,6 +2965,7 @@ impl RepositorySnapshot {
             remote_upstream_url: None,
             stash_entries: Default::default(),
             path_style,
+            remote: None,
         }
     }
 
@@ -4426,6 +4429,88 @@ impl Repository {
         )
     }
 
+    pub fn create_remote(
+        &mut self,
+        remote_name: String,
+        remote_url: Url,
+    ) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(
+            Some(format!("git remote add {remote_name} {remote_url}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local { backend, .. } => {
+                        backend.create_remote(remote_name, remote_url).await
+                    }
+                    RepositoryState::Remote { project_id, client } => {
+                        unimplemented!();
+                        // client
+                        //     .request(proto::GitCreateBranch {
+                        //         project_id: project_id.0,
+                        //         repository_id: id.to_proto(),
+                        //         branch_name,
+                        //     })
+                        //     .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
+    pub fn remove_remote(&mut self, remote_name: String) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(
+            Some(format!("git remove remote {remote_name}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local { backend, .. } => {
+                        backend.remove_remote(remote_name).await
+                    }
+                    RepositoryState::Remote { project_id, client } => {
+                        todo!();
+                        // client
+                        //     .request(proto::GitChangeBranch {
+                        //         project_id: project_id.0,
+                        //         repository_id: id.to_proto(),
+                        //         branch_name,
+                        //     })
+                        //     .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
+    pub fn change_remote(&mut self, remote_name: String) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(
+            Some(format!("git select remote {remote_name}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local { backend, .. } => {
+                        backend.change_remote(remote_name).await
+                    }
+                    RepositoryState::Remote { project_id, client } => {
+                        todo!();
+                        // client
+                        //     .request(proto::GitChangeBranch {
+                        //         project_id: project_id.0,
+                        //         repository_id: id.to_proto(),
+                        //         branch_name,
+                        //     })
+                        //     .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
     pub fn get_remotes(
         &mut self,
         branch_name: Option<String>,
@@ -4446,8 +4531,9 @@ impl Repository {
                     let remotes = response
                         .remotes
                         .into_iter()
-                        .map(|remotes| git::repository::Remote {
+                        .map(|remotes| Remote {
                             name: remotes.name.into(),
+                            url: RemoteUrl::default(), // FiXME
                         })
                         .collect();
 
@@ -5447,6 +5533,7 @@ async fn compute_snapshot(
 ) -> Result<(RepositorySnapshot, Vec<RepositoryEvent>)> {
     let mut events = Vec::new();
     let branches = backend.branches().await?;
+    let remote = backend.remote().await?;
     let branch = branches.into_iter().find(|branch| branch.is_head);
     let statuses = backend.status(&[RelPath::empty().into()]).await?;
     let stash_entries = backend.stash_entries().await?;
@@ -5498,6 +5585,7 @@ async fn compute_snapshot(
         remote_origin_url,
         remote_upstream_url,
         stash_entries,
+        remote,
     };
 
     Ok((snapshot, events))

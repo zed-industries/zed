@@ -3,11 +3,11 @@ use anyhow::{Context as _, Result, bail};
 use collections::{HashMap, HashSet};
 use futures::future::{self, BoxFuture, join_all};
 use git::{
-    Oid,
+    Oid, Remote,
     blame::Blame,
     repository::{
         AskPassDelegate, Branch, CommitDetails, CommitOptions, FetchOptions, GitRepository,
-        GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode, Worktree,
+        GitRepositoryCheckpoint, PushOptions, RepoPath, ResetMode, Worktree,
     },
     status::{
         DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
@@ -637,6 +637,14 @@ impl GitRepository for FakeGitRepository {
 
     fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>> {
         async { Ok(Some("main".into())) }.boxed()
+    }
+
+    fn create_remote(
+        &self,
+        name: String,
+        url: gpui::http_client::Url,
+    ) -> BoxFuture<'_, Result<()>> {
+        unimplemented!()
     }
 }
 
