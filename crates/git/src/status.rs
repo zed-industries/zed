@@ -451,11 +451,11 @@ impl FromStr for GitStatus {
             if entry.is_empty() {
                 continue;
             }
-            
+
             if !matches!(entry.get(2..3), Some(" ")) {
                 continue;
             }
-            
+
             let path_or_old_path = &entry[3..];
 
             if path_or_old_path.ends_with('/') {
