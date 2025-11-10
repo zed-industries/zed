@@ -2898,4 +2898,112 @@ mod test {
             );
         });
     }
+
+    #[gpui::test]
+    async fn test_sort_commands(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                «hornet
+                quirrel
+                elderbug
+                cornifer
+                idaˇ»
+            "},
+            Mode::Visual,
+        );
+
+        cx.simulate_keystrokes(": sort");
+        cx.simulate_keystrokes("enter");
+
+        cx.assert_state(
+            indoc! {"
+                ˇcornifer
+                elderbug
+                hornet
+                ida
+                quirrel
+            "},
+            Mode::Normal,
+        );
+
+        // Assert that, by default, `:sort` takes case into consideration.
+        cx.set_state(
+            indoc! {"
+                «hornet
+                quirrel
+                Elderbug
+                cornifer
+                idaˇ»
+            "},
+            Mode::Visual,
+        );
+
+        cx.simulate_keystrokes(": sort");
+        cx.simulate_keystrokes("enter");
+
+        cx.assert_state(
+            indoc! {"
+                ˇElderbug
+                cornifer
+                hornet
+                ida
+                quirrel
+            "},
+            Mode::Normal,
+        );
+
+        // Assert that, if the `i` option is passed, `:sort` ignores case.
+        cx.set_state(
+            indoc! {"
+                «hornet
+                quirrel
+                Elderbug
+                cornifer
+                idaˇ»
+            "},
+            Mode::Visual,
+        );
+
+        cx.simulate_keystrokes(": sort space i");
+        cx.simulate_keystrokes("enter");
+
+        cx.assert_state(
+            indoc! {"
+                ˇcornifer
+                Elderbug
+                hornet
+                ida
+                quirrel
+            "},
+            Mode::Normal,
+        );
+
+        // When no range is provided, sorts the whole buffer.
+        cx.set_state(
+            indoc! {"
+                ˇhornet
+                quirrel
+                elderbug
+                cornifer
+                ida
+            "},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes(": sort");
+        cx.simulate_keystrokes("enter");
+
+        cx.assert_state(
+            indoc! {"
+                ˇcornifer
+                elderbug
+                hornet
+                ida
+                quirrel
+            "},
+            Mode::Normal,
+        );
+    }
 }
