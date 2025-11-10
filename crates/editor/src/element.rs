@@ -6,9 +6,9 @@ use crate::{
     EditDisplayMode, EditPrediction, Editor, EditorMode, EditorSettings, EditorSnapshot,
     EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp,
     HandleInput, HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp,
-    MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown,
-    PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase,
-    SelectedTextHighlight, Selection, SelectionDragState, SizingBehavior, SoftWrap,
+    MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts,
+    OpenExcerptsSplit, PageDown, PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt,
+    SelectPhase, SelectedTextHighlight, Selection, SelectionDragState, SizingBehavior, SoftWrap,
     StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
@@ -232,6 +232,8 @@ impl EditorElement {
         register_action(editor, window, Editor::blame_hover);
         register_action(editor, window, Editor::delete);
         register_action(editor, window, Editor::tab);
+        register_action(editor, window, Editor::next_snippet_tabstop);
+        register_action(editor, window, Editor::previous_snippet_tabstop);
         register_action(editor, window, Editor::backtab);
         register_action(editor, window, Editor::indent);
         register_action(editor, window, Editor::outdent);
@@ -3903,11 +3905,11 @@ impl EditorElement {
             .child(
                 h_flex()
                     .size_full()
-                    .gap_2()
                     .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
-                    .pl_0p5()
-                    .pr_5()
+                    .pl_1()
+                    .pr_2()
                     .rounded_sm()
+                    .gap_1p5()
                     .when(is_sticky, |el| el.shadow_md())
                     .border_1()
                     .map(|div| {
@@ -3928,15 +3930,17 @@ impl EditorElement {
                         let buffer_id = for_excerpt.buffer_id;
                         let toggle_chevron_icon =
                             FileIcons::get_chevron_icon(!is_folded, cx).map(Icon::from_path);
+                        let button_size = rems_from_px(28.);
+
                         header.child(
                             div()
                                 .hover(|style| style.bg(colors.element_selected))
                                 .rounded_xs()
                                 .child(
                                     ButtonLike::new("toggle-buffer-fold")
-                                        .style(ui::ButtonStyle::Transparent)
-                                        .height(px(28.).into())
-                                        .width(px(28.))
+                                        .style(ButtonStyle::Transparent)
+                                        .height(button_size.into())
+                                        .width(button_size)
                                         .children(toggle_chevron_icon)
                                         .tooltip({
                                             let focus_handle = focus_handle.clone();
@@ -3992,7 +3996,13 @@ impl EditorElement {
                             })
                             .take(1),
                     )
-                    .child(h_flex().size(px(12.0)).justify_center().children(indicator))
+                    .child(
+                        h_flex()
+                            .size(rems_from_px(12.0))
+                            .justify_center()
+                            .flex_shrink_0()
+                            .children(indicator),
+                    )
                     .child(
                         h_flex()
                             .cursor_pointer()
@@ -4000,7 +4010,7 @@ impl EditorElement {
                             .size_full()
                             .justify_between()
                             .overflow_hidden()
-                            .child(h_flex().gap_2().map(|path_header| {
+                            .child(h_flex().gap_0p5().map(|path_header| {
                                 let filename = filename
                                     .map(SharedString::from)
                                     .unwrap_or_else(|| "untitled".into());
@@ -4033,17 +4043,24 @@ impl EditorElement {
                                                     )
                                                     .group_hover("", |div| div.underline()),
                                             )
-                                            .on_click(window.listener_for(&self.editor, {
-                                                let jump_data = jump_data.clone();
-                                                move |editor, e: &ClickEvent, window, cx| {
-                                                    editor.open_excerpts_common(
-                                                        Some(jump_data.clone()),
-                                                        e.modifiers().secondary(),
-                                                        window,
-                                                        cx,
-                                                    );
+                                            .on_click({
+                                                let focus_handle = focus_handle.clone();
+                                                move |event, window, cx| {
+                                                    if event.modifiers().secondary() {
+                                                        focus_handle.dispatch_action(
+                                                            &OpenExcerptsSplit,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    } else {
+                                                        focus_handle.dispatch_action(
+                                                            &OpenExcerpts,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }
                                                 }
-                                            })),
+                                            }),
                                     )
                                     .when_some(parent_path, |then, path| {
                                         then.child(div().child(path).text_color(
@@ -4071,24 +4088,41 @@ impl EditorElement {
                                                         cx,
                                                     )),
                                             )
-                                            .on_click(window.listener_for(&self.editor, {
-                                                let jump_data = jump_data.clone();
-                                                move |editor, e: &ClickEvent, window, cx| {
-                                                    editor.open_excerpts_common(
-                                                        Some(jump_data.clone()),
-                                                        e.modifiers().secondary(),
-                                                        window,
-                                                        cx,
-                                                    );
+                                            .on_click({
+                                                let focus_handle = focus_handle.clone();
+                                                move |event, window, cx| {
+                                                    if event.modifiers().secondary() {
+                                                        focus_handle.dispatch_action(
+                                                            &OpenExcerptsSplit,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    } else {
+                                                        focus_handle.dispatch_action(
+                                                            &OpenExcerpts,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }
                                                 }
-                                            })),
+                                            }),
                                     )
                                 },
                             )
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(window.listener_for(&self.editor, {
                                 let buffer_id = for_excerpt.buffer_id;
-                                move |editor, _e: &ClickEvent, _window, cx| {
+                                move |editor, e: &ClickEvent, window, cx| {
+                                    if e.modifiers().alt {
+                                        editor.open_excerpts_common(
+                                            Some(jump_data.clone()),
+                                            e.modifiers().secondary(),
+                                            window,
+                                            cx,
+                                        );
+                                        return;
+                                    }
+
                                     if is_folded {
                                         editor.unfold_buffer(buffer_id, cx);
                                     } else {
@@ -4101,6 +4135,7 @@ impl EditorElement {
 
         let file = for_excerpt.buffer.file().cloned();
         let editor = self.editor.clone();
+
         right_click_menu("buffer-header-context-menu")
             .trigger(move |_, _, _| header)
             .menu(move |window, cx| {
@@ -8328,7 +8363,7 @@ impl LineWithInvisibles {
                     let fragment_end_x = fragment_start_x + shaped_line.width;
                     if x < fragment_end_x {
                         return Some(
-                            fragment_start_index + shaped_line.index_for_x(x - fragment_start_x)?,
+                            fragment_start_index + shaped_line.index_for_x(x - fragment_start_x),
                         );
                     }
                     fragment_start_x = fragment_end_x;

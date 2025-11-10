@@ -32,6 +32,7 @@ dependencies = [
  "settings",
  "smol",
  "task",
+ "telemetry",
  "tempfile",
  "terminal",
  "ui",
@@ -39,6 +40,7 @@ dependencies = [
  "util",
  "uuid",
  "watch",
+ "zlog",
 ]
 
 [[package]]
@@ -79,6 +81,7 @@ dependencies = [
  "rand 0.9.2",
  "serde_json",
  "settings",
+ "telemetry",
  "text",
  "util",
  "watch",
@@ -247,7 +250,6 @@ dependencies = [
  "acp_tools",
  "action_log",
  "agent-client-protocol",
- "agent_settings",
  "anyhow",
  "async-trait",
  "client",
@@ -3198,6 +3200,7 @@ dependencies = [
  "indoc",
  "ordered-float 2.10.1",
  "rustc-hash 2.1.1",
+ "schemars 1.0.4",
  "serde",
  "strum 0.27.2",
 ]
@@ -6404,7 +6407,7 @@ dependencies = [
  "ignore",
  "libc",
  "log",
- "notify 8.0.0",
+ "notify 8.2.0",
  "objc",
  "parking_lot",
  "paths",
@@ -8863,6 +8866,7 @@ dependencies = [
  "open_router",
  "parking_lot",
  "proto",
+ "schemars 1.0.4",
  "serde",
  "serde_json",
  "settings",
@@ -9027,6 +9031,7 @@ dependencies = [
  "settings",
  "smol",
  "task",
+ "terminal",
  "text",
  "theme",
  "toml 0.8.23",
@@ -9674,6 +9679,7 @@ dependencies = [
  "settings",
  "theme",
  "ui",
+ "urlencoding",
  "util",
  "workspace",
 ]
@@ -10408,11 +10414,10 @@ dependencies = [
 
 [[package]]
 name = "notify"
-version = "8.0.0"
-source = "git+https://github.com/zed-industries/notify.git?rev=bbb9ea5ae52b253e095737847e367c30653a2e96#bbb9ea5ae52b253e095737847e367c30653a2e96"
+version = "8.2.0"
+source = "git+https://github.com/zed-industries/notify.git?rev=b4588b2e5aee68f4c0e100f140e808cbce7b1419#b4588b2e5aee68f4c0e100f140e808cbce7b1419"
 dependencies = [
  "bitflags 2.9.4",
- "filetime",
  "fsevent-sys 4.1.0",
  "inotify 0.11.0",
  "kqueue",
@@ -10421,7 +10426,7 @@ dependencies = [
  "mio 1.1.0",
  "notify-types",
  "walkdir",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -10438,7 +10443,7 @@ dependencies = [
 [[package]]
 name = "notify-types"
 version = "2.0.0"
-source = "git+https://github.com/zed-industries/notify.git?rev=bbb9ea5ae52b253e095737847e367c30653a2e96#bbb9ea5ae52b253e095737847e367c30653a2e96"
+source = "git+https://github.com/zed-industries/notify.git?rev=b4588b2e5aee68f4c0e100f140e808cbce7b1419#b4588b2e5aee68f4c0e100f140e808cbce7b1419"
 
 [[package]]
 name = "now"
@@ -13987,6 +13992,7 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "http_client",
+ "image",
  "json_schema_store",
  "language",
  "language_extension",
@@ -16228,7 +16234,6 @@ dependencies = [
  "log",
  "menu",
  "picker",
- "project",
  "reqwest_client",
  "rust-embed",
  "settings",
@@ -16238,7 +16243,6 @@ dependencies = [
  "theme",
  "title_bar",
  "ui",
- "workspace",
 ]
 
 [[package]]
@@ -18824,7 +18828,6 @@ dependencies = [
 name = "vim_mode_setting"
 version = "0.1.0"
 dependencies = [
- "gpui",
  "settings",
 ]
 
@@ -21692,18 +21695,20 @@ dependencies = [
  "language_model",
  "log",
  "lsp",
+ "open_ai",
  "pretty_assertions",
  "project",
  "release_channel",
- "schemars 1.0.4",
  "serde",
  "serde_json",
  "settings",
+ "smol",
  "thiserror 2.0.17",
  "util",
  "uuid",
  "workspace",
  "worktree",
+ "zlog",
 ]
 
 [[package]]
@@ -21715,6 +21720,7 @@ dependencies = [
  "clap",
  "client",
  "cloud_llm_client",
+ "cloud_zeta2_prompt",
  "collections",
  "edit_prediction_context",
  "editor",
@@ -21728,7 +21734,6 @@ dependencies = [
  "ordered-float 2.10.1",
  "pretty_assertions",
  "project",
- "regex-syntax",
  "serde",
  "serde_json",
  "settings",

@@ -17,5 +17,6 @@ cloud_llm_client.workspace = true
 indoc.workspace = true
 ordered-float.workspace = true
 rustc-hash.workspace = true
+schemars.workspace = true
 serde.workspace = true
 strum.workspace = true

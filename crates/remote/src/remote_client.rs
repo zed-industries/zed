@@ -1077,10 +1077,6 @@ impl RemoteConnectionOptions {
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
         }
     }
-
-    pub fn is_wsl(&self) -> bool {
-        matches!(self, RemoteConnectionOptions::Wsl(_))
-    }
 }
 
 impl From<SshConnectionOptions> for RemoteConnectionOptions {

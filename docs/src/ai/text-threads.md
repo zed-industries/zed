@@ -2,9 +2,12 @@
 
 ## Overview {#overview}
 
-Text threads in the [Agent Panel](./agent-panel.md) function similarly to any other editor. You can use custom key bindings and work with multiple cursors, allowing for seamless transitions between coding and engaging in discussions with the language models.
+Text threads in the [Agent Panel](./agent-panel.md) function similarly to any other editor.
+You can use custom key bindings and work with multiple cursors, allowing for seamless transitions between coding and engaging in discussions with the language models.
 
-However, the text threads differ with the inclusion of message blocks. These blocks serve as containers for text that correspond to different roles within the context. These roles include:
+However, the text threads differ in the inclusion of message blocks.
+These blocks serve as containers for text that correspond to different roles within the context.
+These roles include:
 
 - `You`
 - `Assistant`
@@ -20,24 +23,29 @@ Inserting text from an editor is as simple as highlighting the text and running 
 
 ![Quoting a selection](https://zed.dev/img/assistant/quoting-a-selection.png)
 
-To submit a message, use {#kb assistant::Assist}(`assistant: assist`). Unlike normal threads, where pressing <kbd>enter</kbd> would submit the message, in text threads, our goal is to make it feel as close to a regular editor as possible. So, pressing {#kb editor::Newline} simply inserts a new line.
+To submit a message, use {#kb assistant::Assist}(`assistant: assist`).
+Unlike normal threads, where pressing <kbd>enter</kbd> would submit the message, in text threads, our goal is to make it feel as close to a regular editor as possible.
+So, pressing {#kb editor::Newline} simply inserts a new line.
 
 After submitting a message, the response will be streamed below, in an `Assistant` message block.
 
 ![Receiving an answer](https://zed.dev/img/assistant/receiving-an-answer.png)
 
-The stream can be canceled at any point with <kbd>escape</kbd>. This is useful if you realize early on that the response is not what you were looking for.
+The stream can be canceled at any point with <kbd>escape</kbd>.
+This is useful if you realize early on that the response is not what you were looking for.
 
 If you want to start a new conversation at any time, you can hit <kbd>cmd-n|ctrl-n</kbd> or use the `New Chat` menu option in the hamburger menu at the top left of the panel.
 
-Simple back-and-forth conversations work well with the text threads. However, there may come a time when you want to modify the previous text in the conversation and steer it in a different direction.
+Simple back-and-forth conversations work well with the text threads.
+However, there may come a time when you want to modify the previous text in the conversation and steer it in a different direction.
 
 ## Editing a Text Thread {#edit-text-thread}
 
 Text threads give you the flexibility to have control over the context.
 You can freely edit any previous text, including the responses from the LLM.
 If you want to remove a message block entirely, simply place your cursor at the beginning of the block and use the `delete` key.
-A typical workflow might involve making edits and adjustments throughout the context to refine your inquiry or provide additional information. Here's an example:
+A typical workflow might involve making edits and adjustments throughout the context to refine your inquiry or provide additional information.
+Here's an example:
 
 1. Write text in a `You` block.
 2. Submit the message with {#kb assistant::Assist}.
@@ -47,7 +55,8 @@ A typical workflow might involve making edits and adjustments throughout the con
 6. Add additional context to your original message.
 7. Submit the message with {#kb assistant::Assist}.
 
-Being able to edit previous messages gives you control over how tokens are used. You don't need to start up a new chat to correct a mistake or to add additional information, and you don't have to waste tokens by submitting follow-up corrections.
+Being able to edit previous messages gives you control over how tokens are used.
+You don't need to start up a new chat to correct a mistake or to add additional information, and you don't have to waste tokens by submitting follow-up corrections.
 
 > **Note**: The act of editing past messages is often referred to as "Rewriting History" in the context of the language models.
 
@@ -57,7 +66,8 @@ Some additional points to keep in mind:
 
 ## Commands Overview {#commands}
 
-Slash commands enhance the assistant's capabilities. Begin by typing a `/` at the beginning of the line to see a list of available commands:
+Slash commands enhance the assistant's capabilities.
+Begin by typing a `/` at the beginning of the line to see a list of available commands:
 
 - `/default`: Inserts the default rule
 - `/diagnostics`: Injects errors reported by the project's language server
@@ -80,7 +90,8 @@ Usage: `/default`
 
 ### `/diagnostics`
 
-The `/diagnostics` command injects errors reported by the project's language server into the context. This is useful for getting an overview of current issues in your project.
+The `/diagnostics` command injects errors reported by the project's language server into the context.
+This is useful for getting an overview of current issues in your project.
 
 Usage: `/diagnostics [--include-warnings] [path]`
 
@@ -89,7 +100,8 @@ Usage: `/diagnostics [--include-warnings] [path]`
 
 ### `/file`
 
-The `/file` command inserts the content of a single file or a directory of files into the context. This allows you to reference specific parts of your project in your conversation with the assistant.
+The `/file` command inserts the content of a single file or a directory of files into the context.
+This allows you to reference specific parts of your project in your conversation with the assistant.
 
 Usage: `/file <path>`
 
@@ -103,13 +115,15 @@ Examples:
 
 ### `/now`
 
-The `/now` command inserts the current date and time into the context. This can be useful letting the language model know the current time (and by extension, how old their current knowledge base is).
+The `/now` command inserts the current date and time into the context.
+This can be useful for letting the language model know the current time (and by extension, how old their current knowledge base is).
 
 Usage: `/now`
 
 ### `/prompt`
 
-The `/prompt` command inserts a prompt from the prompt library into the context. It can also be used to nest prompts within prompts.
+The `/prompt` command inserts a prompt from the prompt library into the context.
+It can also be used to nest prompts within prompts.
 
 Usage: `/prompt <prompt_name>`
 
@@ -117,13 +131,15 @@ Related: `/default`
 
 ### `/symbols`
 
-The `/symbols` command inserts the active symbols (functions, classes, etc.) from the current tab into the context. This is useful for getting an overview of the structure of the current file.
+The `/symbols` command inserts the active symbols (functions, classes, etc.) from the current tab into the context.
+This is useful for getting an overview of the structure of the current file.
 
 Usage: `/symbols`
 
 ### `/tab`
 
-The `/tab` command inserts the content of the active tab or all open tabs into the context. This allows you to reference the content you're currently working on.
+The `/tab` command inserts the content of the active tab or all open tabs into the context.
+This allows you to reference the content you're currently working on.
 
 Usage: `/tab [tab_name|all]`
 
@@ -138,15 +154,17 @@ Examples:
 
 ### `/terminal`
 
-The `/terminal` command inserts a select number of lines of output from the terminal into the context. This is useful for referencing recent command outputs or logs.
+The `/terminal` command inserts a select number of lines of output from the terminal into the context.
+This is useful for referencing recent command outputs or logs.
 
 Usage: `/terminal [<number>]`
 
-- `<number>`: Optional parameter to specify the number of lines to insert (default is a 50).
+- `<number>`: Optional parameter to specify the number of lines to insert (default is 50).
 
 ### `/selection`
 
-The `/selection` command inserts the selected text in the editor into the context. This is useful for referencing specific parts of your code.
+The `/selection` command inserts the selected text in the editor into the context.
+This is useful for referencing specific parts of your code.
 
 This is equivalent to the `agent: add selection to thread` command ({#kb agent::AddSelectionToThread}).
 
@@ -173,7 +191,7 @@ Here is some information about their project:
 /file Cargo.toml
 ```
 
-In the above example, the `@file` command is used to insert the contents of the `Cargo.toml` file (or all `Cargo.toml` files present in the project) into the rule.
+In the above example, the `/file` command is used to insert the contents of the `Cargo.toml` file (or all `Cargo.toml` files present in the project) into the rule.
 
 ## Nesting Rules
 
@@ -185,7 +203,7 @@ You might want to nest rules to:
 - Break collections like docs or references into smaller, mix-and-matchable parts
 - Create variants of a similar rule (e.g., `Async Rust - Tokio` vs. `Async Rust - Async-std`)
 
-### Example:
+### Example
 
 ```plaintext
 Title: Zed-Flavored Rust
@@ -215,6 +233,17 @@ Additional slash commands can be provided by extensions.
 
 See [Extension: Slash Commands](../extensions/slash-commands.md) to learn how to create your own.
 
+## Text Threads vs. Threads
+
+For a while, text threads were the only way to interact with AI in Zed.
+We have since introduced, back in May 2025, a new take on the agent panel, which, as opposed to being editor-driven, optimizes for readability.
+You can read more about it in [the Agent Panel page](./agent-panel.md).
+
+However, aside from many interaction differences, the major difference between one vs. the other is that tool calls don't work in Text Threads.
+So, it's accurate to say that Text Threads aren't necessarily "agentic", as they can't perform any action on your behalf.
+Think of it more like a regular and "traditional" AI chat, where what you'll get out of the model is simply just text.
+Consequently, [external agents](./external-agents.md) are also not available in Text Threads.
+
 ## Advanced Concepts
 
 ### Rule Templates {#rule-templates}
@@ -240,9 +269,11 @@ The following templates can be overridden:
 
 2. [`terminal_assistant_prompt.hbs`](https://github.com/zed-industries/zed/tree/main/assets/prompts/terminal_assistant_prompt.hbs): Used for the terminal assistant feature.
 
-> **Note:** Be sure you want to override these, as you'll miss out on iteration on our built-in features. This should be primarily used when developing Zed.
+> **Note:** Be sure you want to override these, as you'll miss out on iteration on our built-in features.
+> This should be primarily used when developing Zed.
 
-You can customize these templates to better suit your needs while maintaining the core structure and variables used by Zed. Zed will automatically reload your prompt overrides when they change on disk.
+You can customize these templates to better suit your needs while maintaining the core structure and variables used by Zed.
+Zed will automatically reload your prompt overrides when they change on disk.
 
 Consult Zed's [assets/prompts](https://github.com/zed-industries/zed/tree/main/assets/prompts) directory for current versions you can play with.
 

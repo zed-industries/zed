@@ -10,7 +10,7 @@ use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{RegisterSetting, Settings, SettingsStore};
 use smol::{fs, io::AsyncReadExt};
 use smol::{fs::File, process::Command};
 use std::mem;
@@ -120,7 +120,7 @@ impl Drop for MacOsUnmounter<'_> {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, RegisterSetting)]
 struct AutoUpdateSetting(bool);
 
 /// Whether or not to automatically check for updates.
@@ -138,8 +138,6 @@ struct GlobalAutoUpdate(Option<Entity<AutoUpdater>>);
 impl Global for GlobalAutoUpdate {}
 
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
-    AutoUpdateSetting::register(cx);
-
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|_, action, window, cx| check(action, window, cx));
 
@@ -406,6 +404,7 @@ impl AutoUpdater {
         arch: &str,
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
+        set_status: impl Fn(&str, &mut AsyncApp) + Send + 'static,
         cx: &mut AsyncApp,
     ) -> Result<PathBuf> {
         let this = cx.update(|cx| {
@@ -415,6 +414,7 @@ impl AutoUpdater {
                 .context("auto-update not initialized")
         })??;
 
+        set_status("Fetching remote server release", cx);
         let release = Self::get_release(
             &this,
             "zed-remote-server",
@@ -439,6 +439,7 @@ impl AutoUpdater {
                 "downloading zed-remote-server {os} {arch} version {}",
                 release.version
             );
+            set_status("Downloading remote server", cx);
             download_remote_server_binary(&version_path, release, client, cx).await?;
         }
 
@@ -1025,7 +1026,6 @@ mod tests {
                 .set_user_settings("{}", cx)
                 .expect("Unable to set user settings");
             cx.set_global(store);
-            AutoUpdateSetting::register(cx);
             assert!(AutoUpdateSetting::get_global(cx).0);
         });
     }

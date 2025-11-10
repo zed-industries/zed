@@ -23,7 +23,7 @@ use project::{
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
-    cmp::Ordering,
+    cmp::{self, Ordering},
     sync::Arc,
 };
 use text::{Anchor, BufferSnapshot, OffsetRangeExt};
@@ -410,7 +410,7 @@ impl BufferDiagnosticsEditor {
             // in the editor.
             // This is done by iterating over the list of diagnostic blocks and
             // determine what range does the diagnostic block span.
-            let mut excerpt_ranges: Vec<ExcerptRange<Point>> = Vec::new();
+            let mut excerpt_ranges: Vec<ExcerptRange<_>> = Vec::new();
 
             for diagnostic_block in blocks.iter() {
                 let excerpt_range = context_range_for_entry(
@@ -420,30 +420,43 @@ impl BufferDiagnosticsEditor {
                     &mut cx,
                 )
                 .await;
+                let initial_range = buffer_snapshot
+                    .anchor_after(diagnostic_block.initial_range.start)
+                    ..buffer_snapshot.anchor_before(diagnostic_block.initial_range.end);
 
-                let index = excerpt_ranges
-                    .binary_search_by(|probe| {
+                let bin_search = |probe: &ExcerptRange<text::Anchor>| {
+                    let context_start = || {
                         probe
                             .context
                             .start
-                            .cmp(&excerpt_range.start)
-                            .then(probe.context.end.cmp(&excerpt_range.end))
-                            .then(
-                                probe
-                                    .primary
-                                    .start
-                                    .cmp(&diagnostic_block.initial_range.start),
-                            )
-                            .then(probe.primary.end.cmp(&diagnostic_block.initial_range.end))
-                            .then(Ordering::Greater)
-                    })
-                    .unwrap_or_else(|index| index);
+                            .cmp(&excerpt_range.start, &buffer_snapshot)
+                    };
+                    let context_end =
+                        || probe.context.end.cmp(&excerpt_range.end, &buffer_snapshot);
+                    let primary_start = || {
+                        probe
+                            .primary
+                            .start
+                            .cmp(&initial_range.start, &buffer_snapshot)
+                    };
+                    let primary_end =
+                        || probe.primary.end.cmp(&initial_range.end, &buffer_snapshot);
+                    context_start()
+                        .then_with(context_end)
+                        .then_with(primary_start)
+                        .then_with(primary_end)
+                        .then(cmp::Ordering::Greater)
+                };
+
+                let index = excerpt_ranges
+                    .binary_search_by(bin_search)
+                    .unwrap_or_else(|i| i);
 
                 excerpt_ranges.insert(
                     index,
                     ExcerptRange {
                         context: excerpt_range,
-                        primary: diagnostic_block.initial_range.clone(),
+                        primary: initial_range,
                     },
                 )
             }
@@ -466,6 +479,13 @@ impl BufferDiagnosticsEditor {
                     buffer_diagnostics_editor
                         .multibuffer
                         .update(cx, |multibuffer, cx| {
+                            let excerpt_ranges = excerpt_ranges
+                                .into_iter()
+                                .map(|range| ExcerptRange {
+                                    context: range.context.to_point(&buffer_snapshot),
+                                    primary: range.primary.to_point(&buffer_snapshot),
+                                })
+                                .collect();
                             multibuffer.set_excerpt_ranges_for_path(
                                 PathKey::for_buffer(&buffer, cx),
                                 buffer.clone(),

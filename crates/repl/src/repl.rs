@@ -15,7 +15,6 @@ use async_dispatcher::{Dispatcher, Runnable, set_dispatcher};
 use gpui::{App, PlatformDispatcher};
 use project::Fs;
 pub use runtimelib::ExecutionState;
-use settings::Settings as _;
 
 pub use crate::jupyter_settings::JupyterSettings;
 pub use crate::kernels::{Kernel, KernelSpecification, KernelStatus};
@@ -31,9 +30,6 @@ pub const KERNEL_DOCS_URL: &str = "https://zed.dev/docs/repl#changing-kernels";
 
 pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
     set_dispatcher(zed_dispatcher(cx));
-    JupyterSettings::register(cx);
-    ::editor::init_settings(cx);
-    ReplSettings::register(cx);
     repl_sessions_ui::init(cx);
     ReplStore::init(fs, cx);
 }

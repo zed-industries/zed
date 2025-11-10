@@ -20,7 +20,7 @@ use remote::RemoteClient;
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::SettingsStore;
+use settings::{RegisterSetting, SettingsStore};
 use task::Shell;
 use util::{ResultExt as _, debug_panic};
 
@@ -1618,7 +1618,7 @@ pub const GEMINI_NAME: &'static str = "gemini";
 pub const CLAUDE_CODE_NAME: &'static str = "claude";
 pub const CODEX_NAME: &'static str = "codex";
 
-#[derive(Default, Clone, JsonSchema, Debug, PartialEq)]
+#[derive(Default, Clone, JsonSchema, Debug, PartialEq, RegisterSetting)]
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
     pub claude: Option<BuiltinAgentServerSettings>,

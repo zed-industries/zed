@@ -23,7 +23,7 @@ use remote::{
     SshConnectionOptions,
 };
 pub use settings::SshConnection;
-use settings::{ExtendingVec, Settings, WslConnection};
+use settings::{ExtendingVec, RegisterSetting, Settings, WslConnection};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Color, CommonAnimationExt, Context, Icon, IconName, IconSize, InteractiveElement,
@@ -32,6 +32,7 @@ use ui::{
 use util::paths::PathWithPosition;
 use workspace::{AppState, ModalView, Workspace};
 
+#[derive(RegisterSetting)]
 pub struct SshSettings {
     pub ssh_connections: ExtendingVec<SshConnection>,
     pub wsl_connections: ExtendingVec<WslConnection>,
@@ -482,12 +483,14 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
         version: Option<SemanticVersion>,
         cx: &mut AsyncApp,
     ) -> Task<anyhow::Result<PathBuf>> {
+        let this = self.clone();
         cx.spawn(async move |cx| {
             AutoUpdater::download_remote_server_release(
                 platform.os,
                 platform.arch,
                 release_channel,
                 version,
+                move |status, cx| this.set_status(Some(status), cx),
                 cx,
             )
             .await
@@ -659,7 +662,7 @@ pub async fn open_remote_project(
                             }
                         })
                         .ok();
-                    log::error!("Failed to open project: {e:?}");
+                    log::error!("Failed to open project: {e:#}");
                     let response = window
                         .update(cx, |_, window, cx| {
                             window.prompt(
@@ -668,7 +671,7 @@ pub async fn open_remote_project(
                                     RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
                                     RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
                                 },
-                                Some(&e.to_string()),
+                                Some(&format!("{e:#}")),
                                 &["Retry", "Cancel"],
                                 cx,
                             )
@@ -715,7 +718,7 @@ pub async fn open_remote_project(
 
         match opened_items {
             Err(e) => {
-                log::error!("Failed to open project: {e:?}");
+                log::error!("Failed to open project: {e:#}");
                 let response = window
                     .update(cx, |_, window, cx| {
                         window.prompt(
@@ -724,7 +727,7 @@ pub async fn open_remote_project(
                                 RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
                                 RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
                             },
-                            Some(&e.to_string()),
+                            Some(&format!("{e:#}")),
                             &["Retry", "Cancel"],
                             cx,
                         )

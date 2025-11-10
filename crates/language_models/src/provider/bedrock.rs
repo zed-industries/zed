@@ -2,7 +2,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use crate::ui::InstructionListItem;
+use crate::ui::{ConfiguredApiCard, InstructionListItem};
 use anyhow::{Context as _, Result, anyhow};
 use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_config::{BehaviorVersion, Region};
@@ -41,7 +41,7 @@ use serde_json::Value;
 use settings::{BedrockAvailableModel as AvailableModel, Settings, SettingsStore};
 use smol::lock::OnceCell;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
-use ui::{Icon, IconName, List, Tooltip, prelude::*};
+use ui::{List, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
@@ -1155,47 +1155,37 @@ impl Render for ConfigurationView {
             return div().child(Label::new("Loading credentials...")).into_any();
         }
 
+        let configured_label = if env_var_set {
+            format!(
+                "Access Key ID is set in {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, Secret Key is set in {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, Region is set in {ZED_BEDROCK_REGION_VAR} environment variables."
+            )
+        } else {
+            match bedrock_method {
+                Some(BedrockAuthMethod::Automatic) => "You are using automatic credentials.".into(),
+                Some(BedrockAuthMethod::NamedProfile) => "You are using named profile.".into(),
+                Some(BedrockAuthMethod::SingleSignOn) => {
+                    "You are using a single sign on profile.".into()
+                }
+                None => "You are using static credentials.".into(),
+            }
+        };
+
+        let tooltip_label = if env_var_set {
+            Some(format!(
+                "To reset your credentials, unset the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, and {ZED_BEDROCK_REGION_VAR} environment variables."
+            ))
+        } else if bedrock_method.is_some() {
+            Some("You cannot reset credentials as they're being derived, check Zed settings to understand how.".to_string())
+        } else {
+            None
+        };
+
         if self.should_render_editor(cx) {
-            return h_flex()
-                .mt_1()
-                .p_1()
-                .justify_between()
-                .rounded_md()
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().background)
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(Label::new(if env_var_set {
-                            format!("Access Key ID is set in {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, Secret Key is set in {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, Region is set in {ZED_BEDROCK_REGION_VAR} environment variables.")
-                        } else {
-                            match bedrock_method {
-                                Some(BedrockAuthMethod::Automatic) => "You are using automatic credentials".into(),
-                                Some(BedrockAuthMethod::NamedProfile) => {
-                                    "You are using named profile".into()
-                                },
-                                Some(BedrockAuthMethod::SingleSignOn) => "You are using a single sign on profile".into(),
-                                None => "You are using static credentials".into(),
-                            }
-                        })),
-                )
-                .child(
-                    Button::new("reset-key", "Reset Key")
-                        .icon(Some(IconName::Trash))
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
-                        .disabled(env_var_set || bedrock_method.is_some())
-                        .when(env_var_set, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your credentials, unset the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, and {ZED_BEDROCK_REGION_VAR} environment variables.")))
-                        })
-                        .when(bedrock_method.is_some(), |this| {
-                            this.tooltip(Tooltip::text("You cannot reset credentials as they're being derived, check Zed settings to understand how"))
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| this.reset_credentials(window, cx))),
-                )
-                .into_any();
+            return ConfiguredApiCard::new(configured_label)
+                .disabled(env_var_set || bedrock_method.is_some())
+                .on_click(cx.listener(|this, _, window, cx| this.reset_credentials(window, cx)))
+                .when_some(tooltip_label, |this, label| this.tooltip_label(label))
+                .into_any_element();
         }
 
         v_flex()
@@ -1241,7 +1231,7 @@ impl Render for ConfigurationView {
 }
 
 impl ConfigurationView {
-    fn render_static_credentials_ui(&self) -> AnyElement {
+    fn render_static_credentials_ui(&self) -> impl IntoElement {
         v_flex()
             .my_2()
             .gap_1p5()
@@ -1278,6 +1268,5 @@ impl ConfigurationView {
             .child(self.secret_access_key_editor.clone())
             .child(self.session_token_editor.clone())
             .child(self.region_editor.clone())
-            .into_any_element()
     }
 }
