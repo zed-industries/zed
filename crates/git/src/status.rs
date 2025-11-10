@@ -207,7 +207,8 @@ impl FileStatus {
         let FileStatus::Tracked(tracked) = self else {
             return false;
         };
-        tracked.index_status == StatusCode::Renamed || tracked.worktree_status == StatusCode::Renamed
+        tracked.index_status == StatusCode::Renamed
+            || tracked.worktree_status == StatusCode::Renamed
     }
 
     pub fn summary(self) -> GitSummary {
@@ -445,23 +446,23 @@ impl FromStr for GitStatus {
     fn from_str(s: &str) -> Result<Self> {
         let mut parts = s.split('\0').peekable();
         let mut entries = Vec::new();
-        
+
         while let Some(entry) = parts.next() {
             if entry.is_empty() {
                 continue;
             }
-            
+
             let sep = match entry.get(2..3) {
                 Some(s) if s == " " => s,
                 _ => continue,
             };
-            
+
             let path_or_old_path = &entry[3..];
-            
+
             if path_or_old_path.ends_with('/') {
                 continue;
             }
-            
+
             let status = match entry.as_bytes()[0..2].try_into() {
                 Ok(bytes) => match FileStatus::from_bytes(bytes).log_err() {
                     Some(s) => s,
@@ -469,7 +470,7 @@ impl FromStr for GitStatus {
                 },
                 Err(_) => continue,
             };
-            
+
             let path = if matches!(
                 status,
                 FileStatus::Tracked(TrackedStatus {
@@ -487,16 +488,16 @@ impl FromStr for GitStatus {
             } else {
                 path_or_old_path
             };
-            
+
             if path.ends_with('/') {
                 continue;
             }
-            
+
             let path = match RelPath::unix(path).log_err() {
                 Some(p) => RepoPath::from_rel_path(p),
                 None => continue,
             };
-            
+
             entries.push((path, status));
         }
         entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
