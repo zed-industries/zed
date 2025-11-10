@@ -148,12 +148,11 @@ impl Bitbucket {
         if is_self_hosted {
             serde_json::from_str::<CommitDetailsSelfHosted>(body_str)
                 .map(|commit| commit.author.avatar_url)
-                .context("failed to deserialize BitBucket commit details")
         } else {
             serde_json::from_str::<CommitDetails>(body_str)
                 .map(|commit| commit.author.user.links.avatar.map(|link| link.href))
-                .context("failed to deserialize BitBucket commit details")
         }
+        .context("failed to deserialize BitBucket commit details")
     }
 }
 
