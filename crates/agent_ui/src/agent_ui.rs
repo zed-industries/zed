@@ -74,6 +74,8 @@ actions!(
         ExpandMessageEditor,
         /// Opens the conversation history view.
         OpenHistory,
+        /// Edits the current thread title.
+        EditTitle,
         /// Adds a context server to the configuration.
         AddContextServer,
         /// Removes the currently selected thread.

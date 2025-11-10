@@ -245,6 +245,7 @@
       "ctrl-shift-j": "agent::ToggleNavigationMenu",
       "ctrl-alt-i": "agent::ToggleOptionsMenu",
       // "ctrl-shift-alt-n": "agent::ToggleNewThreadMenu",
+      "ctrl-alt-e": "agent::EditTitle",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "ctrl-shift-.": "agent::AddSelectionToThread",
       "shift-alt-e": "agent::RemoveAllContext",
