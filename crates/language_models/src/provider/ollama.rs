@@ -20,6 +20,7 @@ pub use settings::OllamaAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::pin::Pin;
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, sync::Arc};
 use ui::{ButtonLike, ElevationIndex, List, Tooltip, prelude::*};
 use ui_input::InputField;
@@ -381,7 +382,7 @@ impl OllamaLanguageModel {
                             }
                             MessageContent::ToolUse(tool_use) => {
                                 tool_calls.push(OllamaToolCall {
-                                    id: tool_use.id.to_string(),
+                                    id: Some(tool_use.id.to_string()),
                                     function: OllamaFunctionCall {
                                         name: tool_use.name.to_string(),
                                         arguments: tool_use.input,
@@ -525,6 +526,9 @@ impl LanguageModel for OllamaLanguageModel {
 fn map_to_language_model_completion_events(
     stream: Pin<Box<dyn Stream<Item = anyhow::Result<ChatResponseDelta>> + Send>>,
 ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+    // Used for creating unique tool use ids
+    static TOOL_CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
+
     struct State {
         stream: Pin<Box<dyn Stream<Item = anyhow::Result<ChatResponseDelta>> + Send>>,
         used_tools: bool,
@@ -575,6 +579,13 @@ fn map_to_language_model_completion_events(
 
                     if let Some(tool_call) = tool_calls.and_then(|v| v.into_iter().next()) {
                         let OllamaToolCall { id, function } = tool_call;
+                        let id = id.unwrap_or_else(|| {
+                            format!(
+                                "{}-{}",
+                                &function.name,
+                                TOOL_CALL_COUNTER.fetch_add(1, Ordering::Relaxed)
+                            )
+                        });
                         let event = LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
                             id: LanguageModelToolUseId::from(id),
                             name: Arc::from(function.name),

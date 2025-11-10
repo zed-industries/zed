@@ -103,7 +103,9 @@ pub enum ChatMessage {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct OllamaToolCall {
-    pub id: String,
+    // TODO: Remove `Option` after most users have updated to Ollama v0.12.10,
+    // which was released on the 4th of November 2025
+    pub id: Option<String>,
     pub function: OllamaFunctionCall,
 }
 
