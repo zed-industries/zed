@@ -11,6 +11,8 @@ use gpui::AsyncApp;
 use smol::channel;
 use smol::process::Child;
 use util::TryFutureExt as _;
+use util::shell::Shell;
+use util::shell_builder::ShellBuilder;
 
 use crate::client::ModelContextServerBinary;
 use crate::transport::Transport;
@@ -26,11 +28,16 @@ impl StdioTransport {
     pub fn new(
         binary: ModelContextServerBinary,
         working_directory: &Option<PathBuf>,
+        shell: &Shell,
         cx: &AsyncApp,
     ) -> Result<Self> {
-        let mut command = util::command::new_smol_command(&binary.executable);
+        let builder = ShellBuilder::new(shell, cfg!(windows));
+        let (command, args) =
+            builder.build(Some(binary.executable.display().to_string()), &binary.args);
+
+        let mut command = util::command::new_smol_command(command);
         command
-            .args(&binary.args)
+            .args(args)
             .envs(binary.env.unwrap_or_default())
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())

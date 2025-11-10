@@ -10,7 +10,9 @@ use futures::{FutureExt as _, future::join_all};
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
 use registry::ContextServerDescriptorRegistry;
 use settings::{Settings as _, SettingsStore};
-use util::{ResultExt as _, rel_path::RelPath};
+use task::Shell;
+use terminal::terminal_settings::TerminalSettings;
+use util::{ResultExt as _, get_default_system_shell, rel_path::RelPath};
 
 use crate::{
     Project,
@@ -409,13 +411,30 @@ impl ContextServerStore {
         ) {
             self.stop_server(&id, cx).log_err();
         }
+        let shell = self.project.update(cx, |project, cx| {
+            let settings = TerminalSettings::get(None, cx).clone();
 
+            let remote_client = project.remote_client.clone();
+            match &remote_client {
+                Some(remote_client) => Shell::Program(
+                    remote_client
+                        .read(cx)
+                        .shell()
+                        .unwrap_or_else(get_default_system_shell),
+                ),
+                None => settings.shell,
+            }
+        });
         let task = cx.spawn({
             let id = server.id();
             let server = server.clone();
             let configuration = configuration.clone();
+
             async move |this, cx| {
-                match server.clone().start(cx).await {
+                let Ok(shell) = shell else {
+                    return;
+                };
+                match server.clone().start(&shell, cx).await {
                     Ok(_) => {
                         debug_assert!(server.client().is_some());
 

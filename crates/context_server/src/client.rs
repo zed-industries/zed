@@ -17,7 +17,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use util::{ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt, shell::Shell};
 
 use crate::{
     transport::{StdioTransport, Transport},
@@ -161,6 +161,7 @@ impl Client {
         server_id: ContextServerId,
         binary: ModelContextServerBinary,
         working_directory: &Option<PathBuf>,
+        shell: &Shell,
         cx: AsyncApp,
     ) -> Result<Self> {
         log::debug!(
@@ -176,7 +177,7 @@ impl Client {
             .unwrap_or_else(String::new);
 
         let timeout = binary.timeout.map(Duration::from_millis);
-        let transport = Arc::new(StdioTransport::new(binary, working_directory, &cx)?);
+        let transport = Arc::new(StdioTransport::new(binary, working_directory, shell, &cx)?);
         Self::new(server_id, server_name.into(), transport, timeout, cx)
     }
 
