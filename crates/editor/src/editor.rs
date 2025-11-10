@@ -1765,30 +1765,6 @@ impl Editor {
         Editor::new_internal(mode, buffer, project, None, window, cx)
     }
 
-    fn to_multi_buffer_range(
-        range: Range<text::Anchor>,
-        buffer_id: Option<BufferId>,
-        excerpt_id: ExcerptId,
-        diff_base_anchor: Option<text::Anchor>,
-    ) -> Range<Anchor> {
-        let start = range.start;
-        let end = range.end;
-        let new_start = Anchor {
-            buffer_id,
-            excerpt_id,
-            text_anchor: start,
-            diff_base_anchor,
-        };
-        let new_end = Anchor {
-            buffer_id,
-            excerpt_id,
-            text_anchor: end,
-            diff_base_anchor,
-        };
-
-        new_start..new_end
-    }
-
     pub fn sticky_headers(&self, cx: &App) -> Option<Vec<OutlineItem<Anchor>>> {
         let multi_buffer = self.buffer().read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
@@ -1812,27 +1788,21 @@ impl Editor {
                 .into_iter()
                 .map(|outline_item| OutlineItem {
                     depth: outline_item.depth,
-                    range: Self::to_multi_buffer_range(
-                        outline_item.range,
-                        Some(buffer_id),
+                    range: Anchor::range_in_buffer(*excerpt_id, buffer_id, outline_item.range),
+                    source_range_for_text: Anchor::range_in_buffer(
                         *excerpt_id,
-                        None,
-                    ),
-                    source_range_for_text: Self::to_multi_buffer_range(
+                        buffer_id,
                         outline_item.source_range_for_text,
-                        Some(buffer_id),
-                        *excerpt_id,
-                        None,
                     ),
                     text: outline_item.text,
                     highlight_ranges: outline_item.highlight_ranges,
                     name_ranges: outline_item.name_ranges,
-                    body_range: outline_item.body_range.map(|range| {
-                        Self::to_multi_buffer_range(range, Some(buffer_id), *excerpt_id, None)
-                    }),
-                    annotation_range: outline_item.annotation_range.map(|range| {
-                        Self::to_multi_buffer_range(range, Some(buffer_id), *excerpt_id, None)
-                    }),
+                    body_range: outline_item
+                        .body_range
+                        .map(|range| Anchor::range_in_buffer(*excerpt_id, buffer_id, range)),
+                    annotation_range: outline_item
+                        .annotation_range
+                        .map(|range| Anchor::range_in_buffer(*excerpt_id, buffer_id, range)),
                 });
             return Some(outline_items.collect());
         }
