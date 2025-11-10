@@ -24,6 +24,8 @@ pub struct EvaluateArguments {
     skip_cache: bool,
     #[arg(long, value_enum, default_value_t = PromptFormat::default())]
     prompt_format: PromptFormat,
+    #[arg(long)]
+    use_expected_context: bool,
 }
 
 pub async fn run_evaluate(
@@ -39,6 +41,7 @@ pub async fn run_evaluate(
                 &path,
                 args.skip_cache,
                 args.prompt_format,
+                args.use_expected_context,
                 app_state.clone(),
                 cx,
             )
@@ -63,13 +66,21 @@ pub async fn run_evaluate_one(
     example_path: &Path,
     skip_cache: bool,
     prompt_format: PromptFormat,
+    use_expected_context: bool,
     app_state: Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) -> Result<EvaluationResult> {
     let example = NamedExample::load(&example_path).unwrap();
-    let predictions = zeta2_predict(example.clone(), skip_cache, prompt_format, &app_state, cx)
-        .await
-        .unwrap();
+    let predictions = zeta2_predict(
+        example.clone(),
+        skip_cache,
+        prompt_format,
+        use_expected_context,
+        &app_state,
+        cx,
+    )
+    .await
+    .unwrap();
 
     let evaluation_result = evaluate(&example.example, &predictions);
 
