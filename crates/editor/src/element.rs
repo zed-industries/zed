@@ -3255,11 +3255,9 @@ impl EditorElement {
             (newest_selection_head, relative)
         });
 
-        let relative_to = if relative.enabled() {
-            Some(newest_selection_head.row())
-        } else {
-            None
-        };
+        let relative_line_numbers_enabled = relative.enabled();
+        let relative_to = relative_line_numbers_enabled.then(|| newest_selection_head.row());
+
         let relative_rows =
             self.calculate_relative_line_numbers(snapshot, &rows, relative_to, relative.wrapped());
         let mut line_number = String::new();
@@ -3271,16 +3269,17 @@ impl EditorElement {
             } else {
                 row_info.buffer_row? + 1
             };
-            let number = relative_rows
-                .get(&display_row)
-                .unwrap_or(&non_relative_number);
-            write!(&mut line_number, "{number}").unwrap();
-            if row_info
-                .diff_status
-                .is_some_and(|status| status.is_deleted())
+            let relative_number = relative_rows.get(&display_row);
+            if !(relative_line_numbers_enabled && relative_number.is_some())
+                && row_info
+                    .diff_status
+                    .is_some_and(|status| status.is_deleted())
             {
                 return None;
             }
+
+            let number = relative_number.unwrap_or(&non_relative_number);
+            write!(&mut line_number, "{number}").unwrap();
 
             let color = active_rows
                 .get(&display_row)
@@ -11002,6 +11001,46 @@ mod tests {
         assert_eq!(relative_rows[&DisplayRow(0)], 5);
         assert_eq!(relative_rows[&DisplayRow(1)], 4);
         assert_eq!(relative_rows[&DisplayRow(2)], 3);
+
+        const DELETED_LINE: u32 = 3;
+        let layouts = cx
+            .update_window(*window, |_, window, cx| {
+                element.layout_line_numbers(
+                    None,
+                    GutterDimensions {
+                        left_padding: Pixels::ZERO,
+                        right_padding: Pixels::ZERO,
+                        width: px(30.0),
+                        margin: Pixels::ZERO,
+                        git_blame_entries_width: None,
+                    },
+                    line_height,
+                    gpui::Point::default(),
+                    DisplayRow(0)..DisplayRow(6),
+                    &(0..6)
+                        .map(|row| RowInfo {
+                            buffer_row: Some(row),
+                            diff_status: (row == DELETED_LINE).then(|| {
+                                DiffHunkStatus::deleted(
+                                    buffer_diff::DiffHunkSecondaryStatus::NoSecondaryHunk,
+                                )
+                            }),
+                            ..Default::default()
+                        })
+                        .collect::<Vec<_>>(),
+                    &BTreeMap::default(),
+                    Some(DisplayPoint::new(DisplayRow(0), 0)),
+                    &snapshot,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap();
+        assert_eq!(layouts.len(), 5,);
+        assert!(
+            layouts.get(&MultiBufferRow(DELETED_LINE)).is_none(),
+            "Deleted line should not have a line number"
+        );
     }
 
     #[gpui::test]
@@ -11075,6 +11114,62 @@ mod tests {
         assert_eq!(relative_rows[&DisplayRow(1)], 2);
         assert_eq!(relative_rows[&DisplayRow(2)], 1);
         // current line has no relative number
+        assert_eq!(relative_rows[&DisplayRow(4)], 1);
+        assert_eq!(relative_rows[&DisplayRow(5)], 2);
+
+        let layouts = cx
+            .update_window(*window, |_, window, cx| {
+                element.layout_line_numbers(
+                    None,
+                    GutterDimensions {
+                        left_padding: Pixels::ZERO,
+                        right_padding: Pixels::ZERO,
+                        width: px(30.0),
+                        margin: Pixels::ZERO,
+                        git_blame_entries_width: None,
+                    },
+                    line_height,
+                    gpui::Point::default(),
+                    DisplayRow(0)..DisplayRow(6),
+                    &(0..6)
+                        .map(|row| RowInfo {
+                            buffer_row: Some(row),
+                            diff_status: Some(DiffHunkStatus::deleted(
+                                buffer_diff::DiffHunkSecondaryStatus::NoSecondaryHunk,
+                            )),
+                            ..Default::default()
+                        })
+                        .collect::<Vec<_>>(),
+                    &BTreeMap::from_iter([(DisplayRow(0), LineHighlightSpec::default())]),
+                    Some(DisplayPoint::new(DisplayRow(0), 0)),
+                    &snapshot,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap();
+        assert!(
+            layouts.is_empty(),
+            "Deleted lines should have no line number"
+        );
+
+        let relative_rows = window
+            .update(cx, |editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                element.calculate_relative_line_numbers(
+                    &snapshot,
+                    &(DisplayRow(0)..DisplayRow(6)),
+                    Some(DisplayRow(3)),
+                    true,
+                )
+            })
+            .unwrap();
+
+        // Deleted lines should still have relative numbers
+        assert_eq!(relative_rows[&DisplayRow(0)], 3);
+        assert_eq!(relative_rows[&DisplayRow(1)], 2);
+        assert_eq!(relative_rows[&DisplayRow(2)], 1);
+        // current line, even if deleted, has no relative number
         assert_eq!(relative_rows[&DisplayRow(4)], 1);
         assert_eq!(relative_rows[&DisplayRow(5)], 2);
     }
