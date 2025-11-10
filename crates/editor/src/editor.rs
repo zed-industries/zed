@@ -3451,25 +3451,19 @@ impl Editor {
         if self.buffer().read(cx).is_singleton() {
             return;
         }
-
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let buffers_to_unfold: Vec<BufferId> = self
+        let buffer_ids: HashSet<BufferId> = self
             .selections
             .disjoint_anchor_ranges()
-            .flat_map(|range| {
-                // Check all buffers that this selection spans
-                let start_offset = range.start.to_offset(&snapshot);
-                let end_offset = range.end.to_offset(&snapshot);
-                snapshot.buffer_ids_for_range(start_offset..end_offset)
-            })
-            .filter(|buffer_id| self.is_buffer_folded(*buffer_id, cx))
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
+            .flat_map(|range| snapshot.buffer_ids_for_range(range))
             .collect();
-
+        let buffers_to_unfold: Vec<BufferId> = buffer_ids
+            .into_iter()
+            .filter(|buffer_id| self.is_buffer_folded(*buffer_id, cx))
+            .collect();
         if !buffers_to_unfold.is_empty() {
             self.display_map.update(cx, |display_map, cx| {
-                display_map.unfold_buffers(buffers_to_unfold.iter().copied(), cx);
+                display_map.unfold_buffers(buffers_to_unfold, cx);
             });
         }
     }
