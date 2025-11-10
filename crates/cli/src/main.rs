@@ -131,16 +131,11 @@ struct Args {
 
 fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
     let canonicalized = match Path::new(argument_str).canonicalize() {
-        // CASE 1: Path exists (Success) - Keep existing logic
         Ok(existing_path) => PathWithPosition::from_path(existing_path),
-
-        // CASE 2: Path does not exist (Error) - Implement new logic
         Err(_) => {
-            // 1. Parse the path to check for line/column information
             let path_with_pos = PathWithPosition::parse_str(argument_str);
             let path_argument = path_with_pos.path;
 
-            // 2. Resolve the path relative to the current directory without canonicalizing
             let curdir = env::current_dir().context("retrieving current directory")?;
             let absolute_path = if path_argument.is_absolute() {
                 path_argument
@@ -148,10 +143,8 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
                 curdir.join(path_argument)
             };
 
-            // 3. Construct PathWithPosition using this non-canonicalized absolute path
             PathWithPosition {
                 path: absolute_path,
-                // retain row/column info if present
                 row: path_with_pos.row,
                 column: path_with_pos.column,
             }
