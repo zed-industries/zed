@@ -511,4 +511,7 @@ pub enum GitHostingProviderKind {
     Github,
     Gitlab,
     Bitbucket,
+    Gitea,
+    Forgejo,
+    SourceHut,
 }
