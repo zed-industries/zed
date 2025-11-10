@@ -3206,7 +3206,11 @@ impl ScrollHandle {
                 }
 
                 if state.overflow.x == Overflow::Scroll {
-                    if bounds.left() + scroll_offset.x < state.bounds.left() {
+                    let child_width = bounds.size.width;
+                    let viewport_width = state.bounds.size.width;
+                    if child_width > viewport_width {
+                        scroll_offset.x = state.bounds.left() - bounds.left();
+                    } else if bounds.left() + scroll_offset.x < state.bounds.left() {
                         scroll_offset.x = state.bounds.left() - bounds.left();
                     } else if bounds.right() + scroll_offset.x > state.bounds.right() {
                         scroll_offset.x = state.bounds.right() - bounds.right();
@@ -3266,5 +3270,30 @@ impl ScrollHandle {
     /// Get the count of children for scrollable item.
     pub fn children_count(&self) -> usize {
         self.0.borrow().child_bounds.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scroll_handle_aligns_wide_children_to_left_edge() {
+        let handle = ScrollHandle::new();
+        {
+            let mut state = handle.0.borrow_mut();
+            state.bounds = Bounds::new(point(px(0.), px(0.)), size(px(80.), px(20.)));
+            state.child_bounds =
+                vec![Bounds::new(point(px(25.), px(0.)), size(px(200.), px(20.)))];
+            state.overflow.x = Overflow::Scroll;
+            state.active_item = Some(ScrollActiveItem {
+                index: 0,
+                strategy: ScrollStrategy::default(),
+            });
+        }
+
+        handle.scroll_to_active_item();
+
+        assert_eq!(handle.offset().x, px(-25.));
     }
 }
