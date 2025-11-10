@@ -1,11 +1,11 @@
 use std::{mem, ops::Range, sync::Arc};
 
 use collections::HashSet;
-use gpui::{App, AppContext, Context, Entity, Task};
+use gpui::{App, AppContext, Context, Entity};
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot};
 use rope::Point;
-use text::{Bias, OffsetRangeExt, locator::Locator};
+use text::{Bias, BufferId, OffsetRangeExt, locator::Locator};
 use util::{post_inc, rel_path::RelPath};
 
 use crate::{
@@ -117,12 +117,14 @@ impl MultiBuffer {
         buffer: Entity<Buffer>,
         ranges: Vec<Range<text::Anchor>>,
         context_line_count: u32,
-        cx: &mut Context<Self>,
-    ) -> Task<Vec<Range<Anchor>>> {
+        cx: &Context<Self>,
+    ) -> impl Future<Output = Vec<Range<Anchor>>> + use<> {
         let buffer_snapshot = buffer.read(cx).snapshot();
-        cx.spawn(async move |multi_buffer, cx| {
+        let multi_buffer = cx.weak_entity();
+        let mut app = cx.to_async();
+        async move {
             let snapshot = buffer_snapshot.clone();
-            let (excerpt_ranges, new, counts) = cx
+            let (excerpt_ranges, new, counts) = app
                 .background_spawn(async move {
                     let ranges = ranges.into_iter().map(|range| range.to_point(&snapshot));
                     let excerpt_ranges =
@@ -133,7 +135,7 @@ impl MultiBuffer {
                 .await;
 
             multi_buffer
-                .update(cx, move |multi_buffer, cx| {
+                .update(&mut app, move |multi_buffer, cx| {
                     let (ranges, _) = multi_buffer.set_merged_excerpt_ranges_for_path(
                         path_key,
                         buffer,
@@ -147,7 +149,16 @@ impl MultiBuffer {
                 })
                 .ok()
                 .unwrap_or_default()
-        })
+        }
+    }
+
+    pub fn remove_excerpts_for_buffer(&mut self, buffer: BufferId, cx: &mut Context<Self>) {
+        self.remove_excerpts(
+            self.excerpts_for_buffer(buffer, cx)
+                .into_iter()
+                .map(|(excerpt, _)| excerpt),
+            cx,
+        );
     }
 
     pub(super) fn expand_excerpts_with_paths(
@@ -161,7 +172,7 @@ impl MultiBuffer {
             .into_iter()
             .chunk_by(|id| self.paths_by_excerpt.get(id).cloned())
             .into_iter()
-            .flat_map(|(k, v)| Some((k?, v.into_iter().collect::<Vec<_>>())))
+            .filter_map(|(k, v)| Some((k?, v.into_iter().collect::<Vec<_>>())))
             .collect::<Vec<_>>();
         let snapshot = self.snapshot(cx);
 
@@ -269,7 +280,7 @@ impl MultiBuffer {
             .excerpts_by_path
             .range(..path.clone())
             .next_back()
-            .map(|(_, value)| *value.last().unwrap())
+            .and_then(|(_, value)| value.last().copied())
             .unwrap_or(ExcerptId::min());
 
         let existing = self
@@ -288,6 +299,7 @@ impl MultiBuffer {
         let snapshot = self.snapshot(cx);
 
         let mut next_excerpt_id =
+            // is this right? What if we remove the last excerpt, then we might reallocate with a wrong mapping?
             if let Some(last_entry) = self.snapshot.borrow().excerpt_ids.last() {
                 last_entry.id.0 + 1
             } else {
@@ -300,20 +312,16 @@ impl MultiBuffer {
         excerpts_cursor.next();
 
         loop {
-            let new = new_iter.peek();
-            let existing = if let Some(existing_id) = existing_iter.peek() {
-                let locator = snapshot.excerpt_locator_for_id(*existing_id);
+            let existing = if let Some(&existing_id) = existing_iter.peek() {
+                let locator = snapshot.excerpt_locator_for_id(existing_id);
                 excerpts_cursor.seek_forward(&Some(locator), Bias::Left);
                 if let Some(excerpt) = excerpts_cursor.item() {
                     if excerpt.buffer_id != buffer_snapshot.remote_id() {
-                        to_remove.push(*existing_id);
+                        to_remove.push(existing_id);
                         existing_iter.next();
                         continue;
                     }
-                    Some((
-                        *existing_id,
-                        excerpt.range.context.to_point(buffer_snapshot),
-                    ))
+                    Some((existing_id, excerpt.range.context.to_point(buffer_snapshot)))
                 } else {
                     None
                 }
@@ -321,6 +329,7 @@ impl MultiBuffer {
                 None
             };
 
+            let new = new_iter.peek();
             if let Some((last_id, last)) = to_insert.last_mut() {
                 if let Some(new) = new
                     && last.context.end >= new.context.start

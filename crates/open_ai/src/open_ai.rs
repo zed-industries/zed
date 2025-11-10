@@ -293,7 +293,7 @@ pub struct FunctionDefinition {
     pub parameters: Option<Value>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum RequestMessage {
     Assistant {
@@ -366,23 +366,40 @@ pub struct ImageUrl {
     pub detail: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct ToolCall {
     pub id: String,
     #[serde(flatten)]
     pub content: ToolCallContent,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ToolCallContent {
     Function { function: FunctionContent },
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct FunctionContent {
     pub name: String,
     pub arguments: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct Response {
+    pub id: String,
+    pub object: String,
+    pub created: u64,
+    pub model: String,
+    pub choices: Vec<Choice>,
+    pub usage: Usage,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct Choice {
+    pub index: u32,
+    pub message: RequestMessage,
+    pub finish_reason: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -410,7 +427,7 @@ pub struct FunctionChunk {
     pub arguments: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
@@ -420,7 +437,7 @@ pub struct Usage {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ChoiceDelta {
     pub index: u32,
-    pub delta: ResponseMessageDelta,
+    pub delta: Option<ResponseMessageDelta>,
     pub finish_reason: Option<String>,
 }
 

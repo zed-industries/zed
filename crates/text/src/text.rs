@@ -20,9 +20,11 @@ use operation_queue::OperationQueue;
 pub use patch::Patch;
 use postage::{oneshot, prelude::*};
 
+use regex::Regex;
 pub use rope::*;
 pub use selection::*;
 use std::{
+    borrow::Cow,
     cmp::{self, Ordering, Reverse},
     fmt::Display,
     future::Future,
@@ -30,7 +32,7 @@ use std::{
     num::NonZeroU64,
     ops::{self, Deref, Range, Sub},
     str,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::{Duration, Instant},
 };
 pub use subscription::*;
@@ -40,6 +42,9 @@ use undo_map::UndoMap;
 
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
+
+static LINE_SEPARATORS_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\r\n|\r").expect("Failed to create LINE_SEPARATORS_REGEX"));
 
 pub type TransactionId = clock::Lamport;
 
@@ -491,21 +496,25 @@ pub struct Edit<D> {
     pub old: Range<D>,
     pub new: Range<D>,
 }
-
 impl<D> Edit<D>
 where
-    D: Sub<D, Output = D> + PartialEq + Copy,
+    D: PartialEq,
 {
-    pub fn old_len(&self) -> D {
+    pub fn is_empty(&self) -> bool {
+        self.old.start == self.old.end && self.new.start == self.new.end
+    }
+}
+
+impl<D, DDelta> Edit<D>
+where
+    D: Sub<D, Output = DDelta> + Copy,
+{
+    pub fn old_len(&self) -> DDelta {
         self.old.end - self.old.start
     }
 
-    pub fn new_len(&self) -> D {
+    pub fn new_len(&self) -> DDelta {
         self.new.end - self.new.start
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.old.start == self.old.end && self.new.start == self.new.end
     }
 }
 
@@ -2014,22 +2023,8 @@ impl BufferSnapshot {
         start..position
     }
 
-    /// Returns the buffer's text as a String.
-    ///
-    /// Note: This always uses `\n` as the line separator, regardless of the buffer's
-    /// actual line ending setting. For LSP communication or other cases where you need
-    /// to preserve the original line endings, use [`Self::text_with_original_line_endings`] instead.
     pub fn text(&self) -> String {
         self.visible_text.to_string()
-    }
-
-    /// Returns the buffer's text with line same endings as in buffer's file.
-    ///
-    /// Unlike [`Self::text`] which always uses `\n`, this method formats the text using
-    /// the buffer's actual line ending setting (Unix `\n` or Windows `\r\n`).
-    pub fn text_with_original_line_endings(&self) -> String {
-        self.visible_text
-            .to_string_with_line_ending(self.line_ending)
     }
 
     pub fn line_ending(&self) -> LineEnding {
@@ -2135,10 +2130,6 @@ impl BufferSnapshot {
         self.visible_text.reversed_bytes_in_range(start..end)
     }
 
-    /// Returns the text in the given range.
-    ///
-    /// Note: This always uses `\n` as the line separator, regardless of the buffer's
-    /// actual line ending setting.
     pub fn text_for_range<T: ToOffset>(&self, range: Range<T>) -> Chunks<'_> {
         let start = range.start.to_offset(self);
         let end = range.end.to_offset(self);
@@ -2290,12 +2281,20 @@ impl BufferSnapshot {
             } else {
                 insertion_cursor.prev();
             }
-            let insertion = insertion_cursor.item().expect("invalid insertion");
+            let Some(insertion) = insertion_cursor.item() else {
+                panic!(
+                    "invalid insertion for buffer {}@{:?} with anchor {:?}",
+                    self.remote_id(),
+                    self.version,
+                    anchor
+                );
+            };
             assert_eq!(
                 insertion.timestamp,
                 anchor.timestamp,
-                "invalid insertion for buffer {} with anchor {:?}",
+                "invalid insertion for buffer {}@{:?} and anchor {:?}",
                 self.remote_id(),
+                self.version,
                 anchor
             );
 
@@ -2325,6 +2324,7 @@ impl BufferSnapshot {
             self.visible_text.len()
         } else {
             debug_assert!(anchor.buffer_id == Some(self.remote_id));
+            debug_assert!(self.version.observed(anchor.timestamp));
             let anchor_key = InsertionFragmentKey {
                 timestamp: anchor.timestamp,
                 split_offset: anchor.offset,
@@ -2348,10 +2348,7 @@ impl BufferSnapshot {
                 .item()
                 .filter(|insertion| insertion.timestamp == anchor.timestamp)
             else {
-                panic!(
-                    "invalid anchor {:?}. buffer id: {}, version: {:?}",
-                    anchor, self.remote_id, self.version
-                );
+                self.panic_bad_anchor(anchor);
             };
 
             let (start, _, item) = self
@@ -2370,13 +2367,29 @@ impl BufferSnapshot {
         }
     }
 
-    fn fragment_id_for_anchor(&self, anchor: &Anchor) -> &Locator {
-        self.try_fragment_id_for_anchor(anchor).unwrap_or_else(|| {
+    #[cold]
+    fn panic_bad_anchor(&self, anchor: &Anchor) -> ! {
+        if anchor.buffer_id.is_some_and(|id| id != self.remote_id) {
+            panic!(
+                "invalid anchor - buffer id does not match: anchor {anchor:?}; buffer id: {}, version: {:?}",
+                self.remote_id, self.version
+            );
+        } else if !self.version.observed(anchor.timestamp) {
+            panic!(
+                "invalid anchor - snapshot has not observed lamport: {:?}; version: {:?}",
+                anchor, self.version
+            );
+        } else {
             panic!(
                 "invalid anchor {:?}. buffer id: {}, version: {:?}",
-                anchor, self.remote_id, self.version,
-            )
-        })
+                anchor, self.remote_id, self.version
+            );
+        }
+    }
+
+    fn fragment_id_for_anchor(&self, anchor: &Anchor) -> &Locator {
+        self.try_fragment_id_for_anchor(anchor)
+            .unwrap_or_else(|| self.panic_bad_anchor(anchor))
     }
 
     fn try_fragment_id_for_anchor(&self, anchor: &Anchor) -> Option<&Locator> {
@@ -3262,6 +3275,77 @@ impl FromAnchor for PointUtf16 {
 impl FromAnchor for usize {
     fn from_anchor(anchor: &Anchor, snapshot: &BufferSnapshot) -> Self {
         snapshot.summary_for_anchor(anchor)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LineEnding {
+    Unix,
+    Windows,
+}
+
+impl Default for LineEnding {
+    fn default() -> Self {
+        #[cfg(unix)]
+        return Self::Unix;
+
+        #[cfg(not(unix))]
+        return Self::Windows;
+    }
+}
+
+impl LineEnding {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LineEnding::Unix => "\n",
+            LineEnding::Windows => "\r\n",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            LineEnding::Unix => "LF",
+            LineEnding::Windows => "CRLF",
+        }
+    }
+
+    pub fn detect(text: &str) -> Self {
+        let mut max_ix = cmp::min(text.len(), 1000);
+        while !text.is_char_boundary(max_ix) {
+            max_ix -= 1;
+        }
+
+        if let Some(ix) = text[..max_ix].find(['\n']) {
+            if ix > 0 && text.as_bytes()[ix - 1] == b'\r' {
+                Self::Windows
+            } else {
+                Self::Unix
+            }
+        } else {
+            Self::default()
+        }
+    }
+
+    pub fn normalize(text: &mut String) {
+        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(text, "\n") {
+            *text = replaced;
+        }
+    }
+
+    pub fn normalize_arc(text: Arc<str>) -> Arc<str> {
+        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(&text, "\n") {
+            replaced.into()
+        } else {
+            text
+        }
+    }
+
+    pub fn normalize_cow(text: Cow<str>) -> Cow<str> {
+        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(&text, "\n") {
+            replaced.into()
+        } else {
+            text
+        }
     }
 }
 

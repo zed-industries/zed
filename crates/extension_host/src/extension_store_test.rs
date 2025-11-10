@@ -1,7 +1,7 @@
 use crate::{
     Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
-    ExtensionIndexThemeEntry, ExtensionManifest, ExtensionSettings, ExtensionStore,
-    GrammarManifestEntry, RELOAD_DEBOUNCE_DURATION, SchemaVersion,
+    ExtensionIndexThemeEntry, ExtensionManifest, ExtensionStore, GrammarManifestEntry,
+    RELOAD_DEBOUNCE_DURATION, SchemaVersion,
 };
 use async_compression::futures::bufread::GzipEncoder;
 use collections::{BTreeMap, HashSet};
@@ -19,7 +19,7 @@ use project::{DEFAULT_COMPLETION_CONTEXT, Project};
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
 use serde_json::json;
-use settings::{Settings as _, SettingsStore};
+use settings::SettingsStore;
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
@@ -31,7 +31,8 @@ use util::test::TempTree;
 #[cfg(test)]
 #[ctor::ctor]
 fn init_logger() {
-    zlog::init_test();
+    // show info logs while we debug the extension_store tests hanging.
+    zlog::init_test_with("info");
 }
 
 #[gpui::test]
@@ -529,10 +530,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     });
 }
 
-// todo(windows)
-// Disable this test on Windows for now. Because this test hangs at
-// `let fake_server = fake_servers.next().await.unwrap();`.
-// Reenable this test when we figure out why.
 #[gpui::test]
 async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     init_test(cx);
@@ -868,9 +865,6 @@ fn init_test(cx: &mut TestAppContext) {
         release_channel::init(SemanticVersion::default(), cx);
         extension::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
-        Project::init_settings(cx);
-        ExtensionSettings::register(cx);
-        language::init(cx);
         gpui_tokio::init(cx);
     });
 }

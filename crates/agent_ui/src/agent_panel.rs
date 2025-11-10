@@ -16,11 +16,9 @@ use serde::{Deserialize, Serialize};
 use settings::{
     DefaultAgentView as DefaultView, LanguageModelProviderSetting, LanguageModelSelection,
 };
-use zed_actions::OpenBrowser;
+
 use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
 
-use crate::acp::{AcpThreadHistory, ThreadHistoryEvent};
-use crate::context_store::ContextStore;
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
     AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, Follow, InlineAssistant,
@@ -34,8 +32,13 @@ use crate::{
     ui::{AgentOnboardingModal, EndTrialUpsell},
 };
 use crate::{
+    ExpandMessageEditor,
+    acp::{AcpThreadHistory, ThreadHistoryEvent},
+};
+use crate::{
     ExternalAgent, NewExternalAgentThread, NewNativeAgentThreadFromSummary, placeholder_command,
 };
+use crate::{ManageProfiles, context_store::ContextStore};
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Result, anyhow};
@@ -106,6 +109,12 @@ pub fn init(cx: &mut App) {
                         }
                     },
                 )
+                .register_action(|workspace, _: &ExpandMessageEditor, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
+                        panel.update(cx, |panel, cx| panel.expand_message_editor(window, cx));
+                    }
+                })
                 .register_action(|workspace, _: &OpenHistory, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
@@ -729,6 +738,25 @@ impl AgentPanel {
         &self.context_server_registry
     }
 
+    pub fn is_hidden(workspace: &Entity<Workspace>, cx: &App) -> bool {
+        let workspace_read = workspace.read(cx);
+
+        workspace_read
+            .panel::<AgentPanel>(cx)
+            .map(|panel| {
+                let panel_id = Entity::entity_id(&panel);
+
+                let is_visible = workspace_read.all_docks().iter().any(|dock| {
+                    dock.read(cx)
+                        .visible_panel()
+                        .is_some_and(|visible_panel| visible_panel.panel_id() == panel_id)
+                });
+
+                !is_visible
+            })
+            .unwrap_or(true)
+    }
+
     fn active_thread_view(&self) -> Option<&Entity<AcpThreadView>> {
         match &self.active_view {
             ActiveView::ExternalAgentThread { thread_view, .. } => Some(thread_view),
@@ -923,6 +951,15 @@ impl AgentPanel {
             cx,
         )
         .detach_and_log_err(cx);
+    }
+
+    fn expand_message_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(thread_view) = self.active_thread_view() {
+            thread_view.update(cx, |view, cx| {
+                view.expand_message_editor(&ExpandMessageEditor, window, cx);
+                view.focus_handle(cx).focus(window);
+            });
+        }
     }
 
     fn open_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1743,10 +1780,9 @@ impl AgentPanel {
                                 }),
                             )
                             .action("Add Custom Server…", Box::new(AddContextServer))
-                            .separator();
-
-                        menu = menu
+                            .separator()
                             .action("Rules", Box::new(OpenRulesLibrary::default()))
+                            .action("Profiles", Box::new(ManageProfiles::default()))
                             .action("Settings", Box::new(OpenSettings))
                             .separator()
                             .action(full_screen_label, Box::new(ToggleZoom));
@@ -1844,7 +1880,12 @@ impl AgentPanel {
                 {
                     let focus_handle = focus_handle.clone();
                     move |_window, cx| {
-                        Tooltip::for_action_in("New…", &ToggleNewThreadMenu, &focus_handle, cx)
+                        Tooltip::for_action_in(
+                            "New Thread…",
+                            &ToggleNewThreadMenu,
+                            &focus_handle,
+                            cx,
+                        )
                     }
                 },
             )
@@ -1942,7 +1983,7 @@ impl AgentPanel {
                             .separator()
                             .header("External Agents")
                             .item(
-                                ContextMenuEntry::new("New Claude Code Thread")
+                                ContextMenuEntry::new("New Claude Code")
                                     .icon(IconName::AiClaude)
                                     .disabled(is_via_collab)
                                     .icon_color(Color::Muted)
@@ -1968,7 +2009,7 @@ impl AgentPanel {
                                     }),
                             )
                             .item(
-                                ContextMenuEntry::new("New Codex Thread")
+                                ContextMenuEntry::new("New Codex CLI")
                                     .icon(IconName::AiOpenAi)
                                     .disabled(is_via_collab)
                                     .icon_color(Color::Muted)
@@ -1994,7 +2035,7 @@ impl AgentPanel {
                                     }),
                             )
                             .item(
-                                ContextMenuEntry::new("New Gemini CLI Thread")
+                                ContextMenuEntry::new("New Gemini CLI")
                                     .icon(IconName::AiGemini)
                                     .icon_color(Color::Muted)
                                     .disabled(is_via_collab)
@@ -2038,9 +2079,9 @@ impl AgentPanel {
                                 for agent_name in agent_names {
                                     let icon_path = agent_server_store_read.agent_icon(&agent_name);
                                     let mut entry =
-                                        ContextMenuEntry::new(format!("New {} Thread", agent_name));
+                                        ContextMenuEntry::new(format!("New {}", agent_name));
                                     if let Some(icon_path) = icon_path {
-                                        entry = entry.custom_icon_path(icon_path);
+                                        entry = entry.custom_icon_svg(icon_path);
                                     } else {
                                         entry = entry.icon(IconName::Terminal);
                                     }
@@ -2090,12 +2131,20 @@ impl AgentPanel {
                                 menu
                             })
                             .separator()
-                            .link(
-                                "Add Other Agents",
-                                OpenBrowser {
-                                    url: zed_urls::external_agents_docs(cx),
-                                }
-                                .boxed_clone(),
+                            .item(
+                                ContextMenuEntry::new("Add More Agents")
+                                    .icon(IconName::Plus)
+                                    .icon_color(Color::Muted)
+                                    .handler({
+                                        move |window, cx| {
+                                            window.dispatch_action(Box::new(zed_actions::Extensions {
+                                                category_filter: Some(
+                                                    zed_actions::ExtensionCategoryFilter::AgentServers,
+                                                ),
+                                                id: None,
+                                            }), cx)
+                                        }
+                                    }),
                             )
                     }))
                 }
@@ -2109,7 +2158,7 @@ impl AgentPanel {
             .when_some(selected_agent_custom_icon, |this, icon_path| {
                 let label = selected_agent_label.clone();
                 this.px(DynamicSpacing::Base02.rems(cx))
-                    .child(Icon::from_path(icon_path).color(Color::Muted))
+                    .child(Icon::from_external_svg(icon_path).color(Color::Muted))
                     .tooltip(move |_window, cx| {
                         Tooltip::with_meta(label.clone(), None, "Selected Agent", cx)
                     })

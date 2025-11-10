@@ -34,7 +34,7 @@ struct CurrentCompletion {
     snapshot: BufferSnapshot,
     /// The edits that should be applied to transform the original text into the predicted text.
     /// Each edit is a range in the buffer and the text to replace it with.
-    edits: Arc<[(Range<Anchor>, String)]>,
+    edits: Arc<[(Range<Anchor>, Arc<str>)]>,
     /// Preview of how the buffer will look after applying the edits.
     edit_preview: EditPreview,
 }
@@ -42,7 +42,7 @@ struct CurrentCompletion {
 impl CurrentCompletion {
     /// Attempts to adjust the edits based on changes made to the buffer since the completion was generated.
     /// Returns None if the user's edits conflict with the predicted edits.
-    fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, String)>> {
+    fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, Arc<str>)>> {
         edit_prediction::interpolate_edits(&self.snapshot, new_snapshot, &self.edits)
     }
 }
@@ -64,6 +64,14 @@ impl CodestralCompletionProvider {
 
     pub fn has_api_key(cx: &App) -> bool {
         Self::api_key(cx).is_some()
+    }
+
+    /// This is so we can immediately show Codestral as a provider users can
+    /// switch to in the edit prediction menu, if the API has been added
+    pub fn ensure_api_key_loaded(http_client: Arc<dyn HttpClient>, cx: &mut App) {
+        MistralLanguageModelProvider::global(http_client, cx)
+            .load_codestral_api_key(cx)
+            .detach();
     }
 
     fn api_key(cx: &App) -> Option<Arc<str>> {
@@ -273,8 +281,8 @@ impl EditPredictionProvider for CodestralCompletionProvider {
                 return Ok(());
             }
 
-            let edits: Arc<[(Range<Anchor>, String)]> =
-                vec![(cursor_position..cursor_position, completion_text)].into();
+            let edits: Arc<[(Range<Anchor>, Arc<str>)]> =
+                vec![(cursor_position..cursor_position, completion_text.into())].into();
             let edit_preview = buffer
                 .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))?
                 .await;

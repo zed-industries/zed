@@ -4,14 +4,12 @@ Zed is designed to be configured: we want to fit your workflow and preferences e
 
 In addition to the settings described here, you may also want to change your [theme](./themes.md), configure your [key bindings](./key-bindings.md), set up [tasks](./tasks.md) or install [extensions](https://github.com/zed-industries/extensions).
 
-## Settings Window
+## Settings Editor
 
-You can browse through many of the supported settings by using the settings window, which can be opened with the {#kb zed::OpenSettings} keybinding, or through the `zed: open settings` action in the command palette.
+You can browse through many of the supported settings via the Settings Editor, which can be opened with the {#kb zed::OpenSettings} keybinding, or through the `zed: open settings` action in the command palette. Through it, you can customize your local, user settings as well as project settings.
 
-Through it, you can customize your local, user settings as well as project settings.
-
-> Note that not all settings that Zed supports are available through the UI yet.
-> Some more intricate ones—for example, language formatters—can only be changed through the JSON settings file.
+> Note that not all settings that Zed supports are available through the Settings Editor yet.
+> Some more intricate ones, such as language formatters, can only be changed through the JSON settings file {#kb zed::OpenSettingsFile}.
 
 ## User Settings File
 
@@ -29,8 +27,8 @@ Whatever you have added to your user settings file gets merged with any local co
 
 ### Default Settings
 
-When visiting the settings UI, the values you see set are the default ones.
-You can also verify all of them in JSON form by running {#action zed::OpenDefaultSettings} from the command palette.
+In the Settings Editor, the values you see set are the default ones.
+You can also verify them in JSON by running {#action zed::OpenDefaultSettings} from the command palette.
 
 Extensions that provide language servers may also provide default settings for those language servers.
 
@@ -67,9 +65,9 @@ They are merged into the base configuration with settings from these keys taking
 
 With this configuration, Stable keeps all base preferences, Preview switches to `zed-dark`, and Nightly enables Vim mode with a different theme.
 
-Changing settings via the UI will always apply the change across all channels.
+Changing settings in the Settings Editorwill always apply the change across all channels.
 
----
+# Settings
 
 Find below an extensive run-through of many supported settings by Zed.
 
@@ -931,6 +929,8 @@ List of `string` values
 - Setting: `cursors`
 - Default: `true`
 
+Cursor indicators appear as small marks on the scrollbar showing where other collaborators' cursors are positioned in the file.
+
 **Options**
 
 `boolean` values
@@ -940,6 +940,8 @@ List of `string` values
 - Description: Whether to show git diff indicators in the scrollbar.
 - Setting: `git_diff`
 - Default: `true`
+
+Git diff indicators appear as colored marks showing lines that have been added, modified, or deleted compared to the git HEAD.
 
 **Options**
 
@@ -951,6 +953,8 @@ List of `string` values
 - Setting: `search_results`
 - Default: `true`
 
+Search result indicators appear as marks showing all locations in the file where your current search query matches.
+
 **Options**
 
 `boolean` values
@@ -960,6 +964,8 @@ List of `string` values
 - Description: Whether to show selected text occurrences in the scrollbar.
 - Setting: `selected_text`
 - Default: `true`
+
+Selected text indicators appear as marks showing all occurrences of the currently selected text throughout the file.
 
 **Options**
 
@@ -971,6 +977,8 @@ List of `string` values
 - Setting: `selected_symbol`
 - Default: `true`
 
+Selected symbol indicators appear as marks showing all occurrences of the currently selected symbol (like a function or variable name) throughout the file.
+
 **Options**
 
 `boolean` values
@@ -980,6 +988,8 @@ List of `string` values
 - Description: Which diagnostic indicators to show in the scrollbar.
 - Setting: `diagnostics`
 - Default: `all`
+
+Diagnostic indicators appear as colored marks showing errors, warnings, and other language server diagnostics at their corresponding line positions in the file.
 
 **Options**
 
@@ -2996,11 +3006,33 @@ List of `string` glob patterns
 
 - Description: Whether to show relative line numbers in the gutter
 - Setting: `relative_line_numbers`
-- Default: `false`
+- Default: `"disabled"`
 
 **Options**
 
-`boolean` values
+1. Show relative line numbers in the gutter whilst counting wrapped lines as one line:
+
+```json [settings]
+{
+  "relative_line_numbers": "enabled"
+}
+```
+
+2. Show relative line numbers in the gutter, including wrapped lines in the counting:
+
+```json [settings]
+{
+  "relative_line_numbers": "wrapped"
+}
+```
+
+2. Do not use relative line numbers:
+
+```json [settings]
+{
+  "relative_line_numbers": "disabled"
+}
+```
 
 ## Remove Trailing Whitespace On Save
 
@@ -3164,6 +3196,12 @@ Non-negative `integer` values
 - Description: If `search_wrap` is disabled, search result do not wrap around the end of the file
 - Setting: `search_wrap`
 - Default: `true`
+
+## Center on Match
+
+- Description: If `center_on_match` is enabled, the editor will center the cursor on the current match when searching.
+- Setting: `center_on_match`
+- Default: `false`
 
 ## Seed Search Query From Cursor
 
@@ -4635,6 +4673,44 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 **Options**
 
 `integer` values between `100` and `900`
+
+## Settings Profiles
+
+- Description: Configure any number of settings profiles that are temporarily applied on top of your existing user settings when selected from `settings profile selector: toggle`.
+- Setting: `profiles`
+- Default: `{}`
+
+In your `settings.json` file, add the `profiles` object.
+Each key within this object is the name of a settings profile, and each value is an object that can include any of Zed's settings.
+
+Example:
+
+```json [settings]
+"profiles": {
+  "Presenting (Dark)": {
+    "agent_buffer_font_size": 18.0,
+    "buffer_font_size": 18.0,
+    "theme": "One Dark",
+    "ui_font_size": 18.0
+  },
+  "Presenting (Light)": {
+    "agent_buffer_font_size": 18.0,
+    "buffer_font_size": 18.0,
+    "theme": "One Light",
+    "ui_font_size": 18.0
+  },
+  "Writing": {
+    "agent_buffer_font_size": 15.0,
+    "buffer_font_size": 15.0,
+    "theme": "Catppuccin Frappé - No Italics",
+    "ui_font_size": 15.0,
+    "tab_bar": { "show": false },
+    "toolbar": { "breadcrumbs": false }
+  }
+}
+```
+
+To preview and enable a settings profile, open the command palette via {#kb command_palette::Toggle} and search for `settings profile selector: toggle`.
 
 ## An example configuration:
 

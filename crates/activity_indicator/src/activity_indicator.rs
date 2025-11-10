@@ -11,7 +11,7 @@ use language::{
     LanguageServerStatusUpdate, ServerHealth,
 };
 use project::{
-    LanguageServerProgress, LspStoreEvent, Project, ProjectEnvironmentEvent,
+    LanguageServerProgress, LspStoreEvent, ProgressToken, Project, ProjectEnvironmentEvent,
     git_store::{GitStoreEvent, Repository},
 };
 use smallvec::SmallVec;
@@ -61,7 +61,7 @@ struct ServerStatus {
 
 struct PendingWork<'a> {
     language_server_id: LanguageServerId,
-    progress_token: &'a str,
+    progress_token: &'a ProgressToken,
     progress: &'a LanguageServerProgress,
 }
 
@@ -313,9 +313,9 @@ impl ActivityIndicator {
                     let mut pending_work = status
                         .pending_work
                         .iter()
-                        .map(|(token, progress)| PendingWork {
+                        .map(|(progress_token, progress)| PendingWork {
                             language_server_id: server_id,
-                            progress_token: token.as_str(),
+                            progress_token,
                             progress,
                         })
                         .collect::<SmallVec<[_; 4]>>();
@@ -358,11 +358,7 @@ impl ActivityIndicator {
                 ..
             }) = pending_work.next()
             {
-                let mut message = progress
-                    .title
-                    .as_deref()
-                    .unwrap_or(progress_token)
-                    .to_string();
+                let mut message = progress.title.clone().unwrap_or(progress_token.to_string());
 
                 if let Some(percentage) = progress.percentage {
                     write!(&mut message, " ({}%)", percentage).unwrap();
@@ -773,7 +769,7 @@ impl Render for ActivityIndicator {
         let Some(content) = self.content_to_render(cx) else {
             return result;
         };
-        let this = cx.entity().downgrade();
+        let activity_indicator = cx.entity().downgrade();
         let truncate_content = content.message.len() > MAX_MESSAGE_LEN;
         result.gap_2().child(
             PopoverMenu::new("activity-indicator-popover")
@@ -815,22 +811,21 @@ impl Render for ActivityIndicator {
                 )
                 .anchor(gpui::Corner::BottomLeft)
                 .menu(move |window, cx| {
-                    let strong_this = this.upgrade()?;
+                    let strong_this = activity_indicator.upgrade()?;
                     let mut has_work = false;
                     let menu = ContextMenu::build(window, cx, |mut menu, _, cx| {
                         for work in strong_this.read(cx).pending_language_server_work(cx) {
                             has_work = true;
-                            let this = this.clone();
+                            let activity_indicator = activity_indicator.clone();
                             let mut title = work
                                 .progress
                                 .title
-                                .as_deref()
-                                .unwrap_or(work.progress_token)
-                                .to_owned();
+                                .clone()
+                                .unwrap_or(work.progress_token.to_string());
 
                             if work.progress.is_cancellable {
                                 let language_server_id = work.language_server_id;
-                                let token = work.progress_token.to_string();
+                                let token = work.progress_token.clone();
                                 let title = SharedString::from(title);
                                 menu = menu.custom_entry(
                                     move |_, _| {
@@ -842,18 +837,23 @@ impl Render for ActivityIndicator {
                                             .into_any_element()
                                     },
                                     move |_, cx| {
-                                        this.update(cx, |this, cx| {
-                                            this.project.update(cx, |project, cx| {
-                                                project.cancel_language_server_work(
-                                                    language_server_id,
-                                                    Some(token.clone()),
+                                        let token = token.clone();
+                                        activity_indicator
+                                            .update(cx, |activity_indicator, cx| {
+                                                activity_indicator.project.update(
                                                     cx,
+                                                    |project, cx| {
+                                                        project.cancel_language_server_work(
+                                                            language_server_id,
+                                                            Some(token),
+                                                            cx,
+                                                        );
+                                                    },
                                                 );
-                                            });
-                                            this.context_menu_handle.hide(cx);
-                                            cx.notify();
-                                        })
-                                        .ok();
+                                                activity_indicator.context_menu_handle.hide(cx);
+                                                cx.notify();
+                                            })
+                                            .ok();
                                     },
                                 );
                             } else {

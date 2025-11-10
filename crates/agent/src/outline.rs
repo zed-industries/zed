@@ -1,6 +1,6 @@
 use anyhow::Result;
 use gpui::{AsyncApp, Entity};
-use language::{Buffer, OutlineItem, ParseStatus};
+use language::{Buffer, OutlineItem};
 use regex::Regex;
 use std::fmt::Write;
 use text::Point;
@@ -30,10 +30,9 @@ pub async fn get_buffer_content_or_outline(
     if file_size > AUTO_OUTLINE_SIZE {
         // For large files, use outline instead of full content
         // Wait until the buffer has been fully parsed, so we can read its outline
-        let mut parse_status = buffer.read_with(cx, |buffer, _| buffer.parse_status())?;
-        while *parse_status.borrow() != ParseStatus::Idle {
-            parse_status.changed().await?;
-        }
+        buffer
+            .read_with(cx, |buffer, _| buffer.parsing_idle())?
+            .await;
 
         let outline_items = buffer.read_with(cx, |buffer, _| {
             let snapshot = buffer.snapshot();

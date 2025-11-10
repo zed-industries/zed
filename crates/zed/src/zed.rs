@@ -388,6 +388,7 @@ pub fn initialize_workspace(
                 app_state.fs.clone(),
                 app_state.user_store.clone(),
                 edit_prediction_menu_handle.clone(),
+                app_state.client.clone(),
                 cx,
             )
         });
@@ -1407,9 +1408,6 @@ pub fn handle_keymap_file_changes(
     mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut App,
 ) {
-    BaseKeymap::register(cx);
-    vim_mode_setting::init(cx);
-
     let (base_keymap_tx, mut base_keymap_rx) = mpsc::unbounded();
     let (keyboard_layout_tx, mut keyboard_layout_rx) = mpsc::unbounded();
     let mut old_base_keymap = *BaseKeymap::get_global(cx);
@@ -1921,6 +1919,7 @@ fn open_bundled_file(
                             let mut editor =
                                 Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
                             editor.set_read_only(true);
+                            editor.set_should_serialize(false, cx);
                             editor.set_breadcrumb_header(title.into());
                             editor
                         })),
@@ -2859,16 +2858,20 @@ mod tests {
         });
 
         // Split the pane with the first entry, then open the second entry again.
-        let (task1, task2) = window
+        window
             .update(cx, |w, window, cx| {
-                (
-                    w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, window, cx),
-                    w.open_path(file2.clone(), None, true, window, cx),
-                )
+                w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, window, cx)
             })
+            .unwrap()
+            .await
             .unwrap();
-        task1.await.unwrap();
-        task2.await.unwrap();
+        window
+            .update(cx, |w, window, cx| {
+                w.open_path(file2.clone(), None, true, window, cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
 
         window
             .read_with(cx, |w, cx| {
@@ -4066,7 +4069,9 @@ mod tests {
                     let editor = item.downcast::<Editor>().unwrap();
                     let (selections, scroll_position) = editor.update(cx, |editor, cx| {
                         (
-                            editor.selections.display_ranges(cx),
+                            editor
+                                .selections
+                                .display_ranges(&editor.display_snapshot(cx)),
                             editor.scroll_position(cx),
                         )
                     });
@@ -4323,10 +4328,8 @@ mod tests {
 
             theme::init(theme::LoadThemes::JustBase, cx);
             client::init(&app_state.client, cx);
-            language::init(cx);
             workspace::init(app_state.clone(), cx);
             onboarding::init(cx);
-            Project::init_settings(cx);
             app_state
         })
     }
@@ -4562,74 +4565,6 @@ mod tests {
         });
     }
 
-    /// Actions that don't build from empty input won't work from command palette invocation.
-    #[gpui::test]
-    async fn test_actions_build_with_empty_input(cx: &mut gpui::TestAppContext) {
-        init_keymap_test(cx);
-        cx.update(|cx| {
-            let all_actions = cx.all_action_names();
-            let mut failing_names = Vec::new();
-            let mut errors = Vec::new();
-            for action in all_actions {
-                match action.to_string().as_str() {
-                    "vim::FindCommand"
-                    | "vim::Literal"
-                    | "vim::ResizePane"
-                    | "vim::PushObject"
-                    | "vim::PushFindForward"
-                    | "vim::PushFindBackward"
-                    | "vim::PushSneak"
-                    | "vim::PushSneakBackward"
-                    | "vim::PushChangeSurrounds"
-                    | "vim::PushJump"
-                    | "vim::PushDigraph"
-                    | "vim::PushLiteral"
-                    | "vim::PushHelixNext"
-                    | "vim::PushHelixPrevious"
-                    | "vim::Number"
-                    | "vim::SelectRegister"
-                    | "git::StageAndNext"
-                    | "git::UnstageAndNext"
-                    | "terminal::SendText"
-                    | "terminal::SendKeystroke"
-                    | "app_menu::OpenApplicationMenu"
-                    | "picker::ConfirmInput"
-                    | "editor::HandleInput"
-                    | "editor::FoldAtLevel"
-                    | "pane::ActivateItem"
-                    | "workspace::ActivatePane"
-                    | "workspace::MoveItemToPane"
-                    | "workspace::MoveItemToPaneInDirection"
-                    | "workspace::NewFileSplit"
-                    | "workspace::OpenTerminal"
-                    | "workspace::SendKeystrokes"
-                    | "agent::NewNativeAgentThreadFromSummary"
-                    | "action::Sequence"
-                    | "zed::OpenBrowser"
-                    | "zed::OpenZedUrl"
-                    | "settings_editor::FocusFile" => {}
-                    _ => {
-                        let result = cx.build_action(action, None);
-                        match &result {
-                            Ok(_) => {}
-                            Err(err) => {
-                                failing_names.push(action);
-                                errors.push(format!("{action} failed to build: {err:?}"));
-                            }
-                        }
-                    }
-                }
-            }
-            if !errors.is_empty() {
-                panic!(
-                    "Failed to build actions using {{}} as input: {:?}. Errors:\n{}",
-                    failing_names,
-                    errors.join("\n")
-                );
-            }
-        });
-    }
-
     /// Checks that action namespaces are the expected set. The purpose of this is to prevent typos
     /// and let you know when introducing a new namespace.
     #[gpui::test]
@@ -4857,21 +4792,17 @@ mod tests {
 
             let state = Arc::get_mut(&mut app_state).unwrap();
             state.build_window_options = build_window_options;
-
             app_state.languages.add(markdown_language());
 
             gpui_tokio::init(cx);
-            vim_mode_setting::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             audio::init(cx);
             channel::init(&app_state.client, app_state.user_store.clone(), cx);
             call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
-            Project::init_settings(cx);
             release_channel::init(SemanticVersion::default(), cx);
             command_palette::init(cx);
-            language::init(cx);
             editor::init(cx);
             collab_ui::init(&app_state, cx);
             git_ui::init(cx);

@@ -720,7 +720,7 @@ impl EditPreview {
     pub fn highlight_edits(
         &self,
         current_snapshot: &BufferSnapshot,
-        edits: &[(Range<Anchor>, String)],
+        edits: &[(Range<Anchor>, impl AsRef<str>)],
         include_deletions: bool,
         cx: &App,
     ) -> HighlightedText {
@@ -747,7 +747,8 @@ impl EditPreview {
                 .end
                 .bias_right(&self.old_snapshot)
                 .to_offset(&self.applied_edits_snapshot);
-            let edit_start_in_preview_snapshot = edit_new_end_in_preview_snapshot - edit_text.len();
+            let edit_start_in_preview_snapshot =
+                edit_new_end_in_preview_snapshot - edit_text.as_ref().len();
 
             let unchanged_range_in_preview_snapshot =
                 offset_in_preview_snapshot..edit_start_in_preview_snapshot;
@@ -772,7 +773,7 @@ impl EditPreview {
                 );
             }
 
-            if !edit_text.is_empty() {
+            if !edit_text.as_ref().is_empty() {
                 highlighted_text.add_text_from_buffer_range(
                     edit_start_in_preview_snapshot..edit_new_end_in_preview_snapshot,
                     &self.applied_edits_snapshot,
@@ -796,7 +797,7 @@ impl EditPreview {
         highlighted_text.build()
     }
 
-    fn compute_visible_range(&self, edits: &[(Range<Anchor>, String)]) -> Option<Range<usize>> {
+    fn compute_visible_range<T>(&self, edits: &[(Range<Anchor>, T)]) -> Option<Range<usize>> {
         let (first, _) = edits.first()?;
         let (last, _) = edits.last()?;
 
@@ -1130,7 +1131,7 @@ impl Buffer {
 
     pub fn preview_edits(
         &self,
-        edits: Arc<[(Range<Anchor>, String)]>,
+        edits: Arc<[(Range<Anchor>, Arc<str>)]>,
         cx: &App,
     ) -> Task<EditPreview> {
         let registry = self.language_registry();
@@ -1573,21 +1574,24 @@ impl Buffer {
                 self.reparse = None;
             }
             Err(parse_task) => {
+                // todo(lw): hot foreground spawn
                 self.reparse = Some(cx.spawn(async move |this, cx| {
-                    let new_syntax_map = parse_task.await;
+                    let new_syntax_map = cx.background_spawn(parse_task).await;
                     this.update(cx, move |this, cx| {
-                        let grammar_changed =
+                        let grammar_changed = || {
                             this.language.as_ref().is_none_or(|current_language| {
                                 !Arc::ptr_eq(&language, current_language)
-                            });
-                        let language_registry_changed = new_syntax_map
-                            .contains_unknown_injections()
-                            && language_registry.is_some_and(|registry| {
-                                registry.version() != new_syntax_map.language_registry_version()
-                            });
-                        let parse_again = language_registry_changed
-                            || grammar_changed
-                            || this.version.changed_since(&parsed_version);
+                            })
+                        };
+                        let language_registry_changed = || {
+                            new_syntax_map.contains_unknown_injections()
+                                && language_registry.is_some_and(|registry| {
+                                    registry.version() != new_syntax_map.language_registry_version()
+                                })
+                        };
+                        let parse_again = this.version.changed_since(&parsed_version)
+                            || language_registry_changed()
+                            || grammar_changed();
                         this.did_finish_parsing(new_syntax_map, cx);
                         this.reparse = None;
                         if parse_again {
@@ -1612,6 +1616,18 @@ impl Buffer {
 
     pub fn parse_status(&self) -> watch::Receiver<ParseStatus> {
         self.parse_status.1.clone()
+    }
+
+    /// Wait until the buffer is no longer parsing
+    pub fn parsing_idle(&self) -> impl Future<Output = ()> + use<> {
+        let mut parse_status = self.parse_status();
+        async move {
+            while *parse_status.borrow() != ParseStatus::Idle {
+                if parse_status.changed().await.is_err() {
+                    break;
+                }
+            }
+        }
     }
 
     /// Assign to the buffer a set of diagnostics created by a given language server.
@@ -3363,7 +3379,19 @@ impl BufferSnapshot {
     pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayer<'_>> {
         let offset = position.to_offset(self);
         self.syntax_layers_for_range(offset..offset, false)
-            .filter(|l| l.node().end_byte() > offset)
+            .filter(|l| {
+                if let Some(ranges) = l.included_sub_ranges {
+                    ranges.iter().any(|range| {
+                        let start = range.start.to_offset(self);
+                        start <= offset && {
+                            let end = range.end.to_offset(self);
+                            offset < end
+                        }
+                    })
+                } else {
+                    l.node().start_byte() <= offset && l.node().end_byte() > offset
+                }
+            })
             .last()
     }
 
@@ -3833,6 +3861,32 @@ impl BufferSnapshot {
         include_extra_context: bool,
         theme: Option<&SyntaxTheme>,
     ) -> Vec<OutlineItem<Anchor>> {
+        self.outline_items_containing_internal(
+            range,
+            include_extra_context,
+            theme,
+            |this, range| this.anchor_after(range.start)..this.anchor_before(range.end),
+        )
+    }
+
+    pub fn outline_items_as_points_containing<T: ToOffset>(
+        &self,
+        range: Range<T>,
+        include_extra_context: bool,
+        theme: Option<&SyntaxTheme>,
+    ) -> Vec<OutlineItem<Point>> {
+        self.outline_items_containing_internal(range, include_extra_context, theme, |_, range| {
+            range
+        })
+    }
+
+    fn outline_items_containing_internal<T: ToOffset, U>(
+        &self,
+        range: Range<T>,
+        include_extra_context: bool,
+        theme: Option<&SyntaxTheme>,
+        range_callback: fn(&Self, Range<Point>) -> Range<U>,
+    ) -> Vec<OutlineItem<U>> {
         let range = range.to_offset(self);
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
             grammar.outline_config.as_ref().map(|c| &c.query)
@@ -3905,19 +3959,16 @@ impl BufferSnapshot {
 
             anchor_items.push(OutlineItem {
                 depth: item_ends_stack.len(),
-                range: self.anchor_after(item.range.start)..self.anchor_before(item.range.end),
+                range: range_callback(self, item.range.clone()),
+                source_range_for_text: range_callback(self, item.source_range_for_text.clone()),
                 text: item.text,
                 highlight_ranges: item.highlight_ranges,
                 name_ranges: item.name_ranges,
-                body_range: item
-                    .body_range
-                    .map(|r| self.anchor_after(r.start)..self.anchor_before(r.end)),
+                body_range: item.body_range.map(|r| range_callback(self, r)),
                 annotation_range: annotation_row_range.map(|annotation_range| {
-                    self.anchor_after(Point::new(annotation_range.start, 0))
-                        ..self.anchor_before(Point::new(
-                            annotation_range.end,
-                            self.line_len(annotation_range.end),
-                        ))
+                    let point_range = Point::new(annotation_range.start, 0)
+                        ..Point::new(annotation_range.end, self.line_len(annotation_range.end));
+                    range_callback(self, point_range)
                 }),
             });
             item_ends_stack.push(item.range.end);
@@ -3984,14 +4035,13 @@ impl BufferSnapshot {
         if buffer_ranges.is_empty() {
             return None;
         }
+        let source_range_for_text =
+            buffer_ranges.first().unwrap().0.start..buffer_ranges.last().unwrap().0.end;
 
         let mut text = String::new();
         let mut highlight_ranges = Vec::new();
         let mut name_ranges = Vec::new();
-        let mut chunks = self.chunks(
-            buffer_ranges.first().unwrap().0.start..buffer_ranges.last().unwrap().0.end,
-            true,
-        );
+        let mut chunks = self.chunks(source_range_for_text.clone(), true);
         let mut last_buffer_range_end = 0;
         for (buffer_range, is_name) in buffer_ranges {
             let space_added = !text.is_empty() && buffer_range.start > last_buffer_range_end;
@@ -4037,6 +4087,7 @@ impl BufferSnapshot {
         Some(OutlineItem {
             depth: 0, // We'll calculate the depth later
             range: item_point_range,
+            source_range_for_text: source_range_for_text.to_point(self),
             text,
             highlight_ranges,
             name_ranges,

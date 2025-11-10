@@ -2591,11 +2591,12 @@ impl SearchableItem for TextThreadEditor {
         &mut self,
         index: usize,
         matches: &[Self::Match],
+        collapse: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
-            editor.activate_match(index, matches, window, cx);
+            editor.activate_match(index, matches, collapse, window, cx);
         });
     }
 
@@ -3222,11 +3223,7 @@ mod tests {
         prompt_store::init(cx);
         LanguageModelRegistry::test(cx);
         cx.set_global(settings_store);
-        language::init(cx);
-        agent_settings::init(cx);
-        Project::init_settings(cx);
+
         theme::init(theme::LoadThemes::JustBase, cx);
-        workspace::init_settings(cx);
-        editor::init_settings(cx);
     }
 }

@@ -620,8 +620,18 @@ impl TextThreadContextHandle {
 
 impl Display for TextThreadContext {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        // TODO: escape title?
-        writeln!(f, "<text_thread title=\"{}\">", self.title)?;
+        write!(f, "<text_thread title=\"")?;
+        for c in self.title.chars() {
+            match c {
+                '&' => write!(f, "&amp;")?,
+                '<' => write!(f, "&lt;")?,
+                '>' => write!(f, "&gt;")?,
+                '"' => write!(f, "&quot;")?,
+                '\'' => write!(f, "&apos;")?,
+                _ => write!(f, "{}", c)?,
+            }
+        }
+        writeln!(f, "\">")?;
         write!(f, "{}", self.text.trim())?;
         write!(f, "\n</text_thread>")
     }
@@ -1065,8 +1075,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
         });
     }
 

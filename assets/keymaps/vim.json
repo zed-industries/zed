@@ -220,6 +220,8 @@
       "[ {": ["vim::UnmatchedBackward", { "char": "{" }],
       "] )": ["vim::UnmatchedForward", { "char": ")" }],
       "[ (": ["vim::UnmatchedBackward", { "char": "(" }],
+      "[ r": "vim::GoToPreviousReference",
+      "] r": "vim::GoToNextReference",
       // tree-sitter related commands
       "[ x": "vim::SelectLargerSyntaxNode",
       "] x": "vim::SelectSmallerSyntaxNode"
@@ -420,6 +422,12 @@
     }
   },
   {
+    "context": "vim_mode == helix_select && !menu",
+    "bindings": {
+      "escape": "vim::SwitchToHelixNormalMode"
+    }
+  },
+  {
     "context": "(vim_mode == helix_normal || vim_mode == helix_select) && !menu",
     "bindings": {
       // Movement
@@ -447,6 +455,7 @@
       "<": "vim::Outdent",
       "=": "vim::AutoIndent",
       "d": "vim::HelixDelete",
+      "alt-d": "editor::Delete", // Delete selection, without yanking
       "c": "vim::HelixSubstitute",
       "alt-c": "vim::HelixSubstituteNoYank",
 

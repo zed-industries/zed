@@ -294,6 +294,8 @@ actions!(
         ToggleFocus,
         /// Toggles visibility of git-ignored files.
         ToggleHideGitIgnore,
+        /// Toggles visibility of hidden files.
+        ToggleHideHidden,
         /// Starts a new search in the selected directory.
         NewSearchInDirectory,
         /// Unfolds the selected directory.
@@ -358,13 +360,7 @@ impl FoldedAncestors {
     }
 }
 
-pub fn init_settings(cx: &mut App) {
-    ProjectPanelSettings::register(cx);
-}
-
 pub fn init(cx: &mut App) {
-    init_settings(cx);
-
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
@@ -378,6 +374,19 @@ pub fn init(cx: &mut App) {
                         .project_panel
                         .get_or_insert_default()
                         .hide_gitignore
+                        .unwrap_or(false),
+                );
+            })
+        });
+
+        workspace.register_action(|workspace, _: &ToggleHideHidden, _, cx| {
+            let fs = workspace.app_state().fs.clone();
+            update_settings_file(fs, cx, move |setting, _| {
+                setting.project_panel.get_or_insert_default().hide_hidden = Some(
+                    !setting
+                        .project_panel
+                        .get_or_insert_default()
+                        .hide_hidden
                         .unwrap_or(false),
                 );
             })
@@ -1038,9 +1047,8 @@ impl ProjectPanel {
                                 "Copy Relative Path",
                                 Box::new(zed_actions::workspace::CopyRelativePath),
                             )
-                            .separator()
                             .when(!should_hide_rename, |menu| {
-                                menu.action("Rename", Box::new(Rename))
+                                menu.separator().action("Rename", Box::new(Rename))
                             })
                             .when(!is_root && !is_remote, |menu| {
                                 menu.action("Trash", Box::new(Trash { skip_prompt: false }))

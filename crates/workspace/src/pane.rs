@@ -1123,7 +1123,6 @@ impl Pane {
                 false
             }
         });
-
         if let Some(existing_item_index) = existing_item_index {
             // If the item already exists, move it to the desired destination and activate it
 
@@ -3702,6 +3701,10 @@ impl Render for Pane {
             key_context.add("EmptyPane");
         }
 
+        self.toolbar
+            .read(cx)
+            .contribute_context(&mut key_context, cx);
+
         let should_display_tab_bar = self.should_display_tab_bar.clone();
         let display_tab_bar = should_display_tab_bar(window, cx);
         let Some(project) = self.project.upgrade() else {
@@ -4126,6 +4129,20 @@ impl NavHistory {
         state
             .closed_stack
             .retain(|entry| entry.item.id() != item_id);
+    }
+
+    pub fn rename_item(
+        &mut self,
+        item_id: EntityId,
+        project_path: ProjectPath,
+        abs_path: Option<PathBuf>,
+    ) {
+        let mut state = self.0.lock();
+        let path_for_item = state.paths_by_item.get_mut(&item_id);
+        if let Some(path_for_item) = path_for_item {
+            path_for_item.0 = project_path;
+            path_for_item.1 = abs_path;
+        }
     }
 
     pub fn path_for_item(&self, item_id: EntityId) -> Option<(ProjectPath, Option<PathBuf>)> {
@@ -6856,8 +6873,6 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(LoadThemes::JustBase, cx);
-            crate::init_settings(cx);
-            Project::init_settings(cx);
         });
     }
 

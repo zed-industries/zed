@@ -7,7 +7,7 @@ mod ssh_config;
 mod wsl_picker;
 
 use remote::RemoteConnectionOptions;
-pub use remote_connections::open_remote_project;
+pub use remote_connections::{RemoteConnectionModal, connect, open_remote_project};
 
 use disconnected_overlay::DisconnectedOverlay;
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -28,13 +28,12 @@ use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*, tooltip_con
 use util::{ResultExt, paths::PathExt};
 use workspace::{
     CloseIntent, HistoryManager, ModalView, OpenOptions, PathList, SerializedWorkspaceLocation,
-    WORKSPACE_DB, Workspace, WorkspaceId, with_active_or_new_workspace,
+    WORKSPACE_DB, Workspace, WorkspaceId, notifications::DetachAndPromptErr,
+    with_active_or_new_workspace,
 };
 use zed_actions::{OpenRecent, OpenRemote};
 
 pub fn init(cx: &mut App) {
-    SshSettings::register(cx);
-
     #[cfg(target_os = "windows")]
     cx.on_action(|open_wsl: &zed_actions::wsl_actions::OpenFolderInWsl, cx| {
         let create_new_window = open_wsl.create_new_window;
@@ -420,77 +419,79 @@ impl PickerDelegate for RecentProjectsDelegate {
             } else {
                 !secondary
             };
-            workspace
-                .update(cx, |workspace, cx| {
-                    if workspace.database_id() == Some(*candidate_workspace_id) {
-                        Task::ready(Ok(()))
-                    } else {
-                        match candidate_workspace_location.clone() {
-                            SerializedWorkspaceLocation::Local => {
-                                let paths = candidate_workspace_paths.paths().to_vec();
-                                if replace_current_window {
-                                    cx.spawn_in(window, async move |workspace, cx| {
-                                        let continue_replacing = workspace
-                                            .update_in(cx, |workspace, window, cx| {
-                                                workspace.prepare_to_close(
-                                                    CloseIntent::ReplaceWindow,
-                                                    window,
-                                                    cx,
-                                                )
-                                            })?
-                                            .await?;
-                                        if continue_replacing {
+            workspace.update(cx, |workspace, cx| {
+                if workspace.database_id() == Some(*candidate_workspace_id) {
+                    return;
+                }
+                match candidate_workspace_location.clone() {
+                    SerializedWorkspaceLocation::Local => {
+                        let paths = candidate_workspace_paths.paths().to_vec();
+                        if replace_current_window {
+                            cx.spawn_in(window, async move |workspace, cx| {
+                                let continue_replacing = workspace
+                                    .update_in(cx, |workspace, window, cx| {
+                                        workspace.prepare_to_close(
+                                            CloseIntent::ReplaceWindow,
+                                            window,
+                                            cx,
+                                        )
+                                    })?
+                                    .await?;
+                                if continue_replacing {
+                                    workspace
+                                        .update_in(cx, |workspace, window, cx| {
                                             workspace
-                                                .update_in(cx, |workspace, window, cx| {
-                                                    workspace.open_workspace_for_paths(
-                                                        true, paths, window, cx,
-                                                    )
-                                                })?
-                                                .await
-                                        } else {
-                                            Ok(())
-                                        }
-                                    })
+                                                .open_workspace_for_paths(true, paths, window, cx)
+                                        })?
+                                        .await
                                 } else {
-                                    workspace.open_workspace_for_paths(false, paths, window, cx)
+                                    Ok(())
                                 }
-                            }
-                            SerializedWorkspaceLocation::Remote(mut connection) => {
-                                let app_state = workspace.app_state().clone();
-
-                                let replace_window = if replace_current_window {
-                                    window.window_handle().downcast::<Workspace>()
-                                } else {
-                                    None
-                                };
-
-                                let open_options = OpenOptions {
-                                    replace_window,
-                                    ..Default::default()
-                                };
-
-                                if let RemoteConnectionOptions::Ssh(connection) = &mut connection {
-                                    SshSettings::get_global(cx)
-                                        .fill_connection_options_from_settings(connection);
-                                };
-
-                                let paths = candidate_workspace_paths.paths().to_vec();
-
-                                cx.spawn_in(window, async move |_, cx| {
-                                    open_remote_project(
-                                        connection.clone(),
-                                        paths,
-                                        app_state,
-                                        open_options,
-                                        cx,
-                                    )
-                                    .await
-                                })
-                            }
+                            })
+                        } else {
+                            workspace.open_workspace_for_paths(false, paths, window, cx)
                         }
                     }
-                })
-                .detach_and_log_err(cx);
+                    SerializedWorkspaceLocation::Remote(mut connection) => {
+                        let app_state = workspace.app_state().clone();
+
+                        let replace_window = if replace_current_window {
+                            window.window_handle().downcast::<Workspace>()
+                        } else {
+                            None
+                        };
+
+                        let open_options = OpenOptions {
+                            replace_window,
+                            ..Default::default()
+                        };
+
+                        if let RemoteConnectionOptions::Ssh(connection) = &mut connection {
+                            SshSettings::get_global(cx)
+                                .fill_connection_options_from_settings(connection);
+                        };
+
+                        let paths = candidate_workspace_paths.paths().to_vec();
+
+                        cx.spawn_in(window, async move |_, cx| {
+                            open_remote_project(
+                                connection.clone(),
+                                paths,
+                                app_state,
+                                open_options,
+                                cx,
+                            )
+                            .await
+                        })
+                    }
+                }
+                .detach_and_prompt_err(
+                    "Failed to open project",
+                    window,
+                    cx,
+                    |_, _, _| None,
+                );
+            });
             cx.emit(DismissEvent);
         }
     }
@@ -759,10 +760,9 @@ impl Render for MatchTooltip {
 mod tests {
     use std::path::PathBuf;
 
-    use dap::debugger_settings::DebuggerSettings;
     use editor::Editor;
     use gpui::{TestAppContext, UpdateGlobal, WindowHandle};
-    use project::Project;
+
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
@@ -908,12 +908,8 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let state = AppState::test(cx);
-            language::init(cx);
             crate::init(cx);
             editor::init(cx);
-            workspace::init_settings(cx);
-            DebuggerSettings::register(cx);
-            Project::init_settings(cx);
             state
         })
     }
