@@ -833,5 +833,26 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {
             "ˇthe lazy dog"
         });
+
+        cx.set_shared_state(indoc! {
+            "ˇthe quick brown
+            fox jumps over
+            the lazy dog"
+        })
+        .await;
+        cx.simulate_shared_keystrokes("d d").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇfox jumps over
+            the lazy dog"
+        });
+        cx.simulate_shared_keystrokes("2 d .").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇfox jumps over
+            the lazy dog"
+        });
+        cx.simulate_shared_keystrokes(".").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇthe lazy dog"
+        });
     }
 }
