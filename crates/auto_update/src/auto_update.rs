@@ -1074,7 +1074,7 @@ mod tests {
             assert_eq!(updater.current_version(), SemanticVersion::new(0, 100, 0));
         });
 
-        release_available.store(true, atomic::Ordering::Relaxed);
+        release_available.store(true, atomic::Ordering::SeqCst);
         cx.background_executor.advance_clock(POLL_INTERVAL);
         cx.background_executor.run_until_parked();
 
