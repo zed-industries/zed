@@ -37,7 +37,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
-use util::{ResultExt as _, rel_path::RelPath};
+use util::rel_path::RelPath;
 use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
@@ -582,14 +582,17 @@ impl ProjectDiff {
         })?;
 
         for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys.into_iter()) {
-            if let Some((buffer, diff)) = entry.load.await.log_err() {
+            let this = this.clone();
+            cx.spawn(async move |cx| {
+                let (buffer, diff) = entry.load.await?;
                 cx.update(|window, cx| {
                     this.update(cx, |this, cx| {
-                        this.register_buffer(path_key, entry.file_status, buffer, diff, window, cx)
+                        this.register_buffer(path_key, entry.file_status, buffer, diff, window, cx);
+                        cx.notify();
                     })
-                    .ok();
-                })?;
-            }
+                })
+            })
+            .detach();
         }
         this.update(cx, |this, cx| {
             this.pending_scroll.take();
