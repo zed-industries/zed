@@ -11,6 +11,9 @@ workspace = true
 [lib]
 path = "src/zeta2.rs"
 
+[features]
+llm-response-cache = []
+
 [dependencies]
 anyhow.workspace = true
 arrayvec.workspace = true

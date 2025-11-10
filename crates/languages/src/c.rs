@@ -98,7 +98,7 @@ impl LspInstaller for CLspAdapter {
                     })
                     .await
                     .inspect_err(|err| {
-                        log::warn!("Unable to run {binary_path:?} asset, redownloading: {err}",)
+                        log::warn!("Unable to run {binary_path:?} asset, redownloading: {err:#}",)
                     })
             };
             if let (Some(actual_digest), Some(expected_digest)) =

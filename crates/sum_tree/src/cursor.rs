@@ -448,7 +448,7 @@ where
         aggregate: &mut dyn SeekAggregate<'a, T>,
     ) -> bool {
         assert!(
-            target.cmp(&self.position, self.cx) >= Ordering::Equal,
+            target.cmp(&self.position, self.cx).is_ge(),
             "cannot seek backward",
         );
 

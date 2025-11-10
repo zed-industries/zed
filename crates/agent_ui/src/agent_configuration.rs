@@ -1047,7 +1047,7 @@ impl AgentConfiguration {
             AgentIcon::Name(icon_name) => Icon::new(icon_name)
                 .size(IconSize::Small)
                 .color(Color::Muted),
-            AgentIcon::Path(icon_path) => Icon::from_path(icon_path)
+            AgentIcon::Path(icon_path) => Icon::from_external_svg(icon_path)
                 .size(IconSize::Small)
                 .color(Color::Muted),
         };

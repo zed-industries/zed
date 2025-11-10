@@ -326,7 +326,7 @@ async fn test_ssh_collaboration_git_branches(
     // Also try creating a new branch
     cx_b.update(|cx| {
         repo_b.update(cx, |repo_b, _cx| {
-            repo_b.create_branch("totally-new-branch".to_string())
+            repo_b.create_branch("totally-new-branch".to_string(), None)
         })
     })
     .await

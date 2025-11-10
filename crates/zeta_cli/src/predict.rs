@@ -1,9 +1,12 @@
+use crate::PromptFormat;
 use crate::example::{ActualExcerpt, NamedExample};
 use crate::headless::ZetaCliAppState;
-use crate::paths::LOGS_DIR;
+use crate::paths::{CACHE_DIR, LOGS_DIR};
 use ::serde::Serialize;
 use anyhow::{Result, anyhow};
 use clap::Args;
+use gpui::http_client::Url;
+// use cloud_llm_client::predict_edits_v3::PromptFormat;
 use cloud_zeta2_prompt::{CURSOR_MARKER, write_codeblock};
 use futures::StreamExt as _;
 use gpui::{AppContext, AsyncApp};
@@ -16,12 +19,17 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+use zeta2::LlmResponseCache;
 
 #[derive(Debug, Args)]
 pub struct PredictArguments {
-    example_path: PathBuf,
+    #[arg(long, value_enum, default_value_t = PromptFormat::default())]
+    prompt_format: PromptFormat,
     #[clap(long, short, value_enum, default_value_t = PredictionsOutputFormat::Md)]
     format: PredictionsOutputFormat,
+    example_path: PathBuf,
+    #[clap(long)]
+    skip_cache: bool,
 }
 
 #[derive(clap::ValueEnum, Debug, Clone)]
@@ -36,7 +44,9 @@ pub async fn run_zeta2_predict(
     cx: &mut AsyncApp,
 ) {
     let example = NamedExample::load(args.example_path).unwrap();
-    let result = zeta2_predict(example, &app_state, cx).await.unwrap();
+    let result = zeta2_predict(example, args.skip_cache, args.prompt_format, &app_state, cx)
+        .await
+        .unwrap();
     result.write(args.format, std::io::stdout()).unwrap();
 }
 
@@ -46,6 +56,8 @@ thread_local! {
 
 pub async fn zeta2_predict(
     example: NamedExample,
+    skip_cache: bool,
+    prompt_format: PromptFormat,
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) -> Result<PredictionDetails> {
@@ -87,6 +99,10 @@ pub async fn zeta2_predict(
         .await;
 
     let zeta = cx.update(|cx| zeta2::Zeta::global(&app_state.client, &app_state.user_store, cx))?;
+
+    zeta.update(cx, |zeta, _cx| {
+        zeta.with_llm_response_cache(Arc::new(Cache { skip_cache }));
+    })?;
 
     cx.subscribe(&buffer_store, {
         let project = project.clone();
@@ -193,6 +209,9 @@ pub async fn zeta2_predict(
     });
 
     zeta.update(cx, |zeta, cx| {
+        let mut options = zeta.options().clone();
+        options.prompt_format = prompt_format.into();
+        zeta.set_options(options);
         zeta.refresh_context(project.clone(), cursor_buffer.clone(), cursor_anchor, cx)
     })?
     .await?;
@@ -221,6 +240,51 @@ pub async fn zeta2_predict(
         .unwrap_or_default();
 
     anyhow::Ok(result)
+}
+
+struct Cache {
+    skip_cache: bool,
+}
+
+impl Cache {
+    fn path(key: u64) -> PathBuf {
+        CACHE_DIR.join(format!("{key:x}.json"))
+    }
+}
+
+impl LlmResponseCache for Cache {
+    fn get_key(&self, url: &Url, body: &str) -> u64 {
+        use collections::FxHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = FxHasher::default();
+        url.hash(&mut hasher);
+        body.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    fn read_response(&self, key: u64) -> Option<String> {
+        let path = Cache::path(key);
+        if path.exists() {
+            if self.skip_cache {
+                log::info!("Skipping existing cached LLM response: {}", path.display());
+                None
+            } else {
+                log::info!("Using LLM response from cache: {}", path.display());
+                Some(fs::read_to_string(path).unwrap())
+            }
+        } else {
+            None
+        }
+    }
+
+    fn write_response(&self, key: u64, value: &str) {
+        fs::create_dir_all(&*CACHE_DIR).unwrap();
+
+        let path = Cache::path(key);
+        log::info!("Writing LLM response to cache: {}", path.display());
+        fs::write(path, value).unwrap();
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

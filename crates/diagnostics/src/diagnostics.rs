@@ -498,7 +498,7 @@ impl ProjectDiagnosticsEditor {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let was_empty = self.multibuffer.read(cx).is_empty();
-        let buffer_snapshot = buffer.read(cx).snapshot();
+        let mut buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer_snapshot.remote_id();
 
         let max_severity = if self.include_warnings {
@@ -546,6 +546,7 @@ impl ProjectDiagnosticsEditor {
             }
             let mut blocks: Vec<DiagnosticBlock> = Vec::new();
 
+            let diagnostics_toolbar_editor = Arc::new(this.clone());
             for (_, group) in grouped {
                 let group_severity = group.iter().map(|d| d.diagnostic.severity).min();
                 if group_severity.is_none_or(|s| s > max_severity) {
@@ -555,7 +556,7 @@ impl ProjectDiagnosticsEditor {
                     crate::diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
                         group,
                         buffer_snapshot.remote_id(),
-                        Some(Arc::new(this.clone())),
+                        Some(diagnostics_toolbar_editor.clone()),
                         cx,
                     )
                 })?;
@@ -563,7 +564,7 @@ impl ProjectDiagnosticsEditor {
                 blocks.extend(more);
             }
 
-            let mut excerpt_ranges: Vec<ExcerptRange<Point>> = this.update(cx, |this, cx| {
+            let mut excerpt_ranges: Vec<ExcerptRange<_>> = this.update(cx, |this, cx| {
                 this.multibuffer.update(cx, |multi_buffer, cx| {
                     let is_dirty = multi_buffer
                         .buffer(buffer_id)
@@ -573,10 +574,7 @@ impl ProjectDiagnosticsEditor {
                         RetainExcerpts::All | RetainExcerpts::Dirty => multi_buffer
                             .excerpts_for_buffer(buffer_id, cx)
                             .into_iter()
-                            .map(|(_, range)| ExcerptRange {
-                                context: range.context.to_point(&buffer_snapshot),
-                                primary: range.primary.to_point(&buffer_snapshot),
-                            })
+                            .map(|(_, range)| range)
                             .collect(),
                     }
                 })
@@ -591,24 +589,41 @@ impl ProjectDiagnosticsEditor {
                     cx,
                 )
                 .await;
+                buffer_snapshot = cx.update(|_, cx| buffer.read(cx).snapshot())?;
+                let initial_range = buffer_snapshot.anchor_after(b.initial_range.start)
+                    ..buffer_snapshot.anchor_before(b.initial_range.end);
 
-                let i = excerpt_ranges
-                    .binary_search_by(|probe| {
+                let bin_search = |probe: &ExcerptRange<text::Anchor>| {
+                    let context_start = || {
                         probe
                             .context
                             .start
-                            .cmp(&excerpt_range.start)
-                            .then(probe.context.end.cmp(&excerpt_range.end))
-                            .then(probe.primary.start.cmp(&b.initial_range.start))
-                            .then(probe.primary.end.cmp(&b.initial_range.end))
-                            .then(cmp::Ordering::Greater)
-                    })
+                            .cmp(&excerpt_range.start, &buffer_snapshot)
+                    };
+                    let context_end =
+                        || probe.context.end.cmp(&excerpt_range.end, &buffer_snapshot);
+                    let primary_start = || {
+                        probe
+                            .primary
+                            .start
+                            .cmp(&initial_range.start, &buffer_snapshot)
+                    };
+                    let primary_end =
+                        || probe.primary.end.cmp(&initial_range.end, &buffer_snapshot);
+                    context_start()
+                        .then_with(context_end)
+                        .then_with(primary_start)
+                        .then_with(primary_end)
+                        .then(cmp::Ordering::Greater)
+                };
+                let i = excerpt_ranges
+                    .binary_search_by(bin_search)
                     .unwrap_or_else(|i| i);
                 excerpt_ranges.insert(
                     i,
                     ExcerptRange {
                         context: excerpt_range,
-                        primary: b.initial_range.clone(),
+                        primary: initial_range,
                     },
                 );
                 result_blocks.insert(i, Some(b));
@@ -623,6 +638,13 @@ impl ProjectDiagnosticsEditor {
                     })
                 }
                 let (anchor_ranges, _) = this.multibuffer.update(cx, |multi_buffer, cx| {
+                    let excerpt_ranges = excerpt_ranges
+                        .into_iter()
+                        .map(|range| ExcerptRange {
+                            context: range.context.to_point(&buffer_snapshot),
+                            primary: range.primary.to_point(&buffer_snapshot),
+                        })
+                        .collect();
                     multi_buffer.set_excerpt_ranges_for_path(
                         PathKey::for_buffer(&buffer, cx),
                         buffer.clone(),
@@ -968,8 +990,8 @@ async fn context_range_for_entry(
     context: u32,
     snapshot: BufferSnapshot,
     cx: &mut AsyncApp,
-) -> Range<Point> {
-    if let Some(rows) = heuristic_syntactic_expand(
+) -> Range<text::Anchor> {
+    let range = if let Some(rows) = heuristic_syntactic_expand(
         range.clone(),
         DIAGNOSTIC_EXPANSION_ROW_LIMIT,
         snapshot.clone(),
@@ -977,15 +999,17 @@ async fn context_range_for_entry(
     )
     .await
     {
-        return Range {
+        Range {
             start: Point::new(*rows.start(), 0),
             end: snapshot.clip_point(Point::new(*rows.end(), u32::MAX), Bias::Left),
-        };
-    }
-    Range {
-        start: Point::new(range.start.row.saturating_sub(context), 0),
-        end: snapshot.clip_point(Point::new(range.end.row + context, u32::MAX), Bias::Left),
-    }
+        }
+    } else {
+        Range {
+            start: Point::new(range.start.row.saturating_sub(context), 0),
+            end: snapshot.clip_point(Point::new(range.end.row + context, u32::MAX), Bias::Left),
+        }
+    };
+    snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end)
 }
 
 /// Expands the input range using syntax information from TreeSitter. This expansion will be limited
