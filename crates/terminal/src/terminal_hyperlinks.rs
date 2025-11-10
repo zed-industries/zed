@@ -50,11 +50,11 @@ impl RegexSearches {
                             warn!(
                                 concat!(
                                     "Ignoring path hyperlink regex specified in ",
-                                    "`terminal.path_hyperlink_regexes` due to:\n{}"
+                                    "`terminal.path_hyperlink_regexes`:\n\n\t{}\n\nError: {}",
                                 ),
+                                regex.as_ref(),
                                 error
                             );
-                            info!("Ignoring path hyperlink regex: {}", regex.as_ref());
                         })
                         .ok()
                 })
