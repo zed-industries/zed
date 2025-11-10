@@ -42,6 +42,7 @@ fn eval_extract_handle_command_output() {
     // gemini-2.5-pro-06-05        |  0.98 (2025-06-16)
     // gemini-2.5-flash            |  0.11 (2025-05-22)
     // gpt-4.1                     |  1.00 (2025-05-22)
+    // claude-sonnet-4.5           |  0.79 (2025-11-10)
 
     let input_file_path = "root/blame.rs";
     let input_file_content = include_str!("evals/fixtures/extract_handle_command_output/before.rs");
@@ -244,6 +245,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
     //  gemini-2.5-pro-preview-latest  |  0.99 (2025-06-16)
     //  gemini-2.5-flash-preview-04-17 |
     //  gpt-4.1                        |
+    //  claude-sonnet-4.5              |  0.25 (2025-11-10)
 
     let input_file_path = "root/lib.rs";
     let input_file_content =
@@ -370,6 +372,7 @@ fn eval_disable_cursor_blinking() {
     //  gemini-2.5-pro                 |  0.95 (2025-07-14)
     //  gemini-2.5-flash-preview-04-17 |  0.78 (2025-07-14)
     //  gpt-4.1                        |  0.00 (2025-07-14) (follows edit_description too literally)
+    //  claude-sonnet-4.5              |  0.20 (2025-11-10)
 
     let input_file_path = "root/editor.rs";
     let input_file_content = include_str!("evals/fixtures/disable_cursor_blinking/before.rs");
@@ -773,6 +776,7 @@ fn eval_add_overwrite_test() {
     //  gemini-2.5-pro-preview-03-25   |  0.35 (2025-05-22)
     //  gemini-2.5-flash-preview-04-17 |
     //  gpt-4.1                        |
+    //  claude-sonnet-4.5              |  0.34 (2025-11-10)
 
     let input_file_path = "root/action_log.rs";
     let input_file_content = include_str!("evals/fixtures/add_overwrite_test/before.rs");
