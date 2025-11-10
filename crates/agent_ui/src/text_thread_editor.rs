@@ -314,6 +314,7 @@ impl TextThreadEditor {
                             )
                         });
                     },
+                    true, // Use popover styles for picker
                     window,
                     cx,
                 )

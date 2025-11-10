@@ -19,14 +19,26 @@ pub type LanguageModelSelector = Picker<LanguageModelPickerDelegate>;
 pub fn language_model_selector(
     get_active_model: impl Fn(&App) -> Option<ConfiguredModel> + 'static,
     on_model_changed: impl Fn(Arc<dyn LanguageModel>, &mut App) + 'static,
+    popover_styles: bool,
     window: &mut Window,
     cx: &mut Context<LanguageModelSelector>,
 ) -> LanguageModelSelector {
-    let delegate = LanguageModelPickerDelegate::new(get_active_model, on_model_changed, window, cx);
-    Picker::list(delegate, window, cx)
-        .show_scrollbar(true)
-        .width(rems(20.))
-        .max_height(Some(rems(20.).into()))
+    let delegate = LanguageModelPickerDelegate::new(
+        get_active_model,
+        on_model_changed,
+        popover_styles,
+        window,
+        cx,
+    );
+
+    if popover_styles {
+        Picker::list(delegate, window, cx)
+            .show_scrollbar(true)
+            .width(rems(20.))
+            .max_height(Some(rems(20.).into()))
+    } else {
+        Picker::list(delegate, window, cx).show_scrollbar(true)
+    }
 }
 
 fn all_models(cx: &App) -> GroupedModels {
@@ -75,12 +87,14 @@ pub struct LanguageModelPickerDelegate {
     selected_index: usize,
     _authenticate_all_providers_task: Task<()>,
     _subscriptions: Vec<Subscription>,
+    popover_styles: bool,
 }
 
 impl LanguageModelPickerDelegate {
     fn new(
         get_active_model: impl Fn(&App) -> Option<ConfiguredModel> + 'static,
         on_model_changed: impl Fn(Arc<dyn LanguageModel>, &mut App) + 'static,
+        popover_styles: bool,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Self {
@@ -113,6 +127,7 @@ impl LanguageModelPickerDelegate {
                     }
                 },
             )],
+            popover_styles,
         }
     }
 
@@ -530,6 +545,10 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<gpui::AnyElement> {
+        if !self.popover_styles {
+            return None;
+        }
+
         Some(
             h_flex()
                 .w_full()
