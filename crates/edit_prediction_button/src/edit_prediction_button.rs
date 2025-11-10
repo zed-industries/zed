@@ -383,7 +383,8 @@ impl Render for EditPredictionButton {
 
                 let mut popover_menu = PopoverMenu::new("zeta")
                     .menu(move |window, cx| {
-                        this.update(cx, |this, cx| this.build_zeta_context_menu(window, cx)).ok()
+                        this.update(cx, |this, cx| this.build_zeta_context_menu(window, cx))
+                            .ok()
                     })
                     .anchor(Corner::BottomRight)
                     .with_handle(self.popover_menu_handle.clone());
