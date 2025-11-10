@@ -2094,7 +2094,7 @@ impl GitStore {
 
         repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.create_branch(branch_name)
+                repository_handle.create_branch(branch_name, None)
             })?
             .await??;
 
@@ -4747,29 +4747,35 @@ impl Repository {
         })
     }
 
-    pub fn create_branch(&mut self, branch_name: String) -> oneshot::Receiver<Result<()>> {
+    pub fn create_branch(
+        &mut self,
+        branch_name: String,
+        base_branch: Option<String>,
+    ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
-        self.send_job(
-            Some(format!("git switch -c {branch_name}").into()),
-            move |repo, _cx| async move {
-                match repo {
-                    RepositoryState::Local { backend, .. } => {
-                        backend.create_branch(branch_name).await
-                    }
-                    RepositoryState::Remote { project_id, client } => {
-                        client
-                            .request(proto::GitCreateBranch {
-                                project_id: project_id.0,
-                                repository_id: id.to_proto(),
-                                branch_name,
-                            })
-                            .await?;
-
-                        Ok(())
-                    }
+        let status_msg = if let Some(ref base) = base_branch {
+            format!("git switch -c {branch_name} {base}").into()
+        } else {
+            format!("git switch -c {branch_name}").into()
+        };
+        self.send_job(Some(status_msg), move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local { backend, .. } => {
+                    backend.create_branch(branch_name, base_branch).await
                 }
-            },
-        )
+                RepositoryState::Remote { project_id, client } => {
+                    client
+                        .request(proto::GitCreateBranch {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            branch_name,
+                        })
+                        .await?;
+
+                    Ok(())
+                }
+            }
+        })
     }
 
     pub fn change_branch(&mut self, branch_name: String) -> oneshot::Receiver<Result<()>> {
