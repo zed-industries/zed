@@ -1,7 +1,4 @@
-use gh_workflow::{
-    Event, Expression, Job, PullRequest, PullRequestType, Run, Schedule, Step, Use, Workflow,
-    WorkflowDispatch,
-};
+use gh_workflow::{Event, Expression, Job, Run, Schedule, Step, Use, Workflow, WorkflowDispatch};
 
 use crate::tasks::workflows::{
     runners::{self, Platform},
@@ -14,16 +11,10 @@ pub(crate) fn run_agent_evals() -> Workflow {
     let model_name = Input::string("model_name", None);
 
     named::workflow()
-        .on(Event::default()
-            .schedule([Schedule::default().cron("0 0 * * *")])
-            .pull_request(PullRequest::default().add_branch("**").types([
-                PullRequestType::Synchronize,
-                PullRequestType::Reopened,
-                PullRequestType::Labeled,
-            ]))
-            .workflow_dispatch(
-                WorkflowDispatch::default().add_input(model_name.name, model_name.input()),
-            ))
+        .timeout_minutes(12u32 * 60)
+        .on(Event::default().workflow_dispatch(
+            WorkflowDispatch::default().add_input(model_name.name, model_name.input()),
+        ))
         .concurrency(vars::one_workflow_per_non_main_branch())
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("CARGO_INCREMENTAL", 0))
@@ -37,15 +28,13 @@ pub(crate) fn run_agent_evals() -> Workflow {
 
 fn agent_evals() -> NamedJob {
     fn run_eval() -> Step<Run> {
-        named::bash("cargo run --package=eval -- --repetitions=8 --concurrency=1")
+        named::bash(
+            "cargo run --package=eval -- --repetitions=8 --concurrency=1 --model ${MODEL_NAME}",
+        )
     }
 
     named::job(
         Job::default()
-            .cond(Expression::new(indoc::indoc!{r#"
-                github.repository_owner == 'zed-industries' &&
-                (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'run-eval'))
-            "#}))
             .runs_on(runners::LINUX_DEFAULT)
             .timeout_minutes(60_u32)
             .add_step(steps::checkout_repo())
@@ -54,7 +43,7 @@ fn agent_evals() -> NamedJob {
             .add_step(setup_cargo_config(Platform::Linux))
             .add_step(steps::script("cargo build --package=eval"))
             .add_step(run_eval())
-            .add_step(steps::cleanup_cargo_config(Platform::Linux))
+            .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )
 }
 
