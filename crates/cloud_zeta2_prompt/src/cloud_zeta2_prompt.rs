@@ -112,27 +112,23 @@ const XML_TAGS_INSTRUCTIONS: &str = indoc! {r#"
     or two sentences, and then specify their next edit, using the following
     XML format:
 
-    <edit>
-    <path>my-project/src/myapp/cli.py</path>
+    <edits path="my-project/src/myapp/cli.py">
     <old_text>
     OLD TEXT 1 HERE
     </old_text>
     <new_text>
     NEW TEXT 1 HERE
     </new_text>
-    </edit>
 
-    <edit>
-    <path>my-project/src/myapp/cli.py</path>
     <old_text>
     OLD TEXT 1 HERE
     </old_text>
     <new_text>
     NEW TEXT 1 HERE
     </new_text>
-    </edit>
+    </edits>
 
-    - Specify the file to edit using the <path> tag.
+    - Specify the file to edit using the `path` attribute.
     - Use `<old_text>` and `<new_text>` tags to replace content
     - `<old_text>` must exactly match existing file content, including indentation
     - `<old_text>` cannot be empty
