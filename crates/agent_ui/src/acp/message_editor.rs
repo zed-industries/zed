@@ -1195,6 +1195,17 @@ impl MessageEditor {
         self.editor.read(cx).text(cx)
     }
 
+    pub fn set_placeholder_text(
+        &mut self,
+        placeholder: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            editor.set_placeholder_text(placeholder, window, cx);
+        });
+    }
+
     #[cfg(test)]
     pub fn set_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
