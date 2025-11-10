@@ -274,16 +274,27 @@ pub fn init(cx: &mut App) {
 }
 
 fn bind_on_window_closed(cx: &mut App) -> Option<gpui::Subscription> {
-    WorkspaceSettings::get_global(cx)
-        .on_last_window_closed
-        .is_quit_app()
-        .then(|| {
-            cx.on_window_closed(|cx| {
-                if cx.windows().is_empty() {
-                    cx.quit();
-                }
+    #[cfg(target_os = "macos")]
+    {
+        WorkspaceSettings::get_global(cx)
+            .on_last_window_closed
+            .is_quit_app()
+            .then(|| {
+                cx.on_window_closed(|cx| {
+                    if cx.windows().is_empty() {
+                        cx.quit();
+                    }
+                })
             })
-        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Some(cx.on_window_closed(|cx| {
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        }))
+    }
 }
 
 pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowOptions {
@@ -1408,9 +1419,6 @@ pub fn handle_keymap_file_changes(
     mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut App,
 ) {
-    BaseKeymap::register(cx);
-    vim_mode_setting::init(cx);
-
     let (base_keymap_tx, mut base_keymap_rx) = mpsc::unbounded();
     let (keyboard_layout_tx, mut keyboard_layout_rx) = mpsc::unbounded();
     let mut old_base_keymap = *BaseKeymap::get_global(cx);
@@ -4331,10 +4339,8 @@ mod tests {
 
             theme::init(theme::LoadThemes::JustBase, cx);
             client::init(&app_state.client, cx);
-            language::init(cx);
             workspace::init(app_state.clone(), cx);
             onboarding::init(cx);
-            Project::init_settings(cx);
             app_state
         })
     }
@@ -4797,21 +4803,17 @@ mod tests {
 
             let state = Arc::get_mut(&mut app_state).unwrap();
             state.build_window_options = build_window_options;
-
             app_state.languages.add(markdown_language());
 
             gpui_tokio::init(cx);
-            vim_mode_setting::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             audio::init(cx);
             channel::init(&app_state.client, app_state.user_store.clone(), cx);
             call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
-            Project::init_settings(cx);
             release_channel::init(SemanticVersion::default(), cx);
             command_palette::init(cx);
-            language::init(cx);
             editor::init(cx);
             collab_ui::init(&app_state, cx);
             git_ui::init(cx);

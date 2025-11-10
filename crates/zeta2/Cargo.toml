@@ -11,6 +11,9 @@ workspace = true
 [lib]
 path = "src/zeta2.rs"
 
+[features]
+llm-response-cache = []
+
 [dependencies]
 anyhow.workspace = true
 arrayvec.workspace = true
@@ -33,6 +36,7 @@ project.workspace = true
 release_channel.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+smol.workspace = true
 thiserror.workspace = true
 util.workspace = true
 uuid.workspace = true

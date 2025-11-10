@@ -113,8 +113,14 @@ fn install_mold() -> Step<Run> {
     named::bash("./script/install-mold")
 }
 
+fn download_wasi_sdk() -> Step<Run> {
+    named::bash("./script/download-wasi-sdk")
+}
+
 pub(crate) fn install_linux_dependencies(job: Job) -> Job {
-    job.add_step(setup_linux()).add_step(install_mold())
+    job.add_step(setup_linux())
+        .add_step(install_mold())
+        .add_step(download_wasi_sdk())
 }
 
 pub fn script(name: &str) -> Step<Run> {

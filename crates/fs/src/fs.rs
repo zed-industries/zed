@@ -719,9 +719,8 @@ impl Fs for RealFs {
         {
             Ok(metadata) => metadata,
             Err(err) => {
-                return match (err.kind(), err.raw_os_error()) {
-                    (io::ErrorKind::NotFound, _) => Ok(None),
-                    (io::ErrorKind::Other, Some(libc::ENOTDIR)) => Ok(None),
+                return match err.kind() {
+                    io::ErrorKind::NotFound | io::ErrorKind::NotADirectory => Ok(None),
                     _ => Err(anyhow::Error::new(err)),
                 };
             }
@@ -1792,7 +1791,8 @@ impl FakeFs {
             for (path, content) in workdir_contents {
                 use util::{paths::PathStyle, rel_path::RelPath};
 
-                let repo_path: RepoPath = RelPath::new(path.strip_prefix(&workdir_path).unwrap(), PathStyle::local()).unwrap().into();
+                let repo_path = RelPath::new(path.strip_prefix(&workdir_path).unwrap(), PathStyle::local()).unwrap();
+                let repo_path = RepoPath::from_rel_path(&repo_path);
                 let status = statuses
                     .iter()
                     .find_map(|(p, status)| (*p == repo_path.as_unix_str()).then_some(status));

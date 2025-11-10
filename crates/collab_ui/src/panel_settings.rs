@@ -1,16 +1,16 @@
 use gpui::Pixels;
-use settings::Settings;
+use settings::{RegisterSetting, Settings};
 use ui::px;
 use workspace::dock::DockPosition;
 
-#[derive(Debug)]
+#[derive(Debug, RegisterSetting)]
 pub struct CollaborationPanelSettings {
     pub button: bool,
     pub dock: DockPosition,
     pub default_width: Pixels,
 }
 
-#[derive(Debug)]
+#[derive(Debug, RegisterSetting)]
 pub struct NotificationPanelSettings {
     pub button: bool,
     pub dock: DockPosition,

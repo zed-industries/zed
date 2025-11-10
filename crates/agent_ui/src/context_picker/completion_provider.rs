@@ -1182,10 +1182,8 @@ mod tests {
         let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
-            language::init(cx);
             editor::init(cx);
             workspace::init(app_state.clone(), cx);
-            Project::init_settings(cx);
         });
 
         app_state
@@ -1486,10 +1484,8 @@ mod tests {
         let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
-            language::init(cx);
             editor::init(cx);
             workspace::init(app_state.clone(), cx);
-            Project::init_settings(cx);
         });
 
         app_state
@@ -1686,11 +1682,6 @@ mod tests {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             theme::init(theme::LoadThemes::JustBase, cx);
-            client::init_settings(cx);
-            language::init(cx);
-            Project::init_settings(cx);
-            workspace::init_settings(cx);
-            editor::init_settings(cx);
         });
     }
 }

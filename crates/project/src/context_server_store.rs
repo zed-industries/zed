@@ -1307,7 +1307,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            Project::init_settings(cx);
             let mut settings = ProjectSettings::get_global(cx).clone();
             for (id, config) in context_server_configurations {
                 settings.context_servers.insert(id, config);

@@ -26,6 +26,7 @@ pub struct ProjectSettingsContent {
     /// The following settings can be overridden for specific language servers:
     /// - initialization_options
     ///
+    ///
     /// To override settings for a language, add an entry for that language server's
     /// name to the lsp value.
     /// Default: null
@@ -108,7 +109,19 @@ pub struct WorktreeSettingsContent {
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
     pub binary: Option<BinarySettings>,
+    /// Options passed to the language server at startup.
+    ///
+    /// Ref: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize
+    ///
+    /// Consult the documentation for the specific language server to see what settings
+    /// are supported.
     pub initialization_options: Option<serde_json::Value>,
+    /// Language server settings.
+    ///
+    /// Ref: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#workspace_configuration
+    ///
+    /// Consult the documentation for the specific LSP to see what settings
+    /// are supported.
     pub settings: Option<serde_json::Value>,
     /// If the server supports sending tasks over LSP extensions,
     /// this setting can be used to enable or disable them in Zed.

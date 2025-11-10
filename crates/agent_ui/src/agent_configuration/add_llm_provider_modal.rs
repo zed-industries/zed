@@ -515,16 +515,14 @@ impl Render for AddLlmProviderModal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::EditorSettings;
     use fs::FakeFs;
     use gpui::{TestAppContext, VisualTestContext};
-    use language::language_settings;
     use language_model::{
         LanguageModelProviderId, LanguageModelProviderName,
         fake_provider::FakeLanguageModelProvider,
     };
     use project::Project;
-    use settings::{Settings as _, SettingsStore};
+    use settings::SettingsStore;
     use util::path;
 
     #[gpui::test]
@@ -730,13 +728,9 @@ mod tests {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
-            language_settings::init(cx);
-            EditorSettings::register(cx);
+
             language_model::init_settings(cx);
-            language_models::init_settings(cx);
         });
 
         let fs = FakeFs::new(cx.executor());

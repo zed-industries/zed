@@ -656,13 +656,7 @@ struct SerializedOutlinePanel {
     active: Option<bool>,
 }
 
-pub fn init_settings(cx: &mut App) {
-    OutlinePanelSettings::register(cx);
-}
-
 pub fn init(cx: &mut App) {
-    init_settings(cx);
-
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<OutlinePanel>(window, cx);
@@ -6823,10 +6817,7 @@ outline: struct OutlineEntryExcerpt
 
             theme::init(theme::LoadThemes::JustBase, cx);
 
-            language::init(cx);
             editor::init(cx);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
             project_search::init(cx);
             buffer_search::init(cx);
             super::init(cx);

@@ -1577,7 +1577,7 @@ pub mod tests {
         LanguageMatcher,
     };
     use lsp::LanguageServerId;
-    use project::Project;
+
     use rand::{Rng, prelude::*};
     use settings::{SettingsContent, SettingsStore};
     use smol::stream::StreamExt;
@@ -2966,10 +2966,7 @@ pub mod tests {
     fn init_test(cx: &mut App, f: impl Fn(&mut SettingsContent)) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
-        workspace::init_settings(cx);
-        language::init(cx);
         crate::init(cx);
-        Project::init_settings(cx);
         theme::init(LoadThemes::JustBase, cx);
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, f);

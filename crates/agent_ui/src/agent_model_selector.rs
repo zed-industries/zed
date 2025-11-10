@@ -47,6 +47,7 @@ impl AgentModelSelector {
                             }
                         }
                     },
+                    true, // Use popover styles for picker
                     window,
                     cx,
                 )

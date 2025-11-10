@@ -23,7 +23,7 @@ use remote::{
     SshConnectionOptions,
 };
 pub use settings::SshConnection;
-use settings::{ExtendingVec, Settings, WslConnection};
+use settings::{ExtendingVec, RegisterSetting, Settings, WslConnection};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Color, CommonAnimationExt, Context, Icon, IconName, IconSize, InteractiveElement,
@@ -32,6 +32,7 @@ use ui::{
 use util::paths::PathWithPosition;
 use workspace::{AppState, ModalView, Workspace};
 
+#[derive(RegisterSetting)]
 pub struct SshSettings {
     pub ssh_connections: ExtendingVec<SshConnection>,
     pub wsl_connections: ExtendingVec<WslConnection>,

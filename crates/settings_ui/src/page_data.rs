@@ -1352,6 +1352,21 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         metadata: None,
                         files: USER,
                     }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Sticky Scroll",
+                        description: "Whether to stick scopes to the top of the editor",
+                        field: Box::new(SettingField {
+                            json_path: Some("sticky_scroll.enabled"),
+                            pick: |settings_content| {
+                                settings_content.editor.sticky_scroll.as_ref().and_then(|sticky_scroll| sticky_scroll.enabled.as_ref())
+                            },
+                            write: |settings_content, value| {
+                                settings_content.editor.sticky_scroll.get_or_insert_default().enabled = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
                     SettingsPageItem::SectionHeader("Signature Help"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Auto Signature Help",

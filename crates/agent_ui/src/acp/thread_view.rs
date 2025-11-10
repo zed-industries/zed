@@ -125,8 +125,9 @@ impl ProfileProvider for Entity<agent::Thread> {
     }
 
     fn set_profile(&self, profile_id: AgentProfileId, cx: &mut App) {
-        self.update(cx, |thread, _cx| {
-            thread.set_profile(profile_id);
+        self.update(cx, |thread, cx| {
+            // Apply the profile and let the thread swap to its default model.
+            thread.set_profile(profile_id, cx);
         });
     }
 
@@ -336,19 +337,7 @@ impl AcpThreadView {
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![]));
 
-        let placeholder = if agent.name() == "Zed Agent" {
-            format!("Message the {} — @ to include context", agent.name())
-        } else if agent.name() == "Claude Code"
-            || agent.name() == "Codex"
-            || !available_commands.borrow().is_empty()
-        {
-            format!(
-                "Message {} — @ to include context, / for commands",
-                agent.name()
-            )
-        } else {
-            format!("Message {} — @ to include context", agent.name())
-        };
+        let placeholder = placeholder_text(agent.name().as_ref(), false);
 
         let message_editor = cx.new(|cx| {
             let mut editor = MessageEditor::new(
@@ -1455,7 +1444,14 @@ impl AcpThreadView {
                     });
                 }
 
+                let has_commands = !available_commands.is_empty();
                 self.available_commands.replace(available_commands);
+
+                let new_placeholder = placeholder_text(self.agent.name().as_ref(), has_commands);
+
+                self.message_editor.update(cx, |editor, cx| {
+                    editor.set_placeholder_text(&new_placeholder, window, cx);
+                });
             }
             AcpThreadEvent::ModeUpdated(_mode) => {
                 // The connection keeps track of the mode
@@ -5707,6 +5703,19 @@ fn loading_contents_spinner(size: IconSize) -> AnyElement {
         .into_any_element()
 }
 
+fn placeholder_text(agent_name: &str, has_commands: bool) -> String {
+    if agent_name == "Zed Agent" {
+        format!("Message the {} — @ to include context", agent_name)
+    } else if has_commands {
+        format!(
+            "Message {} — @ to include context, / for commands",
+            agent_name
+        )
+    } else {
+        format!("Message {} — @ to include context", agent_name)
+    }
+}
+
 impl Focusable for AcpThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match self.thread_state {
@@ -5993,7 +6002,6 @@ pub(crate) mod tests {
     use acp_thread::StubAgentConnection;
     use agent_client_protocol::SessionId;
     use assistant_text_thread::TextThreadStore;
-    use editor::EditorSettings;
     use fs::FakeFs;
     use gpui::{EventEmitter, SemanticVersion, TestAppContext, VisualTestContext};
     use project::Project;
@@ -6511,13 +6519,8 @@ pub(crate) mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
-            AgentSettings::register(cx);
-            workspace::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(SemanticVersion::default(), cx);
-            EditorSettings::register(cx);
             prompt_store::init(cx)
         });
     }
