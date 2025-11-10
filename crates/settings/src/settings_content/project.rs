@@ -110,7 +110,7 @@ pub struct LspSettings {
     pub binary: Option<BinarySettings>,
     /// Options passed to the language server at startup.
     ///
-    /// Consult the documentation for the specific LSP to see what settings
+    /// Consult the documentation for the specific language server to see what settings
     /// are supported
     pub initialization_options: Option<serde_json::Value>,
     /// Language server settings
