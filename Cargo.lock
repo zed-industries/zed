@@ -1331,10 +1331,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "clock",
+ "ctor",
  "db",
+ "futures 0.3.31",
  "gpui",
  "http_client",
  "log",
+ "parking_lot",
  "paths",
  "release_channel",
  "serde",
@@ -1345,6 +1349,7 @@ dependencies = [
  "util",
  "which 6.0.3",
  "workspace",
+ "zlog",
 ]
 
 [[package]]
@@ -7801,6 +7806,7 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sha2",
  "tempfile",
  "url",

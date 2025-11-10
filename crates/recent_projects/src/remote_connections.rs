@@ -485,10 +485,10 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
         let this = self.clone();
         cx.spawn(async move |cx| {
             AutoUpdater::download_remote_server_release(
-                platform.os,
-                platform.arch,
                 release_channel,
                 version,
+                platform.os,
+                platform.arch,
                 move |status, cx| this.set_status(Some(status), cx),
                 cx,
             )
@@ -506,19 +506,19 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
         })
     }
 
-    fn get_download_params(
+    fn get_download_url(
         &self,
         platform: RemotePlatform,
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<Option<(String, String)>>> {
+    ) -> Task<Result<Option<String>>> {
         cx.spawn(async move |cx| {
             AutoUpdater::get_remote_server_release_url(
-                platform.os,
-                platform.arch,
                 release_channel,
                 version,
+                platform.os,
+                platform.arch,
                 cx,
             )
             .await
