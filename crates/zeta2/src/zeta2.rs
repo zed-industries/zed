@@ -30,8 +30,8 @@ use project::Project;
 use release_channel::AppVersion;
 use serde::de::DeserializeOwned;
 use std::collections::{VecDeque, hash_map};
-use uuid::Uuid;
 
+use std::env;
 use std::ops::Range;
 use std::path::Path;
 use std::str::FromStr as _;
@@ -88,8 +88,24 @@ pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
     buffer_change_grouping_interval: Duration::from_secs(1),
 };
 
-static MODEL_ID: LazyLock<String> =
-    LazyLock::new(|| std::env::var("ZED_ZETA2_MODEL").unwrap_or("yqvev8r3".to_string()));
+static USE_OLLAMA: LazyLock<bool> =
+    LazyLock::new(|| env::var("ZED_ZETA2_OLLAMA").is_ok_and(|var| !var.is_empty()));
+static MODEL_ID: LazyLock<String> = LazyLock::new(|| {
+    env::var("ZED_ZETA2_MODEL").unwrap_or(if *USE_OLLAMA {
+        "qwen3-coder:30b".to_string()
+    } else {
+        "yqvev8r3".to_string()
+    })
+});
+static PREDICT_EDITS_URL: LazyLock<Option<String>> = LazyLock::new(|| {
+    env::var("ZED_PREDICT_EDITS_URL").ok().or_else(|| {
+        if *USE_OLLAMA {
+            Some("http://localhost:11434/v1/chat/completions".into())
+        } else {
+            None
+        }
+    })
+});
 
 pub struct Zeta2FeatureFlag;
 
@@ -567,13 +583,13 @@ impl Zeta {
         let Some(prediction) = project_state.current_prediction.take() else {
             return;
         };
-        let request_id = prediction.prediction.id.into();
+        let request_id = prediction.prediction.id.to_string();
 
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
         cx.spawn(async move |this, cx| {
-            let url = if let Ok(predict_edits_url) = std::env::var("ZED_ACCEPT_PREDICTION_URL") {
+            let url = if let Ok(predict_edits_url) = env::var("ZED_ACCEPT_PREDICTION_URL") {
                 http_client::Url::parse(&predict_edits_url)?
             } else {
                 client
@@ -585,7 +601,10 @@ impl Zeta {
                 .background_spawn(Self::send_api_request::<()>(
                     move |builder| {
                         let req = builder.uri(url.as_ref()).body(
-                            serde_json::to_string(&AcceptEditPredictionBody { request_id })?.into(),
+                            serde_json::to_string(&AcceptEditPredictionBody {
+                                request_id: request_id.clone(),
+                            })?
+                            .into(),
                         );
                         Ok(req?)
                     },
@@ -875,7 +894,7 @@ impl Zeta {
                     None
                 };
 
-                if cfg!(debug_assertions) && std::env::var("ZED_ZETA2_SKIP_REQUEST").is_ok() {
+                if cfg!(debug_assertions) && env::var("ZED_ZETA2_SKIP_REQUEST").is_ok() {
                     if let Some(debug_response_tx) = debug_response_tx {
                         debug_response_tx
                             .send((Err("Request skipped".to_string()), TimeDelta::zero()))
@@ -923,7 +942,7 @@ impl Zeta {
                 }
 
                 let (res, usage) = response?;
-                let request_id = EditPredictionId(Uuid::from_str(&res.id)?);
+                let request_id = EditPredictionId(res.id.clone().into());
                 let Some(output_text) = text_from_response(res) else {
                     return Ok((None, usage))
                 };
@@ -980,7 +999,7 @@ impl Zeta {
         app_version: SemanticVersion,
         request: open_ai::Request,
     ) -> Result<(open_ai::Response, Option<EditPredictionUsage>)> {
-        let url = if let Ok(predict_edits_url) = std::env::var("ZED_PREDICT_EDITS_URL") {
+        let url = if let Some(predict_edits_url) = PREDICT_EDITS_URL.as_ref() {
             http_client::Url::parse(&predict_edits_url)?
         } else {
             client
