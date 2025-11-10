@@ -292,8 +292,8 @@ fn check_workspace_binaries() -> NamedJob {
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(Platform::Linux))
-            .map(steps::install_linux_dependencies)
             .add_step(steps::cache_rust_dependencies_namespace())
+            .map(steps::install_linux_dependencies)
             .add_step(steps::script("cargo build -p collab"))
             .add_step(steps::script("cargo build --workspace --bins --examples"))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
@@ -312,13 +312,13 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
             .runs_on(runner)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
+            .when(platform == Platform::Linux, |this| {
+                this.add_step(steps::cache_rust_dependencies_namespace())
+            })
             .when(
                 platform == Platform::Linux,
                 steps::install_linux_dependencies,
             )
-            .when(platform == Platform::Linux, |this| {
-                this.add_step(steps::cache_rust_dependencies_namespace())
-            })
             .add_step(steps::setup_node())
             .add_step(steps::clippy(platform))
             .add_step(steps::cargo_install_nextest(platform))
