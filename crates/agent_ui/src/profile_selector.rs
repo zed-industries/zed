@@ -613,7 +613,7 @@ impl PickerDelegate for ProfilePickerDelegate {
                         .key_binding(
                             KeyBinding::for_action_in(
                                 &ManageProfiles::default(),
-                                &focus_handle.clone(),
+                                &focus_handle,
                                 cx,
                             )
                             .map(|kb| kb.size(rems_from_px(12.))),
