@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{ResultExt, maybe, merge_json_value_into, rel_path::RelPath};
+use util::{ResultExt, maybe, merge_json_value_into};
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -29,19 +29,19 @@ impl VtslsLspAdapter {
 
     const TYPESCRIPT_PACKAGE_NAME: &'static str = "typescript";
     const TYPESCRIPT_TSDK_PATH: &'static str = "node_modules/typescript/lib";
+    const TYPESCRIPT_YARN_TSDK_PATH: &'static str = ".yarn/sdks/typescript/lib";
 
     pub fn new(node: NodeRuntime, fs: Arc<dyn Fs>) -> Self {
         VtslsLspAdapter { node, fs }
     }
 
     async fn tsdk_path(&self, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
-        let is_yarn = adapter
-            .read_text_file(RelPath::unix(".yarn/sdks/typescript/lib/typescript.js").unwrap())
-            .await
-            .is_ok();
+        let yarn_sdk = adapter
+            .worktree_root_path()
+            .join(Self::TYPESCRIPT_YARN_TSDK_PATH);
 
-        let tsdk_path = if is_yarn {
-            ".yarn/sdks/typescript/lib"
+        let tsdk_path = if self.fs.is_dir(&yarn_sdk).await {
+            Self::TYPESCRIPT_YARN_TSDK_PATH
         } else {
             Self::TYPESCRIPT_TSDK_PATH
         };
@@ -178,7 +178,7 @@ impl LspAdapter for VtslsLspAdapter {
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
         use lsp::CompletionItemKind as Kind;
-        let len = item.label.len();
+        let label_len = item.label.len();
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
             Kind::CLASS | Kind::INTERFACE | Kind::ENUM => grammar.highlight_id_for_name("type"),
@@ -201,16 +201,12 @@ impl LspAdapter for VtslsLspAdapter {
         } else {
             item.label.clone()
         };
-        let filter_range = item
-            .filter_text
-            .as_deref()
-            .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
-            .unwrap_or(0..len);
-        Some(language::CodeLabel {
+        Some(language::CodeLabel::filtered(
             text,
-            runs: vec![(0..len, highlight_id)],
-            filter_range,
-        })
+            label_len,
+            item.filter_text.as_deref(),
+            vec![(0..label_len, highlight_id)],
+        ))
     }
 
     async fn workspace_configuration(

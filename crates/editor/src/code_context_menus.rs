@@ -28,10 +28,12 @@ use std::{
     rc::Rc,
 };
 use task::ResolvedTask;
-use ui::{Color, IntoElement, ListItem, Pixels, Popover, Styled, prelude::*};
+use ui::{
+    Color, IntoElement, ListItem, Pixels, Popover, ScrollAxes, Scrollbars, Styled, WithScrollbar,
+    prelude::*,
+};
 use util::ResultExt;
 
-use crate::CodeActionSource;
 use crate::hover_popover::{hover_markdown_style, open_markdown_url};
 use crate::{
     CodeActionProvider, CompletionId, CompletionItemKind, CompletionProvider, DisplayRow, Editor,
@@ -39,7 +41,8 @@ use crate::{
     actions::{ConfirmCodeAction, ConfirmCompletion},
     split_words, styled_runs_for_code_label,
 };
-use settings::SnippetSortOrder;
+use crate::{CodeActionSource, EditorSettings};
+use settings::{Settings, SnippetSortOrder};
 
 pub const MENU_GAP: Pixels = px(4.);
 pub const MENU_ASIDE_X_PADDING: Pixels = px(16.);
@@ -261,6 +264,20 @@ impl Drop for CompletionsMenu {
     }
 }
 
+struct CompletionMenuScrollBarSetting;
+
+impl ui::scrollbars::GlobalSetting for CompletionMenuScrollBarSetting {
+    fn get_value(_cx: &App) -> &Self {
+        &Self
+    }
+}
+
+impl ui::scrollbars::ScrollbarVisibility for CompletionMenuScrollBarSetting {
+    fn visibility(&self, cx: &App) -> ui::scrollbars::ShowScrollbar {
+        EditorSettings::get_global(cx).completion_menu_scrollbar
+    }
+}
+
 impl CompletionsMenu {
     pub fn new(
         id: CompletionId,
@@ -328,11 +345,7 @@ impl CompletionsMenu {
             .map(|choice| Completion {
                 replace_range: selection.start.text_anchor..selection.end.text_anchor,
                 new_text: choice.to_string(),
-                label: CodeLabel {
-                    text: choice.to_string(),
-                    runs: Default::default(),
-                    filter_range: Default::default(),
-                },
+                label: CodeLabel::plain(choice.to_string(), None),
                 icon_path: None,
                 documentation: None,
                 confirm: None,
@@ -902,7 +915,17 @@ impl CompletionsMenu {
             }
         });
 
-        Popover::new().child(list).into_any_element()
+        Popover::new()
+            .child(
+                div().child(list).custom_scrollbars(
+                    Scrollbars::for_settings::<CompletionMenuScrollBarSetting>()
+                        .show_along(ScrollAxes::Vertical)
+                        .tracked_scroll_handle(self.scroll_handle.clone()),
+                    window,
+                    cx,
+                ),
+            )
+            .into_any_element()
     }
 
     fn render_aside(
@@ -1518,6 +1541,7 @@ impl CodeActionsMenu {
                                     this.child(
                                         h_flex()
                                             .overflow_hidden()
+                                            .when(is_quick_action_bar, |this| this.text_ui(cx))
                                             .child(task.resolved_label.replace("\n", ""))
                                             .when(selected, |this| {
                                                 this.text_color(colors.text_accent)
@@ -1528,6 +1552,7 @@ impl CodeActionsMenu {
                                     this.child(
                                         h_flex()
                                             .overflow_hidden()
+                                            .when(is_quick_action_bar, |this| this.text_ui(cx))
                                             .child("debug: ")
                                             .child(scenario.label.clone())
                                             .when(selected, |this| {

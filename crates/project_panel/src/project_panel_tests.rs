@@ -58,6 +58,7 @@ async fn test_visible_list(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..50, cx),
         &[
@@ -123,6 +124,7 @@ async fn test_opening_file(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     toggle_expand_dir(&panel, "src/test", cx);
     select_path(&panel, "src/test/first.rs", cx);
@@ -209,6 +211,7 @@ async fn test_exclusions_in_visible_list(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..50, cx),
         &[
@@ -329,6 +332,7 @@ async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
         );
     });
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -412,6 +416,7 @@ async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
             );
         });
         let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+        cx.run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &["> dir_1/nested_dir_1/nested_dir_2/nested_dir_3"],
@@ -506,6 +511,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
             panel
         })
         .unwrap();
+    cx.run_until_parked();
 
     select_path(&panel, "root1", cx);
     assert_eq!(
@@ -526,6 +532,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
     // Add a file with the root folder selected. The filename editor is placed
     // before the first file in the root folder.
     panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    cx.run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
@@ -549,7 +556,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
         panel.filename_editor.update(cx, |editor, cx| {
             editor.set_text("the-new-filename", window, cx)
         });
-        panel.confirm_edit(window, cx).unwrap()
+        panel.confirm_edit(true, window, cx).unwrap()
     });
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
@@ -568,6 +575,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
     );
 
     confirm.await.unwrap();
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -586,6 +594,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
 
     select_path(&panel, "root1/b", cx);
     panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -607,10 +616,11 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
             panel.filename_editor.update(cx, |editor, cx| {
                 editor.set_text("another-filename.txt", window, cx)
             });
-            panel.confirm_edit(window, cx).unwrap()
+            panel.confirm_edit(true, window, cx).unwrap()
         })
         .await
         .unwrap();
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -647,7 +657,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
 
     let confirm = panel.update_in(cx, |panel, window, cx| {
         panel.filename_editor.update(cx, |editor, cx| {
-            let file_name_selections = editor.selections.all::<usize>(cx);
+            let file_name_selections = editor.selections.all::<usize>(&editor.display_snapshot(cx));
             assert_eq!(
                 file_name_selections.len(),
                 1,
@@ -666,7 +676,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
 
             editor.set_text("a-different-filename.tar.gz", window, cx)
         });
-        panel.confirm_edit(window, cx).unwrap()
+        panel.confirm_edit(true, window, cx).unwrap()
     });
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
@@ -685,6 +695,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
     );
 
     confirm.await.unwrap();
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -720,7 +731,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
 
     panel.update_in(cx, |panel, window, cx| {
             panel.filename_editor.update(cx, |editor, cx| {
-                let file_name_selections = editor.selections.all::<usize>(cx);
+                let file_name_selections = editor.selections.all::<usize>(&editor.display_snapshot(cx));
                 assert_eq!(file_name_selections.len(), 1, "File editing should have a single selection, but got: {file_name_selections:?}");
                 let file_name_selection = &file_name_selections[0];
                 assert_eq!(file_name_selection.start, 0, "Should select the file name from the start");
@@ -729,10 +740,11 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
             });
             panel.cancel(&menu::Cancel, window, cx)
         });
-
+    cx.run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         panel.new_directory(&NewDirectory, window, cx)
     });
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -753,7 +765,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
         panel
             .filename_editor
             .update(cx, |editor, cx| editor.set_text("new-dir", window, cx));
-        panel.confirm_edit(window, cx).unwrap()
+        panel.confirm_edit(true, window, cx).unwrap()
     });
     panel.update_in(cx, |panel, window, cx| {
         panel.select_next(&Default::default(), window, cx)
@@ -775,6 +787,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
     );
 
     confirm.await.unwrap();
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -830,6 +843,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
 
     // Test empty filename and filename with only whitespace
     panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -849,13 +863,15 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
         panel.filename_editor.update(cx, |editor, cx| {
             editor.set_text("", window, cx);
         });
-        assert!(panel.confirm_edit(window, cx).is_none());
+        assert!(panel.confirm_edit(true, window, cx).is_none());
         panel.filename_editor.update(cx, |editor, cx| {
             editor.set_text("   ", window, cx);
         });
-        assert!(panel.confirm_edit(window, cx).is_none());
-        panel.cancel(&menu::Cancel, window, cx)
+        assert!(panel.confirm_edit(true, window, cx).is_none());
+        panel.cancel(&menu::Cancel, window, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
     });
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -924,6 +940,7 @@ async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
             panel
         })
         .unwrap();
+    cx.run_until_parked();
 
     select_path(&panel, "root1", cx);
     assert_eq!(
@@ -944,9 +961,11 @@ async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
     // Add a file with the root folder selected. The filename editor is placed
     // before the first file in the root folder.
     panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    cx.run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -967,7 +986,7 @@ async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
         panel.filename_editor.update(cx, |editor, cx| {
             editor.set_text("/bdir1/dir2/the-new-filename", window, cx)
         });
-        panel.confirm_edit(window, cx).unwrap()
+        panel.confirm_edit(true, window, cx).unwrap()
     });
 
     assert_eq!(
@@ -987,6 +1006,7 @@ async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
     );
 
     confirm.await.unwrap();
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..13, cx),
         &[
@@ -1032,6 +1052,7 @@ async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
             panel
         })
         .unwrap();
+    cx.run_until_parked();
 
     select_path(&panel, "root1", cx);
     assert_eq!(
@@ -1042,6 +1063,7 @@ async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
     // Add a file with the root folder selected. The filename editor is placed
     // before the first file in the root folder.
     panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    cx.run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
@@ -1060,7 +1082,7 @@ async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
         panel
             .filename_editor
             .update(cx, |editor, cx| editor.set_text("new_dir/", window, cx));
-        panel.confirm_edit(window, cx).unwrap()
+        panel.confirm_edit(true, window, cx).unwrap()
     });
 
     assert_eq!(
@@ -1074,6 +1096,7 @@ async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
     );
 
     confirm.await.unwrap();
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -1092,9 +1115,10 @@ async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
         panel
             .filename_editor
             .update(cx, |editor, cx| editor.set_text("new dir 2/", window, cx));
-        panel.confirm_edit(window, cx).unwrap()
+        panel.confirm_edit(true, window, cx).unwrap()
     });
     confirm.await.unwrap();
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -1116,9 +1140,10 @@ async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
             panel
                 .filename_editor
                 .update(cx, |editor, cx| editor.set_text("new_dir_3\\", window, cx));
-            panel.confirm_edit(window, cx).unwrap()
+            panel.confirm_edit(true, window, cx).unwrap()
         });
         confirm.await.unwrap();
+        cx.run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
@@ -1151,6 +1176,7 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     panel.update_in(cx, |panel, window, cx| {
         panel.select_next(&Default::default(), window, cx);
@@ -1188,7 +1214,7 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
 
     panel.update_in(cx, |panel, window, cx| {
         panel.filename_editor.update(cx, |editor, cx| {
-            let file_name_selections = editor.selections.all::<usize>(cx);
+            let file_name_selections = editor.selections.all::<usize>(&editor.display_snapshot(cx));
             assert_eq!(
                 file_name_selections.len(),
                 1,
@@ -1206,7 +1232,7 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
                 "Should select the file name disambiguation until the extension"
             );
         });
-        assert!(panel.confirm_edit(window, cx).is_none());
+        assert!(panel.confirm_edit(true, window, cx).is_none());
     });
 
     panel.update_in(cx, |panel, window, cx| {
@@ -1227,7 +1253,7 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
     );
 
     panel.update_in(cx, |panel, window, cx| {
-        assert!(panel.confirm_edit(window, cx).is_none())
+        assert!(panel.confirm_edit(true, window, cx).is_none())
     });
 }
 
@@ -1251,6 +1277,7 @@ async fn test_cut_paste(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     select_path_with_mark(&panel, "root/one.txt", cx);
     select_path_with_mark(&panel, "root/two.txt", cx);
@@ -1274,6 +1301,7 @@ async fn test_cut_paste(cx: &mut gpui::TestAppContext) {
 
     panel.update_in(cx, |panel, window, cx| {
         panel.paste(&Default::default(), window, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
     });
     cx.executor().run_until_parked();
 
@@ -1354,6 +1382,7 @@ async fn test_cut_paste_between_different_worktrees(cx: &mut gpui::TestAppContex
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     select_path(&panel, "root1/three.txt", cx);
     panel.update_in(cx, |panel, window, cx| {
@@ -1450,6 +1479,7 @@ async fn test_copy_paste_between_different_worktrees(cx: &mut gpui::TestAppConte
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     select_path(&panel, "root1/three.txt", cx);
     panel.update_in(cx, |panel, window, cx| {
@@ -1572,6 +1602,7 @@ async fn test_copy_paste_directory(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     select_path(&panel, "root/a", cx);
     panel.update_in(cx, |panel, window, cx| {
@@ -1641,7 +1672,7 @@ async fn test_copy_paste_directory(cx: &mut gpui::TestAppContext) {
         panel
             .filename_editor
             .update(cx, |editor, cx| editor.set_text("c", window, cx));
-        panel.confirm_edit(window, cx).unwrap()
+        panel.confirm_edit(true, window, cx).unwrap()
     });
     assert_eq!(
         visible_entries_as_strings(&panel, 0..50, cx),
@@ -1711,6 +1742,7 @@ async fn test_copy_paste_directory_with_sibling_file(cx: &mut gpui::TestAppConte
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     toggle_expand_dir(&panel, "test/dir1", cx);
 
@@ -1816,6 +1848,7 @@ async fn test_copy_paste_nested_and_root_entries(cx: &mut gpui::TestAppContext) 
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     toggle_expand_dir(&panel, "test/dir1", cx);
 
@@ -1893,6 +1926,7 @@ async fn test_remove_opened_file(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     toggle_expand_dir(&panel, "src/test", cx);
     select_path(&panel, "src/test/first.rs", cx);
@@ -1991,6 +2025,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             panel
         })
         .unwrap();
+    cx.run_until_parked();
 
     select_path(&panel, "src", cx);
     panel.update_in(cx, |panel, window, cx| panel.confirm(&Confirm, window, cx));
@@ -2006,9 +2041,11 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.new_directory(&NewDirectory, window, cx)
     });
+    cx.run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
+    cx.executor().run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -2023,18 +2060,20 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             .filename_editor
             .update(cx, |editor, cx| editor.set_text("test", window, cx));
         assert!(
-            panel.confirm_edit(window, cx).is_none(),
+            panel.confirm_edit(true, window, cx).is_none(),
             "Should not allow to confirm on conflicting new directory name"
         );
     });
     cx.executor().run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(
-            panel.edit_state.is_some(),
+            panel.state.edit_state.is_some(),
             "Edit state should not be None after conflicting new directory name"
         );
         panel.cancel(&menu::Cancel, window, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
     });
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -2057,6 +2096,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         ]
     );
     panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    cx.run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
@@ -2076,18 +2116,20 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             .filename_editor
             .update(cx, |editor, cx| editor.set_text("first.rs", window, cx));
         assert!(
-            panel.confirm_edit(window, cx).is_none(),
+            panel.confirm_edit(true, window, cx).is_none(),
             "Should not allow to confirm on conflicting new file name"
         );
     });
     cx.executor().run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(
-            panel.edit_state.is_some(),
+            panel.state.edit_state.is_some(),
             "Edit state should not be None after conflicting new file name"
         );
         panel.cancel(&menu::Cancel, window, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
     });
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -2132,14 +2174,14 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             .filename_editor
             .update(cx, |editor, cx| editor.set_text("second.rs", window, cx));
         assert!(
-            panel.confirm_edit(window, cx).is_none(),
+            panel.confirm_edit(true, window, cx).is_none(),
             "Should not allow to confirm on conflicting file rename"
         )
     });
     cx.executor().run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(
-            panel.edit_state.is_some(),
+            panel.state.edit_state.is_some(),
             "Edit state should not be None after conflicting file rename"
         );
         panel.cancel(&menu::Cancel, window, cx);
@@ -2155,6 +2197,396 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         ],
         "File list should be unchanged after failed rename confirmation"
     );
+}
+
+// NOTE: This test is skipped on Windows, because on Windows,
+// when it triggers the lsp store it converts `/src/test/first copy.txt` into an uri
+// but it fails with message `"/src\\test\\first copy.txt" is not parseable as an URI`
+#[gpui::test]
+#[cfg_attr(target_os = "windows", ignore)]
+async fn test_create_duplicate_items_and_check_history(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/src",
+        json!({
+            "test": {
+                "first.txt": "// First Txt file",
+                "second.txt": "// Second Txt file",
+                "third.txt": "// Third Txt file",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace
+        .update(cx, |workspace, window, cx| {
+            let panel = ProjectPanel::new(workspace, window, cx);
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    select_path(&panel, "src", cx);
+    panel.update_in(cx, |panel, window, cx| panel.confirm(&Confirm, window, cx));
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            //
+            "v src  <== selected",
+            "    > test"
+        ]
+    );
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_directory(&NewDirectory, window, cx)
+    });
+    cx.run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            //
+            "v src",
+            "    > [EDITOR: '']  <== selected",
+            "    > test"
+        ]
+    );
+    panel.update_in(cx, |panel, window, cx| {
+        panel
+            .filename_editor
+            .update(cx, |editor, cx| editor.set_text("test", window, cx));
+        assert!(
+            panel.confirm_edit(true, window, cx).is_none(),
+            "Should not allow to confirm on conflicting new directory name"
+        );
+    });
+    cx.executor().run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            panel.state.edit_state.is_some(),
+            "Edit state should not be None after conflicting new directory name"
+        );
+        panel.cancel(&menu::Cancel, window, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            //
+            "v src  <== selected",
+            "    > test"
+        ],
+        "File list should be unchanged after failed folder create confirmation"
+    );
+
+    select_path(&panel, "src/test", cx);
+    panel.update_in(cx, |panel, window, cx| panel.confirm(&Confirm, window, cx));
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            //
+            "v src",
+            "    > test  <== selected"
+        ]
+    );
+    panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    cx.run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v src",
+            "    v test",
+            "          [EDITOR: '']  <== selected",
+            "          first.txt",
+            "          second.txt",
+            "          third.txt"
+        ]
+    );
+    panel.update_in(cx, |panel, window, cx| {
+        panel
+            .filename_editor
+            .update(cx, |editor, cx| editor.set_text("first.txt", window, cx));
+        assert!(
+            panel.confirm_edit(true, window, cx).is_none(),
+            "Should not allow to confirm on conflicting new file name"
+        );
+    });
+    cx.executor().run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            panel.state.edit_state.is_some(),
+            "Edit state should not be None after conflicting new file name"
+        );
+        panel.cancel(&menu::Cancel, window, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v src",
+            "    v test  <== selected",
+            "          first.txt",
+            "          second.txt",
+            "          third.txt"
+        ],
+        "File list should be unchanged after failed file create confirmation"
+    );
+
+    select_path(&panel, "src/test/first.txt", cx);
+    panel.update_in(cx, |panel, window, cx| panel.confirm(&Confirm, window, cx));
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v src",
+            "    v test",
+            "          first.txt  <== selected",
+            "          second.txt",
+            "          third.txt"
+        ],
+    );
+    panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v src",
+            "    v test",
+            "          [EDITOR: 'first.txt']  <== selected",
+            "          second.txt",
+            "          third.txt"
+        ]
+    );
+    panel.update_in(cx, |panel, window, cx| {
+        panel
+            .filename_editor
+            .update(cx, |editor, cx| editor.set_text("second.txt", window, cx));
+        assert!(
+            panel.confirm_edit(true, window, cx).is_none(),
+            "Should not allow to confirm on conflicting file rename"
+        )
+    });
+    cx.executor().run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            panel.state.edit_state.is_some(),
+            "Edit state should not be None after conflicting file rename"
+        );
+        panel.cancel(&menu::Cancel, window, cx);
+    });
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v src",
+            "    v test",
+            "          first.txt  <== selected",
+            "          second.txt",
+            "          third.txt"
+        ],
+        "File list should be unchanged after failed rename confirmation"
+    );
+    panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
+    cx.executor().run_until_parked();
+    // Try to duplicate and check history
+    panel.update_in(cx, |panel, window, cx| {
+        panel.duplicate(&Duplicate, window, cx)
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v src",
+            "    v test",
+            "          first.txt",
+            "          [EDITOR: 'first copy.txt']  <== selected  <== marked",
+            "          second.txt",
+            "          third.txt"
+        ],
+    );
+
+    let confirm = panel.update_in(cx, |panel, window, cx| {
+        panel
+            .filename_editor
+            .update(cx, |editor, cx| editor.set_text("fourth.txt", window, cx));
+        panel.confirm_edit(true, window, cx).unwrap()
+    });
+    confirm.await.unwrap();
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v src",
+            "    v test",
+            "          first.txt",
+            "          fourth.txt  <== selected",
+            "          second.txt",
+            "          third.txt"
+        ],
+        "File list should be different after rename confirmation"
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.update_visible_entries(None, false, false, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    select_path(&panel, "src/test/first.txt", cx);
+    panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
+    cx.executor().run_until_parked();
+
+    workspace
+        .read_with(cx, |this, cx| {
+            assert!(
+                this.recent_navigation_history_iter(cx)
+                    .any(|(project_path, abs_path)| {
+                        project_path.path == Arc::from(rel_path("test/fourth.txt"))
+                            && abs_path == Some(PathBuf::from(path!("/src/test/fourth.txt")))
+                    })
+            );
+        })
+        .unwrap();
+}
+
+// NOTE: This test is skipped on Windows, because on Windows,
+// when it triggers the lsp store it converts `/src/test/first.txt` into an uri
+// but it fails with message `"/src\\test\\first.txt" is not parseable as an URI`
+#[gpui::test]
+#[cfg_attr(target_os = "windows", ignore)]
+async fn test_rename_item_and_check_history(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/src",
+        json!({
+            "test": {
+                "first.txt": "// First Txt file",
+                "second.txt": "// Second Txt file",
+                "third.txt": "// Third Txt file",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace
+        .update(cx, |workspace, window, cx| {
+            let panel = ProjectPanel::new(workspace, window, cx);
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    select_path(&panel, "src", cx);
+    panel.update_in(cx, |panel, window, cx| panel.confirm(&Confirm, window, cx));
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            //
+            "v src  <== selected",
+            "    > test"
+        ]
+    );
+
+    select_path(&panel, "src/test", cx);
+    panel.update_in(cx, |panel, window, cx| panel.confirm(&Confirm, window, cx));
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            //
+            "v src",
+            "    > test  <== selected"
+        ]
+    );
+    panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    cx.run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
+
+    select_path(&panel, "src/test/first.txt", cx);
+    panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
+    cx.executor().run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v src",
+            "    v test",
+            "          [EDITOR: 'first.txt']  <== selected  <== marked",
+            "          second.txt",
+            "          third.txt"
+        ],
+    );
+
+    let confirm = panel.update_in(cx, |panel, window, cx| {
+        panel
+            .filename_editor
+            .update(cx, |editor, cx| editor.set_text("fourth.txt", window, cx));
+        panel.confirm_edit(true, window, cx).unwrap()
+    });
+    confirm.await.unwrap();
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v src",
+            "    v test",
+            "          fourth.txt  <== selected",
+            "          second.txt",
+            "          third.txt"
+        ],
+        "File list should be different after rename confirmation"
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.update_visible_entries(None, false, false, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    select_path(&panel, "src/test/second.txt", cx);
+    panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
+    cx.executor().run_until_parked();
+
+    workspace
+        .read_with(cx, |this, cx| {
+            assert!(
+                this.recent_navigation_history_iter(cx)
+                    .any(|(project_path, abs_path)| {
+                        project_path.path == Arc::from(rel_path("test/fourth.txt"))
+                            && abs_path == Some(PathBuf::from(path!("/src/test/fourth.txt")))
+                    })
+            );
+        })
+        .unwrap();
 }
 
 #[gpui::test]
@@ -2233,6 +2665,7 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     // Check initial state
     assert_eq!(
@@ -2256,6 +2689,7 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
     });
+    cx.run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..6, cx),
@@ -2272,6 +2706,7 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
     });
+    cx.run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..6, cx),
@@ -2288,6 +2723,7 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
     });
+    cx.run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 6..9, cx),
@@ -2301,6 +2737,7 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
     });
+    cx.run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 9..11, cx),
@@ -2310,6 +2747,7 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
     });
+    cx.run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 13..16, cx),
@@ -2323,6 +2761,7 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
     });
+    cx.run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 16..18, cx),
@@ -2333,6 +2772,7 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
     });
+    cx.run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..18, cx),
@@ -2362,6 +2802,7 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
     });
+    cx.run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 16..18, cx),
@@ -2371,6 +2812,7 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
     });
+    cx.run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 13..16, cx),
@@ -2384,6 +2826,7 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
     });
+    cx.run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 9..11, cx),
@@ -2393,6 +2836,7 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
     });
+    cx.run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 6..9, cx),
@@ -2406,6 +2850,7 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
     });
+    cx.run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..6, cx),
@@ -2422,6 +2867,7 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
     });
+    cx.run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..6, cx),
@@ -2468,6 +2914,7 @@ async fn test_select_directory(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
     cx.executor().run_until_parked();
@@ -2565,6 +3012,7 @@ async fn test_select_first_last(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
@@ -2618,6 +3066,7 @@ async fn test_select_first_last(cx: &mut gpui::TestAppContext) {
     });
 
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     #[rustfmt::skip]
     assert_eq!(
@@ -2669,6 +3118,7 @@ async fn test_dir_toggle_collapse(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
     cx.executor().run_until_parked();
@@ -2720,6 +3170,7 @@ async fn test_collapse_all_entries(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     panel.update_in(cx, |panel, window, cx| {
         panel.collapse_all_entries(&CollapseAllEntries, window, cx)
@@ -2774,6 +3225,7 @@ async fn test_collapse_all_entries_multiple_worktrees(cx: &mut gpui::TestAppCont
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     panel.update_in(cx, |panel, window, cx| {
         panel.collapse_all_entries(&CollapseAllEntries, window, cx)
@@ -2816,6 +3268,7 @@ async fn test_collapse_all_entries_with_collapsed_root(cx: &mut gpui::TestAppCon
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     // Open project_root/dir_1 to ensure that a nested directory is expanded
     toggle_expand_dir(&panel, "project_root/dir_1", cx);
@@ -2862,6 +3315,7 @@ async fn test_new_file_move(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     // Make a new buffer with no backing file
     workspace
@@ -2919,6 +3373,12 @@ async fn test_new_file_move(cx: &mut gpui::TestAppContext) {
     );
 }
 
+// NOTE: This test is skipped on Windows, because on Windows, unlike on Unix,
+// you can't rename a directory which some program has already open. This is a
+// limitation of the Windows. Since Zed will have the root open, it will hold an open handle
+// to it, and thus renaming it will fail on Windows.
+// See: https://stackoverflow.com/questions/41365318/access-is-denied-when-renaming-folder
+// See: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
 #[gpui::test]
 #[cfg_attr(target_os = "windows", ignore)]
 async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
@@ -2939,6 +3399,7 @@ async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     toggle_expand_dir(&panel, "root1/dir1", cx);
 
@@ -2970,9 +3431,10 @@ async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
         panel
             .filename_editor
             .update(cx, |editor, cx| editor.set_text("new_root1", window, cx));
-        panel.confirm_edit(window, cx).unwrap()
+        panel.confirm_edit(true, window, cx).unwrap()
     });
     confirm.await.unwrap();
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
         &[
@@ -3031,12 +3493,13 @@ async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
         });
 
         let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+        cx.run_until_parked();
 
         panel.update(cx, |panel, cx| {
             let project = panel.project.read(cx);
             let worktree = project.visible_worktrees(cx).next().unwrap();
             let root_entry = worktree.read(cx).root_entry().unwrap();
-            panel.selection = Some(SelectedEntry {
+            panel.state.selection = Some(SelectedEntry {
                 worktree_id: worktree.read(cx).id(),
                 entry_id: root_entry.id,
             });
@@ -3045,7 +3508,7 @@ async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
         panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
 
         assert!(
-            panel.read_with(cx, |panel, _| panel.edit_state.is_none()),
+            panel.read_with(cx, |panel, _| panel.state.edit_state.is_none()),
             "Rename should be blocked when hide_root=true with single worktree"
         );
     }
@@ -3069,19 +3532,21 @@ async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
         });
 
         let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+        cx.run_until_parked();
+
         select_path(&panel, "root1", cx);
         panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
 
         #[cfg(target_os = "windows")]
         assert!(
-            panel.read_with(cx, |panel, _| panel.edit_state.is_none()),
+            panel.read_with(cx, |panel, _| panel.state.edit_state.is_none()),
             "Rename should be blocked on Windows even with multiple worktrees"
         );
 
         #[cfg(not(target_os = "windows"))]
         {
             assert!(
-                panel.read_with(cx, |panel, _| panel.edit_state.is_some()),
+                panel.read_with(cx, |panel, _| panel.state.edit_state.is_some()),
                 "Rename should work with multiple worktrees on non-Windows when hide_root=true"
             );
             panel.update_in(cx, |panel, window, cx| {
@@ -3113,16 +3578,38 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
     cx.update(|window, cx| {
         panel.update(cx, |this, cx| {
             this.select_next(&Default::default(), window, cx);
             this.expand_selected_entry(&Default::default(), window, cx);
+        })
+    });
+    cx.run_until_parked();
+
+    cx.update(|window, cx| {
+        panel.update(cx, |this, cx| {
             this.expand_selected_entry(&Default::default(), window, cx);
+        })
+    });
+    cx.run_until_parked();
+
+    cx.update(|window, cx| {
+        panel.update(cx, |this, cx| {
             this.select_next(&Default::default(), window, cx);
             this.expand_selected_entry(&Default::default(), window, cx);
+        })
+    });
+    cx.run_until_parked();
+
+    cx.update(|window, cx| {
+        panel.update(cx, |this, cx| {
             this.select_next(&Default::default(), window, cx);
         })
     });
+    cx.run_until_parked();
+
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -3172,7 +3659,7 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
     cx.update(|window, cx| {
         panel.update(cx, |this, cx| {
             let drag = DraggedSelection {
-                active_selection: this.selection.unwrap(),
+                active_selection: this.state.selection.unwrap(),
                 marked_selections: this.marked_entries.clone().into(),
             };
             let target_entry = this
@@ -3235,7 +3722,7 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
             this.select_previous(&SelectPrevious, window, cx);
 
             this.paste(&Paste, window, cx);
-            // this.expand_selected_entry(&ExpandSelectedEntry, cx);
+            this.update_visible_entries(None, false, false, window, cx);
         })
     });
     cx.run_until_parked();
@@ -3304,16 +3791,17 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     });
 
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     // Case 1: Move last dir 'd' - should move only 'd', leaving 'a/b/c'
     select_path(&panel, "root/a/b/c/d", cx);
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
             active_selection: SelectedEntry {
-                worktree_id: panel.selection.as_ref().unwrap().worktree_id,
-                entry_id: panel.resolve_entry(panel.selection.as_ref().unwrap().entry_id),
+                worktree_id: panel.state.selection.as_ref().unwrap().worktree_id,
+                entry_id: panel.resolve_entry(panel.state.selection.as_ref().unwrap().entry_id),
             },
-            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
+            marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
             .project
@@ -3343,10 +3831,10 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
             active_selection: SelectedEntry {
-                worktree_id: panel.selection.as_ref().unwrap().worktree_id,
-                entry_id: panel.resolve_entry(panel.selection.as_ref().unwrap().entry_id),
+                worktree_id: panel.state.selection.as_ref().unwrap().worktree_id,
+                entry_id: panel.resolve_entry(panel.state.selection.as_ref().unwrap().entry_id),
             },
-            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
+            marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
             .project
@@ -3366,10 +3854,10 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
             active_selection: SelectedEntry {
-                worktree_id: panel.selection.as_ref().unwrap().worktree_id,
-                entry_id: panel.resolve_entry(panel.selection.as_ref().unwrap().entry_id),
+                worktree_id: panel.state.selection.as_ref().unwrap().worktree_id,
+                entry_id: panel.resolve_entry(panel.state.selection.as_ref().unwrap().entry_id),
             },
-            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
+            marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
             .project
@@ -3395,10 +3883,10 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
             active_selection: SelectedEntry {
-                worktree_id: panel.selection.as_ref().unwrap().worktree_id,
-                entry_id: panel.resolve_entry(panel.selection.as_ref().unwrap().entry_id),
+                worktree_id: panel.state.selection.as_ref().unwrap().worktree_id,
+                entry_id: panel.resolve_entry(panel.state.selection.as_ref().unwrap().entry_id),
             },
-            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
+            marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
             .project
@@ -3418,10 +3906,10 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
             active_selection: SelectedEntry {
-                worktree_id: panel.selection.as_ref().unwrap().worktree_id,
-                entry_id: panel.resolve_entry(panel.selection.as_ref().unwrap().entry_id),
+                worktree_id: panel.state.selection.as_ref().unwrap().worktree_id,
+                entry_id: panel.resolve_entry(panel.state.selection.as_ref().unwrap().entry_id),
             },
-            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
+            marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
             .project
@@ -3487,6 +3975,7 @@ async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
@@ -3734,6 +4223,7 @@ async fn test_gitignored_and_always_included(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
@@ -3847,6 +4337,7 @@ async fn test_explicit_reveal(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
@@ -4043,6 +4534,7 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
             panel
         })
         .unwrap();
+    cx.run_until_parked();
 
     select_path(&panel, "root1", cx);
     assert_eq!(
@@ -4062,6 +4554,7 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
     let excluded_dir_path = "excluded_dir";
 
     panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    cx.run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
@@ -4070,7 +4563,7 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
             panel.filename_editor.update(cx, |editor, cx| {
                 editor.set_text(excluded_file_path, window, cx)
             });
-            panel.confirm_edit(window, cx).unwrap()
+            panel.confirm_edit(true, window, cx).unwrap()
         })
         .await
         .unwrap();
@@ -4117,6 +4610,7 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.new_directory(&NewDirectory, window, cx)
     });
+    cx.run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
@@ -4125,11 +4619,11 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
             panel.filename_editor.update(cx, |editor, cx| {
                 editor.set_text(excluded_file_path, window, cx)
             });
-            panel.confirm_edit(window, cx).unwrap()
+            panel.confirm_edit(true, window, cx).unwrap()
         })
         .await
         .unwrap();
-
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..13, cx),
         &["v root1", "      .dockerignore"],
@@ -4158,18 +4652,23 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.new_directory(&NewDirectory, window, cx)
     });
+    cx.run_until_parked();
+
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
+
     panel
         .update_in(cx, |panel, window, cx| {
             panel.filename_editor.update(cx, |editor, cx| {
                 editor.set_text(excluded_dir_path, window, cx)
             });
-            panel.confirm_edit(window, cx).unwrap()
+            panel.confirm_edit(true, window, cx).unwrap()
         })
         .await
         .unwrap();
+
+    cx.run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..13, cx),
@@ -4227,6 +4726,7 @@ async fn test_selection_restored_when_creation_cancelled(cx: &mut gpui::TestAppC
             panel
         })
         .unwrap();
+    cx.run_until_parked();
 
     select_path(&panel, "src", cx);
     panel.update_in(cx, |panel, window, cx| panel.confirm(&Confirm, window, cx));
@@ -4242,6 +4742,7 @@ async fn test_selection_restored_when_creation_cancelled(cx: &mut gpui::TestAppC
     panel.update_in(cx, |panel, window, cx| {
         panel.new_directory(&NewDirectory, window, cx)
     });
+    cx.executor().run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
@@ -4256,8 +4757,10 @@ async fn test_selection_restored_when_creation_cancelled(cx: &mut gpui::TestAppC
     );
 
     panel.update_in(cx, |panel, window, cx| {
-        panel.cancel(&menu::Cancel, window, cx)
+        panel.cancel(&menu::Cancel, window, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
     });
+    cx.executor().run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -4296,6 +4799,7 @@ async fn test_basic_file_deletion_scenarios(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     toggle_expand_dir(&panel, "root/dir1", cx);
     toggle_expand_dir(&panel, "root/dir2", cx);
@@ -4430,6 +4934,7 @@ async fn test_deletion_gitignored(cx: &mut gpui::TestAppContext) {
     });
 
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     select_path(&panel, "root/aa", cx);
     assert_eq!(
@@ -4527,6 +5032,7 @@ async fn test_nested_deletion_gitignore(cx: &mut gpui::TestAppContext) {
     });
 
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     // Test 1: Visible items should exclude files on gitignore
     toggle_expand_dir(&panel, "root/dir1", cx);
@@ -4588,6 +5094,7 @@ async fn test_complex_selection_scenarios(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     toggle_expand_dir(&panel, "root/dir1", cx);
     toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
@@ -4700,6 +5207,7 @@ async fn test_delete_all_files_and_directories(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     toggle_expand_dir(&panel, "root/dir1", cx);
     toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
@@ -4772,6 +5280,7 @@ async fn test_nested_selection_deletion(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     toggle_expand_dir(&panel, "root/dir1", cx);
     toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
@@ -4846,6 +5355,7 @@ async fn test_multiple_worktrees_deletion(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     // Expand all directories for testing
     toggle_expand_dir(&panel, "root1/dir1", cx);
@@ -4977,6 +5487,7 @@ async fn test_selection_vs_marked_entries_priority(cx: &mut gpui::TestAppContext
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     toggle_expand_dir(&panel, "root/dir1", cx);
     toggle_expand_dir(&panel, "root/dir2", cx);
@@ -5080,6 +5591,7 @@ async fn test_selection_fallback_to_next_highest_worktree(cx: &mut gpui::TestApp
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     toggle_expand_dir(&panel, "root_b/dir1", cx);
     toggle_expand_dir(&panel, "root_c/dir2", cx);
@@ -5139,6 +5651,7 @@ fn toggle_expand_dir(panel: &Entity<ProjectPanel>, path: &str, cx: &mut VisualTe
         }
         panic!("no worktree for path {:?}", path);
     });
+    cx.run_until_parked();
 }
 
 #[gpui::test]
@@ -5192,6 +5705,7 @@ async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
     });
 
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
@@ -5214,11 +5728,11 @@ async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
     );
 
     let entry_id = find_project_entry(&panel, "root/dir1", cx).unwrap();
-    panel.update(cx, |panel, cx| {
+    panel.update_in(cx, |panel, window, cx| {
         let project = panel.project.read(cx);
         let worktree = project.worktrees(cx).next().unwrap().read(cx);
         panel.expand_all_for_entry(worktree.id(), entry_id, cx);
-        panel.update_visible_entries(None, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
     });
     cx.run_until_parked();
 
@@ -5272,11 +5786,11 @@ async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
     );
 
     let entry_id = find_project_entry(&panel, "root/dir1", cx).unwrap();
-    panel.update(cx, |panel, cx| {
+    panel.update_in(cx, |panel, window, cx| {
         let project = panel.project.read(cx);
         let worktree = project.worktrees(cx).next().unwrap().read(cx);
         panel.expand_all_for_entry(worktree.id(), entry_id, cx);
-        panel.update_visible_entries(None, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
     });
     cx.run_until_parked();
 
@@ -5302,11 +5816,11 @@ async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
 
     // Test 3: When explicitly called on ignored directory
     let ignored_dir_entry = find_project_entry(&panel, "root/dir1/ignored_dir", cx).unwrap();
-    panel.update(cx, |panel, cx| {
+    panel.update_in(cx, |panel, window, cx| {
         let project = panel.project.read(cx);
         let worktree = project.worktrees(cx).next().unwrap().read(cx);
         panel.expand_all_for_entry(worktree.id(), ignored_dir_entry, cx);
-        panel.update_visible_entries(None, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
     });
     cx.run_until_parked();
 
@@ -5367,6 +5881,7 @@ async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
     // Test 1: Basic collapsing
     {
         let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+        cx.run_until_parked();
 
         toggle_expand_dir(&panel, "root/dir1", cx);
         toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
@@ -5390,12 +5905,13 @@ async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
         );
 
         let entry_id = find_project_entry(&panel, "root/dir1", cx).unwrap();
-        panel.update(cx, |panel, cx| {
+        panel.update_in(cx, |panel, window, cx| {
             let project = panel.project.read(cx);
             let worktree = project.worktrees(cx).next().unwrap().read(cx);
             panel.collapse_all_for_entry(worktree.id(), entry_id, cx);
-            panel.update_visible_entries(None, cx);
+            panel.update_visible_entries(None, false, false, window, cx);
         });
+        cx.run_until_parked();
 
         assert_eq!(
             visible_entries_as_strings(&panel, 0..20, cx),
@@ -5418,6 +5934,7 @@ async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
         });
 
         let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+        cx.run_until_parked();
 
         toggle_expand_dir(&panel, "root/dir1", cx);
         toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
@@ -5473,6 +5990,7 @@ async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
         });
 
         let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+        cx.run_until_parked();
 
         toggle_expand_dir(&panel, "root/dir1", cx);
         toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
@@ -5542,6 +6060,7 @@ async fn test_create_entries_without_selection(cx: &mut gpui::TestAppContext) {
             panel
         })
         .unwrap();
+    cx.run_until_parked();
 
     #[rustfmt::skip]
     assert_eq!(
@@ -5556,6 +6075,7 @@ async fn test_create_entries_without_selection(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.new_file(&NewFile, window, cx);
     });
+    cx.run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
@@ -5564,11 +6084,11 @@ async fn test_create_entries_without_selection(cx: &mut gpui::TestAppContext) {
             panel.filename_editor.update(cx, |editor, cx| {
                 editor.set_text("hello_from_no_selections", window, cx)
             });
-            panel.confirm_edit(window, cx).unwrap()
+            panel.confirm_edit(true, window, cx).unwrap()
         })
         .await
         .unwrap();
-
+    cx.run_until_parked();
     #[rustfmt::skip]
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
@@ -5619,6 +6139,7 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
             panel
         })
         .unwrap();
+    cx.run_until_parked();
 
     #[rustfmt::skip]
     assert_eq!(
@@ -5632,7 +6153,7 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
 
     panel.update(cx, |panel, _| {
         assert!(
-            panel.selection.is_none(),
+            panel.state.selection.is_none(),
             "Should have no selection initially"
         );
     });
@@ -5641,10 +6162,11 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
     panel.update_in(cx, |panel, window, cx| {
         panel.new_file(&NewFile, window, cx);
     });
+    cx.run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
-
+    cx.run_until_parked();
     #[rustfmt::skip]
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
@@ -5660,9 +6182,10 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
         panel.filename_editor.update(cx, |editor, cx| {
             editor.set_text("new_file_at_root.txt", window, cx)
         });
-        panel.confirm_edit(window, cx).unwrap()
+        panel.confirm_edit(true, window, cx).unwrap()
     });
     confirm.await.unwrap();
+    cx.run_until_parked();
 
     #[rustfmt::skip]
     assert_eq!(
@@ -5682,12 +6205,14 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
 
     // Test 2: Create new directory when no entry is selected
     panel.update(cx, |panel, _| {
-        panel.selection = None;
+        panel.state.selection = None;
     });
 
     panel.update_in(cx, |panel, window, cx| {
         panel.new_directory(&NewDirectory, window, cx);
     });
+    cx.run_until_parked();
+
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
@@ -5708,9 +6233,10 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
         panel.filename_editor.update(cx, |editor, cx| {
             editor.set_text("new_dir_at_root", window, cx)
         });
-        panel.confirm_edit(window, cx).unwrap()
+        panel.confirm_edit(true, window, cx).unwrap()
     });
     confirm.await.unwrap();
+    cx.run_until_parked();
 
     #[rustfmt::skip]
     assert_eq!(
@@ -5753,6 +6279,7 @@ async fn test_highlight_entry_for_external_drag(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     panel.update(cx, |panel, cx| {
         let project = panel.project.read(cx);
@@ -5826,6 +6353,7 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     panel.update(cx, |panel, cx| {
         let project = panel.project.read(cx);
@@ -5965,6 +6493,7 @@ async fn test_highlight_entry_for_selection_drag_cross_worktree(cx: &mut gpui::T
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     panel.update(cx, |panel, cx| {
         let project = panel.project.read(cx);
@@ -6055,6 +6584,7 @@ async fn test_should_highlight_background_for_selection_drag(cx: &mut gpui::Test
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     panel.update(cx, |panel, cx| {
         let project = panel.project.read(cx);
@@ -6226,6 +6756,7 @@ async fn test_hide_root(cx: &mut gpui::TestAppContext) {
         });
 
         let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+        cx.run_until_parked();
 
         #[rustfmt::skip]
         assert_eq!(
@@ -6260,6 +6791,7 @@ async fn test_hide_root(cx: &mut gpui::TestAppContext) {
         });
 
         let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+        cx.run_until_parked();
 
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
@@ -6302,6 +6834,7 @@ async fn test_hide_root(cx: &mut gpui::TestAppContext) {
         });
 
         let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+        cx.run_until_parked();
 
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
@@ -6337,6 +6870,7 @@ async fn test_hide_root(cx: &mut gpui::TestAppContext) {
         });
 
         let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+        cx.run_until_parked();
 
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
@@ -6375,6 +6909,7 @@ async fn test_compare_selected_files(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     let file1_path = "root/file1.txt";
     let file2_path = "root/file2.txt";
@@ -6478,6 +7013,7 @@ async fn test_compare_files_context_menu(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
 
     // Test 1: When only one file is selected, there should be no compare option
     select_path(&panel, "root/file1.txt", cx);
@@ -6538,22 +7074,162 @@ async fn test_compare_files_context_menu(cx: &mut gpui::TestAppContext) {
     }
 }
 
+#[gpui::test]
+async fn test_hide_hidden_entries(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".hidden-file.txt": "hidden file content",
+            "visible-file.txt": "visible file content",
+            ".hidden-parent-dir": {
+                "nested-dir": {
+                    "file.txt": "file content",
+                }
+            },
+            "visible-dir": {
+                "file-in-visible.txt": "file content",
+                "nested": {
+                    ".hidden-nested-dir": {
+                        ".double-hidden-dir": {
+                            "deep-file-1.txt": "deep content 1",
+                            "deep-file-2.txt": "deep content 2"
+                        },
+                        "hidden-nested-file-1.txt": "hidden nested 1",
+                        "hidden-nested-file-2.txt": "hidden nested 2"
+                    },
+                    "visible-nested-file.txt": "visible nested content"
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_hidden: false,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "root/.hidden-parent-dir", cx);
+    toggle_expand_dir(&panel, "root/.hidden-parent-dir/nested-dir", cx);
+    toggle_expand_dir(&panel, "root/visible-dir", cx);
+    toggle_expand_dir(&panel, "root/visible-dir/nested", cx);
+    toggle_expand_dir(&panel, "root/visible-dir/nested/.hidden-nested-dir", cx);
+    toggle_expand_dir(
+        &panel,
+        "root/visible-dir/nested/.hidden-nested-dir/.double-hidden-dir",
+        cx,
+    );
+
+    let expanded = [
+        "v root",
+        "    v .hidden-parent-dir",
+        "        v nested-dir",
+        "              file.txt",
+        "    v visible-dir",
+        "        v nested",
+        "            v .hidden-nested-dir",
+        "                v .double-hidden-dir  <== selected",
+        "                      deep-file-1.txt",
+        "                      deep-file-2.txt",
+        "                  hidden-nested-file-1.txt",
+        "                  hidden-nested-file-2.txt",
+        "              visible-nested-file.txt",
+        "          file-in-visible.txt",
+        "      .hidden-file.txt",
+        "      visible-file.txt",
+    ];
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..30, cx),
+        &expanded,
+        "With hide_hidden=false, contents of hidden nested directory should be visible"
+    );
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_hidden: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.update_visible_entries(None, false, false, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..30, cx),
+        &[
+            "v root",
+            "    v visible-dir",
+            "        v nested",
+            "              visible-nested-file.txt",
+            "          file-in-visible.txt",
+            "      visible-file.txt",
+        ],
+        "With hide_hidden=false, contents of hidden nested directory should be visible"
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_hidden: false,
+                ..settings
+            },
+            cx,
+        );
+        panel.update_visible_entries(None, false, false, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..30, cx),
+        &expanded,
+        "With hide_hidden=false, deeply nested hidden directories and their contents should be visible"
+    );
+}
+
 fn select_path(panel: &Entity<ProjectPanel>, path: &str, cx: &mut VisualTestContext) {
     let path = rel_path(path);
-    panel.update(cx, |panel, cx| {
+    panel.update_in(cx, |panel, window, cx| {
         for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
             let worktree = worktree.read(cx);
             if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
                 let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
-                panel.selection = Some(crate::SelectedEntry {
-                    worktree_id: worktree.id(),
-                    entry_id,
-                });
+                panel.update_visible_entries(
+                    Some((worktree.id(), entry_id)),
+                    false,
+                    false,
+                    window,
+                    cx,
+                );
                 return;
             }
         }
         panic!("no worktree for path {:?}", path);
     });
+    cx.run_until_parked();
 }
 
 fn select_path_with_mark(panel: &Entity<ProjectPanel>, path: &str, cx: &mut VisualTestContext) {
@@ -6570,7 +7246,7 @@ fn select_path_with_mark(panel: &Entity<ProjectPanel>, path: &str, cx: &mut Visu
                 if !panel.marked_entries.contains(&entry) {
                     panel.marked_entries.push(entry);
                 }
-                panel.selection = Some(entry);
+                panel.state.selection = Some(entry);
                 return;
             }
         }
@@ -6657,14 +7333,8 @@ fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        init_settings(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
-        language::init(cx);
-        editor::init_settings(cx);
         crate::init(cx);
-        workspace::init_settings(cx);
-        client::init_settings(cx);
-        Project::init_settings(cx);
 
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
@@ -6682,12 +7352,9 @@ fn init_test_with_editor(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let app_state = AppState::test(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
-        init_settings(cx);
-        language::init(cx);
         editor::init(cx);
         crate::init(cx);
         workspace::init(app_state, cx);
-        Project::init_settings(cx);
 
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {

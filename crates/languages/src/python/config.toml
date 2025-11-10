@@ -35,3 +35,4 @@ decrease_indent_patterns = [
   { pattern = "^\\s*except\\b.*:\\s*(#.*)?",  valid_after = ["try", "except"] },
   { pattern = "^\\s*finally\\b.*:\\s*(#.*)?", valid_after = ["try", "except", "else"] },
 ]
+import_path_strip_regex = "/__init__\\.py$"

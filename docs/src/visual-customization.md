@@ -1,16 +1,16 @@
 # Visual Customization
 
-Various aspects of Zed's visual layout can be configured via Zed settings.json which you can access via {#action zed::OpenSettings} ({#kb zed::OpenSettings}).
+Various aspects of Zed's visual layout can be configured via either the settings window or the `settings.json` file, which you can access via {#action zed::OpenSettings} ({#kb zed::OpenSettings}) and {#action zed::OpenSettingsFile} ({#kb zed::OpenSettingsFile}) respectively.
 
 See [Configuring Zed](./configuring-zed.md) for additional information and other non-visual settings.
 
 ## Themes
 
-Use may install zed extensions providing [Themes](./themes.md) and [Icon Themes](./icon-themes.md) via {#action zed::Extensions} from the command palette or menu.
+You can install many [themes](./themes.md) and [icon themes](./icon-themes.md) in form of extensions by running {#action zed::Extensions} from the command palette.
 
-You can preview/choose amongst your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and ({#action icon_theme_selector::Toggle}) which will modify the following settings:
+You can preview/choose amongst your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and {#action icon_theme_selector::Toggle} which will modify the following settings:
 
-```json
+```json [settings]
 {
   "theme": "One Dark",
   "icon_theme": "Zed (Default)"
@@ -19,26 +19,26 @@ You can preview/choose amongst your installed themes and icon themes with {#acti
 
 If you would like to use distinct themes for light mode/dark mode that can be set with:
 
-```json
+```json [settings]
 {
   "theme": {
-    "dark": "One Dark"
+    "dark": "One Dark",
     "light": "One Light",
     // Mode to use (dark, light) or "system" to follow the OS's light/dark mode (default)
-    "mode": "system",
+    "mode": "system"
   },
   "icon_theme": {
-    "dark": "Zed (Default)"
+    "dark": "Zed (Default)",
     "light": "Zed (Default)",
     // Mode to use (dark, light) or "system" to follow the OS's light/dark mode (default)
-    "mode": "system",
+    "mode": "system"
   }
 }
 ```
 
 ## Fonts
 
-```json
+```json [settings]
   // UI Font. Use ".SystemUIFont" to use the default system font (SF Pro on macOS),
   // or ".ZedSans" for the bundled default (currently IBM Plex)
   "ui_font_family": ".SystemUIFont",
@@ -61,19 +61,24 @@ If you would like to use distinct themes for light mode/dark mode that can be se
     "line_height": "standard",
   },
 
-  // Agent Panel Font Settings
-  "agent_font_size": 15
+  // Controls the font size for agent responses in the agent panel.
+  // If not specified, it falls back to the UI font size.
+  "agent_ui_font_size": 15,
+  // Controls the font size for the agent panel's message editor, user message,
+  // and any other snippet of code.
+  "agent_buffer_font_size": 12
 ```
 
 ### Font ligatures
 
 By default Zed enable font ligatures which will visually combines certain adjacent characters.
 
-For example `=>` will be displayed as `→` and `!=` will be `≠`. This is purely cosmetic and the individual characters remain unchanged.
+For example `=>` will be displayed as `→` and `!=` will be `≠`.
+This is purely cosmetic and the individual characters remain unchanged.
 
 To disable this behavior use:
 
-```json
+```json [settings]
 {
   "buffer_font_features": {
     "calt": false // Disable ligatures
@@ -83,7 +88,7 @@ To disable this behavior use:
 
 ### Status Bar
 
-```json
+```json [settings]
 {
   // Whether to show full labels in line indicator or short ones
   //   - `short`: "2 s, 15 l, 32 c"
@@ -105,7 +110,7 @@ To disable this behavior use:
 
 ### Titlebar
 
-```json
+```json [settings]
   // Control which items are shown/hidden in the title bar
   "title_bar": {
     "show_branch_icon": false,      // Show/hide branch icon beside branch switcher
@@ -120,7 +125,7 @@ To disable this behavior use:
 
 ## Workspace
 
-```json
+```json [settings]
 {
   // Force usage of Zed build in path prompts (file and directory pickers)
   // instead of OS native pickers (false).
@@ -128,10 +133,6 @@ To disable this behavior use:
   // Force usage of Zed built in confirmation prompts ("Do you want to save?")
   // instead of OS native prompts (false). On linux this is ignored (always false).
   "use_system_prompts": true,
-
-  // Whether to use the system provided dialogs for Open and Save As (true) or
-  // Zed's built-in keyboard-first pickers (false)
-  "use_system_path_prompts": true,
 
   // Active pane styling settings.
   "active_pane_modifiers": {
@@ -152,7 +153,7 @@ To disable this behavior use:
 
 <!--
 TBD: Centered layout related settings
-```json
+```json [settings]
     "centered_layout": {
     // The relative width of the left padding of the central pane from the
     // workspace when the centered layout is used.
@@ -166,7 +167,7 @@ TBD: Centered layout related settings
 
 ## Editor
 
-```json
+```json [settings]
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
 
@@ -186,7 +187,7 @@ TBD: Centered layout related settings
   "show_whitespaces": "selection",
   "whitespace_map": { // Which characters to show when `show_whitespaces` enabled
     "space": "•",
-    "tab": "→"
+    "tab": "⟶"       // use "→", for a shorter arrow
   },
 
   "unnecessary_code_fade": 0.3, // How much to fade out unused code.
@@ -208,7 +209,7 @@ TBD: Centered layout related settings
     "folds": true,                // Show/hide show fold buttons in the gutter.
     "min_line_number_digits": 4   // Reserve space for N digit line numbers
   },
-  "relative_line_numbers": false, // Show relative line numbers in gutter
+  "relative_line_numbers": "enabled", // Show relative line numbers in gutter
 
   // Indent guides
   "indent_guides": {
@@ -222,7 +223,7 @@ TBD: Centered layout related settings
 
 ### Git Blame {#editor-blame}
 
-```json
+```json [settings]
   "git": {
     "inline_blame": {
       "enabled": true,             // Show/hide inline blame
@@ -237,7 +238,7 @@ TBD: Centered layout related settings
 
 ### Editor Toolbar
 
-```json
+```json [settings]
   // Editor toolbar related settings
   "toolbar": {
     "breadcrumbs": true, // Whether to show breadcrumbs.
@@ -250,7 +251,7 @@ TBD: Centered layout related settings
 
 ### Editor Scrollbar and Minimap {#editor-scrollbar}
 
-```json
+```json [settings]
   // Scrollbar related settings
   "scrollbar": {
     // When to show the scrollbar in the editor (auto, system, always, never)
@@ -291,7 +292,7 @@ TBD: Centered layout related settings
 
 ### Editor Tabs
 
-```json
+```json [settings]
   // Maximum number of tabs per pane. Unset for unlimited.
   "max_tabs": null,
 
@@ -313,7 +314,7 @@ TBD: Centered layout related settings
 
 ### Status Bar
 
-```json
+```json [settings]
   "status_bar": {
     // Show/hide a button that displays the active buffer's language.
     // Clicking the button brings up the language selector.
@@ -323,6 +324,10 @@ TBD: Centered layout related settings
     // Clicking the button brings up an input for jumping to a line and column.
     // Defaults to true.
     "cursor_position_button": true,
+    // Show/hide a button that displays the buffer's line-ending mode.
+    // Clicking the button brings up the line-ending selector.
+    // Defaults to false.
+    "line_endings_button": false
   },
   "global_lsp_settings": {
     // Show/hide the LSP button in the status bar.
@@ -334,7 +339,7 @@ TBD: Centered layout related settings
 
 ### Multibuffer
 
-```json
+```json [settings]
 {
   // The default number of lines to expand excerpts in the multibuffer by.
   "expand_excerpt_lines": 5,
@@ -345,7 +350,7 @@ TBD: Centered layout related settings
 
 ### Editor Completions, Snippets, Actions, Diagnostics {#editor-lsp}
 
-```json
+```json [settings]
   "snippet_sort_order": "inline",        // Snippets completions: top, inline, bottom, none
   "show_completions_on_input": true,     // Show completions while typing
   "show_completion_documentation": true, // Show documentation in completions
@@ -363,11 +368,13 @@ TBD: Centered layout related settings
 
   // How to render LSP `textDocument/documentColor` colors in the editor.
   "lsp_document_colors": "inlay",        // none, inlay, border, background
+  // When to show the scrollbar in the completion menu.
+  "completion_menu_scrollbar": "never", // auto, system, always, never
 ```
 
 ### Edit Predictions {#editor-ai}
 
-```json
+```json [settings]
   "edit_predictions": {
     "mode": "eager",                // Automatically show (eager) or hold-alt (subtle)
     "enabled_in_text_threads": true // Show/hide predictions in agent text threads
@@ -377,7 +384,7 @@ TBD: Centered layout related settings
 
 ### Editor Inlay Hints
 
-```json
+```json [settings]
 {
   "inlay_hints": {
     "enabled": false,
@@ -408,7 +415,7 @@ TBD: Centered layout related settings
 
 ## File Finder
 
-```json
+```json [settings]
   // File Finder Settings
   "file_finder": {
     "file_icons": true,         // Show/hide file icons
@@ -422,7 +429,7 @@ TBD: Centered layout related settings
 
 Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#kb project_panel::ToggleFocus}) or with {#action pane::RevealInProjectPanel} ({#kb pane::RevealInProjectPanel}).
 
-```json
+```json [settings]
   // Project Panel Settings
   "project_panel": {
     "button": true,                 // Show/hide button in the status bar
@@ -447,13 +454,15 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
       "show": "always"
     },
     // Whether to hide the root entry when only one folder is open in the window.
-    "hide_root": false
-  }.
+    "hide_root": false,
+    // Whether to hide the hidden entries in the project panel.
+    "hide_hidden": false
+  }
 ```
 
 ## Agent Panel
 
-```json
+```json [settings]
   "agent": {
     "version": "2",
     "enabled": true,        // Enable/disable the agent
@@ -462,14 +471,19 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     "default_width": 640,   // Default width (left/right docked)
     "default_height": 320,  // Default height (bottom docked)
   },
-  "agent_font_size": 16
+  // Controls the font size for agent responses in the agent panel.
+  // If not specified, it falls back to the UI font size.
+  "agent_ui_font_size": 15,
+  // Controls the font size for the agent panel's message editor, user message,
+  // and any other snippet of code.
+  "agent_buffer_font_size": 12
 ```
 
 See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settings.
 
 ## Terminal Panel
 
-```json
+```json [settings]
   // Terminal Panel Settings
   "terminal": {
     "dock": "bottom",                   // Where to dock: left, right, bottom
@@ -506,7 +520,7 @@ See [Terminal settings](./configuring-zed.md#terminal) for additional non-visual
 
 ### Other Panels
 
-```json
+```json [settings]
   // Git Panel
   "git_panel": {
     "button": true,               // Show/hide status bar icon
@@ -547,15 +561,15 @@ See [Terminal settings](./configuring-zed.md#terminal) for additional non-visual
 
 ## Collaboration Panels
 
-```json
+```json [settings]
 {
   // Collaboration Panel
   "collaboration_panel": {
-    "button": true,               // Show/hide status bar icon
-    "dock": "left",               // Where to dock: left, right
-    "default_width": 240          // Default width of the collaboration panel.
+    "button": true, // Show/hide status bar icon
+    "dock": "left", // Where to dock: left, right
+    "default_width": 240 // Default width of the collaboration panel.
   },
-  "show_call_status_icon": true,  // Shown call status in the OS status bar.
+  "show_call_status_icon": true, // Shown call status in the OS status bar.
 
   // Notification Panel
   "notification_panel": {
@@ -566,4 +580,5 @@ See [Terminal settings](./configuring-zed.md#terminal) for additional non-visual
     // Default width of the notification panel.
     "default_width": 380
   }
+}
 ```

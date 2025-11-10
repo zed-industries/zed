@@ -7,7 +7,9 @@ use parking_lot::RwLock;
 use rand::prelude::*;
 use settings::SettingsStore;
 use std::env;
+use std::time::{Duration, Instant};
 use util::RandomCharIter;
+use util::rel_path::rel_path;
 use util::test::sample_text;
 
 #[ctor::ctor]
@@ -30,6 +32,7 @@ fn test_empty_singleton(cx: &mut App) {
             multibuffer_row: Some(MultiBufferRow(0)),
             diff_status: None,
             expand_info: None,
+            wrapped_buffer_row: None,
         }]
     );
 }
@@ -77,7 +80,9 @@ fn test_remote(cx: &mut App) {
         let ops = cx
             .background_executor()
             .block(host_buffer.read(cx).serialize_ops(None, cx));
-        let mut buffer = Buffer::from_proto(1, Capability::ReadWrite, state, None).unwrap();
+        let mut buffer =
+            Buffer::from_proto(ReplicaId::REMOTE_SERVER, Capability::ReadWrite, state, None)
+                .unwrap();
         buffer.apply_ops(
             ops.into_iter()
                 .map(|op| language::proto::deserialize_operation(op).unwrap()),
@@ -156,15 +161,12 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
         events.read().as_slice(),
         &[
             Event::Edited {
-                singleton_buffer_edited: false,
                 edited_buffer: None,
             },
             Event::Edited {
-                singleton_buffer_edited: false,
                 edited_buffer: None,
             },
             Event::Edited {
-                singleton_buffer_edited: false,
                 edited_buffer: None,
             }
         ]
@@ -799,7 +801,13 @@ async fn test_set_anchored_excerpts_for_path(cx: &mut TestAppContext) {
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     let anchor_ranges_1 = multibuffer
         .update(cx, |multibuffer, cx| {
-            multibuffer.set_anchored_excerpts_for_path(buffer_1.clone(), ranges_1, 2, cx)
+            multibuffer.set_anchored_excerpts_for_path(
+                PathKey::for_buffer(&buffer_1, cx),
+                buffer_1.clone(),
+                ranges_1,
+                2,
+                cx,
+            )
         })
         .await;
     let snapshot_1 = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
@@ -816,7 +824,13 @@ async fn test_set_anchored_excerpts_for_path(cx: &mut TestAppContext) {
     );
     let anchor_ranges_2 = multibuffer
         .update(cx, |multibuffer, cx| {
-            multibuffer.set_anchored_excerpts_for_path(buffer_2.clone(), ranges_2, 2, cx)
+            multibuffer.set_anchored_excerpts_for_path(
+                PathKey::for_buffer(&buffer_2, cx),
+                buffer_2.clone(),
+                ranges_2,
+                2,
+                cx,
+            )
         })
         .await;
     let snapshot_2 = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
@@ -1524,7 +1538,7 @@ fn test_set_excerpts_for_buffer_ordering(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path1: PathKey = PathKey::namespaced(0, "/".into());
+    let path1: PathKey = PathKey::with_sort_prefix(0, rel_path("root").into_arc());
 
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |multibuffer, cx| {
@@ -1619,7 +1633,7 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path1: PathKey = PathKey::namespaced(0, "/".into());
+    let path1: PathKey = PathKey::with_sort_prefix(0, rel_path("root").into_arc());
     let buf2 = cx.new(|cx| {
         Buffer::local(
             indoc! {
@@ -1638,7 +1652,7 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path2 = PathKey::namespaced(1, "/".into());
+    let path2 = PathKey::with_sort_prefix(1, rel_path("root").into_arc());
 
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |multibuffer, cx| {
@@ -1815,7 +1829,7 @@ fn test_set_excerpts_for_buffer_rename(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path: PathKey = PathKey::namespaced(0, "/".into());
+    let path: PathKey = PathKey::with_sort_prefix(0, rel_path("root").into_arc());
     let buf2 = cx.new(|cx| {
         Buffer::local(
             indoc! {
@@ -2419,6 +2433,8 @@ impl ReferenceMultibuffer {
                             buffer_id: region.buffer_id,
                             diff_status: region.status,
                             buffer_row,
+                            wrapped_buffer_row: None,
+
                             multibuffer_row: Some(MultiBufferRow(
                                 text[..ix].matches('\n').count() as u32
                             )),
@@ -2972,7 +2988,7 @@ fn test_history(cx: &mut App) {
     });
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |this, _| {
-        this.history.group_interval = group_interval;
+        this.set_group_interval(group_interval);
     });
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.push_excerpts(
@@ -3626,7 +3642,7 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
 fn assert_line_indents(snapshot: &MultiBufferSnapshot) {
     let max_row = snapshot.max_point().row;
     let buffer_id = snapshot.excerpts().next().unwrap().1.remote_id();
-    let text = text::Buffer::new(0, buffer_id, snapshot.text());
+    let text = text::Buffer::new(ReplicaId::LOCAL, buffer_id, snapshot.text());
     let mut line_indents = text
         .line_indents_in_row_range(0..max_row + 1)
         .collect::<Vec<_>>();

@@ -6,7 +6,7 @@ use crate::{ToggleMarksView, ToggleRegistersView, UseSystemClipboard, Vim, VimAd
 use crate::{motion::Motion, object::Object};
 use anyhow::Result;
 use collections::HashMap;
-use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
+use command_palette_hooks::{CommandPaletteFilter, GlobalCommandPaletteInterceptor};
 use db::{
     sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
     sqlez_macros::sql,
@@ -66,11 +66,15 @@ impl Display for Mode {
 }
 
 impl Mode {
-    pub fn is_visual(&self) -> bool {
+    pub fn is_visual(self) -> bool {
         match self {
             Self::Visual | Self::VisualLine | Self::VisualBlock | Self::HelixSelect => true,
             Self::Normal | Self::Insert | Self::Replace | Self::HelixNormal => false,
         }
+    }
+
+    pub fn is_helix(self) -> bool {
+        matches!(self, Mode::HelixNormal | Mode::HelixSelect)
     }
 }
 
@@ -109,6 +113,9 @@ pub enum Operator {
     },
     ChangeSurrounds {
         target: Option<Object>,
+        /// Represents whether the opening bracket was used for the target
+        /// object.
+        opening: bool,
     },
     DeleteSurrounds,
     Mark,
@@ -303,8 +310,8 @@ impl MarksState {
 
     fn load(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
-            let Some(workspace_id) = this.update(cx, |this, cx| this.workspace_id(cx))? else {
-                return Ok(());
+            let Some(workspace_id) = this.update(cx, |this, cx| this.workspace_id(cx)).ok()? else {
+                return None;
             };
             let (marks, paths) = cx
                 .background_spawn(async move {
@@ -312,10 +319,12 @@ impl MarksState {
                     let paths = DB.get_global_marks_paths(workspace_id)?;
                     anyhow::Ok((marks, paths))
                 })
-                .await?;
+                .await
+                .log_err()?;
             this.update(cx, |this, cx| this.loaded(marks, paths, cx))
+                .ok()
         })
-        .detach_and_log_err(cx);
+        .detach();
     }
 
     fn loaded(
@@ -715,9 +724,7 @@ impl VimGlobals {
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.show_namespace(Vim::NAMESPACE);
                 });
-                CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
-                    interceptor.set(Box::new(command_interceptor));
-                });
+                GlobalCommandPaletteInterceptor::set(cx, command_interceptor);
                 for window in cx.windows() {
                     if let Some(workspace) = window.downcast::<Workspace>() {
                         workspace
@@ -732,9 +739,7 @@ impl VimGlobals {
             } else {
                 KeyBinding::set_vim_mode(cx, false);
                 *Vim::globals(cx) = VimGlobals::default();
-                CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
-                    interceptor.clear();
-                });
+                GlobalCommandPaletteInterceptor::clear(cx);
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.hide_namespace(Vim::NAMESPACE);
                 });
@@ -807,11 +812,10 @@ impl VimGlobals {
                 self.last_yank.replace(content.text.clone());
                 cx.write_to_clipboard(content.clone().into());
             } else {
-                self.last_yank = cx
-                    .read_from_clipboard()
-                    .and_then(|item| item.text().map(|string| string.into()));
+                if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
+                    self.last_yank.replace(text.into());
+                }
             }
-
             self.registers.insert('"', content.clone());
             if is_yank {
                 self.registers.insert('0', content);
@@ -865,7 +869,9 @@ impl VimGlobals {
                 }
             }
             '%' => editor.and_then(|editor| {
-                let selection = editor.selections.newest::<Point>(cx);
+                let selection = editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx));
                 if let Some((_, buffer, _)) = editor
                     .buffer()
                     .read(cx)
@@ -885,10 +891,10 @@ impl VimGlobals {
 
     fn system_clipboard_is_newer(&self, cx: &App) -> bool {
         cx.read_from_clipboard().is_some_and(|item| {
-            if let Some(last_state) = &self.last_yank {
-                Some(last_state.as_ref()) != item.text().as_deref()
-            } else {
-                true
+            match (item.text().as_deref(), &self.last_yank) {
+                (Some(new), Some(last)) => last.as_ref() != new,
+                (Some(_), None) => true,
+                (None, _) => false,
             }
         })
     }
@@ -990,7 +996,7 @@ pub struct SearchState {
     pub prior_selections: Vec<Range<Anchor>>,
     pub prior_operator: Option<Operator>,
     pub prior_mode: Mode,
-    pub helix_select: bool,
+    pub is_helix_regex_search: bool,
 }
 
 impl Operator {
@@ -1078,7 +1084,9 @@ impl Operator {
             | Operator::Replace
             | Operator::Digraph { .. }
             | Operator::Literal { .. }
-            | Operator::ChangeSurrounds { target: Some(_) }
+            | Operator::ChangeSurrounds {
+                target: Some(_), ..
+            }
             | Operator::DeleteSurrounds => true,
             Operator::Change
             | Operator::Delete
@@ -1095,7 +1103,7 @@ impl Operator {
             | Operator::ReplaceWithRegister
             | Operator::Exchange
             | Operator::Object { .. }
-            | Operator::ChangeSurrounds { target: None }
+            | Operator::ChangeSurrounds { target: None, .. }
             | Operator::OppositeCase
             | Operator::ToggleComments
             | Operator::HelixMatch
@@ -1122,7 +1130,7 @@ impl Operator {
             | Operator::Rewrap
             | Operator::ShellCommand
             | Operator::AddSurrounds { target: None }
-            | Operator::ChangeSurrounds { target: None }
+            | Operator::ChangeSurrounds { target: None, .. }
             | Operator::DeleteSurrounds
             | Operator::Exchange
             | Operator::HelixNext { .. }

@@ -38,11 +38,6 @@ pub fn run_package_conformity(_args: PackageConformityArgs) -> Result<()> {
             continue;
         }
 
-        // Ignore `workspace-hack`, as it produces a lot of false positives.
-        if package.name == "workspace-hack" {
-            continue;
-        }
-
         for dependencies in [
             &cargo_toml.dependencies,
             &cargo_toml.dev_dependencies,

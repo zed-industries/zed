@@ -13,8 +13,6 @@ path = "src/extension.rs"
 
 [dependencies]
 anyhow.workspace = true
-async-compression.workspace = true
-async-tar.workspace = true
 async-trait.workspace = true
 collections.workspace = true
 dap.workspace = true
@@ -36,7 +34,6 @@ url.workspace = true
 util.workspace = true
 wasm-encoder.workspace = true
 wasmparser.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true

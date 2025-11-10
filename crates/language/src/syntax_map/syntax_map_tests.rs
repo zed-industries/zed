@@ -6,7 +6,7 @@ use crate::{
 use gpui::App;
 use rand::rngs::StdRng;
 use std::{env, ops::Range, sync::Arc};
-use text::{Buffer, BufferId};
+use text::{Buffer, BufferId, ReplicaId};
 use tree_sitter::Node;
 use unindent::Unindent as _;
 use util::test::marked_text_ranges;
@@ -88,7 +88,7 @@ fn test_syntax_map_layers_for_range(cx: &mut App) {
     registry.add(language.clone());
 
     let mut buffer = Buffer::new(
-        0,
+        ReplicaId::LOCAL,
         BufferId::new(1).unwrap(),
         r#"
             fn a() {
@@ -189,7 +189,7 @@ fn test_dynamic_language_injection(cx: &mut App) {
     registry.add(Arc::new(ruby_lang()));
 
     let mut buffer = Buffer::new(
-        0,
+        ReplicaId::LOCAL,
         BufferId::new(1).unwrap(),
         r#"
             This is a code block:
@@ -811,7 +811,7 @@ fn test_syntax_map_languages_loading_with_erb(cx: &mut App) {
     .unindent();
 
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), text);
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), text);
 
     let mut syntax_map = SyntaxMap::new(&buffer);
     syntax_map.set_language_registry(registry.clone());
@@ -978,7 +978,7 @@ fn test_random_edits(
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(10);
 
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), text);
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), text);
 
     let mut syntax_map = SyntaxMap::new(&buffer);
     syntax_map.set_language_registry(registry.clone());
@@ -1159,7 +1159,7 @@ fn test_edit_sequence(language_name: &str, steps: &[&str], cx: &mut App) -> (Buf
         .now_or_never()
         .unwrap()
         .unwrap();
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "");
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
 
     let mut mutated_syntax_map = SyntaxMap::new(&buffer);
     mutated_syntax_map.set_language_registry(registry.clone());

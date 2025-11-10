@@ -347,6 +347,7 @@ message Commit {
     string message = 6;
     optional CommitOptions options = 7;
     reserved 8;
+    uint64 askpass_id = 9;
 
     message CommitOptions {
         bool amend = 1;
@@ -403,8 +404,9 @@ message Pull {
     reserved 2;
     uint64 repository_id = 3;
     string remote_name = 4;
-    string branch_name = 5;
+    optional string branch_name = 5;
     uint64 askpass_id = 6;
+    bool rebase = 7;
 }
 
 message RemoteMessageResponse {
@@ -471,4 +473,61 @@ message GetDefaultBranch {
 
 message GetDefaultBranchResponse {
     optional string branch = 1;
+}
+
+message GetTreeDiff {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    bool is_merge = 3;
+    string base = 4;
+    string head = 5;
+}
+
+message GetTreeDiffResponse {
+    repeated TreeDiffStatus entries = 1;
+}
+
+message TreeDiffStatus {
+    enum Status {
+        ADDED = 0;
+        MODIFIED = 1;
+        DELETED = 2;
+    }
+
+    Status status = 1;
+    string path = 2;
+    optional string oid = 3;
+}
+
+message GetBlobContent {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string oid =3;
+}
+
+message GetBlobContentResponse {
+    string content = 1;
+}
+
+message GitGetWorktrees {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+}
+
+message GitWorktreesResponse {
+    repeated Worktree worktrees = 1;
+}
+
+message Worktree {
+    string path = 1;
+    string ref_name = 2;
+    string sha = 3;
+}
+
+message GitCreateWorktree {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string name = 3;
+    string directory = 4;
+    optional string commit = 5;
 }

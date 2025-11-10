@@ -41,8 +41,8 @@ use serde_json::Value;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use task::{
-    BuildTaskDefinition, DebugScenario, ShellBuilder, SpawnInTerminal, TaskContext, ZedDebugConfig,
-    substitute_variables_in_str,
+    BuildTaskDefinition, DebugScenario, Shell, ShellBuilder, SpawnInTerminal, TaskContext,
+    ZedDebugConfig, substitute_variables_in_str,
 };
 use terminal_view::TerminalView;
 use ui::{
@@ -386,6 +386,7 @@ pub(crate) fn new_debugger_pane(
             Default::default(),
             None,
             NoAction.boxed_clone(),
+            true,
             window,
             cx,
         );
@@ -565,14 +566,13 @@ pub(crate) fn new_debugger_pane(
                                 }))
                                 .tooltip({
                                     let focus_handle = focus_handle.clone();
-                                    move |window, cx| {
+                                    move |_window, cx| {
                                         let zoomed_text =
                                             if zoomed { "Minimize" } else { "Expand" };
                                         Tooltip::for_action_in(
                                             zoomed_text,
                                             &ToggleExpandItem,
                                             &focus_handle,
-                                            window,
                                             cx,
                                         )
                                     }
@@ -937,6 +937,7 @@ impl RunningState {
         let task_store = project.read(cx).task_store().downgrade();
         let weak_project = project.downgrade();
         let weak_workspace = workspace.downgrade();
+        let is_windows = project.read(cx).path_style(cx).is_windows();
         let remote_shell = project
             .read(cx)
             .remote_client()
@@ -988,7 +989,7 @@ impl RunningState {
                         (task, None)
                     }
                 };
-                let Some(task) = task_template.resolve_task("debug-build-task", &task_context) else {
+                let Some(mut task) = task_template.resolve_task("debug-build-task", &task_context) else {
                     anyhow::bail!("Could not resolve task variables within a debug scenario");
                 };
 
@@ -1025,7 +1026,11 @@ impl RunningState {
                     None
                 };
 
-                let builder = ShellBuilder::new(remote_shell.as_deref(), &task.resolved.shell);
+                if let Some(remote_shell) = remote_shell && task.resolved.shell == Shell::System {
+                    task.resolved.shell = Shell::Program(remote_shell);
+                }
+
+                let builder = ShellBuilder::new(&task.resolved.shell, is_windows);
                 let command_label = builder.command_label(task.resolved.command.as_deref().unwrap_or(""));
                 let (command, args) =
                     builder.build(task.resolved.command.clone(), &task.resolved.args);
@@ -1228,7 +1233,6 @@ impl RunningState {
 
             terminal.read_with(cx, |terminal, _| {
                 terminal
-                    .pty_info
                     .pid()
                     .map(|pid| pid.as_u32())
                     .context("Terminal was spawned but PID was not available")

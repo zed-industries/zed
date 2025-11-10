@@ -1,8 +1,6 @@
 pub mod contributors;
 pub mod events;
 pub mod extensions;
-pub mod ips_file;
-pub mod slack;
 
 use crate::{AppState, Error, Result, auth, db::UserId, rpc};
 use anyhow::Context as _;

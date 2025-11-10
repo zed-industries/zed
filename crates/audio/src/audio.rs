@@ -1,12 +1,12 @@
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use gpui::{App, BackgroundExecutor, BorrowAppContext, Global};
+use log::info;
 
 #[cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))]
 mod non_windows_and_freebsd_deps {
     pub(super) use gpui::AsyncApp;
     pub(super) use libwebrtc::native::apm;
-    pub(super) use log::info;
     pub(super) use parking_lot::Mutex;
     pub(super) use rodio::cpal::Sample;
     pub(super) use rodio::source::LimitSettings;
@@ -48,7 +48,6 @@ pub const LEGACY_CHANNEL_COUNT: NonZero<u16> = nz!(2);
 pub const REPLAY_DURATION: Duration = Duration::from_secs(30);
 
 pub fn init(cx: &mut App) {
-    AudioSettings::register(cx);
     LIVE_SETTINGS.initialize(cx);
 }
 

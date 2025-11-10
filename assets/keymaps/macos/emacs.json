@@ -10,10 +10,18 @@
     }
   },
   {
+    // Workaround to avoid falling back to default bindings.
+    // Unbind so Zed ignores these keys and lets emacs handle them.
+    // NOTE: must be declared before the `Editor` override.
+    "context": "Editor",
+    "bindings": {
+      "ctrl-g": null // currently activates `go_to_line::Toggle` when there is nothing to cancel
+    }
+  },
+  {
     "context": "Editor",
     "bindings": {
       "ctrl-g": "editor::Cancel",
-      "ctrl-x b": "tab_switcher::Toggle", // switch-to-buffer
       "alt-g g": "go_to_line::Toggle", // goto-line
       "alt-g alt-g": "go_to_line::Toggle", // goto-line
       "ctrl-space": "editor::SetMark", // set-mark
@@ -30,8 +38,10 @@
       "shift-home": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": false }], // move-beginning-of-line
       "shift-end": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": false }], // move-end-of-line
       "alt-m": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": false, "stop_at_indent": true }], // back-to-indentation
-      "alt-f": "editor::MoveToNextSubwordEnd", // forward-word
-      "alt-b": "editor::MoveToPreviousSubwordStart", // backward-word
+      "alt-left": "editor::MoveToPreviousWordStart", // left-word
+      "alt-right": "editor::MoveToNextWordEnd", // right-word
+      "alt-f": "editor::MoveToNextWordEnd", // forward-word
+      "alt-b": "editor::MoveToPreviousWordStart", // backward-word
       "alt-u": "editor::ConvertToUpperCase", // upcase-word
       "alt-l": "editor::ConvertToLowerCase", // downcase-word
       "alt-c": "editor::ConvertToUpperCamelCase", // capitalize-word
@@ -44,6 +54,8 @@
       "ctrl-x h": "editor::SelectAll", // mark-whole-buffer
       "ctrl-d": "editor::Delete", // delete-char
       "alt-d": ["editor::DeleteToNextWordEnd", { "ignore_newlines": false, "ignore_brackets": false }], // kill-word
+      "alt-backspace": "editor::DeleteToPreviousWordStart", // backward-kill-word
+      "alt-delete": "editor::DeleteToPreviousWordStart", // backward-kill-word
       "ctrl-k": "editor::KillRingCut", // kill-line
       "ctrl-w": "editor::Cut", // kill-region
       "alt-w": "editor::Copy", // kill-ring-save
@@ -53,14 +65,19 @@
       "ctrl-x u": "editor::Undo", // undo
       "alt-{": "editor::MoveToStartOfParagraph", // backward-paragraph
       "alt-}": "editor::MoveToEndOfParagraph", // forward-paragraph
+      "ctrl-up": "editor::MoveToStartOfParagraph", // backward-paragraph
+      "ctrl-down": "editor::MoveToEndOfParagraph", // forward-paragraph
       "ctrl-v": "editor::MovePageDown", // scroll-up
       "alt-v": "editor::MovePageUp", // scroll-down
       "ctrl-x [": "editor::MoveToBeginning", // beginning-of-buffer
       "ctrl-x ]": "editor::MoveToEnd", // end-of-buffer
       "alt-<": "editor::MoveToBeginning", // beginning-of-buffer
       "alt->": "editor::MoveToEnd", // end-of-buffer
+      "ctrl-home": "editor::MoveToBeginning", // beginning-of-buffer
+      "ctrl-end": "editor::MoveToEnd", // end-of-buffer
       "ctrl-l": "editor::ScrollCursorCenterTopBottom", // recenter-top-bottom
       "ctrl-s": "buffer_search::Deploy", // isearch-forward
+      "ctrl-r": "buffer_search::Deploy", // isearch-backward
       "alt-^": "editor::JoinLines", // join-line
       "alt-q": "editor::Rewrap" // fill-paragraph
     }
@@ -86,10 +103,19 @@
       "end": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": false }],
       "ctrl-a": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": false }],
       "ctrl-e": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": false }],
+      "alt-m": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": false, "stop_at_indent": true }],
       "alt-f": "editor::SelectToNextWordEnd",
-      "alt-b": "editor::SelectToPreviousSubwordStart",
+      "alt-b": "editor::SelectToPreviousWordStart",
+      "alt-{": "editor::SelectToStartOfParagraph",
+      "alt-}": "editor::SelectToEndOfParagraph",
+      "ctrl-up": "editor::SelectToStartOfParagraph",
+      "ctrl-down": "editor::SelectToEndOfParagraph",
+      "ctrl-x [": "editor::SelectToBeginning",
+      "ctrl-x ]": "editor::SelectToEnd",
       "alt-<": "editor::SelectToBeginning",
       "alt->": "editor::SelectToEnd",
+      "ctrl-home": "editor::SelectToBeginning",
+      "ctrl-end": "editor::SelectToEnd",
       "ctrl-g": "editor::Cancel"
     }
   },
@@ -107,15 +133,28 @@
       "ctrl-n": "editor::SignatureHelpNext"
     }
   },
+  // Example setting for using emacs-style tab
+  // (i.e. indent the current line / selection or perform symbol completion depending on context)
+  // {
+  //   "context": "Editor && !showing_code_actions && !showing_completions",
+  //   "bindings": {
+  //     "tab": "editor::AutoIndent" // indent-for-tab-command
+  //   }
+  // },
   {
     "context": "Workspace",
     "bindings": {
+      "alt-x": "command_palette::Toggle", // execute-extended-command
+      "ctrl-x b": "tab_switcher::Toggle", // switch-to-buffer
+      "ctrl-x ctrl-b": "tab_switcher::Toggle", // list-buffers
+      // "ctrl-x ctrl-c": "workspace::CloseWindow" // in case you only want to exit the current Zed instance
       "ctrl-x ctrl-c": "zed::Quit", // save-buffers-kill-terminal
       "ctrl-x 5 0": "workspace::CloseWindow", // delete-frame
       "ctrl-x 5 2": "workspace::NewWindow", // make-frame-command
       "ctrl-x o": "workspace::ActivateNextPane", // other-window
       "ctrl-x k": "pane::CloseActiveItem", // kill-buffer
       "ctrl-x 0": "pane::CloseActiveItem", // delete-window
+      // "ctrl-x 1": "pane::JoinAll", // in case you prefer to delete the splits but keep the buffers open
       "ctrl-x 1": "pane::CloseOtherItems", // delete-other-windows
       "ctrl-x 2": "pane::SplitDown", // split-window-below
       "ctrl-x 3": "pane::SplitRight", // split-window-right
@@ -126,10 +165,19 @@
     }
   },
   {
-    // Workaround to enable using emacs in the Zed terminal.
+    // Workaround to enable using native emacs from the Zed terminal.
     // Unbind so Zed ignores these keys and lets emacs handle them.
+    // NOTE:
+    //  "terminal::SendKeystroke" only works for a single key stroke (e.g. ctrl-x),
+    //  so override with null for compound sequences (e.g. ctrl-x ctrl-c).
     "context": "Terminal",
     "bindings": {
+      // If you want to perfect your emacs-in-zed setup, also consider the following.
+      // You may need to enable "option_as_meta" from the Zed settings for "alt-x" to work.
+      // "alt-x": ["terminal::SendKeystroke", "alt-x"],
+      // "ctrl-x": ["terminal::SendKeystroke", "ctrl-x"],
+      // "ctrl-n": ["terminal::SendKeystroke", "ctrl-n"],
+      // ...
       "ctrl-x ctrl-c": null, // save-buffers-kill-terminal
       "ctrl-x ctrl-f": null, // find-file
       "ctrl-x ctrl-s": null, // save-buffer

@@ -47,7 +47,6 @@ impl Render for ImageGallery {
                 div()
                     .image_cache(self.image_cache.clone())
                     .id("main")
-                    .font_family(".SystemUIFont")
                     .text_color(gpui::black())
                     .bg(rgb(0xE9E9E9))
                     .overflow_y_scroll()
@@ -102,7 +101,6 @@ impl Render for ImageGallery {
             .child(image_cache(simple_lru_cache("lru-cache", IMAGES_IN_GALLERY)).child(
                 div()
                     .id("main")
-                    .font_family(".SystemUIFont")
                     .bg(rgb(0xE9E9E9))
                     .text_color(gpui::black())
                     .overflow_y_scroll()

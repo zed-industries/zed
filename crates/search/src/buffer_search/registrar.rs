@@ -62,7 +62,7 @@ impl<T: 'static> SearchActionsRegistrar for DivRegistrar<'_, '_, T> {
 impl SearchActionsRegistrar for Workspace {
     fn register_handler<A: Action>(&mut self, callback: impl ActionExecutor<A>) {
         self.register_action(move |workspace, action: &A, window, cx| {
-            if workspace.has_active_modal(window, cx) {
+            if workspace.has_active_modal(window, cx) && !workspace.hide_modal(window, cx) {
                 cx.propagate();
                 return;
             }

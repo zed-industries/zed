@@ -20,7 +20,17 @@ pub enum Model {
     Grok3MiniFast,
     #[serde(rename = "grok-4", alias = "grok-4-latest")]
     Grok4,
-    #[serde(rename = "grok-code-fast-1")]
+    #[serde(
+        rename = "grok-4-fast-reasoning",
+        alias = "grok-4-fast-reasoning-latest"
+    )]
+    Grok4FastReasoning,
+    #[serde(
+        rename = "grok-4-fast-non-reasoning",
+        alias = "grok-4-fast-non-reasoning-latest"
+    )]
+    Grok4FastNonReasoning,
+    #[serde(rename = "grok-code-fast-1", alias = "grok-code-fast-1-0825")]
     GrokCodeFast1,
     #[serde(rename = "custom")]
     Custom {
@@ -44,6 +54,8 @@ impl Model {
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
             "grok-4" => Ok(Self::Grok4),
+            "grok-4-fast-reasoning" => Ok(Self::Grok4FastReasoning),
+            "grok-4-fast-non-reasoning" => Ok(Self::Grok4FastNonReasoning),
             "grok-2-vision" => Ok(Self::Grok2Vision),
             "grok-3" => Ok(Self::Grok3),
             "grok-3-mini" => Ok(Self::Grok3Mini),
@@ -62,6 +74,8 @@ impl Model {
             Self::Grok3Fast => "grok-3-fast",
             Self::Grok3MiniFast => "grok-3-mini-fast",
             Self::Grok4 => "grok-4",
+            Self::Grok4FastReasoning => "grok-4-fast-reasoning",
+            Self::Grok4FastNonReasoning => "grok-4-fast-non-reasoning",
             Self::GrokCodeFast1 => "grok-code-fast-1",
             Self::Custom { name, .. } => name,
         }
@@ -75,6 +89,8 @@ impl Model {
             Self::Grok3Fast => "Grok 3 Fast",
             Self::Grok3MiniFast => "Grok 3 Mini Fast",
             Self::Grok4 => "Grok 4",
+            Self::Grok4FastReasoning => "Grok 4 Fast",
+            Self::Grok4FastNonReasoning => "Grok 4 Fast (Non-Reasoning)",
             Self::GrokCodeFast1 => "Grok Code Fast 1",
             Self::Custom {
                 name, display_name, ..
@@ -86,6 +102,7 @@ impl Model {
         match self {
             Self::Grok3 | Self::Grok3Mini | Self::Grok3Fast | Self::Grok3MiniFast => 131_072,
             Self::Grok4 | Self::GrokCodeFast1 => 256_000,
+            Self::Grok4FastReasoning | Self::Grok4FastNonReasoning => 128_000,
             Self::Grok2Vision => 8_192,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -94,7 +111,10 @@ impl Model {
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
             Self::Grok3 | Self::Grok3Mini | Self::Grok3Fast | Self::Grok3MiniFast => Some(8_192),
-            Self::Grok4 | Self::GrokCodeFast1 => Some(64_000),
+            Self::Grok4
+            | Self::Grok4FastReasoning
+            | Self::Grok4FastNonReasoning
+            | Self::GrokCodeFast1 => Some(64_000),
             Self::Grok2Vision => Some(4_096),
             Self::Custom {
                 max_output_tokens, ..
@@ -109,7 +129,9 @@ impl Model {
             | Self::Grok3Mini
             | Self::Grok3Fast
             | Self::Grok3MiniFast
-            | Self::Grok4 => true,
+            | Self::Grok4
+            | Self::Grok4FastReasoning
+            | Self::Grok4FastNonReasoning => true,
             Self::Custom {
                 parallel_tool_calls: Some(support),
                 ..
@@ -130,6 +152,8 @@ impl Model {
             | Self::Grok3Fast
             | Self::Grok3MiniFast
             | Self::Grok4
+            | Self::Grok4FastReasoning
+            | Self::Grok4FastNonReasoning
             | Self::GrokCodeFast1 => true,
             Self::Custom {
                 supports_tools: Some(support),

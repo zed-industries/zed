@@ -53,9 +53,20 @@ fn main() -> Result<()> {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum PreprocessorError {
-    ActionNotFound { action_name: String },
-    DeprecatedActionUsed { used: String, should_be: String },
+    ActionNotFound {
+        action_name: String,
+    },
+    DeprecatedActionUsed {
+        used: String,
+        should_be: String,
+    },
     InvalidFrontmatterLine(String),
+    InvalidSettingsJson {
+        file: std::path::PathBuf,
+        line: usize,
+        snippet: String,
+        error: String,
+    },
 }
 
 impl PreprocessorError {
@@ -71,6 +82,20 @@ impl PreprocessorError {
             }
         }
         PreprocessorError::ActionNotFound { action_name }
+    }
+
+    fn new_for_invalid_settings_json(
+        chapter: &Chapter,
+        location: usize,
+        snippet: String,
+        error: String,
+    ) -> Self {
+        PreprocessorError::InvalidSettingsJson {
+            file: chapter.path.clone().expect("chapter has path"),
+            line: chapter.content[..location].lines().count() + 1,
+            snippet,
+            error,
+        }
     }
 }
 
@@ -88,6 +113,21 @@ impl std::fmt::Display for PreprocessorError {
                 "Deprecated action used: {} should be {}",
                 used, should_be
             ),
+            PreprocessorError::InvalidSettingsJson {
+                file,
+                line,
+                snippet,
+                error,
+            } => {
+                write!(
+                    f,
+                    "Invalid settings JSON at {}:{}\nError: {}\n\n{}",
+                    file.display(),
+                    line,
+                    error,
+                    snippet
+                )
+            }
         }
     }
 }
@@ -100,11 +140,11 @@ fn handle_preprocessing() -> Result<()> {
     let (_ctx, mut book) = CmdPreprocessor::parse_input(input.as_bytes())?;
 
     let mut errors = HashSet::<PreprocessorError>::new();
-
     handle_frontmatter(&mut book, &mut errors);
     template_big_table_of_actions(&mut book);
     template_and_validate_keybindings(&mut book, &mut errors);
     template_and_validate_actions(&mut book, &mut errors);
+    template_and_validate_json_snippets(&mut book, &mut errors);
 
     if !errors.is_empty() {
         const ANSI_RED: &str = "\x1b[31m";
@@ -163,6 +203,10 @@ fn template_big_table_of_actions(book: &mut Book) {
     });
 }
 
+fn format_binding(binding: String) -> String {
+    binding.replace("\\", "\\\\")
+}
+
 fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<PreprocessorError>) {
     let regex = Regex::new(r"\{#kb (.*?)\}").unwrap();
 
@@ -183,7 +227,10 @@ fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<Prepr
                     return "<div>No default binding</div>".to_string();
                 }
 
-                format!("<kbd class=\"keybinding\">{macos_binding}|{linux_binding}</kbd>")
+                let formatted_macos_binding = format_binding(macos_binding);
+                let formatted_linux_binding = format_binding(linux_binding);
+
+                format!("<kbd class=\"keybinding\">{formatted_macos_binding}|{formatted_linux_binding}</kbd>")
             })
             .into_owned()
     });
@@ -233,6 +280,161 @@ fn find_binding(os: &str, action: &str) -> Option<String> {
             }
         })
     })
+}
+
+fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<PreprocessorError>) {
+    fn for_each_labeled_code_block_mut(
+        book: &mut Book,
+        errors: &mut HashSet<PreprocessorError>,
+        f: impl Fn(&str, &str) -> anyhow::Result<()>,
+    ) {
+        const TAGGED_JSON_BLOCK_START: &'static str = "```json [";
+        const JSON_BLOCK_END: &'static str = "```";
+
+        for_each_chapter_mut(book, |chapter| {
+            let mut offset = 0;
+            while let Some(loc) = chapter.content[offset..].find(TAGGED_JSON_BLOCK_START) {
+                let loc = loc + offset;
+                let tag_start = loc + TAGGED_JSON_BLOCK_START.len();
+                offset = tag_start;
+                let Some(tag_end) = chapter.content[tag_start..].find(']') else {
+                    errors.insert(PreprocessorError::new_for_invalid_settings_json(
+                        chapter,
+                        loc,
+                        chapter.content[loc..tag_start].to_string(),
+                        "Unclosed JSON block tag".to_string(),
+                    ));
+                    continue;
+                };
+                let tag_end = tag_end + tag_start;
+
+                let tag = &chapter.content[tag_start..tag_end];
+
+                if tag.contains('\n') {
+                    errors.insert(PreprocessorError::new_for_invalid_settings_json(
+                        chapter,
+                        loc,
+                        chapter.content[loc..tag_start].to_string(),
+                        "Unclosed JSON block tag".to_string(),
+                    ));
+                    continue;
+                }
+
+                let snippet_start = tag_end + 1;
+                offset = snippet_start;
+
+                let Some(snippet_end) = chapter.content[snippet_start..].find(JSON_BLOCK_END)
+                else {
+                    errors.insert(PreprocessorError::new_for_invalid_settings_json(
+                        chapter,
+                        loc,
+                        chapter.content[loc..tag_end + 1].to_string(),
+                        "Missing closing code block".to_string(),
+                    ));
+                    continue;
+                };
+                let snippet_end = snippet_start + snippet_end;
+                let snippet_json = &chapter.content[snippet_start..snippet_end];
+                offset = snippet_end + 3;
+
+                if let Err(err) = f(tag, snippet_json) {
+                    errors.insert(PreprocessorError::new_for_invalid_settings_json(
+                        chapter,
+                        loc,
+                        chapter.content[loc..snippet_end + 3].to_string(),
+                        err.to_string(),
+                    ));
+                    continue;
+                };
+                let tag_range_complete = tag_start - 1..tag_end + 1;
+                offset -= tag_range_complete.len();
+                chapter.content.replace_range(tag_range_complete, "");
+            }
+        });
+    }
+
+    for_each_labeled_code_block_mut(book, errors, |label, snippet_json| {
+        let mut snippet_json_fixed = snippet_json
+            .to_string()
+            .replace("\n>", "\n")
+            .trim()
+            .to_string();
+        while snippet_json_fixed.starts_with("//") {
+            if let Some(line_end) = snippet_json_fixed.find('\n') {
+                snippet_json_fixed.replace_range(0..line_end, "");
+                snippet_json_fixed = snippet_json_fixed.trim().to_string();
+            }
+        }
+        match label {
+            "settings" => {
+                if !snippet_json_fixed.starts_with('{') || !snippet_json_fixed.ends_with('}') {
+                    snippet_json_fixed.insert(0, '{');
+                    snippet_json_fixed.push_str("\n}");
+                }
+                settings::parse_json_with_comments::<settings::SettingsContent>(
+                    &snippet_json_fixed,
+                )?;
+            }
+            "keymap" => {
+                if !snippet_json_fixed.starts_with('[') || !snippet_json_fixed.ends_with(']') {
+                    snippet_json_fixed.insert(0, '[');
+                    snippet_json_fixed.push_str("\n]");
+                }
+
+                let keymap = settings::KeymapFile::parse(&snippet_json_fixed)
+                    .context("Failed to parse keymap JSON")?;
+                for section in keymap.sections() {
+                    for (keystrokes, action) in section.bindings() {
+                        keystrokes
+                            .split_whitespace()
+                            .map(|source| gpui::Keystroke::parse(source))
+                            .collect::<std::result::Result<Vec<_>, _>>()
+                            .context("Failed to parse keystroke")?;
+                        if let Some((action_name, _)) = settings::KeymapFile::parse_action(action)
+                            .map_err(|err| anyhow::format_err!(err))
+                            .context("Failed to parse action")?
+                        {
+                            anyhow::ensure!(
+                                find_action_by_name(action_name).is_some(),
+                                "Action not found: {}",
+                                action_name
+                            );
+                        }
+                    }
+                }
+            }
+            "debug" => {
+                if !snippet_json_fixed.starts_with('[') || !snippet_json_fixed.ends_with(']') {
+                    snippet_json_fixed.insert(0, '[');
+                    snippet_json_fixed.push_str("\n]");
+                }
+
+                settings::parse_json_with_comments::<task::DebugTaskFile>(&snippet_json_fixed)?;
+            }
+            "tasks" => {
+                if !snippet_json_fixed.starts_with('[') || !snippet_json_fixed.ends_with(']') {
+                    snippet_json_fixed.insert(0, '[');
+                    snippet_json_fixed.push_str("\n]");
+                }
+
+                settings::parse_json_with_comments::<task::TaskTemplates>(&snippet_json_fixed)?;
+            }
+            "icon-theme" => {
+                if !snippet_json_fixed.starts_with('{') || !snippet_json_fixed.ends_with('}') {
+                    snippet_json_fixed.insert(0, '{');
+                    snippet_json_fixed.push_str("\n}");
+                }
+
+                settings::parse_json_with_comments::<theme::IconThemeFamilyContent>(
+                    &snippet_json_fixed,
+                )?;
+            }
+            label => {
+                anyhow::bail!("Unexpected JSON code block tag: {}", label)
+            }
+        };
+        Ok(())
+    });
 }
 
 /// Removes any configurable options from the stringified action if existing,
@@ -334,6 +536,7 @@ fn handle_postprocessing() -> Result<()> {
         .as_str()
         .expect("Default title not a string")
         .to_string();
+    let amplitude_key = std::env::var("DOCS_AMPLITUDE_API_KEY").unwrap_or_default();
 
     output.insert("html".to_string(), zed_html);
     mdbook::Renderer::render(&mdbook::renderer::HtmlHandlebars::new(), &ctx)?;
@@ -402,6 +605,7 @@ fn handle_postprocessing() -> Result<()> {
         let meta_title = format!("{} | {}", page_title, meta_title);
         zlog::trace!(logger => "Updating {:?}", pretty_path(&file, &root_dir));
         let contents = contents.replace("#description#", meta_description);
+        let contents = contents.replace("#amplitude_key#", &amplitude_key);
         let contents = title_regex()
             .replace(&contents, |_: &regex::Captures| {
                 format!("<title>{}</title>", meta_title)
@@ -473,7 +677,7 @@ fn generate_big_table_of_actions() -> String {
         output.push_str(action.name);
         output.push_str("</code><br>\n");
         if !action.deprecated_aliases.is_empty() {
-            output.push_str("Deprecated Aliases:");
+            output.push_str("Deprecated Alias(es): ");
             for alias in action.deprecated_aliases.iter() {
                 output.push_str("<code>");
                 output.push_str(alias);

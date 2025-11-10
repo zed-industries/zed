@@ -44,7 +44,8 @@ impl Vim {
                     return;
                 };
 
-                let (display_map, current_selections) = editor.selections.all_adjusted_display(cx);
+                let display_map = editor.display_snapshot(cx);
+                let current_selections = editor.selections.all_adjusted_display(&display_map);
 
                 // The clipboard can have multiple selections, and there can
                 // be multiple selections. Helix zips them together, so the first
@@ -109,9 +110,9 @@ impl Vim {
                     };
                     let point = display_point.to_point(&display_map);
                     let anchor = if action.before {
-                        display_map.buffer_snapshot.anchor_after(point)
+                        display_map.buffer_snapshot().anchor_after(point)
                     } else {
-                        display_map.buffer_snapshot.anchor_before(point)
+                        display_map.buffer_snapshot().anchor_before(point)
                     };
                     edits.push((point..point, to_insert.repeat(count)));
                     new_selections.push((anchor, to_insert.len() * count));
@@ -119,8 +120,8 @@ impl Vim {
 
                 editor.edit(edits, cx);
 
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    let snapshot = s.buffer().clone();
                     s.select_ranges(new_selections.into_iter().map(|(anchor, len)| {
                         let offset = anchor.to_offset(&snapshot);
                         if action.before {

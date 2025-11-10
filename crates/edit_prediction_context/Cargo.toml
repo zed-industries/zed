@@ -19,10 +19,12 @@ collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
 hashbrown.workspace = true
+indoc.workspace = true
 itertools.workspace = true
 language.workspace = true
 log.workspace = true
 ordered-float.workspace = true
+postage.workspace = true
 project.workspace = true
 regex.workspace = true
 serde.workspace = true
@@ -31,7 +33,6 @@ strum.workspace = true
 text.workspace = true
 tree-sitter.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 clap.workspace = true
@@ -44,5 +45,8 @@ project = {workspace= true, features = ["test-support"]}
 serde_json.workspace = true
 settings = {workspace= true, features = ["test-support"]}
 text = { workspace = true, features = ["test-support"] }
+tree-sitter-c.workspace = true
+tree-sitter-cpp.workspace = true
+tree-sitter-go.workspace = true
 util = { workspace = true, features = ["test-support"] }
 zlog.workspace = true

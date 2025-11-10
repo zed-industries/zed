@@ -1,7 +1,6 @@
-use settings::{Settings, SettingsContent};
-use ui::App;
+use settings::{RegisterSetting, Settings, SettingsContent};
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, RegisterSetting)]
 pub struct TitleBarSettings {
     pub show_branch_icon: bool,
     pub show_onboarding_banner: bool,
@@ -13,7 +12,7 @@ pub struct TitleBarSettings {
 }
 
 impl Settings for TitleBarSettings {
-    fn from_settings(s: &SettingsContent, _: &mut App) -> Self {
+    fn from_settings(s: &SettingsContent) -> Self {
         let content = s.title_bar.clone().unwrap();
         TitleBarSettings {
             show_branch_icon: content.show_branch_icon.unwrap(),

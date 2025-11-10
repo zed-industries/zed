@@ -84,7 +84,11 @@ async fn test_project_diff(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
     diff.update(cx_b, |diff, cx| {
         assert_eq!(
             diff.excerpt_paths(cx),
-            vec!["changed.txt", "deleted.txt", "created.txt"]
+            vec![
+                rel_path("changed.txt").into_arc(),
+                rel_path("deleted.txt").into_arc(),
+                rel_path("created.txt").into_arc()
+            ]
         );
     });
 
@@ -121,7 +125,11 @@ async fn test_project_diff(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
     diff.update(cx_b, |diff, cx| {
         assert_eq!(
             diff.excerpt_paths(cx),
-            vec!["deleted.txt", "unchanged.txt", "created.txt"]
+            vec![
+                rel_path("deleted.txt").into_arc(),
+                rel_path("unchanged.txt").into_arc(),
+                rel_path("created.txt").into_arc()
+            ]
         );
     });
 }

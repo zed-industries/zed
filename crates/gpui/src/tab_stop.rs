@@ -120,7 +120,9 @@ impl TabStopMap {
             }
         };
 
-        let node = self.tab_node_for_focus_id(focused_id)?;
+        let Some(node) = self.tab_node_for_focus_id(focused_id) else {
+            return self.next(None);
+        };
         let item = self.next_inner(node);
 
         if let Some(item) = item {
@@ -155,7 +157,9 @@ impl TabStopMap {
             }
         };
 
-        let node = self.tab_node_for_focus_id(focused_id)?;
+        let Some(node) = self.tab_node_for_focus_id(focused_id) else {
+            return self.prev(None);
+        };
         let item = self.prev_inner(node);
 
         if let Some(item) = item {

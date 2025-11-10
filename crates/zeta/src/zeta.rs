@@ -133,7 +133,7 @@ pub struct EditPrediction {
     path: Arc<Path>,
     excerpt_range: Range<usize>,
     cursor_offset: usize,
-    edits: Arc<[(Range<Anchor>, String)]>,
+    edits: Arc<[(Range<Anchor>, Arc<str>)]>,
     snapshot: BufferSnapshot,
     edit_preview: EditPreview,
     input_outline: Arc<str>,
@@ -150,55 +150,9 @@ impl EditPrediction {
             .duration_since(self.buffer_snapshotted_at)
     }
 
-    fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, String)>> {
-        interpolate(&self.snapshot, new_snapshot, self.edits.clone())
+    fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, Arc<str>)>> {
+        edit_prediction::interpolate_edits(&self.snapshot, new_snapshot, &self.edits)
     }
-}
-
-fn interpolate(
-    old_snapshot: &BufferSnapshot,
-    new_snapshot: &BufferSnapshot,
-    current_edits: Arc<[(Range<Anchor>, String)]>,
-) -> Option<Vec<(Range<Anchor>, String)>> {
-    let mut edits = Vec::new();
-
-    let mut model_edits = current_edits.iter().peekable();
-    for user_edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
-        while let Some((model_old_range, _)) = model_edits.peek() {
-            let model_old_range = model_old_range.to_offset(old_snapshot);
-            if model_old_range.end < user_edit.old.start {
-                let (model_old_range, model_new_text) = model_edits.next().unwrap();
-                edits.push((model_old_range.clone(), model_new_text.clone()));
-            } else {
-                break;
-            }
-        }
-
-        if let Some((model_old_range, model_new_text)) = model_edits.peek() {
-            let model_old_offset_range = model_old_range.to_offset(old_snapshot);
-            if user_edit.old == model_old_offset_range {
-                let user_new_text = new_snapshot
-                    .text_for_range(user_edit.new.clone())
-                    .collect::<String>();
-
-                if let Some(model_suffix) = model_new_text.strip_prefix(&user_new_text) {
-                    if !model_suffix.is_empty() {
-                        let anchor = old_snapshot.anchor_after(user_edit.old.end);
-                        edits.push((anchor..anchor, model_suffix.to_string()));
-                    }
-
-                    model_edits.next();
-                    continue;
-                }
-            }
-        }
-
-        return None;
-    }
-
-    edits.extend(model_edits.cloned());
-
-    if edits.is_empty() { None } else { Some(edits) }
 }
 
 impl std::fmt::Debug for EditPrediction {
@@ -698,7 +652,7 @@ impl Zeta {
                     .header(ZED_VERSION_HEADER_NAME, app_version.to_string())
                     .body(
                         serde_json::to_string(&AcceptEditPredictionBody {
-                            request_id: request_id.0,
+                            request_id: request_id.0.to_string(),
                         })?
                         .into(),
                     )?)
@@ -757,7 +711,7 @@ impl Zeta {
         cx.spawn(async move |cx| {
             let output_excerpt: Arc<str> = output_excerpt.into();
 
-            let edits: Arc<[(Range<Anchor>, String)]> = cx
+            let edits: Arc<[(Range<Anchor>, Arc<str>)]> = cx
                 .background_spawn({
                     let output_excerpt = output_excerpt.clone();
                     let editable_range = editable_range.clone();
@@ -769,16 +723,19 @@ impl Zeta {
 
             let Some((edits, snapshot, edit_preview)) = buffer.read_with(cx, {
                 let edits = edits.clone();
-                |buffer, cx| {
+                move |buffer, cx| {
                     let new_snapshot = buffer.snapshot();
-                    let edits: Arc<[(Range<Anchor>, String)]> =
-                        interpolate(&snapshot, &new_snapshot, edits)?.into();
+                    let edits: Arc<[(Range<Anchor>, Arc<str>)]> =
+                        edit_prediction::interpolate_edits(&snapshot, &new_snapshot, &edits)?
+                            .into();
                     Some((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
                 }
             })?
             else {
                 return anyhow::Ok(None);
             };
+
+            let request_id = Uuid::from_str(&request_id).context("failed to parse request id")?;
 
             let edit_preview = edit_preview.await;
 
@@ -804,7 +761,7 @@ impl Zeta {
         output_excerpt: Arc<str>,
         editable_range: Range<usize>,
         snapshot: &BufferSnapshot,
-    ) -> Result<Vec<(Range<Anchor>, String)>> {
+    ) -> Result<Vec<(Range<Anchor>, Arc<str>)>> {
         let content = output_excerpt.replace(CURSOR_MARKER, "");
 
         let start_markers = content
@@ -862,7 +819,7 @@ impl Zeta {
         new_text: &str,
         offset: usize,
         snapshot: &BufferSnapshot,
-    ) -> Vec<(Range<Anchor>, String)> {
+    ) -> Vec<(Range<Anchor>, Arc<str>)> {
         text_diff(&old_text, new_text)
             .into_iter()
             .map(|(mut old_range, new_text)| {
@@ -881,7 +838,7 @@ impl Zeta {
                 );
                 old_range.end = old_range.end.saturating_sub(suffix_len);
 
-                let new_text = new_text[prefix_len..new_text.len() - suffix_len].to_string();
+                let new_text = new_text[prefix_len..new_text.len() - suffix_len].into();
                 let range = if old_range.is_empty() {
                     let anchor = snapshot.anchor_after(old_range.start);
                     anchor..anchor
@@ -1228,7 +1185,7 @@ impl CurrentEditPrediction {
         if old_edits.len() == 1 && new_edits.len() == 1 {
             let (old_range, old_text) = &old_edits[0];
             let (new_range, new_text) = &new_edits[0];
-            new_range == old_range && new_text.starts_with(old_text)
+            new_range == old_range && new_text.starts_with(old_text.as_ref())
         } else {
             true
         }
@@ -1316,12 +1273,17 @@ pub struct ZetaEditPredictionProvider {
     next_pending_completion_id: usize,
     current_completion: Option<CurrentEditPrediction>,
     last_request_timestamp: Instant,
+    project: Entity<Project>,
 }
 
 impl ZetaEditPredictionProvider {
     pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
 
-    pub fn new(zeta: Entity<Zeta>, singleton_buffer: Option<Entity<Buffer>>) -> Self {
+    pub fn new(
+        zeta: Entity<Zeta>,
+        project: Entity<Project>,
+        singleton_buffer: Option<Entity<Buffer>>,
+    ) -> Self {
         Self {
             zeta,
             singleton_buffer,
@@ -1329,6 +1291,7 @@ impl ZetaEditPredictionProvider {
             next_pending_completion_id: 0,
             current_completion: None,
             last_request_timestamp: Instant::now(),
+            project,
         }
     }
 }
@@ -1394,7 +1357,6 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
 
     fn refresh(
         &mut self,
-        project: Option<Entity<Project>>,
         buffer: Entity<Buffer>,
         position: language::Anchor,
         _debounce: bool,
@@ -1403,9 +1365,6 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
         if self.zeta.read(cx).update_required {
             return;
         }
-        let Some(project) = project else {
-            return;
-        };
 
         if self
             .zeta
@@ -1433,6 +1392,7 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
         self.next_pending_completion_id += 1;
         let last_request_timestamp = self.last_request_timestamp;
 
+        let project = self.project.clone();
         let task = cx.spawn(async move |this, cx| {
             if let Some(timeout) = (last_request_timestamp + Self::THROTTLE_TIMEOUT)
                 .checked_duration_since(Instant::now())
@@ -1604,7 +1564,7 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
             }
         }
 
-        Some(edit_prediction::EditPrediction {
+        Some(edit_prediction::EditPrediction::Local {
             id: Some(completion.id.to_string().into()),
             edits: edits[edit_start_ix..edit_end_ix].to_vec(),
             edit_preview: Some(completion.edit_preview.clone()),
@@ -1623,7 +1583,7 @@ fn guess_token_count(bytes: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use client::test::FakeServer;
-    use clock::FakeSystemClock;
+    use clock::{FakeSystemClock, ReplicaId};
     use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
@@ -1641,13 +1601,8 @@ mod tests {
     #[gpui::test]
     async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         let buffer = cx.new(|cx| Buffer::local("Lorem ipsum dolor", cx));
-        let edits: Arc<[(Range<Anchor>, String)]> = cx.update(|cx| {
-            to_completion_edits(
-                [(2..5, "REM".to_string()), (9..11, "".to_string())],
-                &buffer,
-                cx,
-            )
-            .into()
+        let edits: Arc<[(Range<Anchor>, Arc<str>)]> = cx.update(|cx| {
+            to_completion_edits([(2..5, "REM".into()), (9..11, "".into())], &buffer, cx).into()
         });
 
         let edit_preview = cx
@@ -1677,7 +1632,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
+                vec![(2..5, "REM".into()), (9..11, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "")], None, cx));
@@ -1687,7 +1642,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(2..2, "REM".to_string()), (6..8, "".to_string())]
+                vec![(2..2, "REM".into()), (6..8, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.undo(cx));
@@ -1697,7 +1652,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
+                vec![(2..5, "REM".into()), (9..11, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "R")], None, cx));
@@ -1707,7 +1662,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(3..3, "EM".to_string()), (7..9, "".to_string())]
+                vec![(3..3, "EM".into()), (7..9, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(3..3, "E")], None, cx));
@@ -1717,7 +1672,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(4..4, "M".to_string()), (8..10, "".to_string())]
+                vec![(4..4, "M".into()), (8..10, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "M")], None, cx));
@@ -1727,7 +1682,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(9..11, "".to_string())]
+                vec![(9..11, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "")], None, cx));
@@ -1737,7 +1692,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(4..4, "M".to_string()), (8..10, "".to_string())]
+                vec![(4..4, "M".into()), (8..10, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(8..10, "")], None, cx));
@@ -1747,7 +1702,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(4..4, "M".to_string())]
+                vec![(4..4, "M".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(4..6, "")], None, cx));
@@ -1881,7 +1836,7 @@ mod tests {
         let buffer = cx.new(|_cx| {
             Buffer::remote(
                 language::BufferId::new(1).unwrap(),
-                1,
+                ReplicaId::new(1),
                 language::Capability::ReadWrite,
                 "fn main() {\n    println!(\"Hello\");\n}",
             )
@@ -2126,9 +2081,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            client::init_settings(cx);
-            Project::init_settings(cx);
         });
     }
 
@@ -2212,7 +2164,7 @@ mod tests {
                                 .status(200)
                                 .body(
                                     serde_json::to_string(&PredictEditsResponse {
-                                        request_id: Uuid::new_v4(),
+                                        request_id: Uuid::new_v4().to_string(),
                                         output_excerpt: completion_response.lock().clone(),
                                     })
                                     .unwrap()
@@ -2253,10 +2205,10 @@ mod tests {
     }
 
     fn to_completion_edits(
-        iterator: impl IntoIterator<Item = (Range<usize>, String)>,
+        iterator: impl IntoIterator<Item = (Range<usize>, Arc<str>)>,
         buffer: &Entity<Buffer>,
         cx: &App,
-    ) -> Vec<(Range<Anchor>, String)> {
+    ) -> Vec<(Range<Anchor>, Arc<str>)> {
         let buffer = buffer.read(cx);
         iterator
             .into_iter()
@@ -2270,10 +2222,10 @@ mod tests {
     }
 
     fn from_completion_edits(
-        editor_edits: &[(Range<Anchor>, String)],
+        editor_edits: &[(Range<Anchor>, Arc<str>)],
         buffer: &Entity<Buffer>,
         cx: &App,
-    ) -> Vec<(Range<usize>, String)> {
+    ) -> Vec<(Range<usize>, Arc<str>)> {
         let buffer = buffer.read(cx);
         editor_edits
             .iter()

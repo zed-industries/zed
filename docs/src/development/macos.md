@@ -10,7 +10,7 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
 - Install [Xcode](https://apps.apple.com/us/app/xcode/id497799835?mt=12) from the macOS App Store, or from the [Apple Developer](https://developer.apple.com/download/all/) website. Note this requires a developer account.
 
-> Ensure you launch Xcode after installing, and install the macOS components, which is the default option. If you are on macOS 26 (Tahoe) you will need to use `--features gpui/runtime_shaders` or add the feature in the root `Cargo.toml`
+> Ensure you launch Xcode after installing, and install the macOS components, which is the default option.
 
 - Install [Xcode command line tools](https://developer.apple.com/xcode/resources/)
 

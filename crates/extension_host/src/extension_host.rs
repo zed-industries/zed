@@ -73,6 +73,12 @@ const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 /// The current extension [`SchemaVersion`] supported by Zed.
 const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
 
+/// Extensions that should no longer be loaded or downloaded.
+///
+/// These snippets should no longer be downloaded or loaded, because their
+/// functionality has been integrated into the core editor.
+const SUPPRESSED_EXTENSIONS: &[&str] = &["snippets", "ruff", "ty", "basedpyright"];
+
 /// Returns the [`SchemaVersion`] range that is compatible with this version of Zed.
 pub fn schema_version_range() -> RangeInclusive<SchemaVersion> {
     SchemaVersion::ZERO..=CURRENT_SCHEMA_VERSION
@@ -194,8 +200,6 @@ pub fn init(
     node_runtime: NodeRuntime,
     cx: &mut App,
 ) {
-    ExtensionSettings::register(cx);
-
     let store = cx.new(move |cx| {
         ExtensionStore::new(
             paths::extensions_dir().clone(),
@@ -354,7 +358,7 @@ impl ExtensionStore {
                         }
                         extension_id = reload_rx.next() => {
                             let Some(extension_id) = extension_id else { break; };
-                            this.update( cx, |this, _| {
+                            this.update(cx, |this, _| {
                                 this.modified_extensions.extend(extension_id);
                             })?;
                             index_changed = true;
@@ -602,7 +606,7 @@ impl ExtensionStore {
                     .extension_index
                     .extensions
                     .contains_key(extension_id.as_ref());
-                !is_already_installed
+                !is_already_installed && !SUPPRESSED_EXTENSIONS.contains(&extension_id.as_ref())
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -682,7 +686,12 @@ impl ExtensionStore {
                 );
             }
 
-            let response: GetExtensionsResponse = serde_json::from_slice(&body)?;
+            let mut response: GetExtensionsResponse = serde_json::from_slice(&body)?;
+
+            response
+                .data
+                .retain(|extension| !SUPPRESSED_EXTENSIONS.contains(&extension.id.as_ref()));
+
             Ok(response.data)
         })
     }
@@ -1076,6 +1085,10 @@ impl ExtensionStore {
     ) -> Task<()> {
         let old_index = &self.extension_index;
 
+        new_index
+            .extensions
+            .retain(|extension_id, _| !SUPPRESSED_EXTENSIONS.contains(&extension_id.as_ref()));
+
         // Determine which extensions need to be loaded and unloaded, based
         // on the changes to the manifest and the extensions that we know have been
         // modified.
@@ -1256,7 +1269,7 @@ impl ExtensionStore {
         self.proxy.register_grammars(grammars_to_add);
         let languages_to_add = new_index
             .languages
-            .iter_mut()
+            .iter()
             .filter(|(_, entry)| extensions_to_load.contains(&entry.extension))
             .collect::<Vec<_>>();
         for (language_name, language) in languages_to_add {
@@ -1505,6 +1518,10 @@ impl ExtensionStore {
     ) -> Result<()> {
         let mut extension_manifest = ExtensionManifest::load(fs.clone(), &extension_dir).await?;
         let extension_id = extension_manifest.id.clone();
+
+        if SUPPRESSED_EXTENSIONS.contains(&extension_id.as_ref()) {
+            return Ok(());
+        }
 
         // TODO: distinguish dev extensions more explicitly, by the absence
         // of a checksum file that we'll create when downloading normal extensions.

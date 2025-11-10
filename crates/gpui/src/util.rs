@@ -83,8 +83,11 @@ impl<T: Future> FutureExt for T {
     }
 }
 
+#[pin_project::pin_project]
 pub struct WithTimeout<T> {
+    #[pin]
     future: T,
+    #[pin]
     timer: Task<()>,
 }
 
@@ -97,15 +100,11 @@ impl<T: Future> Future for WithTimeout<T> {
     type Output = Result<T::Output, Timeout>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context) -> task::Poll<Self::Output> {
-        // SAFETY: the fields of Timeout are private and we never move the future ourselves
-        // And its already pinned since we are being polled (all futures need to be pinned to be polled)
-        let this = unsafe { &raw mut *self.get_unchecked_mut() };
-        let future = unsafe { Pin::new_unchecked(&mut (*this).future) };
-        let timer = unsafe { Pin::new_unchecked(&mut (*this).timer) };
+        let this = self.project();
 
-        if let task::Poll::Ready(output) = future.poll(cx) {
+        if let task::Poll::Ready(output) = this.future.poll(cx) {
             task::Poll::Ready(Ok(output))
-        } else if timer.poll(cx).is_ready() {
+        } else if this.timer.poll(cx).is_ready() {
             task::Poll::Ready(Err(Timeout))
         } else {
             task::Poll::Pending
@@ -114,6 +113,8 @@ impl<T: Future> Future for WithTimeout<T> {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+/// Uses smol executor to run a given future no longer than the timeout specified.
+/// Note that this won't "rewind" on `cx.executor().advance_clock` call, truly waiting for the timeout to elapse.
 pub async fn smol_timeout<F, T>(timeout: Duration, f: F) -> Result<T, ()>
 where
     F: Future<Output = T>,
@@ -138,5 +139,37 @@ pub(crate) fn atomic_incr_if_not_zero(counter: &AtomicUsize) -> usize {
             Ok(x) => return x + 1,
             Err(actual) => loaded = actual,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::TestAppContext;
+
+    use super::*;
+
+    #[gpui::test]
+    async fn test_with_timeout(cx: &mut TestAppContext) {
+        Task::ready(())
+            .with_timeout(Duration::from_secs(1), &cx.executor())
+            .await
+            .expect("Timeout should be noop");
+
+        let long_duration = Duration::from_secs(6000);
+        let short_duration = Duration::from_secs(1);
+        cx.executor()
+            .timer(long_duration)
+            .with_timeout(short_duration, &cx.executor())
+            .await
+            .expect_err("timeout should have triggered");
+
+        let fut = cx
+            .executor()
+            .timer(long_duration)
+            .with_timeout(short_duration, &cx.executor());
+        cx.executor().advance_clock(short_duration * 2);
+        futures::FutureExt::now_or_never(fut)
+            .unwrap_or_else(|| panic!("timeout should have triggered"))
+            .expect_err("timeout");
     }
 }
