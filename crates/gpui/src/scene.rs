@@ -5,7 +5,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
+    AtlasTextureId, AtlasTile, BackgroundColor, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
     Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
 };
 use std::{
@@ -455,7 +455,7 @@ pub(crate) struct Quad {
     pub border_style: BorderStyle,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
-    pub background: Background,
+    pub background: BackgroundColor,
     pub border_color: Hsla,
     pub corner_radii: Corners<ScaledPixels>,
     pub border_widths: Edges<ScaledPixels>,
@@ -679,7 +679,7 @@ pub struct Path<P: Clone + Debug + Default + PartialEq> {
     pub(crate) bounds: Bounds<P>,
     pub(crate) content_mask: ContentMask<P>,
     pub(crate) vertices: Vec<PathVertex<P>>,
-    pub(crate) color: Background,
+    pub(crate) color: BackgroundColor,
     start: Point<P>,
     current: Point<P>,
     contour_count: usize,
