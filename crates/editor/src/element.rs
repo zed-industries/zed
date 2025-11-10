@@ -6,10 +6,10 @@ use crate::{
     EditDisplayMode, EditPrediction, Editor, EditorMode, EditorSettings, EditorSnapshot,
     EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp,
     HandleInput, HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp,
-    MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown,
-    PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase,
-    SelectedTextHighlight, Selection, SelectionDragState, SelectionEffects, SizingBehavior,
-    SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
+    MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts,
+    OpenExcerptsSplit, PageDown, PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt,
+    SelectPhase, SelectedTextHighlight, Selection, SelectionDragState, SelectionEffects,
+    SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
@@ -4043,17 +4043,24 @@ impl EditorElement {
                                                     )
                                                     .group_hover("", |div| div.underline()),
                                             )
-                                            .on_click(window.listener_for(&self.editor, {
-                                                let jump_data = jump_data.clone();
-                                                move |editor, e: &ClickEvent, window, cx| {
-                                                    editor.open_excerpts_common(
-                                                        Some(jump_data.clone()),
-                                                        e.modifiers().secondary(),
-                                                        window,
-                                                        cx,
-                                                    );
+                                            .on_click({
+                                                let focus_handle = focus_handle.clone();
+                                                move |event, window, cx| {
+                                                    if event.modifiers().secondary() {
+                                                        focus_handle.dispatch_action(
+                                                            &OpenExcerptsSplit,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    } else {
+                                                        focus_handle.dispatch_action(
+                                                            &OpenExcerpts,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }
                                                 }
-                                            })),
+                                            }),
                                     )
                                     .when_some(parent_path, |then, path| {
                                         then.child(div().child(path).text_color(
@@ -4069,31 +4076,53 @@ impl EditorElement {
                                 can_open_excerpts && is_selected && relative_path.is_some(),
                                 |el| {
                                     el.child(
-                                        Button::new("open-file", "Open File")
+                                        ButtonLike::new("open-file-button")
                                             .style(ButtonStyle::OutlinedGhost)
-                                            .key_binding(KeyBinding::for_action_in(
-                                                &OpenExcerpts,
-                                                &focus_handle,
-                                                cx,
-                                            ))
-                                            .on_click(window.listener_for(&self.editor, {
-                                                let jump_data = jump_data.clone();
-                                                move |editor, e: &ClickEvent, window, cx| {
-                                                    editor.open_excerpts_common(
-                                                        Some(jump_data.clone()),
-                                                        e.modifiers().secondary(),
-                                                        window,
+                                            .child(
+                                                h_flex()
+                                                    .gap_2p5()
+                                                    .child(Label::new("Open file"))
+                                                    .child(KeyBinding::for_action_in(
+                                                        &OpenExcerpts,
+                                                        &focus_handle,
                                                         cx,
-                                                    );
+                                                    )),
+                                            )
+                                            .on_click({
+                                                let focus_handle = focus_handle.clone();
+                                                move |event, window, cx| {
+                                                    if event.modifiers().secondary() {
+                                                        focus_handle.dispatch_action(
+                                                            &OpenExcerptsSplit,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    } else {
+                                                        focus_handle.dispatch_action(
+                                                            &OpenExcerpts,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }
                                                 }
-                                            })),
+                                            }),
                                     )
                                 },
                             )
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(window.listener_for(&self.editor, {
                                 let buffer_id = for_excerpt.buffer_id;
-                                move |editor, _e: &ClickEvent, _window, cx| {
+                                move |editor, e: &ClickEvent, window, cx| {
+                                    if e.modifiers().alt {
+                                        editor.open_excerpts_common(
+                                            Some(jump_data.clone()),
+                                            e.modifiers().secondary(),
+                                            window,
+                                            cx,
+                                        );
+                                        return;
+                                    }
+
                                     if is_folded {
                                         editor.unfold_buffer(buffer_id, cx);
                                     } else {

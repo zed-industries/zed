@@ -1,9 +1,10 @@
 use editor::EditorSettings;
 use gpui::{App, Pixels};
+use settings::RegisterSetting;
 pub use settings::{DockSide, Settings, ShowIndentGuides};
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, RegisterSetting)]
 pub struct OutlinePanelSettings {
     pub button: bool,
     pub default_width: Pixels,

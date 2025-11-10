@@ -56,3 +56,20 @@ body:
         Output of "zed: copy system specs into clipboard"
     validations:
       required: true
+  - type: textarea
+    attributes:
+      label: If applicable, attach your `Zed.log` file to this issue.
+      description: |
+        From the command palette, run `zed: open log` to see the last 1000 lines.
+        Or run `zed: reveal log in file manager` to reveal the log file itself.
+      value: |
+        <details><summary>Zed.log</summary>
+
+        <!-- Paste your log inside the code block. -->
+        ```log
+
+        ```
+
+        </details>
+    validations:
+      required: false

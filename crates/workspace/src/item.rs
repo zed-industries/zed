@@ -17,7 +17,8 @@ use gpui::{
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 pub use settings::{
-    ActivateOnClose, ClosePosition, Settings, SettingsLocation, ShowCloseButton, ShowDiagnostics,
+    ActivateOnClose, ClosePosition, RegisterSetting, Settings, SettingsLocation, ShowCloseButton,
+    ShowDiagnostics,
 };
 use smallvec::SmallVec;
 use std::{
@@ -50,6 +51,7 @@ impl Default for SaveOptions {
     }
 }
 
+#[derive(RegisterSetting)]
 pub struct ItemSettings {
     pub git_status: bool,
     pub close_position: ClosePosition,
@@ -59,6 +61,7 @@ pub struct ItemSettings {
     pub show_close_button: ShowCloseButton,
 }
 
+#[derive(RegisterSetting)]
 pub struct PreviewTabsSettings {
     pub enabled: bool,
     pub enable_preview_from_file_finder: bool,

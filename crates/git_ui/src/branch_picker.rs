@@ -241,18 +241,10 @@ impl BranchListDelegate {
             return;
         };
         let new_branch_name = new_branch_name.to_string().replace(' ', "-");
+        let base_branch = from_branch.map(|b| b.to_string());
         cx.spawn(async move |_, cx| {
-            if let Some(based_branch) = from_branch {
-                repo.update(cx, |repo, _| repo.change_branch(based_branch.to_string()))?
-                    .await??;
-            }
-
             repo.update(cx, |repo, _| {
-                repo.create_branch(new_branch_name.to_string())
-            })?
-            .await??;
-            repo.update(cx, |repo, _| {
-                repo.change_branch(new_branch_name.to_string())
+                repo.create_branch(new_branch_name, base_branch)
             })?
             .await??;
 

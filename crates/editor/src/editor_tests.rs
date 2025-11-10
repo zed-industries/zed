@@ -25701,10 +25701,6 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
         cx.set_global(store);
         theme::init(theme::LoadThemes::JustBase, cx);
         release_channel::init(SemanticVersion::default(), cx);
-        client::init_settings(cx);
-        language::init(cx);
-        Project::init_settings(cx);
-        workspace::init_settings(cx);
         crate::init(cx);
     });
     zlog::init_test();

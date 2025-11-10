@@ -7333,14 +7333,8 @@ fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        init_settings(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
-        language::init(cx);
-        editor::init_settings(cx);
         crate::init(cx);
-        workspace::init_settings(cx);
-        client::init_settings(cx);
-        Project::init_settings(cx);
 
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
@@ -7358,12 +7352,9 @@ fn init_test_with_editor(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let app_state = AppState::test(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
-        init_settings(cx);
-        language::init(cx);
         editor::init(cx);
         crate::init(cx);
         workspace::init(app_state, cx);
-        Project::init_settings(cx);
 
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {

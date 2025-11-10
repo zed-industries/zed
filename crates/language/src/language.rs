@@ -88,13 +88,6 @@ pub use syntax_map::{
 pub use text::{AnchorRangeExt, LineEnding};
 pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
 
-/// Initializes the `language` crate.
-///
-/// This should be called before making use of items from the create.
-pub fn init(cx: &mut App) {
-    language_settings::init(cx);
-}
-
 static QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Mutex::new(vec![]);
 static PARSERS: Mutex<Vec<Parser>> = Mutex::new(vec![]);
 

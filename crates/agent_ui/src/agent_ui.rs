@@ -247,8 +247,6 @@ pub fn init(
     is_eval: bool,
     cx: &mut App,
 ) {
-    AgentSettings::register(cx);
-
     assistant_text_thread::init(client.clone(), cx);
     rules_library::init(cx);
     if !is_eval {

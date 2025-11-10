@@ -1,21 +1,14 @@
 use std::{ops::Range, sync::Arc};
 
-use gpui::{AsyncApp, Entity};
+use gpui::{AsyncApp, Entity, SharedString};
 use language::{Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, TextBufferSnapshot};
-use uuid::Uuid;
 
-#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
-pub struct EditPredictionId(pub Uuid);
-
-impl Into<Uuid> for EditPredictionId {
-    fn into(self) -> Uuid {
-        self.0
-    }
-}
+#[derive(Clone, Default, Debug, PartialEq, Eq, Hash)]
+pub struct EditPredictionId(pub SharedString);
 
 impl From<EditPredictionId> for gpui::ElementId {
     fn from(value: EditPredictionId) -> Self {
-        gpui::ElementId::Uuid(value.0)
+        gpui::ElementId::Name(value.0)
     }
 }
 
@@ -149,7 +142,7 @@ mod tests {
             .await;
 
         let prediction = EditPrediction {
-            id: EditPredictionId(Uuid::new_v4()),
+            id: EditPredictionId("prediction-1".into()),
             edits,
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
             buffer: buffer.clone(),

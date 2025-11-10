@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
 use chrono::TimeDelta;
 use client::{Client, EditPredictionUsage, UserStore};
 use cloud_llm_client::predict_edits_v3::{self, PromptFormat, Signature};
@@ -6,8 +6,8 @@ use cloud_llm_client::{
     AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
     ZED_VERSION_HEADER_NAME,
 };
-use cloud_zeta2_prompt::DEFAULT_MAX_PROMPT_BYTES;
-use cloud_zeta2_prompt::retrieval_prompt::SearchToolInput;
+use cloud_zeta2_prompt::retrieval_prompt::{SearchToolInput, SearchToolQuery};
+use cloud_zeta2_prompt::{CURSOR_MARKER, DEFAULT_MAX_PROMPT_BYTES};
 use collections::HashMap;
 use edit_prediction_context::{
     DeclarationId, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
@@ -30,12 +30,12 @@ use project::Project;
 use release_channel::AppVersion;
 use serde::de::DeserializeOwned;
 use std::collections::{VecDeque, hash_map};
-use uuid::Uuid;
 
+use std::env;
 use std::ops::Range;
 use std::path::Path;
 use std::str::FromStr as _;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use util::rel_path::RelPathBuf;
@@ -87,6 +87,25 @@ pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
     file_indexing_parallelism: 1,
     buffer_change_grouping_interval: Duration::from_secs(1),
 };
+
+static USE_OLLAMA: LazyLock<bool> =
+    LazyLock::new(|| env::var("ZED_ZETA2_OLLAMA").is_ok_and(|var| !var.is_empty()));
+static MODEL_ID: LazyLock<String> = LazyLock::new(|| {
+    env::var("ZED_ZETA2_MODEL").unwrap_or(if *USE_OLLAMA {
+        "qwen3-coder:30b".to_string()
+    } else {
+        "yqvev8r3".to_string()
+    })
+});
+static PREDICT_EDITS_URL: LazyLock<Option<String>> = LazyLock::new(|| {
+    env::var("ZED_PREDICT_EDITS_URL").ok().or_else(|| {
+        if *USE_OLLAMA {
+            Some("http://localhost:11434/v1/chat/completions".into())
+        } else {
+            None
+        }
+    })
+});
 
 pub struct Zeta2FeatureFlag;
 
@@ -180,7 +199,7 @@ pub struct ZetaEditPredictionDebugInfo {
 pub struct ZetaSearchQueryDebugInfo {
     pub project: Entity<Project>,
     pub timestamp: Instant,
-    pub regex_by_glob: HashMap<String, String>,
+    pub search_queries: Vec<SearchToolQuery>,
 }
 
 pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
@@ -564,13 +583,13 @@ impl Zeta {
         let Some(prediction) = project_state.current_prediction.take() else {
             return;
         };
-        let request_id = prediction.prediction.id.into();
+        let request_id = prediction.prediction.id.to_string();
 
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
         cx.spawn(async move |this, cx| {
-            let url = if let Ok(predict_edits_url) = std::env::var("ZED_ACCEPT_PREDICTION_URL") {
+            let url = if let Ok(predict_edits_url) = env::var("ZED_ACCEPT_PREDICTION_URL") {
                 http_client::Url::parse(&predict_edits_url)?
             } else {
                 client
@@ -582,7 +601,10 @@ impl Zeta {
                 .background_spawn(Self::send_api_request::<()>(
                     move |builder| {
                         let req = builder.uri(url.as_ref()).body(
-                            serde_json::to_string(&AcceptEditPredictionBody { request_id })?.into(),
+                            serde_json::to_string(&AcceptEditPredictionBody {
+                                request_id: request_id.clone(),
+                            })?
+                            .into(),
                         );
                         Ok(req?)
                     },
@@ -872,7 +894,7 @@ impl Zeta {
                     None
                 };
 
-                if cfg!(debug_assertions) && std::env::var("ZED_ZETA2_SKIP_REQUEST").is_ok() {
+                if cfg!(debug_assertions) && env::var("ZED_ZETA2_SKIP_REQUEST").is_ok() {
                     if let Some(debug_response_tx) = debug_response_tx {
                         debug_response_tx
                             .send((Err("Request skipped".to_string()), TimeDelta::zero()))
@@ -883,7 +905,7 @@ impl Zeta {
 
                 let (prompt, _) = prompt_result?;
                 let request = open_ai::Request {
-                    model: std::env::var("ZED_ZETA2_MODEL").unwrap_or("yqvev8r3".to_string()),
+                    model: MODEL_ID.clone(),
                     messages: vec![open_ai::RequestMessage::User {
                         content: open_ai::MessageContent::Plain(prompt),
                     }],
@@ -920,24 +942,35 @@ impl Zeta {
                 }
 
                 let (res, usage) = response?;
-                let request_id = EditPredictionId(Uuid::from_str(&res.id)?);
-                let Some(output_text) = text_from_response(res) else {
+                let request_id = EditPredictionId(res.id.clone().into());
+                let Some(mut output_text) = text_from_response(res) else {
                     return Ok((None, usage))
                 };
 
-                let (edited_buffer_snapshot, edits) =
-                    crate::udiff::parse_diff(&output_text, |path| {
-                        included_files
-                            .iter()
-                            .find_map(|(_, buffer, probe_path, ranges)| {
-                                if probe_path.as_ref() == path {
-                                    Some((buffer, ranges.as_slice()))
-                                } else {
-                                    None
-                                }
-                            })
-                    })
-                    .await?;
+                if output_text.contains(CURSOR_MARKER) {
+                    log::trace!("Stripping out {CURSOR_MARKER} from response");
+                    output_text = output_text.replace(CURSOR_MARKER, "");
+                }
+
+                let (edited_buffer_snapshot, edits) = match options.prompt_format {
+                    PromptFormat::NumLinesUniDiff => {
+                        crate::udiff::parse_diff(&output_text, |path| {
+                            included_files
+                                .iter()
+                                .find_map(|(_, buffer, probe_path, ranges)| {
+                                    if probe_path.as_ref() == path {
+                                        Some((buffer, ranges.as_slice()))
+                                    } else {
+                                        None
+                                    }
+                                })
+                        })
+                        .await?
+                    }
+                    _ => {
+                        bail!("unsupported prompt format {}", options.prompt_format)
+                    }
+                };
 
                 let edited_buffer = included_files
                     .iter()
@@ -977,7 +1010,7 @@ impl Zeta {
         app_version: SemanticVersion,
         request: open_ai::Request,
     ) -> Result<(open_ai::Response, Option<EditPredictionUsage>)> {
-        let url = if let Ok(predict_edits_url) = std::env::var("ZED_PREDICT_EDITS_URL") {
+        let url = if let Some(predict_edits_url) = PREDICT_EDITS_URL.as_ref() {
             http_client::Url::parse(&predict_edits_url)?
         } else {
             client
@@ -1226,10 +1259,24 @@ impl Zeta {
                 .ok();
         }
 
-        let (tool_schema, tool_description) = &*cloud_zeta2_prompt::retrieval_prompt::TOOL_SCHEMA;
+        pub static TOOL_SCHEMA: LazyLock<(serde_json::Value, String)> = LazyLock::new(|| {
+            let schema = language_model::tool_schema::root_schema_for::<SearchToolInput>(
+                language_model::LanguageModelToolSchemaFormat::JsonSchemaSubset,
+            );
+
+            let description = schema
+                .get("description")
+                .and_then(|description| description.as_str())
+                .unwrap()
+                .to_string();
+
+            (schema.into(), description)
+        });
+
+        let (tool_schema, tool_description) = TOOL_SCHEMA.clone();
 
         let request = open_ai::Request {
-            model: std::env::var("ZED_ZETA2_MODEL").unwrap_or("2327jz9q".to_string()),
+            model: MODEL_ID.clone(),
             messages: vec![open_ai::RequestMessage::User {
                 content: open_ai::MessageContent::Plain(prompt),
             }],
@@ -1242,8 +1289,8 @@ impl Zeta {
             tools: vec![open_ai::ToolDefinition::Function {
                 function: FunctionDefinition {
                     name: cloud_zeta2_prompt::retrieval_prompt::TOOL_NAME.to_string(),
-                    description: Some(tool_description.clone()),
-                    parameters: Some(tool_schema.clone()),
+                    description: Some(tool_description),
+                    parameters: Some(tool_schema),
                 },
             }],
             prompt_cache_key: None,
@@ -1255,7 +1302,6 @@ impl Zeta {
             let response =
                 Self::send_raw_llm_request(client, llm_token, app_version, request).await;
             let mut response = Self::handle_api_response(&this, response, cx)?;
-
             log::trace!("Got search planning response");
 
             let choice = response
@@ -1270,7 +1316,7 @@ impl Zeta {
                 anyhow::bail!("Retrieval response didn't include an assistant message");
             };
 
-            let mut regex_by_glob: HashMap<String, String> = HashMap::default();
+            let mut queries: Vec<SearchToolQuery> = Vec::new();
             for tool_call in tool_calls {
                 let open_ai::ToolCallContent::Function { function } = tool_call.content;
                 if function.name != cloud_zeta2_prompt::retrieval_prompt::TOOL_NAME {
@@ -1283,13 +1329,7 @@ impl Zeta {
                 }
 
                 let input: SearchToolInput = serde_json::from_str(&function.arguments)?;
-                for query in input.queries {
-                    let regex = regex_by_glob.entry(query.glob).or_default();
-                    if !regex.is_empty() {
-                        regex.push('|');
-                    }
-                    regex.push_str(&query.regex);
-                }
+                queries.extend(input.queries);
             }
 
             if let Some(debug_tx) = &debug_tx {
@@ -1298,16 +1338,16 @@ impl Zeta {
                         ZetaSearchQueryDebugInfo {
                             project: project.clone(),
                             timestamp: Instant::now(),
-                            regex_by_glob: regex_by_glob.clone(),
+                            search_queries: queries.clone(),
                         },
                     ))
                     .ok();
             }
 
-            log::trace!("Running retrieval search: {regex_by_glob:#?}");
+            log::trace!("Running retrieval search: {queries:#?}");
 
             let related_excerpts_result =
-                retrieval_search::run_retrieval_searches(project.clone(), regex_by_glob, cx).await;
+                retrieval_search::run_retrieval_searches(project.clone(), queries, cx).await;
 
             log::trace!("Search queries executed");
 
@@ -1754,7 +1794,8 @@ mod tests {
                                     arguments: serde_json::to_string(&SearchToolInput {
                                         queries: Box::new([SearchToolQuery {
                                             glob: "root/2.txt".to_string(),
-                                            regex: ".".to_string(),
+                                            syntax_node: vec![],
+                                            content: Some(".".into()),
                                         }]),
                                     })
                                     .unwrap(),
@@ -2095,8 +2136,6 @@ mod tests {
         cx.update(move |cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
             zlog::init_test();
 
             let (req_tx, req_rx) = mpsc::unbounded();
