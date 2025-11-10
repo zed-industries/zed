@@ -879,7 +879,7 @@ impl GitPanel {
             let active_repository = self.active_repository.as_ref()?.downgrade();
 
             cx.spawn(async move |_, cx| {
-                let file_path_str = repo_path.0.display(PathStyle::Posix);
+                let file_path_str = repo_path.as_ref().display(PathStyle::Posix);
 
                 let repo_root = active_repository.read_with(cx, |repository, _| {
                     repository.snapshot().work_directory_abs_path
@@ -1074,7 +1074,7 @@ impl GitPanel {
         }
         let mut details = entries
             .iter()
-            .filter_map(|entry| entry.repo_path.0.file_name())
+            .filter_map(|entry| entry.repo_path.as_ref().file_name())
             .map(|filename| filename.to_string())
             .take(5)
             .join("\n");
@@ -1129,7 +1129,7 @@ impl GitPanel {
             .map(|entry| {
                 entry
                     .repo_path
-                    .0
+                    .as_ref()
                     .file_name()
                     .map(|f| f.to_string())
                     .unwrap_or_default()
@@ -1585,6 +1585,7 @@ impl GitPanel {
             return;
         }
 
+        let askpass = self.askpass_delegate("git commit", window, cx);
         let commit_message = self.custom_or_suggested_commit_message(window, cx);
 
         let Some(mut message) = commit_message else {
@@ -1599,7 +1600,7 @@ impl GitPanel {
         let task = if self.has_staged_changes() {
             // Repository serializes all git operations, so we can just send a commit immediately
             let commit_task = active_repository.update(cx, |repo, cx| {
-                repo.commit(message.into(), None, options, cx)
+                repo.commit(message.into(), None, options, askpass, cx)
             });
             cx.background_spawn(async move { commit_task.await? })
         } else {
@@ -1621,7 +1622,7 @@ impl GitPanel {
             cx.spawn(async move |_, cx| {
                 stage_task.await?;
                 let commit_task = active_repository.update(cx, |repo, cx| {
-                    repo.commit(message.into(), None, options, cx)
+                    repo.commit(message.into(), None, options, askpass, cx)
                 })?;
                 commit_task.await?
             })
@@ -5646,7 +5647,7 @@ mod tests {
             assert_eq!(
                 entry.status_entry().map(|status| status
                     .repo_path
-                    .0
+                    .as_ref()
                     .as_std_path()
                     .to_string_lossy()
                     .to_string()),

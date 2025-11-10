@@ -227,7 +227,7 @@ impl sum_tree::Item for StatusEntry {
 
     fn summary(&self, _: <Self::Summary as sum_tree::Summary>::Context<'_>) -> Self::Summary {
         PathSummary {
-            max_path: self.repo_path.0.clone(),
+            max_path: self.repo_path.as_ref().clone(),
             item_summary: self.status.summary(),
         }
     }
@@ -237,7 +237,7 @@ impl sum_tree::KeyedItem for StatusEntry {
     type Key = PathKey;
 
     fn key(&self) -> Self::Key {
-        PathKey(self.repo_path.0.clone())
+        PathKey(self.repo_path.as_ref().clone())
     }
 }
 
@@ -990,7 +990,7 @@ impl GitStore {
                     RepositoryState::Local { backend, .. } => backend
                         .blame(repo_path.clone(), content)
                         .await
-                        .with_context(|| format!("Failed to blame {:?}", repo_path.0))
+                        .with_context(|| format!("Failed to blame {:?}", repo_path.as_ref()))
                         .map(Some),
                     RepositoryState::Remote { project_id, client } => {
                         let response = client
@@ -1399,7 +1399,44 @@ impl GitStore {
                     diffs.remove(buffer_id);
                 }
             }
+            BufferStoreEvent::BufferChangedFilePath { buffer, .. } => {
+                // Whenever a buffer's file path changes, it's possible that the
+                // new path is actually a path that is being tracked by a git
+                // repository. In that case, we'll want to update the buffer's
+                // `BufferDiffState`, in case it already has one.
+                let buffer_id = buffer.read(cx).remote_id();
+                let diff_state = self.diffs.get(&buffer_id);
+                let repo = self.repository_and_path_for_buffer_id(buffer_id, cx);
 
+                if let Some(diff_state) = diff_state
+                    && let Some((repo, repo_path)) = repo
+                {
+                    let buffer = buffer.clone();
+                    let diff_state = diff_state.clone();
+
+                    cx.spawn(async move |_git_store, cx| {
+                        async {
+                            let diff_bases_change = repo
+                                .update(cx, |repo, cx| {
+                                    repo.load_committed_text(buffer_id, repo_path, cx)
+                                })?
+                                .await?;
+
+                            diff_state.update(cx, |diff_state, cx| {
+                                let buffer_snapshot = buffer.read(cx).text_snapshot();
+                                diff_state.diff_bases_changed(
+                                    buffer_snapshot,
+                                    Some(diff_bases_change),
+                                    cx,
+                                );
+                            })
+                        }
+                        .await
+                        .log_err();
+                    })
+                    .detach();
+                }
+            }
             _ => {}
         }
     }
@@ -1957,6 +1994,15 @@ impl GitStore {
     ) -> Result<proto::Ack> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let askpass_id = envelope.payload.askpass_id;
+
+        let askpass = make_remote_delegate(
+            this,
+            envelope.payload.project_id,
+            repository_id,
+            askpass_id,
+            &mut cx,
+        );
 
         let message = SharedString::from(envelope.payload.message);
         let name = envelope.payload.name.map(SharedString::from);
@@ -1972,6 +2018,7 @@ impl GitStore {
                         amend: options.amend,
                         signoff: options.signoff,
                     },
+                    askpass,
                     cx,
                 )
             })?
@@ -2366,7 +2413,7 @@ impl GitStore {
                 .entries
                 .into_iter()
                 .map(|(path, status)| proto::TreeDiffStatus {
-                    path: path.0.to_proto(),
+                    path: path.as_ref().to_proto(),
                     status: match status {
                         TreeDiffStatus::Added {} => proto::tree_diff_status::Status::Added.into(),
                         TreeDiffStatus::Modified { .. } => {
@@ -3142,13 +3189,13 @@ impl RepositorySnapshot {
 
     pub fn status_for_path(&self, path: &RepoPath) -> Option<StatusEntry> {
         self.statuses_by_path
-            .get(&PathKey(path.0.clone()), ())
+            .get(&PathKey(path.as_ref().clone()), ())
             .cloned()
     }
 
     pub fn pending_ops_for_path(&self, path: &RepoPath) -> Option<PendingOps> {
         self.pending_ops_by_path
-            .get(&PathKey(path.0.clone()), ())
+            .get(&PathKey(path.as_ref().clone()), ())
             .cloned()
     }
 
@@ -4216,9 +4263,12 @@ impl Repository {
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
+        askpass: AskPassDelegate,
         _cx: &mut App,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
+        let askpass_delegates = self.askpass_delegates.clone();
+        let askpass_id = util::post_inc(&mut self.latest_askpass_id);
 
         self.send_job(Some("git commit".into()), move |git_repo, _cx| async move {
             match git_repo {
@@ -4228,10 +4278,15 @@ impl Repository {
                     ..
                 } => {
                     backend
-                        .commit(message, name_and_email, options, environment)
+                        .commit(message, name_and_email, options, askpass, environment)
                         .await
                 }
                 RepositoryState::Remote { project_id, client } => {
+                    askpass_delegates.lock().insert(askpass_id, askpass);
+                    let _defer = util::defer(|| {
+                        let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
+                        debug_assert!(askpass_delegate.is_some());
+                    });
                     let (name, email) = name_and_email.unzip();
                     client
                         .request(proto::Commit {
@@ -4244,6 +4299,7 @@ impl Repository {
                                 amend: options.amend,
                                 signoff: options.signoff,
                             }),
+                            askpass_id,
                         })
                         .await
                         .context("sending commit request")?;
@@ -4708,7 +4764,9 @@ impl Repository {
                                 }
                             };
                             Some((
-                                RepoPath(RelPath::from_proto(&entry.path).log_err()?),
+                                RepoPath::from_rel_path(
+                                    &RelPath::from_proto(&entry.path).log_err()?,
+                                ),
                                 status,
                             ))
                         })
@@ -5270,7 +5328,8 @@ impl Repository {
                         let mut cursor = prev_statuses.cursor::<PathProgress>(());
                         for path in changed_paths.into_iter() {
                             if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left) {
-                                changed_path_statuses.push(Edit::Remove(PathKey(path.0)));
+                                changed_path_statuses
+                                    .push(Edit::Remove(PathKey(path.as_ref().clone())));
                             }
                         }
                         changed_path_statuses
@@ -5416,10 +5475,8 @@ fn get_permalink_in_rust_registry_src(
         remote,
         BuildPermalinkParams::new(
             &cargo_vcs_info.git.sha1,
-            &RepoPath(
-                RelPath::new(&path, PathStyle::local())
-                    .context("invalid path")?
-                    .into_arc(),
+            &RepoPath::from_rel_path(
+                &RelPath::new(&path, PathStyle::local()).context("invalid path")?,
             ),
             Some(selection),
         ),
@@ -5621,7 +5678,11 @@ async fn compute_snapshot(
     let mut events = Vec::new();
     let branches = backend.branches().await?;
     let branch = branches.into_iter().find(|branch| branch.is_head);
-    let statuses = backend.status(&[RelPath::empty().into()]).await?;
+    let statuses = backend
+        .status(&[RepoPath::from_rel_path(
+            &RelPath::new(".".as_ref(), PathStyle::local()).unwrap(),
+        )])
+        .await?;
     let stash_entries = backend.stash_entries().await?;
     let statuses_by_path = SumTree::from_iter(
         statuses

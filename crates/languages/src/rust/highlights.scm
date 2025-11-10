@@ -195,7 +195,9 @@
 (unary_expression "!" @operator)
 operator: "/" @operator
 
-(lifetime) @lifetime
+(lifetime
+  "'" @lifetime
+  (identifier) @lifetime)
 
 (parameter (identifier) @variable.parameter)
 

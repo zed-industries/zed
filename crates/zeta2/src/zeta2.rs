@@ -6,8 +6,8 @@ use cloud_llm_client::{
     AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
     ZED_VERSION_HEADER_NAME,
 };
-use cloud_zeta2_prompt::DEFAULT_MAX_PROMPT_BYTES;
 use cloud_zeta2_prompt::retrieval_prompt::{SearchToolInput, SearchToolQuery};
+use cloud_zeta2_prompt::{CURSOR_MARKER, DEFAULT_MAX_PROMPT_BYTES};
 use collections::HashMap;
 use edit_prediction_context::{
     DeclarationId, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
@@ -131,6 +131,15 @@ pub struct Zeta {
     options: ZetaOptions,
     update_required: bool,
     debug_tx: Option<mpsc::UnboundedSender<ZetaDebugInfo>>,
+    #[cfg(feature = "llm-response-cache")]
+    llm_response_cache: Option<Arc<dyn LlmResponseCache>>,
+}
+
+#[cfg(feature = "llm-response-cache")]
+pub trait LlmResponseCache: Send + Sync {
+    fn get_key(&self, url: &gpui::http_client::Url, body: &str) -> u64;
+    fn read_response(&self, key: u64) -> Option<String>;
+    fn write_response(&self, key: u64, value: &str);
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -359,7 +368,14 @@ impl Zeta {
             ),
             update_required: false,
             debug_tx: None,
+            #[cfg(feature = "llm-response-cache")]
+            llm_response_cache: None,
         }
+    }
+
+    #[cfg(feature = "llm-response-cache")]
+    pub fn with_llm_response_cache(&mut self, cache: Arc<dyn LlmResponseCache>) {
+        self.llm_response_cache = Some(cache);
     }
 
     pub fn debug_info(&mut self) -> mpsc::UnboundedReceiver<ZetaDebugInfo> {
@@ -734,6 +750,9 @@ impl Zeta {
             })
             .collect::<Vec<_>>();
 
+        #[cfg(feature = "llm-response-cache")]
+        let llm_response_cache = self.llm_response_cache.clone();
+
         let request_task = cx.background_spawn({
             let active_buffer = active_buffer.clone();
             async move {
@@ -923,8 +942,14 @@ impl Zeta {
                 log::trace!("Sending edit prediction request");
 
                 let before_request = chrono::Utc::now();
-                let response =
-                    Self::send_raw_llm_request(client, llm_token, app_version, request).await;
+                let response = Self::send_raw_llm_request(
+                    request,
+                    client,
+                    llm_token,
+                    app_version,
+                    #[cfg(feature = "llm-response-cache")]
+                    llm_response_cache
+                ).await;
                 let request_time = chrono::Utc::now() - before_request;
 
                 log::trace!("Got edit prediction response");
@@ -943,9 +968,14 @@ impl Zeta {
 
                 let (res, usage) = response?;
                 let request_id = EditPredictionId(res.id.clone().into());
-                let Some(output_text) = text_from_response(res) else {
+                let Some(mut output_text) = text_from_response(res) else {
                     return Ok((None, usage))
                 };
+
+                if output_text.contains(CURSOR_MARKER) {
+                    log::trace!("Stripping out {CURSOR_MARKER} from response");
+                    output_text = output_text.replace(CURSOR_MARKER, "");
+                }
 
                 let (edited_buffer_snapshot, edits) = match options.prompt_format {
                     PromptFormat::NumLinesUniDiff => {
@@ -1003,10 +1033,13 @@ impl Zeta {
     }
 
     async fn send_raw_llm_request(
+        request: open_ai::Request,
         client: Arc<Client>,
         llm_token: LlmApiToken,
         app_version: SemanticVersion,
-        request: open_ai::Request,
+        #[cfg(feature = "llm-response-cache")] llm_response_cache: Option<
+            Arc<dyn LlmResponseCache>,
+        >,
     ) -> Result<(open_ai::Response, Option<EditPredictionUsage>)> {
         let url = if let Some(predict_edits_url) = PREDICT_EDITS_URL.as_ref() {
             http_client::Url::parse(&predict_edits_url)?
@@ -1016,7 +1049,21 @@ impl Zeta {
                 .build_zed_llm_url("/predict_edits/raw", &[])?
         };
 
-        Self::send_api_request(
+        #[cfg(feature = "llm-response-cache")]
+        let cache_key = if let Some(cache) = llm_response_cache {
+            let request_json = serde_json::to_string(&request)?;
+            let key = cache.get_key(&url, &request_json);
+
+            if let Some(response_str) = cache.read_response(key) {
+                return Ok((serde_json::from_str(&response_str)?, None));
+            }
+
+            Some((cache, key))
+        } else {
+            None
+        };
+
+        let (response, usage) = Self::send_api_request(
             |builder| {
                 let req = builder
                     .uri(url.as_ref())
@@ -1027,7 +1074,14 @@ impl Zeta {
             llm_token,
             app_version,
         )
-        .await
+        .await?;
+
+        #[cfg(feature = "llm-response-cache")]
+        if let Some((cache, key)) = cache_key {
+            cache.write_response(key, &serde_json::to_string(&response)?);
+        }
+
+        Ok((response, usage))
     }
 
     fn handle_api_response<T>(
@@ -1295,10 +1349,20 @@ impl Zeta {
             reasoning_effort: None,
         };
 
+        #[cfg(feature = "llm-response-cache")]
+        let llm_response_cache = self.llm_response_cache.clone();
+
         cx.spawn(async move |this, cx| {
             log::trace!("Sending search planning request");
-            let response =
-                Self::send_raw_llm_request(client, llm_token, app_version, request).await;
+            let response = Self::send_raw_llm_request(
+                request,
+                client,
+                llm_token,
+                app_version,
+                #[cfg(feature = "llm-response-cache")]
+                llm_response_cache,
+            )
+            .await;
             let mut response = Self::handle_api_response(&this, response, cx)?;
             log::trace!("Got search planning response");
 

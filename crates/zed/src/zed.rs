@@ -274,16 +274,27 @@ pub fn init(cx: &mut App) {
 }
 
 fn bind_on_window_closed(cx: &mut App) -> Option<gpui::Subscription> {
-    WorkspaceSettings::get_global(cx)
-        .on_last_window_closed
-        .is_quit_app()
-        .then(|| {
-            cx.on_window_closed(|cx| {
-                if cx.windows().is_empty() {
-                    cx.quit();
-                }
+    #[cfg(target_os = "macos")]
+    {
+        WorkspaceSettings::get_global(cx)
+            .on_last_window_closed
+            .is_quit_app()
+            .then(|| {
+                cx.on_window_closed(|cx| {
+                    if cx.windows().is_empty() {
+                        cx.quit();
+                    }
+                })
             })
-        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Some(cx.on_window_closed(|cx| {
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        }))
+    }
 }
 
 pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowOptions {
