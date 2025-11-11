@@ -26,3 +26,80 @@ During setup, you have the option to import key settings from VS Code. Zed impor
 Zed doesn’t import extensions or keybindings, but this is the fastest way to get a familiar feel while trying something new. If you skip that step during setup, you can still import settings manually later via the command palette:
 
 `Cmd+Shift+P → Zed: Import Settings from VS Code`
+
+## Set Up Your Editor Preferences
+
+You can also configure your settings manually in the Settings Editor.
+
+To edit your settings:
+1. `Cmd+,` to open the Settings Editor.
+2. {#kb command_palette::zed:open settings}
+
+Here’s how common VS Code settings translate:
+| VS Code | Zed | Notes |
+| --- | --- | --- |
+| editor.fontFamily | buffer_font_family | Zed uses Zed Mono by default |
+| editor.fontSize | buffer_font_size | Set in pixels |
+| editor.tabSize | tab_size | Can override per language |
+| editor.insertSpaces | insert_spaces | Boolean |
+| editor.formatOnSave | format_on_save | Works with formatter enabled |
+| editor.wordWrap | soft_wrap | Supports optional wrap column |
+
+
+Zed also supports per-project settings. You can find these in the Settings Editor as well.
+
+## Open or Create a Project
+
+After setup, press `Cmd+O` (or `Ctrl+O` on Linux) to open a folder. This becomes your workspace in Zed. There's no support for multi-root workspaces or `.code-workspace` files like in VS Code. Zed keeps it simple: one folder, one workspace.
+
+To start a new project, create a directory using your terminal or file manager, then open it in Zed. The editor will treat that folder as the root of your project.
+
+You can also launch Zed from the terminal inside any folder with:
+`zed .`
+
+Once inside a project, use `Cmd+P` to jump between files quickly. `Cmd+Shift+P` opens the command palette for running actions / tasks, toggling settings, or starting a collaboration session.
+
+Open buffers appear as tabs across the top. The sidebar shows your file tree and Git status. Collapse it with `Cmd+B` for a distraction-free view.
+
+## Differences in Keybindings
+
+If you chose the VS Code keymap during onboarding, you're likely good to go, and most of your shortcuts should already feel familiar.
+Here’s a quick reference guide for how our keybindings compare to what you’re used to coming from VS Code.
+
+### Common Shared Keybindings (Zed <> VS Code)
+| Action | Shortcut |
+| --- | --- |
+| Find files | `Cmd + P` |
+| Run a command | `Cmd + Shift + P` |
+| Search text (project-wide) | `Cmd + Shift + F` |
+| Find symbols (project-wide) | `Cmd + T` |
+| Find symbols (file-wide) | `Cmd + Shift + O` |
+| Toggle left dock | `Cmd + B` |
+| Toggle bottom dock | `Cmd + J` |
+| Open terminal | `Ctrl + `` |
+| Open file tree explorer | `Cmd + Shift + E` |
+| Close current buffer | `Cmd + W` |
+| Close whole project | `Cmd + Shift + W` |
+| Refactor: rename symbol | `Fn + F2` |
+| Change theme | `Cmd + K, then T` |
+| Wrap text | `Opt + Z` |
+| Navigate open tabs | `Cmd + Opt + Arrow` |
+| Syntactic fold / unfold | `Cmd + Opt + {` or `Cmd + Opt + }` |
+
+
+### Different Keybindings (Zed <> VS Code)
+| Action | VS Code | Zed |
+| --- | --- | --- |
+| Open recent project | `Ctrl + R` | `Opt + Cmd + O` |
+| Move lines up/down | `Opt + Up/Down` | `Cmd + Ctrl + Up/Down` |
+| Split panes | `Cmd + \` | `Cmd + K, then Arrow Keys` |
+
+####  How to Customize Keybindings
+
+To edit your keybindings:
+- Open the command palette (`Cmd+Shift+P`)
+- Run {#kb command_palette:Zed:Open Keymap Editor}
+
+This opens a list of all available bindings. You can override individual shortcuts, remove conflicts, or build a layout that works better for your setup.
+
+Zed also supports chords (multi-key sequences) like `Ctrl+K Ctrl+C`, just like VS Code.
