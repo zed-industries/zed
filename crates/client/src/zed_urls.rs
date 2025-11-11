@@ -51,3 +51,11 @@ pub fn external_agents_docs(cx: &App) -> String {
         server_url = server_url(cx)
     )
 }
+
+/// Returns the URL to Zed agent servers documentation.
+pub fn agent_server_docs(cx: &App) -> String {
+    format!(
+        "{server_url}/docs/extensions/agent-servers",
+        server_url = server_url(cx)
+    )
+}
