@@ -222,10 +222,6 @@ impl GroupedModels {
 
         let mut other_by_provider: IndexMap<_, Vec<ModelInfo>> = IndexMap::default();
         for model in other {
-            if recommended_ids.contains(&(model.model.provider_id(), model.model.id())) {
-                continue;
-            }
-
             let provider = model.model.provider_id();
             if let Some(models) = other_by_provider.get_mut(&provider) {
                 models.push(model);
