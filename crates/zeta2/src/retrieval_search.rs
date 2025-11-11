@@ -51,7 +51,7 @@ pub async fn run_retrieval_searches(
         })?;
 
         queries.hash(&mut hasher);
-        let key = (EvalCacheEntryKind::SearchResults, hasher.finish());
+        let key = (EvalCacheEntryKind::Search, hasher.finish());
 
         if let Some(cached_results) = eval_cache.read(key) {
             let file_results = serde_json::from_str::<CachedSearchResults>(&cached_results)
@@ -80,7 +80,7 @@ pub async fn run_retrieval_searches(
             return Ok(results);
         }
 
-        Some((eval_cache, key))
+        Some((eval_cache, serde_json::to_string(&queries)?, key))
     } else {
         None
     };
@@ -141,7 +141,7 @@ pub async fn run_retrieval_searches(
         }
 
         #[cfg(feature = "eval-support")]
-        if let Some((cache, key)) = cache {
+        if let Some((cache, queries, key)) = cache {
             let cached_results: CachedSearchResults = results
                 .iter()
                 .filter_map(|(buffer, ranges)| {
@@ -155,7 +155,7 @@ pub async fn run_retrieval_searches(
                     Some((path?.as_std_path().to_path_buf(), ranges))
                 })
                 .collect();
-            cache.write(key, &serde_json::to_string(&cached_results)?);
+            cache.write(key, &queries, &serde_json::to_string(&cached_results)?);
         }
 
         for (buffer, ranges) in results.iter_mut() {

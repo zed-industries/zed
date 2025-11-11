@@ -373,32 +373,31 @@ struct RunCache {
 }
 
 impl RunCache {
-    fn cache_path((kind, key): &EvalCacheKey) -> PathBuf {
-        CACHE_DIR.join(format!("{kind}-{key:x}.json",))
+    fn output_cache_path((kind, key): &EvalCacheKey) -> PathBuf {
+        CACHE_DIR.join(format!("{kind}-out-{key:x}.json",))
+    }
+
+    fn input_cache_path((kind, key): &EvalCacheKey) -> PathBuf {
+        CACHE_DIR.join(format!("{kind}-in-{key:x}.json",))
     }
 
     fn link_to_run(&self, key: &EvalCacheKey) {
-        let link_path = self.example_run_dir.join(format!("{}.json", key.0));
+        let output_link_path = self.example_run_dir.join(format!("{}-out.json", key.0));
+        fs::hard_link(Self::output_cache_path(key), &output_link_path).unwrap();
 
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(Self::cache_path(key), link_path).unwrap();
-
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_file(Self::cache_path(key), link_path).unwrap();
+        let input_link_path = self.example_run_dir.join(format!("{}-in.json", key.0));
+        fs::hard_link(Self::input_cache_path(key), &input_link_path).unwrap();
     }
 }
 
 impl EvalCache for RunCache {
     fn read(&self, key: EvalCacheKey) -> Option<String> {
-        let path = RunCache::cache_path(&key);
+        let path = RunCache::output_cache_path(&key);
 
         if path.exists() {
             let use_cache = match key.0 {
-                EvalCacheEntryKind::SearchResults => self.cache_mode.use_cached_search_results(),
-                EvalCacheEntryKind::ContextRequest
-                | EvalCacheEntryKind::ContextResponse
-                | EvalCacheEntryKind::PredictionRequest
-                | EvalCacheEntryKind::PredictionResponse => {
+                EvalCacheEntryKind::Search => self.cache_mode.use_cached_search_results(),
+                EvalCacheEntryKind::Context | EvalCacheEntryKind::Prediction => {
                     self.cache_mode.use_cached_llm_responses()
                 }
             };
@@ -420,12 +419,16 @@ impl EvalCache for RunCache {
         }
     }
 
-    fn write(&self, key: EvalCacheKey, value: &str) {
+    fn write(&self, key: EvalCacheKey, input: &str, output: &str) {
         fs::create_dir_all(&*CACHE_DIR).unwrap();
 
-        let path = RunCache::cache_path(&key);
-        log::info!("Writing cache entry: {}", path.display());
-        fs::write(&path, value).unwrap();
+        let input_path = RunCache::input_cache_path(&key);
+        fs::write(&input_path, input).unwrap();
+
+        let output_path = RunCache::output_cache_path(&key);
+        log::info!("Writing cache entry: {}", output_path.display());
+        fs::write(&output_path, output).unwrap();
+
         self.link_to_run(&key);
     }
 }

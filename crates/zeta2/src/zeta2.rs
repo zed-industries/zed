@@ -957,9 +957,7 @@ impl Zeta {
                     #[cfg(feature = "eval-support")]
                     eval_cache,
                     #[cfg(feature = "eval-support")]
-                    EvalCacheEntryKind::PredictionRequest,
-                    #[cfg(feature = "eval-support")]
-                    EvalCacheEntryKind::PredictionResponse,
+                    EvalCacheEntryKind::Prediction,
                 )
                 .await;
                 let request_time = chrono::Utc::now() - before_request;
@@ -1060,8 +1058,7 @@ impl Zeta {
         llm_token: LlmApiToken,
         app_version: SemanticVersion,
         #[cfg(feature = "eval-support")] eval_cache: Option<Arc<dyn EvalCache>>,
-        #[cfg(feature = "eval-support")] eval_cache_req_kind: EvalCacheEntryKind,
-        #[cfg(feature = "eval-support")] eval_cache_res_kind: EvalCacheEntryKind,
+        #[cfg(feature = "eval-support")] eval_cache_kind: EvalCacheEntryKind,
     ) -> Result<(open_ai::Response, Option<EditPredictionUsage>)> {
         let url = if let Some(predict_edits_url) = PREDICT_EDITS_URL.as_ref() {
             http_client::Url::parse(&predict_edits_url)?
@@ -1082,14 +1079,12 @@ impl Zeta {
             request_str.hash(&mut hasher);
             let hash = hasher.finish();
 
-            cache.write((eval_cache_req_kind, hash), &request_str);
-
-            let key = (eval_cache_res_kind, hash);
+            let key = (eval_cache_kind, hash);
             if let Some(response_str) = cache.read(key) {
                 return Ok((serde_json::from_str(&response_str)?, None));
             }
 
-            Some((cache, key))
+            Some((cache, request_str, key))
         } else {
             None
         };
@@ -1108,8 +1103,8 @@ impl Zeta {
         .await?;
 
         #[cfg(feature = "eval-support")]
-        if let Some((cache, key)) = cache_key {
-            cache.write(key, &serde_json::to_string(&response)?);
+        if let Some((cache, request, key)) = cache_key {
+            cache.write(key, &request, &serde_json::to_string(&response)?);
         }
 
         Ok((response, usage))
@@ -1393,9 +1388,7 @@ impl Zeta {
                 #[cfg(feature = "eval-support")]
                 eval_cache.clone(),
                 #[cfg(feature = "eval-support")]
-                EvalCacheEntryKind::ContextRequest,
-                #[cfg(feature = "eval-support")]
-                EvalCacheEntryKind::ContextResponse,
+                EvalCacheEntryKind::Context,
             )
             .await;
             let mut response = Self::handle_api_response(&this, response, cx)?;
@@ -1807,22 +1800,18 @@ pub type EvalCacheKey = (EvalCacheEntryKind, u64);
 #[cfg(feature = "eval-support")]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EvalCacheEntryKind {
-    ContextRequest,
-    ContextResponse,
-    SearchResults,
-    PredictionRequest,
-    PredictionResponse,
+    Context,
+    Search,
+    Prediction,
 }
 
 #[cfg(feature = "eval-support")]
 impl std::fmt::Display for EvalCacheEntryKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EvalCacheEntryKind::SearchResults => write!(f, "search-results"),
-            EvalCacheEntryKind::ContextRequest => write!(f, "context-request"),
-            EvalCacheEntryKind::ContextResponse => write!(f, "context-response"),
-            EvalCacheEntryKind::PredictionRequest => write!(f, "prediction-request"),
-            EvalCacheEntryKind::PredictionResponse => write!(f, "prediction-response"),
+            EvalCacheEntryKind::Search => write!(f, "search"),
+            EvalCacheEntryKind::Context => write!(f, "context"),
+            EvalCacheEntryKind::Prediction => write!(f, "prediction"),
         }
     }
 }
@@ -1830,7 +1819,7 @@ impl std::fmt::Display for EvalCacheEntryKind {
 #[cfg(feature = "eval-support")]
 pub trait EvalCache: Send + Sync {
     fn read(&self, key: EvalCacheKey) -> Option<String>;
-    fn write(&self, key: EvalCacheKey, value: &str);
+    fn write(&self, key: EvalCacheKey, input: &str, value: &str);
 }
 
 #[cfg(test)]
