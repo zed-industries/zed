@@ -14,7 +14,7 @@ use crate::{
     PromptFormat,
     example::{Example, NamedExample},
     headless::ZetaCliAppState,
-    paths::{RUN_DIR, print_run_data_dir},
+    paths::print_run_data_dir,
     predict::{CacheMode, PredictionDetails, zeta2_predict},
 };
 
