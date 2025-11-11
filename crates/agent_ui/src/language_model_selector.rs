@@ -780,12 +780,12 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_dont_exclude_models_from_other_providers(_cx: &mut TestAppContext) {
+    fn test_models_from_different_providers(_cx: &mut TestAppContext) {
         let recommended_models = create_models(vec![("zed", "claude")]);
         let all_models = create_models(vec![
-            ("zed", "claude"), // Should be filtered out from "other"
+            ("zed", "claude"), // Should also appear in "other"
             ("zed", "gemini"),
-            ("copilot", "claude"), // Should not be filtered out from "other"
+            ("copilot", "claude"), // Different provider, should appear in "other"
         ]);
 
         let grouped_models = GroupedModels::new(all_models, recommended_models);
@@ -797,7 +797,10 @@ mod tests {
             .cloned()
             .collect::<Vec<_>>();
 
-        // Recommended models should not appear in "other"
-        assert_models_eq(actual_other_models, vec!["zed/gemini", "copilot/claude"]);
+        // All models should appear in "other" regardless of recommended status
+        assert_models_eq(
+            actual_other_models,
+            vec!["zed/claude", "zed/gemini", "copilot/claude"],
+        );
     }
 }
