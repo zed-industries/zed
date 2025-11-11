@@ -282,7 +282,7 @@ impl BackgroundExecutor {
         let mut cx = std::task::Context::from_waker(&waker);
 
         let duration = Duration::from_secs(
-            option_env!("BLOCK_INTERNAL_TIMEOUT")
+            option_env!("GPUI_TEST_TIMEOUT")
                 .and_then(|s| s.parse::<u64>().ok())
                 .unwrap_or(180),
         );
