@@ -1,7 +1,7 @@
 use crate::{Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle};
 use anyhow::Result;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
-use git::GITIGNORE;
+use git::{DOT_GIT, GITIGNORE, REPO_EXCLUDE};
 use gpui::{AppContext as _, BackgroundExecutor, BorrowAppContext, Context, Task, TestAppContext};
 use parking_lot::Mutex;
 use postage::stream::Stream;
@@ -2429,7 +2429,7 @@ async fn test_repo_exclude(executor: BackgroundExecutor, cx: &mut TestAppContext
             ".env.example": "secret=xxxx",
             ".env.local": "secret=1234",
             ".gitignore": "!.env.example",
-            "README.md": "# Info Exclude",
+            "README.md": "# Repo Exclude",
             "src": {
                 "main.rs": "fn main() {}",
             },
@@ -2471,7 +2471,7 @@ async fn test_repo_exclude(executor: BackgroundExecutor, cx: &mut TestAppContext
 
     // Ignore statuses are updated when .git/info/exclude file changes
     fs.write(
-        &project_dir.join(".git").join("info").join("exclude"),
+        &project_dir.join(DOT_GIT).join(REPO_EXCLUDE),
         ".env.example".as_bytes(),
     )
     .await

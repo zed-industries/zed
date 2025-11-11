@@ -19,7 +19,8 @@ use futures::{
 };
 use fuzzy::CharBag;
 use git::{
-    COMMIT_MESSAGE, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE, INDEX_LOCK, LFS_DIR, status::GitSummary,
+    COMMIT_MESSAGE, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE, INDEX_LOCK, LFS_DIR, REPO_EXCLUDE,
+    status::GitSummary,
 };
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Priority,
@@ -2573,7 +2574,7 @@ impl LocalSnapshot {
 
         if let Some(repo_exclude) = repo_root
             .as_ref()
-            .and_then(|repo_root_path| self.repo_exclude_by_work_dir_abs_path.get(repo_root_path))
+            .and_then(|abs_path| self.repo_exclude_by_work_dir_abs_path.get(abs_path))
         {
             ignore_stack = ignore_stack.append(IgnoreKind::RepoExclude, repo_exclude.clone());
         }
@@ -5023,7 +5024,7 @@ async fn discover_ancestor_git_repo(
                 };
             }
 
-            let repo_exclude_abs_path = ancestor_dot_git.join("info").join("exclude");
+            let repo_exclude_abs_path = ancestor_dot_git.join(REPO_EXCLUDE);
             if let Ok(repo_exclude) = build_gitignore(&repo_exclude_abs_path, fs.as_ref()).await {
                 exclude = Some(Arc::new(repo_exclude));
             }
