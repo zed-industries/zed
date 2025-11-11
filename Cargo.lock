@@ -96,6 +96,7 @@ dependencies = [
  "auto_update",
  "editor",
  "extension_host",
+ "fs",
  "futures 0.3.31",
  "gpui",
  "language",
