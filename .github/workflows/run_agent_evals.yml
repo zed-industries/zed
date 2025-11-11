@@ -51,6 +51,11 @@ jobs:
     - name: run_agent_evals::agent_evals::run_eval
       run: cargo run --package=eval -- --repetitions=8 --concurrency=1 --model "${MODEL_NAME}"
       shell: bash -euxo pipefail {0}
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+        GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
