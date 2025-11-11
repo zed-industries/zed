@@ -4054,24 +4054,6 @@ impl EditorElement {
                                                     );
                                                 }
                                             })),
-                                        // .on_click({
-                                        //     let focus_handle = focus_handle.clone();
-                                        //     move |event, window, cx| {
-                                        //         if event.modifiers().secondary() {
-                                        //             focus_handle.dispatch_action(
-                                        //                 &OpenExcerptsSplit,
-                                        //                 window,
-                                        //                 cx,
-                                        //             );
-                                        //         } else {
-                                        //             focus_handle.dispatch_action(
-                                        //                 &OpenExcerpts,
-                                        //                 window,
-                                        //                 cx,
-                                        //             );
-                                        //         }
-                                        //     }
-                                        // }),
                                     )
                                     .when_some(parent_path, |then, path| {
                                         then.child(div().child(path).text_color(
