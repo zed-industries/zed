@@ -3190,6 +3190,14 @@ impl MultiBufferSnapshot {
             )
         })
         .filter_map(move |(range, hunk, excerpt)| {
+            if hunk
+                .buffer_range
+                .start
+                .cmp(&excerpt.range.context.start, &excerpt.buffer)
+                .is_lt()
+            {
+                return None;
+            }
             if range.start != range.end && range.end == query_range.start && !hunk.range.is_empty()
             {
                 return None;
