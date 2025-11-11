@@ -930,6 +930,104 @@ mod tests {
                 }
             }
         }
+
+        mod perf {
+            use super::super::*;
+            use crate::TerminalSettings;
+            use alacritty_terminal::{
+                event::VoidListener,
+                grid::Dimensions,
+                index::{Column, Point as AlacPoint},
+                term::test::mock_term,
+                term::{Term, search::Match},
+            };
+            use settings::{self, Settings, SettingsContent};
+            use std::{cell::RefCell, rc::Rc};
+            use util_macros::perf;
+
+            fn build_test_term(line: &str) -> (Term<VoidListener>, AlacPoint) {
+                let content = line.repeat(500);
+                let term = mock_term(&content);
+                let point = AlacPoint::new(
+                    term.grid().bottommost_line() - 1,
+                    Column(term.grid().last_column().0 / 2),
+                );
+
+                (term, point)
+            }
+
+            #[perf]
+            pub fn cargo_hyperlink_benchmark() {
+                const LINE: &str = "    Compiling terminal v0.1.0 (/Hyperlinks/Bench/Source/zed-hyperlinks/crates/terminal)\r\n";
+                thread_local! {
+                    static TEST_TERM_AND_POINT: (Term<VoidListener>, AlacPoint) =
+                        build_test_term(LINE);
+                }
+                TEST_TERM_AND_POINT.with(|(term, point)| {
+                    assert!(
+                        find_from_grid_point_bench(term, *point).is_some(),
+                        "Hyperlink should have been found"
+                    );
+                });
+            }
+
+            #[perf]
+            pub fn rust_hyperlink_benchmark() {
+                const LINE: &str = "    --> /Hyperlinks/Bench/Source/zed-hyperlinks/crates/terminal/terminal.rs:1000:42\r\n";
+                thread_local! {
+                    static TEST_TERM_AND_POINT: (Term<VoidListener>, AlacPoint) =
+                        build_test_term(LINE);
+                }
+                TEST_TERM_AND_POINT.with(|(term, point)| {
+                    assert!(
+                        find_from_grid_point_bench(term, *point).is_some(),
+                        "Hyperlink should have been found"
+                    );
+                });
+            }
+
+            #[perf]
+            pub fn ls_hyperlink_benchmark() {
+                const LINE: &str = "Cargo.toml        experiments        notebooks        rust-toolchain.toml    tooling\r\n";
+                thread_local! {
+                    static TEST_TERM_AND_POINT: (Term<VoidListener>, AlacPoint) =
+                        build_test_term(LINE);
+                }
+                TEST_TERM_AND_POINT.with(|(term, point)| {
+                    assert!(
+                        find_from_grid_point_bench(term, *point).is_some(),
+                        "Hyperlink should have been found"
+                    );
+                });
+            }
+
+            pub fn find_from_grid_point_bench(
+                term: &Term<VoidListener>,
+                point: AlacPoint,
+            ) -> Option<(String, bool, Match)> {
+                const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
+
+                thread_local! {
+                    static TEST_REGEX_SEARCHES: RefCell<RegexSearches> =
+                        RefCell::new({
+                            let default_settings_content: Rc<SettingsContent> =
+                                settings::parse_json_with_comments(&settings::default_settings())
+                                    .unwrap();
+                            let default_terminal_settings =
+                                TerminalSettings::from_settings(&default_settings_content);
+
+                            RegexSearches::new(
+                                &default_terminal_settings.path_hyperlink_regexes,
+                                PATH_HYPERLINK_TIMEOUT_MS
+                            )
+                        });
+                }
+
+                TEST_REGEX_SEARCHES.with(|regex_searches| {
+                    find_from_grid_point(&term, point, &mut regex_searches.borrow_mut())
+                })
+            }
+        }
     }
 
     mod file_iri {
@@ -1558,40 +1656,5 @@ mod tests {
                 }
             }
         }
-    }
-}
-
-#[cfg(feature = "bench-support")]
-pub mod bench {
-    use super::*;
-    use crate::TerminalSettings;
-    use alacritty_terminal::{
-        event::VoidListener,
-        index::Point as AlacPoint,
-        term::{Term, search::Match},
-    };
-    use settings::{self, Settings, SettingsContent};
-    use std::{cell::RefCell, rc::Rc};
-
-    pub fn find_from_grid_point_bench(
-        term: &Term<VoidListener>,
-        point: AlacPoint,
-    ) -> Option<(String, bool, Match)> {
-        const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
-
-        thread_local! {
-            static TEST_REGEX_SEARCHES: RefCell<RegexSearches> =
-                RefCell::new({
-                    let default_settings_content: Rc<SettingsContent> =
-                        settings::parse_json_with_comments(&settings::default_settings()).unwrap();
-                    let default_terminal_settings = TerminalSettings::from_settings(&default_settings_content);
-
-                    RegexSearches::new(&default_terminal_settings.path_hyperlink_regexes, PATH_HYPERLINK_TIMEOUT_MS)
-                });
-        }
-
-        TEST_REGEX_SEARCHES.with(|regex_searches| {
-            find_from_grid_point(&term, point, &mut regex_searches.borrow_mut())
-        })
     }
 }

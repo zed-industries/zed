@@ -3,9 +3,6 @@ pub mod mappings;
 pub use alacritty_terminal;
 
 mod pty_info;
-#[cfg(feature = "bench-support")]
-pub mod terminal_hyperlinks;
-#[cfg(not(feature = "bench-support"))]
 mod terminal_hyperlinks;
 pub mod terminal_settings;
 

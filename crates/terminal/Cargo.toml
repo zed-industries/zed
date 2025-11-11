@@ -11,7 +11,6 @@ test-support = [
     "gpui/test-support",
     "settings/test-support",
 ]
-bench-support = []
 
 [lints]
 workspace = true
@@ -51,8 +50,4 @@ rand.workspace = true
 serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 url.workspace = true
-criterion.workspace = true
-
-[[bench]]
-name = "hyperlink_benchmark"
-harness = false
+util_macros.workspace = true

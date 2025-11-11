@@ -17080,7 +17080,6 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "collections",
- "criterion",
  "fancy-regex 0.14.0",
  "futures 0.3.31",
  "gpui",
@@ -17101,6 +17100,7 @@ dependencies = [
  "url",
  "urlencoding",
  "util",
+ "util_macros",
  "windows 0.61.3",
 ]
 
