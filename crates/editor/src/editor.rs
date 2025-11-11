@@ -201,10 +201,17 @@ use workspace::{
 };
 
 use crate::{
-    code_context_menus::CompletionsMenuSource, editor_settings::MultiCursorModifier, git::word_diff::Cache, hover_links::{find_url, find_url_from_range}, inlays::{
+    code_context_menus::CompletionsMenuSource,
+    editor_settings::MultiCursorModifier,
+    git::word_diff::Cache,
+    hover_links::{find_url, find_url_from_range},
+    inlays::{
         InlineValueCache,
         inlay_hints::{LspInlayHintData, inlay_hint_settings},
-    }, scroll::{ScrollOffset, ScrollPixelOffset}, selections_collection::resolve_selections_wrapping_blocks, signature_help::{SignatureHelpHiddenBy, SignatureHelpState}
+    },
+    scroll::{ScrollOffset, ScrollPixelOffset},
+    selections_collection::resolve_selections_wrapping_blocks,
+    signature_help::{SignatureHelpHiddenBy, SignatureHelpState},
 };
 
 pub const FILE_HEADER_HEIGHT: u32 = 2;
@@ -269,6 +276,9 @@ pub enum ConflictsOurs {}
 pub enum ConflictsTheirs {}
 pub enum ConflictsOursMarker {}
 pub enum ConflictsTheirsMarker {}
+
+pub struct HunkAddedColor;
+pub struct HunkRemovedColor;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Navigated {

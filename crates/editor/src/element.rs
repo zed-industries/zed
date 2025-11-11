@@ -5,11 +5,11 @@ use crate::{
     DisplayDiffHunk, DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite,
     EditDisplayMode, EditPrediction, Editor, EditorMode, EditorSettings, EditorSnapshot,
     EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp,
-    HandleInput, HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp,
-    MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown,
-    PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase,
-    SelectedTextHighlight, Selection, SelectionDragState, SoftWrap, StickyHeaderExcerpt, ToPoint,
-    ToggleFold, ToggleFoldAll,
+    HandleInput, HoveredCursor, HunkAddedColor, HunkRemovedColor, InlayHintRefreshReason, JumpData,
+    LineDown, LineHighlight, LineUp, MAX_LINE_LEN, MINIMAP_FONT_SIZE,
+    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp, PhantomBreakpointIndicator,
+    Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SelectionDragState,
+    SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
@@ -8702,11 +8702,15 @@ impl Element for EditorElement {
                             continue;
                         };
 
-                        let background_color = match diff_status.kind {
-                            DiffHunkStatusKind::Added => cx.theme().colors().version_control_added,
-                            DiffHunkStatusKind::Deleted => {
-                                cx.theme().colors().version_control_deleted
-                            }
+                        let (background_color, type_id) = match diff_status.kind {
+                            DiffHunkStatusKind::Added => (
+                                cx.theme().colors().version_control_added,
+                                TypeId::of::<HunkAddedColor>(),
+                            ),
+                            DiffHunkStatusKind::Deleted => (
+                                cx.theme().colors().version_control_deleted,
+                                TypeId::of::<HunkRemovedColor>(),
+                            ),
                             DiffHunkStatusKind::Modified => {
                                 debug_panic!("modified diff status for row info");
                                 continue;
@@ -8728,14 +8732,14 @@ impl Element for EditorElement {
                                 background_color.opacity(0.36)
                             }),
                             include_gutter: true,
-                            type_id: None,
+                            type_id: Some(type_id),
                         };
 
                         let filled_highlight = LineHighlight {
                             background: solid_background(background_color.opacity(hunk_opacity)),
                             border: None,
                             include_gutter: true,
-                            type_id: None,
+                            type_id: Some(type_id),
                         };
 
                         let background = if Self::diff_hunk_hollow(diff_status, cx) {
@@ -8760,23 +8764,13 @@ impl Element for EditorElement {
                         })
                         .unwrap_or_default();
 
-                    // TODO ugliness here
+                    // todo!: ugliness here
                     let mut highlighted_ranges = self.editor.update(cx, |editor, cx| {
                         editor.update_word_diff(&row_infos, cx);
                         let diff = editor.word_diff_highlights(&row_infos);
                         highlighted_ranges.extend(diff);
                         highlighted_ranges
                     });
-
-                    // TODO make this come from git stuff
-                    // git stuff should probably be higher up in the stack
-                    highlighted_ranges.insert(
-                        0,
-                        (
-                            DisplayPoint::zero()..DisplayPoint::new(DisplayRow(0), 5),
-                            Hsla::blue(),
-                        ),
-                    );
 
                     let highlighted_gutter_ranges =
                         self.editor.read(cx).gutter_highlights_in_range(
@@ -8963,6 +8957,22 @@ impl Element for EditorElement {
                             if current_range.contains(&diff_base_byte_range.end) {
                                 multi_buffer_range.start =
                                     buffer.anchor_after(diff_base_byte_range.end);
+                            }
+
+                            // Check if first row has HunkRemovedColor and last row has HunkAddedColor
+                            let first_is_removed = highlighted_rows
+                                .get(&display_row_range.start)
+                                .and_then(|highlight| highlight.type_id)
+                                .is_some_and(|type_id| type_id == TypeId::of::<HunkRemovedColor>());
+
+                            let last_row = DisplayRow(display_row_range.end.0.saturating_sub(1));
+                            let last_is_added = highlighted_rows
+                                .get(&last_row)
+                                .and_then(|highlight| highlight.type_id)
+                                .is_some_and(|type_id| type_id == TypeId::of::<HunkAddedColor>());
+
+                            if !first_is_removed || !last_is_added {
+                                continue;
                             }
 
                             let current_text: String =
