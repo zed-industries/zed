@@ -17,8 +17,9 @@ use anyhow::{Context as _, Result, anyhow};
 use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
 use cloud_llm_client::{
-    AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
-    PredictEditsBody, PredictEditsGitInfo, PredictEditsResponse, ZED_VERSION_HEADER_NAME,
+    AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, EditPredictionRejection,
+    MINIMUM_REQUIRED_VERSION_HEADER_NAME, PredictEditsBody, PredictEditsGitInfo,
+    PredictEditsResponse, ZED_VERSION_HEADER_NAME,
 };
 use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
@@ -171,6 +172,7 @@ pub struct Zeta {
     shown_completions: VecDeque<EditPrediction>,
     rated_completions: HashSet<EditPredictionId>,
     data_collection_choice: DataCollectionChoice,
+    discarded_completions: Vec<EditPredictionRejection>,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
     /// Whether an update to a newer version of Zed is required to continue using Zeta.
@@ -231,6 +233,7 @@ impl Zeta {
             client,
             shown_completions: VecDeque::new(),
             rated_completions: HashSet::default(),
+            discarded_completions: Vec::new(),
             data_collection_choice,
             llm_token: LlmApiToken::default(),
             _llm_token_subscription: cx.subscribe(
@@ -995,6 +998,18 @@ impl Zeta {
             )
         });
     }
+
+    fn discard_completion(
+        &mut self,
+        completion_id: EditPredictionId,
+        was_shown: bool,
+        _cx: &mut Context<Self>,
+    ) {
+        self.discarded_completions.push(EditPredictionRejection {
+            request_id: completion_id.to_string(),
+            was_shown,
+        })
+    }
 }
 
 pub struct PerformPredictEditsParams {
@@ -1082,6 +1097,7 @@ pub fn gather_context(
                 git_info: None,
                 outline: None,
                 speculated_output: None,
+                discarded_predictions: Vec::new(),
             };
 
             Ok(GatherContextOutput {
@@ -1167,6 +1183,7 @@ impl Event {
 struct CurrentEditPrediction {
     buffer_id: EntityId,
     completion: EditPrediction,
+    was_shown: bool,
 }
 
 impl CurrentEditPrediction {
@@ -1414,6 +1431,7 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
                         c.map(|completion| CurrentEditPrediction {
                             buffer_id: buffer.entity_id(),
                             completion,
+                            was_shown: false,
                         })
                     })
                 }
@@ -1505,9 +1523,19 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
         self.pending_completions.clear();
     }
 
-    fn discard(&mut self, _cx: &mut Context<Self>) {
+    fn discard(&mut self, cx: &mut Context<Self>) {
         self.pending_completions.clear();
-        self.current_completion.take();
+        if let Some(completion) = self.current_completion.take() {
+            self.zeta.update(cx, |zeta, cx| {
+                zeta.discard_completion(completion.completion.id, completion.was_shown, cx);
+            });
+        }
+    }
+
+    fn did_show(&mut self, _cx: &mut Context<Self>) {
+        if let Some(current_completion) = self.current_completion.as_mut() {
+            current_completion.was_shown = true;
+        }
     }
 
     fn suggest(
