@@ -3660,7 +3660,8 @@ impl BackgroundScanner {
         let root_abs_path = self.state.lock().await.snapshot.abs_path.clone();
 
         let repo = if self.scanning_enabled {
-            let (ignores, repo) = discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await;
+            let (ignores, exclude, repo) =
+                discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await;
             self.state
                 .lock()
                 .await
@@ -3671,6 +3672,15 @@ impl BackgroundScanner {
         } else {
             None
         };
+
+        if let Some(exclude) = exclude {
+            self.state
+                .lock()
+                .await
+                .snapshot
+                .repo_exclude_by_work_dir_abs_path
+                .insert(root_abs_path.as_path().into(), (exclude, true));
+        }
 
         let containing_git_repository = if let Some((ancestor_dot_git, work_directory)) = repo
             && self.scanning_enabled
@@ -4309,19 +4319,6 @@ impl BackgroundScanner {
                         self.watcher.as_ref(),
                     )
                     .await;
-
-                let repo_exclude_abs_path = child_abs_path.join("info").join("exclude");
-                if self.fs.is_file(&repo_exclude_abs_path).await {
-                    match build_gitignore(&repo_exclude_abs_path, self.fs.as_ref()).await {
-                        Ok(exclude) => {
-                            let exclude = Arc::new(exclude);
-                            ignore_stack = ignore_stack.append(IgnoreKind::RepoExclude, exclude);
-                        }
-                        Err(error) => {
-                            log::error!("error loading .git/info/exclude: {:?}", error);
-                        }
-                    }
-                }
             } else if child_name == GITIGNORE {
                 match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
                     Ok(ignore) => {
@@ -4589,11 +4586,24 @@ impl BackgroundScanner {
                         .await;
 
                     if path.is_empty()
-                        && let Some((ignores, repo)) = new_ancestor_repo.take()
+                        && let Some((ignores, exclude, repo)) = new_ancestor_repo.take()
                     {
                         log::trace!("updating ancestor git repository");
                         state.snapshot.ignores_by_parent_abs_path.extend(ignores);
                         if let Some((ancestor_dot_git, work_directory)) = repo {
+                            if let Some(exclude) = exclude {
+                                let work_directory_abs_path = self
+                                    .state
+                                    .lock()
+                                    .await
+                                    .snapshot
+                                    .work_directory_abs_path(&work_directory);
+
+                                state
+                                    .snapshot
+                                    .repo_exclude_by_work_dir_abs_path
+                                    .insert(work_directory_abs_path.into(), (exclude, true));
+                            }
                             state
                                 .insert_git_repository_for_path(
                                     work_directory,
@@ -4903,22 +4913,17 @@ impl BackgroundScanner {
                         },
                     );
 
-                    let repo_exclude_path = local_repository
+                    let repo_exclude_abs_path = local_repository
                         .common_dir_abs_path
                         .join("info")
                         .join("exclude");
-                    if self.fs.is_file(&repo_exclude_path).await {
-                        let repo_exclude = build_gitignore(&repo_exclude_path, self.fs.as_ref())
-                            .await
-                            .log_err()
-                            .map(Arc::new);
-
-                        if let Some(repo_exclude) = repo_exclude {
-                            state.snapshot.repo_exclude_by_work_dir_abs_path.insert(
-                                local_repository.work_directory_abs_path.clone(),
-                                (repo_exclude, true),
-                            );
-                        }
+                    if let Ok(repo_exclude) =
+                        build_gitignore(&repo_exclude_abs_path, self.fs.as_ref()).await
+                    {
+                        state.snapshot.repo_exclude_by_work_dir_abs_path.insert(
+                            local_repository.work_directory_abs_path.clone(),
+                            (Arc::new(repo_exclude), true),
+                        );
                     } else {
                         state
                             .snapshot
@@ -5002,8 +5007,10 @@ async fn discover_ancestor_git_repo(
     root_abs_path: &SanitizedPath,
 ) -> (
     HashMap<Arc<Path>, (Arc<Gitignore>, bool)>,
+    Option<Arc<Gitignore>>,
     Option<(PathBuf, WorkDirectory)>,
 ) {
+    let mut exclude = None;
     let mut ignores = HashMap::default();
     for (index, ancestor) in root_abs_path.as_path().ancestors().enumerate() {
         if index != 0 {
@@ -5039,6 +5046,7 @@ async fn discover_ancestor_git_repo(
                     // also mark where in the git repo the root folder is located.
                     return (
                         ignores,
+                        exclude,
                         Some((
                             ancestor_dot_git,
                             WorkDirectory::AboveProject {
@@ -5050,12 +5058,17 @@ async fn discover_ancestor_git_repo(
                 };
             }
 
+            let repo_exclude_abs_path = ancestor_dot_git.join("info").join("exclude");
+            if let Ok(repo_exclude) = build_gitignore(&repo_exclude_abs_path, fs.as_ref()).await {
+                exclude = Some(Arc::new(repo_exclude));
+            }
+
             // Reached root of git repository.
             break;
         }
     }
 
-    (ignores, None)
+    (ignores, exclude, None)
 }
 
 fn build_diff(
