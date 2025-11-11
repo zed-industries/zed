@@ -1,10 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context as _, Result};
-use client::{
-    TypedEnvelope,
-    proto::{self, FromProto},
-};
+use client::{TypedEnvelope, proto};
 use collections::{HashMap, HashSet};
 use extension::{
     Extension, ExtensionDebugAdapterProviderProxy, ExtensionHostProxy, ExtensionLanguageProxy,
@@ -342,7 +339,7 @@ impl HeadlessExtensionStore {
                         version: extension.version,
                         dev: extension.dev,
                     },
-                    PathBuf::from_proto(envelope.payload.tmp_dir),
+                    PathBuf::from(envelope.payload.tmp_dir),
                     cx,
                 )
             })?

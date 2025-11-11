@@ -41,7 +41,6 @@ rand.workspace = true
 regex.workspace = true
 release_channel.workspace = true
 rpc = { workspace = true, features = ["gpui"] }
-schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
@@ -58,7 +57,6 @@ tokio-socks = { version = "0.5.2", default-features = false, features = ["future
 tokio.workspace = true
 url.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 worktree.workspace = true
 
 [dev-dependencies]

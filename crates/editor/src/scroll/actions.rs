@@ -2,7 +2,7 @@ use super::Axis;
 use crate::{
     Autoscroll, Editor, EditorMode, NextScreen, NextScrollCursorCenterTopBottom,
     SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT, ScrollCursorBottom, ScrollCursorCenter,
-    ScrollCursorCenterTopBottom, ScrollCursorTop, display_map::DisplayRow,
+    ScrollCursorCenterTopBottom, ScrollCursorTop, display_map::DisplayRow, scroll::ScrollOffset,
 };
 use gpui::{Context, Point, Window};
 
@@ -25,7 +25,7 @@ impl Editor {
 
     pub fn scroll(
         &mut self,
-        scroll_position: Point<f32>,
+        scroll_position: Point<ScrollOffset>,
         axis: Option<Axis>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -72,7 +72,12 @@ impl Editor {
         cx: &mut Context<Editor>,
     ) {
         let scroll_margin_rows = self.vertical_scroll_margin() as u32;
-        let new_screen_top = self.selections.newest_display(cx).head().row().0;
+        let new_screen_top = self
+            .selections
+            .newest_display(&self.display_snapshot(cx))
+            .head()
+            .row()
+            .0;
         let new_screen_top = new_screen_top.saturating_sub(scroll_margin_rows);
         self.set_scroll_top_row(DisplayRow(new_screen_top), window, cx);
     }
@@ -86,7 +91,12 @@ impl Editor {
         let Some(visible_rows) = self.visible_line_count().map(|count| count as u32) else {
             return;
         };
-        let new_screen_top = self.selections.newest_display(cx).head().row().0;
+        let new_screen_top = self
+            .selections
+            .newest_display(&self.display_snapshot(cx))
+            .head()
+            .row()
+            .0;
         let new_screen_top = new_screen_top.saturating_sub(visible_rows / 2);
         self.set_scroll_top_row(DisplayRow(new_screen_top), window, cx);
     }
@@ -101,7 +111,12 @@ impl Editor {
         let Some(visible_rows) = self.visible_line_count().map(|count| count as u32) else {
             return;
         };
-        let new_screen_top = self.selections.newest_display(cx).head().row().0;
+        let new_screen_top = self
+            .selections
+            .newest_display(&self.display_snapshot(cx))
+            .head()
+            .row()
+            .0;
         let new_screen_top =
             new_screen_top.saturating_sub(visible_rows.saturating_sub(scroll_margin_rows));
         self.set_scroll_top_row(DisplayRow(new_screen_top), window, cx);

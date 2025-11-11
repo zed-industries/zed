@@ -66,7 +66,9 @@ use util::markdown::MarkdownEscaped;
 use crate::outputs::OutputContent;
 
 /// TableView renders a static table inline in a buffer.
-/// It uses the https://specs.frictionlessdata.io/tabular-data-resource/ specification for data interchange.
+///
+/// It uses the <https://specs.frictionlessdata.io/tabular-data-resource/>
+/// specification for data interchange.
 pub struct TableView {
     pub table: TabularDataResource,
     pub widths: Vec<Pixels>,
@@ -99,9 +101,7 @@ impl TableView {
             len: 0,
             font: text_font,
             color: text_style.color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            ..Default::default()
         }];
 
         for field in table.schema.fields.iter() {

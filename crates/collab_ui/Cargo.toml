@@ -47,9 +47,7 @@ picker.workspace = true
 project.workspace = true
 release_channel.workspace = true
 rpc.workspace = true
-schemars.workspace = true
 serde.workspace = true
-serde_derive.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smallvec.workspace = true
@@ -62,7 +60,6 @@ title_bar.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }

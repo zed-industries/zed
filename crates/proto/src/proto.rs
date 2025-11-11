@@ -51,6 +51,7 @@ messages!(
     (Commit, Background),
     (CopyProjectEntry, Foreground),
     (CreateBufferForPeer, Foreground),
+    (CreateImageForPeer, Foreground),
     (CreateChannel, Foreground),
     (CreateChannelResponse, Foreground),
     (CreateContext, Foreground),
@@ -175,16 +176,15 @@ messages!(
     (ReorderChannel, Foreground),
     (LspQuery, Background),
     (LspQueryResponse, Background),
-    // todo(lsp) remove after Zed Stable hits v0.204.x
-    (MultiLspQuery, Background),
-    (MultiLspQueryResponse, Background),
     (OnTypeFormatting, Background),
     (OnTypeFormattingResponse, Background),
     (OpenBufferById, Background),
     (OpenBufferByPath, Background),
+    (OpenImageByPath, Background),
     (OpenBufferForSymbol, Background),
     (OpenBufferForSymbolResponse, Background),
     (OpenBufferResponse, Background),
+    (OpenImageResponse, Background),
     (OpenCommitMessageBuffer, Background),
     (OpenContext, Foreground),
     (OpenContextResponse, Foreground),
@@ -261,6 +261,8 @@ messages!(
     (Unstage, Background),
     (Stash, Background),
     (StashPop, Background),
+    (StashApply, Background),
+    (StashDrop, Background),
     (UpdateBuffer, Foreground),
     (UpdateBufferFile, Foreground),
     (UpdateChannelBuffer, Foreground),
@@ -301,6 +303,7 @@ messages!(
     (AskPassResponse, Background),
     (GitCreateBranch, Background),
     (GitChangeBranch, Background),
+    (GitRenameBranch, Background),
     (CheckForPushedCommits, Background),
     (CheckForPushedCommitsResponse, Background),
     (GitDiff, Background),
@@ -316,14 +319,24 @@ messages!(
     (PullWorkspaceDiagnostics, Background),
     (GetDefaultBranch, Background),
     (GetDefaultBranchResponse, Background),
+    (GetTreeDiff, Background),
+    (GetTreeDiffResponse, Background),
+    (GetBlobContent, Background),
+    (GetBlobContentResponse, Background),
     (GitClone, Background),
     (GitCloneResponse, Background),
     (ToggleLspLogs, Background),
+    (GetDirectoryEnvironment, Background),
+    (DirectoryEnvironment, Background),
     (GetAgentServerCommand, Background),
     (AgentServerCommand, Background),
     (ExternalAgentsUpdated, Background),
     (ExternalAgentLoadingStatusUpdated, Background),
     (NewExternalAgentVersionAvailable, Background),
+    (RemoteStarted, Background),
+    (GitGetWorktrees, Background),
+    (GitWorktreesResponse, Background),
+    (GitCreateWorktree, Background)
 );
 
 request_messages!(
@@ -387,6 +400,7 @@ request_messages!(
     (OnTypeFormatting, OnTypeFormattingResponse),
     (OpenBufferById, OpenBufferResponse),
     (OpenBufferByPath, OpenBufferResponse),
+    (OpenImageByPath, OpenImageResponse),
     (OpenBufferForSymbol, OpenBufferForSymbolResponse),
     (OpenCommitMessageBuffer, OpenBufferResponse),
     (OpenNewBuffer, OpenBufferResponse),
@@ -428,6 +442,8 @@ request_messages!(
     (Unstage, Ack),
     (Stash, Ack),
     (StashPop, Ack),
+    (StashApply, Ack),
+    (StashDrop, Ack),
     (UpdateBuffer, Ack),
     (UpdateParticipantLocation, Ack),
     (UpdateProject, Ack),
@@ -440,8 +456,6 @@ request_messages!(
     (SetRoomParticipantRole, Ack),
     (BlameBuffer, BlameBufferResponse),
     (RejoinRemoteProjects, RejoinRemoteProjectsResponse),
-    // todo(lsp) remove after Zed Stable hits v0.204.x
-    (MultiLspQuery, MultiLspQueryResponse),
     (LspQuery, Ack),
     (LspQueryResponse, Ack),
     (RestartLanguageServers, Ack),
@@ -484,6 +498,7 @@ request_messages!(
     (AskPassRequest, AskPassResponse),
     (GitCreateBranch, Ack),
     (GitChangeBranch, Ack),
+    (GitRenameBranch, Ack),
     (CheckForPushedCommits, CheckForPushedCommitsResponse),
     (GitDiff, GitDiffResponse),
     (GitInit, Ack),
@@ -493,10 +508,16 @@ request_messages!(
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
     (PullWorkspaceDiagnostics, Ack),
     (GetDefaultBranch, GetDefaultBranchResponse),
+    (GetBlobContent, GetBlobContentResponse),
+    (GetTreeDiff, GetTreeDiffResponse),
     (GitClone, GitCloneResponse),
     (ToggleLspLogs, Ack),
+    (GetDirectoryEnvironment, DirectoryEnvironment),
     (GetProcesses, GetProcessesResponse),
-    (GetAgentServerCommand, AgentServerCommand)
+    (GetAgentServerCommand, AgentServerCommand),
+    (RemoteStarted, Ack),
+    (GitGetWorktrees, GitWorktreesResponse),
+    (GitCreateWorktree, Ack)
 );
 
 lsp_messages!(
@@ -511,6 +532,7 @@ lsp_messages!(
     (GetDeclaration, GetDeclarationResponse, true),
     (GetTypeDefinition, GetTypeDefinitionResponse, true),
     (GetImplementation, GetImplementationResponse, true),
+    (InlayHints, InlayHintsResponse, false),
 );
 
 entity_messages!(
@@ -527,6 +549,7 @@ entity_messages!(
     GetColorPresentation,
     CopyProjectEntry,
     CreateBufferForPeer,
+    CreateImageForPeer,
     CreateProjectEntry,
     GetDocumentColor,
     DeleteProjectEntry,
@@ -557,14 +580,13 @@ entity_messages!(
     LoadCommitDiff,
     LspQuery,
     LspQueryResponse,
-    // todo(lsp) remove after Zed Stable hits v0.204.x
-    MultiLspQuery,
     RestartLanguageServers,
     StopLanguageServers,
     OnTypeFormatting,
     OpenNewBuffer,
     OpenBufferById,
     OpenBufferByPath,
+    OpenImageByPath,
     OpenBufferForSymbol,
     OpenCommitMessageBuffer,
     PerformRename,
@@ -585,6 +607,8 @@ entity_messages!(
     Unstage,
     Stash,
     StashPop,
+    StashApply,
+    StashDrop,
     UpdateBuffer,
     UpdateBufferFile,
     UpdateDiagnosticSummary,
@@ -631,6 +655,7 @@ entity_messages!(
     GitCheckoutFiles,
     SetIndexText,
     ToggleLspLogs,
+    GetDirectoryEnvironment,
 
     Push,
     Fetch,
@@ -638,6 +663,7 @@ entity_messages!(
     Pull,
     AskPassRequest,
     GitChangeBranch,
+    GitRenameBranch,
     GitCreateBranch,
     CheckForPushedCommits,
     GitDiff,
@@ -650,11 +676,15 @@ entity_messages!(
     GetDocumentDiagnostics,
     PullWorkspaceDiagnostics,
     GetDefaultBranch,
+    GetTreeDiff,
+    GetBlobContent,
     GitClone,
     GetAgentServerCommand,
     ExternalAgentsUpdated,
     ExternalAgentLoadingStatusUpdated,
     NewExternalAgentVersionAvailable,
+    GitGetWorktrees,
+    GitCreateWorktree
 );
 
 entity_messages!(
@@ -839,27 +869,8 @@ impl LspQuery {
             Some(lsp_query::Request::GetImplementation(_)) => ("GetImplementation", false),
             Some(lsp_query::Request::GetReferences(_)) => ("GetReferences", false),
             Some(lsp_query::Request::GetDocumentColor(_)) => ("GetDocumentColor", false),
+            Some(lsp_query::Request::InlayHints(_)) => ("InlayHints", false),
             None => ("<unknown>", true),
-        }
-    }
-}
-
-// todo(lsp) remove after Zed Stable hits v0.204.x
-impl MultiLspQuery {
-    pub fn request_str(&self) -> &str {
-        match self.request {
-            Some(multi_lsp_query::Request::GetHover(_)) => "GetHover",
-            Some(multi_lsp_query::Request::GetCodeActions(_)) => "GetCodeActions",
-            Some(multi_lsp_query::Request::GetSignatureHelp(_)) => "GetSignatureHelp",
-            Some(multi_lsp_query::Request::GetCodeLens(_)) => "GetCodeLens",
-            Some(multi_lsp_query::Request::GetDocumentDiagnostics(_)) => "GetDocumentDiagnostics",
-            Some(multi_lsp_query::Request::GetDocumentColor(_)) => "GetDocumentColor",
-            Some(multi_lsp_query::Request::GetDefinition(_)) => "GetDefinition",
-            Some(multi_lsp_query::Request::GetDeclaration(_)) => "GetDeclaration",
-            Some(multi_lsp_query::Request::GetTypeDefinition(_)) => "GetTypeDefinition",
-            Some(multi_lsp_query::Request::GetImplementation(_)) => "GetImplementation",
-            Some(multi_lsp_query::Request::GetReferences(_)) => "GetReferences",
-            None => "<unknown>",
         }
     }
 }
@@ -890,25 +901,5 @@ mod tests {
             id: u32::MAX,
         };
         assert_eq!(PeerId::from_u64(peer_id.as_u64()), peer_id);
-    }
-
-    #[test]
-    #[cfg(target_os = "windows")]
-    fn test_proto() {
-        use std::path::PathBuf;
-
-        fn generate_proto_path(path: PathBuf) -> PathBuf {
-            let proto = path.to_proto();
-            PathBuf::from_proto(proto)
-        }
-
-        let path = PathBuf::from("C:\\foo\\bar");
-        assert_eq!(path, generate_proto_path(path.clone()));
-
-        let path = PathBuf::from("C:/foo/bar/");
-        assert_eq!(path, generate_proto_path(path.clone()));
-
-        let path = PathBuf::from("C:/foo\\bar\\");
-        assert_eq!(path, generate_proto_path(path.clone()));
     }
 }

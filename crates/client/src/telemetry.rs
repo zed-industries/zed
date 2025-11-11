@@ -19,7 +19,7 @@ use std::sync::LazyLock;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::{AssistantEventData, AssistantPhase, Event, EventRequestBody, EventWrapper};
-use util::{ResultExt, TryFutureExt};
+use util::TryFutureExt;
 use worktree::{UpdatedEntriesSet, WorktreeId};
 
 use self::event_coalescer::EventCoalescer;
@@ -179,8 +179,6 @@ impl Telemetry {
         let release_channel =
             ReleaseChannel::try_global(cx).map(|release_channel| release_channel.display_name());
 
-        TelemetrySettings::register(cx);
-
         let state = Arc::new(Mutex::new(TelemetryState {
             settings: *TelemetrySettings::get_global(cx),
             architecture: env::consts::ARCH,
@@ -209,7 +207,7 @@ impl Telemetry {
             let os_version = os_version();
             state.lock().os_version = Some(os_version);
             async move {
-                if let Some(tempfile) = File::create(Self::log_file_path()).log_err() {
+                if let Some(tempfile) = File::create(Self::log_file_path()).ok() {
                     state.lock().log_file = Some(tempfile);
                 }
             }
@@ -405,7 +403,7 @@ impl Telemetry {
         let mut project_types: HashSet<&str> = HashSet::new();
 
         for (path, _, _) in updated_entries_set.iter() {
-            let Some(file_name) = path.file_name().and_then(|f| f.to_str()) else {
+            let Some(file_name) = path.file_name() else {
                 continue;
             };
 
@@ -437,7 +435,7 @@ impl Telemetry {
         Some(project_types)
     }
 
-    fn report_event(self: &Arc<Self>, event: Event) {
+    fn report_event(self: &Arc<Self>, mut event: Event) {
         let mut state = self.state.lock();
         // RUST_LOG=telemetry=trace to debug telemetry events
         log::trace!(target: "telemetry", "{:?}", event);
@@ -445,6 +443,12 @@ impl Telemetry {
         if !state.settings.metrics {
             return;
         }
+
+        match &mut event {
+            Event::Flexible(event) => event
+                .event_properties
+                .insert("event_source".into(), "zed".into()),
+        };
 
         if state.flush_events_task.is_none() {
             let this = self.clone();
@@ -601,6 +605,7 @@ mod tests {
     use http_client::FakeHttpClient;
     use std::collections::HashMap;
     use telemetry_events::FlexibleEvent;
+    use util::rel_path::RelPath;
     use worktree::{PathChange, ProjectEntryId, WorktreeId};
 
     #[gpui::test]
@@ -855,12 +860,12 @@ mod tests {
         let entries: Vec<_> = file_paths
             .into_iter()
             .enumerate()
-            .map(|(i, path)| {
-                (
-                    Arc::from(std::path::Path::new(path)),
+            .filter_map(|(i, path)| {
+                Some((
+                    Arc::from(RelPath::unix(path).ok()?),
                     ProjectEntryId::from_proto(i as u64 + 1),
                     PathChange::Added,
-                )
+                ))
             })
             .collect();
         let updated_entries: UpdatedEntriesSet = Arc::from(entries.as_slice());

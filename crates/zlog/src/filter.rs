@@ -1,9 +1,8 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    sync::{
-        OnceLock, RwLock,
-        atomic::{AtomicU8, Ordering},
-    },
+use collections::HashMap;
+use std::collections::VecDeque;
+use std::sync::{
+    OnceLock, RwLock,
+    atomic::{AtomicU8, Ordering},
 };
 
 use crate::{SCOPE_DEPTH_MAX, SCOPE_STRING_SEP_STR, Scope, ScopeAlloc, env_config, private};
@@ -42,6 +41,9 @@ const DEFAULT_FILTERS: &[(&str, log::LevelFilter)] = &[
     ("blade_graphics", log::LevelFilter::Warn),
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
     ("naga::back::spv::writer", log::LevelFilter::Warn),
+    // usvg prints a lot of warnings on rendering an SVG with partial errors, which
+    // can happen a lot with the SVG preview
+    ("usvg::parser::style", log::LevelFilter::Error),
 ];
 
 pub fn init_env_filter(filter: env_config::EnvFilter) {

@@ -3,6 +3,7 @@ pub mod commit;
 mod hosting_provider;
 mod remote;
 pub mod repository;
+pub mod stash;
 pub mod status;
 
 pub use crate::hosting_provider::*;
@@ -10,22 +11,18 @@ pub use crate::remote::*;
 use anyhow::{Context as _, Result};
 pub use git2 as libgit;
 use gpui::{Action, actions};
-pub use repository::WORK_DIRECTORY_REPO_PATH;
+pub use repository::RemoteCommandOutput;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::ffi::OsStr;
 use std::fmt;
 use std::str::FromStr;
-use std::sync::LazyLock;
 
-pub static DOT_GIT: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".git"));
-pub static GITIGNORE: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".gitignore"));
-pub static FSMONITOR_DAEMON: LazyLock<&'static OsStr> =
-    LazyLock::new(|| OsStr::new("fsmonitor--daemon"));
-pub static LFS_DIR: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("lfs"));
-pub static COMMIT_MESSAGE: LazyLock<&'static OsStr> =
-    LazyLock::new(|| OsStr::new("COMMIT_EDITMSG"));
-pub static INDEX_LOCK: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("index.lock"));
+pub const DOT_GIT: &str = ".git";
+pub const GITIGNORE: &str = ".gitignore";
+pub const FSMONITOR_DAEMON: &str = "fsmonitor--daemon";
+pub const LFS_DIR: &str = "lfs";
+pub const COMMIT_MESSAGE: &str = "COMMIT_EDITMSG";
+pub const INDEX_LOCK: &str = "index.lock";
 
 actions!(
     git,
@@ -59,6 +56,8 @@ actions!(
         StashAll,
         /// Pops the most recent stash.
         StashPop,
+        /// Apply the most recent stash.
+        StashApply,
         /// Restores all tracked files to their last committed state.
         RestoreTrackedFiles,
         /// Moves all untracked files to trash.
@@ -73,6 +72,8 @@ actions!(
         ForcePush,
         /// Pulls changes from the remote repository.
         Pull,
+        /// Pulls changes from the remote repository with rebase.
+        PullRebase,
         /// Fetches changes from the remote repository.
         Fetch,
         /// Fetches changes from a specific remote.
@@ -95,8 +96,22 @@ actions!(
         OpenModifiedFiles,
         /// Clones a repository.
         Clone,
+        /// Adds a file to .gitignore.
+        AddToGitignore,
     ]
 );
+
+/// Renames a git branch.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = git)]
+#[serde(deny_unknown_fields)]
+pub struct RenameBranch {
+    /// The branch to rename.
+    ///
+    /// Default: the current branch.
+    #[serde(default)]
+    pub branch: Option<String>,
+}
 
 /// Restores a file to its last committed state, discarding local changes.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]

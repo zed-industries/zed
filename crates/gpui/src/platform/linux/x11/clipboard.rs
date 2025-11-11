@@ -86,6 +86,7 @@ x11rb::atom_manager! {
         SVG__MIME: ImageFormat::mime_type(ImageFormat::Svg ).as_bytes(),
         BMP__MIME: ImageFormat::mime_type(ImageFormat::Bmp ).as_bytes(),
         TIFF_MIME: ImageFormat::mime_type(ImageFormat::Tiff).as_bytes(),
+        ICO__MIME: ImageFormat::mime_type(ImageFormat::Ico ).as_bytes(),
 
         // This is just some random name for the property on our window, into which
         // the clipboard owner writes the data we requested.
@@ -957,15 +958,17 @@ impl Clipboard {
         }
         // At this point we know that the clipboard does not exist.
         let ctx = Arc::new(Inner::new()?);
-        let join_handle;
-        {
-            let ctx = Arc::clone(&ctx);
-            join_handle = std::thread::spawn(move || {
-                if let Err(error) = serve_requests(ctx) {
-                    log::error!("Worker thread errored with: {}", error);
+        let join_handle = std::thread::Builder::new()
+            .name("Clipboard".to_owned())
+            .spawn({
+                let ctx = Arc::clone(&ctx);
+                move || {
+                    if let Err(error) = serve_requests(ctx) {
+                        log::error!("Worker thread errored with: {}", error);
+                    }
                 }
-            });
-        }
+            })
+            .unwrap();
         *global_cb = Some(GlobalClipboard {
             inner: Arc::clone(&ctx),
             server_handle: join_handle,
@@ -1001,6 +1004,7 @@ impl Clipboard {
             ImageFormat::Svg => self.inner.atoms.SVG__MIME,
             ImageFormat::Bmp => self.inner.atoms.BMP__MIME,
             ImageFormat::Tiff => self.inner.atoms.TIFF_MIME,
+            ImageFormat::Ico => self.inner.atoms.ICO__MIME,
         };
         let data = vec![ClipboardData {
             bytes: image.bytes,

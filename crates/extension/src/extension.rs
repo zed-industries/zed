@@ -16,6 +16,7 @@ use gpui::{App, Task};
 use language::LanguageName;
 use semantic_version::SemanticVersion;
 use task::{SpawnInTerminal, ZedDebugConfig};
+use util::rel_path::RelPath;
 
 pub use crate::capabilities::*;
 pub use crate::extension_events::*;
@@ -33,7 +34,7 @@ pub fn init(cx: &mut App) {
 pub trait WorktreeDelegate: Send + Sync + 'static {
     fn id(&self) -> u64;
     fn root_path(&self) -> String;
-    async fn read_text_file(&self, path: PathBuf) -> Result<String>;
+    async fn read_text_file(&self, path: &RelPath) -> Result<String>;
     async fn which(&self, binary_name: String) -> Option<String>;
     async fn shell_env(&self) -> Vec<(String, String)>;
 }

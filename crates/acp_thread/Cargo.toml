@@ -39,14 +39,13 @@ serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
 task.workspace = true
+telemetry.workspace = true
 terminal.workspace = true
 ui.workspace = true
 url.workspace = true
 util.workspace = true
 uuid.workspace = true
 watch.workspace = true
-which.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 env_logger.workspace = true
@@ -58,3 +57,4 @@ rand.workspace = true
 tempfile.workspace = true
 util.workspace = true
 settings.workspace = true
+zlog.workspace = true

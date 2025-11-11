@@ -54,25 +54,9 @@ pub struct ShapedGlyph {
 }
 
 impl LineLayout {
-    /// The index for the character at the given x coordinate
-    pub fn index_for_x(&self, x: Pixels) -> Option<usize> {
-        if x >= self.width {
-            None
-        } else {
-            for run in self.runs.iter().rev() {
-                for glyph in run.glyphs.iter().rev() {
-                    if glyph.position.x <= x {
-                        return Some(glyph.index);
-                    }
-                }
-            }
-            Some(0)
-        }
-    }
-
     /// closest_index_for_x returns the character boundary closest to the given x coordinate
     /// (e.g. to handle aligning up/down arrow keys)
-    pub fn closest_index_for_x(&self, x: Pixels) -> usize {
+    pub fn index_for_x(&self, x: Pixels) -> usize {
         let mut prev_index = 0;
         let mut prev_x = px(0.);
 
@@ -278,34 +262,10 @@ impl WrappedLineLayout {
     }
 
     /// The index corresponding to a given position in this layout for the given line height.
-    ///
-    /// See also [`Self::closest_index_for_position`].
     pub fn index_for_position(
-        &self,
-        position: Point<Pixels>,
-        line_height: Pixels,
-    ) -> Result<usize, usize> {
-        self._index_for_position(position, line_height, false)
-    }
-
-    /// The closest index to a given position in this layout for the given line height.
-    ///
-    /// Closest means the character boundary closest to the given position.
-    ///
-    /// See also [`LineLayout::closest_index_for_x`].
-    pub fn closest_index_for_position(
-        &self,
-        position: Point<Pixels>,
-        line_height: Pixels,
-    ) -> Result<usize, usize> {
-        self._index_for_position(position, line_height, true)
-    }
-
-    fn _index_for_position(
         &self,
         mut position: Point<Pixels>,
         line_height: Pixels,
-        closest: bool,
     ) -> Result<usize, usize> {
         let wrapped_line_ix = (position.y / line_height) as usize;
 
@@ -345,16 +305,9 @@ impl WrappedLineLayout {
         } else if position_in_unwrapped_line.x >= wrapped_line_end_x {
             Err(wrapped_line_end_index)
         } else {
-            if closest {
-                Ok(self
-                    .unwrapped_layout
-                    .closest_index_for_x(position_in_unwrapped_line.x))
-            } else {
-                Ok(self
-                    .unwrapped_layout
-                    .index_for_x(position_in_unwrapped_line.x)
-                    .unwrap())
-            }
+            Ok(self
+                .unwrapped_layout
+                .index_for_x(position_in_unwrapped_line.x))
         }
     }
 
@@ -501,7 +454,7 @@ impl LineLayoutCache {
         } else {
             drop(current_frame);
             let text = SharedString::from(text);
-            let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs);
+            let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs, None);
             let wrap_boundaries = if let Some(wrap_width) = wrap_width {
                 unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
             } else {
@@ -531,19 +484,6 @@ impl LineLayoutCache {
     }
 
     pub fn layout_line<Text>(
-        &self,
-        text: Text,
-        font_size: Pixels,
-        runs: &[FontRun],
-    ) -> Arc<LineLayout>
-    where
-        Text: AsRef<str>,
-        SharedString: From<Text>,
-    {
-        self.layout_line_internal(text, font_size, runs, None)
-    }
-
-    pub fn layout_line_internal<Text>(
         &self,
         text: Text,
         font_size: Pixels,
@@ -634,15 +574,15 @@ struct CacheKeyRef<'a> {
     force_width: Option<Pixels>,
 }
 
-impl PartialEq for (dyn AsCacheKeyRef + '_) {
+impl PartialEq for dyn AsCacheKeyRef + '_ {
     fn eq(&self, other: &dyn AsCacheKeyRef) -> bool {
         self.as_cache_key_ref() == other.as_cache_key_ref()
     }
 }
 
-impl Eq for (dyn AsCacheKeyRef + '_) {}
+impl Eq for dyn AsCacheKeyRef + '_ {}
 
-impl Hash for (dyn AsCacheKeyRef + '_) {
+impl Hash for dyn AsCacheKeyRef + '_ {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.as_cache_key_ref().hash(state)
     }

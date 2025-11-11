@@ -315,19 +315,17 @@ impl Render for LanguageServerPrompt {
                                     )
                                     .child(
                                         IconButton::new(close_id, close_icon)
-                                            .tooltip(move |window, cx| {
+                                            .tooltip(move |_window, cx| {
                                                 if suppress {
                                                     Tooltip::for_action(
                                                         "Suppress.\nClose with click.",
                                                         &SuppressNotification,
-                                                        window,
                                                         cx,
                                                     )
                                                 } else {
                                                     Tooltip::for_action(
                                                         "Close.\nSuppress with shift-click.",
                                                         &menu::Cancel,
-                                                        window,
                                                         cx,
                                                     )
                                                 }
@@ -499,7 +497,7 @@ impl NotificationFrame {
     }
 
     /// Determines whether the given notification ID should be suppressible
-    /// Suppressed motifications will not be shown anymore
+    /// Suppressed notifications will not be shown anymore
     pub fn show_suppress_button(mut self, show: bool) -> Self {
         self.show_suppress_button = show;
         self
@@ -556,23 +554,21 @@ impl RenderOnce for NotificationFrame {
                         this.on_modifiers_changed(move |_, _, cx| cx.notify(entity))
                             .child(
                                 IconButton::new(close_id, close_icon)
-                                    .tooltip(move |window, cx| {
+                                    .tooltip(move |_window, cx| {
                                         if suppress {
                                             Tooltip::for_action(
                                                 "Suppress.\nClose with click.",
                                                 &SuppressNotification,
-                                                window,
                                                 cx,
                                             )
                                         } else if show_suppress_button {
                                             Tooltip::for_action(
                                                 "Close.\nSuppress with shift-click.",
                                                 &menu::Cancel,
-                                                window,
                                                 cx,
                                             )
                                         } else {
-                                            Tooltip::for_action("Close", &menu::Cancel, window, cx)
+                                            Tooltip::for_action("Close", &menu::Cancel, cx)
                                         }
                                     })
                                     .on_click({
@@ -761,8 +757,8 @@ pub mod simple_message_notification {
             self
         }
 
-        /// Determines whether the given notification ID should be supressable
-        /// Suppressed motifications will not be shown anymor
+        /// Determines whether the given notification ID should be suppressible
+        /// Suppressed notifications will not be shown anymor
         pub fn show_suppress_button(mut self, show: bool) -> Self {
             self.show_suppress_button = show;
             self

@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:15
+    image: docker.io/library/postgres:15
     container_name: zed_postgres
     ports:
       - 5432:5432
@@ -23,7 +23,7 @@ services:
       - ./.blob_store:/data
 
   livekit_server:
-    image: livekit/livekit-server
+    image: docker.io/livekit/livekit-server
     container_name: livekit_server
     entrypoint: /livekit-server --config /livekit.yaml
     ports:
@@ -33,34 +33,8 @@ services:
     volumes:
       - ./livekit.yaml:/livekit.yaml
 
-  postgrest_app:
-    image: postgrest/postgrest
-    container_name: postgrest_app
-    ports:
-      - 8081:8081
-    environment:
-      PGRST_DB_URI: postgres://postgres@postgres:5432/zed
-    volumes:
-      - ./crates/collab/postgrest_app.conf:/etc/postgrest.conf
-    command: postgrest /etc/postgrest.conf
-    depends_on:
-      - postgres
-
-  postgrest_llm:
-    image: postgrest/postgrest
-    container_name: postgrest_llm
-    ports:
-      - 8082:8082
-    environment:
-      PGRST_DB_URI: postgres://postgres@postgres:5432/zed_llm
-    volumes:
-      - ./crates/collab/postgrest_llm.conf:/etc/postgrest.conf
-    command: postgrest /etc/postgrest.conf
-    depends_on:
-      - postgres
-
   stripe-mock:
-    image: stripe/stripe-mock:v0.178.0
+    image: docker.io/stripe/stripe-mock:v0.178.0
     ports:
       - 12111:12111
       - 12112:12112

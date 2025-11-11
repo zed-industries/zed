@@ -6,7 +6,9 @@ use gpui::{AppContext, Entity, TestAppContext};
 use indoc::indoc;
 #[cfg(test)]
 use project::agent_server_store::BuiltinAgentServerSettings;
-use project::{FakeFs, Project, agent_server_store::AllAgentServersSettings};
+use project::{FakeFs, Project};
+#[cfg(test)]
+use settings::Settings;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -83,6 +85,7 @@ where
                     acp::ContentBlock::Text(acp::TextContent {
                         text: "Read the file ".into(),
                         annotations: None,
+                        meta: None,
                     }),
                     acp::ContentBlock::ResourceLink(acp::ResourceLink {
                         uri: "foo.rs".into(),
@@ -92,10 +95,12 @@ where
                         mime_type: None,
                         size: None,
                         title: None,
+                        meta: None,
                     }),
                     acp::ContentBlock::Text(acp::TextContent {
                         text: " and tell me what the content of the println! is".into(),
                         annotations: None,
+                        meta: None,
                     }),
                 ],
                 cx,
@@ -449,29 +454,22 @@ pub use common_e2e_tests;
 // Helpers
 
 pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
-    use settings::Settings;
-
     env_logger::try_init().ok();
 
     cx.update(|cx| {
         let settings_store = settings::SettingsStore::test(cx);
         cx.set_global(settings_store);
-        Project::init_settings(cx);
-        language::init(cx);
         gpui_tokio::init(cx);
         let http_client = reqwest_client::ReqwestClient::user_agent("agent tests").unwrap();
         cx.set_http_client(Arc::new(http_client));
-        client::init_settings(cx);
         let client = client::Client::production(cx);
         let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));
         language_model::init(client.clone(), cx);
         language_models::init(user_store, client, cx);
-        agent_settings::init(cx);
-        AllAgentServersSettings::register(cx);
 
         #[cfg(test)]
-        AllAgentServersSettings::override_global(
-            AllAgentServersSettings {
+        project::agent_server_store::AllAgentServersSettings::override_global(
+            project::agent_server_store::AllAgentServersSettings {
                 claude: Some(BuiltinAgentServerSettings {
                     path: Some("claude-code-acp".into()),
                     args: None,
@@ -480,6 +478,13 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
                     default_mode: None,
                 }),
                 gemini: Some(crate::gemini::tests::local_command().into()),
+                codex: Some(BuiltinAgentServerSettings {
+                    path: Some("codex-acp".into()),
+                    args: None,
+                    env: None,
+                    ignore_system_version: None,
+                    default_mode: None,
+                }),
                 custom: collections::HashMap::default(),
             },
             cx,

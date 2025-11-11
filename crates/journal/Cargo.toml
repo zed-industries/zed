@@ -18,12 +18,10 @@ chrono.workspace = true
 editor.workspace = true
 gpui.workspace = true
 log.workspace = true
-schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 shellexpand.workspace = true
 workspace.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

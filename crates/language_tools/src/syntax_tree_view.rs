@@ -3,7 +3,7 @@ use editor::{Anchor, Editor, ExcerptId, SelectionEffects, scroll::Autoscroll};
 use gpui::{
     App, AppContext as _, Context, Div, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
-    ParentElement, Render, ScrollStrategy, SharedString, Styled, UniformListScrollHandle,
+    ParentElement, Render, ScrollStrategy, SharedString, Styled, Task, UniformListScrollHandle,
     WeakEntity, Window, actions, div, rems, uniform_list,
 };
 use language::{Buffer, OwnedSyntaxLayer};
@@ -12,7 +12,8 @@ use theme::ActiveTheme;
 use tree_sitter::{Node, TreeCursor};
 use ui::{
     ButtonCommon, ButtonLike, Clickable, Color, ContextMenu, FluentBuilder as _, IconButton,
-    IconName, Label, LabelCommon, LabelSize, PopoverMenu, StyledExt, Tooltip, h_flex, v_flex,
+    IconName, Label, LabelCommon, LabelSize, PopoverMenu, StyledExt, Tooltip, WithScrollbar,
+    h_flex, v_flex,
 };
 use workspace::{
     Event as WorkspaceEvent, SplitDirection, ToolbarItemEvent, ToolbarItemLocation,
@@ -251,10 +252,13 @@ impl SyntaxTreeView {
             .editor
             .update(cx, |editor, cx| editor.snapshot(window, cx));
         let (buffer, range, excerpt_id) = editor_state.editor.update(cx, |editor, cx| {
-            let selection_range = editor.selections.last::<usize>(cx).range();
+            let selection_range = editor
+                .selections
+                .last::<usize>(&editor.display_snapshot(cx))
+                .range();
             let multi_buffer = editor.buffer().read(cx);
             let (buffer, range, excerpt_id) = snapshot
-                .buffer_snapshot
+                .buffer_snapshot()
                 .range_to_buffer_ranges(selection_range)
                 .pop()?;
             let buffer = multi_buffer.buffer(buffer.remote_id()).unwrap();
@@ -355,12 +359,7 @@ impl SyntaxTreeView {
         let multibuffer = editor_state.editor.read(cx).buffer();
         let multibuffer = multibuffer.read(cx).snapshot(cx);
         let excerpt_id = buffer_state.excerpt_id;
-        let range = multibuffer
-            .anchor_in_excerpt(excerpt_id, range.start)
-            .unwrap()
-            ..multibuffer
-                .anchor_in_excerpt(excerpt_id, range.end)
-                .unwrap();
+        let range = multibuffer.anchor_range_in_excerpt(excerpt_id, range)?;
 
         // Update the editor with the anchor range.
         editor_state.editor.update(cx, |editor, cx| {
@@ -487,7 +486,7 @@ impl SyntaxTreeView {
 }
 
 impl Render for SyntaxTreeView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex_1()
             .bg(cx.theme().colors().editor_background)
@@ -512,6 +511,8 @@ impl Render for SyntaxTreeView {
                         .text_bg(cx.theme().colors().background)
                         .into_any_element(),
                     )
+                    .vertical_scrollbar_for(self.list_scroll_handle.clone(), window, cx)
+                    .into_any_element()
                 } else {
                     let inner_content = v_flex()
                         .items_center()
@@ -540,6 +541,7 @@ impl Render for SyntaxTreeView {
                         .size_full()
                         .justify_center()
                         .child(inner_content)
+                        .into_any_element()
                 }
             })
     }
@@ -566,22 +568,26 @@ impl Item for SyntaxTreeView {
         None
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| {
+        Task::ready(Some(cx.new(|cx| {
             let mut clone = Self::new(self.workspace_handle.clone(), None, window, cx);
             if let Some(editor) = &self.editor {
                 clone.set_editor(editor.editor.clone(), window, cx)
             }
             clone
-        }))
+        })))
     }
 }
 

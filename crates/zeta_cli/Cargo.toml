@@ -13,10 +13,16 @@ name = "zeta"
 path = "src/main.rs"
 
 [dependencies]
+
 anyhow.workspace = true
+chrono.workspace = true
 clap.workspace = true
 client.workspace = true
+cloud_llm_client.workspace= true
+cloud_zeta2_prompt.workspace= true
+collections.workspace = true
 debug_adapter_extension.workspace = true
+edit_prediction_context.workspace = true
 extension.workspace = true
 fs.workspace = true
 futures.workspace = true
@@ -27,19 +33,32 @@ language_extension.workspace = true
 language_model.workspace = true
 language_models.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }
+log.workspace = true
 node_runtime.workspace = true
+ordered-float.workspace = true
 paths.workspace = true
+polars = { version = "0.51", features = ["lazy", "dtype-struct", "parquet"] }
 project.workspace = true
 prompt_store.workspace = true
+pulldown-cmark.workspace = true
 release_channel.workspace = true
 reqwest_client.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 shellexpand.workspace = true
+smol.workspace = true
+soa-rs = "0.8.1"
 terminal_view.workspace = true
+toml.workspace = true
 util.workspace = true
 watch.workspace = true
-workspace-hack.workspace = true
 zeta.workspace = true
-smol.workspace = true
+zeta2 = { workspace = true, features = ["llm-response-cache"] }
+zlog.workspace = true
+
+[dev-dependencies]
+indoc.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true

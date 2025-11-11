@@ -22,16 +22,15 @@ use futures::{
     channel::oneshot, future::BoxFuture,
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
-use http_client::{HttpClient, HttpClientWithUrl, http};
+use http_client::{HttpClient, HttpClientWithUrl, http, read_proxy_from_env};
 use parking_lot::RwLock;
 use postage::watch;
 use proxy::connect_proxy_stream;
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+use settings::{RegisterSetting, Settings, SettingsContent};
 use std::{
     any::TypeId,
     convert::TryFrom,
@@ -96,64 +95,49 @@ actions!(
     ]
 );
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key(None)]
-pub struct ClientSettingsContent {
-    server_url: Option<String>,
-}
-
-#[derive(Deserialize)]
+#[derive(Deserialize, RegisterSetting)]
 pub struct ClientSettings {
     pub server_url: String,
 }
 
 impl Settings for ClientSettings {
-    type FileContent = ClientSettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        let mut result = sources.json_merge::<Self>()?;
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         if let Some(server_url) = &*ZED_SERVER_URL {
-            result.server_url.clone_from(server_url)
+            return Self {
+                server_url: server_url.clone(),
+            };
         }
-        Ok(result)
+        Self {
+            server_url: content.server_url.clone().unwrap(),
+        }
     }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key(None)]
-pub struct ProxySettingsContent {
-    proxy: Option<String>,
-}
-
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, RegisterSetting)]
 pub struct ProxySettings {
     pub proxy: Option<String>,
 }
 
-impl Settings for ProxySettings {
-    type FileContent = ProxySettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        Ok(Self {
-            proxy: sources
-                .user
-                .or(sources.server)
-                .and_then(|value| value.proxy.clone())
-                .or(sources.default.proxy.clone()),
-        })
-    }
-
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
-        vscode.string_setting("http.proxy", &mut current.proxy);
+impl ProxySettings {
+    pub fn proxy_url(&self) -> Option<Url> {
+        self.proxy
+            .as_ref()
+            .and_then(|input| {
+                input
+                    .parse::<Url>()
+                    .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
+                    .ok()
+            })
+            .or_else(read_proxy_from_env)
     }
 }
 
-pub fn init_settings(cx: &mut App) {
-    TelemetrySettings::register(cx);
-    ClientSettings::register(cx);
-    ProxySettings::register(cx);
+impl Settings for ProxySettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        Self {
+            proxy: content.proxy.clone(),
+        }
+    }
 }
 
 pub fn init(client: &Arc<Client>, cx: &mut App) {
@@ -518,43 +502,18 @@ impl<T: 'static> Drop for PendingEntitySubscription<T> {
     }
 }
 
-#[derive(Copy, Clone, Deserialize, Debug)]
+#[derive(Copy, Clone, Deserialize, Debug, RegisterSetting)]
 pub struct TelemetrySettings {
     pub diagnostics: bool,
     pub metrics: bool,
 }
 
-/// Control what info is collected by Zed.
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
-#[settings_key(key = "telemetry")]
-pub struct TelemetrySettingsContent {
-    /// Send debug info like crash reports.
-    ///
-    /// Default: true
-    pub diagnostics: Option<bool>,
-    /// Send anonymized usage data like what languages you're using Zed with.
-    ///
-    /// Default: true
-    pub metrics: Option<bool>,
-}
-
 impl settings::Settings for TelemetrySettings {
-    type FileContent = TelemetrySettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        sources.json_merge()
-    }
-
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
-        vscode.enum_setting("telemetry.telemetryLevel", &mut current.metrics, |s| {
-            Some(s == "all")
-        });
-        vscode.enum_setting("telemetry.telemetryLevel", &mut current.diagnostics, |s| {
-            Some(matches!(s, "all" | "error" | "crash"))
-        });
-        // we could translate telemetry.telemetryLevel, but just because users didn't want
-        // to send microsoft telemetry doesn't mean they don't want to send it to zed. their
-        // all/error/crash/off correspond to combinations of our "diagnostics" and "metrics".
+    fn from_settings(content: &SettingsContent) -> Self {
+        Self {
+            diagnostics: content.telemetry.as_ref().unwrap().diagnostics.unwrap(),
+            metrics: content.telemetry.as_ref().unwrap().metrics.unwrap(),
+        }
     }
 }
 
@@ -1528,7 +1487,7 @@ impl Client {
 
         let url = self
             .http
-            .build_zed_cloud_url("/internal/users/impersonate", &[])?;
+            .build_zed_cloud_url("/internal/users/impersonate")?;
         let request = Request::post(url.as_str())
             .header("Content-Type", "application/json")
             .header("Authorization", format!("Bearer {api_token}"))
@@ -2212,7 +2171,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            init_settings(cx);
         });
     }
 }

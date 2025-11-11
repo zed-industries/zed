@@ -205,14 +205,8 @@ setTimeout(() => {
         ZED_WINDOW_POSITION: position,
         ZED_STATELESS: isStateful && i == 0 ? "" : "1",
         ZED_ALWAYS_ACTIVE: "1",
-        ZED_SERVER_URL:
-          platform === "win32"
-            ? "http://127.0.0.1:3000"
-            : "http://localhost:3000",
-        ZED_RPC_URL:
-          platform === "win32"
-            ? "http://127.0.0.1:8080/rpc"
-            : "http://localhost:8080/rpc",
+        ZED_SERVER_URL: "http://localhost:3000",
+        ZED_RPC_URL: "http://localhost:8080/rpc",
         ZED_ADMIN_API_TOKEN: "internal-api-key-secret",
         ZED_WINDOW_SIZE: size,
         ZED_CLIENT_CHECKSUM_SEED: "development-checksum-seed",

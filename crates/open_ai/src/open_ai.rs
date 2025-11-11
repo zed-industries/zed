@@ -6,6 +6,7 @@ use http_client::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+pub use settings::OpenAiReasoningEffort as ReasoningEffort;
 use std::{convert::TryFrom, future::Future};
 use strum::EnumIter;
 use thiserror::Error;
@@ -282,16 +283,6 @@ pub enum ToolChoice {
     Other(ToolDefinition),
 }
 
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-#[serde(rename_all = "lowercase")]
-pub enum ReasoningEffort {
-    Minimal,
-    Low,
-    Medium,
-    High,
-}
-
 #[derive(Clone, Deserialize, Serialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolDefinition {
@@ -306,7 +297,7 @@ pub struct FunctionDefinition {
     pub parameters: Option<Value>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum RequestMessage {
     Assistant {
@@ -379,23 +370,40 @@ pub struct ImageUrl {
     pub detail: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct ToolCall {
     pub id: String,
     #[serde(flatten)]
     pub content: ToolCallContent,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ToolCallContent {
     Function { function: FunctionContent },
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct FunctionContent {
     pub name: String,
     pub arguments: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct Response {
+    pub id: String,
+    pub object: String,
+    pub created: u64,
+    pub model: String,
+    pub choices: Vec<Choice>,
+    pub usage: Usage,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct Choice {
+    pub index: u32,
+    pub message: RequestMessage,
+    pub finish_reason: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -423,7 +431,7 @@ pub struct FunctionChunk {
     pub arguments: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
@@ -433,7 +441,7 @@ pub struct Usage {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ChoiceDelta {
     pub index: u32,
-    pub delta: ResponseMessageDelta,
+    pub delta: Option<ResponseMessageDelta>,
     pub finish_reason: Option<String>,
 }
 

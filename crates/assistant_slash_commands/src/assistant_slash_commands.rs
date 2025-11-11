@@ -1,4 +1,3 @@
-mod cargo_workspace_command;
 mod context_server_command;
 mod default_command;
 mod delta_command;
@@ -12,7 +11,6 @@ mod streaming_example_command;
 mod symbols_command;
 mod tab_command;
 
-pub use crate::cargo_workspace_command::*;
 pub use crate::context_server_command::*;
 pub use crate::default_command::*;
 pub use crate::delta_command::*;

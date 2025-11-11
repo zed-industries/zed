@@ -1,22 +1,23 @@
 mod async_body;
 pub mod github;
+pub mod github_download;
 
 pub use anyhow::{Result, anyhow};
 pub use async_body::{AsyncBody, Inner};
 use derive_more::Deref;
 use http::HeaderValue;
-pub use http::{self, Method, Request, Response, StatusCode, Uri};
+pub use http::{self, Method, Request, Response, StatusCode, Uri, request::Builder};
 
 use futures::{
     FutureExt as _,
     future::{self, BoxFuture},
 };
-use http::request::Builder;
 use parking_lot::Mutex;
+use serde::Serialize;
 #[cfg(feature = "test-support")]
 use std::fmt;
 use std::{any::type_name, sync::Arc};
-pub use url::Url;
+pub use url::{Host, Url};
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RedirectPolicy {
@@ -28,6 +29,25 @@ pub enum RedirectPolicy {
 pub struct FollowRedirects(pub bool);
 
 pub trait HttpRequestExt {
+    /// Conditionally modify self with the given closure.
+    fn when(self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        if condition { then(self) } else { self }
+    }
+
+    /// Conditionally unwrap and modify self with the given closure, if the given option is Some.
+    fn when_some<T>(self, option: Option<T>, then: impl FnOnce(Self, T) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        match option {
+            Some(value) => then(self, value),
+            None => self,
+        }
+    }
+
     /// Whether or not to follow redirects
     fn follow_redirects(self, follow: RedirectPolicy) -> Self;
 }
@@ -48,12 +68,12 @@ pub trait HttpClient: 'static + Send + Sync {
         req: http::Request<AsyncBody>,
     ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>>;
 
-    fn get<'a>(
-        &'a self,
+    fn get(
+        &self,
         uri: &str,
         body: AsyncBody,
         follow_redirects: bool,
-    ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
+    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
         let request = Builder::new()
             .uri(uri)
             .follow_redirects(if follow_redirects {
@@ -64,16 +84,16 @@ pub trait HttpClient: 'static + Send + Sync {
             .body(body);
 
         match request {
-            Ok(request) => Box::pin(async move { self.send(request).await }),
+            Ok(request) => self.send(request),
             Err(e) => Box::pin(async move { Err(e.into()) }),
         }
     }
 
-    fn post_json<'a>(
-        &'a self,
+    fn post_json(
+        &self,
         uri: &str,
         body: AsyncBody,
-    ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
+    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
         let request = Builder::new()
             .uri(uri)
             .method(Method::POST)
@@ -81,7 +101,7 @@ pub trait HttpClient: 'static + Send + Sync {
             .body(body);
 
         match request {
-            Ok(request) => Box::pin(async move { self.send(request).await }),
+            Ok(request) => self.send(request),
             Err(e) => Box::pin(async move { Err(e.into()) }),
         }
     }
@@ -236,7 +256,7 @@ impl HttpClientWithUrl {
     }
 
     /// Builds a Zed Cloud URL using the given path.
-    pub fn build_zed_cloud_url(&self, path: &str, query: &[(&str, &str)]) -> Result<Url> {
+    pub fn build_zed_cloud_url(&self, path: &str) -> Result<Url> {
         let base_url = self.base_url();
         let base_api_url = match base_url.as_ref() {
             "https://zed.dev" => "https://cloud.zed.dev",
@@ -245,10 +265,20 @@ impl HttpClientWithUrl {
             other => other,
         };
 
-        Ok(Url::parse_with_params(
-            &format!("{}{}", base_api_url, path),
-            query,
-        )?)
+        Ok(Url::parse(&format!("{}{}", base_api_url, path))?)
+    }
+
+    /// Builds a Zed Cloud URL using the given path and query params.
+    pub fn build_zed_cloud_url_with_query(&self, path: &str, query: impl Serialize) -> Result<Url> {
+        let base_url = self.base_url();
+        let base_api_url = match base_url.as_ref() {
+            "https://zed.dev" => "https://cloud.zed.dev",
+            "https://staging.zed.dev" => "https://cloud.zed.dev",
+            "http://localhost:3000" => "http://localhost:8787",
+            other => other,
+        };
+        let query = serde_urlencoded::to_string(&query)?;
+        Ok(Url::parse(&format!("{}{}?{}", base_api_url, path, query))?)
     }
 
     /// Builds a Zed LLM URL using the given path.
@@ -316,6 +346,12 @@ pub fn read_proxy_from_env() -> Option<Url> {
         .iter()
         .find_map(|var| std::env::var(var).ok())
         .and_then(|env| env.parse().ok())
+}
+
+pub fn read_no_proxy_from_env() -> Option<String> {
+    const ENV_VARS: &[&str] = &["NO_PROXY", "no_proxy"];
+
+    ENV_VARS.iter().find_map(|var| std::env::var(var).ok())
 }
 
 pub struct BlockedHttpClient;

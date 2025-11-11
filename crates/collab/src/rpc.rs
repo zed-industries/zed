@@ -33,9 +33,10 @@ pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use futures::TryFutureExt as _;
 use reqwest_client::ReqwestClient;
-use rpc::proto::{MultiLspQuery, split_repository_update};
+use rpc::proto::split_repository_update;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 use tracing::Span;
+use util::paths::PathStyle;
 
 use futures::{
     FutureExt, SinkExt, StreamExt, TryStreamExt, channel::oneshot, future::BoxFuture,
@@ -335,10 +336,6 @@ impl Server {
             .add_message_handler(update_language_server)
             .add_message_handler(update_diagnostic_summary)
             .add_message_handler(update_worktree_settings)
-            .add_request_handler(forward_read_only_project_request::<proto::GetHover>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetDefinition>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetTypeDefinition>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetReferences>)
             .add_request_handler(forward_read_only_project_request::<proto::FindSearchCandidates>)
             .add_request_handler(forward_read_only_project_request::<proto::GetDocumentHighlights>)
             .add_request_handler(forward_read_only_project_request::<proto::GetDocumentSymbols>)
@@ -346,12 +343,12 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferForSymbol>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferById>)
             .add_request_handler(forward_read_only_project_request::<proto::SynchronizeBuffers>)
-            .add_request_handler(forward_read_only_project_request::<proto::InlayHints>)
             .add_request_handler(forward_read_only_project_request::<proto::ResolveInlayHint>)
             .add_request_handler(forward_read_only_project_request::<proto::GetColorPresentation>)
-            .add_request_handler(forward_mutating_project_request::<proto::GetCodeLens>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferByPath>)
+            .add_request_handler(forward_read_only_project_request::<proto::OpenImageByPath>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetBranches>)
+            .add_request_handler(forward_read_only_project_request::<proto::GetDefaultBranch>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUnstagedDiff>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUncommittedDiff>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtExpandMacro>)
@@ -364,7 +361,6 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::LspExtCancelFlycheck>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtRunFlycheck>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtClearFlycheck>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetDocumentDiagnostics>)
             .add_request_handler(
                 forward_mutating_project_request::<proto::RegisterBufferWithLanguageServers>,
             )
@@ -377,7 +373,6 @@ impl Server {
             .add_request_handler(
                 forward_mutating_project_request::<proto::ResolveCompletionDocumentation>,
             )
-            .add_request_handler(forward_mutating_project_request::<proto::GetCodeActions>)
             .add_request_handler(forward_mutating_project_request::<proto::ApplyCodeAction>)
             .add_request_handler(forward_mutating_project_request::<proto::PrepareRename>)
             .add_request_handler(forward_mutating_project_request::<proto::PerformRename>)
@@ -395,13 +390,13 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::OnTypeFormatting>)
             .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
-            .add_request_handler(multi_lsp_query)
             .add_request_handler(lsp_query)
             .add_message_handler(broadcast_project_message_from_host::<proto::LspQueryResponse>)
             .add_request_handler(forward_mutating_project_request::<proto::RestartLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::StopLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::LinkedEditingRange>)
             .add_message_handler(create_buffer_for_peer)
+            .add_message_handler(create_image_for_peer)
             .add_request_handler(update_buffer)
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshInlayHints>)
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshCodeLens>)
@@ -456,6 +451,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::Unstage>)
             .add_request_handler(forward_mutating_project_request::<proto::Stash>)
             .add_request_handler(forward_mutating_project_request::<proto::StashPop>)
+            .add_request_handler(forward_mutating_project_request::<proto::StashDrop>)
             .add_request_handler(forward_mutating_project_request::<proto::Commit>)
             .add_request_handler(forward_mutating_project_request::<proto::GitInit>)
             .add_request_handler(forward_read_only_project_request::<proto::GetRemotes>)
@@ -468,6 +464,8 @@ impl Server {
             .add_message_handler(broadcast_project_message_from_host::<proto::BreakpointsForFile>)
             .add_request_handler(forward_mutating_project_request::<proto::OpenCommitMessageBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::GitDiff>)
+            .add_request_handler(forward_mutating_project_request::<proto::GetTreeDiff>)
+            .add_request_handler(forward_mutating_project_request::<proto::GetBlobContent>)
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateBranch>)
             .add_request_handler(forward_mutating_project_request::<proto::GitChangeBranch>)
             .add_request_handler(forward_mutating_project_request::<proto::CheckForPushedCommits>)
@@ -910,8 +908,6 @@ impl Server {
                                 user_id=field::Empty,
                                 login=field::Empty,
                                 impersonator=field::Empty,
-                                // todo(lsp) remove after Zed Stable hits v0.204.x
-                                multi_lsp_query_request=field::Empty,
                                 lsp_query_request=field::Empty,
                                 release_channel=field::Empty,
                                 { TOTAL_DURATION_MS }=field::Empty,
@@ -1888,6 +1884,7 @@ async fn share_project(
             session.connection_id,
             &request.worktrees,
             request.is_ssh_project,
+            request.windows_paths.unwrap_or(false),
         )
         .await?;
     response.send(proto::ShareProjectResponse {
@@ -2021,6 +2018,7 @@ async fn join_project(
         language_servers,
         language_server_capabilities,
         role: project.role.into(),
+        windows_paths: project.path_style == PathStyle::Windows,
     })?;
 
     for (worktree_id, worktree) in mem::take(&mut project.worktrees) {
@@ -2358,17 +2356,6 @@ where
     Ok(())
 }
 
-// todo(lsp) remove after Zed Stable hits v0.204.x
-async fn multi_lsp_query(
-    request: MultiLspQuery,
-    response: Response<MultiLspQuery>,
-    session: MessageContext,
-) -> Result<()> {
-    tracing::Span::current().record("multi_lsp_query_request", request.request_str());
-    tracing::info!("multi_lsp_query message received");
-    forward_mutating_project_request(request, response, session).await
-}
-
 async fn lsp_query(
     request: proto::LspQuery,
     response: Response<proto::LspQuery>,
@@ -2387,6 +2374,26 @@ async fn lsp_query(
 /// Notify other participants that a new buffer has been created
 async fn create_buffer_for_peer(
     request: proto::CreateBufferForPeer,
+    session: MessageContext,
+) -> Result<()> {
+    session
+        .db()
+        .await
+        .check_user_is_project_host(
+            ProjectId::from_proto(request.project_id),
+            session.connection_id,
+        )
+        .await?;
+    let peer_id = request.peer_id.context("invalid peer id")?;
+    session
+        .peer
+        .forward_send(session.connection_id, peer_id.into(), request)?;
+    Ok(())
+}
+
+/// Notify other participants that a new image has been created
+async fn create_image_for_peer(
+    request: proto::CreateImageForPeer,
     session: MessageContext,
 ) -> Result<()> {
     session

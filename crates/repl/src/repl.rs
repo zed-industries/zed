@@ -5,6 +5,7 @@ pub mod notebook;
 mod outputs;
 mod repl_editor;
 mod repl_sessions_ui;
+mod repl_settings;
 mod repl_store;
 mod session;
 
@@ -14,7 +15,6 @@ use async_dispatcher::{Dispatcher, Runnable, set_dispatcher};
 use gpui::{App, PlatformDispatcher};
 use project::Fs;
 pub use runtimelib::ExecutionState;
-use settings::Settings as _;
 
 pub use crate::jupyter_settings::JupyterSettings;
 pub use crate::kernels::{Kernel, KernelSpecification, KernelStatus};
@@ -22,6 +22,7 @@ pub use crate::repl_editor::*;
 pub use crate::repl_sessions_ui::{
     ClearOutputs, Interrupt, ReplSessionsPage, Restart, Run, Sessions, Shutdown,
 };
+pub use crate::repl_settings::ReplSettings;
 use crate::repl_store::ReplStore;
 pub use crate::session::Session;
 
@@ -29,8 +30,6 @@ pub const KERNEL_DOCS_URL: &str = "https://zed.dev/docs/repl#changing-kernels";
 
 pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
     set_dispatcher(zed_dispatcher(cx));
-    JupyterSettings::register(cx);
-    ::editor::init_settings(cx);
     repl_sessions_ui::init(cx);
     ReplStore::init(fs, cx);
 }

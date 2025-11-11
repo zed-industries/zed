@@ -37,12 +37,7 @@ pub trait ContextProvider: Send + Sync {
     }
 
     /// Provides all tasks, associated with the current language.
-    fn associated_tasks(
-        &self,
-        _: Arc<dyn Fs>,
-        _: Option<Arc<dyn File>>,
-        _: &App,
-    ) -> Task<Option<TaskTemplates>> {
+    fn associated_tasks(&self, _: Option<Arc<dyn File>>, _: &App) -> Task<Option<TaskTemplates>> {
         Task::ready(None)
     }
 

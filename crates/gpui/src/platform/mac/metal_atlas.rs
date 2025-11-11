@@ -167,11 +167,14 @@ impl MetalAtlasState {
 
         if let Some(ix) = index {
             texture_list.textures[ix] = Some(atlas_texture);
-            texture_list.textures.get_mut(ix).unwrap().as_mut().unwrap()
+            texture_list.textures.get_mut(ix)
         } else {
             texture_list.textures.push(Some(atlas_texture));
-            texture_list.textures.last_mut().unwrap().as_mut().unwrap()
+            texture_list.textures.last_mut()
         }
+        .unwrap()
+        .as_mut()
+        .unwrap()
     }
 
     fn texture(&self, id: AtlasTextureId) -> &MetalAtlasTexture {

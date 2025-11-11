@@ -24,7 +24,7 @@ use std::{
     sync::Arc,
 };
 use task::{DebugScenario, TcpArgumentsTemplate, ZedDebugConfig};
-use util::archive::extract_zip;
+use util::{archive::extract_zip, rel_path::RelPath};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DapStatus {
@@ -44,8 +44,9 @@ pub trait DapDelegate: Send + Sync + 'static {
     fn fs(&self) -> Arc<dyn Fs>;
     fn output_to_console(&self, msg: String);
     async fn which(&self, command: &OsStr) -> Option<PathBuf>;
-    async fn read_text_file(&self, path: PathBuf) -> Result<String>;
+    async fn read_text_file(&self, path: &RelPath) -> Result<String>;
     async fn shell_env(&self) -> collections::HashMap<String, String>;
+    fn is_headless(&self) -> bool;
 }
 
 #[derive(
@@ -238,7 +239,7 @@ impl DebugAdapterBinary {
             cwd: self
                 .cwd
                 .as_ref()
-                .map(|cwd| cwd.to_string_lossy().to_string()),
+                .map(|cwd| cwd.to_string_lossy().into_owned()),
             connection: self.connection.as_ref().map(|c| c.to_proto()),
             launch_type: match self.request_args.request {
                 StartDebuggingRequestArgumentsRequest::Launch => {
@@ -305,7 +306,7 @@ pub async fn download_adapter_from_github(
     anyhow::ensure!(
         response.status().is_success(),
         "download failed with status {}",
-        response.status().to_string()
+        response.status()
     );
 
     delegate.output_to_console("Download complete".to_owned());
@@ -355,6 +356,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
+        user_env: Option<HashMap<String, String>>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary>;
 
@@ -454,6 +456,7 @@ impl DebugAdapter for FakeAdapter {
         task_definition: &DebugTaskDefinition,
         _: Option<PathBuf>,
         _: Option<Vec<String>>,
+        _: Option<HashMap<String, String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let connection = task_definition

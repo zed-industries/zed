@@ -288,16 +288,6 @@ fn test_helper_methods() {
         background.spawn(async { 10 }).await
     });
     assert_eq!(results, vec![10, 10, 10]);
-
-    // Test the with_seed method
-    let result = TestScheduler::with_seed(123, async |scheduler: Arc<TestScheduler>| {
-        let background = scheduler.background();
-
-        // Spawn a background task and wait for its result
-        let task = background.spawn(async { 99 });
-        task.await
-    });
-    assert_eq!(result, 99);
 }
 
 #[test]

@@ -1,3 +1,7 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "We are not in an async environment, so std::process::Command is fine"
+)]
 #![cfg_attr(
     any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
     allow(dead_code)
@@ -19,6 +23,8 @@ use util::paths::PathWithPosition;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::io::IsTerminal;
+
+const URL_PREFIX: [&'static str; 5] = ["zed://", "http://", "https://", "file://", "ssh://"];
 
 struct Detect;
 
@@ -56,16 +62,22 @@ struct Args {
     #[arg(short, long)]
     wait: bool,
     /// Add files to the currently open workspace
-    #[arg(short, long, overrides_with = "new")]
+    #[arg(short, long, overrides_with_all = ["new", "reuse"])]
     add: bool,
     /// Create a new workspace
-    #[arg(short, long, overrides_with = "add")]
+    #[arg(short, long, overrides_with_all = ["add", "reuse"])]
     new: bool,
+    /// Reuse an existing window, replacing its workspace
+    #[arg(short, long, overrides_with_all = ["add", "new"])]
+    reuse: bool,
     /// Sets a custom directory for all user data (e.g., database, extensions, logs).
-    /// This overrides the default platform-specific data directory location.
-    /// On macOS, the default is `~/Library/Application Support/Zed`.
-    /// On Linux/FreeBSD, the default is `$XDG_DATA_HOME/zed`.
-    /// On Windows, the default is `%LOCALAPPDATA%\Zed`.
+    /// This overrides the default platform-specific data directory location:
+    #[cfg_attr(target_os = "macos", doc = "`~/Library/Application Support/Zed`.")]
+    #[cfg_attr(target_os = "windows", doc = "`%LOCALAPPDATA%\\Zed`.")]
+    #[cfg_attr(
+        not(any(target_os = "windows", target_os = "macos")),
+        doc = "`$XDG_DATA_HOME/zed`."
+    )]
     #[arg(long, value_name = "DIR")]
     user_data_dir: Option<String>,
     /// The paths to open in Zed (space-separated).
@@ -110,6 +122,11 @@ struct Args {
     ))]
     #[arg(long)]
     uninstall: bool,
+
+    /// Used for SSH/Git password authentication, to remove the need for netcat as a dependency,
+    /// by having Zed act like netcat communicating over a Unix socket.
+    #[arg(long, hide = true)]
+    askpass: Option<String>,
 }
 
 fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
@@ -137,10 +154,11 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
         }
         .with_context(|| format!("parsing as path with position {argument_str}"))?,
     };
-    Ok(canonicalized.to_string(|path| path.to_string_lossy().to_string()))
+    Ok(canonicalized.to_string(|path| path.to_string_lossy().into_owned()))
 }
 
 fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
+    let mut source = PathWithPosition::parse_str(source);
     let mut command = util::command::new_std_command("wsl.exe");
 
     let (user, distro_name) = if let Some((user, distro)) = wsl.split_once('@') {
@@ -159,19 +177,17 @@ fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
     let output = command
         .arg("--distribution")
         .arg(distro_name)
+        .arg("--exec")
         .arg("wslpath")
         .arg("-m")
-        .arg(source)
+        .arg(&source.path)
         .output()?;
 
     let result = String::from_utf8_lossy(&output.stdout);
     let prefix = format!("//wsl.localhost/{}", distro_name);
+    source.path = Path::new(result.trim().strip_prefix(&prefix).unwrap_or(&result)).to_owned();
 
-    Ok(result
-        .trim()
-        .strip_prefix(&prefix)
-        .unwrap_or(&result)
-        .to_string())
+    Ok(source.to_string(|path| path.to_string_lossy().into_owned()))
 }
 
 fn main() -> Result<()> {
@@ -196,6 +212,12 @@ fn main() -> Result<()> {
         }
     }
     let args = Args::parse();
+
+    // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
+    if let Some(socket) = &args.askpass {
+        askpass::main(socket);
+        return Ok(());
+    }
 
     // Set custom data directory before any path operations
     let user_data_dir = args.user_data_dir.clone();
@@ -310,21 +332,16 @@ fn main() -> Result<()> {
     let wsl = None;
 
     for path in args.paths_with_position.iter() {
-        if path.starts_with("zed://")
-            || path.starts_with("http://")
-            || path.starts_with("https://")
-            || path.starts_with("file://")
-            || path.starts_with("ssh://")
-        {
+        if URL_PREFIX.iter().any(|&prefix| path.starts_with(prefix)) {
             urls.push(path.to_string());
         } else if path == "-" && args.paths_with_position.len() == 1 {
             let file = NamedTempFile::new()?;
-            paths.push(file.path().to_string_lossy().to_string());
+            paths.push(file.path().to_string_lossy().into_owned());
             let (file, _) = file.keep()?;
             stdin_tmp_file = Some(file);
         } else if let Some(file) = anonymous_fd(path) {
             let tmp_file = NamedTempFile::new()?;
-            paths.push(tmp_file.path().to_string_lossy().to_string());
+            paths.push(tmp_file.path().to_string_lossy().into_owned());
             let (tmp_file, _) = tmp_file.keep()?;
             anonymous_fd_tmp_files.push((file, tmp_file));
         } else if let Some(wsl) = wsl {
@@ -339,59 +356,78 @@ fn main() -> Result<()> {
         "Dev servers were removed in v0.157.x please upgrade to SSH remoting: https://zed.dev/docs/remote-development"
     );
 
-    let sender: JoinHandle<anyhow::Result<()>> = thread::spawn({
-        let exit_status = exit_status.clone();
-        let user_data_dir_for_thread = user_data_dir.clone();
-        move || {
-            let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
-            let (tx, rx) = (handshake.requests, handshake.responses);
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .stack_size(10 * 1024 * 1024)
+        .thread_name(|ix| format!("RayonWorker{}", ix))
+        .build_global()
+        .unwrap();
 
-            #[cfg(target_os = "windows")]
-            let wsl = args.wsl;
-            #[cfg(not(target_os = "windows"))]
-            let wsl = None;
+    let sender: JoinHandle<anyhow::Result<()>> = thread::Builder::new()
+        .name("CliReceiver".to_string())
+        .spawn({
+            let exit_status = exit_status.clone();
+            let user_data_dir_for_thread = user_data_dir.clone();
+            move || {
+                let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
+                let (tx, rx) = (handshake.requests, handshake.responses);
 
-            tx.send(CliRequest::Open {
-                paths,
-                urls,
-                diff_paths,
-                wsl,
-                wait: args.wait,
-                open_new_workspace,
-                env,
-                user_data_dir: user_data_dir_for_thread,
-            })?;
+                #[cfg(target_os = "windows")]
+                let wsl = args.wsl;
+                #[cfg(not(target_os = "windows"))]
+                let wsl = None;
 
-            while let Ok(response) = rx.recv() {
-                match response {
-                    CliResponse::Ping => {}
-                    CliResponse::Stdout { message } => println!("{message}"),
-                    CliResponse::Stderr { message } => eprintln!("{message}"),
-                    CliResponse::Exit { status } => {
-                        exit_status.lock().replace(status);
-                        return Ok(());
+                tx.send(CliRequest::Open {
+                    paths,
+                    urls,
+                    diff_paths,
+                    wsl,
+                    wait: args.wait,
+                    open_new_workspace,
+                    reuse: args.reuse,
+                    env,
+                    user_data_dir: user_data_dir_for_thread,
+                })?;
+
+                while let Ok(response) = rx.recv() {
+                    match response {
+                        CliResponse::Ping => {}
+                        CliResponse::Stdout { message } => println!("{message}"),
+                        CliResponse::Stderr { message } => eprintln!("{message}"),
+                        CliResponse::Exit { status } => {
+                            exit_status.lock().replace(status);
+                            return Ok(());
+                        }
                     }
                 }
-            }
 
-            Ok(())
-        }
-    });
+                Ok(())
+            }
+        })
+        .unwrap();
 
     let stdin_pipe_handle: Option<JoinHandle<anyhow::Result<()>>> =
         stdin_tmp_file.map(|mut tmp_file| {
-            thread::spawn(move || {
-                let mut stdin = std::io::stdin().lock();
-                if !io::IsTerminal::is_terminal(&stdin) {
-                    io::copy(&mut stdin, &mut tmp_file)?;
-                }
-                Ok(())
-            })
+            thread::Builder::new()
+                .name("CliStdin".to_string())
+                .spawn(move || {
+                    let mut stdin = std::io::stdin().lock();
+                    if !io::IsTerminal::is_terminal(&stdin) {
+                        io::copy(&mut stdin, &mut tmp_file)?;
+                    }
+                    Ok(())
+                })
+                .unwrap()
         });
 
     let anonymous_fd_pipe_handles: Vec<_> = anonymous_fd_tmp_files
         .into_iter()
-        .map(|(mut file, mut tmp_file)| thread::spawn(move || io::copy(&mut file, &mut tmp_file)))
+        .map(|(mut file, mut tmp_file)| {
+            thread::Builder::new()
+                .name("CliAnonymousFd".to_string())
+                .spawn(move || io::copy(&mut file, &mut tmp_file))
+                .unwrap()
+        })
         .collect();
 
     if args.foreground {
@@ -708,15 +744,15 @@ mod windows {
             Storage::FileSystem::{
                 CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE, OPEN_EXISTING, WriteFile,
             },
-            System::Threading::{CREATE_NEW_PROCESS_GROUP, CreateMutexW},
+            System::Threading::CreateMutexW,
         },
         core::HSTRING,
     };
 
     use crate::{Detect, InstalledApp};
+    use std::io;
     use std::path::{Path, PathBuf};
     use std::process::ExitStatus;
-    use std::{io, os::windows::process::CommandExt};
 
     fn check_single_instance() -> bool {
         let mutex = unsafe {
@@ -755,7 +791,6 @@ mod windows {
         fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
             if check_single_instance() {
                 std::process::Command::new(self.0.clone())
-                    .creation_flags(CREATE_NEW_PROCESS_GROUP.0)
                     .arg(ipc_url)
                     .spawn()?;
             } else {

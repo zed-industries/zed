@@ -25,7 +25,7 @@ impl DapLocator for PythonLocator {
         if adapter.0.as_ref() != "Debugpy" {
             return None;
         }
-        let valid_program = build_config.command.starts_with("\"$ZED_")
+        let valid_program = build_config.command.starts_with("$ZED_")
             || Path::new(&build_config.command)
                 .file_name()
                 .is_some_and(|name| name.to_str().is_some_and(|path| path.starts_with("python")));
@@ -92,5 +92,55 @@ impl DapLocator for PythonLocator {
 
     async fn run(&self, _: SpawnInTerminal) -> Result<DebugRequest> {
         bail!("Python locator should not require DapLocator::run to be ran");
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use serde_json::json;
+
+    use super::*;
+
+    #[gpui::test]
+    async fn test_python_locator() {
+        let adapter = DebugAdapterName("Debugpy".into());
+        let build_task = TaskTemplate {
+            label: "run module '$ZED_FILE'".into(),
+            command: "$ZED_CUSTOM_PYTHON_ACTIVE_ZED_TOOLCHAIN".into(),
+            args: vec!["-m".into(), "$ZED_CUSTOM_PYTHON_MODULE_NAME".into()],
+            env: Default::default(),
+            cwd: Some("$ZED_WORKTREE_ROOT".into()),
+            use_new_terminal: false,
+            allow_concurrent_runs: false,
+            reveal: task::RevealStrategy::Always,
+            reveal_target: task::RevealTarget::Dock,
+            hide: task::HideStrategy::Never,
+            tags: vec!["python-module-main-method".into()],
+            shell: task::Shell::System,
+            show_summary: false,
+            show_command: false,
+        };
+
+        let expected_scenario = DebugScenario {
+            adapter: "Debugpy".into(),
+            label: "run module 'main.py'".into(),
+            build: None,
+            config: json!({
+                "request": "launch",
+                "python": "$ZED_CUSTOM_PYTHON_ACTIVE_ZED_TOOLCHAIN",
+                "args": [],
+                "cwd": "$ZED_WORKTREE_ROOT",
+                "module": "$ZED_CUSTOM_PYTHON_MODULE_NAME",
+            }),
+            tcp_connection: None,
+        };
+
+        assert_eq!(
+            PythonLocator
+                .create_scenario(&build_task, "run module 'main.py'", &adapter)
+                .await
+                .expect("Failed to create a scenario"),
+            expected_scenario
+        );
     }
 }

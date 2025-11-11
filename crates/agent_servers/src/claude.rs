@@ -10,7 +10,7 @@ use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, SharedString, Task};
 use project::agent_server_store::{AllAgentServersSettings, CLAUDE_CODE_NAME};
 
-use crate::{AgentServer, AgentServerDelegate};
+use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
 
 #[derive(Clone)]
@@ -45,8 +45,13 @@ impl AgentServer for ClaudeCode {
     }
 
     fn set_default_mode(&self, mode_id: Option<acp::SessionModeId>, fs: Arc<dyn Fs>, cx: &mut App) {
-        update_settings_file::<AllAgentServersSettings>(fs, cx, |settings, _| {
-            settings.claude.get_or_insert_default().default_mode = mode_id.map(|m| m.to_string())
+        update_settings_file(fs, cx, |settings, _| {
+            settings
+                .agent_servers
+                .get_or_insert_default()
+                .claude
+                .get_or_insert_default()
+                .default_mode = mode_id.map(|m| m.to_string())
         });
     }
 
@@ -57,9 +62,11 @@ impl AgentServer for ClaudeCode {
         cx: &mut App,
     ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
         let name = self.name();
-        let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().to_string());
+        let telemetry_id = self.telemetry_id();
+        let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().into_owned());
         let is_remote = delegate.project.read(cx).is_via_remote_server();
         let store = delegate.store.downgrade();
+        let extra_env = load_proxy_env(cx);
         let default_mode = self.default_mode(cx);
 
         cx.spawn(async move |cx| {
@@ -70,7 +77,7 @@ impl AgentServer for ClaudeCode {
                         .context("Claude Code is not registered")?;
                     anyhow::Ok(agent.get_command(
                         root_dir.as_deref(),
-                        Default::default(),
+                        extra_env,
                         delegate.status_tx,
                         delegate.new_version_available,
                         &mut cx.to_async(),
@@ -79,6 +86,7 @@ impl AgentServer for ClaudeCode {
                 .await?;
             let connection = crate::acp::connect(
                 name,
+                telemetry_id,
                 command,
                 root_dir.as_ref(),
                 default_mode,

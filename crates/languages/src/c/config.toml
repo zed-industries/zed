@@ -17,3 +17,4 @@ brackets = [
 ]
 debuggers = ["CodeLLDB", "GDB"]
 documentation_comment = { start = "/*", prefix = "* ", end = "*/", tab_size = 1 }
+import_path_strip_regex = "^<|>$"

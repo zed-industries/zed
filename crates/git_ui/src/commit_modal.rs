@@ -40,7 +40,8 @@ impl ModalContainerProperties {
         let font_size = style.font_size.to_pixels(window.rem_size());
 
         if let Ok(em_width) = window.text_system().em_width(font_id, font_size) {
-            modal_width = preferred_char_width as f32 * em_width.0 + (container_padding * 2.0);
+            modal_width =
+                f32::from(preferred_char_width as f32 * em_width + px(container_padding * 2.0));
         }
 
         Self {
@@ -198,7 +199,7 @@ impl CommitModal {
             && commit_message.is_empty()
         {
             commit_editor.update(cx, |editor, cx| {
-                editor.set_placeholder_text(suggested_commit_message, cx);
+                editor.set_placeholder_text(&suggested_commit_message, window, cx);
             });
         }
 
@@ -326,7 +327,7 @@ impl CommitModal {
             .anchor(Corner::TopRight)
     }
 
-    pub fn render_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    pub fn render_footer(&self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (
             can_commit,
             tooltip,
@@ -368,10 +369,6 @@ impl CommitModal {
             .icon_color(Color::Placeholder)
             .color(Color::Muted)
             .icon_position(IconPosition::Start)
-            .tooltip(Tooltip::for_action_title(
-                "Switch Branch",
-                &zed_actions::git::Branch,
-            ))
             .on_click(cx.listener(|_, _, window, cx| {
                 window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
             }))
@@ -391,7 +388,7 @@ impl CommitModal {
             });
         let focus_handle = self.focus_handle(cx);
 
-        let close_kb_hint = ui::KeyBinding::for_action(&menu::Cancel, window, cx).map(|close_kb| {
+        let close_kb_hint = ui::KeyBinding::for_action(&menu::Cancel, cx).map(|close_kb| {
             KeybindingHint::new(close_kb, cx.theme().colors().editor_background).suffix("Cancel")
         });
 
@@ -426,7 +423,7 @@ impl CommitModal {
                     .flex_none()
                     .px_1()
                     .gap_4()
-                    .children(close_kb_hint)
+                    .child(close_kb_hint)
                     .child(SplitButton::new(
                         ui::ButtonLike::new_rounded_left(ElementId::Name(
                             format!("split-button-left-{}", commit_label).into(),
@@ -455,18 +452,21 @@ impl CommitModal {
                         .disabled(!can_commit)
                         .tooltip({
                             let focus_handle = focus_handle.clone();
-                            move |window, cx| {
+                            move |_window, cx| {
                                 if can_commit {
                                     Tooltip::with_meta_in(
                                         tooltip,
-                                        Some(&git::Commit),
+                                        Some(if is_amend_pending {
+                                            &git::Amend
+                                        } else {
+                                            &git::Commit
+                                        }),
                                         format!(
                                             "git commit{}{}",
                                             if is_amend_pending { " --amend" } else { "" },
                                             if is_signoff_enabled { " --signoff" } else { "" }
                                         ),
                                         &focus_handle.clone(),
-                                        window,
                                         cx,
                                     )
                                 } else {

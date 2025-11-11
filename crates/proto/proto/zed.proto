@@ -9,6 +9,7 @@ import "channel.proto";
 import "core.proto";
 import "debugger.proto";
 import "git.proto";
+import "image.proto";
 import "lsp.proto";
 import "notification.proto";
 import "task.proto";
@@ -210,8 +211,6 @@ message Envelope {
 
         UpdateNotification update_notification = 174;
 
-        MultiLspQuery multi_lsp_query = 175;
-        MultiLspQueryResponse multi_lsp_query_response = 176;
         RestartLanguageServers restart_language_servers = 208;
 
         RejoinRemoteProjects rejoin_remote_projects = 186;
@@ -413,7 +412,31 @@ message Envelope {
         ExternalAgentsUpdated external_agents_updated = 375;
 
         ExternalAgentLoadingStatusUpdated external_agent_loading_status_updated = 376;
-        NewExternalAgentVersionAvailable new_external_agent_version_available = 377; // current max
+        NewExternalAgentVersionAvailable new_external_agent_version_available = 377;
+
+        StashDrop stash_drop = 378;
+        StashApply stash_apply = 379;
+
+        GitRenameBranch git_rename_branch = 380;
+
+        RemoteStarted remote_started = 381;
+
+        GetDirectoryEnvironment get_directory_environment = 382;
+        DirectoryEnvironment directory_environment = 383;
+
+        GetTreeDiff get_tree_diff = 384;
+        GetTreeDiffResponse get_tree_diff_response = 385;
+
+        GetBlobContent get_blob_content = 386;
+        GetBlobContentResponse get_blob_content_response = 387;
+
+        GitWorktreesResponse git_worktrees_response = 388;
+        GitGetWorktrees git_get_worktrees = 389;
+        GitCreateWorktree git_create_worktree = 390;
+
+        OpenImageByPath open_image_by_path = 391;
+        OpenImageResponse open_image_response = 392;
+        CreateImageForPeer create_image_for_peer = 393; // current max
     }
 
     reserved 87 to 88;
@@ -421,7 +444,7 @@ message Envelope {
     reserved 158 to 161;
     reserved 164;
     reserved 166 to 169;
-    reserved 177 to 185;
+    reserved 175 to 185;
     reserved 188;
     reserved 189 to 192;
     reserved 193 to 195;
@@ -487,3 +510,5 @@ message Test {
 message FlushBufferedMessages {}
 
 message FlushBufferedMessagesResponse {}
+
+message RemoteStarted {}

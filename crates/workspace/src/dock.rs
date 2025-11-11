@@ -9,14 +9,12 @@ use gpui::{
     Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window, deferred, div,
     px,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use std::sync::Arc;
 use ui::{ContextMenu, Divider, DividerColor, IconButton, Tooltip, h_flex};
 use ui::{prelude::*, right_click_menu};
 
-pub(crate) const RESIZE_HANDLE_SIZE: Pixels = Pixels(6.);
+pub(crate) const RESIZE_HANDLE_SIZE: Pixels = px(6.);
 
 pub enum PanelEvent {
     ZoomIn,
@@ -29,6 +27,7 @@ pub use proto::PanelId;
 
 pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn persistent_name() -> &'static str;
+    fn panel_key() -> &'static str;
     fn position(&self, window: &Window, cx: &App) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition) -> bool;
     fn set_position(&mut self, position: DockPosition, window: &mut Window, cx: &mut Context<Self>);
@@ -63,6 +62,7 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
 pub trait PanelHandle: Send + Sync {
     fn panel_id(&self) -> EntityId;
     fn persistent_name(&self) -> &'static str;
+    fn panel_key(&self) -> &'static str;
     fn position(&self, window: &Window, cx: &App) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition, cx: &App) -> bool;
     fn set_position(&self, position: DockPosition, window: &mut Window, cx: &mut App);
@@ -108,6 +108,10 @@ where
 
     fn persistent_name(&self) -> &'static str {
         T::persistent_name()
+    }
+
+    fn panel_key(&self) -> &'static str {
+        T::panel_key()
     }
 
     fn position(&self, window: &Window, cx: &App) -> DockPosition {
@@ -210,12 +214,31 @@ impl Focusable for Dock {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "lowercase")]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum DockPosition {
     Left,
     Bottom,
     Right,
+}
+
+impl From<settings::DockPosition> for DockPosition {
+    fn from(value: settings::DockPosition) -> Self {
+        match value {
+            settings::DockPosition::Left => Self::Left,
+            settings::DockPosition::Bottom => Self::Bottom,
+            settings::DockPosition::Right => Self::Right,
+        }
+    }
+}
+
+impl Into<settings::DockPosition> for DockPosition {
+    fn into(self) -> settings::DockPosition {
+        match self {
+            Self::Left => settings::DockPosition::Left,
+            Self::Bottom => settings::DockPosition::Bottom,
+            Self::Right => settings::DockPosition::Right,
+        }
+    }
 }
 
 impl DockPosition {
@@ -715,7 +738,7 @@ impl Dock {
     }
 
     pub fn clamp_panel_size(&mut self, max_size: Pixels, window: &mut Window, cx: &mut App) {
-        let max_size = px((max_size.0 - RESIZE_HANDLE_SIZE.0).abs());
+        let max_size = (max_size - RESIZE_HANDLE_SIZE).abs();
         for panel in self.panel_entries.iter().map(|entry| &entry.panel) {
             if panel.size(window, cx) > max_size {
                 panel.set_size(Some(max_size.max(RESIZE_HANDLE_SIZE)), window, cx);
@@ -925,8 +948,8 @@ impl Render for PanelButtons {
                                     }
                                 })
                                 .when(!is_active, |this| {
-                                    this.tooltip(move |window, cx| {
-                                        Tooltip::for_action(tooltip.clone(), &*action, window, cx)
+                                    this.tooltip(move |_window, cx| {
+                                        Tooltip::for_action(tooltip.clone(), &*action, cx)
                                     })
                                 })
                         }),
@@ -996,6 +1019,10 @@ pub mod test {
 
     impl Panel for TestPanel {
         fn persistent_name() -> &'static str {
+            "TestPanel"
+        }
+
+        fn panel_key() -> &'static str {
             "TestPanel"
         }
 

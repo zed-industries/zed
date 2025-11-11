@@ -41,6 +41,7 @@ fn main() {
                 name: "Quit".into(),
                 action: Box::new(Quit),
                 os_action: None,
+                checked: false,
             }],
         }]);
 
@@ -255,7 +256,10 @@ impl LivekitWindow {
         } else {
             let room = self.room.clone();
             cx.spawn_in(window, async move |this, cx| {
-                let (publication, stream) = room.publish_local_microphone_track(cx).await.unwrap();
+                let (publication, stream) = room
+                    .publish_local_microphone_track("test_user".to_string(), false, cx)
+                    .await
+                    .unwrap();
                 this.update(cx, |this, cx| {
                     this.microphone_track = Some(publication);
                     this.microphone_stream = Some(stream);

@@ -1,10 +1,13 @@
 use agent_client_protocol as acp;
-
+use anyhow::Result;
 use futures::{FutureExt as _, future::Shared};
-use gpui::{App, AppContext, Context, Entity, Task};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, Task};
 use language::LanguageRegistry;
 use markdown::Markdown;
+use project::Project;
 use std::{path::PathBuf, process::ExitStatus, sync::Arc, time::Instant};
+use task::Shell;
+use util::get_default_system_shell_preferring_bash;
 
 pub struct Terminal {
     id: acp::TerminalId,
@@ -28,7 +31,7 @@ pub struct TerminalOutput {
 impl Terminal {
     pub fn new(
         id: acp::TerminalId,
-        command: String,
+        command_label: &str,
         working_dir: Option<PathBuf>,
         output_byte_limit: Option<usize>,
         terminal: Entity<terminal::Terminal>,
@@ -40,7 +43,7 @@ impl Terminal {
             id,
             command: cx.new(|cx| {
                 Markdown::new(
-                    format!("```\n{}\n```", command).into(),
+                    format!("```\n{}\n```", command_label).into(),
                     Some(language_registry.clone()),
                     None,
                     cx,
@@ -75,6 +78,7 @@ impl Terminal {
                     acp::TerminalExitStatus {
                         exit_code: exit_status.as_ref().map(|e| e.exit_code()),
                         signal: exit_status.and_then(|e| e.signal().map(Into::into)),
+                        meta: None,
                     }
                 })
                 .shared(),
@@ -105,7 +109,9 @@ impl Terminal {
                 exit_status: Some(acp::TerminalExitStatus {
                     exit_code: exit_status.as_ref().map(|e| e.exit_code()),
                     signal: exit_status.and_then(|e| e.signal().map(Into::into)),
+                    meta: None,
                 }),
+                meta: None,
             }
         } else {
             let (current_content, original_len) = self.truncated_output(cx);
@@ -114,6 +120,7 @@ impl Terminal {
                 truncated: current_content.len() < original_len,
                 output: current_content,
                 exit_status: None,
+                meta: None,
             }
         }
     }
@@ -165,4 +172,61 @@ impl Terminal {
             self.terminal.read(cx).get_content()
         )
     }
+}
+
+pub async fn create_terminal_entity(
+    command: String,
+    args: &[String],
+    env_vars: Vec<(String, String)>,
+    cwd: Option<PathBuf>,
+    project: &Entity<Project>,
+    cx: &mut AsyncApp,
+) -> Result<Entity<terminal::Terminal>> {
+    let mut env = if let Some(dir) = &cwd {
+        project
+            .update(cx, |project, cx| {
+                project.environment().update(cx, |env, cx| {
+                    env.directory_environment(dir.clone().into(), cx)
+                })
+            })?
+            .await
+            .unwrap_or_default()
+    } else {
+        Default::default()
+    };
+
+    // Disables paging for `git` and hopefully other commands
+    env.insert("PAGER".into(), "".into());
+    env.extend(env_vars);
+
+    // Use remote shell or default system shell, as appropriate
+    let shell = project
+        .update(cx, |project, cx| {
+            project
+                .remote_client()
+                .and_then(|r| r.read(cx).default_system_shell())
+                .map(Shell::Program)
+        })?
+        .unwrap_or_else(|| Shell::Program(get_default_system_shell_preferring_bash()));
+    let is_windows = project
+        .read_with(cx, |project, cx| project.path_style(cx).is_windows())
+        .unwrap_or(cfg!(windows));
+    let (task_command, task_args) = task::ShellBuilder::new(&shell, is_windows)
+        .redirect_stdin_to_dev_null()
+        .build(Some(command.clone()), &args);
+
+    project
+        .update(cx, |project, cx| {
+            project.create_terminal_task(
+                task::SpawnInTerminal {
+                    command: Some(task_command),
+                    args: task_args,
+                    cwd,
+                    env,
+                    ..Default::default()
+                },
+                cx,
+            )
+        })?
+        .await
 }

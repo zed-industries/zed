@@ -33,6 +33,7 @@ impl Database {
         connection: ConnectionId,
         worktrees: &[proto::WorktreeMetadata],
         is_ssh_project: bool,
+        windows_paths: bool,
     ) -> Result<TransactionGuard<(ProjectId, proto::Room)>> {
         self.room_transaction(room_id, |tx| async move {
             let participant = room_participant::Entity::find()
@@ -69,6 +70,7 @@ impl Database {
                     connection.owner_id as i32,
                 ))),
                 id: ActiveValue::NotSet,
+                windows_paths: ActiveValue::set(windows_paths),
             }
             .insert(&*tx)
             .await?;
@@ -89,14 +91,18 @@ impl Database {
                 .await?;
             }
 
-            let replica_id = if is_ssh_project { 1 } else { 0 };
+            let replica_id = if is_ssh_project {
+                clock::ReplicaId::REMOTE_SERVER
+            } else {
+                clock::ReplicaId::LOCAL
+            };
 
             project_collaborator::ActiveModel {
                 project_id: ActiveValue::set(project.id),
                 connection_id: ActiveValue::set(connection.id as i32),
                 connection_server_id: ActiveValue::set(ServerId(connection.owner_id as i32)),
                 user_id: ActiveValue::set(participant.user_id),
-                replica_id: ActiveValue::set(ReplicaId(replica_id)),
+                replica_id: ActiveValue::set(ReplicaId(replica_id.as_u16() as i32)),
                 is_host: ActiveValue::set(true),
                 id: ActiveValue::NotSet,
                 committer_name: ActiveValue::Set(None),
@@ -280,6 +286,7 @@ impl Database {
                         git_status: ActiveValue::set(None),
                         is_external: ActiveValue::set(entry.is_external),
                         is_deleted: ActiveValue::set(false),
+                        is_hidden: ActiveValue::set(entry.is_hidden),
                         scan_id: ActiveValue::set(update.scan_id as i64),
                         is_fifo: ActiveValue::set(entry.is_fifo),
                     }
@@ -298,6 +305,7 @@ impl Database {
                         worktree_entry::Column::MtimeNanos,
                         worktree_entry::Column::CanonicalPath,
                         worktree_entry::Column::IsIgnored,
+                        worktree_entry::Column::IsHidden,
                         worktree_entry::Column::ScanId,
                     ])
                     .to_owned(),
@@ -837,7 +845,7 @@ impl Database {
             .iter()
             .map(|c| c.replica_id)
             .collect::<HashSet<_>>();
-        let mut replica_id = ReplicaId(1);
+        let mut replica_id = ReplicaId(clock::ReplicaId::FIRST_COLLAB_ID.as_u16() as i32);
         while replica_ids.contains(&replica_id) {
             replica_id.0 += 1;
         }
@@ -903,6 +911,7 @@ impl Database {
                         canonical_path: db_entry.canonical_path,
                         is_ignored: db_entry.is_ignored,
                         is_external: db_entry.is_external,
+                        is_hidden: db_entry.is_hidden,
                         // This is only used in the summarization backlog, so if it's None,
                         // that just means we won't be able to detect when to resummarize
                         // based on total number of backlogged bytes - instead, we'd go
@@ -995,6 +1004,7 @@ impl Database {
                         scan_id: db_repository_entry.scan_id as u64,
                         is_last_update: true,
                         merge_message: db_repository_entry.merge_message,
+                        stash_entries: Vec::new(),
                     });
                 }
             }
@@ -1045,6 +1055,12 @@ impl Database {
             .all(tx)
             .await?;
 
+        let path_style = if project.windows_paths {
+            PathStyle::Windows
+        } else {
+            PathStyle::Posix
+        };
+
         let project = Project {
             id: project.id,
             role,
@@ -1072,6 +1088,7 @@ impl Database {
                     capabilities: language_server.capabilities,
                 })
                 .collect(),
+            path_style,
         };
         Ok((project, replica_id as ReplicaId))
     }

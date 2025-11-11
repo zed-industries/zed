@@ -3,8 +3,11 @@ mod remote_connections;
 mod remote_servers;
 mod ssh_config;
 
+#[cfg(target_os = "windows")]
+mod wsl_picker;
+
 use remote::RemoteConnectionOptions;
-pub use remote_connections::open_remote_project;
+pub use remote_connections::{RemoteConnectionModal, connect, open_remote_project};
 
 use disconnected_overlay::DisconnectedOverlay;
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -25,12 +28,106 @@ use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*, tooltip_con
 use util::{ResultExt, paths::PathExt};
 use workspace::{
     CloseIntent, HistoryManager, ModalView, OpenOptions, PathList, SerializedWorkspaceLocation,
-    WORKSPACE_DB, Workspace, WorkspaceId, with_active_or_new_workspace,
+    WORKSPACE_DB, Workspace, WorkspaceId, notifications::DetachAndPromptErr,
+    with_active_or_new_workspace,
 };
 use zed_actions::{OpenRecent, OpenRemote};
 
 pub fn init(cx: &mut App) {
-    SshSettings::register(cx);
+    #[cfg(target_os = "windows")]
+    cx.on_action(|open_wsl: &zed_actions::wsl_actions::OpenFolderInWsl, cx| {
+        let create_new_window = open_wsl.create_new_window;
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            use gpui::PathPromptOptions;
+            use project::DirectoryLister;
+
+            let paths = workspace.prompt_for_open_path(
+                PathPromptOptions {
+                    files: true,
+                    directories: true,
+                    multiple: false,
+                    prompt: None,
+                },
+                DirectoryLister::Local(
+                    workspace.project().clone(),
+                    workspace.app_state().fs.clone(),
+                ),
+                window,
+                cx,
+            );
+
+            cx.spawn_in(window, async move |workspace, cx| {
+                use util::paths::SanitizedPath;
+
+                let Some(paths) = paths.await.log_err().flatten() else {
+                    return;
+                };
+
+                let paths = paths
+                    .into_iter()
+                    .filter_map(|path| SanitizedPath::new(&path).local_to_wsl())
+                    .collect::<Vec<_>>();
+
+                if paths.is_empty() {
+                    let message = indoc::indoc! { r#"
+                        Invalid path specified when trying to open a folder inside WSL.
+
+                        Please note that Zed currently does not support opening network share folders inside wsl.
+                    "#};
+
+                    let _ = cx.prompt(gpui::PromptLevel::Critical, "Invalid path", Some(&message), &["Ok"]).await;
+                    return;
+                }
+
+                workspace.update_in(cx, |workspace, window, cx| {
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        crate::wsl_picker::WslOpenModal::new(paths, create_new_window, window, cx)
+                    });
+                }).log_err();
+            })
+            .detach();
+        });
+    });
+
+    #[cfg(target_os = "windows")]
+    cx.on_action(|open_wsl: &zed_actions::wsl_actions::OpenWsl, cx| {
+        let create_new_window = open_wsl.create_new_window;
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            let handle = cx.entity().downgrade();
+            let fs = workspace.project().read(cx).fs().clone();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                RemoteServerProjects::wsl(create_new_window, fs, window, handle, cx)
+            });
+        });
+    });
+
+    #[cfg(target_os = "windows")]
+    cx.on_action(|open_wsl: &remote::OpenWslPath, cx| {
+        let open_wsl = open_wsl.clone();
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            let fs = workspace.project().read(cx).fs().clone();
+            add_wsl_distro(fs, &open_wsl.distro, cx);
+            let open_options = OpenOptions {
+                replace_window: window.window_handle().downcast::<Workspace>(),
+                ..Default::default()
+            };
+
+            let app_state = workspace.app_state().clone();
+
+            cx.spawn_in(window, async move |_, cx| {
+                open_remote_project(
+                    RemoteConnectionOptions::Wsl(open_wsl.distro.clone()),
+                    open_wsl.paths,
+                    app_state,
+                    open_options,
+                    cx,
+                )
+                .await
+            })
+            .detach();
+        });
+    });
+
     cx.on_action(|open_recent: &OpenRecent, cx| {
         let create_new_window = open_recent.create_new_window;
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
@@ -63,6 +160,38 @@ pub fn init(cx: &mut App) {
     });
 
     cx.observe_new(DisconnectedOverlay::register).detach();
+}
+
+#[cfg(target_os = "windows")]
+pub fn add_wsl_distro(
+    fs: Arc<dyn project::Fs>,
+    connection_options: &remote::WslConnectionOptions,
+    cx: &App,
+) {
+    use gpui::ReadGlobal;
+    use settings::SettingsStore;
+
+    let distro_name = SharedString::from(&connection_options.distro_name);
+    let user = connection_options.user.clone();
+    SettingsStore::global(cx).update_settings_file(fs, move |setting, _| {
+        let connections = setting
+            .remote
+            .wsl_connections
+            .get_or_insert(Default::default());
+
+        if !connections
+            .iter()
+            .any(|conn| conn.distro_name == distro_name && conn.user == user)
+        {
+            use std::collections::BTreeSet;
+
+            connections.push(settings::WslConnection {
+                distro_name,
+                user,
+                projects: BTreeSet::new(),
+            })
+        }
+    });
 }
 
 pub struct RecentProjects {
@@ -240,8 +369,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .filter(|(_, (id, _, _))| !self.is_current_workspace(*id, cx))
             .map(|(id, (_, _, paths))| {
                 let combined_string = paths
-                    .paths()
-                    .iter()
+                    .ordered_paths()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
                     .join("");
@@ -257,7 +385,12 @@ impl PickerDelegate for RecentProjectsDelegate {
             &Default::default(),
             cx.background_executor().clone(),
         ));
-        self.matches.sort_unstable_by_key(|m| m.candidate_id);
+        self.matches.sort_unstable_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score) // Descending score
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.candidate_id.cmp(&b.candidate_id)) // Ascending candidate_id for ties
+        });
 
         if self.reset_selected_match_index {
             self.selected_match_index = self
@@ -286,77 +419,79 @@ impl PickerDelegate for RecentProjectsDelegate {
             } else {
                 !secondary
             };
-            workspace
-                .update(cx, |workspace, cx| {
-                    if workspace.database_id() == Some(*candidate_workspace_id) {
-                        Task::ready(Ok(()))
-                    } else {
-                        match candidate_workspace_location.clone() {
-                            SerializedWorkspaceLocation::Local => {
-                                let paths = candidate_workspace_paths.paths().to_vec();
-                                if replace_current_window {
-                                    cx.spawn_in(window, async move |workspace, cx| {
-                                        let continue_replacing = workspace
-                                            .update_in(cx, |workspace, window, cx| {
-                                                workspace.prepare_to_close(
-                                                    CloseIntent::ReplaceWindow,
-                                                    window,
-                                                    cx,
-                                                )
-                                            })?
-                                            .await?;
-                                        if continue_replacing {
+            workspace.update(cx, |workspace, cx| {
+                if workspace.database_id() == Some(*candidate_workspace_id) {
+                    return;
+                }
+                match candidate_workspace_location.clone() {
+                    SerializedWorkspaceLocation::Local => {
+                        let paths = candidate_workspace_paths.paths().to_vec();
+                        if replace_current_window {
+                            cx.spawn_in(window, async move |workspace, cx| {
+                                let continue_replacing = workspace
+                                    .update_in(cx, |workspace, window, cx| {
+                                        workspace.prepare_to_close(
+                                            CloseIntent::ReplaceWindow,
+                                            window,
+                                            cx,
+                                        )
+                                    })?
+                                    .await?;
+                                if continue_replacing {
+                                    workspace
+                                        .update_in(cx, |workspace, window, cx| {
                                             workspace
-                                                .update_in(cx, |workspace, window, cx| {
-                                                    workspace.open_workspace_for_paths(
-                                                        true, paths, window, cx,
-                                                    )
-                                                })?
-                                                .await
-                                        } else {
-                                            Ok(())
-                                        }
-                                    })
+                                                .open_workspace_for_paths(true, paths, window, cx)
+                                        })?
+                                        .await
                                 } else {
-                                    workspace.open_workspace_for_paths(false, paths, window, cx)
+                                    Ok(())
                                 }
-                            }
-                            SerializedWorkspaceLocation::Remote(mut connection) => {
-                                let app_state = workspace.app_state().clone();
-
-                                let replace_window = if replace_current_window {
-                                    window.window_handle().downcast::<Workspace>()
-                                } else {
-                                    None
-                                };
-
-                                let open_options = OpenOptions {
-                                    replace_window,
-                                    ..Default::default()
-                                };
-
-                                if let RemoteConnectionOptions::Ssh(connection) = &mut connection {
-                                    SshSettings::get_global(cx)
-                                        .fill_connection_options_from_settings(connection);
-                                };
-
-                                let paths = candidate_workspace_paths.paths().to_vec();
-
-                                cx.spawn_in(window, async move |_, cx| {
-                                    open_remote_project(
-                                        connection.clone(),
-                                        paths,
-                                        app_state,
-                                        open_options,
-                                        cx,
-                                    )
-                                    .await
-                                })
-                            }
+                            })
+                        } else {
+                            workspace.open_workspace_for_paths(false, paths, window, cx)
                         }
                     }
-                })
-                .detach_and_log_err(cx);
+                    SerializedWorkspaceLocation::Remote(mut connection) => {
+                        let app_state = workspace.app_state().clone();
+
+                        let replace_window = if replace_current_window {
+                            window.window_handle().downcast::<Workspace>()
+                        } else {
+                            None
+                        };
+
+                        let open_options = OpenOptions {
+                            replace_window,
+                            ..Default::default()
+                        };
+
+                        if let RemoteConnectionOptions::Ssh(connection) = &mut connection {
+                            SshSettings::get_global(cx)
+                                .fill_connection_options_from_settings(connection);
+                        };
+
+                        let paths = candidate_workspace_paths.paths().to_vec();
+
+                        cx.spawn_in(window, async move |_, cx| {
+                            open_remote_project(
+                                connection.clone(),
+                                paths,
+                                app_state,
+                                open_options,
+                                cx,
+                            )
+                            .await
+                        })
+                    }
+                }
+                .detach_and_prompt_err(
+                    "Failed to open project",
+                    window,
+                    cx,
+                    |_, _, _| None,
+                );
+            });
             cx.emit(DismissEvent);
         }
     }
@@ -386,19 +521,25 @@ impl PickerDelegate for RecentProjectsDelegate {
         let mut path_start_offset = 0;
 
         let (match_labels, paths): (Vec<_>, Vec<_>) = paths
-            .paths()
-            .iter()
+            .ordered_paths()
             .map(|p| p.compact())
             .map(|path| {
                 let highlighted_text =
                     highlights_for_path(path.as_ref(), &hit.positions, path_start_offset);
-
-                path_start_offset += highlighted_text.1.char_count;
+                path_start_offset += highlighted_text.1.text.len();
                 highlighted_text
             })
             .unzip();
 
+        let prefix = match &location {
+            SerializedWorkspaceLocation::Remote(RemoteConnectionOptions::Wsl(wsl)) => {
+                Some(SharedString::from(&wsl.distro_name))
+            }
+            _ => None,
+        };
+
         let highlighted_match = HighlightedMatchWithPaths {
+            prefix,
             match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
             paths,
         };
@@ -417,10 +558,13 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 SerializedWorkspaceLocation::Local => Icon::new(IconName::Screen)
                                     .color(Color::Muted)
                                     .into_any_element(),
-                                SerializedWorkspaceLocation::Remote(_) => {
-                                    Icon::new(IconName::Server)
-                                        .color(Color::Muted)
-                                        .into_any_element()
+                                SerializedWorkspaceLocation::Remote(options) => {
+                                    Icon::new(match options {
+                                        RemoteConnectionOptions::Ssh { .. } => IconName::Server,
+                                        RemoteConnectionOptions::Wsl { .. } => IconName::Linux,
+                                    })
+                                    .color(Color::Muted)
+                                    .into_any_element()
                                 }
                             })
                         })
@@ -463,11 +607,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         )
     }
 
-    fn render_footer(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Option<AnyElement> {
+    fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         Some(
             h_flex()
                 .w_full()
@@ -483,7 +623,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 from_existing_connection: false,
                                 create_new_window: false,
                             },
-                            window,
                             cx,
                         ))
                         .on_click(|_, window, cx| {
@@ -499,7 +638,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 )
                 .child(
                     Button::new("local", "Open Local Folder")
-                        .key_binding(KeyBinding::for_action(&workspace::Open, window, cx))
+                        .key_binding(KeyBinding::for_action(&workspace::Open, cx))
                         .on_click(|_, window, cx| {
                             window.dispatch_action(workspace::Open.boxed_clone(), cx)
                         }),
@@ -516,34 +655,33 @@ fn highlights_for_path(
     path_start_offset: usize,
 ) -> (Option<HighlightedMatch>, HighlightedMatch) {
     let path_string = path.to_string_lossy();
-    let path_char_count = path_string.chars().count();
+    let path_text = path_string.to_string();
+    let path_byte_len = path_text.len();
     // Get the subset of match highlight positions that line up with the given path.
     // Also adjusts them to start at the path start
     let path_positions = match_positions
         .iter()
         .copied()
         .skip_while(|position| *position < path_start_offset)
-        .take_while(|position| *position < path_start_offset + path_char_count)
+        .take_while(|position| *position < path_start_offset + path_byte_len)
         .map(|position| position - path_start_offset)
         .collect::<Vec<_>>();
 
     // Again subset the highlight positions to just those that line up with the file_name
     // again adjusted to the start of the file_name
     let file_name_text_and_positions = path.file_name().map(|file_name| {
-        let text = file_name.to_string_lossy();
-        let char_count = text.chars().count();
-        let file_name_start = path_char_count - char_count;
+        let file_name_text = file_name.to_string_lossy().into_owned();
+        let file_name_start_byte = path_byte_len - file_name_text.len();
         let highlight_positions = path_positions
             .iter()
             .copied()
-            .skip_while(|position| *position < file_name_start)
-            .take_while(|position| *position < file_name_start + char_count)
-            .map(|position| position - file_name_start)
+            .skip_while(|position| *position < file_name_start_byte)
+            .take_while(|position| *position < file_name_start_byte + file_name_text.len())
+            .map(|position| position - file_name_start_byte)
             .collect::<Vec<_>>();
         HighlightedMatch {
-            text: text.to_string(),
+            text: file_name_text,
             highlight_positions,
-            char_count,
             color: Color::Default,
         }
     });
@@ -551,9 +689,8 @@ fn highlights_for_path(
     (
         file_name_text_and_positions,
         HighlightedMatch {
-            text: path_string.to_string(),
+            text: path_text,
             highlight_positions: path_positions,
-            char_count: path_char_count,
             color: Color::Default,
         },
     )
@@ -612,8 +749,8 @@ struct MatchTooltip {
 }
 
 impl Render for MatchTooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        tooltip_container(window, cx, |div, _, _| {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        tooltip_container(cx, |div, _| {
             self.highlighted_location.render_paths_children(div)
         })
     }
@@ -623,10 +760,9 @@ impl Render for MatchTooltip {
 mod tests {
     use std::path::PathBuf;
 
-    use dap::debugger_settings::DebuggerSettings;
     use editor::Editor;
     use gpui::{TestAppContext, UpdateGlobal, WindowHandle};
-    use project::{Project, project_settings::ProjectSettings};
+
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
@@ -640,8 +776,11 @@ mod tests {
 
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<ProjectSettings>(cx, |settings| {
-                    settings.session.restore_unsaved_buffers = false
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .session
+                        .get_or_insert_default()
+                        .restore_unsaved_buffers = Some(false)
                 });
             });
         });
@@ -769,12 +908,8 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let state = AppState::test(cx);
-            language::init(cx);
             crate::init(cx);
             editor::init(cx);
-            workspace::init_settings(cx);
-            DebuggerSettings::register(cx);
-            Project::init_settings(cx);
             state
         })
     }

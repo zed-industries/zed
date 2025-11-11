@@ -17,10 +17,11 @@ use project::{
 };
 use settings::{Settings as _, SettingsStore};
 use ui::{
-    Context, ContextMenu, ContextMenuEntry, ContextMenuItem, DocumentationAside, DocumentationSide,
-    Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, Window, prelude::*,
+    Context, ContextMenu, ContextMenuEntry, ContextMenuItem, DocumentationAside, DocumentationEdge,
+    DocumentationSide, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, Window, prelude::*,
 };
 
+use util::{ResultExt, rel_path::RelPath};
 use workspace::{StatusItemView, Workspace};
 
 use crate::lsp_log_view;
@@ -121,7 +122,6 @@ impl LanguageServerHealthStatus {
 
 impl LanguageServerState {
     fn fill_menu(&self, mut menu: ContextMenu, cx: &mut Context<Self>) -> ContextMenu {
-        menu = menu.align_popover_bottom();
         let lsp_logs = cx
             .try_global::<GlobalLogStore>()
             .map(|lsp_logs| lsp_logs.0.clone());
@@ -149,6 +149,7 @@ impl LanguageServerState {
                                         return;
                                     };
                                     let project = workspace.read(cx).project().clone();
+                                    let path_style = project.read(cx).path_style(cx);
                                     let buffer_store = project.read(cx).buffer_store().clone();
                                     let buffers = state
                                         .read(cx)
@@ -160,6 +161,9 @@ impl LanguageServerState {
                                                 servers.worktree.as_ref()?.upgrade()?.read(cx);
                                             let relative_path =
                                                 abs_path.strip_prefix(&worktree.abs_path()).ok()?;
+                                            let relative_path =
+                                                RelPath::new(relative_path, path_style)
+                                                    .log_err()?;
                                             let entry = worktree.entry_for_path(&relative_path)?;
                                             let project_path =
                                                 project.read(cx).path_for_entry(entry.id, cx)?;
@@ -357,6 +361,7 @@ impl LanguageServerState {
                 message.map(|server_message| {
                     DocumentationAside::new(
                         DocumentationSide::Right,
+                        DocumentationEdge::Bottom,
                         Rc::new(move |_| Label::new(server_message.clone()).into_any_element()),
                     )
                 }),
@@ -767,7 +772,7 @@ impl LspButton {
                 });
                 servers_with_health_checks.insert(&health.name);
                 let worktree_name =
-                    worktree.map(|worktree| SharedString::new(worktree.read(cx).root_name()));
+                    worktree.map(|worktree| SharedString::new(worktree.read(cx).root_name_str()));
 
                 let binary_status = state.language_servers.binary_statuses.get(&health.name);
                 let server_data = ServerData::WithHealthCheck {
@@ -826,7 +831,7 @@ impl LspButton {
                         {
                             Some((worktree, server_id)) => {
                                 let worktree_name =
-                                    SharedString::new(worktree.read(cx).root_name());
+                                    SharedString::new(worktree.read(cx).root_name_str());
                                 servers_per_worktree
                                     .entry(worktree_name.clone())
                                     .or_default()
@@ -1006,7 +1011,7 @@ impl StatusItemView for LspButton {
 impl Render for LspButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         if self.server_state.read(cx).language_servers.is_empty() || self.lsp_menu.is_none() {
-            return div();
+            return div().hidden();
         }
 
         let mut has_errors = false;
@@ -1060,14 +1065,8 @@ impl Render for LspButton {
                         .when_some(indicator, IconButton::indicator)
                         .icon_size(IconSize::Small)
                         .indicator_border_color(Some(cx.theme().colors().status_bar_background)),
-                    move |window, cx| {
-                        Tooltip::with_meta(
-                            "Language Servers",
-                            Some(&ToggleMenu),
-                            description,
-                            window,
-                            cx,
-                        )
+                    move |_window, cx| {
+                        Tooltip::with_meta("Language Servers", Some(&ToggleMenu), description, cx)
                     },
                 ),
         )

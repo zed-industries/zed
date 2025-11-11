@@ -1,20 +1,23 @@
 use crate::{
+    ChatWithFollow,
     acp::completion_provider::{ContextPickerCompletionProvider, SlashCommandCompletion},
     context_picker::{ContextPickerAction, fetch_context_picker::fetch_url_content},
 };
 use acp_thread::{MentionUri, selection_name};
+use agent::{HistoryStore, outline};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
-use agent2::HistoryStore;
 use anyhow::{Result, anyhow};
 use assistant_slash_commands::codeblock_fence_for_path;
 use collections::{HashMap, HashSet};
 use editor::{
     Addon, Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
-    EditorEvent, EditorMode, EditorSnapshot, EditorStyle, ExcerptId, FoldPlaceholder, InlayId,
+    EditorEvent, EditorMode, EditorSnapshot, EditorStyle, ExcerptId, FoldPlaceholder, Inlay,
     MultiBuffer, ToOffset,
     actions::Paste,
-    display_map::{Crease, CreaseId, FoldId, Inlay},
+    code_context_menus::CodeContextMenu,
+    display_map::{Crease, CreaseId, FoldId},
+    scroll::Autoscroll,
 };
 use futures::{
     FutureExt as _,
@@ -29,13 +32,14 @@ use language::{Buffer, Language, language_settings::InlayHintKind};
 use language_model::LanguageModelImage;
 use postage::stream::Stream as _;
 use project::{
-    CompletionIntent, InlayHint, InlayHintLabel, Project, ProjectItem, ProjectPath, Worktree,
+    CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, ProjectItem, ProjectPath,
+    Worktree,
 };
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::Settings;
 use std::{
-    cell::{Cell, RefCell},
+    cell::RefCell,
     ffi::OsStr,
     fmt::Write,
     ops::{Range, RangeInclusive},
@@ -46,14 +50,9 @@ use std::{
 };
 use text::OffsetRangeExt;
 use theme::ThemeSettings;
-use ui::{
-    ActiveTheme, AnyElement, App, ButtonCommon, ButtonLike, ButtonStyle, Color, Element as _,
-    FluentBuilder as _, Icon, IconName, IconSize, InteractiveElement, IntoElement, Label,
-    LabelCommon, LabelSize, ParentElement, Render, SelectableButton, Styled, TextSize, TintColor,
-    Toggleable, Window, div, h_flex,
-};
-use util::{ResultExt, debug_panic};
-use workspace::{Workspace, notifications::NotifyResultExt as _};
+use ui::{ButtonLike, TintColor, Toggleable, prelude::*};
+use util::{ResultExt, debug_panic, rel_path::RelPath};
+use workspace::{CollaboratorId, Workspace, notifications::NotifyResultExt as _};
 use zed_actions::agent::Chat;
 
 pub struct MessageEditor {
@@ -63,7 +62,7 @@ pub struct MessageEditor {
     workspace: WeakEntity<Workspace>,
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
-    prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+    prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     agent_name: SharedString,
     _subscriptions: Vec<Subscription>,
@@ -80,7 +79,7 @@ pub enum MessageEditorEvent {
 
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
 
-const COMMAND_HINT_INLAY_ID: usize = 0;
+const COMMAND_HINT_INLAY_ID: InlayId = InlayId::Hint(0);
 
 impl MessageEditor {
     pub fn new(
@@ -88,10 +87,10 @@ impl MessageEditor {
         project: Entity<Project>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+        prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
         agent_name: SharedString,
-        placeholder: impl Into<Arc<str>>,
+        placeholder: &str,
         mode: EditorMode,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -117,7 +116,7 @@ impl MessageEditor {
             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
             let mut editor = Editor::new(mode, buffer, None, window, cx);
-            editor.set_placeholder_text(placeholder, cx);
+            editor.set_placeholder_text(placeholder, window, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_soft_wrap();
             editor.set_use_modal_editing(true);
@@ -145,7 +144,9 @@ impl MessageEditor {
 
         subscriptions.push(cx.subscribe_in(&editor, window, {
             move |this, editor, event, window, cx| {
-                if let EditorEvent::Edited { .. } = event {
+                if let EditorEvent::Edited { .. } = event
+                    && !editor.read(cx).read_only(cx)
+                {
                     let snapshot = editor.update(cx, |editor, cx| {
                         let new_hints = this
                             .command_hint(editor.buffer(), cx)
@@ -154,7 +155,7 @@ impl MessageEditor {
                         let has_new_hint = !new_hints.is_empty();
                         editor.splice_inlays(
                             if has_hint {
-                                &[InlayId::Hint(COMMAND_HINT_INLAY_ID)]
+                                &[COMMAND_HINT_INLAY_ID]
                             } else {
                                 &[]
                             },
@@ -232,12 +233,20 @@ impl MessageEditor {
 
     pub fn insert_thread_summary(
         &mut self,
-        thread: agent2::DbThreadMetadata,
+        thread: agent::DbThreadMetadata,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let uri = MentionUri::Thread {
+            id: thread.id.clone(),
+            name: thread.title.to_string(),
+        };
+        let content = format!("{}\n", uri.as_link());
+
+        let content_len = content.len() - 1;
+
         let start = self.editor.update(cx, |editor, cx| {
-            editor.set_text(format!("{}\n", thread.title), window, cx);
+            editor.set_text(content, window, cx);
             editor
                 .buffer()
                 .read(cx)
@@ -246,18 +255,8 @@ impl MessageEditor {
                 .text_anchor
         });
 
-        self.confirm_mention_completion(
-            thread.title.clone(),
-            start,
-            thread.title.len(),
-            MentionUri::Thread {
-                id: thread.id.clone(),
-                name: thread.title.to_string(),
-            },
-            window,
-            cx,
-        )
-        .detach();
+        self.confirm_mention_completion(thread.title, start, content_len, uri, window, cx)
+            .detach();
     }
 
     #[cfg(test)]
@@ -272,6 +271,15 @@ impl MessageEditor {
 
     pub fn is_empty(&self, cx: &App) -> bool {
         self.editor.read(cx).is_empty(cx)
+    }
+
+    pub fn is_completions_menu_visible(&self, cx: &App) -> bool {
+        self.editor
+            .read(cx)
+            .context_menu()
+            .borrow()
+            .as_ref()
+            .is_some_and(|menu| matches!(menu, CodeContextMenu::Completions(_)) && menu.visible())
     }
 
     pub fn mentions(&self) -> HashSet<MentionUri> {
@@ -294,18 +302,13 @@ impl MessageEditor {
         let snapshot = self
             .editor
             .update(cx, |editor, cx| editor.snapshot(window, cx));
-        let Some((excerpt_id, _, _)) = snapshot.buffer_snapshot.as_singleton() else {
+        let Some(start_anchor) = snapshot.buffer_snapshot().as_singleton_anchor(start) else {
             return Task::ready(());
         };
-        let Some(start_anchor) = snapshot
-            .buffer_snapshot
-            .anchor_in_excerpt(*excerpt_id, start)
-        else {
-            return Task::ready(());
-        };
+        let excerpt_id = start_anchor.excerpt_id;
         let end_anchor = snapshot
-            .buffer_snapshot
-            .anchor_before(start_anchor.to_offset(&snapshot.buffer_snapshot) + content_len + 1);
+            .buffer_snapshot()
+            .anchor_before(start_anchor.to_offset(&snapshot.buffer_snapshot()) + content_len + 1);
 
         let crease = if let MentionUri::File { abs_path } = &mention_uri
             && let Some(extension) = abs_path.extension()
@@ -334,7 +337,7 @@ impl MessageEditor {
                 })
                 .shared();
             insert_crease_for_mention(
-                *excerpt_id,
+                excerpt_id,
                 start,
                 content_len,
                 mention_uri.name().into(),
@@ -346,7 +349,7 @@ impl MessageEditor {
             )
         } else {
             insert_crease_for_mention(
-                *excerpt_id,
+                excerpt_id,
                 start,
                 content_len,
                 crease_text,
@@ -363,7 +366,7 @@ impl MessageEditor {
 
         let task = match mention_uri.clone() {
             MentionUri::Fetch { url } => self.confirm_mention_for_fetch(url, cx),
-            MentionUri::Directory { abs_path } => self.confirm_mention_for_directory(abs_path, cx),
+            MentionUri::Directory { .. } => Task::ready(Ok(Mention::Link)),
             MentionUri::Thread { id, .. } => self.confirm_mention_for_thread(id, cx),
             MentionUri::TextThread { path, .. } => self.confirm_mention_for_text_thread(path, cx),
             MentionUri::File { abs_path } => self.confirm_mention_for_file(abs_path, cx),
@@ -380,7 +383,6 @@ impl MessageEditor {
                 )))
             }
             MentionUri::Selection { .. } => {
-                // Handled elsewhere
                 debug_panic!("unexpected selection URI");
                 Task::ready(Err(anyhow!("unexpected selection URI")))
             }
@@ -427,7 +429,7 @@ impl MessageEditor {
             .unwrap_or_default();
 
         if Img::extensions().contains(&extension) && !extension.contains("svg") {
-            if !self.prompt_capabilities.get().image {
+            if !self.prompt_capabilities.borrow().image {
                 return Task::ready(Err(anyhow!("This model does not support images yet")));
             }
             let task = self
@@ -456,103 +458,17 @@ impl MessageEditor {
             .update(cx, |project, cx| project.open_buffer(project_path, cx));
         cx.spawn(async move |_, cx| {
             let buffer = buffer.await?;
-            let mention = buffer.update(cx, |buffer, cx| Mention::Text {
-                content: buffer.text(),
-                tracked_buffers: vec![cx.entity()],
-            })?;
-            anyhow::Ok(mention)
-        })
-    }
+            let buffer_content = outline::get_buffer_content_or_outline(
+                buffer.clone(),
+                Some(&abs_path.to_string_lossy()),
+                &cx,
+            )
+            .await?;
 
-    fn confirm_mention_for_directory(
-        &mut self,
-        abs_path: PathBuf,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Mention>> {
-        fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<(Arc<Path>, PathBuf)> {
-            let mut files = Vec::new();
-
-            for entry in worktree.child_entries(path) {
-                if entry.is_dir() {
-                    files.extend(collect_files_in_path(worktree, &entry.path));
-                } else if entry.is_file() {
-                    files.push((entry.path.clone(), worktree.full_path(&entry.path)));
-                }
-            }
-
-            files
-        }
-
-        let Some(project_path) = self
-            .project
-            .read(cx)
-            .project_path_for_absolute_path(&abs_path, cx)
-        else {
-            return Task::ready(Err(anyhow!("project path not found")));
-        };
-        let Some(entry) = self.project.read(cx).entry_for_path(&project_path, cx) else {
-            return Task::ready(Err(anyhow!("project entry not found")));
-        };
-        let directory_path = entry.path.clone();
-        let worktree_id = project_path.worktree_id;
-        let Some(worktree) = self.project.read(cx).worktree_for_id(worktree_id, cx) else {
-            return Task::ready(Err(anyhow!("worktree not found")));
-        };
-        let project = self.project.clone();
-        cx.spawn(async move |_, cx| {
-            let file_paths = worktree.read_with(cx, |worktree, _cx| {
-                collect_files_in_path(worktree, &directory_path)
-            })?;
-            let descendants_future = cx.update(|cx| {
-                join_all(file_paths.into_iter().map(|(worktree_path, full_path)| {
-                    let rel_path = worktree_path
-                        .strip_prefix(&directory_path)
-                        .log_err()
-                        .map_or_else(|| worktree_path.clone(), |rel_path| rel_path.into());
-
-                    let open_task = project.update(cx, |project, cx| {
-                        project.buffer_store().update(cx, |buffer_store, cx| {
-                            let project_path = ProjectPath {
-                                worktree_id,
-                                path: worktree_path,
-                            };
-                            buffer_store.open_buffer(project_path, cx)
-                        })
-                    });
-
-                    // TODO: report load errors instead of just logging
-                    let rope_task = cx.spawn(async move |cx| {
-                        let buffer = open_task.await.log_err()?;
-                        let rope = buffer
-                            .read_with(cx, |buffer, _cx| buffer.as_rope().clone())
-                            .log_err()?;
-                        Some((rope, buffer))
-                    });
-
-                    cx.background_spawn(async move {
-                        let (rope, buffer) = rope_task.await?;
-                        Some((rel_path, full_path, rope.to_string(), buffer))
-                    })
-                }))
-            })?;
-
-            let contents = cx
-                .background_spawn(async move {
-                    let (contents, tracked_buffers) = descendants_future
-                        .await
-                        .into_iter()
-                        .flatten()
-                        .map(|(rel_path, full_path, rope, buffer)| {
-                            ((rel_path, full_path, rope), buffer)
-                        })
-                        .unzip();
-                    Mention::Text {
-                        content: render_directory_contents(contents),
-                        tracked_buffers,
-                    }
-                })
-                .await;
-            anyhow::Ok(contents)
+            Ok(Mention::Text {
+                content: buffer_content.text,
+                tracked_buffers: vec![buffer],
+            })
         })
     }
 
@@ -634,10 +550,7 @@ impl MessageEditor {
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
-        let Some((&excerpt_id, _, _)) = snapshot.as_singleton() else {
-            return;
-        };
-        let Some(start) = snapshot.anchor_in_excerpt(excerpt_id, source_range.start) else {
+        let Some(start) = snapshot.as_singleton_anchor(source_range.start) else {
             return;
         };
 
@@ -688,6 +601,21 @@ impl MessageEditor {
                 ),
             );
         }
+
+        // Take this explanation with a grain of salt but, with creases being
+        // inserted, GPUI's recomputes the editor layout in the next frames, so
+        // directly calling `editor.request_autoscroll` wouldn't work as
+        // expected. We're leveraging `cx.on_next_frame` to wait 2 frames and
+        // ensure that the layout has been recalculated so that the autoscroll
+        // request actually shows the cursor's new position.
+        let editor = self.editor.clone();
+        cx.on_next_frame(window, move |_, window, cx| {
+            cx.on_next_frame(window, move |_, _, cx| {
+                editor.update(cx, |editor, cx| {
+                    editor.request_autoscroll(Autoscroll::fit(), cx)
+                });
+            });
+        });
     }
 
     fn confirm_mention_for_thread(
@@ -695,7 +623,7 @@ impl MessageEditor {
         id: acp::SessionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
-        let server = Rc::new(agent2::NativeAgentServer::new(
+        let server = Rc::new(agent::NativeAgentServer::new(
             self.project.read(cx).fs().clone(),
             self.history_store.clone(),
         ));
@@ -708,7 +636,7 @@ impl MessageEditor {
         let connection = server.connect(None, delegate, cx);
         cx.spawn(async move |_, cx| {
             let (agent, _) = connection.await?;
-            let agent = agent.downcast::<agent2::NativeAgentConnection>().unwrap();
+            let agent = agent.downcast::<agent::NativeAgentConnection>().unwrap();
             let summary = agent
                 .0
                 .update(cx, |agent, cx| agent.thread_summary(id, cx))?
@@ -725,12 +653,12 @@ impl MessageEditor {
         path: PathBuf,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
-        let context = self.history_store.update(cx, |text_thread_store, cx| {
-            text_thread_store.load_text_thread(path.as_path().into(), cx)
+        let text_thread_task = self.history_store.update(cx, |store, cx| {
+            store.load_text_thread(path.as_path().into(), cx)
         });
         cx.spawn(async move |_, cx| {
-            let context = context.await?;
-            let xml = context.update(cx, |context, cx| context.to_xml(cx))?;
+            let text_thread = text_thread_task.await?;
+            let xml = text_thread.update(cx, |text_thread, cx| text_thread.to_xml(cx))?;
             Ok(Mention::Text {
                 content: xml,
                 tracked_buffers: Vec::new(),
@@ -773,6 +701,7 @@ impl MessageEditor {
 
     pub fn contents(
         &self,
+        full_mention_content: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>> {
         // Check for unsupported slash commands before spawning async task
@@ -786,15 +715,19 @@ impl MessageEditor {
 
         let contents = self
             .mention_set
-            .contents(&self.prompt_capabilities.get(), cx);
+            .contents(full_mention_content, self.project.clone(), cx);
         let editor = self.editor.clone();
+        let supports_embedded_context = self.prompt_capabilities.borrow().embedded_context;
 
         cx.spawn(async move |_, cx| {
             let contents = contents.await?;
             let mut all_tracked_buffers = Vec::new();
 
             let result = editor.update(cx, |editor, cx| {
-                let mut ix = 0;
+                let (mut ix, _) = text
+                    .char_indices()
+                    .find(|(_, c)| !c.is_whitespace())
+                    .unwrap_or((0, '\0'));
                 let mut chunks: Vec<acp::ContentBlock> = Vec::new();
                 let text = editor.text(cx);
                 editor.display_map.update(cx, |map, cx| {
@@ -804,17 +737,8 @@ impl MessageEditor {
                             continue;
                         };
 
-                        let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot);
+                        let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot());
                         if crease_range.start > ix {
-                            //todo(): Custom slash command ContentBlock?
-                            // let chunk = if prevent_slash_commands
-                            //     && ix == 0
-                            //     && parse_slash_command(&text[ix..]).is_some()
-                            // {
-                            //     format!(" {}", &text[ix..crease_range.start]).into()
-                            // } else {
-                            //     text[ix..crease_range.start].into()
-                            // };
                             let chunk = text[ix..crease_range.start].into();
                             chunks.push(chunk);
                         }
@@ -824,16 +748,32 @@ impl MessageEditor {
                                 tracked_buffers,
                             } => {
                                 all_tracked_buffers.extend(tracked_buffers.iter().cloned());
-                                acp::ContentBlock::Resource(acp::EmbeddedResource {
-                                    annotations: None,
-                                    resource: acp::EmbeddedResourceResource::TextResourceContents(
-                                        acp::TextResourceContents {
-                                            mime_type: None,
-                                            text: content.clone(),
-                                            uri: uri.to_uri().to_string(),
-                                        },
-                                    ),
-                                })
+                                if supports_embedded_context {
+                                    acp::ContentBlock::Resource(acp::EmbeddedResource {
+                                        annotations: None,
+                                        resource:
+                                            acp::EmbeddedResourceResource::TextResourceContents(
+                                                acp::TextResourceContents {
+                                                    mime_type: None,
+                                                    text: content.clone(),
+                                                    uri: uri.to_uri().to_string(),
+                                                    meta: None,
+                                                },
+                                            ),
+                                        meta: None,
+                                    })
+                                } else {
+                                    acp::ContentBlock::ResourceLink(acp::ResourceLink {
+                                        name: uri.name(),
+                                        uri: uri.to_uri().to_string(),
+                                        annotations: None,
+                                        description: None,
+                                        mime_type: None,
+                                        size: None,
+                                        title: None,
+                                        meta: None,
+                                    })
+                                }
                             }
                             Mention::Image(mention_image) => {
                                 let uri = match uri {
@@ -852,34 +792,25 @@ impl MessageEditor {
                                     data: mention_image.data.to_string(),
                                     mime_type: mention_image.format.mime_type().into(),
                                     uri,
+                                    meta: None,
                                 })
                             }
-                            Mention::UriOnly => {
-                                acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                                    name: uri.name(),
-                                    uri: uri.to_uri().to_string(),
-                                    annotations: None,
-                                    description: None,
-                                    mime_type: None,
-                                    size: None,
-                                    title: None,
-                                })
-                            }
+                            Mention::Link => acp::ContentBlock::ResourceLink(acp::ResourceLink {
+                                name: uri.name(),
+                                uri: uri.to_uri().to_string(),
+                                annotations: None,
+                                description: None,
+                                mime_type: None,
+                                size: None,
+                                title: None,
+                                meta: None,
+                            }),
                         };
                         chunks.push(chunk);
                         ix = crease_range.end;
                     }
 
                     if ix < text.len() {
-                        //todo(): Custom slash command ContentBlock?
-                        // let last_chunk = if prevent_slash_commands
-                        //     && ix == 0
-                        //     && parse_slash_command(&text[ix..]).is_some()
-                        // {
-                        //     format!(" {}", text[ix..].trim_end())
-                        // } else {
-                        //     text[ix..].trim_end().to_owned()
-                        // };
                         let last_chunk = text[ix..].trim_end().to_owned();
                         if !last_chunk.is_empty() {
                             chunks.push(last_chunk.into());
@@ -905,11 +836,72 @@ impl MessageEditor {
         });
     }
 
-    fn send(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
+    pub fn send(&mut self, cx: &mut Context<Self>) {
         if self.is_empty(cx) {
             return;
         }
+        self.editor.update(cx, |editor, cx| {
+            editor.clear_inlay_hints(cx);
+        });
         cx.emit(MessageEditorEvent::Send)
+    }
+
+    pub fn trigger_completion_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let editor = self.editor.clone();
+
+        cx.spawn_in(window, async move |_, cx| {
+            editor
+                .update_in(cx, |editor, window, cx| {
+                    let menu_is_open =
+                        editor.context_menu().borrow().as_ref().is_some_and(|menu| {
+                            matches!(menu, CodeContextMenu::Completions(_)) && menu.visible()
+                        });
+
+                    let has_at_sign = {
+                        let snapshot = editor.display_snapshot(cx);
+                        let cursor = editor.selections.newest::<text::Point>(&snapshot).head();
+                        let offset = cursor.to_offset(&snapshot);
+                        if offset > 0 {
+                            snapshot
+                                .buffer_snapshot()
+                                .reversed_chars_at(offset)
+                                .next()
+                                .map(|sign| sign == '@')
+                                .unwrap_or(false)
+                        } else {
+                            false
+                        }
+                    };
+
+                    if menu_is_open && has_at_sign {
+                        return;
+                    }
+
+                    editor.insert("@", window, cx);
+                    editor.show_completions(&editor::actions::ShowCompletions, window, cx);
+                })
+                .log_err();
+        })
+        .detach();
+    }
+
+    fn chat(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
+        self.send(cx);
+    }
+
+    fn chat_with_follow(
+        &mut self,
+        _: &ChatWithFollow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace
+            .update(cx, |this, cx| {
+                this.follow(CollaboratorId::Agent, window, cx)
+            })
+            .log_err();
+
+        self.send(cx);
     }
 
     fn cancel(&mut self, _: &editor::actions::Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -917,7 +909,7 @@ impl MessageEditor {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.prompt_capabilities.get().image {
+        if !self.prompt_capabilities.borrow().image {
             return;
         }
 
@@ -947,11 +939,11 @@ impl MessageEditor {
                 self.editor.update(cx, |message_editor, cx| {
                     let snapshot = message_editor.snapshot(window, cx);
                     let (excerpt_id, _, buffer_snapshot) =
-                        snapshot.buffer_snapshot.as_singleton().unwrap();
+                        snapshot.buffer_snapshot().as_singleton().unwrap();
 
                     let text_anchor = buffer_snapshot.anchor_before(buffer_snapshot.len());
                     let multibuffer_anchor = snapshot
-                        .buffer_snapshot
+                        .buffer_snapshot()
                         .anchor_in_excerpt(*excerpt_id, text_anchor);
                     message_editor.edit(
                         [(
@@ -1032,6 +1024,7 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let path_style = self.project.read(cx).path_style(cx);
         let buffer = self.editor.read(cx).buffer().clone();
         let Some(buffer) = buffer.read(cx).as_singleton() else {
             return;
@@ -1041,18 +1034,15 @@ impl MessageEditor {
             let Some(entry) = self.project.read(cx).entry_for_path(&path, cx) else {
                 continue;
             };
-            let Some(abs_path) = self.project.read(cx).absolute_path(&path, cx) else {
+            let Some(worktree) = self.project.read(cx).worktree_for_id(path.worktree_id, cx) else {
                 continue;
             };
-            let path_prefix = abs_path
-                .file_name()
-                .unwrap_or(path.path.as_os_str())
-                .display()
-                .to_string();
+            let abs_path = worktree.read(cx).absolutize(&path.path);
             let (file_name, _) =
                 crate::context_picker::file_context_picker::extract_file_name_and_directory(
                     &path.path,
-                    &path_prefix,
+                    worktree.read(cx).root_name(),
+                    path_style,
                 );
 
             let uri = if entry.is_dir() {
@@ -1092,11 +1082,16 @@ impl MessageEditor {
     }
 
     pub fn insert_selections(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let buffer = self.editor.read(cx).buffer().clone();
-        let Some(buffer) = buffer.read(cx).as_singleton() else {
+        let editor = self.editor.read(cx);
+        let editor_buffer = editor.buffer().read(cx);
+        let Some(buffer) = editor_buffer.as_singleton() else {
             return;
         };
-        let anchor = buffer.update(cx, |buffer, _cx| buffer.anchor_before(buffer.len()));
+        let cursor_anchor = editor.selections.newest_anchor().head();
+        let cursor_offset = cursor_anchor.to_offset(&editor_buffer.snapshot(cx));
+        let anchor = buffer.update(cx, |buffer, _cx| {
+            buffer.anchor_before(cursor_offset.min(buffer.len()))
+        });
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -1109,14 +1104,10 @@ impl MessageEditor {
         ) else {
             return;
         };
+
         self.editor.update(cx, |message_editor, cx| {
-            message_editor.edit(
-                [(
-                    multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
-                    completion.new_text,
-                )],
-                cx,
-            );
+            message_editor.edit([(cursor_anchor..cursor_anchor, completion.new_text)], cx);
+            message_editor.request_autoscroll(Autoscroll::fit(), cx);
         });
         if let Some(confirm) = completion.confirm {
             confirm(CompletionIntent::Complete, window, cx);
@@ -1145,6 +1136,7 @@ impl MessageEditor {
     ) {
         self.clear(window, cx);
 
+        let path_style = self.project.read(cx).path_style(cx);
         let mut text = String::new();
         let mut mentions = Vec::new();
 
@@ -1157,7 +1149,8 @@ impl MessageEditor {
                     resource: acp::EmbeddedResourceResource::TextResourceContents(resource),
                     ..
                 }) => {
-                    let Some(mention_uri) = MentionUri::parse(&resource.uri).log_err() else {
+                    let Some(mention_uri) = MentionUri::parse(&resource.uri, path_style).log_err()
+                    else {
                         continue;
                     };
                     let start = text.len();
@@ -1173,11 +1166,13 @@ impl MessageEditor {
                     ));
                 }
                 acp::ContentBlock::ResourceLink(resource) => {
-                    if let Some(mention_uri) = MentionUri::parse(&resource.uri).log_err() {
+                    if let Some(mention_uri) =
+                        MentionUri::parse(&resource.uri, path_style).log_err()
+                    {
                         let start = text.len();
                         write!(&mut text, "{}", mention_uri.as_link()).ok();
                         let end = text.len();
-                        mentions.push((start..end, mention_uri, Mention::UriOnly));
+                        mentions.push((start..end, mention_uri, Mention::Link));
                     }
                 }
                 acp::ContentBlock::Image(acp::ImageContent {
@@ -1185,9 +1180,10 @@ impl MessageEditor {
                     data,
                     mime_type,
                     annotations: _,
+                    meta: _,
                 }) => {
                     let mention_uri = if let Some(uri) = uri {
-                        MentionUri::parse(&uri)
+                        MentionUri::parse(&uri, path_style)
                     } else {
                         Ok(MentionUri::PastedImage)
                     };
@@ -1248,6 +1244,17 @@ impl MessageEditor {
         self.editor.read(cx).text(cx)
     }
 
+    pub fn set_placeholder_text(
+        &mut self,
+        placeholder: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            editor.set_placeholder_text(placeholder, window, cx);
+        });
+    }
+
     #[cfg(test)]
     pub fn set_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
@@ -1256,7 +1263,103 @@ impl MessageEditor {
     }
 }
 
-fn render_directory_contents(entries: Vec<(Arc<Path>, PathBuf, String)>) -> String {
+fn full_mention_for_directory(
+    project: &Entity<Project>,
+    abs_path: &Path,
+    cx: &mut App,
+) -> Task<Result<Mention>> {
+    fn collect_files_in_path(worktree: &Worktree, path: &RelPath) -> Vec<(Arc<RelPath>, String)> {
+        let mut files = Vec::new();
+
+        for entry in worktree.child_entries(path) {
+            if entry.is_dir() {
+                files.extend(collect_files_in_path(worktree, &entry.path));
+            } else if entry.is_file() {
+                files.push((
+                    entry.path.clone(),
+                    worktree
+                        .full_path(&entry.path)
+                        .to_string_lossy()
+                        .to_string(),
+                ));
+            }
+        }
+
+        files
+    }
+
+    let Some(project_path) = project
+        .read(cx)
+        .project_path_for_absolute_path(&abs_path, cx)
+    else {
+        return Task::ready(Err(anyhow!("project path not found")));
+    };
+    let Some(entry) = project.read(cx).entry_for_path(&project_path, cx) else {
+        return Task::ready(Err(anyhow!("project entry not found")));
+    };
+    let directory_path = entry.path.clone();
+    let worktree_id = project_path.worktree_id;
+    let Some(worktree) = project.read(cx).worktree_for_id(worktree_id, cx) else {
+        return Task::ready(Err(anyhow!("worktree not found")));
+    };
+    let project = project.clone();
+    cx.spawn(async move |cx| {
+        let file_paths = worktree.read_with(cx, |worktree, _cx| {
+            collect_files_in_path(worktree, &directory_path)
+        })?;
+        let descendants_future = cx.update(|cx| {
+            join_all(file_paths.into_iter().map(|(worktree_path, full_path)| {
+                let rel_path = worktree_path
+                    .strip_prefix(&directory_path)
+                    .log_err()
+                    .map_or_else(|| worktree_path.clone(), |rel_path| rel_path.into());
+
+                let open_task = project.update(cx, |project, cx| {
+                    project.buffer_store().update(cx, |buffer_store, cx| {
+                        let project_path = ProjectPath {
+                            worktree_id,
+                            path: worktree_path,
+                        };
+                        buffer_store.open_buffer(project_path, cx)
+                    })
+                });
+
+                cx.spawn(async move |cx| {
+                    let buffer = open_task.await.log_err()?;
+                    let buffer_content = outline::get_buffer_content_or_outline(
+                        buffer.clone(),
+                        Some(&full_path),
+                        &cx,
+                    )
+                    .await
+                    .ok()?;
+
+                    Some((rel_path, full_path, buffer_content.text, buffer))
+                })
+            }))
+        })?;
+
+        let contents = cx
+            .background_spawn(async move {
+                let (contents, tracked_buffers) = descendants_future
+                    .await
+                    .into_iter()
+                    .flatten()
+                    .map(|(rel_path, full_path, rope, buffer)| {
+                        ((rel_path, full_path, rope), buffer)
+                    })
+                    .unzip();
+                Mention::Text {
+                    content: render_directory_contents(contents),
+                    tracked_buffers,
+                }
+            })
+            .await;
+        anyhow::Ok(contents)
+    })
+}
+
+fn render_directory_contents(entries: Vec<(Arc<RelPath>, String, String)>) -> String {
     let mut output = String::new();
     for (_relative_path, full_path, content) in entries {
         let fence = codeblock_fence_for_path(Some(&full_path), None);
@@ -1275,24 +1378,21 @@ impl Render for MessageEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .key_context("MessageEditor")
-            .on_action(cx.listener(Self::send))
+            .on_action(cx.listener(Self::chat))
+            .on_action(cx.listener(Self::chat_with_follow))
             .on_action(cx.listener(Self::cancel))
             .capture_action(cx.listener(Self::paste))
             .flex_1()
             .child({
                 let settings = ThemeSettings::get_global(cx);
-                let font_size = TextSize::Small
-                    .rems(cx)
-                    .to_pixels(settings.agent_font_size(cx));
-                let line_height = settings.buffer_line_height.value() * font_size;
 
                 let text_style = TextStyle {
                     color: cx.theme().colors().text,
                     font_family: settings.buffer_font.family.clone(),
                     font_fallbacks: settings.buffer_font.fallbacks.clone(),
                     font_features: settings.buffer_font.features.clone(),
-                    font_size: font_size.into(),
-                    line_height: line_height.into(),
+                    font_size: settings.agent_buffer_font_size(cx).into(),
+                    line_height: relative(settings.buffer_line_height.value()),
                     ..Default::default()
                 };
 
@@ -1489,7 +1589,7 @@ pub enum Mention {
         tracked_buffers: Vec<Entity<Buffer>>,
     },
     Image(MentionImage),
-    UriOnly,
+    Link,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1506,27 +1606,24 @@ pub struct MentionSet {
 impl MentionSet {
     fn contents(
         &self,
-        prompt_capabilities: &acp::PromptCapabilities,
+        full_mention_content: bool,
+        project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<HashMap<CreaseId, (MentionUri, Mention)>>> {
-        if !prompt_capabilities.embedded_context {
-            let mentions = self
-                .mentions
-                .iter()
-                .map(|(crease_id, (uri, _))| (*crease_id, (uri.clone(), Mention::UriOnly)))
-                .collect();
-
-            return Task::ready(Ok(mentions));
-        }
-
         let mentions = self.mentions.clone();
-        cx.spawn(async move |_cx| {
+        cx.spawn(async move |cx| {
             let mut contents = HashMap::default();
             for (crease_id, (mention_uri, task)) in mentions {
-                contents.insert(
-                    crease_id,
-                    (mention_uri, task.await.map_err(|e| anyhow!("{e}"))?),
-                );
+                let content = if full_mention_content
+                    && let MentionUri::Directory { abs_path } = &mention_uri
+                {
+                    cx.update(|cx| full_mention_for_directory(&project, abs_path, cx))?
+                        .await?
+                } else {
+                    task.await.map_err(|e| anyhow!("{e}"))?
+                };
+
+                contents.insert(crease_id, (mention_uri, content));
             }
             Ok(contents)
         })
@@ -1534,7 +1631,7 @@ impl MentionSet {
 
     fn remove_invalid(&mut self, snapshot: EditorSnapshot) {
         for (crease_id, crease) in snapshot.crease_snapshot.creases() {
-            if !crease.range().start.is_valid(&snapshot.buffer_snapshot) {
+            if !crease.range().start.is_valid(&snapshot.buffer_snapshot()) {
                 self.mentions.remove(&crease_id);
             }
         }
@@ -1568,30 +1665,25 @@ impl Addon for MessageEditorAddon {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        cell::{Cell, RefCell},
-        ops::Range,
-        path::Path,
-        rc::Rc,
-        sync::Arc,
-    };
+    use std::{cell::RefCell, ops::Range, path::Path, rc::Rc, sync::Arc};
 
     use acp_thread::MentionUri;
+    use agent::{HistoryStore, outline};
     use agent_client_protocol as acp;
-    use agent2::HistoryStore;
-    use assistant_context::ContextStore;
+    use assistant_text_thread::TextThreadStore;
     use editor::{AnchorRangeExt as _, Editor, EditorMode};
     use fs::FakeFs;
     use futures::StreamExt as _;
     use gpui::{
         AppContext, Entity, EventEmitter, FocusHandle, Focusable, TestAppContext, VisualTestContext,
     };
+    use language_model::LanguageModelRegistry;
     use lsp::{CompletionContext, CompletionTriggerKind};
     use project::{CompletionIntent, Project, ProjectPath};
     use serde_json::json;
     use text::Point;
     use ui::{App, Context, IntoElement, Render, SharedString, Window};
-    use util::{path, uri};
+    use util::{path, paths::PathStyle, rel_path::rel_path};
     use workspace::{AppState, Item, Workspace};
 
     use crate::acp::{
@@ -1610,8 +1702,8 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -1673,13 +1765,10 @@ mod tests {
 
         editor.update_in(cx, |editor, window, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            let start = snapshot
-                .anchor_in_excerpt(excerpt_id, completion.replace_range.start)
+            let range = snapshot
+                .anchor_range_in_excerpt(excerpt_id, completion.replace_range)
                 .unwrap();
-            let end = snapshot
-                .anchor_in_excerpt(excerpt_id, completion.replace_range.end)
-                .unwrap();
-            editor.edit([(start..end, completion.new_text)], cx);
+            editor.edit([(range, completion.new_text)], cx);
             (completion.confirm.unwrap())(CompletionIntent::Complete, window, cx);
         });
 
@@ -1692,7 +1781,7 @@ mod tests {
         });
 
         let (content, _) = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(cx))
+            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
             .await
             .unwrap();
 
@@ -1718,9 +1807,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
-        let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         // Start with no available commands - simulating Claude which doesn't support slash commands
         let available_commands = Rc::new(RefCell::new(vec![]));
 
@@ -1755,7 +1844,7 @@ mod tests {
         });
 
         let contents_result = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(cx))
+            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
             .await;
 
         // Should fail because available_commands is empty (no commands supported)
@@ -1769,6 +1858,7 @@ mod tests {
             name: "help".to_string(),
             description: "Get help".to_string(),
             input: None,
+            meta: None,
         }]);
 
         // Test that unsupported slash commands trigger an error when we have a list of available commands
@@ -1777,7 +1867,7 @@ mod tests {
         });
 
         let contents_result = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(cx))
+            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
             .await;
 
         assert!(contents_result.is_err());
@@ -1792,7 +1882,7 @@ mod tests {
         });
 
         let contents_result = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(cx))
+            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
             .await;
 
         // Should succeed because /help is in available_commands
@@ -1804,7 +1894,7 @@ mod tests {
         });
 
         let (content, _) = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(cx))
+            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
             .await
             .unwrap();
 
@@ -1822,7 +1912,7 @@ mod tests {
 
         // The @ mention functionality should not be affected
         let (content, _) = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(cx))
+            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
             .await
             .unwrap();
 
@@ -1869,10 +1959,8 @@ mod tests {
         let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
-            language::init(cx);
             editor::init(cx);
             workspace::init(app_state.clone(), cx);
-            Project::init_settings(cx);
         });
 
         let project = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
@@ -1881,14 +1969,15 @@ mod tests {
 
         let mut cx = VisualTestContext::from_window(*window, cx);
 
-        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
-        let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![
             acp::AvailableCommand {
                 name: "quick-math".to_string(),
                 description: "2 + 2 = 4 - 1 = 3".to_string(),
                 input: None,
+                meta: None,
             },
             acp::AvailableCommand {
                 name: "say-hello".to_string(),
@@ -1896,6 +1985,7 @@ mod tests {
                 input: Some(acp::AvailableCommandInput::Unstructured {
                     hint: "<name>".to_string(),
                 }),
+                meta: None,
             },
         ]));
 
@@ -1997,20 +2087,10 @@ mod tests {
         editor.update_in(&mut cx, |editor, _window, cx| {
             assert_eq!(editor.text(cx), "/say-hello ");
             assert_eq!(editor.display_text(cx), "/say-hello <name>");
-            assert!(editor.has_visible_completions_menu());
-
-            assert_eq!(
-                current_completion_labels_with_documentation(editor),
-                &[("say-hello".into(), "Say hello to whoever you want".into())]
-            );
+            assert!(!editor.has_visible_completions_menu());
         });
 
         cx.simulate_input("GPT5");
-
-        editor.update_in(&mut cx, |editor, window, cx| {
-            assert!(editor.has_visible_completions_menu());
-            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
-        });
 
         cx.run_until_parked();
 
@@ -2020,7 +2100,7 @@ mod tests {
             assert!(!editor.has_visible_completions_menu());
 
             // Delete argument
-            for _ in 0..4 {
+            for _ in 0..5 {
                 editor.backspace(&editor::actions::Backspace, window, cx);
             }
         });
@@ -2028,12 +2108,11 @@ mod tests {
         cx.run_until_parked();
 
         editor.update_in(&mut cx, |editor, window, cx| {
-            assert_eq!(editor.text(cx), "/say-hello ");
+            assert_eq!(editor.text(cx), "/say-hello");
             // Hint is visible because argument was deleted
             assert_eq!(editor.display_text(cx), "/say-hello <name>");
 
             // Delete last command letter
-            editor.backspace(&editor::actions::Backspace, window, cx);
             editor.backspace(&editor::actions::Backspace, window, cx);
         });
 
@@ -2054,10 +2133,8 @@ mod tests {
         let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
-            language::init(cx);
             editor::init(cx);
             workspace::init(app_state.clone(), cx);
-            Project::init_settings(cx);
         });
 
         app_state
@@ -2098,15 +2175,17 @@ mod tests {
         let mut cx = VisualTestContext::from_window(*window, cx);
 
         let paths = vec![
-            path!("a/one.txt"),
-            path!("a/two.txt"),
-            path!("a/three.txt"),
-            path!("a/four.txt"),
-            path!("b/five.txt"),
-            path!("b/six.txt"),
-            path!("b/seven.txt"),
-            path!("b/eight.txt"),
+            rel_path("a/one.txt"),
+            rel_path("a/two.txt"),
+            rel_path("a/three.txt"),
+            rel_path("a/four.txt"),
+            rel_path("b/five.txt"),
+            rel_path("b/six.txt"),
+            rel_path("b/seven.txt"),
+            rel_path("b/eight.txt"),
         ];
+
+        let slash = PathStyle::local().separator();
 
         let mut opened_editors = Vec::new();
         for path in paths {
@@ -2115,7 +2194,7 @@ mod tests {
                     workspace.open_path(
                         ProjectPath {
                             worktree_id,
-                            path: Path::new(path).into(),
+                            path: path.into(),
                         },
                         None,
                         false,
@@ -2128,9 +2207,9 @@ mod tests {
             opened_editors.push(buffer);
         }
 
-        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
-        let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
 
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
@@ -2176,19 +2255,22 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    "eight.txt dir/b/",
-                    "seven.txt dir/b/",
-                    "six.txt dir/b/",
-                    "five.txt dir/b/",
+                    format!("eight.txt b{slash}"),
+                    format!("seven.txt b{slash}"),
+                    format!("six.txt b{slash}"),
+                    format!("five.txt b{slash}"),
+                    "Files & Directories".into(),
+                    "Symbols".into()
                 ]
             );
             editor.set_text("", window, cx);
         });
 
-        prompt_capabilities.set(acp::PromptCapabilities {
+        prompt_capabilities.replace(acp::PromptCapabilities {
             image: true,
             audio: true,
             embedded_context: true,
+            meta: None,
         });
 
         cx.simulate_input("Lorem ");
@@ -2206,14 +2288,14 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    "eight.txt dir/b/",
-                    "seven.txt dir/b/",
-                    "six.txt dir/b/",
-                    "five.txt dir/b/",
-                    "Files & Directories",
-                    "Symbols",
-                    "Threads",
-                    "Fetch"
+                    format!("eight.txt b{slash}"),
+                    format!("seven.txt b{slash}"),
+                    format!("six.txt b{slash}"),
+                    format!("five.txt b{slash}"),
+                    "Files & Directories".into(),
+                    "Symbols".into(),
+                    "Threads".into(),
+                    "Fetch".into()
                 ]
             );
         });
@@ -2240,7 +2322,10 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(editor.text(cx), "Lorem @file one");
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), vec!["one.txt dir/a/"]);
+            assert_eq!(
+                current_completion_labels(editor),
+                vec![format!("one.txt a{slash}")]
+            );
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -2248,7 +2333,11 @@ mod tests {
             editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
         });
 
-        let url_one = uri!("file:///dir/a/one.txt");
+        let url_one = MentionUri::File {
+            abs_path: path!("/dir/a/one.txt").into(),
+        }
+        .to_uri()
+        .to_string();
         editor.update(&mut cx, |editor, cx| {
             let text = editor.text(cx);
             assert_eq!(text, format!("Lorem [@one.txt]({url_one}) "));
@@ -2256,17 +2345,11 @@ mod tests {
             assert_eq!(fold_ranges(editor, cx).len(), 1);
         });
 
-        let all_prompt_capabilities = acp::PromptCapabilities {
-            image: true,
-            audio: true,
-            embedded_context: true,
-        };
-
         let contents = message_editor
             .update(&mut cx, |message_editor, cx| {
                 message_editor
                     .mention_set()
-                    .contents(&all_prompt_capabilities, cx)
+                    .contents(false, project.clone(), cx)
             })
             .await
             .unwrap()
@@ -2278,25 +2361,10 @@ mod tests {
                 panic!("Unexpected mentions");
             };
             pretty_assertions::assert_eq!(content, "1");
-            pretty_assertions::assert_eq!(uri, &url_one.parse::<MentionUri>().unwrap());
-        }
-
-        let contents = message_editor
-            .update(&mut cx, |message_editor, cx| {
-                message_editor
-                    .mention_set()
-                    .contents(&acp::PromptCapabilities::default(), cx)
-            })
-            .await
-            .unwrap()
-            .into_values()
-            .collect::<Vec<_>>();
-
-        {
-            let [(uri, Mention::UriOnly)] = contents.as_slice() else {
-                panic!("Unexpected mentions");
-            };
-            pretty_assertions::assert_eq!(uri, &url_one.parse::<MentionUri>().unwrap());
+            pretty_assertions::assert_eq!(
+                uri,
+                &MentionUri::parse(&url_one, PathStyle::local()).unwrap()
+            );
         }
 
         cx.simulate_input(" ");
@@ -2336,21 +2404,28 @@ mod tests {
             .update(&mut cx, |message_editor, cx| {
                 message_editor
                     .mention_set()
-                    .contents(&all_prompt_capabilities, cx)
+                    .contents(false, project.clone(), cx)
             })
             .await
             .unwrap()
             .into_values()
             .collect::<Vec<_>>();
 
-        let url_eight = uri!("file:///dir/b/eight.txt");
+        let url_eight = MentionUri::File {
+            abs_path: path!("/dir/b/eight.txt").into(),
+        }
+        .to_uri()
+        .to_string();
 
         {
             let [_, (uri, Mention::Text { content, .. })] = contents.as_slice() else {
                 panic!("Unexpected mentions");
             };
             pretty_assertions::assert_eq!(content, "8");
-            pretty_assertions::assert_eq!(uri, &url_eight.parse::<MentionUri>().unwrap());
+            pretty_assertions::assert_eq!(
+                uri,
+                &MentionUri::parse(&url_eight, PathStyle::local()).unwrap()
+            );
         }
 
         editor.update(&mut cx, |editor, cx| {
@@ -2435,18 +2510,24 @@ mod tests {
                 format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) @symbol ")
             );
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), &["MySymbol"]);
+            assert_eq!(current_completion_labels(editor), &["MySymbol one.txt L1"]);
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
             editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
         });
 
+        let symbol = MentionUri::Symbol {
+            abs_path: path!("/dir/a/one.txt").into(),
+            name: "MySymbol".into(),
+            line_range: 0..=0,
+        };
+
         let contents = message_editor
             .update(&mut cx, |message_editor, cx| {
                 message_editor
                     .mention_set()
-                    .contents(&all_prompt_capabilities, cx)
+                    .contents(false, project.clone(), cx)
             })
             .await
             .unwrap()
@@ -2458,12 +2539,7 @@ mod tests {
                 panic!("Unexpected mentions");
             };
             pretty_assertions::assert_eq!(content, "1");
-            pretty_assertions::assert_eq!(
-                uri,
-                &format!("{url_one}?symbol=MySymbol#L1:1")
-                    .parse::<MentionUri>()
-                    .unwrap()
-            );
+            pretty_assertions::assert_eq!(uri, &symbol);
         }
 
         cx.run_until_parked();
@@ -2471,7 +2547,10 @@ mod tests {
         editor.read_with(&cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) ")
+                format!(
+                    "Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) ",
+                    symbol.to_uri(),
+                )
             );
         });
 
@@ -2481,10 +2560,10 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) @file x.png")
+                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) @file x.png", symbol.to_uri())
             );
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), &["x.png dir/"]);
+            assert_eq!(current_completion_labels(editor), &["x.png "]);
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -2496,7 +2575,7 @@ mod tests {
             .update(&mut cx, |message_editor, cx| {
                 message_editor
                     .mention_set()
-                    .contents(&all_prompt_capabilities, cx)
+                    .contents(false, project.clone(), cx)
             })
             .await
             .expect_err("Should fail to load x.png");
@@ -2507,7 +2586,10 @@ mod tests {
         editor.read_with(&cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) ")
+                format!(
+                    "Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) ",
+                    symbol.to_uri()
+                )
             );
         });
 
@@ -2517,10 +2599,10 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
                     assert_eq!(
                         editor.text(cx),
-                        format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) @file x.png")
+                        format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) @file x.png", symbol.to_uri())
                     );
                     assert!(editor.has_visible_completions_menu());
-                    assert_eq!(current_completion_labels(editor), &["x.png dir/"]);
+                    assert_eq!(current_completion_labels(editor), &["x.png "]);
                 });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -2532,18 +2614,21 @@ mod tests {
 
         // Mention was removed
         editor.read_with(&cx, |editor, cx| {
-                    assert_eq!(
-                        editor.text(cx),
-                        format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) ")
-                    );
-                });
+            assert_eq!(
+                editor.text(cx),
+                format!(
+                    "Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) ",
+                    symbol.to_uri()
+                )
+            );
+        });
 
         // Now getting the contents succeeds, because the invalid mention was removed
         let contents = message_editor
             .update(&mut cx, |message_editor, cx| {
                 message_editor
                     .mention_set()
-                    .contents(&all_prompt_capabilities, cx)
+                    .contents(false, project.clone(), cx)
             })
             .await
             .unwrap();
@@ -2583,5 +2668,541 @@ mod tests {
                 )
             })
             .collect::<Vec<_>>()
+    }
+
+    #[gpui::test]
+    async fn test_large_file_mention_uses_outline(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        // Create a large file that exceeds AUTO_OUTLINE_SIZE
+        const LINE: &str = "fn example_function() { /* some code */ }\n";
+        let large_content = LINE.repeat(2 * (outline::AUTO_OUTLINE_SIZE / LINE.len()));
+        assert!(large_content.len() > outline::AUTO_OUTLINE_SIZE);
+
+        // Create a small file that doesn't exceed AUTO_OUTLINE_SIZE
+        let small_content = "fn small_function() { /* small */ }\n";
+        assert!(small_content.len() < outline::AUTO_OUTLINE_SIZE);
+
+        fs.insert_tree(
+            "/project",
+            json!({
+                "large_file.rs": large_content.clone(),
+                "small_file.rs": small_content,
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+
+        let message_editor = cx.update(|window, cx| {
+            cx.new(|cx| {
+                let editor = MessageEditor::new(
+                    workspace.downgrade(),
+                    project.clone(),
+                    history_store.clone(),
+                    None,
+                    Default::default(),
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        min_lines: 1,
+                        max_lines: None,
+                    },
+                    window,
+                    cx,
+                );
+                // Enable embedded context so files are actually included
+                editor.prompt_capabilities.replace(acp::PromptCapabilities {
+                    embedded_context: true,
+                    meta: None,
+                    ..Default::default()
+                });
+                editor
+            })
+        });
+
+        // Test large file mention
+        // Get the absolute path using the project's worktree
+        let large_file_abs_path = project.read_with(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap();
+            let worktree_root = worktree.read(cx).abs_path();
+            worktree_root.join("large_file.rs")
+        });
+        let large_file_task = message_editor.update(cx, |editor, cx| {
+            editor.confirm_mention_for_file(large_file_abs_path, cx)
+        });
+
+        let large_file_mention = large_file_task.await.unwrap();
+        match large_file_mention {
+            Mention::Text { content, .. } => {
+                // Should contain outline header for large files
+                assert!(content.contains("File outline for"));
+                assert!(content.contains("file too large to show full content"));
+                // Should not contain the full repeated content
+                assert!(!content.contains(&LINE.repeat(100)));
+            }
+            _ => panic!("Expected Text mention for large file"),
+        }
+
+        // Test small file mention
+        // Get the absolute path using the project's worktree
+        let small_file_abs_path = project.read_with(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap();
+            let worktree_root = worktree.read(cx).abs_path();
+            worktree_root.join("small_file.rs")
+        });
+        let small_file_task = message_editor.update(cx, |editor, cx| {
+            editor.confirm_mention_for_file(small_file_abs_path, cx)
+        });
+
+        let small_file_mention = small_file_task.await.unwrap();
+        match small_file_mention {
+            Mention::Text { content, .. } => {
+                // Should contain the actual content
+                assert_eq!(content, small_content);
+                // Should not contain outline header
+                assert!(!content.contains("File outline for"));
+            }
+            _ => panic!("Expected Text mention for small file"),
+        }
+    }
+
+    #[gpui::test]
+    async fn test_insert_thread_summary(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(LanguageModelRegistry::test);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({"file": ""})).await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+
+        // Create a thread metadata to insert as summary
+        let thread_metadata = agent::DbThreadMetadata {
+            id: acp::SessionId("thread-123".into()),
+            title: "Previous Conversation".into(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        let message_editor = cx.update(|window, cx| {
+            cx.new(|cx| {
+                let mut editor = MessageEditor::new(
+                    workspace.downgrade(),
+                    project.clone(),
+                    history_store.clone(),
+                    None,
+                    Default::default(),
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        min_lines: 1,
+                        max_lines: None,
+                    },
+                    window,
+                    cx,
+                );
+                editor.insert_thread_summary(thread_metadata.clone(), window, cx);
+                editor
+            })
+        });
+
+        // Construct expected values for verification
+        let expected_uri = MentionUri::Thread {
+            id: thread_metadata.id.clone(),
+            name: thread_metadata.title.to_string(),
+        };
+        let expected_link = format!("[@{}]({})", thread_metadata.title, expected_uri.to_uri());
+
+        message_editor.read_with(cx, |editor, cx| {
+            let text = editor.text(cx);
+
+            assert!(
+                text.contains(&expected_link),
+                "Expected editor text to contain thread mention link.\nExpected substring: {}\nActual text: {}",
+                expected_link,
+                text
+            );
+
+            let mentions = editor.mentions();
+            assert_eq!(
+                mentions.len(),
+                1,
+                "Expected exactly one mention after inserting thread summary"
+            );
+
+            assert!(
+                mentions.contains(&expected_uri),
+                "Expected mentions to contain the thread URI"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_whitespace_trimming(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({"file.rs": "fn main() {}"}))
+            .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+
+        let message_editor = cx.update(|window, cx| {
+            cx.new(|cx| {
+                MessageEditor::new(
+                    workspace.downgrade(),
+                    project.clone(),
+                    history_store.clone(),
+                    None,
+                    Default::default(),
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        min_lines: 1,
+                        max_lines: None,
+                    },
+                    window,
+                    cx,
+                )
+            })
+        });
+        let editor = message_editor.update(cx, |message_editor, _| message_editor.editor.clone());
+
+        cx.run_until_parked();
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("  \u{A0}してhello world  ", window, cx);
+        });
+
+        let (content, _) = message_editor
+            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            content,
+            vec![acp::ContentBlock::Text(acp::TextContent {
+                text: "してhello world".into(),
+                annotations: None,
+                meta: None
+            })]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_editor_respects_embedded_context_capability(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        let file_content = "fn main() { println!(\"Hello, world!\"); }\n";
+
+        fs.insert_tree(
+            "/project",
+            json!({
+                "src": {
+                    "main.rs": file_content,
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+
+        let (message_editor, editor) = workspace.update_in(cx, |workspace, window, cx| {
+            let workspace_handle = cx.weak_entity();
+            let message_editor = cx.new(|cx| {
+                MessageEditor::new(
+                    workspace_handle,
+                    project.clone(),
+                    history_store.clone(),
+                    None,
+                    Default::default(),
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        max_lines: None,
+                        min_lines: 1,
+                    },
+                    window,
+                    cx,
+                )
+            });
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            message_editor.read(cx).focus_handle(cx).focus(window);
+            let editor = message_editor.read(cx).editor().clone();
+            (message_editor, editor)
+        });
+
+        cx.simulate_input("What is in @file main");
+
+        editor.update_in(cx, |editor, window, cx| {
+            assert!(editor.has_visible_completions_menu());
+            assert_eq!(editor.text(cx), "What is in @file main");
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        let content = message_editor
+            .update(cx, |editor, cx| editor.contents(false, cx))
+            .await
+            .unwrap()
+            .0;
+
+        let main_rs_uri = if cfg!(windows) {
+            "file:///C:/project/src/main.rs".to_string()
+        } else {
+            "file:///project/src/main.rs".to_string()
+        };
+
+        // When embedded context is `false` we should get a resource link
+        pretty_assertions::assert_eq!(
+            content,
+            vec![
+                acp::ContentBlock::Text(acp::TextContent {
+                    text: "What is in ".to_string(),
+                    annotations: None,
+                    meta: None
+                }),
+                acp::ContentBlock::ResourceLink(acp::ResourceLink {
+                    uri: main_rs_uri.clone(),
+                    name: "main.rs".to_string(),
+                    annotations: None,
+                    meta: None,
+                    description: None,
+                    mime_type: None,
+                    size: None,
+                    title: None,
+                })
+            ]
+        );
+
+        message_editor.update(cx, |editor, _cx| {
+            editor.prompt_capabilities.replace(acp::PromptCapabilities {
+                embedded_context: true,
+                ..Default::default()
+            })
+        });
+
+        let content = message_editor
+            .update(cx, |editor, cx| editor.contents(false, cx))
+            .await
+            .unwrap()
+            .0;
+
+        // When embedded context is `true` we should get a resource
+        pretty_assertions::assert_eq!(
+            content,
+            vec![
+                acp::ContentBlock::Text(acp::TextContent {
+                    text: "What is in ".to_string(),
+                    annotations: None,
+                    meta: None
+                }),
+                acp::ContentBlock::Resource(acp::EmbeddedResource {
+                    resource: acp::EmbeddedResourceResource::TextResourceContents(
+                        acp::TextResourceContents {
+                            text: file_content.to_string(),
+                            uri: main_rs_uri,
+                            mime_type: None,
+                            meta: None
+                        }
+                    ),
+                    annotations: None,
+                    meta: None
+                })
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_autoscroll_after_insert_selections(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let app_state = cx.update(AppState::test);
+
+        cx.update(|cx| {
+            editor::init(cx);
+            workspace::init(app_state.clone(), cx);
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/dir"),
+                json!({
+                    "test.txt": "line1\nline2\nline3\nline4\nline5\n",
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+
+        let worktree = project.update(cx, |project, cx| {
+            let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
+            assert_eq!(worktrees.len(), 1);
+            worktrees.pop().unwrap()
+        });
+        let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+
+        let mut cx = VisualTestContext::from_window(*window, cx);
+
+        // Open a regular editor with the created file, and select a portion of
+        // the text that will be used for the selections that are meant to be
+        // inserted in the agent panel.
+        let editor = workspace
+            .update_in(&mut cx, |workspace, window, cx| {
+                workspace.open_path(
+                    ProjectPath {
+                        worktree_id,
+                        path: rel_path("test.txt").into(),
+                    },
+                    None,
+                    false,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.select_ranges([Point::new(0, 0)..Point::new(0, 5)]);
+            });
+        });
+
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+
+        // Create a new `MessageEditor`. The `EditorMode::full()` has to be used
+        // to ensure we have a fixed viewport, so we can eventually actually
+        // place the cursor outside of the visible area.
+        let message_editor = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let workspace_handle = cx.weak_entity();
+            let message_editor = cx.new(|cx| {
+                MessageEditor::new(
+                    workspace_handle,
+                    project.clone(),
+                    history_store.clone(),
+                    None,
+                    Default::default(),
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::full(),
+                    window,
+                    cx,
+                )
+            });
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+
+            message_editor
+        });
+
+        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.editor.update(cx, |editor, cx| {
+                // Update the Agent Panel's Message Editor text to have 100
+                // lines, ensuring that the cursor is set at line 90 and that we
+                // then scroll all the way to the top, so the cursor's position
+                // remains off screen.
+                let mut lines = String::new();
+                for _ in 1..=100 {
+                    lines.push_str(&"Another line in the agent panel's message editor\n");
+                }
+                editor.set_text(lines.as_str(), window, cx);
+                editor.change_selections(Default::default(), window, cx, |selections| {
+                    selections.select_ranges([Point::new(90, 0)..Point::new(90, 0)]);
+                });
+                editor.set_scroll_position(gpui::Point::new(0., 0.), window, cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        // Before proceeding, let's assert that the cursor is indeed off screen,
+        // otherwise the rest of the test doesn't make sense.
+        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.editor.update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                let cursor_row = editor.selections.newest::<Point>(&snapshot).head().row;
+                let scroll_top = snapshot.scroll_position().y as u32;
+                let visible_lines = editor.visible_line_count().unwrap() as u32;
+                let visible_range = scroll_top..(scroll_top + visible_lines);
+
+                assert!(!visible_range.contains(&cursor_row));
+            })
+        });
+
+        // Now let's insert the selection in the Agent Panel's editor and
+        // confirm that, after the insertion, the cursor is now in the visible
+        // range.
+        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.insert_selections(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.editor.update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                let cursor_row = editor.selections.newest::<Point>(&snapshot).head().row;
+                let scroll_top = snapshot.scroll_position().y as u32;
+                let visible_lines = editor.visible_line_count().unwrap() as u32;
+                let visible_range = scroll_top..(scroll_top + visible_lines);
+
+                assert!(visible_range.contains(&cursor_row));
+            })
+        });
     }
 }

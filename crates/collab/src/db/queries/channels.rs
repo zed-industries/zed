@@ -1129,8 +1129,3 @@ async fn max_order(parent_path: &str, tx: &TransactionHandle) -> Result<i32> {
 enum QueryIds {
     Id,
 }
-
-#[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-enum QueryUserIds {
-    UserId,
-}

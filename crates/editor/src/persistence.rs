@@ -35,7 +35,7 @@ impl Bind for SerializedEditor {
             &self
                 .abs_path
                 .as_ref()
-                .map(|p| p.to_string_lossy().to_string()),
+                .map(|p| p.to_string_lossy().into_owned()),
             start_index,
         )?;
         let start_index = statement.bind(&self.contents, start_index)?;
@@ -235,7 +235,7 @@ impl EditorDb {
 
     // Returns the scroll top row, and offset
     query! {
-        pub fn get_scroll_position(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<(u32, f32, f32)>> {
+        pub fn get_scroll_position(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<(u32, f64, f64)>> {
             SELECT scroll_top_row, scroll_horizontal_offset, scroll_vertical_offset
             FROM editors
             WHERE item_id = ? AND workspace_id = ?
@@ -247,8 +247,8 @@ impl EditorDb {
             item_id: ItemId,
             workspace_id: WorkspaceId,
             top_row: u32,
-            vertical_offset: f32,
-            horizontal_offset: f32
+            vertical_offset: f64,
+            horizontal_offset: f64
         ) -> Result<()> {
             UPDATE OR IGNORE editors
             SET

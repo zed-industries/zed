@@ -1,23 +1,23 @@
-use agent::{
-    context_store::ContextStore,
-    thread_store::{TextThreadStore, ThreadStore},
-};
-use collections::VecDeque;
+use agent::HistoryStore;
+use collections::{HashMap, VecDeque};
 use editor::actions::Paste;
-use editor::display_map::EditorMargins;
+use editor::display_map::{CreaseId, EditorMargins};
+use editor::{Addon, AnchorRangeExt as _};
 use editor::{
     ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
     actions::{MoveDown, MoveUp},
 };
 use fs::Fs;
 use gpui::{
-    AnyElement, App, Context, CursorStyle, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, TextStyle, WeakEntity, Window,
+    AnyElement, App, ClipboardEntry, Context, CursorStyle, Entity, EventEmitter, FocusHandle,
+    Focusable, Subscription, TextStyle, WeakEntity, Window,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
 use parking_lot::Mutex;
+use prompt_store::PromptStore;
 use settings::Settings;
 use std::cmp;
+use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 use theme::ThemeSettings;
@@ -28,12 +28,15 @@ use zed_actions::agent::ToggleModelSelector;
 
 use crate::agent_model_selector::AgentModelSelector;
 use crate::buffer_codegen::BufferCodegen;
-use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
+use crate::context::{AgentContextHandle, AgentContextKey};
+use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
+use crate::context_store::{ContextStore, ContextStoreEvent};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
-use crate::message_editor::{ContextCreasesAddon, extract_message_creases, insert_message_creases};
 use crate::terminal_codegen::TerminalCodegen;
-use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext};
-use crate::{RemoveAllContext, ToggleContextPicker};
+use crate::{
+    CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext, RemoveAllContext,
+    ToggleContextPicker,
+};
 
 pub struct PromptEditor<T> {
     pub editor: Entity<Editor>,
@@ -229,7 +232,7 @@ impl<T: 'static> PromptEditor<T> {
         self.editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(1, Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text("Add a prompt…", cx);
+            editor.set_placeholder_text("Add a prompt…", window, cx);
             editor.set_text(prompt, window, cx);
             insert_message_creases(
                 &mut editor,
@@ -261,10 +264,10 @@ impl<T: 'static> PromptEditor<T> {
 
         let agent_panel_keybinding =
             ui::text_for_action(&zed_actions::assistant::ToggleFocus, window, cx)
-                .map(|keybinding| format!("{keybinding} to chat ― "))
+                .map(|keybinding| format!("{keybinding} to chat"))
                 .unwrap_or_default();
 
-        format!("{action}… ({agent_panel_keybinding}↓↑ for history)")
+        format!("{action}… ({agent_panel_keybinding} ― ↓↑ for history — @ to include context)")
     }
 
     pub fn prompt(&self, cx: &App) -> String {
@@ -272,7 +275,31 @@ impl<T: 'static> PromptEditor<T> {
     }
 
     fn paste(&mut self, _: &Paste, _window: &mut Window, cx: &mut Context<Self>) {
-        crate::active_thread::attach_pasted_images_as_context(&self.context_store, cx);
+        let images = cx
+            .read_from_clipboard()
+            .map(|item| {
+                item.into_entries()
+                    .filter_map(|entry| {
+                        if let ClipboardEntry::Image(image) = entry {
+                            Some(image)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        if images.is_empty() {
+            return;
+        }
+        cx.stop_propagation();
+
+        self.context_store.update(cx, |store, cx| {
+            for image in images {
+                store.add_image_instance(Arc::new(image), cx);
+            }
+        });
     }
 
     fn handle_prompt_editor_events(
@@ -445,12 +472,11 @@ impl<T: 'static> PromptEditor<T> {
                 IconButton::new("stop", IconName::Stop)
                     .icon_color(Color::Error)
                     .shape(IconButtonShape::Square)
-                    .tooltip(move |window, cx| {
+                    .tooltip(move |_window, cx| {
                         Tooltip::with_meta(
                             mode.tooltip_interrupt(),
                             Some(&menu::Cancel),
                             "Changes won't be discarded",
-                            window,
                             cx,
                         )
                     })
@@ -464,12 +490,11 @@ impl<T: 'static> PromptEditor<T> {
                         IconButton::new("restart", IconName::RotateCw)
                             .icon_color(Color::Info)
                             .shape(IconButtonShape::Square)
-                            .tooltip(move |window, cx| {
+                            .tooltip(move |_window, cx| {
                                 Tooltip::with_meta(
                                     mode.tooltip_restart(),
                                     Some(&menu::Confirm),
                                     "Changes will be discarded",
-                                    window,
                                     cx,
                                 )
                             })
@@ -482,8 +507,8 @@ impl<T: 'static> PromptEditor<T> {
                     let accept = IconButton::new("accept", IconName::Check)
                         .icon_color(Color::Info)
                         .shape(IconButtonShape::Square)
-                        .tooltip(move |window, cx| {
-                            Tooltip::for_action(mode.tooltip_accept(), &menu::Confirm, window, cx)
+                        .tooltip(move |_window, cx| {
+                            Tooltip::for_action(mode.tooltip_accept(), &menu::Confirm, cx)
                         })
                         .on_click(cx.listener(|_, _, _, cx| {
                             cx.emit(PromptEditorEvent::ConfirmRequested { execute: false });
@@ -496,11 +521,10 @@ impl<T: 'static> PromptEditor<T> {
                             IconButton::new("confirm", IconName::PlayFilled)
                                 .icon_color(Color::Info)
                                 .shape(IconButtonShape::Square)
-                                .tooltip(|window, cx| {
+                                .tooltip(|_window, cx| {
                                     Tooltip::for_action(
                                         "Execute Generated Command",
                                         &menu::SecondaryConfirm,
-                                        window,
                                         cx,
                                     )
                                 })
@@ -592,13 +616,12 @@ impl<T: 'static> PromptEditor<T> {
                     .shape(IconButtonShape::Square)
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
-                        move |window, cx| {
+                        move |_window, cx| {
                             cx.new(|cx| {
                                 let mut tooltip = Tooltip::new("Previous Alternative").key_binding(
                                     KeyBinding::for_action_in(
                                         &CyclePreviousInlineAssist,
                                         &focus_handle,
-                                        window,
                                         cx,
                                     ),
                                 );
@@ -634,13 +657,12 @@ impl<T: 'static> PromptEditor<T> {
                     .shape(IconButtonShape::Square)
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
-                        move |window, cx| {
+                        move |_window, cx| {
                             cx.new(|cx| {
                                 let mut tooltip = Tooltip::new("Next Alternative").key_binding(
                                     KeyBinding::for_action_in(
                                         &CycleNextInlineAssist,
                                         &focus_handle,
-                                        window,
                                         cx,
                                     ),
                                 );
@@ -753,8 +775,8 @@ impl PromptEditor<BufferCodegen> {
         fs: Arc<dyn Fs>,
         context_store: Entity<ContextStore>,
         workspace: WeakEntity<Workspace>,
-        thread_store: Option<WeakEntity<ThreadStore>>,
-        text_thread_store: Option<WeakEntity<TextThreadStore>>,
+        thread_store: Option<WeakEntity<HistoryStore>>,
+        prompt_store: Option<WeakEntity<PromptStore>>,
         window: &mut Window,
         cx: &mut Context<PromptEditor<BufferCodegen>>,
     ) -> PromptEditor<BufferCodegen> {
@@ -782,7 +804,7 @@ impl PromptEditor<BufferCodegen> {
             // always show the cursor (even when it isn't focused) because
             // typing in one will make what you typed appear in all of them.
             editor.set_show_cursor_when_unfocused(true, cx);
-            editor.set_placeholder_text(Self::placeholder_text(&mode, window, cx), cx);
+            editor.set_placeholder_text(&Self::placeholder_text(&mode, window, cx), window, cx);
             editor.register_addon(ContextCreasesAddon::new());
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
@@ -799,7 +821,7 @@ impl PromptEditor<BufferCodegen> {
                 workspace.clone(),
                 context_store.downgrade(),
                 thread_store.clone(),
-                text_thread_store.clone(),
+                prompt_store.clone(),
                 prompt_editor_entity,
                 codegen_buffer.as_ref().map(Entity::downgrade),
             ))));
@@ -813,7 +835,7 @@ impl PromptEditor<BufferCodegen> {
                 context_store.clone(),
                 workspace.clone(),
                 thread_store.clone(),
-                text_thread_store.clone(),
+                prompt_store,
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
                 ModelUsageContext::InlineAssistant,
@@ -925,8 +947,8 @@ impl PromptEditor<TerminalCodegen> {
         fs: Arc<dyn Fs>,
         context_store: Entity<ContextStore>,
         workspace: WeakEntity<Workspace>,
-        thread_store: Option<WeakEntity<ThreadStore>>,
-        text_thread_store: Option<WeakEntity<TextThreadStore>>,
+        thread_store: Option<WeakEntity<HistoryStore>>,
+        prompt_store: Option<WeakEntity<PromptStore>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -949,7 +971,7 @@ impl PromptEditor<TerminalCodegen> {
                 cx,
             );
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text(Self::placeholder_text(&mode, window, cx), cx);
+            editor.set_placeholder_text(&Self::placeholder_text(&mode, window, cx), window, cx);
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
                 max_entries_visible: 12,
@@ -964,7 +986,7 @@ impl PromptEditor<TerminalCodegen> {
                 workspace.clone(),
                 context_store.downgrade(),
                 thread_store.clone(),
-                text_thread_store.clone(),
+                prompt_store.clone(),
                 prompt_editor_entity,
                 None,
             ))));
@@ -978,7 +1000,7 @@ impl PromptEditor<TerminalCodegen> {
                 context_store.clone(),
                 workspace.clone(),
                 thread_store.clone(),
-                text_thread_store.clone(),
+                prompt_store.clone(),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
                 ModelUsageContext::InlineAssistant,
@@ -1136,6 +1158,159 @@ impl GenerationMode {
         match self {
             GenerationMode::Generate => "Accept Generation",
             GenerationMode::Transform => "Accept Transform",
+        }
+    }
+}
+
+/// Stored information that can be used to resurrect a context crease when creating an editor for a past message.
+#[derive(Clone, Debug)]
+pub struct MessageCrease {
+    pub range: Range<usize>,
+    pub icon_path: SharedString,
+    pub label: SharedString,
+    /// None for a deserialized message, Some otherwise.
+    pub context: Option<AgentContextHandle>,
+}
+
+#[derive(Default)]
+pub struct ContextCreasesAddon {
+    creases: HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>>,
+    _subscription: Option<Subscription>,
+}
+
+impl Addon for ContextCreasesAddon {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn to_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+}
+
+impl ContextCreasesAddon {
+    pub fn new() -> Self {
+        Self {
+            creases: HashMap::default(),
+            _subscription: None,
+        }
+    }
+
+    pub fn add_creases(
+        &mut self,
+        context_store: &Entity<ContextStore>,
+        key: AgentContextKey,
+        creases: impl IntoIterator<Item = (CreaseId, SharedString)>,
+        cx: &mut Context<Editor>,
+    ) {
+        self.creases.entry(key).or_default().extend(creases);
+        self._subscription = Some(
+            cx.subscribe(context_store, |editor, _, event, cx| match event {
+                ContextStoreEvent::ContextRemoved(key) => {
+                    let Some(this) = editor.addon_mut::<Self>() else {
+                        return;
+                    };
+                    let (crease_ids, replacement_texts): (Vec<_>, Vec<_>) = this
+                        .creases
+                        .remove(key)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .unzip();
+                    let ranges = editor
+                        .remove_creases(crease_ids, cx)
+                        .into_iter()
+                        .map(|(_, range)| range)
+                        .collect::<Vec<_>>();
+                    editor.unfold_ranges(&ranges, false, false, cx);
+                    editor.edit(ranges.into_iter().zip(replacement_texts), cx);
+                    cx.notify();
+                }
+            }),
+        )
+    }
+
+    pub fn into_inner(self) -> HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>> {
+        self.creases
+    }
+}
+
+pub fn extract_message_creases(
+    editor: &mut Editor,
+    cx: &mut Context<'_, Editor>,
+) -> Vec<MessageCrease> {
+    let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+    let mut contexts_by_crease_id = editor
+        .addon_mut::<ContextCreasesAddon>()
+        .map(std::mem::take)
+        .unwrap_or_default()
+        .into_inner()
+        .into_iter()
+        .flat_map(|(key, creases)| {
+            let context = key.0;
+            creases
+                .into_iter()
+                .map(move |(id, _)| (id, context.clone()))
+        })
+        .collect::<HashMap<_, _>>();
+    // Filter the addon's list of creases based on what the editor reports,
+    // since the addon might have removed creases in it.
+
+    editor.display_map.update(cx, |display_map, cx| {
+        display_map
+            .snapshot(cx)
+            .crease_snapshot
+            .creases()
+            .filter_map(|(id, crease)| {
+                Some((
+                    id,
+                    (
+                        crease.range().to_offset(&buffer_snapshot),
+                        crease.metadata()?.clone(),
+                    ),
+                ))
+            })
+            .map(|(id, (range, metadata))| {
+                let context = contexts_by_crease_id.remove(&id);
+                MessageCrease {
+                    range,
+                    context,
+                    label: metadata.label,
+                    icon_path: metadata.icon_path,
+                }
+            })
+            .collect()
+    })
+}
+
+pub fn insert_message_creases(
+    editor: &mut Editor,
+    message_creases: &[MessageCrease],
+    context_store: &Entity<ContextStore>,
+    window: &mut Window,
+    cx: &mut Context<'_, Editor>,
+) {
+    let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+    let creases = message_creases
+        .iter()
+        .map(|crease| {
+            let start = buffer_snapshot.anchor_after(crease.range.start);
+            let end = buffer_snapshot.anchor_before(crease.range.end);
+            crease_for_mention(
+                crease.label.clone(),
+                crease.icon_path.clone(),
+                start..end,
+                cx.weak_entity(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let ids = editor.insert_creases(creases.clone(), cx);
+    editor.fold_creases(creases, false, window, cx);
+    if let Some(addon) = editor.addon_mut::<ContextCreasesAddon>() {
+        for (crease, id) in message_creases.iter().zip(ids) {
+            if let Some(context) = crease.context.as_ref() {
+                let key = AgentContextKey(context.clone());
+                addon.add_creases(context_store, key, vec![(id, crease.label.clone())], cx);
+            }
         }
     }
 }

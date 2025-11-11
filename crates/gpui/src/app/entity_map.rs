@@ -378,11 +378,9 @@ pub struct Entity<T> {
     #[deref]
     #[deref_mut]
     pub(crate) any_entity: AnyEntity,
-    pub(crate) entity_type: PhantomData<T>,
+    pub(crate) entity_type: PhantomData<fn(T) -> T>,
 }
 
-unsafe impl<T> Send for Entity<T> {}
-unsafe impl<T> Sync for Entity<T> {}
 impl<T> Sealed for Entity<T> {}
 
 impl<T: 'static> Entity<T> {
@@ -657,7 +655,7 @@ pub struct WeakEntity<T> {
     #[deref]
     #[deref_mut]
     any_entity: AnyWeakEntity,
-    entity_type: PhantomData<T>,
+    entity_type: PhantomData<fn(T) -> T>,
 }
 
 impl<T> std::fmt::Debug for WeakEntity<T> {
@@ -668,9 +666,6 @@ impl<T> std::fmt::Debug for WeakEntity<T> {
             .finish()
     }
 }
-
-unsafe impl<T> Send for WeakEntity<T> {}
-unsafe impl<T> Sync for WeakEntity<T> {}
 
 impl<T> Clone for WeakEntity<T> {
     fn clone(&self) -> Self {

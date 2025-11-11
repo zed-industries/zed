@@ -14,7 +14,6 @@ use settings::Settings;
 use std::hash::Hash;
 use theme::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset};
-use time_format::format_local_timestamp;
 use ui::{Avatar, Divider, IconButtonShape, prelude::*, tooltip_container};
 use workspace::Workspace;
 
@@ -28,25 +27,33 @@ pub struct CommitDetails {
 }
 
 pub struct CommitAvatar<'a> {
-    commit: &'a CommitDetails,
+    sha: &'a SharedString,
+    remote: Option<&'a GitRemote>,
 }
 
 impl<'a> CommitAvatar<'a> {
-    pub fn new(details: &'a CommitDetails) -> Self {
-        Self { commit: details }
+    pub fn new(sha: &'a SharedString, remote: Option<&'a GitRemote>) -> Self {
+        Self { sha, remote }
+    }
+
+    pub fn from_commit_details(details: &'a CommitDetails) -> Self {
+        Self {
+            sha: &details.sha,
+            remote: details
+                .message
+                .as_ref()
+                .and_then(|details| details.remote.as_ref()),
+        }
     }
 }
 
 impl<'a> CommitAvatar<'a> {
     pub fn render(&'a self, window: &mut Window, cx: &mut App) -> Option<impl IntoElement + use<>> {
         let remote = self
-            .commit
-            .message
-            .as_ref()
-            .and_then(|details| details.remote.clone())
+            .remote
             .filter(|remote| remote.host_supports_avatars())?;
 
-        let avatar_url = CommitAvatarAsset::new(remote, self.commit.sha.clone());
+        let avatar_url = CommitAvatarAsset::new(remote.clone(), self.sha.clone());
 
         let element = match window.use_asset::<CommitAvatarAsset>(&avatar_url, cx) {
             // Loading or no avatar found
@@ -169,7 +176,7 @@ impl CommitTooltip {
 
 impl Render for CommitTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let avatar = CommitAvatar::new(&self.commit).render(window, cx);
+        let avatar = CommitAvatar::from_commit_details(&self.commit).render(window, cx);
 
         let author = self.commit.author_name.clone();
 
@@ -182,9 +189,11 @@ impl Render for CommitTooltip {
             .map(|sha| sha.to_string().into())
             .unwrap_or_else(|| self.commit.sha.clone());
         let full_sha = self.commit.sha.to_string();
-        let absolute_timestamp = format_local_timestamp(
+        let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
+        let absolute_timestamp = time_format::format_localized_timestamp(
             self.commit.commit_time,
             OffsetDateTime::now_utc(),
+            local_offset,
             time_format::TimestampFormat::MediumAbsolute,
         );
         let markdown_style = {
@@ -233,7 +242,7 @@ impl Render for CommitTooltip {
             has_parent: false,
         };
 
-        tooltip_container(window, cx, move |this, _, cx| {
+        tooltip_container(cx, move |this, cx| {
             this.occlude()
                 .on_mouse_move(|_, _, cx| cx.stop_propagation())
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -310,9 +319,10 @@ impl Render for CommitTooltip {
                                             .on_click(
                                                 move |_, window, cx| {
                                                     CommitView::open(
-                                                        commit_summary.clone(),
+                                                        commit_summary.sha.to_string(),
                                                         repo.downgrade(),
                                                         workspace.clone(),
+                                                        None,
                                                         window,
                                                         cx,
                                                     );
@@ -342,11 +352,11 @@ impl Render for CommitTooltip {
 fn blame_entry_timestamp(blame_entry: &BlameEntry, format: time_format::TimestampFormat) -> String {
     match blame_entry.author_offset_date_time() {
         Ok(timestamp) => {
-            let local = chrono::Local::now().offset().local_minus_utc();
+            let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
             time_format::format_localized_timestamp(
                 timestamp,
                 time::OffsetDateTime::now_utc(),
-                UtcOffset::from_whole_seconds(local).unwrap(),
+                local_offset,
                 format,
             )
         }

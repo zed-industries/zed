@@ -1,5 +1,5 @@
 use crate::{
-    DIAGNOSTICS_UPDATE_DELAY, IncludeWarnings, ToggleWarnings, context_range_for_entry,
+    DIAGNOSTICS_UPDATE_DEBOUNCE, IncludeWarnings, ToggleWarnings, context_range_for_entry,
     diagnostic_renderer::{DiagnosticBlock, DiagnosticRenderer},
     toolbar_controls::DiagnosticsToolbarEditor,
 };
@@ -15,7 +15,7 @@ use gpui::{
     InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
     Task, WeakEntity, Window, actions, div,
 };
-use language::{Buffer, DiagnosticEntry, Point};
+use language::{Buffer, DiagnosticEntry, DiagnosticEntryRef, Point};
 use project::{
     DiagnosticSummary, Event, Project, ProjectItem, ProjectPath,
     project_settings::{DiagnosticSeverity, ProjectSettings},
@@ -23,12 +23,11 @@ use project::{
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
-    cmp::Ordering,
+    cmp::{self, Ordering},
     sync::Arc,
 };
 use text::{Anchor, BufferSnapshot, OffsetRangeExt};
 use ui::{Button, ButtonStyle, Icon, IconName, Label, Tooltip, h_flex, prelude::*};
-use util::paths::PathExt;
 use workspace::{
     ItemHandle, ItemNavHistory, ToolbarItemLocation, Workspace,
     item::{BreadcrumbText, Item, ItemEvent, TabContentParams},
@@ -284,7 +283,7 @@ impl BufferDiagnosticsEditor {
 
         self.update_excerpts_task = Some(cx.spawn_in(window, async move |editor, cx| {
             cx.background_executor()
-                .timer(DIAGNOSTICS_UPDATE_DELAY)
+                .timer(DIAGNOSTICS_UPDATE_DEBOUNCE)
                 .await;
 
             if let Some(buffer) = buffer {
@@ -351,7 +350,7 @@ impl BufferDiagnosticsEditor {
                 grouped
                     .entry(entry.diagnostic.group_id)
                     .or_default()
-                    .push(DiagnosticEntry {
+                    .push(DiagnosticEntryRef {
                         range: entry.range.to_point(&buffer_snapshot),
                         diagnostic: entry.diagnostic,
                     })
@@ -411,7 +410,7 @@ impl BufferDiagnosticsEditor {
             // in the editor.
             // This is done by iterating over the list of diagnostic blocks and
             // determine what range does the diagnostic block span.
-            let mut excerpt_ranges: Vec<ExcerptRange<Point>> = Vec::new();
+            let mut excerpt_ranges: Vec<ExcerptRange<_>> = Vec::new();
 
             for diagnostic_block in blocks.iter() {
                 let excerpt_range = context_range_for_entry(
@@ -421,30 +420,43 @@ impl BufferDiagnosticsEditor {
                     &mut cx,
                 )
                 .await;
+                let initial_range = buffer_snapshot
+                    .anchor_after(diagnostic_block.initial_range.start)
+                    ..buffer_snapshot.anchor_before(diagnostic_block.initial_range.end);
 
-                let index = excerpt_ranges
-                    .binary_search_by(|probe| {
+                let bin_search = |probe: &ExcerptRange<text::Anchor>| {
+                    let context_start = || {
                         probe
                             .context
                             .start
-                            .cmp(&excerpt_range.start)
-                            .then(probe.context.end.cmp(&excerpt_range.end))
-                            .then(
-                                probe
-                                    .primary
-                                    .start
-                                    .cmp(&diagnostic_block.initial_range.start),
-                            )
-                            .then(probe.primary.end.cmp(&diagnostic_block.initial_range.end))
-                            .then(Ordering::Greater)
-                    })
-                    .unwrap_or_else(|index| index);
+                            .cmp(&excerpt_range.start, &buffer_snapshot)
+                    };
+                    let context_end =
+                        || probe.context.end.cmp(&excerpt_range.end, &buffer_snapshot);
+                    let primary_start = || {
+                        probe
+                            .primary
+                            .start
+                            .cmp(&initial_range.start, &buffer_snapshot)
+                    };
+                    let primary_end =
+                        || probe.primary.end.cmp(&initial_range.end, &buffer_snapshot);
+                    context_start()
+                        .then_with(context_end)
+                        .then_with(primary_start)
+                        .then_with(primary_end)
+                        .then(cmp::Ordering::Greater)
+                };
+
+                let index = excerpt_ranges
+                    .binary_search_by(bin_search)
+                    .unwrap_or_else(|i| i);
 
                 excerpt_ranges.insert(
                     index,
                     ExcerptRange {
                         context: excerpt_range,
-                        primary: diagnostic_block.initial_range.clone(),
+                        primary: initial_range,
                     },
                 )
             }
@@ -467,6 +479,13 @@ impl BufferDiagnosticsEditor {
                     buffer_diagnostics_editor
                         .multibuffer
                         .update(cx, |multibuffer, cx| {
+                            let excerpt_ranges = excerpt_ranges
+                                .into_iter()
+                                .map(|range| ExcerptRange {
+                                    context: range.context.to_point(&buffer_snapshot),
+                                    primary: range.primary.to_point(&buffer_snapshot),
+                                })
+                                .collect();
                             multibuffer.set_excerpt_ranges_for_path(
                                 PathKey::for_buffer(&buffer, cx),
                                 buffer.clone(),
@@ -561,13 +580,16 @@ impl BufferDiagnosticsEditor {
         })
     }
 
-    fn set_diagnostics(&mut self, diagnostics: &Vec<DiagnosticEntry<Anchor>>) {
-        self.diagnostics = diagnostics.clone();
+    fn set_diagnostics(&mut self, diagnostics: &[DiagnosticEntryRef<'_, Anchor>]) {
+        self.diagnostics = diagnostics
+            .iter()
+            .map(DiagnosticEntryRef::to_owned)
+            .collect();
     }
 
     fn diagnostics_are_unchanged(
         &self,
-        diagnostics: &Vec<DiagnosticEntry<Anchor>>,
+        diagnostics: &Vec<DiagnosticEntryRef<'_, Anchor>>,
         snapshot: &BufferSnapshot,
     ) -> bool {
         if self.diagnostics.len() != diagnostics.len() {
@@ -686,16 +708,20 @@ impl Item for BufferDiagnosticsEditor {
         true
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| {
+        Task::ready(Some(cx.new(|cx| {
             BufferDiagnosticsEditor::new(
                 self.project_path.clone(),
                 self.project.clone(),
@@ -704,7 +730,7 @@ impl Item for BufferDiagnosticsEditor {
                 window,
                 cx,
             )
-        }))
+        })))
     }
 
     fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -726,10 +752,6 @@ impl Item for BufferDiagnosticsEditor {
 
     fn is_dirty(&self, cx: &App) -> bool {
         self.multibuffer.read(cx).is_dirty(cx)
-    }
-
-    fn is_singleton(&self, _cx: &App) -> bool {
-        false
     }
 
     fn navigate(
@@ -783,15 +805,16 @@ impl Item for BufferDiagnosticsEditor {
     }
 
     // Builds the content to be displayed in the tab.
-    fn tab_content(&self, params: TabContentParams, _window: &Window, _cx: &App) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
+        let path_style = self.project.read(cx).path_style(cx);
         let error_count = self.summary.error_count;
         let warning_count = self.summary.warning_count;
         let label = Label::new(
             self.project_path
                 .path
                 .file_name()
-                .map(|f| f.to_sanitized_string())
-                .unwrap_or_else(|| self.project_path.path.to_sanitized_string()),
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| self.project_path.path.display(path_style).to_string()),
         );
 
         h_flex()
@@ -827,11 +850,12 @@ impl Item for BufferDiagnosticsEditor {
         "Buffer Diagnostics".into()
     }
 
-    fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
+    fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
+        let path_style = self.project.read(cx).path_style(cx);
         Some(
             format!(
                 "Buffer Diagnostics - {}",
-                self.project_path.path.to_sanitized_string()
+                self.project_path.path.display(path_style)
             )
             .into(),
         )
@@ -848,7 +872,8 @@ impl Item for BufferDiagnosticsEditor {
 
 impl Render for BufferDiagnosticsEditor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let filename = self.project_path.path.to_sanitized_string();
+        let path_style = self.project.read(cx).path_style(cx);
+        let filename = self.project_path.path.display(path_style).to_string();
         let error_count = self.summary.error_count;
         let warning_count = match self.include_warnings {
             true => self.summary.warning_count,
@@ -931,10 +956,6 @@ impl DiagnosticsToolbarEditor for WeakEntity<BufferDiagnosticsEditor> {
             buffer_diagnostics_editor.include_warnings
         })
         .unwrap_or(false)
-    }
-
-    fn has_stale_excerpts(&self, _cx: &App) -> bool {
-        false
     }
 
     fn is_updating(&self, cx: &App) -> bool {

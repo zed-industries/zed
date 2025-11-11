@@ -1,6 +1,7 @@
 use anyhow::Context as _;
 use gpui::{App, SharedString, UpdateGlobal};
 use node_runtime::NodeRuntime;
+use project::Fs;
 use python::PyprojectTomlManifestProvider;
 use rust::CargoManifestProvider;
 use rust_embed::RustEmbed;
@@ -11,12 +12,14 @@ use util::{ResultExt, asset_str};
 
 pub use language::*;
 
-use crate::{json::JsonTaskProvider, python::BasedPyrightLspAdapter};
+use crate::{
+    json::JsonTaskProvider,
+    python::{BasedPyrightLspAdapter, RuffLspAdapter},
+};
 
 mod bash;
 mod c;
 mod css;
-mod github_download;
 mod go;
 mod json;
 mod package_json;
@@ -53,7 +56,7 @@ pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
         ))
     });
 
-pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
+pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime, cx: &mut App) {
     #[cfg(feature = "load-grammars")]
     languages.register_native_grammars([
         ("bash", tree_sitter_bash::LANGUAGE),
@@ -84,19 +87,24 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     let go_context_provider = Arc::new(go::GoContextProvider);
     let go_lsp_adapter = Arc::new(go::GoLspAdapter);
     let json_context_provider = Arc::new(JsonTaskProvider);
-    let json_lsp_adapter = Arc::new(json::JsonLspAdapter::new(node.clone(), languages.clone()));
+    let json_lsp_adapter = Arc::new(json::JsonLspAdapter::new(node.clone()));
     let node_version_lsp_adapter = Arc::new(json::NodeVersionAdapter);
     let py_lsp_adapter = Arc::new(python::PyLspAdapter::new());
+    let ty_lsp_adapter = Arc::new(python::TyLspAdapter::new(fs.clone()));
     let python_context_provider = Arc::new(python::PythonContextProvider);
-    let python_lsp_adapter = Arc::new(python::PythonLspAdapter::new(node.clone()));
-    let basedpyright_lsp_adapter = Arc::new(BasedPyrightLspAdapter::new());
+    let python_lsp_adapter = Arc::new(python::PyrightLspAdapter::new(node.clone()));
+    let basedpyright_lsp_adapter = Arc::new(BasedPyrightLspAdapter::new(node.clone()));
+    let ruff_lsp_adapter = Arc::new(RuffLspAdapter::new(fs.clone()));
     let python_toolchain_provider = Arc::new(python::PythonToolchainProvider);
     let rust_context_provider = Arc::new(rust::RustContextProvider);
     let rust_lsp_adapter = Arc::new(rust::RustLspAdapter);
     let tailwind_adapter = Arc::new(tailwind::TailwindLspAdapter::new(node.clone()));
-    let typescript_context = Arc::new(typescript::TypeScriptContextProvider::new());
-    let typescript_lsp_adapter = Arc::new(typescript::TypeScriptLspAdapter::new(node.clone()));
-    let vtsls_adapter = Arc::new(vtsls::VtslsLspAdapter::new(node.clone()));
+    let typescript_context = Arc::new(typescript::TypeScriptContextProvider::new(fs.clone()));
+    let typescript_lsp_adapter = Arc::new(typescript::TypeScriptLspAdapter::new(
+        node.clone(),
+        fs.clone(),
+    ));
+    let vtsls_adapter = Arc::new(vtsls::VtslsLspAdapter::new(node.clone(), fs.clone()));
     let yaml_lsp_adapter = Arc::new(yaml::YamlLspAdapter::new(node));
 
     let built_in_languages = [
@@ -167,7 +175,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         },
         LanguageInfo {
             name: "python",
-            adapters: vec![basedpyright_lsp_adapter],
+            adapters: vec![basedpyright_lsp_adapter, ruff_lsp_adapter],
             context: Some(python_context_provider),
             toolchain: Some(python_toolchain_provider),
             manifest_name: Some(SharedString::new_static("pyproject.toml").into()),
@@ -260,8 +268,10 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         LanguageServerName("typescript-language-server".into()),
         typescript_lsp_adapter,
     );
+
     languages.register_available_lsp_adapter(python_lsp_adapter.name(), python_lsp_adapter);
     languages.register_available_lsp_adapter(py_lsp_adapter.name(), py_lsp_adapter);
+    languages.register_available_lsp_adapter(ty_lsp_adapter.name(), ty_lsp_adapter);
     // Register Tailwind for the existing languages that should have it by default.
     //
     // This can be driven by the `language_servers` setting once we have a way for
@@ -275,6 +285,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         "HEEX",
         "HTML",
         "JavaScript",
+        "TypeScript",
         "PHP",
         "Svelte",
         "TSX",
@@ -300,7 +311,12 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
                 cx.update(|cx| {
                     SettingsStore::update_global(cx, |settings, cx| {
                         settings
-                            .set_extension_settings(language_settings.clone(), cx)
+                            .set_extension_settings(
+                                settings::ExtensionsSettingsContent {
+                                    all_languages: language_settings.clone(),
+                                },
+                                cx,
+                            )
                             .log_err();
                     });
                 })?;

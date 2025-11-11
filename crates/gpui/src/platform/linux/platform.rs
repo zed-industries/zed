@@ -73,6 +73,13 @@ pub trait LinuxClient {
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
     fn run(&self);
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    fn window_identifier(
+        &self,
+    ) -> impl Future<Output = Option<ashpd::WindowIdentifier>> + Send + 'static {
+        std::future::ready::<Option<ashpd::WindowIdentifier>>(None)
+    }
 }
 
 #[derive(Default)]
@@ -204,6 +211,10 @@ impl<P: LinuxClient + 'static> Platform for P {
             app_path = app_path.display()
         );
 
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "We are restarting ourselves, using std command thus is fine"
+        )]
         let restart_process = Command::new("/usr/bin/env")
             .arg("bash")
             .arg("-c")
@@ -287,6 +298,9 @@ impl<P: LinuxClient + 'static> Platform for P {
         let _ = (done_tx.send(Ok(None)), options);
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
+        let identifier = self.window_identifier();
+
+        #[cfg(any(feature = "wayland", feature = "x11"))]
         self.foreground_executor()
             .spawn(async move {
                 let title = if options.directories {
@@ -296,6 +310,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                 };
 
                 let request = match ashpd::desktop::file_chooser::OpenFileRequest::default()
+                    .identifier(identifier.await)
                     .modal(true)
                     .title(title)
                     .accept_label(options.prompt.as_ref().map(crate::SharedString::as_str))
@@ -343,6 +358,9 @@ impl<P: LinuxClient + 'static> Platform for P {
         let _ = (done_tx.send(Ok(None)), directory, suggested_name);
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
+        let identifier = self.window_identifier();
+
+        #[cfg(any(feature = "wayland", feature = "x11"))]
         self.foreground_executor()
             .spawn({
                 let directory = directory.to_owned();
@@ -351,6 +369,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                 async move {
                     let mut request_builder =
                         ashpd::desktop::file_chooser::SaveFileRequest::default()
+                            .identifier(identifier.await)
                             .modal(true)
                             .title("Save File")
                             .current_folder(directory)
@@ -403,11 +422,15 @@ impl<P: LinuxClient + 'static> Platform for P {
         let path = path.to_owned();
         self.background_executor()
             .spawn(async move {
-                let _ = std::process::Command::new("xdg-open")
+                let _ = smol::process::Command::new("xdg-open")
                     .arg(path)
                     .spawn()
                     .context("invoking xdg-open")
-                    .log_err();
+                    .log_err()?
+                    .status()
+                    .await
+                    .log_err()?;
+                Some(())
             })
             .detach();
     }
@@ -591,10 +614,14 @@ pub(super) fn open_uri_internal(
                     if let Some(token) = activation_token.as_ref() {
                         command.env("XDG_ACTIVATION_TOKEN", token);
                     }
-                    match command.spawn() {
-                        Ok(_) => return,
+                    let program = format!("{:?}", command.get_program());
+                    match smol::process::Command::from(command).spawn() {
+                        Ok(mut cmd) => {
+                            cmd.status().await.log_err();
+                            return;
+                        }
                         Err(e) => {
-                            log::error!("Failed to open with {:?}: {}", command.get_program(), e)
+                            log::error!("Failed to open with {}: {}", program, e)
                         }
                     }
                 }

@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -10,11 +9,13 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use ui::{ListItem, Tooltip, prelude::*};
-use util::ResultExt as _;
+use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use workspace::Workspace;
 
-use crate::context_picker::ContextPicker;
-use agent::context_store::{ContextStore, FileInclusion};
+use crate::{
+    context_picker::ContextPicker,
+    context_store::{ContextStore, FileInclusion},
+};
 
 pub struct FileContextPicker {
     picker: Entity<Picker<FileContextPickerDelegate>>,
@@ -160,7 +161,9 @@ impl PickerDelegate for FileContextPickerDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let FileMatch { mat, .. } = &self.matches[ix];
+        let FileMatch { mat, .. } = &self.matches.get(ix)?;
+        let workspace = self.workspace.upgrade()?;
+        let path_style = workspace.read(cx).path_style(cx);
 
         Some(
             ListItem::new(ix)
@@ -172,6 +175,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                     &mat.path,
                     &mat.path_prefix,
                     mat.is_dir,
+                    path_style,
                     self.context_store.clone(),
                     cx,
                 )),
@@ -193,28 +197,43 @@ pub(crate) fn search_files(
     if query.is_empty() {
         let workspace = workspace.read(cx);
         let project = workspace.project().read(cx);
+        let visible_worktrees = workspace.visible_worktrees(cx).collect::<Vec<_>>();
+        let include_root_name = visible_worktrees.len() > 1;
+
         let recent_matches = workspace
             .recent_navigation_history(Some(10), cx)
             .into_iter()
-            .filter_map(|(project_path, _)| {
-                let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
-                Some(FileMatch {
+            .map(|(project_path, _)| {
+                let path_prefix = if include_root_name {
+                    project
+                        .worktree_for_id(project_path.worktree_id, cx)
+                        .map(|wt| wt.read(cx).root_name().into())
+                        .unwrap_or_else(|| RelPath::empty().into())
+                } else {
+                    RelPath::empty().into()
+                };
+
+                FileMatch {
                     mat: PathMatch {
                         score: 0.,
                         positions: Vec::new(),
                         worktree_id: project_path.worktree_id.to_usize(),
                         path: project_path.path,
-                        path_prefix: worktree.read(cx).root_name().into(),
+                        path_prefix,
                         distance_to_relative_ancestor: 0,
                         is_dir: false,
                     },
                     is_recent: true,
-                })
+                }
             });
 
-        let file_matches = project.worktrees(cx).flat_map(|worktree| {
+        let file_matches = visible_worktrees.into_iter().flat_map(|worktree| {
             let worktree = worktree.read(cx);
-            let path_prefix: Arc<str> = worktree.root_name().into();
+            let path_prefix: Arc<RelPath> = if include_root_name {
+                worktree.root_name().into()
+            } else {
+                RelPath::empty().into()
+            };
             worktree.entries(false, 0).map(move |entry| FileMatch {
                 mat: PathMatch {
                     score: 0.,
@@ -232,6 +251,7 @@ pub(crate) fn search_files(
         Task::ready(recent_matches.chain(file_matches).collect())
     } else {
         let worktrees = workspace.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
+        let include_root_name = worktrees.len() > 1;
         let candidate_sets = worktrees
             .into_iter()
             .map(|worktree| {
@@ -240,7 +260,7 @@ pub(crate) fn search_files(
                 PathMatchCandidateSet {
                     snapshot: worktree.snapshot(),
                     include_ignored: worktree.root_entry().is_some_and(|entry| entry.is_ignored),
-                    include_root_name: true,
+                    include_root_name,
                     candidates: project::Candidates::Entries,
                 }
             })
@@ -251,7 +271,7 @@ pub(crate) fn search_files(
             fuzzy::match_path_sets(
                 candidate_sets.as_slice(),
                 query.as_str(),
-                None,
+                &None,
                 false,
                 100,
                 &cancellation_flag,
@@ -269,51 +289,37 @@ pub(crate) fn search_files(
 }
 
 pub fn extract_file_name_and_directory(
-    path: &Path,
-    path_prefix: &str,
+    path: &RelPath,
+    path_prefix: &RelPath,
+    path_style: PathStyle,
 ) -> (SharedString, Option<SharedString>) {
-    if path == Path::new("") {
-        (
-            SharedString::from(
-                path_prefix
-                    .trim_end_matches(std::path::MAIN_SEPARATOR)
-                    .to_string(),
-            ),
-            None,
-        )
-    } else {
-        let file_name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string()
-            .into();
-
-        let mut directory = path_prefix
-            .trim_end_matches(std::path::MAIN_SEPARATOR)
-            .to_string();
-        if !directory.ends_with('/') {
-            directory.push('/');
-        }
-        if let Some(parent) = path.parent().filter(|parent| parent != &Path::new("")) {
-            directory.push_str(&parent.to_string_lossy());
-            directory.push('/');
-        }
-
-        (file_name, Some(directory.into()))
+    // If path is empty, this means we're matching with the root directory itself
+    // so we use the path_prefix as the name
+    if path.is_empty() && !path_prefix.is_empty() {
+        return (path_prefix.display(path_style).to_string().into(), None);
     }
+
+    let full_path = path_prefix.join(path);
+    let file_name = full_path.file_name().unwrap_or_default();
+    let display_path = full_path.display(path_style);
+    let (directory, file_name) = display_path.split_at(display_path.len() - file_name.len());
+    (
+        file_name.to_string().into(),
+        Some(SharedString::new(directory)).filter(|dir| !dir.is_empty()),
+    )
 }
 
 pub fn render_file_context_entry(
     id: ElementId,
     worktree_id: WorktreeId,
-    path: &Arc<Path>,
-    path_prefix: &Arc<str>,
+    path: &Arc<RelPath>,
+    path_prefix: &Arc<RelPath>,
     is_directory: bool,
+    path_style: PathStyle,
     context_store: WeakEntity<ContextStore>,
     cx: &App,
 ) -> Stateful<Div> {
-    let (file_name, directory) = extract_file_name_and_directory(path, path_prefix);
+    let (file_name, directory) = extract_file_name_and_directory(path, path_prefix, path_style);
 
     let added = context_store.upgrade().and_then(|context_store| {
         let project_path = ProjectPath {
@@ -330,9 +336,9 @@ pub fn render_file_context_entry(
     });
 
     let file_icon = if is_directory {
-        FileIcons::get_folder_icon(false, cx)
+        FileIcons::get_folder_icon(false, path.as_std_path(), cx)
     } else {
-        FileIcons::get_icon(path, cx)
+        FileIcons::get_icon(path.as_std_path(), cx)
     }
     .map(Icon::from_path)
     .unwrap_or_else(|| Icon::new(IconName::File));

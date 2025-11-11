@@ -1,3 +1,5 @@
+pub mod predict_edits_v3;
+
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -39,7 +41,7 @@ pub const EDIT_PREDICTIONS_RESOURCE_HEADER_VALUE: &str = "edit_predictions";
 /// The name of the header used to indicate that the maximum number of consecutive tool uses has been reached.
 pub const TOOL_USE_LIMIT_REACHED_HEADER_NAME: &str = "x-zed-tool-use-limit-reached";
 
-/// The name of the header used to indicate the the minimum required Zed version.
+/// The name of the header used to indicate the minimum required Zed version.
 ///
 /// This can be used to force a Zed upgrade in order to continue communicating
 /// with the LLM service.
@@ -52,6 +54,9 @@ pub const CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME: &str =
 /// The name of the header used by the server to indicate to the client that it supports sending status messages.
 pub const SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME: &str =
     "x-zed-server-supports-status-messages";
+
+/// The name of the header used by the client to indicate that it supports receiving xAI models.
+pub const CLIENT_SUPPORTS_X_AI_HEADER_NAME: &str = "x-zed-client-supports-x-ai";
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -74,38 +79,60 @@ impl FromStr for UsageLimit {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Plan {
-    #[default]
-    #[serde(alias = "Free")]
-    ZedFree,
-    ZedFreeV2,
-    #[serde(alias = "ZedPro")]
-    ZedPro,
-    ZedProV2,
-    #[serde(alias = "ZedProTrial")]
-    ZedProTrial,
-    ZedProTrialV2,
+    V1(PlanV1),
+    V2(PlanV2),
 }
 
 impl Plan {
     pub fn is_v2(&self) -> bool {
-        matches!(self, Plan::ZedFreeV2 | Plan::ZedProV2 | Plan::ZedProTrialV2)
+        matches!(self, Self::V2(_))
     }
 }
 
-impl FromStr for Plan {
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanV1 {
+    #[default]
+    #[serde(alias = "Free")]
+    ZedFree,
+    #[serde(alias = "ZedPro")]
+    ZedPro,
+    #[serde(alias = "ZedProTrial")]
+    ZedProTrial,
+}
+
+impl FromStr for PlanV1 {
     type Err = anyhow::Error;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "zed_free" => Ok(Plan::ZedFree),
-            "zed_free_v2" => Ok(Plan::ZedFreeV2),
-            "zed_pro" => Ok(Plan::ZedPro),
-            "zed_pro_v2" => Ok(Plan::ZedProV2),
-            "zed_pro_trial" => Ok(Plan::ZedProTrial),
-            "zed_pro_trial_v2" => Ok(Plan::ZedProTrialV2),
+            "zed_free" => Ok(Self::ZedFree),
+            "zed_pro" => Ok(Self::ZedPro),
+            "zed_pro_trial" => Ok(Self::ZedProTrial),
+            plan => Err(anyhow::anyhow!("invalid plan: {plan:?}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanV2 {
+    #[default]
+    ZedFree,
+    ZedPro,
+    ZedProTrial,
+}
+
+impl FromStr for PlanV2 {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "zed_free" => Ok(Self::ZedFree),
+            "zed_pro" => Ok(Self::ZedPro),
+            "zed_pro_trial" => Ok(Self::ZedProTrial),
             plan => Err(anyhow::anyhow!("invalid plan: {plan:?}")),
         }
     }
@@ -120,6 +147,7 @@ pub enum LanguageModelProvider {
     Anthropic,
     OpenAi,
     Google,
+    XAi,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,13 +183,13 @@ pub struct PredictEditsGitInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictEditsResponse {
-    pub request_id: Uuid,
+    pub request_id: String,
     pub output_excerpt: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcceptEditPredictionBody {
-    pub request_id: Uuid,
+    pub request_id: String,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
@@ -294,19 +322,22 @@ pub struct LanguageModel {
     pub supports_images: bool,
     pub supports_thinking: bool,
     pub supports_max_mode: bool,
+    // only used by OpenAI and xAI
+    #[serde(default)]
+    pub supports_parallel_tool_calls: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListModelsResponse {
     pub models: Vec<LanguageModel>,
-    pub default_model: LanguageModelId,
-    pub default_fast_model: LanguageModelId,
+    pub default_model: Option<LanguageModelId>,
+    pub default_fast_model: Option<LanguageModelId>,
     pub recommended_models: Vec<LanguageModelId>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GetSubscriptionResponse {
-    pub plan: Plan,
+    pub plan: PlanV1,
     pub usage: Option<CurrentUsage>,
 }
 
@@ -330,33 +361,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_plan_deserialize_snake_case() {
-        let plan = serde_json::from_value::<Plan>(json!("zed_free")).unwrap();
-        assert_eq!(plan, Plan::ZedFree);
+    fn test_plan_v1_deserialize_snake_case() {
+        let plan = serde_json::from_value::<PlanV1>(json!("zed_free")).unwrap();
+        assert_eq!(plan, PlanV1::ZedFree);
 
-        let plan = serde_json::from_value::<Plan>(json!("zed_pro")).unwrap();
-        assert_eq!(plan, Plan::ZedPro);
+        let plan = serde_json::from_value::<PlanV1>(json!("zed_pro")).unwrap();
+        assert_eq!(plan, PlanV1::ZedPro);
 
-        let plan = serde_json::from_value::<Plan>(json!("zed_pro_trial")).unwrap();
-        assert_eq!(plan, Plan::ZedProTrial);
-
-        let plan = serde_json::from_value::<Plan>(json!("zed_pro_v2")).unwrap();
-        assert_eq!(plan, Plan::ZedProV2);
-
-        let plan = serde_json::from_value::<Plan>(json!("zed_pro_trial_v2")).unwrap();
-        assert_eq!(plan, Plan::ZedProTrialV2);
+        let plan = serde_json::from_value::<PlanV1>(json!("zed_pro_trial")).unwrap();
+        assert_eq!(plan, PlanV1::ZedProTrial);
     }
 
     #[test]
-    fn test_plan_deserialize_aliases() {
-        let plan = serde_json::from_value::<Plan>(json!("Free")).unwrap();
-        assert_eq!(plan, Plan::ZedFree);
+    fn test_plan_v1_deserialize_aliases() {
+        let plan = serde_json::from_value::<PlanV1>(json!("Free")).unwrap();
+        assert_eq!(plan, PlanV1::ZedFree);
 
-        let plan = serde_json::from_value::<Plan>(json!("ZedPro")).unwrap();
-        assert_eq!(plan, Plan::ZedPro);
+        let plan = serde_json::from_value::<PlanV1>(json!("ZedPro")).unwrap();
+        assert_eq!(plan, PlanV1::ZedPro);
 
-        let plan = serde_json::from_value::<Plan>(json!("ZedProTrial")).unwrap();
-        assert_eq!(plan, Plan::ZedProTrial);
+        let plan = serde_json::from_value::<PlanV1>(json!("ZedProTrial")).unwrap();
+        assert_eq!(plan, PlanV1::ZedProTrial);
+    }
+
+    #[test]
+    fn test_plan_v2_deserialize_snake_case() {
+        let plan = serde_json::from_value::<PlanV2>(json!("zed_free")).unwrap();
+        assert_eq!(plan, PlanV2::ZedFree);
+
+        let plan = serde_json::from_value::<PlanV2>(json!("zed_pro")).unwrap();
+        assert_eq!(plan, PlanV2::ZedPro);
+
+        let plan = serde_json::from_value::<PlanV2>(json!("zed_pro_trial")).unwrap();
+        assert_eq!(plan, PlanV2::ZedProTrial);
     }
 
     #[test]

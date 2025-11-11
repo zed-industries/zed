@@ -73,7 +73,7 @@ async fn test_lsp_log_view(cx: &mut TestAppContext) {
     let log_view = window.root(cx).unwrap();
     let mut cx = VisualTestContext::from_window(*window, cx);
 
-    language_server.notify::<lsp::notification::LogMessage>(&lsp::LogMessageParams {
+    language_server.notify::<lsp::notification::LogMessage>(lsp::LogMessageParams {
         message: "hello from the server".into(),
         typ: lsp::MessageType::INFO,
     });
@@ -91,7 +91,7 @@ async fn test_lsp_log_view(cx: &mut TestAppContext) {
                     .next()
                     .unwrap()
                     .read(cx)
-                    .root_name()
+                    .root_name_str()
                     .to_string(),
                 rpc_trace_enabled: false,
                 selected_entry: LogKind::Logs,
@@ -109,12 +109,7 @@ fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        workspace::init_settings(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         release_channel::init(SemanticVersion::default(), cx);
-        language::init(cx);
-        client::init_settings(cx);
-        Project::init_settings(cx);
-        editor::init_settings(cx);
     });
 }

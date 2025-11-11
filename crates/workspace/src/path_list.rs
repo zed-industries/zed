@@ -3,15 +3,22 @@ use std::{
     sync::Arc,
 };
 
+use itertools::Itertools;
 use util::paths::SanitizedPath;
 
 /// A list of absolute paths, in a specific order.
 ///
 /// The paths are stored in lexicographic order, so that they can be compared to
 /// other path lists without regard to the order of the paths.
+///
+/// The paths can be retrieved in the original order using `ordered_paths()`.
 #[derive(Default, PartialEq, Eq, Debug, Clone)]
 pub struct PathList {
+    /// The paths, in lexicographic order.
     paths: Arc<[PathBuf]>,
+    /// The order in which the paths were provided.
+    ///
+    /// See `ordered_paths()` for a way to get the paths in the original order.
     order: Arc<[usize]>,
 }
 
@@ -42,12 +49,23 @@ impl PathList {
         self.paths.is_empty()
     }
 
+    /// Get the paths in lexicographic order.
     pub fn paths(&self) -> &[PathBuf] {
         self.paths.as_ref()
     }
 
+    /// Get the order in which the paths were provided.
     pub fn order(&self) -> &[usize] {
         self.order.as_ref()
+    }
+
+    /// Get the paths in the original order.
+    pub fn ordered_paths(&self) -> impl Iterator<Item = &PathBuf> {
+        self.order
+            .iter()
+            .zip(self.paths.iter())
+            .sorted_by_key(|(i, _)| **i)
+            .map(|(_, path)| path)
     }
 
     pub fn is_lexicographically_ordered(&self) -> bool {
@@ -109,15 +127,70 @@ mod tests {
         let list1 = PathList::new(&["a/d", "a/c"]);
         let list2 = PathList::new(&["a/c", "a/d"]);
 
-        assert_eq!(list1.paths(), list2.paths());
-        assert_ne!(list1, list2);
-        assert_eq!(list1.order(), &[1, 0]);
-        assert_eq!(list2.order(), &[0, 1]);
+        assert_eq!(list1.paths(), list2.paths(), "paths differ");
+        assert_eq!(list1.order(), &[1, 0], "list1 order incorrect");
+        assert_eq!(list2.order(), &[0, 1], "list2 order incorrect");
 
         let list1_deserialized = PathList::deserialize(&list1.serialize());
-        assert_eq!(list1_deserialized, list1);
+        assert_eq!(list1_deserialized, list1, "list1 deserialization failed");
 
         let list2_deserialized = PathList::deserialize(&list2.serialize());
-        assert_eq!(list2_deserialized, list2);
+        assert_eq!(list2_deserialized, list2, "list2 deserialization failed");
+
+        assert_eq!(
+            list1.ordered_paths().collect_array().unwrap(),
+            [&PathBuf::from("a/d"), &PathBuf::from("a/c")],
+            "list1 ordered paths incorrect"
+        );
+        assert_eq!(
+            list2.ordered_paths().collect_array().unwrap(),
+            [&PathBuf::from("a/c"), &PathBuf::from("a/d")],
+            "list2 ordered paths incorrect"
+        );
+    }
+
+    #[test]
+    fn test_path_list_ordering() {
+        let list = PathList::new(&["b", "a", "c"]);
+        assert_eq!(
+            list.paths(),
+            &[PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c")]
+        );
+        assert_eq!(list.order(), &[1, 0, 2]);
+        assert!(!list.is_lexicographically_ordered());
+
+        let serialized = list.serialize();
+        let deserialized = PathList::deserialize(&serialized);
+        assert_eq!(deserialized, list);
+
+        assert_eq!(
+            deserialized.ordered_paths().collect_array().unwrap(),
+            [
+                &PathBuf::from("b"),
+                &PathBuf::from("a"),
+                &PathBuf::from("c")
+            ]
+        );
+
+        let list = PathList::new(&["b", "c", "a"]);
+        assert_eq!(
+            list.paths(),
+            &[PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c")]
+        );
+        assert_eq!(list.order(), &[2, 0, 1]);
+        assert!(!list.is_lexicographically_ordered());
+
+        let serialized = list.serialize();
+        let deserialized = PathList::deserialize(&serialized);
+        assert_eq!(deserialized, list);
+
+        assert_eq!(
+            deserialized.ordered_paths().collect_array().unwrap(),
+            [
+                &PathBuf::from("b"),
+                &PathBuf::from("c"),
+                &PathBuf::from("a"),
+            ]
+        );
     }
 }

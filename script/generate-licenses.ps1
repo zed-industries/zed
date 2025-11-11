@@ -1,4 +1,4 @@
-$CARGO_ABOUT_VERSION="0.7"
+$CARGO_ABOUT_VERSION="0.8"
 $outputFile=$args[0] ? $args[0] : "$(Get-Location)/assets/licenses.md"
 $templateFile="script/licenses/template.md.hbs"
 

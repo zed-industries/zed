@@ -587,6 +587,8 @@ impl SyntaxSnapshot {
                     let changed_ranges;
 
                     let mut included_ranges = step.included_ranges;
+                    let is_combined = matches!(step.mode, ParseMode::Combined { .. });
+
                     for range in &mut included_ranges {
                         range.start_byte -= step_start_byte;
                         range.end_byte -= step_start_byte;
@@ -749,16 +751,20 @@ impl SyntaxSnapshot {
                         );
                     }
 
-                    let included_sub_ranges: Option<Vec<Range<Anchor>>> =
-                        (included_ranges.len() > 1).then_some(
+                    let included_sub_ranges: Option<Vec<Range<Anchor>>> = if is_combined {
+                        Some(
                             included_ranges
                                 .into_iter()
+                                .filter(|r| r.start_byte < r.end_byte)
                                 .map(|r| {
                                     text.anchor_before(r.start_byte + step_start_byte)
                                         ..text.anchor_after(r.end_byte + step_start_byte)
                                 })
                                 .collect(),
-                        );
+                        )
+                    } else {
+                        None
+                    };
                     SyntaxLayerContent::Parsed {
                         tree,
                         language,
@@ -1775,13 +1781,13 @@ impl Default for SyntaxLayerSummary {
 }
 
 impl sum_tree::Summary for SyntaxLayerSummary {
-    type Context = BufferSnapshot;
+    type Context<'a> = &'a BufferSnapshot;
 
     fn zero(_cx: &BufferSnapshot) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, other: &Self, buffer: &Self::Context) {
+    fn add_summary(&mut self, other: &Self, buffer: Self::Context<'_>) {
         if other.max_depth > self.max_depth {
             self.max_depth = other.max_depth;
             self.range = other.range.clone();

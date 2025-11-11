@@ -28,7 +28,7 @@ Zed allows you to override global settings for individual languages. These custo
 
 Here's an example of language-specific settings:
 
-```json
+```json [settings]
 "languages": {
   "Python": {
     "tab_size": 4,
@@ -67,7 +67,7 @@ Zed automatically detects file types based on their extensions, but you can cust
 
 To set up custom file associations, use the [`file_types`](./configuring-zed.md#file-types) setting in your `settings.json`:
 
-```json
+```json [settings]
 "file_types": {
   "C++": ["c"],
   "TOML": ["MyLockFile"],
@@ -109,7 +109,7 @@ Zed simplifies language server management for users:
 2. Storage Location:
 
    - macOS: `~/Library/Application Support/Zed/languages`
-   - Linux: `$XDG_DATA_HOME/languages`, `$FLATPAK_XDG_DATA_HOME/languages`, or `$HOME/.local/share`
+   - Linux: `$XDG_DATA_HOME/zed/languages`, `$FLATPAK_XDG_DATA_HOME/zed/languages`, or `$HOME/.local/share/zed/languages`
 
 3. Automatic Updates: Zed keeps your language servers up-to-date, ensuring you always have the latest features and improvements.
 
@@ -119,7 +119,7 @@ Some languages in Zed offer multiple language server options. You might have mul
 
 You can specify your preference using the `language_servers` setting:
 
-```json
+```json [settings]
   "languages": {
     "PHP": {
       "language_servers": ["intelephense", "!phpactor", "..."]
@@ -135,11 +135,17 @@ In this example:
 
 This configuration allows you to tailor the language server setup to your specific needs, ensuring that you get the most suitable functionality for your development workflow.
 
+### Toolchains
+
+Some language servers need to be configured with a current "toolchain", which is an installation of a specific version of a programming language compiler or/and interpreter, which can possibly include a full set of dependencies of a project.
+An example of what Zed considers a toolchain is a virtual environment in Python.
+Not all languages in Zed support toolchain discovery and selection, but for those that do, you can specify the toolchain from a toolchain picker (via {#action toolchain::Select}). To learn more about toolchains in Zed, see [`toolchains`](./toolchains.md).
+
 ### Configuring Language Servers
 
 Many language servers accept custom configuration options. You can set these in the `lsp` section of your `settings.json`:
 
-```json
+```json [settings]
   "lsp": {
     "rust-analyzer": {
       "initialization_options": {
@@ -164,7 +170,7 @@ Suppose you want to configure the following settings for TypeScript:
 
 Here's how you would structure these settings in Zed's `settings.json`:
 
-```json
+```json [settings]
 "lsp": {
   "typescript-language-server": {
     "initialization_options": {
@@ -192,7 +198,7 @@ Sent once during language server startup, requires server's restart to reapply c
 
 For example, rust-analyzer and clangd rely on this way of configuring only.
 
-```json
+```json [settings]
   "lsp": {
     "rust-analyzer": {
       "initialization_options": {
@@ -207,7 +213,7 @@ For example, rust-analyzer and clangd rely on this way of configuring only.
 May be queried by the server multiple times.
 Most of the servers would rely on this way of configuring only.
 
-```json
+```json [settings]
 "lsp": {
   "tailwindcss-language-server": {
     "settings": {
@@ -223,7 +229,7 @@ Apart of the LSP-related server configuration options, certain servers in Zed al
 
 Language servers are automatically downloaded or launched if found in your path, if you wish to specify an explicit alternate binary you can specify that in settings:
 
-```json
+```json [settings]
   "lsp": {
     "rust-analyzer": {
       "binary": {
@@ -243,7 +249,7 @@ Language servers are automatically downloaded or launched if found in your path,
 
 You can toggle language server support globally or per-language:
 
-```json
+```json [settings]
   "languages": {
     "Markdown": {
       "enable_language_server": false
@@ -261,7 +267,7 @@ Zed provides support for code formatting and linting to maintain consistent code
 
 Zed supports both built-in and external formatters. See [`formatter`](./configuring-zed.md#formatter) docs for more. You can configure formatters globally or per-language in your `settings.json`:
 
-```json
+```json [settings]
 "languages": {
   "JavaScript": {
     "formatter": {
@@ -283,7 +289,7 @@ This example uses Prettier for JavaScript and the language server's formatter fo
 
 To disable formatting for a specific language:
 
-```json
+```json [settings]
 "languages": {
   "Markdown": {
     "format_on_save": "off"
@@ -295,7 +301,7 @@ To disable formatting for a specific language:
 
 Linting in Zed is typically handled by language servers. Many language servers allow you to configure linting rules:
 
-```json
+```json [settings]
 "lsp": {
   "eslint": {
     "settings": {
@@ -311,11 +317,11 @@ This configuration sets up ESLint to organize imports on save for JavaScript fil
 
 To run linter fixes automatically on save:
 
-```json
+```json [settings]
 "languages": {
   "JavaScript": {
-    "code_actions_on_format": {
-      "source.fixAll.eslint": true
+    "formatter": {
+      "code_action": "source.fixAll.eslint"
     }
   }
 }
@@ -325,18 +331,20 @@ To run linter fixes automatically on save:
 
 Zed allows you to run both formatting and linting on save. Here's an example that uses Prettier for formatting and ESLint for linting JavaScript files:
 
-```json
+```json [settings]
 "languages": {
   "JavaScript": {
-    "formatter": {
-      "external": {
-        "command": "prettier",
-        "arguments": ["--stdin-filepath", "{buffer_path}"]
+    "formatter": [
+      {
+        "code_action": "source.fixAll.eslint"
+      },
+      {
+        "external": {
+          "command": "prettier",
+          "arguments": ["--stdin-filepath", "{buffer_path}"]
+        }
       }
-    },
-    "code_actions_on_format": {
-      "source.fixAll.eslint": true
-    },
+    ],
     "format_on_save": "on"
   }
 }
@@ -356,18 +364,20 @@ Zed offers customization options for syntax highlighting and themes, allowing yo
 
 ### Customizing Syntax Highlighting
 
-Zed uses Tree-sitter grammars for syntax highlighting. Override the default highlighting using the `experimental.theme_overrides` setting.
+Zed uses Tree-sitter grammars for syntax highlighting. Override the default highlighting using the `theme_overrides` setting.
 
 This example makes comments italic and changes the color of strings:
 
-```json
-"experimental.theme_overrides": {
-  "syntax": {
-    "comment": {
-      "font_style": "italic"
-    },
-    "string": {
-      "color": "#00AA00"
+```json [settings]
+"theme_overrides": {
+  "One Dark": {
+    "syntax": {
+      "comment": {
+        "font_style": "italic"
+      },
+      "string": {
+        "color": "#00AA00"
+      }
     }
   }
 }
@@ -380,7 +390,7 @@ Change your theme:
 1. Use the theme selector ({#kb theme_selector::Toggle})
 2. Or set it in your `settings.json`:
 
-```json
+```json [settings]
 "theme": {
   "mode": "dark",
   "dark": "One Dark",
@@ -402,7 +412,7 @@ To create your own theme extension, refer to the [Developing Theme Extensions](.
 
 Inlay hints provide additional information inline in your code, such as parameter names or inferred types. Configure inlay hints in your `settings.json`:
 
-```json
+```json [settings]
 "inlay_hints": {
   "enabled": true,
   "show_type_hints": true,
@@ -439,7 +449,7 @@ When renaming a symbol that spans multiple files, Zed will open a preview in a m
 
 ### Hover Information
 
-Use the `editor: Show Hover` command to display information about the symbol under the cursor. This often includes type information, documentation, and links to relevant resources.
+Use the `editor: Hover` command to display information about the symbol under the cursor. This often includes type information, documentation, and links to relevant resources.
 
 ### Workspace Symbol Search
 

@@ -3,15 +3,14 @@ use buffer_diff::BufferDiff;
 use clock;
 use collections::BTreeMap;
 use futures::{FutureExt, StreamExt, channel::mpsc};
-use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
+use gpui::{
+    App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
+};
 use language::{Anchor, Buffer, BufferEvent, DiskState, Point, ToPoint};
 use project::{Project, ProjectItem, lsp_store::OpenLspBufferHandle};
 use std::{cmp, ops::Range, sync::Arc};
 use text::{Edit, Patch, Rope};
-use util::{
-    RangeExt, ResultExt as _,
-    paths::{PathStyle, RemotePathBuf},
-};
+use util::{RangeExt, ResultExt as _};
 
 /// Tracks actions performed by tools in a thread
 pub struct ActionLog {
@@ -32,65 +31,6 @@ impl ActionLog {
 
     pub fn project(&self) -> &Entity<Project> {
         &self.project
-    }
-
-    pub fn latest_snapshot(&self, buffer: &Entity<Buffer>) -> Option<text::BufferSnapshot> {
-        Some(self.tracked_buffers.get(buffer)?.snapshot.clone())
-    }
-
-    /// Return a unified diff patch with user edits made since last read or notification
-    pub fn unnotified_user_edits(&self, cx: &Context<Self>) -> Option<String> {
-        let diffs = self
-            .tracked_buffers
-            .values()
-            .filter_map(|tracked| {
-                if !tracked.may_have_unnotified_user_edits {
-                    return None;
-                }
-
-                let text_with_latest_user_edits = tracked.diff_base.to_string();
-                let text_with_last_seen_user_edits = tracked.last_seen_base.to_string();
-                if text_with_latest_user_edits == text_with_last_seen_user_edits {
-                    return None;
-                }
-                let patch = language::unified_diff(
-                    &text_with_last_seen_user_edits,
-                    &text_with_latest_user_edits,
-                );
-
-                let buffer = tracked.buffer.clone();
-                let file_path = buffer
-                    .read(cx)
-                    .file()
-                    .map(|file| RemotePathBuf::new(file.full_path(cx), PathStyle::Posix).to_proto())
-                    .unwrap_or_else(|| format!("buffer_{}", buffer.entity_id()));
-
-                let mut result = String::new();
-                result.push_str(&format!("--- a/{}\n", file_path));
-                result.push_str(&format!("+++ b/{}\n", file_path));
-                result.push_str(&patch);
-
-                Some(result)
-            })
-            .collect::<Vec<_>>();
-
-        if diffs.is_empty() {
-            return None;
-        }
-
-        let unified_diff = diffs.join("\n\n");
-        Some(unified_diff)
-    }
-
-    /// Return a unified diff patch with user edits made since last read/notification
-    /// and mark them as notified
-    pub fn flush_unnotified_user_edits(&mut self, cx: &Context<Self>) -> Option<String> {
-        let patch = self.unnotified_user_edits(cx);
-        self.tracked_buffers.values_mut().for_each(|tracked| {
-            tracked.may_have_unnotified_user_edits = false;
-            tracked.last_seen_base = tracked.diff_base.clone();
-        });
-        patch
     }
 
     fn track_buffer_internal(
@@ -142,31 +82,26 @@ impl ActionLog {
                 let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
                 let (diff_update_tx, diff_update_rx) = mpsc::unbounded();
                 let diff_base;
-                let last_seen_base;
                 let unreviewed_edits;
                 if is_created {
                     diff_base = Rope::default();
-                    last_seen_base = Rope::default();
                     unreviewed_edits = Patch::new(vec![Edit {
                         old: 0..1,
                         new: 0..text_snapshot.max_point().row + 1,
                     }])
                 } else {
                     diff_base = buffer.read(cx).as_rope().clone();
-                    last_seen_base = diff_base.clone();
                     unreviewed_edits = Patch::default();
                 }
                 TrackedBuffer {
                     buffer: buffer.clone(),
                     diff_base,
-                    last_seen_base,
                     unreviewed_edits,
                     snapshot: text_snapshot,
                     status,
                     version: buffer.read(cx).version(),
                     diff,
                     diff_update: diff_update_tx,
-                    may_have_unnotified_user_edits: false,
                     _open_lsp_handle: open_lsp_handle,
                     _maintain_diff: cx.spawn({
                         let buffer = buffer.clone();
@@ -317,10 +252,9 @@ impl ActionLog {
                 let new_snapshot = buffer_snapshot.clone();
                 let unreviewed_edits = tracked_buffer.unreviewed_edits.clone();
                 let edits = diff_snapshots(&old_snapshot, &new_snapshot);
-                let mut has_user_changes = false;
                 async move {
                     if let ChangeAuthor::User = author {
-                        has_user_changes = apply_non_conflicting_edits(
+                        apply_non_conflicting_edits(
                             &unreviewed_edits,
                             edits,
                             &mut base_text,
@@ -328,22 +262,13 @@ impl ActionLog {
                         );
                     }
 
-                    (Arc::new(base_text.to_string()), base_text, has_user_changes)
+                    (Arc::new(base_text.to_string()), base_text)
                 }
             });
 
             anyhow::Ok(rebase)
         })??;
-        let (new_base_text, new_diff_base, has_user_changes) = rebase.await;
-
-        this.update(cx, |this, _| {
-            let tracked_buffer = this
-                .tracked_buffers
-                .get_mut(buffer)
-                .context("buffer not tracked")
-                .unwrap();
-            tracked_buffer.may_have_unnotified_user_edits |= has_user_changes;
-        })?;
+        let (new_base_text, new_diff_base) = rebase.await;
 
         Self::update_diff(
             this,
@@ -562,14 +487,17 @@ impl ActionLog {
         &mut self,
         buffer: Entity<Buffer>,
         buffer_range: Range<impl language::ToPoint>,
+        telemetry: Option<ActionLogTelemetry>,
         cx: &mut Context<Self>,
     ) {
         let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
             return;
         };
 
+        let mut metrics = ActionLogMetrics::for_buffer(buffer.read(cx));
         match tracked_buffer.status {
             TrackedBufferStatus::Deleted => {
+                metrics.add_edits(tracked_buffer.unreviewed_edits.edits());
                 self.tracked_buffers.remove(&buffer);
                 cx.notify();
             }
@@ -578,7 +506,6 @@ impl ActionLog {
                 let buffer_range =
                     buffer_range.start.to_point(buffer)..buffer_range.end.to_point(buffer);
                 let mut delta = 0i32;
-
                 tracked_buffer.unreviewed_edits.retain_mut(|edit| {
                     edit.old.start = (edit.old.start as i32 + delta) as u32;
                     edit.old.end = (edit.old.end as i32 + delta) as u32;
@@ -610,6 +537,7 @@ impl ActionLog {
                                 .collect::<String>(),
                         );
                         delta += edit.new_len() as i32 - edit.old_len() as i32;
+                        metrics.add_edit(edit);
                         false
                     }
                 });
@@ -621,19 +549,24 @@ impl ActionLog {
                 tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
             }
         }
+        if let Some(telemetry) = telemetry {
+            telemetry_report_accepted_edits(&telemetry, metrics);
+        }
     }
 
     pub fn reject_edits_in_ranges(
         &mut self,
         buffer: Entity<Buffer>,
         buffer_ranges: Vec<Range<impl language::ToPoint>>,
+        telemetry: Option<ActionLogTelemetry>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
             return Task::ready(Ok(()));
         };
 
-        match &tracked_buffer.status {
+        let mut metrics = ActionLogMetrics::for_buffer(buffer.read(cx));
+        let task = match &tracked_buffer.status {
             TrackedBufferStatus::Created {
                 existing_file_content,
             } => {
@@ -683,6 +616,7 @@ impl ActionLog {
                     }
                 };
 
+                metrics.add_edits(tracked_buffer.unreviewed_edits.edits());
                 self.tracked_buffers.remove(&buffer);
                 cx.notify();
                 task
@@ -696,6 +630,7 @@ impl ActionLog {
                     .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx));
 
                 // Clear all tracked edits for this buffer and start over as if we just read it.
+                metrics.add_edits(tracked_buffer.unreviewed_edits.edits());
                 self.tracked_buffers.remove(&buffer);
                 self.buffer_read(buffer.clone(), cx);
                 cx.notify();
@@ -735,6 +670,7 @@ impl ActionLog {
                         }
 
                         if revert {
+                            metrics.add_edit(edit);
                             let old_range = tracked_buffer
                                 .diff_base
                                 .point_to_offset(Point::new(edit.old.start, 0))
@@ -755,12 +691,25 @@ impl ActionLog {
                 self.project
                     .update(cx, |project, cx| project.save_buffer(buffer, cx))
             }
+        };
+        if let Some(telemetry) = telemetry {
+            telemetry_report_rejected_edits(&telemetry, metrics);
         }
+        task
     }
 
-    pub fn keep_all_edits(&mut self, cx: &mut Context<Self>) {
-        self.tracked_buffers
-            .retain(|_buffer, tracked_buffer| match tracked_buffer.status {
+    pub fn keep_all_edits(
+        &mut self,
+        telemetry: Option<ActionLogTelemetry>,
+        cx: &mut Context<Self>,
+    ) {
+        self.tracked_buffers.retain(|buffer, tracked_buffer| {
+            let mut metrics = ActionLogMetrics::for_buffer(buffer.read(cx));
+            metrics.add_edits(tracked_buffer.unreviewed_edits.edits());
+            if let Some(telemetry) = telemetry.as_ref() {
+                telemetry_report_accepted_edits(telemetry, metrics);
+            }
+            match tracked_buffer.status {
                 TrackedBufferStatus::Deleted => false,
                 _ => {
                     if let TrackedBufferStatus::Created { .. } = &mut tracked_buffer.status {
@@ -771,13 +720,24 @@ impl ActionLog {
                     tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
                     true
                 }
-            });
+            }
+        });
+
         cx.notify();
     }
 
-    pub fn reject_all_edits(&mut self, cx: &mut Context<Self>) -> Task<()> {
+    pub fn reject_all_edits(
+        &mut self,
+        telemetry: Option<ActionLogTelemetry>,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
         let futures = self.changed_buffers(cx).into_keys().map(|buffer| {
-            let reject = self.reject_edits_in_ranges(buffer, vec![Anchor::MIN..Anchor::MAX], cx);
+            let reject = self.reject_edits_in_ranges(
+                buffer,
+                vec![Anchor::MIN..Anchor::MAX],
+                telemetry.clone(),
+                cx,
+            );
 
             async move {
                 reject.await.log_err();
@@ -785,8 +745,7 @@ impl ActionLog {
         });
 
         let task = futures::future::join_all(futures);
-
-        cx.spawn(async move |_, _| {
+        cx.background_spawn(async move {
             task.await;
         })
     }
@@ -814,6 +773,61 @@ impl ActionLog {
             })
             .map(|(buffer, _)| buffer)
     }
+}
+
+#[derive(Clone)]
+pub struct ActionLogTelemetry {
+    pub agent_telemetry_id: &'static str,
+    pub session_id: Arc<str>,
+}
+
+struct ActionLogMetrics {
+    lines_removed: u32,
+    lines_added: u32,
+    language: Option<SharedString>,
+}
+
+impl ActionLogMetrics {
+    fn for_buffer(buffer: &Buffer) -> Self {
+        Self {
+            language: buffer.language().map(|l| l.name().0),
+            lines_removed: 0,
+            lines_added: 0,
+        }
+    }
+
+    fn add_edits(&mut self, edits: &[Edit<u32>]) {
+        for edit in edits {
+            self.add_edit(edit);
+        }
+    }
+
+    fn add_edit(&mut self, edit: &Edit<u32>) {
+        self.lines_added += edit.new_len();
+        self.lines_removed += edit.old_len();
+    }
+}
+
+fn telemetry_report_accepted_edits(telemetry: &ActionLogTelemetry, metrics: ActionLogMetrics) {
+    telemetry::event!(
+        "Agent Edits Accepted",
+        agent = telemetry.agent_telemetry_id,
+        session = telemetry.session_id,
+        language = metrics.language,
+        lines_added = metrics.lines_added,
+        lines_removed = metrics.lines_removed
+    );
+}
+
+fn telemetry_report_rejected_edits(telemetry: &ActionLogTelemetry, metrics: ActionLogMetrics) {
+    telemetry::event!(
+        "Agent Edits Rejected",
+        agent = telemetry.agent_telemetry_id,
+        session = telemetry.session_id,
+        language = metrics.language,
+        lines_added = metrics.lines_added,
+        lines_removed = metrics.lines_removed
+    );
 }
 
 fn apply_non_conflicting_edits(
@@ -946,14 +960,12 @@ enum TrackedBufferStatus {
 struct TrackedBuffer {
     buffer: Entity<Buffer>,
     diff_base: Rope,
-    last_seen_base: Rope,
     unreviewed_edits: Patch<u32>,
     status: TrackedBufferStatus,
     version: clock::Global,
     diff: Entity<BufferDiff>,
     snapshot: text::BufferSnapshot,
     diff_update: mpsc::UnboundedSender<(ChangeAuthor, text::BufferSnapshot)>,
-    may_have_unnotified_user_edits: bool,
     _open_lsp_handle: OpenLspBufferHandle,
     _maintain_diff: Task<()>,
     _subscription: Subscription,
@@ -984,7 +996,6 @@ mod tests {
     use super::*;
     use buffer_diff::DiffHunkStatusKind;
     use gpui::TestAppContext;
-    use indoc::indoc;
     use language::Point;
     use project::{FakeFs, Fs, Project, RemoveOptions};
     use rand::prelude::*;
@@ -1002,8 +1013,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
         });
     }
 
@@ -1063,7 +1072,7 @@ mod tests {
         );
 
         action_log.update(cx, |log, cx| {
-            log.keep_edits_in_range(buffer.clone(), Point::new(3, 0)..Point::new(4, 3), cx)
+            log.keep_edits_in_range(buffer.clone(), Point::new(3, 0)..Point::new(4, 3), None, cx)
         });
         cx.run_until_parked();
         assert_eq!(
@@ -1079,7 +1088,7 @@ mod tests {
         );
 
         action_log.update(cx, |log, cx| {
-            log.keep_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(4, 3), cx)
+            log.keep_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(4, 3), None, cx)
         });
         cx.run_until_parked();
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
@@ -1164,7 +1173,7 @@ mod tests {
         );
 
         action_log.update(cx, |log, cx| {
-            log.keep_edits_in_range(buffer.clone(), Point::new(1, 0)..Point::new(1, 0), cx)
+            log.keep_edits_in_range(buffer.clone(), Point::new(1, 0)..Point::new(1, 0), None, cx)
         });
         cx.run_until_parked();
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
@@ -1261,111 +1270,7 @@ mod tests {
         );
 
         action_log.update(cx, |log, cx| {
-            log.keep_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(1, 0), cx)
-        });
-        cx.run_until_parked();
-        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
-    }
-
-    #[gpui::test(iterations = 10)]
-    async fn test_user_edits_notifications(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            path!("/dir"),
-            json!({"file": indoc! {"
-            abc
-            def
-            ghi
-            jkl
-            mno"}}),
-        )
-        .await;
-        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let file_path = project
-            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
-            .unwrap();
-        let buffer = project
-            .update(cx, |project, cx| project.open_buffer(file_path, cx))
-            .await
-            .unwrap();
-
-        // Agent edits
-        cx.update(|cx| {
-            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
-            buffer.update(cx, |buffer, cx| {
-                buffer
-                    .edit([(Point::new(1, 2)..Point::new(2, 3), "F\nGHI")], None, cx)
-                    .unwrap()
-            });
-            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-        });
-        cx.run_until_parked();
-        assert_eq!(
-            buffer.read_with(cx, |buffer, _| buffer.text()),
-            indoc! {"
-                abc
-                deF
-                GHI
-                jkl
-                mno"}
-        );
-        assert_eq!(
-            unreviewed_hunks(&action_log, cx),
-            vec![(
-                buffer.clone(),
-                vec![HunkStatus {
-                    range: Point::new(1, 0)..Point::new(3, 0),
-                    diff_status: DiffHunkStatusKind::Modified,
-                    old_text: "def\nghi\n".into(),
-                }],
-            )]
-        );
-
-        // User edits
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit(
-                [
-                    (Point::new(0, 2)..Point::new(0, 2), "X"),
-                    (Point::new(3, 0)..Point::new(3, 0), "Y"),
-                ],
-                None,
-                cx,
-            )
-        });
-        cx.run_until_parked();
-        assert_eq!(
-            buffer.read_with(cx, |buffer, _| buffer.text()),
-            indoc! {"
-                abXc
-                deF
-                GHI
-                Yjkl
-                mno"}
-        );
-
-        // User edits should be stored separately from agent's
-        let user_edits = action_log.update(cx, |log, cx| log.unnotified_user_edits(cx));
-        assert_eq!(
-            user_edits.expect("should have some user edits"),
-            indoc! {"
-                --- a/dir/file
-                +++ b/dir/file
-                @@ -1,5 +1,5 @@
-                -abc
-                +abXc
-                 def
-                 ghi
-                -jkl
-                +Yjkl
-                 mno
-            "}
-        );
-
-        action_log.update(cx, |log, cx| {
-            log.keep_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(1, 0), cx)
+            log.keep_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(1, 0), None, cx)
         });
         cx.run_until_parked();
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
@@ -1424,7 +1329,7 @@ mod tests {
         );
 
         action_log.update(cx, |log, cx| {
-            log.keep_edits_in_range(buffer.clone(), 0..5, cx)
+            log.keep_edits_in_range(buffer.clone(), 0..5, None, cx)
         });
         cx.run_until_parked();
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
@@ -1476,7 +1381,7 @@ mod tests {
 
         action_log
             .update(cx, |log, cx| {
-                log.reject_edits_in_ranges(buffer.clone(), vec![2..5], cx)
+                log.reject_edits_in_ranges(buffer.clone(), vec![2..5], None, cx)
             })
             .await
             .unwrap();
@@ -1556,7 +1461,7 @@ mod tests {
 
         action_log
             .update(cx, |log, cx| {
-                log.reject_edits_in_ranges(buffer.clone(), vec![2..5], cx)
+                log.reject_edits_in_ranges(buffer.clone(), vec![2..5], None, cx)
             })
             .await
             .unwrap();
@@ -1739,6 +1644,7 @@ mod tests {
                 log.reject_edits_in_ranges(
                     buffer.clone(),
                     vec![Point::new(4, 0)..Point::new(4, 0)],
+                    None,
                     cx,
                 )
             })
@@ -1773,6 +1679,7 @@ mod tests {
                 log.reject_edits_in_ranges(
                     buffer.clone(),
                     vec![Point::new(0, 0)..Point::new(1, 0)],
+                    None,
                     cx,
                 )
             })
@@ -1800,6 +1707,7 @@ mod tests {
                 log.reject_edits_in_ranges(
                     buffer.clone(),
                     vec![Point::new(4, 0)..Point::new(4, 0)],
+                    None,
                     cx,
                 )
             })
@@ -1874,7 +1782,7 @@ mod tests {
             let range_2 = buffer.read(cx).anchor_before(Point::new(5, 0))
                 ..buffer.read(cx).anchor_before(Point::new(5, 3));
 
-            log.reject_edits_in_ranges(buffer.clone(), vec![range_1, range_2], cx)
+            log.reject_edits_in_ranges(buffer.clone(), vec![range_1, range_2], None, cx)
                 .detach();
             assert_eq!(
                 buffer.read_with(cx, |buffer, _| buffer.text()),
@@ -1935,6 +1843,7 @@ mod tests {
                 log.reject_edits_in_ranges(
                     buffer.clone(),
                     vec![Point::new(0, 0)..Point::new(0, 0)],
+                    None,
                     cx,
                 )
             })
@@ -1990,6 +1899,7 @@ mod tests {
                 log.reject_edits_in_ranges(
                     buffer.clone(),
                     vec![Point::new(0, 0)..Point::new(0, 11)],
+                    None,
                     cx,
                 )
             })
@@ -2052,6 +1962,7 @@ mod tests {
                 log.reject_edits_in_ranges(
                     buffer.clone(),
                     vec![Point::new(0, 0)..Point::new(100, 0)],
+                    None,
                     cx,
                 )
             })
@@ -2099,7 +2010,7 @@ mod tests {
 
         // User accepts the single hunk
         action_log.update(cx, |log, cx| {
-            log.keep_edits_in_range(buffer.clone(), Anchor::MIN..Anchor::MAX, cx)
+            log.keep_edits_in_range(buffer.clone(), Anchor::MIN..Anchor::MAX, None, cx)
         });
         cx.run_until_parked();
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
@@ -2120,7 +2031,7 @@ mod tests {
         // User rejects the hunk
         action_log
             .update(cx, |log, cx| {
-                log.reject_edits_in_ranges(buffer.clone(), vec![Anchor::MIN..Anchor::MAX], cx)
+                log.reject_edits_in_ranges(buffer.clone(), vec![Anchor::MIN..Anchor::MAX], None, cx)
             })
             .await
             .unwrap();
@@ -2164,7 +2075,7 @@ mod tests {
         cx.run_until_parked();
 
         // User clicks "Accept All"
-        action_log.update(cx, |log, cx| log.keep_all_edits(cx));
+        action_log.update(cx, |log, cx| log.keep_all_edits(None, cx));
         cx.run_until_parked();
         assert!(fs.is_file(path!("/dir/new_file").as_ref()).await);
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]); // Hunks are cleared
@@ -2183,7 +2094,7 @@ mod tests {
 
         // User clicks "Reject All"
         action_log
-            .update(cx, |log, cx| log.reject_all_edits(cx))
+            .update(cx, |log, cx| log.reject_all_edits(None, cx))
             .await;
         cx.run_until_parked();
         assert!(fs.is_file(path!("/dir/new_file").as_ref()).await);
@@ -2223,7 +2134,7 @@ mod tests {
                     action_log.update(cx, |log, cx| {
                         let range = buffer.read(cx).random_byte_range(0, &mut rng);
                         log::info!("keeping edits in range {:?}", range);
-                        log.keep_edits_in_range(buffer.clone(), range, cx)
+                        log.keep_edits_in_range(buffer.clone(), range, None, cx)
                     });
                 }
                 25..50 => {
@@ -2231,7 +2142,7 @@ mod tests {
                         .update(cx, |log, cx| {
                             let range = buffer.read(cx).random_byte_range(0, &mut rng);
                             log::info!("rejecting edits in range {:?}", range);
-                            log.reject_edits_in_ranges(buffer.clone(), vec![range], cx)
+                            log.reject_edits_in_ranges(buffer.clone(), vec![range], None, cx)
                         })
                         .await
                         .unwrap();
@@ -2301,7 +2212,7 @@ mod tests {
         .await;
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("file.txt".into(), "a\nb\nc\nd\ne\nf\ng\nh\ni\nj".into())],
+            &[("file.txt", "a\nb\nc\nd\ne\nf\ng\nh\ni\nj".into())],
             "0000000",
         );
         cx.run_until_parked();
@@ -2384,7 +2295,7 @@ mod tests {
         // - Ignores the last line edit (j stays as j)
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("file.txt".into(), "A\nb\nc\nf\nG\nh\ni\nj".into())],
+            &[("file.txt", "A\nb\nc\nf\nG\nh\ni\nj".into())],
             "0000001",
         );
         cx.run_until_parked();
@@ -2415,10 +2326,7 @@ mod tests {
         // Make another commit that accepts the NEW line but with different content
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[(
-                "file.txt".into(),
-                "A\nb\nc\nf\nGGG\nh\nDIFFERENT\ni\nj".into(),
-            )],
+            &[("file.txt", "A\nb\nc\nf\nGGG\nh\nDIFFERENT\ni\nj".into())],
             "0000002",
         );
         cx.run_until_parked();
@@ -2444,7 +2352,7 @@ mod tests {
         // Final commit that accepts all remaining edits
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("file.txt".into(), "A\nb\nc\nf\nGGG\nh\nNEW\ni\nJ".into())],
+            &[("file.txt", "A\nb\nc\nf\nGGG\nh\nNEW\ni\nJ".into())],
             "0000003",
         );
         cx.run_until_parked();
@@ -2487,62 +2395,5 @@ mod tests {
                 })
                 .collect()
         })
-    }
-
-    #[gpui::test]
-    async fn test_format_patch(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            path!("/dir"),
-            json!({"test.txt": "line 1\nline 2\nline 3\n"}),
-        )
-        .await;
-        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
-
-        let file_path = project
-            .read_with(cx, |project, cx| {
-                project.find_project_path("dir/test.txt", cx)
-            })
-            .unwrap();
-        let buffer = project
-            .update(cx, |project, cx| project.open_buffer(file_path, cx))
-            .await
-            .unwrap();
-
-        cx.update(|cx| {
-            // Track the buffer and mark it as read first
-            action_log.update(cx, |log, cx| {
-                log.buffer_read(buffer.clone(), cx);
-            });
-
-            // Make some edits to create a patch
-            buffer.update(cx, |buffer, cx| {
-                buffer
-                    .edit([(Point::new(1, 0)..Point::new(1, 6), "CHANGED")], None, cx)
-                    .unwrap(); // Replace "line2" with "CHANGED"
-            });
-        });
-
-        cx.run_until_parked();
-
-        // Get the patch
-        let patch = action_log.update(cx, |log, cx| log.unnotified_user_edits(cx));
-
-        // Verify the patch format contains expected unified diff elements
-        assert_eq!(
-            patch.unwrap(),
-            indoc! {"
-            --- a/dir/test.txt
-            +++ b/dir/test.txt
-            @@ -1,3 +1,3 @@
-             line 1
-            -line 2
-            +CHANGED
-             line 3
-            "}
-        );
     }
 }

@@ -28,7 +28,7 @@ use sqlez::{
 };
 
 use ui::{App, SharedString, px};
-use util::{ResultExt, maybe};
+use util::{ResultExt, maybe, rel_path::RelPath};
 use uuid::Uuid;
 
 use crate::{
@@ -252,7 +252,7 @@ impl sqlez::bindable::Bind for SerializedPixels {
         statement: &sqlez::statement::Statement,
         start_index: i32,
     ) -> anyhow::Result<i32> {
-        let this: i32 = self.0.0 as i32;
+        let this: i32 = u32::from(self.0) as _;
         this.bind(statement, start_index)
     }
 }
@@ -791,12 +791,11 @@ impl WorkspaceDb {
                     remote_connection_id IS ?
                 LIMIT 1
             })
-            .map(|mut prepared_statement| {
+            .and_then(|mut prepared_statement| {
                 (prepared_statement)((
                     root_paths.serialize().paths,
                     remote_connection_id.map(|id| id.0 as i32),
                 ))
-                .unwrap()
             })
             .context("No workspaces found")
             .warn_on_err()
@@ -915,10 +914,13 @@ impl WorkspaceDb {
                     relative_worktree_path == String::default()
                 );
 
+                let Some(relative_path) = RelPath::unix(&relative_worktree_path).log_err() else {
+                    continue;
+                };
                 if worktree_id != u64::MAX && relative_worktree_path != String::default() {
                     ToolchainScope::Subproject(
                         WorktreeId::from_usize(worktree_id as usize),
-                        Arc::from(relative_worktree_path.as_ref()),
+                        relative_path.into(),
                     )
                 } else {
                     ToolchainScope::Project
@@ -994,11 +996,18 @@ impl WorkspaceDb {
                         }
                     }
                 }
+
+                conn.exec_bound(
+                    sql!(
+                        DELETE FROM user_toolchains WHERE workspace_id = ?1;
+                    )
+                )?(workspace.id).context("Clearing old user toolchains")?;
+
                 for (scope, toolchains) in workspace.user_toolchains {
                     for toolchain in toolchains {
                         let query = sql!(INSERT OR REPLACE INTO user_toolchains(remote_connection_id, workspace_id, worktree_id, relative_worktree_path, language_name, name, path, raw_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8));
                         let (workspace_id, worktree_id, relative_worktree_path) = match scope {
-                            ToolchainScope::Subproject(worktree_id, ref path) => (Some(workspace.id), Some(worktree_id), Some(path.to_string_lossy().into_owned())),
+                            ToolchainScope::Subproject(worktree_id, ref path) => (Some(workspace.id), Some(worktree_id), Some(path.as_unix_str().to_owned())),
                             ToolchainScope::Project => (Some(workspace.id), None, None),
                             ToolchainScope::Global => (None, None, None),
                         };
@@ -1337,7 +1346,21 @@ impl WorkspaceDb {
                 continue;
             }
 
-            if paths.paths().iter().all(|path| path.exists())
+            let has_wsl_path = if cfg!(windows) {
+                paths
+                    .paths()
+                    .iter()
+                    .any(|path| util::paths::WslPath::from_path(path).is_some())
+            } else {
+                false
+            };
+
+            // Delete the workspace if any of the paths are WSL paths.
+            // If a local workspace points to WSL, this check will cause us to wait for the
+            // WSL VM and file server to boot up. This can block for many seconds.
+            // Supported scenarios use remote workspaces.
+            if !has_wsl_path
+                && paths.paths().iter().all(|path| path.exists())
                 && paths.paths().iter().any(|path| path.is_dir())
             {
                 result.push((id, SerializedWorkspaceLocation::Local, paths));
@@ -1637,25 +1660,41 @@ impl WorkspaceDb {
         &self,
         workspace_id: WorkspaceId,
         worktree_id: WorktreeId,
-        relative_worktree_path: String,
+        relative_worktree_path: Arc<RelPath>,
         language_name: LanguageName,
     ) -> Result<Option<Toolchain>> {
         self.write(move |this| {
             let mut select = this
                 .select_bound(sql!(
-                    SELECT name, path, raw_json FROM toolchains WHERE workspace_id = ? AND language_name = ? AND worktree_id = ? AND relative_worktree_path = ?
+                    SELECT
+                        name, path, raw_json
+                    FROM toolchains
+                    WHERE
+                        workspace_id = ? AND
+                        language_name = ? AND
+                        worktree_id = ? AND
+                        relative_worktree_path = ?
                 ))
                 .context("select toolchain")?;
 
-            let toolchain: Vec<(String, String, String)> =
-                select((workspace_id, language_name.as_ref().to_string(), worktree_id.to_usize(), relative_worktree_path))?;
+            let toolchain: Vec<(String, String, String)> = select((
+                workspace_id,
+                language_name.as_ref().to_string(),
+                worktree_id.to_usize(),
+                relative_worktree_path.as_unix_str().to_string(),
+            ))?;
 
-            Ok(toolchain.into_iter().next().and_then(|(name, path, raw_json)| Some(Toolchain {
-                name: name.into(),
-                path: path.into(),
-                language_name,
-                as_json: serde_json::Value::from_str(&raw_json).ok()?,
-            })))
+            Ok(toolchain
+                .into_iter()
+                .next()
+                .and_then(|(name, path, raw_json)| {
+                    Some(Toolchain {
+                        name: name.into(),
+                        path: path.into(),
+                        language_name,
+                        as_json: serde_json::Value::from_str(&raw_json).ok()?,
+                    })
+                }))
         })
         .await
     }
@@ -1663,31 +1702,46 @@ impl WorkspaceDb {
     pub(crate) async fn toolchains(
         &self,
         workspace_id: WorkspaceId,
-    ) -> Result<Vec<(Toolchain, WorktreeId, Arc<Path>)>> {
+    ) -> Result<Vec<(Toolchain, WorktreeId, Arc<RelPath>)>> {
         self.write(move |this| {
             let mut select = this
                 .select_bound(sql!(
-                    SELECT name, path, worktree_id, relative_worktree_path, language_name, raw_json FROM toolchains WHERE workspace_id = ?
+                    SELECT
+                        name, path, worktree_id, relative_worktree_path, language_name, raw_json
+                    FROM toolchains
+                    WHERE workspace_id = ?
                 ))
                 .context("select toolchains")?;
 
             let toolchain: Vec<(String, String, u64, String, String, String)> =
                 select(workspace_id)?;
 
-            Ok(toolchain.into_iter().filter_map(|(name, path, worktree_id, relative_worktree_path, language_name, raw_json)| Some((Toolchain {
-                name: name.into(),
-                path: path.into(),
-                language_name: LanguageName::new(&language_name),
-                as_json: serde_json::Value::from_str(&raw_json).ok()?,
-            }, WorktreeId::from_proto(worktree_id), Arc::from(relative_worktree_path.as_ref())))).collect())
+            Ok(toolchain
+                .into_iter()
+                .filter_map(
+                    |(name, path, worktree_id, relative_worktree_path, language, json)| {
+                        Some((
+                            Toolchain {
+                                name: name.into(),
+                                path: path.into(),
+                                language_name: LanguageName::new(&language),
+                                as_json: serde_json::Value::from_str(&json).ok()?,
+                            },
+                            WorktreeId::from_proto(worktree_id),
+                            RelPath::from_proto(&relative_worktree_path).log_err()?,
+                        ))
+                    },
+                )
+                .collect())
         })
         .await
     }
+
     pub async fn set_toolchain(
         &self,
         workspace_id: WorkspaceId,
         worktree_id: WorktreeId,
-        relative_worktree_path: String,
+        relative_worktree_path: Arc<RelPath>,
         toolchain: Toolchain,
     ) -> Result<()> {
         log::debug!(
@@ -1709,7 +1763,7 @@ impl WorkspaceDb {
             insert((
                 workspace_id,
                 worktree_id.to_usize(),
-                relative_worktree_path,
+                relative_worktree_path.as_unix_str(),
                 toolchain.language_name.as_ref(),
                 toolchain.name.as_ref(),
                 toolchain.path.as_ref(),
@@ -2452,7 +2506,7 @@ mod tests {
 
         let workspace_6 = SerializedWorkspace {
             id: WorkspaceId(6),
-            paths: PathList::new(&["/tmp6a", "/tmp6b", "/tmp6c"]),
+            paths: PathList::new(&["/tmp6c", "/tmp6b", "/tmp6a"]),
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -2493,7 +2547,7 @@ mod tests {
         assert_eq!(locations.len(), 1);
         assert_eq!(
             locations[0].0,
-            PathList::new(&["/tmp6a", "/tmp6b", "/tmp6c"]),
+            PathList::new(&["/tmp6c", "/tmp6b", "/tmp6a"]),
         );
         assert_eq!(locations[0].1, Some(60));
     }

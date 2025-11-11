@@ -1,14 +1,12 @@
 use edit_prediction::EditPredictionProvider;
-use gpui::{Entity, prelude::*};
+use gpui::{Entity, KeyBinding, Modifiers, prelude::*};
 use indoc::indoc;
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
-use project::Project;
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 use text::{Point, ToOffset};
 
 use crate::{
-    EditPrediction,
-    editor_tests::{init_test, update_test_language_settings},
+    AcceptEditPrediction, EditPrediction, MenuEditPredictionsPolicy, editor_tests::init_test,
     test::editor_test_context::EditorTestContext,
 };
 
@@ -26,7 +24,7 @@ async fn test_edit_prediction_insert(cx: &mut gpui::TestAppContext) {
 
     assert_editor_active_edit_completion(&mut cx, |_, edits| {
         assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].1.as_str(), "-273.15");
+        assert_eq!(edits[0].1.as_ref(), "-273.15");
     });
 
     accept_completion(&mut cx);
@@ -48,7 +46,7 @@ async fn test_edit_prediction_modification(cx: &mut gpui::TestAppContext) {
 
     assert_editor_active_edit_completion(&mut cx, |_, edits| {
         assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].1.as_str(), "3.14159");
+        assert_eq!(edits[0].1.as_ref(), "3.14159");
     });
 
     accept_completion(&mut cx);
@@ -263,7 +261,7 @@ async fn test_edit_prediction_jump_disabled_for_non_zed_providers(cx: &mut gpui:
                 EditPrediction::Edit { .. } => {
                     // This is expected for non-Zed providers
                 }
-                EditPrediction::Move { .. } => {
+                EditPrediction::MoveWithin { .. } | EditPrediction::MoveOutside { .. } => {
                     panic!(
                         "Non-Zed providers should not show Move predictions (jump functionality)"
                     );
@@ -274,46 +272,65 @@ async fn test_edit_prediction_jump_disabled_for_non_zed_providers(cx: &mut gpui:
 }
 
 #[gpui::test]
-async fn test_edit_predictions_disabled_in_scope(cx: &mut gpui::TestAppContext) {
+async fn test_edit_prediction_preview_cleanup_on_toggle_off(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    update_test_language_settings(cx, |settings| {
-        settings.defaults.edit_predictions_disabled_in = Some(vec!["string".to_string()]);
-    });
+    // Bind `ctrl-shift-a` to accept the provided edit prediction. The actual key
+    // binding here doesn't matter, we simply need to confirm that holding the
+    // binding's modifiers triggers the edit prediction preview.
+    cx.update(|cx| cx.bind_keys([KeyBinding::new("ctrl-shift-a", AcceptEditPrediction, None)]));
 
     let mut cx = EditorTestContext::new(cx).await;
     let provider = cx.new(|_| FakeEditPredictionProvider::default());
     assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state("let x = ˇ;");
 
-    let language = languages::language("javascript", tree_sitter_typescript::LANGUAGE_TSX.into());
-    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
-
-    // Test disabled inside of string
-    cx.set_state("const x = \"hello ˇworld\";");
-    propose_edits(&provider, vec![(17..17, "beautiful ")], &mut cx);
-    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
-    cx.editor(|editor, _, _| {
-        assert!(
-            editor.active_edit_prediction.is_none(),
-            "Edit predictions should be disabled in string scopes when configured in edit_predictions_disabled_in"
-        );
+    propose_edits(&provider, vec![(8..8, "42")], &mut cx);
+    cx.update_editor(|editor, window, cx| {
+        editor.set_menu_edit_predictions_policy(MenuEditPredictionsPolicy::ByProvider);
+        editor.update_visible_edit_prediction(window, cx)
     });
 
-    // Test enabled outside of string
-    cx.set_state("const x = \"hello world\"; ˇ");
-    propose_edits(&provider, vec![(24..24, "// comment")], &mut cx);
-    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
     cx.editor(|editor, _, _| {
-        assert!(
-            editor.active_edit_prediction.is_some(),
-            "Edit predictions should work outside of disabled scopes"
-        );
+        assert!(editor.has_active_edit_prediction());
+    });
+
+    // Simulate pressing the modifiers for `AcceptEditPrediction`, namely
+    // `ctrl-shift`, so that we can confirm that the edit prediction preview is
+    // activated.
+    let modifiers = Modifiers::control_shift();
+    cx.simulate_modifiers_change(modifiers);
+    cx.run_until_parked();
+
+    cx.editor(|editor, _, _| {
+        assert!(editor.edit_prediction_preview_is_active());
+    });
+
+    // Disable showing edit predictions without issuing a new modifiers changed
+    // event, to confirm that the edit prediction preview is still active.
+    cx.update_editor(|editor, window, cx| {
+        editor.set_show_edit_predictions(Some(false), window, cx);
+    });
+
+    cx.editor(|editor, _, _| {
+        assert!(!editor.has_active_edit_prediction());
+        assert!(editor.edit_prediction_preview_is_active());
+    });
+
+    // Now release the modifiers
+    // Simulate releasing all modifiers, ensuring that even with edit prediction
+    // disabled, the edit prediction preview is cleaned up.
+    cx.simulate_modifiers_change(Modifiers::none());
+    cx.run_until_parked();
+
+    cx.editor(|editor, _, _| {
+        assert!(!editor.edit_prediction_preview_is_active());
     });
 }
 
 fn assert_editor_active_edit_completion(
     cx: &mut EditorTestContext,
-    assert: impl FnOnce(MultiBufferSnapshot, &Vec<(Range<Anchor>, String)>),
+    assert: impl FnOnce(MultiBufferSnapshot, &Vec<(Range<Anchor>, Arc<str>)>),
 ) {
     cx.editor(|editor, _, cx| {
         let completion_state = editor
@@ -339,7 +356,7 @@ fn assert_editor_active_move_completion(
             .as_ref()
             .expect("editor has no active completion");
 
-        if let EditPrediction::Move { target, .. } = &completion_state.completion {
+        if let EditPrediction::MoveWithin { target, .. } = &completion_state.completion {
             assert(editor.buffer().read(cx).snapshot(cx), *target);
         } else {
             panic!("expected move completion");
@@ -366,7 +383,7 @@ fn propose_edits<T: ToOffset>(
 
     cx.update(|_, cx| {
         provider.update(cx, |provider, _| {
-            provider.set_edit_prediction(Some(edit_prediction::EditPrediction {
+            provider.set_edit_prediction(Some(edit_prediction::EditPrediction::Local {
                 id: None,
                 edits: edits.collect(),
                 edit_preview: None,
@@ -397,7 +414,7 @@ fn propose_edits_non_zed<T: ToOffset>(
 
     cx.update(|_, cx| {
         provider.update(cx, |provider, _| {
-            provider.set_edit_prediction(Some(edit_prediction::EditPrediction {
+            provider.set_edit_prediction(Some(edit_prediction::EditPrediction::Local {
                 id: None,
                 edits: edits.collect(),
                 edit_preview: None,
@@ -436,7 +453,7 @@ impl EditPredictionProvider for FakeEditPredictionProvider {
     }
 
     fn show_completions_in_menu() -> bool {
-        false
+        true
     }
 
     fn supports_jump_to_edit() -> bool {
@@ -458,7 +475,6 @@ impl EditPredictionProvider for FakeEditPredictionProvider {
 
     fn refresh(
         &mut self,
-        _project: Option<Entity<Project>>,
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
         _debounce: bool,
@@ -532,7 +548,6 @@ impl EditPredictionProvider for FakeNonZedEditPredictionProvider {
 
     fn refresh(
         &mut self,
-        _project: Option<Entity<Project>>,
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
         _debounce: bool,

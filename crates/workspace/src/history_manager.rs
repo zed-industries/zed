@@ -128,8 +128,7 @@ impl HistoryManager {
 impl HistoryManagerEntry {
     pub fn new(id: WorkspaceId, paths: &PathList) -> Self {
         let path = paths
-            .paths()
-            .iter()
+            .ordered_paths()
             .map(|path| path.compact())
             .collect::<SmallVec<[PathBuf; 2]>>();
         Self { id, path }

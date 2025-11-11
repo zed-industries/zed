@@ -28,11 +28,12 @@ use std::{
     rc::Rc,
 };
 use task::ResolvedTask;
-use ui::{Color, IntoElement, ListItem, Pixels, Popover, Styled, prelude::*};
+use ui::{
+    Color, IntoElement, ListItem, Pixels, Popover, ScrollAxes, Scrollbars, Styled, WithScrollbar,
+    prelude::*,
+};
 use util::ResultExt;
 
-use crate::CodeActionSource;
-use crate::editor_settings::SnippetSortOrder;
 use crate::hover_popover::{hover_markdown_style, open_markdown_url};
 use crate::{
     CodeActionProvider, CompletionId, CompletionItemKind, CompletionProvider, DisplayRow, Editor,
@@ -40,6 +41,8 @@ use crate::{
     actions::{ConfirmCodeAction, ConfirmCompletion},
     split_words, styled_runs_for_code_label,
 };
+use crate::{CodeActionSource, EditorSettings};
+use settings::{Settings, SnippetSortOrder};
 
 pub const MENU_GAP: Pixels = px(4.);
 pub const MENU_ASIDE_X_PADDING: Pixels = px(16.);
@@ -249,8 +252,17 @@ enum MarkdownCacheKey {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CompletionsMenuSource {
+    /// Show all completions (words, snippets, LSP)
     Normal,
+    /// Show only snippets (not words or LSP)
+    ///
+    /// Used after typing a non-word character
+    SnippetsOnly,
+    /// Tab stops within a snippet that have a predefined finite set of choices
     SnippetChoices,
+    /// Show only words (not snippets or LSP)
+    ///
+    /// Used when word completions are explicitly triggered
     Words { ignore_threshold: bool },
 }
 
@@ -258,6 +270,20 @@ pub enum CompletionsMenuSource {
 impl Drop for CompletionsMenu {
     fn drop(&mut self) {
         self.cancel_filter.store(true, Ordering::Relaxed);
+    }
+}
+
+struct CompletionMenuScrollBarSetting;
+
+impl ui::scrollbars::GlobalSetting for CompletionMenuScrollBarSetting {
+    fn get_value(_cx: &App) -> &Self {
+        &Self
+    }
+}
+
+impl ui::scrollbars::ScrollbarVisibility for CompletionMenuScrollBarSetting {
+    fn visibility(&self, cx: &App) -> ui::scrollbars::ShowScrollbar {
+        EditorSettings::get_global(cx).completion_menu_scrollbar
     }
 }
 
@@ -328,11 +354,7 @@ impl CompletionsMenu {
             .map(|choice| Completion {
                 replace_range: selection.start.text_anchor..selection.end.text_anchor,
                 new_text: choice.to_string(),
-                label: CodeLabel {
-                    text: choice.to_string(),
-                    runs: Default::default(),
-                    filter_range: Default::default(),
-                },
+                label: CodeLabel::plain(choice.to_string(), None),
                 icon_path: None,
                 documentation: None,
                 confirm: None,
@@ -902,7 +924,17 @@ impl CompletionsMenu {
             }
         });
 
-        Popover::new().child(list).into_any_element()
+        Popover::new()
+            .child(
+                div().child(list).custom_scrollbars(
+                    Scrollbars::for_settings::<CompletionMenuScrollBarSetting>()
+                        .show_along(ScrollAxes::Vertical)
+                        .tracked_scroll_handle(self.scroll_handle.clone()),
+                    window,
+                    cx,
+                ),
+            )
+            .into_any_element()
     }
 
     fn render_aside(
@@ -1481,6 +1513,8 @@ impl CodeActionsMenu {
     ) -> AnyElement {
         let actions = self.actions.clone();
         let selected_item = self.selected_item;
+        let is_quick_action_bar = matches!(self.origin(), ContextMenuOrigin::QuickActionBar);
+
         let list = uniform_list(
             "code_actions_menu",
             self.actions.len(),
@@ -1502,7 +1536,7 @@ impl CodeActionsMenu {
                                     this.child(
                                         h_flex()
                                             .overflow_hidden()
-                                            .text_sm()
+                                            .when(is_quick_action_bar, |this| this.text_ui(cx))
                                             .child(
                                                 // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
                                                 action.lsp_action.title().replace("\n", ""),
@@ -1516,6 +1550,7 @@ impl CodeActionsMenu {
                                     this.child(
                                         h_flex()
                                             .overflow_hidden()
+                                            .when(is_quick_action_bar, |this| this.text_ui(cx))
                                             .child(task.resolved_label.replace("\n", ""))
                                             .when(selected, |this| {
                                                 this.text_color(colors.text_accent)
@@ -1526,6 +1561,7 @@ impl CodeActionsMenu {
                                     this.child(
                                         h_flex()
                                             .overflow_hidden()
+                                            .when(is_quick_action_bar, |this| this.text_ui(cx))
                                             .child("debug: ")
                                             .child(scenario.label.clone())
                                             .when(selected, |this| {

@@ -14,7 +14,6 @@ use project::project_settings::ProjectSettings;
 use settings::Settings;
 use std::sync::Arc;
 use time::OffsetDateTime;
-use time_format::format_local_timestamp;
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
@@ -137,13 +136,13 @@ impl BranchList {
                 })
                 .await;
 
-            this.update_in(cx, |this, window, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
                 this.picker.update(cx, |picker, cx| {
                     picker.delegate.default_branch = default_branch;
                     picker.delegate.all_branches = Some(all_branches);
                     picker.refresh(window, cx);
                 })
-            })?;
+            });
 
             anyhow::Ok(())
         })
@@ -242,18 +241,10 @@ impl BranchListDelegate {
             return;
         };
         let new_branch_name = new_branch_name.to_string().replace(' ', "-");
+        let base_branch = from_branch.map(|b| b.to_string());
         cx.spawn(async move |_, cx| {
-            if let Some(based_branch) = from_branch {
-                repo.update(cx, |repo, _| repo.change_branch(based_branch.to_string()))?
-                    .await??;
-            }
-
             repo.update(cx, |repo, _| {
-                repo.create_branch(new_branch_name.to_string())
-            })?
-            .await??;
-            repo.update(cx, |repo, _| {
-                repo.change_branch(new_branch_name.to_string())
+                repo.create_branch(new_branch_name, base_branch)
             })?
             .await??;
 
@@ -410,37 +401,20 @@ impl PickerDelegate for BranchListDelegate {
             return;
         }
 
-        cx.spawn_in(window, {
-            let branch = entry.branch.clone();
-            async move |picker, cx| {
-                let branch_change_task = picker.update(cx, |this, cx| {
-                    let repo = this
-                        .delegate
-                        .repo
-                        .as_ref()
-                        .context("No active repository")?
-                        .clone();
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
 
-                    let mut cx = cx.to_async();
+        let branch = entry.branch.clone();
+        cx.spawn(async move |_, cx| {
+            repo.update(cx, |repo, _| repo.change_branch(branch.name().to_string()))?
+                .await??;
 
-                    anyhow::Ok(async move {
-                        repo.update(&mut cx, |repo, _| {
-                            repo.change_branch(branch.name().to_string())
-                        })?
-                        .await?
-                    })
-                })??;
-
-                branch_change_task.await?;
-
-                picker.update(cx, |_, cx| {
-                    cx.emit(DismissEvent);
-
-                    anyhow::Ok(())
-                })
-            }
+            anyhow::Ok(())
         })
         .detach_and_prompt_err("Failed to change branch", window, cx, |_, _, _| None);
+
+        cx.emit(DismissEvent);
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -454,7 +428,7 @@ impl PickerDelegate for BranchListDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let entry = &self.matches[ix];
+        let entry = &self.matches.get(ix)?;
 
         let (commit_time, author_name, subject) = entry
             .branch
@@ -464,9 +438,12 @@ impl PickerDelegate for BranchListDelegate {
                 let subject = commit.subject.clone();
                 let commit_time = OffsetDateTime::from_unix_timestamp(commit.commit_timestamp)
                     .unwrap_or_else(|_| OffsetDateTime::now_utc());
-                let formatted_time = format_local_timestamp(
+                let local_offset =
+                    time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
+                let formatted_time = time_format::format_localized_timestamp(
                     commit_time,
                     OffsetDateTime::now_utc(),
+                    local_offset,
                     time_format::TimestampFormat::Relative,
                 );
                 let author = commit.author_name.clone();
@@ -483,11 +460,10 @@ impl PickerDelegate for BranchListDelegate {
                         this.delegate.set_selected_index(ix, window, cx);
                         this.delegate.confirm(true, window, cx);
                     }))
-                    .tooltip(move |window, cx| {
+                    .tooltip(move |_window, cx| {
                         Tooltip::for_action(
                             format!("Create branch based off default: {default_branch}"),
                             &menu::SecondaryConfirm,
-                            window,
                             cx,
                         )
                     }),
@@ -511,8 +487,12 @@ impl PickerDelegate for BranchListDelegate {
                 )
                 .into_any_element()
         } else {
-            HighlightedLabel::new(entry.branch.name().to_owned(), entry.positions.clone())
-                .truncate()
+            h_flex()
+                .max_w_48()
+                .child(
+                    HighlightedLabel::new(entry.branch.name().to_owned(), entry.positions.clone())
+                        .truncate(),
+                )
                 .into_any_element()
         };
 
@@ -521,6 +501,14 @@ impl PickerDelegate for BranchListDelegate {
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
+                .tooltip({
+                    let branch_name = entry.branch.name().to_string();
+                    if entry.is_new {
+                        Tooltip::text(format!("Create branch \"{}\"", branch_name))
+                    } else {
+                        Tooltip::text(branch_name)
+                    }
+                })
                 .child(
                     v_flex()
                         .w_full()
@@ -556,7 +544,6 @@ impl PickerDelegate for BranchListDelegate {
                                     let show_author_name = ProjectSettings::get_global(cx)
                                         .git
                                         .branch_picker
-                                        .unwrap_or_default()
                                         .show_author_name;
 
                                     subject.map_or("no commits found".into(), |subject| {

@@ -26,7 +26,6 @@ log.workspace = true
 menu.workspace = true
 outline.workspace = true
 project.workspace = true
-schemars.workspace = true
 search.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -39,7 +38,6 @@ util.workspace = true
 workspace.workspace = true
 worktree.workspace = true
 zed_actions.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 search = { workspace = true, features = ["test-support"] }
