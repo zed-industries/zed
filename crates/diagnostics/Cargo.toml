@@ -21,6 +21,7 @@ editor.workspace = true
 gpui.workspace = true
 indoc.workspace = true
 language.workspace = true
+languages.workspace = true
 log.workspace = true
 lsp.workspace = true
 markdown.workspace = true

@@ -6,11 +6,12 @@ use language::{LanguageName, LspAdapter, LspAdapterDelegate, LspInstaller, Toolc
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
+use regex::Regex;
 use serde_json::Value;
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 use util::{ResultExt, maybe, merge_json_value_into};
 
@@ -55,6 +56,20 @@ impl VtslsLspAdapter {
         } else {
             None
         }
+    }
+
+    pub fn enhance_diagnostic_message(message: &str) -> Option<String> {
+        static SINGLE_WORD_REGEX: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"'([^\s']*)'").expect("Failed to create REGEX"));
+
+        static MULTI_WORD_REGEX: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"'([^']+\s+[^']*)'").expect("Failed to create REGEX"));
+
+        let first = SINGLE_WORD_REGEX.replace_all(message, "`$1`").to_string();
+        let second = MULTI_WORD_REGEX
+            .replace_all(&first, "\n```typescript\n$1\n```\n")
+            .to_string();
+        Some(second)
     }
 }
 
@@ -274,6 +289,10 @@ impl LspAdapter for VtslsLspAdapter {
         Ok(default_workspace_configuration)
     }
 
+    fn diagnostic_message_to_markdown(&self, message: &str) -> Option<String> {
+        VtslsLspAdapter::enhance_diagnostic_message(message)
+    }
+
     fn language_ids(&self) -> HashMap<LanguageName, String> {
         HashMap::from_iter([
             (LanguageName::new("TypeScript"), "typescript".into()),
@@ -301,4 +320,39 @@ async fn get_cached_ts_server_binary(
     })
     .await
     .log_err()
+}
+
+mod test {
+    use crate::vtsls::VtslsLspAdapter;
+
+    #[test]
+    fn test_diagnostic_message_to_markdown() {
+        let message = "Type '() => { foo: string; bar: string; }' is not assignable to type 'GetUserFunction'.\n  Property 'baz' is missing in type '{ foo: string; bar: string; }' but required in type 'User'.";
+
+        let expected = "Type \n```typescript\n() => { foo: string; bar: string; }\n```\n is not assignable to type `GetUserFunction`.\n  Property `baz` is missing in type \n```typescript\n{ foo: string; bar: string; }\n```\n but required in type `User`.";
+
+        let actual = VtslsLspAdapter::enhance_diagnostic_message(message).expect("Should be some");
+
+        assert_eq!(actual, expected);
+    }
+    // Other cases
+    //
+    // "Property 'baz' is missing in type '{ foo: string; bar: string; }' but required in type 'User'."
+    // "'baz' is declared here."
+    // "The expected type comes from the return type of this signature."
+    // "Type '() => { foo: string; bar: string; }' is not assignable to type 'GetUserFunction'.\n  Property 'baz' is missing in type '{ foo: string; bar: string; }' but required in type 'User'."
+    // " but required in type 'User'."
+    // "'baz' is declared here."
+    // "Binding element 'input' implicitly has an 'any' type."
+    // "Binding element 'ctx' implicitly has an 'any' type."
+    // "Parameter 'file' implicitly has an 'any' type."
+    // "Parameter 'file' implicitly has an 'any' type."
+    // "Parameter 'file' implicitly has an 'any' type."
+    // "Binding element 'ctx' implicitly has an 'any' type."
+    // "Binding element 'input' implicitly has an 'any' type."
+    // "'otherThing' is declared but its value is never read."
+    // "'getInstanceThing' is declared but its value is never read."
+    // "'bar' is declared but its value is never read."
+    // "'baz' is declared but its value is never read."
+    //
 }

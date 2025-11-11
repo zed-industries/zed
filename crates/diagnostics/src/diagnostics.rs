@@ -73,7 +73,7 @@ pub fn init(cx: &mut App) {
 }
 
 pub(crate) struct ProjectDiagnosticsEditor {
-    project: Entity<Project>,
+    pub project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     editor: Entity<Editor>,
@@ -552,11 +552,15 @@ impl ProjectDiagnosticsEditor {
                 if group_severity.is_none_or(|s| s > max_severity) {
                     continue;
                 }
+                let languages = this
+                    .read_with(cx, |t, cx| t.project.read(cx).languages().clone())
+                    .ok();
                 let more = cx.update(|_, cx| {
                     crate::diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
                         group,
                         buffer_snapshot.remote_id(),
                         Some(diagnostics_toolbar_editor.clone()),
+                        languages,
                         cx,
                     )
                 })?;
