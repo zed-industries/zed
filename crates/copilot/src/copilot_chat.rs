@@ -45,12 +45,7 @@ impl CopilotChatConfiguration {
     }
 
     pub fn settings_url(&self) -> String {
-        if let Some(enterprise_uri) = &self.enterprise_uri {
-            let domain = Self::parse_domain(enterprise_uri);
-            format!("https://{domain}/settings/copilot")
-        } else {
-            "https://github.com/settings/copilot".to_string()
-        }
+        Self::parse_domain(enterprise_uri).unwrap_or_else(|| "https://github.com/settings/copilot".to_string())
     }
 
     pub fn chat_completions_url_from_endpoint(&self, endpoint: &str) -> String {
