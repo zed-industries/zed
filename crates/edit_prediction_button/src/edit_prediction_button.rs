@@ -839,7 +839,7 @@ impl EditPredictionButton {
         let copilot_config = copilot::copilot_chat::CopilotChatConfiguration {
             enterprise_uri: all_language_settings.edit_predictions.copilot.enterprise_uri.clone(),
         };
-        let settings_url = copilot_config.settings_url();
+        let settings_url = Self::parse_domain(enterprise_uri).unwrap_or_else(|| "https://github.com/settings/copilot".to_string());
 
         ContextMenu::build(window, cx, |menu, window, cx| {
             let menu = self.build_language_settings_menu(menu, window, cx);
