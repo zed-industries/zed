@@ -52,7 +52,7 @@ pub fn external_agents_docs(cx: &App) -> String {
     )
 }
 
-/// Returns the URL to Zed AI's external agents documentation.
+/// Returns the URL to Zed agent servers documentation.
 pub fn agent_server_docs(cx: &App) -> String {
     format!(
         "{server_url}/docs/extensions/agent-servers",
