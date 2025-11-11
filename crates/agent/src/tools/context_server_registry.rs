@@ -3,7 +3,7 @@ use agent_client_protocol::ToolKind;
 use anyhow::{Result, anyhow, bail};
 use collections::{BTreeMap, HashMap};
 use context_server::ContextServerId;
-use gpui::{App, Context, Entity, SharedString, Task};
+use gpui::{App, AsyncApp, Context, Entity, SharedString, Task};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use std::sync::Arc;
 use util::ResultExt;
@@ -28,6 +28,7 @@ impl ContextServerRegistry {
         };
         for server in server_store.read(cx).running_servers() {
             this.reload_tools_for_server(server.id(), cx);
+            this.register_tools_list_changed_handler(&server, cx);
         }
         this
     }
@@ -54,6 +55,38 @@ impl ContextServerRegistry {
         self.registered_servers
             .iter()
             .map(|(id, server)| (id, &server.tools))
+    }
+
+    fn register_tools_list_changed_handler(
+        &self,
+        server: &Arc<context_server::ContextServer>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(client) = server.client() else {
+            return;
+        };
+        
+        if !client.capable(context_server::protocol::ServerCapability::Tools) {
+            return;
+        }
+
+        let server_id = server.id();
+        let this = cx.entity().downgrade();
+        
+        client.on_notification(
+            "notifications/tools/list_changed",
+            Box::new(move |_params, cx: AsyncApp| {
+                let server_id = server_id.clone();
+                let this = this.clone();
+                cx.spawn(async move |cx| {
+                    this.update(cx, |this, cx| {
+                        log::info!("Received tools/list_changed notification for server {}", server_id);
+                        this.reload_tools_for_server(server_id, cx);
+                    })
+                })
+                .detach();
+            }),
+        );
     }
 
     fn reload_tools_for_server(&mut self, server_id: ContextServerId, cx: &mut Context<Self>) {
@@ -111,7 +144,10 @@ impl ContextServerRegistry {
                 match status {
                     ContextServerStatus::Starting => {}
                     ContextServerStatus::Running => {
-                        self.reload_tools_for_server(server_id.clone(), cx);
+                        if let Some(server) = self.server_store.read(cx).get_running_server(server_id) {
+                            self.reload_tools_for_server(server_id.clone(), cx);
+                            self.register_tools_list_changed_handler(&server, cx);
+                        }
                     }
                     ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
                         self.registered_servers.remove(server_id);
