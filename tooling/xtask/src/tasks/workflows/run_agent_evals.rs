@@ -32,7 +32,7 @@ pub(crate) fn run_unit_evals() -> Workflow {
     let model_name = Input::string("model_name", None);
     let commit_sha = Input::string("commit_sha", None);
 
-    let unit_evals = named::job(unit_evals());
+    let unit_evals = named::job(unit_evals(Some(commit_sha.to_string())));
 
     named::workflow()
         .name("run_unit_evals")
@@ -114,10 +114,10 @@ fn cron_unit_evals() -> NamedJob {
         "#}))
     }
 
-    named::job(unit_evals().add_step(send_failure_to_slack()))
+    named::job(unit_evals(None).add_step(send_failure_to_slack()))
 }
 
-fn unit_evals() -> Job {
+fn unit_evals(commit: Option<String>) -> Job {
     fn send_failure_to_slack() -> Step<Use> {
         named::uses(
             "slackapi",
@@ -141,7 +141,10 @@ fn unit_evals() -> Job {
         .map(steps::install_linux_dependencies)
         .add_step(steps::cargo_install_nextest(Platform::Linux))
         .add_step(steps::clear_target_dir_if_large(Platform::Linux))
-        .add_step(add_api_keys(steps::script("./script/run-unit-evals")))
+        .add_step(
+            add_api_keys(steps::script("./script/run-unit-evals"))
+                .add_env(("UNIT_EVAL_COMMIT", commit.unwrap_or_default())),
+        )
         .add_step(send_failure_to_slack())
         .add_step(steps::cleanup_cargo_config(Platform::Linux))
 }
