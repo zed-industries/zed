@@ -1,8 +1,8 @@
 use crate::{
     Copy, CopyAndTrim, CopyPermalinkToLine, Cut, DisplayPoint, DisplaySnapshot, Editor,
-    EvaluateSelectedText, FindAllReferences, GoToDeclaration, GoToDefinition, FindAllImplementations,
-    GoToTypeDefinition, Paste, Rename, RevealInFileManager, RunToCursor, SelectMode,
-    SelectionEffects, SelectionExt, ToDisplayPoint, ToggleCodeActions,
+    EvaluateSelectedText, FindAllImplementations, FindAllReferences, GoToDeclaration,
+    GoToDefinition, GoToTypeDefinition, Paste, Rename, RevealInFileManager, RunToCursor,
+    SelectMode, SelectionEffects, SelectionExt, ToDisplayPoint, ToggleCodeActions,
     actions::{Format, FormatSelections},
     selections_collection::SelectionsCollection,
 };
@@ -14,7 +14,6 @@ use std::ops::Range;
 use text::PointUtf16;
 use workspace::OpenInTerminal;
 use zed_actions::agent::AddSelectionToThread;
-
 #[derive(Debug)]
 pub enum MenuPosition {
     /// When the editor is scrolled, the context menu stays on the exact
@@ -27,14 +26,12 @@ pub enum MenuPosition {
         offset: Point<Pixels>,
     },
 }
-
 pub struct MouseContextMenu {
     pub(crate) position: MenuPosition,
     pub(crate) context_menu: Entity<ui::ContextMenu>,
     _dismiss_subscription: Subscription,
     _cursor_move_subscription: Subscription,
 }
-
 impl std::fmt::Debug for MouseContextMenu {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MouseContextMenu")
@@ -43,7 +40,6 @@ impl std::fmt::Debug for MouseContextMenu {
             .finish()
     }
 }
-
 impl MouseContextMenu {
     pub(crate) fn pinned_to_editor(
         editor: &mut Editor,
@@ -72,7 +68,6 @@ impl MouseContextMenu {
             cx,
         ))
     }
-
     pub(crate) fn new(
         editor: &Editor,
         position: MenuPosition,
@@ -82,7 +77,6 @@ impl MouseContextMenu {
     ) -> Self {
         let context_menu_focus = context_menu.focus_handle(cx);
         window.focus(&context_menu_focus);
-
         let _dismiss_subscription = cx.subscribe_in(&context_menu, window, {
             let context_menu_focus = context_menu_focus.clone();
             move |editor, _, _event: &DismissEvent, window, cx| {
@@ -92,9 +86,7 @@ impl MouseContextMenu {
                 }
             }
         });
-
         let selection_init = editor.selections.newest_anchor().clone();
-
         let _cursor_move_subscription = cx.subscribe_in(
             &cx.entity(),
             window,
@@ -119,7 +111,6 @@ impl MouseContextMenu {
                 }
             },
         );
-
         Self {
             position,
             context_menu,
@@ -128,7 +119,6 @@ impl MouseContextMenu {
         }
     }
 }
-
 fn display_ranges<'a>(
     display_map: &'a DisplaySnapshot,
     selections: &'a SelectionsCollection,
@@ -140,7 +130,6 @@ fn display_ranges<'a>(
         .chain(pending)
         .map(move |s| s.start.to_display_point(display_map)..s.end.to_display_point(display_map))
 }
-
 pub fn deploy_context_menu(
     editor: &mut Editor,
     position: Option<Point<Pixels>>,
@@ -151,12 +140,10 @@ pub fn deploy_context_menu(
     if !editor.is_focused(window) {
         window.focus(&editor.focus_handle(cx));
     }
-
     // Don't show context menu for inline editors
     if !editor.mode().is_full() {
         return;
     }
-
     let display_map = editor.display_snapshot(cx);
     let source_anchor = display_map.display_point_to_anchor(point, text::Bias::Right);
     let context_menu = if let Some(custom) = editor.custom_context_menu.take() {
@@ -171,7 +158,6 @@ pub fn deploy_context_menu(
         let Some(project) = editor.project.clone() else {
             return;
         };
-
         let snapshot = editor.snapshot(window, cx);
         let display_map = editor.display_snapshot(cx);
         let buffer = snapshot.buffer_snapshot();
@@ -183,7 +169,6 @@ pub fn deploy_context_menu(
                 s.set_pending_anchor_range(anchor..anchor, SelectMode::Character);
             });
         }
-
         let focus = window.focused(cx);
         let has_reveal_target = editor.target_file(cx).is_some();
         let has_selections = editor
@@ -201,11 +186,9 @@ pub fn deploy_context_menu(
                     .repository_and_path_for_buffer_id(buffer_id, cx)
                     .is_some()
             });
-
         let evaluate_selection = window.is_action_available(&EvaluateSelectedText, cx);
         let run_to_cursor = window.is_action_available(&RunToCursor, cx);
         let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
-
         ui::ContextMenu::build(window, cx, |menu, _window, _cx| {
             let builder = menu
                 .on_blur_subscription(Subscription::new(|| {}))
@@ -271,7 +254,6 @@ pub fn deploy_context_menu(
             }
         })
     };
-
     editor.mouse_context_menu = match position {
         Some(position) => MouseContextMenu::pinned_to_editor(
             editor,
@@ -298,17 +280,14 @@ pub fn deploy_context_menu(
     };
     cx.notify();
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{editor_tests::init_test, test::editor_lsp_test_context::EditorLspTestContext};
     use indoc::indoc;
-
     #[gpui::test]
     async fn test_mouse_context_menu(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
-
         let mut cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
@@ -317,7 +296,6 @@ mod tests {
             cx,
         )
         .await;
-
         cx.set_state(indoc! {"
             fn teˇst() {
                 do_work();
@@ -332,7 +310,6 @@ mod tests {
         cx.update_editor(|editor, window, cx| {
             deploy_context_menu(editor, Some(Default::default()), point, window, cx)
         });
-
         cx.assert_editor_state(indoc! {"
             fn test() {
                 do_wˇork();
