@@ -37,7 +37,9 @@ pub(crate) fn run_unit_evals() -> Workflow {
     named::workflow()
         .name("run_unit_evals")
         .on(Event::default().workflow_dispatch(
-            WorkflowDispatch::default().add_input(model_name.name, model_name.input()),
+            WorkflowDispatch::default()
+                .add_input(model_name.name, model_name.input())
+                .add_input(commit_sha.name, commit_sha.input()),
         ))
         .concurrency(vars::one_workflow_per_non_main_branch())
         .add_env(("CARGO_TERM_COLOR", "always"))
