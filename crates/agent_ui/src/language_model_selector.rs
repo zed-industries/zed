@@ -755,10 +755,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_exclude_recommended_models(_cx: &mut TestAppContext) {
+    fn test_recommended_models_also_appear_in_other(_cx: &mut TestAppContext) {
         let recommended_models = create_models(vec![("zed", "claude")]);
         let all_models = create_models(vec![
-            ("zed", "claude"), // Should be filtered out from "other"
+            ("zed", "claude"), // Should also appear in "other"
             ("zed", "gemini"),
             ("copilot", "o3"),
         ]);
@@ -772,8 +772,11 @@ mod tests {
             .cloned()
             .collect::<Vec<_>>();
 
-        // Recommended models should not appear in "other"
-        assert_models_eq(actual_other_models, vec!["zed/gemini", "copilot/o3"]);
+        // Recommended models should also appear in "other"
+        assert_models_eq(
+            actual_other_models,
+            vec!["zed/claude", "zed/gemini", "copilot/o3"],
+        );
     }
 
     #[gpui::test]
