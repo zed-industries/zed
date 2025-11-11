@@ -11,10 +11,6 @@ workspace = true
 [lib]
 path = "src/miniprofiler_ui.rs"
 
-[[bin]]
-name = "run"
-path = "src/run.rs"
-
 [dependencies]
 anyhow.workspace = true
 gpui.workspace = true
@@ -24,10 +20,6 @@ workspace.workspace = true
 util.workspace = true
 serde_json.workspace = true
 smol.workspace = true
-
-# remove this
-settings = { workspace = true }
-theme.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
