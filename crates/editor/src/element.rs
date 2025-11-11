@@ -58,7 +58,7 @@ use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
 use markdown::Markdown;
 use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
-    MultiBufferRow, RowInfo,
+    MultiBufferRow, RowInfo, ToOffset,
 };
 
 use project::{
@@ -8953,12 +8953,20 @@ impl Element for EditorElement {
                             && !diff_base_byte_range.is_empty()
                             && status.is_modified()
                         {
-                            let current_text: String = snapshot
-                                .buffer_snapshot()
-                                .text_for_range(multi_buffer_range.clone())
-                                .collect();
-                            let old_text: String = snapshot
-                                .buffer_snapshot()
+                            let buffer = snapshot.buffer_snapshot();
+                            let mut multi_buffer_range = multi_buffer_range.clone();
+                            let current_range =
+                                multi_buffer_range.start.to_point(buffer).to_offset(buffer)
+                                    ..multi_buffer_range.end.to_point(buffer).to_offset(buffer);
+
+                            if current_range.contains(&diff_base_byte_range.end) {
+                                multi_buffer_range.start =
+                                    buffer.anchor_after(diff_base_byte_range.end);
+                            }
+
+                            let current_text: String =
+                                buffer.text_for_range(multi_buffer_range).collect();
+                            let old_text: String = buffer
                                 .text_for_range(diff_base_byte_range.clone())
                                 .collect();
 
