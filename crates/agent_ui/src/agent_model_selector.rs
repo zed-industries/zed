@@ -39,10 +39,13 @@ impl AgentModelSelector {
                         match &model_usage_context {
                             ModelUsageContext::InlineAssistant => {
                                 update_settings_file(fs.clone(), cx, move |settings, _cx| {
-                                    settings
-                                        .agent
-                                        .get_or_insert_default()
-                                        .set_inline_assistant_model(provider.clone(), model_id);
+                                    // Ensure agent settings exist without overwriting existing ones
+                                    if settings.agent.is_none() {
+                                        settings.agent = Some(Default::default());
+                                    }
+                                    
+                                    // Only update the inline assistant model, preserve other settings
+                                    settings.agent.as_mut().unwrap().set_inline_assistant_model(provider.clone(), model_id);
                                 });
                             }
                         }
