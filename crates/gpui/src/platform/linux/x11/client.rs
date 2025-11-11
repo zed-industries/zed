@@ -314,24 +314,36 @@ impl X11Client {
                         // callbacks.
                         handle.insert_idle(|_| {
                             let start = Instant::now();
-                            let location = match runnable {
+                            let mut timing = match runnable {
                                 RunnableVariant::Meta(runnable) => {
                                     let location = runnable.metadata().location;
+                                    let timing = TaskTiming {
+                                        location,
+                                        start,
+                                        end: None,
+                                    };
+                                    LinuxDispatcher::add_task_timing(timing);
+
                                     runnable.run();
-                                    location
+                                    timing
                                 }
                                 RunnableVariant::Compat(runnable) => {
+                                    let location = core::panic::Location::caller();
+                                    let timing = TaskTiming {
+                                        location,
+                                        start,
+                                        end: None,
+                                    };
+                                    LinuxDispatcher::add_task_timing(timing);
+
                                     runnable.run();
-                                    core::panic::Location::caller()
+                                    timing
                                 }
                             };
-                            let end = Instant::now();
 
-                            LinuxDispatcher::add_task_timing(TaskTiming {
-                                location,
-                                start,
-                                end,
-                            });
+                            let end = Instant::now();
+                            timing.end = Some(end);
+                            LinuxDispatcher::add_task_timing(timing);
                         });
                     }
                 }

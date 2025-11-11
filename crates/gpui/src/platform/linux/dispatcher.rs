@@ -42,24 +42,36 @@ impl LinuxDispatcher {
                         for runnable in receiver {
                             let start = Instant::now();
 
-                            let location = match runnable {
+                            let mut location = match runnable {
                                 RunnableVariant::Meta(runnable) => {
                                     let location = runnable.metadata().location;
+                                    let timing = TaskTiming {
+                                        location,
+                                        start,
+                                        end: None,
+                                    };
+                                    Self::add_task_timing(timing);
+
                                     runnable.run();
-                                    location
+                                    timing
                                 }
                                 RunnableVariant::Compat(runnable) => {
+                                    let location = core::panic::Location::caller();
+                                    let timing = TaskTiming {
+                                        location,
+                                        start,
+                                        end: None,
+                                    };
+                                    Self::add_task_timing(timing);
+
                                     runnable.run();
-                                    core::panic::Location::caller()
+                                    timing
                                 }
                             };
-                            let end = Instant::now();
 
-                            Self::add_task_timing(TaskTiming {
-                                location,
-                                start,
-                                end,
-                            });
+                            let end = Instant::now();
+                            location.end = Some(end);
+                            Self::add_task_timing(location);
 
                             log::trace!(
                                 "background thread {}: ran runnable. took: {:?}",
@@ -98,7 +110,7 @@ impl LinuxDispatcher {
                                                     let timing = TaskTiming {
                                                         location,
                                                         start,
-                                                        end: start,
+                                                        end: None,
                                                     };
                                                     Self::add_task_timing(timing);
 
@@ -109,7 +121,7 @@ impl LinuxDispatcher {
                                                     let timing = TaskTiming {
                                                         location: core::panic::Location::caller(),
                                                         start,
-                                                        end: start,
+                                                        end: None,
                                                     };
                                                     Self::add_task_timing(timing);
 
@@ -119,7 +131,7 @@ impl LinuxDispatcher {
                                             };
                                             let end = Instant::now();
 
-                                            timing.end = end;
+                                            timing.end = Some(end);
                                             Self::add_task_timing(timing);
                                         }
                                         TimeoutAction::Drop
