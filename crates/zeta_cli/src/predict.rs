@@ -7,9 +7,8 @@ use crate::paths::{
 };
 use ::serde::Serialize;
 use anyhow::{Result, anyhow};
-use clap::Args;
+use clap::{Args, ValueEnum};
 use collections::HashMap;
-use gpui::http_client::Url;
 use language::{Anchor, Buffer, Point};
 // use cloud_llm_client::predict_edits_v3::PromptFormat;
 use cloud_zeta2_prompt::{CURSOR_MARKER, write_codeblock};
@@ -25,7 +24,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use zeta2::LlmResponseCache;
+use zeta2::{EvalCache, EvalCacheEntryKind, EvalCacheKey};
 
 #[derive(Debug, Args)]
 pub struct PredictArguments {
@@ -36,8 +35,31 @@ pub struct PredictArguments {
     #[clap(long, short, value_enum, default_value_t = PredictionsOutputFormat::Md)]
     format: PredictionsOutputFormat,
     example_path: PathBuf,
-    #[clap(long)]
-    skip_cache: bool,
+    #[clap(long, value_enum, default_value_t = CacheMode::default())]
+    cache: CacheMode,
+}
+
+#[derive(Debug, ValueEnum, Default, Clone, Copy)]
+pub enum CacheMode {
+    /// Use cached LLM requests and responses, based on the hash of the prompt and the endpoint.
+    #[default]
+    #[value(alias = "request")]
+    Requests,
+    /// Ignore existing cache entries for both LLM and search.
+    Skip,
+    /// Use cached LLM responses AND search results for full determinism. Fails if they haven't been cached yet.
+    /// Useful for reproducing results and fixing bugs outside of search queries
+    Force,
+}
+
+impl CacheMode {
+    fn use_cached_llm_responses(&self) -> bool {
+        matches!(self, CacheMode::Requests | CacheMode::Force)
+    }
+
+    fn use_cached_search_results(&self) -> bool {
+        matches!(self, CacheMode::Force)
+    }
 }
 
 #[derive(clap::ValueEnum, Debug, Clone)]
@@ -55,9 +77,9 @@ pub async fn run_zeta2_predict(
     let example = NamedExample::load(args.example_path).unwrap();
     let result = zeta2_predict(
         example,
-        args.skip_cache,
         args.prompt_format,
         args.use_expected_context,
+        args.cache,
         &app_state,
         cx,
     )
@@ -81,9 +103,9 @@ thread_local! {
 
 pub async fn zeta2_predict(
     example: NamedExample,
-    skip_cache: bool,
     prompt_format: PromptFormat,
     use_expected_context: bool,
+    cache_mode: CacheMode,
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) -> Result<PredictionDetails> {
@@ -127,7 +149,7 @@ pub async fn zeta2_predict(
     let zeta = cx.update(|cx| zeta2::Zeta::global(&app_state.client, &app_state.user_store, cx))?;
 
     zeta.update(cx, |zeta, _cx| {
-        zeta.with_llm_response_cache(Arc::new(Cache { skip_cache }));
+        zeta.with_eval_cache(Arc::new(Cache { cache_mode }));
     })?;
 
     cx.subscribe(&buffer_store, {
@@ -329,46 +351,54 @@ async fn resolve_context_entry(
 }
 
 struct Cache {
-    skip_cache: bool,
+    cache_mode: CacheMode,
 }
 
 impl Cache {
-    fn path(key: u64) -> PathBuf {
-        CACHE_DIR.join(format!("{key:x}.json"))
+    fn path((kind, key): EvalCacheKey) -> PathBuf {
+        CACHE_DIR.join(format!(
+            "{}-{key:x}.json",
+            match kind {
+                EvalCacheEntryKind::Search => "search",
+                EvalCacheEntryKind::LlmResponse => "llm-response",
+                EvalCacheEntryKind::LlmRequest => "llm-request",
+            }
+        ))
     }
 }
 
-impl LlmResponseCache for Cache {
-    fn get_key(&self, url: &Url, body: &str) -> u64 {
-        use collections::FxHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = FxHasher::default();
-        url.hash(&mut hasher);
-        body.hash(&mut hasher);
-        hasher.finish()
-    }
-
-    fn read_response(&self, key: u64) -> Option<String> {
+impl EvalCache for Cache {
+    fn read(&self, key: EvalCacheKey) -> Option<String> {
         let path = Cache::path(key);
         if path.exists() {
-            if self.skip_cache {
-                log::info!("Skipping existing cached LLM response: {}", path.display());
-                None
-            } else {
-                log::info!("Using LLM response from cache: {}", path.display());
+            let use_cache = match key.0 {
+                EvalCacheEntryKind::Search => self.cache_mode.use_cached_search_results(),
+                EvalCacheEntryKind::LlmResponse | EvalCacheEntryKind::LlmRequest => {
+                    self.cache_mode.use_cached_llm_responses()
+                }
+            };
+            if use_cache {
+                log::info!("Using cache entry: {}", path.display());
                 Some(fs::read_to_string(path).unwrap())
+            } else {
+                log::info!("Skipping cached entry: {}", path.display());
+                None
             }
+        } else if matches!(self.cache_mode, CacheMode::Force) {
+            panic!(
+                "No cached entry found for {:?}. Run without `--cache force` at least once.",
+                key.0
+            );
         } else {
             None
         }
     }
 
-    fn write_response(&self, key: u64, value: &str) {
+    fn write(&self, key: EvalCacheKey, value: &str) {
         fs::create_dir_all(&*CACHE_DIR).unwrap();
 
         let path = Cache::path(key);
-        log::info!("Writing LLM response to cache: {}", path.display());
+        log::info!("Writing cache entry: {}", path.display());
         fs::write(path, value).unwrap();
     }
 }
