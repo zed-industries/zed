@@ -780,10 +780,9 @@ impl WindowsPlatformInner {
 
     #[inline]
     fn run_foreground_task(&self) -> Option<isize> {
-<<<<<<< HEAD
         loop {
             for runnable in self.main_receiver.drain() {
-                runnable.run();
+                WindowsDispatcher::execute_runnable(runnable);
             }
 
             // Someone could enqueue a Runnable here. The flag is still true, so they will not PostMessage.
@@ -794,17 +793,14 @@ impl WindowsPlatformInner {
             match self.main_receiver.try_recv() {
                 Ok(runnable) => {
                     let _ = dispatcher.wake_posted.swap(true, Ordering::AcqRel);
-                    runnable.run();
+
+                    WindowsDispatcher::execute_runnable(runnable);
                     continue;
                 }
                 _ => {
                     break;
                 }
             }
-=======
-        for runnable in self.main_receiver.drain() {
-            WindowsDispatcher::execute_runnable(runnable);
->>>>>>> 7a129eae48 (initial mini-profiler implementation)
         }
 
         Some(0)
@@ -880,12 +876,8 @@ struct PlatformWindowCreateContext {
     inner: Option<Result<Rc<WindowsPlatformInner>>>,
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     validation_number: usize,
-<<<<<<< HEAD
-    main_sender: Option<flume::Sender<Runnable>>,
-    main_receiver: Option<flume::Receiver<Runnable>>,
-=======
+    main_sender: Option<flume::Sender<RunnableVariant>>,
     main_receiver: Option<flume::Receiver<RunnableVariant>>,
->>>>>>> 7a129eae48 (initial mini-profiler implementation)
     directx_devices: Option<DirectXDevices>,
     dispatcher: Option<Arc<WindowsDispatcher>>,
 }

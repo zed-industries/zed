@@ -79,7 +79,7 @@ impl WindowsDispatcher {
                 let timing = TaskTiming {
                     location,
                     start,
-                    end: start,
+                    end: None,
                 };
                 Self::add_task_timing(timing);
 
@@ -91,7 +91,7 @@ impl WindowsDispatcher {
                 let timing = TaskTiming {
                     location: core::panic::Location::caller(),
                     start,
-                    end: start,
+                    end: None,
                 };
                 Self::add_task_timing(timing);
 
@@ -102,7 +102,7 @@ impl WindowsDispatcher {
         };
 
         let end = Instant::now();
-        timing.end = end;
+        timing.end = Some(end);
 
         Self::add_task_timing(timing);
     }
