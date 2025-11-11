@@ -80,7 +80,7 @@ pub async fn run_retrieval_searches(
             return Ok(results);
         }
 
-        Some((eval_cache, serde_json::to_string(&queries)?, key))
+        Some((eval_cache, serde_json::to_string_pretty(&queries)?, key))
     } else {
         None
     };
@@ -155,7 +155,11 @@ pub async fn run_retrieval_searches(
                     Some((path?.as_std_path().to_path_buf(), ranges))
                 })
                 .collect();
-            cache.write(key, &queries, &serde_json::to_string(&cached_results)?);
+            cache.write(
+                key,
+                &queries,
+                &serde_json::to_string_pretty(&cached_results)?,
+            );
         }
 
         for (buffer, ranges) in results.iter_mut() {

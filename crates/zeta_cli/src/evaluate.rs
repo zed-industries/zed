@@ -14,6 +14,7 @@ use crate::{
     PromptFormat,
     example::{Example, NamedExample},
     headless::ZetaCliAppState,
+    paths::{RUN_DIR, print_run_data_dir},
     predict::{CacheMode, PredictionDetails, zeta2_predict},
 };
 
@@ -48,18 +49,24 @@ pub async fn run_evaluate(
             .await
         })
     });
-    let all_results = futures::future::try_join_all(all_tasks).await.unwrap();
+    let all_results = futures::future::try_join_all(all_tasks).await;
 
-    let aggregated_result = EvaluationResult {
-        context: Scores::aggregate(all_results.iter().map(|r| &r.context)),
-        edit_prediction: Scores::aggregate(all_results.iter().map(|r| &r.edit_prediction)),
-    };
+    if let Ok(all_results) = &all_results {
+        let aggregated_result = EvaluationResult {
+            context: Scores::aggregate(all_results.iter().map(|r| &r.context)),
+            edit_prediction: Scores::aggregate(all_results.iter().map(|r| &r.edit_prediction)),
+        };
 
-    if example_len > 1 {
-        println!("\n{}", "-".repeat(80));
-        println!("# TOTAL SCORES:");
-        println!("{}", aggregated_result.to_markdown());
+        if example_len > 1 {
+            println!("\n{}", "-".repeat(80));
+            println!("\n## TOTAL SCORES");
+            println!("{}", aggregated_result.to_markdown());
+        }
     }
+
+    print_run_data_dir();
+
+    all_results.unwrap();
 }
 
 pub async fn run_evaluate_one(

@@ -1,19 +1,15 @@
 use crate::PromptFormat;
 use crate::example::{ActualExcerpt, ExpectedExcerpt, NamedExample};
 use crate::headless::ZetaCliAppState;
-use crate::paths::{
-    CACHE_DIR, LATEST_EXAMPLE_RUN_DIR, LOGS_DIR, LOGS_PREDICTION_PROMPT, LOGS_PREDICTION_RESPONSE,
-    LOGS_SEARCH_PROMPT, LOGS_SEARCH_QUERIES, RUN_DIR,
-};
+use crate::paths::{CACHE_DIR, LATEST_EXAMPLE_RUN_DIR, RUN_DIR, print_run_data_dir};
 use ::serde::Serialize;
 use anyhow::{Context, Result, anyhow};
 use clap::{Args, ValueEnum};
-use collections::HashMap;
-use language::{Anchor, Buffer, Point};
-// use cloud_llm_client::predict_edits_v3::PromptFormat;
 use cloud_zeta2_prompt::{CURSOR_MARKER, write_codeblock};
+use collections::HashMap;
 use futures::StreamExt as _;
 use gpui::{AppContext, AsyncApp, Entity};
+use language::{Anchor, Buffer, Point};
 use project::Project;
 use serde::Deserialize;
 use std::cell::Cell;
@@ -87,14 +83,7 @@ pub async fn run_zeta2_predict(
     .unwrap();
     result.write(args.format, std::io::stdout()).unwrap();
 
-    println!("## Logs\n");
-    println!("Search prompt: {}", LOGS_SEARCH_PROMPT.display());
-    println!("Search queries: {}", LOGS_SEARCH_QUERIES.display());
-    println!("Prediction prompt: {}", LOGS_PREDICTION_PROMPT.display());
-    println!(
-        "Prediction response: {}",
-        LOGS_PREDICTION_RESPONSE.display()
-    );
+    print_run_data_dir();
 }
 
 thread_local! {
@@ -109,7 +98,6 @@ pub async fn zeta2_predict(
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) -> Result<PredictionDetails> {
-    fs::create_dir_all(&*LOGS_DIR)?;
     let worktree_path = example.setup_worktree().await?;
 
     if !AUTHENTICATED.get() {
@@ -164,7 +152,7 @@ pub async fn zeta2_predict(
 
     zeta.update(cx, |zeta, _cx| {
         zeta.with_eval_cache(Arc::new(RunCache {
-            example_run_dir,
+            example_run_dir: example_run_dir.clone(),
             cache_mode,
         }));
     })?;
@@ -198,12 +186,15 @@ pub async fn zeta2_predict(
                 match event {
                     zeta2::ZetaDebugInfo::ContextRetrievalStarted(info) => {
                         start_time = Some(info.timestamp);
-                        fs::write(&*LOGS_SEARCH_PROMPT, &info.search_prompt)?;
+                        fs::write(
+                            example_run_dir.join("search_prompt.md"),
+                            &info.search_prompt,
+                        )?;
                     }
                     zeta2::ZetaDebugInfo::SearchQueriesGenerated(info) => {
                         search_queries_generated_at = Some(info.timestamp);
                         fs::write(
-                            &*LOGS_SEARCH_QUERIES,
+                            example_run_dir.join("search_queries.json"),
                             serde_json::to_string_pretty(&info.search_queries).unwrap(),
                         )?;
                     }
@@ -215,7 +206,7 @@ pub async fn zeta2_predict(
                         let prediction_started_at = Instant::now();
                         start_time.get_or_insert(prediction_started_at);
                         fs::write(
-                            &*LOGS_PREDICTION_PROMPT,
+                            example_run_dir.join("prediction_prompt.md"),
                             &request.local_prompt.unwrap_or_default(),
                         )?;
 
@@ -249,7 +240,7 @@ pub async fn zeta2_predict(
                         let response = request.response_rx.await?.0.map_err(|err| anyhow!(err))?;
                         let response = zeta2::text_from_response(response).unwrap_or_default();
                         let prediction_finished_at = Instant::now();
-                        fs::write(&*LOGS_PREDICTION_RESPONSE, &response)?;
+                        fs::write(example_run_dir.join("prediction_response.md"), &response)?;
 
                         let mut result = result.lock().unwrap();
 
@@ -374,18 +365,18 @@ struct RunCache {
 
 impl RunCache {
     fn output_cache_path((kind, key): &EvalCacheKey) -> PathBuf {
-        CACHE_DIR.join(format!("{kind}-out-{key:x}.json",))
+        CACHE_DIR.join(format!("{kind}_out_{key:x}.json",))
     }
 
     fn input_cache_path((kind, key): &EvalCacheKey) -> PathBuf {
-        CACHE_DIR.join(format!("{kind}-in-{key:x}.json",))
+        CACHE_DIR.join(format!("{kind}_in_{key:x}.json",))
     }
 
     fn link_to_run(&self, key: &EvalCacheKey) {
-        let output_link_path = self.example_run_dir.join(format!("{}-out.json", key.0));
+        let output_link_path = self.example_run_dir.join(format!("{}_out.json", key.0));
         fs::hard_link(Self::output_cache_path(key), &output_link_path).unwrap();
 
-        let input_link_path = self.example_run_dir.join(format!("{}-in.json", key.0));
+        let input_link_path = self.example_run_dir.join(format!("{}_in.json", key.0));
         fs::hard_link(Self::input_cache_path(key), &input_link_path).unwrap();
     }
 }

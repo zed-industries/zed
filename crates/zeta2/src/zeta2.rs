@@ -1075,7 +1075,7 @@ impl Zeta {
 
             let mut hasher = FxHasher::default();
             url.hash(&mut hasher);
-            let request_str = serde_json::to_string(&request)?;
+            let request_str = serde_json::to_string_pretty(&request)?;
             request_str.hash(&mut hasher);
             let hash = hasher.finish();
 
@@ -1104,7 +1104,7 @@ impl Zeta {
 
         #[cfg(feature = "eval-support")]
         if let Some((cache, request, key)) = cache_key {
-            cache.write(key, &request, &serde_json::to_string(&response)?);
+            cache.write(key, &request, &serde_json::to_string_pretty(&response)?);
         }
 
         Ok((response, usage))
