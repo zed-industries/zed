@@ -958,7 +958,9 @@
       "shift-g": "menu::SelectLast",
       "g g": "menu::SelectFirst",
       "enter": "editor::ToggleFocus",
-      "/": "menu::Cancel"
+      "/": "menu::Cancel",
+      "ctrl-u": "outline_panel::ScrollUp",
+      "ctrl-d": "outline_panel::ScrollDown"
     }
   },
   {
