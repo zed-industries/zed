@@ -3758,8 +3758,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
-
-                SettingsPageItem::SectionHeader("Auto Open Files"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Hidden Files",
                     description: "Globs to match files that will be considered \"hidden\" and can be hidden from the project panel.",
@@ -3778,11 +3776,12 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SectionHeader("Auto Open Files"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "On Create",
-                    description: "Automatically open newly created files in the editor",
+                    description: "Whether to automatically open newly created files in the editor.",
                     field: Box::new(SettingField {
-                        json_path: Some("project_panel.open_file_on_paste"),
+                        json_path: Some("project_panel.auto_open.on_create"),
                         pick: |settings_content| {
                             settings_content.project_panel.as_ref()?.auto_open.as_ref()?.on_create.as_ref()
                         },
@@ -3795,8 +3794,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "On Paste",
-                    description: "Automatically open files after pasting or duplicating them in the project panel",
+                    description: "Whether to automatically open files after pasting or duplicating them.",
                     field: Box::new(SettingField {
+                        json_path: Some("project_panel.auto_open.on_paste"),
                         pick: |settings_content| {
                             settings_content.project_panel.as_ref()?.auto_open.as_ref()?.on_paste.as_ref()
                         },
@@ -3809,8 +3809,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "On Drop",
-                    description: "Automatically open files dropped from external sources into the project panel",
+                    description: "Whether to automatically open files dropped from external sources.",
                     field: Box::new(SettingField {
+                        json_path: Some("project_panel.auto_open.on_drop"),
                         pick: |settings_content| {
                             settings_content.project_panel.as_ref()?.auto_open.as_ref()?.on_drop.as_ref()
                         },
