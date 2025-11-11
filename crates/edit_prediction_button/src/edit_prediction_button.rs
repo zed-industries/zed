@@ -43,6 +43,7 @@ actions!(
     ]
 );
 
+const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
 const PRIVACY_DOCS: &str = "https://zed.dev/docs/ai/privacy-and-security";
 
 struct CopilotErrorToast;
@@ -839,7 +840,7 @@ impl EditPredictionButton {
         let copilot_config = copilot::copilot_chat::CopilotChatConfiguration {
             enterprise_uri: all_language_settings.edit_predictions.copilot.enterprise_uri.clone(),
         };
-        let settings_url = Self::parse_domain(enterprise_uri).unwrap_or_else(|| "https://github.com/settings/copilot".to_string());
+        let settings_url = Self::parse_domain(enterprise_uri).unwrap_or_else(|| COPILOT_SETTINGS_URL.to_string());
 
         ContextMenu::build(window, cx, |menu, window, cx| {
             let menu = self.build_language_settings_menu(menu, window, cx);
