@@ -511,7 +511,12 @@ impl Vim {
                     search_bar.is_contains_uppercase(&search),
                 );
             } else {
-                options.set(SearchOptions::CASE_SENSITIVE, false)
+                // Fallback: no explicit i/I flags and smartcase disabled;
+                // use global editor.search.case_sensitive.
+                options.set(
+                    SearchOptions::CASE_SENSITIVE,
+                    EditorSettings::get_global(cx).search.case_sensitive,
+                )
             }
 
             if !replacement.flag_g {
@@ -663,7 +668,7 @@ mod test {
     use indoc::indoc;
     use search::BufferSearchBar;
     use settings::SettingsStore;
-
+    
     #[gpui::test]
     async fn test_move_to_next(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
@@ -1173,4 +1178,4 @@ mod test {
                  "
         });
     }
-}
+    }
