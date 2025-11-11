@@ -253,6 +253,7 @@ pub struct MultiBufferSnapshot {
 }
 
 #[derive(Debug, Clone)]
+/// A piece of text in the multi-buffer
 enum DiffTransform {
     BufferContent {
         summary: TextSummary,

@@ -22,6 +22,7 @@ pub static CALCULATE_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::n
 pub struct BufferDiff {
     pub buffer_id: BufferId,
     inner: BufferDiffInner,
+    // diff of the index vs head
     secondary_diff: Option<Entity<BufferDiff>>,
 }
 

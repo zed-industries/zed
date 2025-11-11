@@ -12,8 +12,8 @@ use crate::{
     ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
-        Block, BlockContext, BlockPoint, BlockStyle, ChunkRendererId, DisplaySnapshot,
-        EditorMargins, HighlightKey, HighlightedChunk, ToDisplayPoint,
+        Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
+        HighlightKey, HighlightedChunk, ToDisplayPoint,
     },
     editor_settings::{
         CurrentLineHighlight, DocumentColorsRenderMode, DoubleClickInMultibuffer, Minimap,
@@ -8941,6 +8941,30 @@ impl Element for EditorElement {
                         window,
                         cx,
                     );
+
+                    for (diff_hunk, _) in &display_hunks {
+                        if let DisplayDiffHunk::Unfolded {
+                            is_created_file,
+                            diff_base_byte_range,
+                            display_row_range,
+                            multi_buffer_range,
+                            status,
+                        } = diff_hunk
+                            && !diff_base_byte_range.is_empty()
+                            && status.is_modified()
+                        {
+                            let current_text: String = snapshot
+                                .buffer_snapshot()
+                                .text_for_range(multi_buffer_range.clone())
+                                .collect();
+                            let old_text: String = snapshot
+                                .buffer_snapshot()
+                                .text_for_range(diff_base_byte_range.clone())
+                                .collect();
+
+                            dbg!(current_text, old_text);
+                        }
+                    }
 
                     let merged_highlighted_ranges =
                         if let Some((_, colors)) = document_colors.as_ref() {
