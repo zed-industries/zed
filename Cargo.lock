@@ -21693,6 +21693,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "strsim",
  "thiserror 2.0.17",
  "util",
  "uuid",

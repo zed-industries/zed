@@ -332,7 +332,14 @@ impl NamedExample {
         }
 
         // Resolve the example to a revision, fetching it if needed.
-        let revision = run_git(&repo_dir, &["rev-parse", &self.example.revision]).await;
+        let revision = run_git(
+            &repo_dir,
+            &[
+                "rev-parse",
+                &format!("{}^{{commit}}", self.example.revision),
+            ],
+        )
+        .await;
         let revision = if let Ok(revision) = revision {
             revision
         } else {
@@ -477,7 +484,7 @@ impl NamedExample {
             let mut matches = text.match_indices(&cursor_excerpt);
             let Some((excerpt_offset, _)) = matches.next() else {
                 anyhow::bail!(
-                    "Cursor excerpt did not exist in buffer.\nExcerpt:\n\n{cursor_excerpt}\nBuffer text:\n{text}\n"
+                    "\nExcerpt:\n\n{cursor_excerpt}\nBuffer text:\n{text}\n.Cursor excerpt did not exist in buffer."
                 );
             };
             assert!(matches.next().is_none());

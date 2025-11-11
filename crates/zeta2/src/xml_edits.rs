@@ -5,6 +5,15 @@ use std::path::Path;
 use std::sync::Arc;
 
 pub async fn parse_xml_edits<'a>(
+    input: &'a str,
+    get_buffer: impl Fn(&Path) -> Option<(&'a BufferSnapshot, &'a [Range<Anchor>])> + Send,
+) -> Result<(&'a BufferSnapshot, Vec<(Range<Anchor>, Arc<str>)>)> {
+    parse_xml_edits_inner(input, get_buffer)
+        .await
+        .with_context(|| format!("Failed to parse XML edits:\n{input}"))
+}
+
+async fn parse_xml_edits_inner<'a>(
     mut input: &'a str,
     get_buffer: impl Fn(&Path) -> Option<(&'a BufferSnapshot, &'a [Range<Anchor>])> + Send,
 ) -> Result<(&'a BufferSnapshot, Vec<(Range<Anchor>, Arc<str>)>)> {
@@ -56,13 +65,29 @@ fn resolve_new_text_old_text_in_buffer(
             let range = range.to_offset(buffer);
             let text = buffer.text_for_range(range.clone()).collect::<String>();
             for (match_offset, _) in text.match_indices(old_text) {
-                if offset.is_some() {
-                    anyhow::bail!("old_text is not unique enough:\n{}", old_text);
+                if let Some(offset) = offset {
+                    let offset_match_point = buffer.offset_to_point(offset);
+                    let second_match_point = buffer.offset_to_point(range.start + match_offset);
+                    anyhow::bail!(
+                        "old_text is not unique enough:\n{}\nFound at {:?} and {:?}",
+                        old_text,
+                        offset_match_point,
+                        second_match_point
+                    );
                 }
                 offset = Some(range.start + match_offset);
             }
         }
-        offset.ok_or_else(|| anyhow!("Failed to match old_text:\n{}", old_text))
+        offset.ok_or_else(|| {
+            #[cfg(debug_assertions)]
+            if let Some(closest_match) = closest_old_text_match(buffer, old_text) {
+                log::info!(
+                    "Closest `old_text` match: {}",
+                    pretty_assertions::StrComparison::new(old_text, &closest_match)
+                )
+            }
+            anyhow!("Failed to match old_text:\n{}", old_text)
+        })
     }?;
 
     let edits_within_hunk = language::text_diff(&old_text, &new_text);
@@ -75,6 +100,30 @@ fn resolve_new_text_old_text_in_buffer(
                 inner_text,
             )
         }))
+}
+
+fn closest_old_text_match(buffer: &TextBufferSnapshot, old_text: &str) -> Option<String> {
+    let buffer_text = buffer.text();
+    let mut cursor = 0;
+    let len = old_text.len();
+
+    let mut min_score = usize::MAX;
+    let mut min_start = 0;
+
+    while cursor + len <= buffer_text.len() {
+        let candidate = &buffer_text[cursor..cursor + len];
+        let score = strsim::levenshtein(candidate, old_text);
+        if score < min_score {
+            min_score = score;
+            min_start = cursor;
+        }
+        cursor += 1;
+    }
+    if min_score != usize::MAX {
+        Some(buffer_text[min_start..min_start + len].to_string())
+    } else {
+        None
+    }
 }
 
 struct ParsedTag<'a> {
