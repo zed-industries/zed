@@ -846,10 +846,10 @@ impl EditPredictionButton {
                 .clone(),
         };
         let settings_url = match Self::parse_domain(enterprise_uri) {
-          Some(uri) => {
-            format!("{}/{COPILOT_SETTINGS_PATH}", uri.trim_end_matches('/'))
-          }
-          None => COPILOT_SETTINGS_URL.to_string(),
+            Some(uri) => {
+                format!("{}/{COPILOT_SETTINGS_PATH}", uri.trim_end_matches('/'))
+            }
+            None => COPILOT_SETTINGS_URL.to_string(),
         };
 
         ContextMenu::build(window, cx, |menu, window, cx| {
