@@ -2217,7 +2217,7 @@ mod tests {
                 &r#"
                 {
                     "project_panel": {
-                        "auto_open": {"on_paste": true}
+                        "auto_open": { "on_paste": true }
                     }
                 }
                 "#
@@ -2238,7 +2238,7 @@ mod tests {
                 &r#"
                 {
                     "project_panel": {
-                        "auto_open": {"on_paste": false}
+                        "auto_open": { "on_paste": false }
                     }
                 }
                 "#
