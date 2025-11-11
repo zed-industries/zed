@@ -490,9 +490,6 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
     pub fn remove_selections_from_buffer(&mut self, buffer_id: language::BufferId) {
         let mut changed = false;
 
-        println!("---before---");
-        dbg!(&self.disjoint);
-
         let filtered_selections: Arc<[Selection<Anchor>]> = {
             self.disjoint
                 .iter()
@@ -523,9 +520,6 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
         } else {
             self.collection.disjoint = filtered_selections;
         }
-
-        println!("---after---");
-        dbg!(&self.collection.disjoint);
 
         self.selections_changed |= changed;
     }
