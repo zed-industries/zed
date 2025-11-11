@@ -694,14 +694,18 @@ fn build_symbol_label(symbol_name: &str, file_name: &str, line: u32, cx: &App) -
 }
 
 fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: &App) -> CodeLabel {
-    let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
+    let path = cx
+        .theme()
+        .syntax()
+        .highlight_id("variable")
+        .map(HighlightId);
     let mut label = CodeLabelBuilder::default();
 
     label.push_str(file_name, None);
     label.push_str(" ", None);
 
     if let Some(directory) = directory {
-        label.push_str(directory, comment_id);
+        label.push_str(directory, path);
     }
 
     label.build()
