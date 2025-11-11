@@ -754,6 +754,10 @@ impl Zeta {
             })
             .collect::<Vec<_>>();
 
+        included_files.sort_by(|(_, _, path_a, ranges_a), (_, _, path_b, ranges_b)| {
+            (path_a, ranges_a.len()).cmp(&(path_b, ranges_b.len()))
+        });
+
         #[cfg(feature = "eval-support")]
         let eval_cache = self.eval_cache.clone();
 

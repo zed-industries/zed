@@ -1,4 +1,4 @@
-use std::{ops::Range, path::PathBuf, sync::Arc};
+use std::{collections::BTreeMap, ops::Range, path::PathBuf, sync::Arc};
 
 use anyhow::{Context as _, Result};
 use cloud_zeta2_prompt::retrieval_prompt::SearchToolQuery;
@@ -22,7 +22,7 @@ use workspace::item::Settings as _;
 
 use crate::EvalCache;
 
-type CachedSearchResults = HashMap<PathBuf, Vec<Range<usize>>>;
+type CachedSearchResults = BTreeMap<PathBuf, Vec<Range<usize>>>;
 
 pub async fn run_retrieval_searches(
     queries: Vec<SearchToolQuery>,
