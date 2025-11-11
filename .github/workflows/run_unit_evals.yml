@@ -1,6 +1,6 @@
-# Generated from xtask::workflows::run_agent_evals
+# Generated from xtask::workflows::run_unit_evals
 # Rebuild with `cargo xtask workflows`.
-name: run_agent_evals
+name: run_unit_evals
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: '0'

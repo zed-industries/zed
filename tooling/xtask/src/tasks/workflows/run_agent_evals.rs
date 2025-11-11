@@ -19,6 +19,9 @@ pub(crate) fn run_agent_evals() -> Workflow {
         .add_env(("CARGO_INCREMENTAL", 0))
         .add_env(("RUST_BACKTRACE", 1))
         .add_env(("ANTHROPIC_API_KEY", vars::ANTHROPIC_API_KEY))
+        .add_env(("OPENAI_API_KEY", vars::OPENAI_API_KEY))
+        .add_env(("GOOGLE_AI_API_KEY", vars::GOOGLE_AI_API_KEY))
+        .add_env(("GOOGLE_CLOUD_PROJECT", vars::GOOGLE_CLOUD_PROJECT))
         .add_env(("ZED_CLIENT_CHECKSUM_SEED", vars::ZED_CLIENT_CHECKSUM_SEED))
         .add_env(("ZED_EVAL_TELEMETRY", 1))
         .add_env(("MODEL_NAME", model_name.to_string()))
@@ -50,6 +53,7 @@ pub(crate) fn run_unit_evals() -> Workflow {
     let unit_evals = unit_evals();
 
     named::workflow()
+        .name("run_unit_evals")
         .on(Event::default()
             .schedule([
                 // GitHub might drop jobs at busy times, so we choose a random time in the middle of the night.

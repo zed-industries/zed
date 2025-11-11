@@ -17,6 +17,9 @@ macro_rules! var {
 }
 
 secret!(ANTHROPIC_API_KEY);
+secret!(OPENAI_API_KEY);
+secret!(GOOGLE_AI_API_KEY);
+secret!(GOOGLE_CLOUD_PROJECT);
 secret!(APPLE_NOTARIZATION_ISSUER_ID);
 secret!(APPLE_NOTARIZATION_KEY);
 secret!(APPLE_NOTARIZATION_KEY_ID);

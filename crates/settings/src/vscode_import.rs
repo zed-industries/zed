@@ -753,7 +753,13 @@ impl VsCodeSettings {
         let env = self
             .read_value(&format!("terminal.integrated.env.{platform}"))
             .and_then(|v| v.as_object())
-            .map(|v| v.iter().map(|(k, v)| (k.clone(), v.to_string())).collect());
+            .map(|v| {
+                v.iter()
+                    .map(|(k, v)| (k.clone(), v.to_string()))
+                    // zed does not support substitutions, so this can break env vars
+                    .filter(|(_, v)| !v.contains('$'))
+                    .collect()
+            });
 
         ProjectTerminalSettingsContent {
             // TODO: handle arguments
