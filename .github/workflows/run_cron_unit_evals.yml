@@ -50,15 +50,6 @@ jobs:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
         GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
-    - name: run_agent_evals::unit_evals::send_failure_to_slack
-      if: ${{ failure() }}
-      uses: slackapi/slack-github-action@b0fa283ad8fea605de13dc3f449259339835fc52
-      with:
-        method: chat.postMessage
-        token: ${{ secrets.SLACK_APP_ZED_UNIT_EVALS_BOT_TOKEN }}
-        payload: |
-          channel: C04UDRNNJFQ
-          text: "Unit Evals Failed: https://github.com/zed-industries/zed/actions/runs/${{ github.run_id }}"
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
