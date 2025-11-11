@@ -37,7 +37,8 @@ use std::{
     io::{self, IsTerminal},
     path::{Path, PathBuf},
     process,
-    sync::{Arc, OnceLock}, time::Instant,
+    sync::{Arc, OnceLock},
+    time::Instant,
 };
 use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
 use util::{ResultExt, TryFutureExt, maybe};

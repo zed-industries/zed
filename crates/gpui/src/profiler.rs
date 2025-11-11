@@ -98,7 +98,11 @@ impl<'a> SerializedTaskTiming<'a> {
             .iter()
             .map(|timing| {
                 let start = timing.start.duration_since(anchor).as_nanos();
-                let duration = timing.end.unwrap_or_else(|| Instant::now()).duration_since(timing.start).as_nanos();
+                let duration = timing
+                    .end
+                    .unwrap_or_else(|| Instant::now())
+                    .duration_since(timing.start)
+                    .as_nanos();
                 SerializedTaskTiming {
                     location: timing.location.into(),
                     start,
@@ -129,7 +133,10 @@ impl<'a> SerializedThreadTaskTimings<'a> {
     /// # Params
     ///
     /// `anchor` - [`Instant`] that should be earlier than all timings to use as base anchor
-    pub fn convert(anchor: Instant, timings: ThreadTaskTimings) -> SerializedThreadTaskTimings<'static> {
+    pub fn convert(
+        anchor: Instant,
+        timings: ThreadTaskTimings,
+    ) -> SerializedThreadTaskTimings<'static> {
         let serialized_timings = SerializedTaskTiming::convert(anchor, &timings.timings);
 
         let mut hasher = DefaultHasher::new();

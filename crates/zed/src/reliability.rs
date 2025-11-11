@@ -9,7 +9,7 @@ use proto::{CrashReport, GetCrashFilesResponse};
 use reqwest::multipart::{Form, Part};
 use settings::Settings;
 use smol::stream::StreamExt;
-use std::{ffi::OsStr, fs, sync::Arc, time::Duration, thread::ThreadId};
+use std::{ffi::OsStr, fs, sync::Arc, thread::ThreadId, time::Duration};
 use util::ResultExt;
 
 use crate::STARTUP_TIME;
@@ -312,7 +312,11 @@ fn monitor_hangs(cx: &App) {
                             }
 
                             if is_full {
-                                save_hang_trace(main_thread_id, &background_executor, hang_time.unwrap());
+                                save_hang_trace(
+                                    main_thread_id,
+                                    &background_executor,
+                                    hang_time.unwrap(),
+                                );
                             }
                         }
                     }
