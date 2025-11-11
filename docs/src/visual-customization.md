@@ -218,6 +218,10 @@ TBD: Centered layout related settings
     "active_line_width": 1,           // Width of active guide in pixels [1-10]
     "coloring": "fixed",              // disabled, fixed, indent_aware
     "background_coloring": "disabled" // disabled, indent_aware
+  },
+
+  "sticky_scroll": {
+    "enabled": false // Whether to stick scopes to the top of the editor. Disabled by default.
   }
 ```
 

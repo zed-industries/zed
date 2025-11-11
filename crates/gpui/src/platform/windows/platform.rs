@@ -342,9 +342,8 @@ impl Platform for WindowsPlatform {
             }
         }
 
-        if let Some(ref mut callback) = self.inner.state.borrow_mut().callbacks.quit {
-            callback();
-        }
+        self.inner
+            .with_callback(|callbacks| &mut callbacks.quit, |callback| callback());
     }
 
     fn quit(&self) {
@@ -578,14 +577,13 @@ impl Platform for WindowsPlatform {
 
     fn set_cursor_style(&self, style: CursorStyle) {
         let hcursor = load_cursor(style);
-        let mut lock = self.inner.state.borrow_mut();
-        if lock.current_cursor.map(|c| c.0) != hcursor.map(|c| c.0) {
+        if self.inner.state.borrow_mut().current_cursor.map(|c| c.0) != hcursor.map(|c| c.0) {
             self.post_message(
                 WM_GPUI_CURSOR_STYLE_CHANGED,
                 WPARAM(0),
                 LPARAM(hcursor.map_or(0, |c| c.0 as isize)),
             );
-            lock.current_cursor = hcursor;
+            self.inner.state.borrow_mut().current_cursor = hcursor;
         }
     }
 
@@ -724,6 +722,18 @@ impl WindowsPlatformInner {
         }))
     }
 
+    /// Calls `project` to project to the corresponding callback field, removes it from callbacks, calls `f` with the callback and then puts the callback back.
+    fn with_callback<T>(
+        &self,
+        project: impl Fn(&mut PlatformCallbacks) -> &mut Option<T>,
+        f: impl FnOnce(&mut T),
+    ) {
+        if let Some(mut callback) = project(&mut self.state.borrow_mut().callbacks).take() {
+            f(&mut callback);
+            *project(&mut self.state.borrow_mut().callbacks) = Some(callback)
+        }
+    }
+
     fn handle_msg(
         self: &Rc<Self>,
         handle: HWND,
@@ -753,9 +763,7 @@ impl WindowsPlatformInner {
         }
         match message {
             WM_GPUI_CLOSE_ONE_WINDOW => {
-                if self.close_one_window(HWND(lparam.0 as _)) {
-                    unsafe { PostQuitMessage(0) };
-                }
+                self.close_one_window(HWND(lparam.0 as _));
                 Some(0)
             }
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
@@ -809,40 +817,36 @@ impl WindowsPlatformInner {
     }
 
     fn handle_dock_action_event(&self, action_idx: usize) -> Option<isize> {
-        let mut lock = self.state.borrow_mut();
-        let mut callback = lock.callbacks.app_menu_action.take()?;
-        let Some(action) = lock
+        let Some(action) = self
+            .state
+            .borrow_mut()
             .jump_list
             .dock_menus
             .get(action_idx)
             .map(|dock_menu| dock_menu.action.boxed_clone())
         else {
-            lock.callbacks.app_menu_action = Some(callback);
             log::error!("Dock menu for index {action_idx} not found");
             return Some(1);
         };
-        drop(lock);
-        callback(&*action);
-        self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
+        self.with_callback(
+            |callbacks| &mut callbacks.app_menu_action,
+            |callback| callback(&*action),
+        );
         Some(0)
     }
 
     fn handle_keyboard_layout_change(&self) -> Option<isize> {
-        let mut callback = self
-            .state
-            .borrow_mut()
-            .callbacks
-            .keyboard_layout_change
-            .take()?;
-        callback();
-        self.state.borrow_mut().callbacks.keyboard_layout_change = Some(callback);
+        self.with_callback(
+            |callbacks| &mut callbacks.keyboard_layout_change,
+            |callback| callback(),
+        );
         Some(0)
     }
 
     fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
-        let mut lock = self.state.borrow_mut();
         let directx_devices = lparam.0 as *const DirectXDevices;
         let directx_devices = unsafe { &*directx_devices };
+        let mut lock = self.state.borrow_mut();
         lock.directx_devices.take();
         lock.directx_devices = Some(directx_devices.clone());
 

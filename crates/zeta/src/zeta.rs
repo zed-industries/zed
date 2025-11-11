@@ -652,7 +652,7 @@ impl Zeta {
                     .header(ZED_VERSION_HEADER_NAME, app_version.to_string())
                     .body(
                         serde_json::to_string(&AcceptEditPredictionBody {
-                            request_id: request_id.0,
+                            request_id: request_id.0.to_string(),
                         })?
                         .into(),
                     )?)
@@ -734,6 +734,8 @@ impl Zeta {
             else {
                 return anyhow::Ok(None);
             };
+
+            let request_id = Uuid::from_str(&request_id).context("failed to parse request id")?;
 
             let edit_preview = edit_preview.await;
 
@@ -2162,7 +2164,7 @@ mod tests {
                                 .status(200)
                                 .body(
                                     serde_json::to_string(&PredictEditsResponse {
-                                        request_id: Uuid::new_v4(),
+                                        request_id: Uuid::new_v4().to_string(),
                                         output_excerpt: completion_response.lock().clone(),
                                     })
                                     .unwrap()

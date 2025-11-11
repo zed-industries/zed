@@ -54,7 +54,7 @@ toml.workspace = true
 util.workspace = true
 watch.workspace = true
 zeta.workspace = true
-zeta2.workspace = true
+zeta2 = { workspace = true, features = ["llm-response-cache"] }
 zlog.workspace = true
 
 [dev-dependencies]

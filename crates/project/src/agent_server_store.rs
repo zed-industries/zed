@@ -759,6 +759,18 @@ impl AgentServerStore {
             }
         })
     }
+
+    pub fn get_extension_id_for_agent(
+        &mut self,
+        name: &ExternalAgentServerName,
+    ) -> Option<Arc<str>> {
+        self.external_agents.get_mut(name).and_then(|agent| {
+            agent
+                .as_any_mut()
+                .downcast_ref::<LocalExtensionArchiveAgent>()
+                .map(|ext_agent| ext_agent.extension_id.clone())
+        })
+    }
 }
 
 fn get_or_npm_install_builtin_agent(
