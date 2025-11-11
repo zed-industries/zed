@@ -8,6 +8,7 @@ use std::{ops::Range, sync::Arc};
 
 use agent::ContextServerRegistry;
 use anyhow::Result;
+use client::zed_urls;
 use cloud_llm_client::{Plan, PlanV1, PlanV2};
 use collections::HashMap;
 use context_server::ContextServerId;
@@ -33,13 +34,13 @@ use project::{
 };
 use settings::{Settings, SettingsStore, update_settings_file};
 use ui::{
-    Button, ButtonStyle, Chip, CommonAnimationExt, ContextMenu, Disclosure, Divider, DividerColor,
-    ElevationIndex, IconName, IconPosition, IconSize, Indicator, LabelSize, PopoverMenu, Switch,
-    SwitchColor, Tooltip, WithScrollbar, prelude::*,
+    Button, ButtonStyle, Chip, CommonAnimationExt, ContextMenu, ContextMenuEntry, Disclosure,
+    Divider, DividerColor, ElevationIndex, IconName, IconPosition, IconSize, Indicator, LabelSize,
+    PopoverMenu, Switch, SwitchColor, Tooltip, WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{Workspace, create_and_open_local_file};
-use zed_actions::ExtensionCategoryFilter;
+use zed_actions::{ExtensionCategoryFilter, OpenBrowser};
 
 pub(crate) use configure_context_server_modal::ConfigureContextServerModal;
 pub(crate) use configure_context_server_tools_modal::ConfigureContextServerToolsModal;
@@ -417,6 +418,7 @@ impl AgentConfiguration {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let providers = LanguageModelRegistry::read_global(cx).providers();
+
         let popover_menu = PopoverMenu::new("add-provider-popover")
             .trigger(
                 Button::new("add-provider", "Add Provider")
@@ -427,7 +429,6 @@ impl AgentConfiguration {
                     .icon_color(Color::Muted)
                     .label_size(LabelSize::Small),
             )
-            .anchor(gpui::Corner::TopRight)
             .menu({
                 let workspace = self.workspace.clone();
                 move |window, cx| {
@@ -449,6 +450,11 @@ impl AgentConfiguration {
                         })
                     }))
                 }
+            })
+            .anchor(gpui::Corner::TopRight)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(2.0),
             });
 
         v_flex()
@@ -543,7 +549,6 @@ impl AgentConfiguration {
                     .icon_color(Color::Muted)
                     .label_size(LabelSize::Small),
             )
-            .anchor(gpui::Corner::TopRight)
             .menu({
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
@@ -566,6 +571,11 @@ impl AgentConfiguration {
                         })
                     }))
                 }
+            })
+            .anchor(gpui::Corner::TopRight)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(2.0),
             });
 
         v_flex()
@@ -957,22 +967,89 @@ impl AgentConfiguration {
             })
             .collect();
 
-        let add_agens_button = Button::new("add-agent", "Add Agent")
-            .style(ButtonStyle::Outlined)
-            .icon_position(IconPosition::Start)
-            .icon(IconName::Plus)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .label_size(LabelSize::Small)
-            .on_click(move |_, window, cx| {
-                if let Some(workspace) = window.root().flatten() {
-                    let workspace = workspace.downgrade();
-                    window
-                        .spawn(cx, async |cx| {
-                            open_new_agent_servers_entry_in_settings_editor(workspace, cx).await
+        let add_agent_popover = PopoverMenu::new("add-agent-server-popover")
+            .trigger(
+                Button::new("add-agent", "Add Agent")
+                    .style(ButtonStyle::Outlined)
+                    .icon_position(IconPosition::Start)
+                    .icon(IconName::Plus)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .label_size(LabelSize::Small),
+            )
+            .menu({
+                move |window, cx| {
+                    Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
+                        menu.entry("Install from Extensions", None, {
+                            |window, cx| {
+                                window.dispatch_action(
+                                    zed_actions::Extensions {
+                                        category_filter: Some(
+                                            ExtensionCategoryFilter::AgentServers,
+                                        ),
+                                        id: None,
+                                    }
+                                    .boxed_clone(),
+                                    cx,
+                                )
+                            }
                         })
-                        .detach_and_log_err(cx);
+                        .entry("Add Custom Agent", None, {
+                            move |window, cx| {
+                                if let Some(workspace) = window.root().flatten() {
+                                    let workspace = workspace.downgrade();
+                                    window
+                                        .spawn(cx, async |cx| {
+                                            open_new_agent_servers_entry_in_settings_editor(
+                                                workspace, cx,
+                                            )
+                                            .await
+                                        })
+                                        .detach_and_log_err(cx);
+                                }
+                            }
+                        })
+                        .separator()
+                        .header("Learn More")
+                        .item(
+                            ContextMenuEntry::new("Agent Servers Docs")
+                                .icon(IconName::ArrowUpRight)
+                                .icon_color(Color::Muted)
+                                .icon_position(IconPosition::End)
+                                .handler({
+                                    move |window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(OpenBrowser {
+                                                url: zed_urls::agent_server_docs(cx),
+                                            }),
+                                            cx,
+                                        );
+                                    }
+                                }),
+                        )
+                        .item(
+                            ContextMenuEntry::new("ACP Docs")
+                                .icon(IconName::ArrowUpRight)
+                                .icon_color(Color::Muted)
+                                .icon_position(IconPosition::End)
+                                .handler({
+                                    move |window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(OpenBrowser {
+                                                url: "https://agentclientprotocol.com/".into(),
+                                            }),
+                                            cx,
+                                        );
+                                    }
+                                }),
+                        )
+                    }))
                 }
+            })
+            .anchor(gpui::Corner::TopRight)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(2.0),
             });
 
         v_flex()
@@ -983,7 +1060,7 @@ impl AgentConfiguration {
                     .child(self.render_section_title(
                         "External Agents",
                         "All agents connected through the Agent Client Protocol.",
-                        add_agens_button.into_any_element(),
+                        add_agent_popover.into_any_element(),
                     ))
                     .child(
                         v_flex()
