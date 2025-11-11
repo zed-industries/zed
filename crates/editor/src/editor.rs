@@ -2485,7 +2485,6 @@ impl Editor {
             if let Some(buffer) = multi_buffer.read(cx).as_singleton() {
                 editor.register_buffer(buffer.read(cx).remote_id(), cx);
             }
-            editor.update_lsp_data(None, window, cx);
             editor.report_editor_event(ReportEditorEvent::EditorOpened, None, cx);
         }
 
