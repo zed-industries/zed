@@ -173,9 +173,18 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
 }
 
 fn journal_dir(path: &str) -> Option<PathBuf> {
-    shellexpand::full(path) //TODO handle this better
-        .ok()
-        .map(|dir| Path::new(&dir.to_string()).to_path_buf().join("journal"))
+    let expanded = shellexpand::full(path).ok()?;
+    let base_path = Path::new(expanded.as_ref());
+    let absolute_path = if base_path.is_absolute() {
+        base_path.to_path_buf()
+    } else {
+        log::warn!(
+            "Invalid journal path '{}' (not absolute), falling back to home directory",
+            path
+        );
+        std::env::home_dir()?
+    };
+    Some(absolute_path.join("journal"))
 }
 
 fn heading_entry(now: NaiveTime, hour_format: &HourFormat) -> String {
@@ -222,6 +231,65 @@ mod tests {
             let expected_heading_entry = "# 15:00";
 
             assert_eq!(actual_heading_entry, expected_heading_entry);
+        }
+    }
+
+    mod journal_dir_tests {
+        use super::super::*;
+
+        #[test]
+        fn test_absolute_unix_path() {
+            let result = journal_dir("/home/user");
+            assert!(result.is_some());
+            let path = result.unwrap();
+            assert!(path.is_absolute());
+            assert!(path.ends_with("journal"));
+        }
+
+        #[test]
+        fn test_tilde_expansion() {
+            let result = journal_dir("~/documents");
+            assert!(result.is_some());
+            let path = result.unwrap();
+
+            assert!(path.is_absolute(), "Tilde should expand to absolute path");
+            assert!(path.ends_with("journal"));
+            println!("path: {:?}", path);
+        }
+
+        #[test]
+        fn test_relative_path_falls_back_to_home() {
+            for relative_path in ["relative/path", "NONEXT/some/path", "../some/path"] {
+                let result = journal_dir(relative_path);
+                assert!(result.is_some(), "Failed for path: {}", relative_path);
+                let path = result.unwrap();
+
+                assert!(
+                    path.is_absolute(),
+                    "Path should be absolute for input '{}', got: {:?}",
+                    relative_path,
+                    path
+                );
+                assert!(path.ends_with("journal"));
+
+                if let Some(home) = std::env::home_dir() {
+                    assert!(
+                        path.starts_with(home),
+                        "Should fall back to home directory for input '{}'",
+                        relative_path
+                    );
+                }
+            }
+        }
+
+        #[test]
+        #[cfg(target_os = "windows")]
+        fn test_absolute_path_windows_style() {
+            let result = journal_dir("C:\\Users\\user\\Documents");
+            assert!(result.is_some());
+            let path = result.unwrap();
+            assert!(path.is_absolute());
+            assert!(path.ends_with("journal"));
         }
     }
 }
