@@ -236,8 +236,7 @@ pub struct LocalSnapshot {
     snapshot: Snapshot,
     global_gitignore: Option<Arc<Gitignore>>,
     /// Exclude files for all git repositories in the worktree, indexed by their absolute path.
-    /// The boolean indicates whether the repository exclude needs to be updated.
-    repo_exclude_by_work_dir_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, bool)>,
+    repo_exclude_by_work_dir_abs_path: HashMap<Arc<Path>, Arc<Gitignore>>,
     /// All of the gitignore files in the worktree, indexed by their absolute path.
     /// The boolean indicates whether the gitignore needs to be updated.
     ignores_by_parent_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, bool)>,
@@ -2572,7 +2571,7 @@ impl LocalSnapshot {
             IgnoreStack::none()
         };
 
-        if let Some((repo_exclude, _)) = repo_root
+        if let Some(repo_exclude) = repo_root
             .as_ref()
             .and_then(|repo_root_path| self.repo_exclude_by_work_dir_abs_path.get(repo_root_path))
         {
@@ -3679,7 +3678,7 @@ impl BackgroundScanner {
                 .await
                 .snapshot
                 .repo_exclude_by_work_dir_abs_path
-                .insert(root_abs_path.as_path().into(), (exclude, true));
+                .insert(root_abs_path.as_path().into(), exclude);
         }
 
         let containing_git_repository = if let Some((ancestor_dot_git, work_directory)) = repo
@@ -4602,7 +4601,7 @@ impl BackgroundScanner {
                                 state
                                     .snapshot
                                     .repo_exclude_by_work_dir_abs_path
-                                    .insert(work_directory_abs_path.into(), (exclude, true));
+                                    .insert(work_directory_abs_path.into(), exclude);
                             }
                             state
                                 .insert_git_repository_for_path(
@@ -4722,20 +4721,6 @@ impl BackgroundScanner {
                     }
                     true
                 });
-
-            snapshot.repo_exclude_by_work_dir_abs_path.retain(
-                |work_dir_abs_path, (_, needs_update)| {
-                    if *needs_update {
-                        *needs_update = false;
-                        ignores_to_update.push(work_dir_abs_path.clone());
-                    }
-
-                    snapshot
-                        .git_repositories
-                        .iter()
-                        .any(|(_, r)| &r.work_directory_abs_path == work_dir_abs_path)
-                },
-            );
         }
 
         ignores_to_update
@@ -4912,26 +4897,6 @@ impl BackgroundScanner {
                             entry.git_dir_scan_id = scan_id;
                         },
                     );
-
-                    let repo_exclude_abs_path = local_repository
-                        .common_dir_abs_path
-                        .join("info")
-                        .join("exclude");
-                    if let Ok(repo_exclude) =
-                        build_gitignore(&repo_exclude_abs_path, self.fs.as_ref()).await
-                    {
-                        state.snapshot.repo_exclude_by_work_dir_abs_path.insert(
-                            local_repository.work_directory_abs_path.clone(),
-                            (Arc::new(repo_exclude), true),
-                        );
-                    } else {
-                        state
-                            .snapshot
-                            .repo_exclude_by_work_dir_abs_path
-                            .remove(&local_repository.work_directory_abs_path);
-                    }
-
-                    affected_repo_roots.push(local_repository.work_directory_abs_path.clone());
                 }
             };
         }
