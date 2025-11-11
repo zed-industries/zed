@@ -215,11 +215,6 @@ struct GroupedModels {
 
 impl GroupedModels {
     pub fn new(other: Vec<ModelInfo>, recommended: Vec<ModelInfo>) -> Self {
-        let recommended_ids = recommended
-            .iter()
-            .map(|info| (info.model.provider_id(), info.model.id()))
-            .collect::<HashSet<_>>();
-
         let mut other_by_provider: IndexMap<_, Vec<ModelInfo>> = IndexMap::default();
         for model in other {
             let provider = model.model.provider_id();
