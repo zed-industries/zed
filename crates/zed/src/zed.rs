@@ -726,7 +726,7 @@ fn register_actions(
                 ..Default::default()
             })
         })
-        .register_action(|_, action: &OpenBrowser, _window, cx| {
+        .register_action(|workspace, action: &OpenBrowser, _window, cx| {
             // Parse and validate the URL to ensure it's properly formatted
             match url::Url::parse(&action.url) {
                 Ok(parsed_url) => {
@@ -735,6 +735,14 @@ fn register_actions(
                 }
                 Err(e) => {
                     log::error!("Failed to parse URL '{}': {}", action.url, e);
+                    workspace.show_toast(
+                        Toast::new(
+                            NotificationId::unique::<OpenBrowser>(),
+                            format!("Opening this URL in a browser failed because the URL is invalid: {}", action.url),
+                        )
+                        .autohide(),
+                        cx,
+                    );
                 }
             }
         })
