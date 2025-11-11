@@ -971,25 +971,14 @@ impl<'a> MarkdownParser<'a> {
         highlights: &mut Vec<MarkdownHighlight>,
         regions: &mut Vec<(Range<usize>, ParsedRegion)>,
     ) {
-        fn add_highlight_range(
-            text: &String,
-            start: usize,
-            highlights: Vec<MarkdownHighlight>,
-        ) -> Vec<(Range<usize>, MarkdownHighlight)> {
-            highlights
-                .into_iter()
-                .map(|style| (start..text.len(), style))
-                .collect()
-        }
-
-        fn correct_region_range(
+        fn add_range<T>(
             old_text: &String,
             new_text: &String,
-            highlights: Vec<(Range<usize>, ParsedRegion)>,
-        ) -> Vec<(Range<usize>, ParsedRegion)> {
-            highlights
+            items: Vec<T>,
+        ) -> Vec<(Range<usize>, T)> {
+            items
                 .into_iter()
-                .map(|(_, region)| (old_text.len()..new_text.len(), region))
+                .map(|item| (old_text.len()..new_text.len(), item))
                 .collect()
         }
 
@@ -1005,26 +994,36 @@ impl<'a> MarkdownParser<'a> {
                     let mut new_text = old_text.clone();
                     new_text.push_str(&contents.borrow());
 
-                    text.highlights.extend(add_highlight_range(
-                        &new_text,
-                        old_text.len(),
-                        std::mem::take(highlights),
-                    ));
-                    text.regions.extend(correct_region_range(
+                    text.highlights.extend(add_range(
                         &old_text,
                         &new_text,
-                        std::mem::take(regions),
+                        std::mem::take(highlights),
+                    ));
+                    text.regions.extend(add_range(
+                        &old_text,
+                        &new_text,
+                        std::mem::take(regions)
+                            .into_iter()
+                            .map(|(_, region)| region)
+                            .collect::<Vec<_>>(),
                     ));
                     text.contents = SharedString::from(new_text);
                 } else {
                     let contents = contents.borrow().to_string();
                     paragraph.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
                         source_range,
-                        highlights: add_highlight_range(&contents, 0, std::mem::take(highlights)),
-                        regions: correct_region_range(
+                        highlights: add_range(
                             &String::new(),
                             &contents,
-                            std::mem::take(regions),
+                            std::mem::take(highlights),
+                        ),
+                        regions: add_range(
+                            &String::new(),
+                            &contents,
+                            std::mem::take(regions)
+                                .into_iter()
+                                .map(|(_, region)| region)
+                                .collect::<Vec<_>>(),
                         ),
                         contents: contents.into(),
                     }));
