@@ -3475,8 +3475,7 @@ async fn test_clear_navigation_history(cx: &mut TestAppContext) {
         .await;
 
     let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
-    let (workspace, cx) =
-        cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
     workspace.update_in(cx, |_workspace, window, cx| window.focused(cx));
 

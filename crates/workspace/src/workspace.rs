@@ -1929,15 +1929,9 @@ impl Workspace {
             .collect()
     }
 
-    pub fn clear_navigation_history(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) {
+    pub fn clear_navigation_history(&mut self, _window: &mut Window, cx: &mut Context<Workspace>) {
         for pane in &self.panes {
-            pane.update(cx, |pane, cx| {
-                pane.nav_history_mut().clear(cx)
-            });
+            pane.update(cx, |pane, cx| pane.nav_history_mut().clear(cx));
         }
     }
 
