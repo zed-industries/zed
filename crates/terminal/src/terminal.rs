@@ -386,7 +386,7 @@ impl TerminalBuilder {
             selection_phase: SelectionPhase::Ended,
             hyperlink_regex_searches: RegexSearches::default(),
             vi_mode_enabled: false,
-            is_ssh_terminal: false,
+            is_remote_terminal: false,
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
             #[cfg(windows)]
@@ -422,7 +422,7 @@ impl TerminalBuilder {
         max_scroll_history_lines: Option<usize>,
         path_hyperlink_regexes: Vec<String>,
         path_hyperlink_timeout_ms: u64,
-        is_ssh_terminal: bool,
+        is_remote_terminal: bool,
         window_id: u64,
         completion_tx: Option<Sender<Option<ExitStatus>>>,
         cx: &App,
@@ -611,7 +611,7 @@ impl TerminalBuilder {
                     path_hyperlink_timeout_ms,
                 ),
                 vi_mode_enabled: false,
-                is_ssh_terminal,
+                is_remote_terminal,
                 last_mouse_move_time: Instant::now(),
                 last_hyperlink_search_position: None,
                 #[cfg(windows)]
@@ -658,7 +658,7 @@ impl TerminalBuilder {
             })
         };
         // the thread we spawn things on has an effect on signal handling
-        if cfg!(target_os = "unix") {
+        if !cfg!(target_os = "windows") {
             cx.spawn(async move |_| fut.await)
         } else {
             cx.background_spawn(fut)
@@ -840,7 +840,7 @@ pub struct Terminal {
     hyperlink_regex_searches: RegexSearches,
     task: Option<TaskState>,
     vi_mode_enabled: bool,
-    is_ssh_terminal: bool,
+    is_remote_terminal: bool,
     last_mouse_move_time: Instant,
     last_hyperlink_search_position: Option<Point<Pixels>>,
     #[cfg(windows)]
@@ -1973,7 +1973,7 @@ impl Terminal {
     }
 
     pub fn working_directory(&self) -> Option<PathBuf> {
-        if self.is_ssh_terminal {
+        if self.is_remote_terminal {
             // We can't yet reliably detect the working directory of a shell on the
             // SSH host. Until we can do that, it doesn't make sense to display
             // the working directory on the client and persist that.
@@ -2174,7 +2174,7 @@ impl Terminal {
             self.template.max_scroll_history_lines,
             self.template.path_hyperlink_regexes.clone(),
             self.template.path_hyperlink_timeout_ms,
-            self.is_ssh_terminal,
+            self.is_remote_terminal,
             self.template.window_id,
             None,
             cx,
