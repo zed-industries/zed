@@ -128,20 +128,21 @@ impl Render for EditPredictionButton {
                             }),
                     );
                 }
-                let this = cx.entity();
+                let this = cx.weak_entity();
 
                 div().child(
                     PopoverMenu::new("copilot")
                         .menu(move |window, cx| {
                             let current_status = Copilot::global(cx)?.read(cx).status();
-                            Some(match current_status {
+                            match current_status {
                                 Status::Authorized => this.update(cx, |this, cx| {
                                     this.build_copilot_context_menu(window, cx)
                                 }),
                                 _ => this.update(cx, |this, cx| {
                                     this.build_copilot_start_menu(window, cx)
                                 }),
-                            })
+                            }
+                            .ok()
                         })
                         .anchor(Corner::BottomRight)
                         .trigger_with_tooltip(
@@ -182,7 +183,7 @@ impl Render for EditPredictionButton {
                 let icon = status.to_icon();
                 let tooltip_text = status.to_tooltip();
                 let has_menu = status.has_menu();
-                let this = cx.entity();
+                let this = cx.weak_entity();
                 let fs = self.fs.clone();
 
                 div().child(
@@ -209,9 +210,11 @@ impl Render for EditPredictionButton {
                                     )
                                 }))
                             }
-                            SupermavenButtonStatus::Ready => Some(this.update(cx, |this, cx| {
-                                this.build_supermaven_context_menu(window, cx)
-                            })),
+                            SupermavenButtonStatus::Ready => this
+                                .update(cx, |this, cx| {
+                                    this.build_supermaven_context_menu(window, cx)
+                                })
+                                .ok(),
                             _ => None,
                         })
                         .anchor(Corner::BottomRight)
@@ -233,15 +236,16 @@ impl Render for EditPredictionButton {
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let has_api_key = CodestralCompletionProvider::has_api_key(cx);
                 let fs = self.fs.clone();
-                let this = cx.entity();
+                let this = cx.weak_entity();
 
                 div().child(
                     PopoverMenu::new("codestral")
                         .menu(move |window, cx| {
                             if has_api_key {
-                                Some(this.update(cx, |this, cx| {
+                                this.update(cx, |this, cx| {
                                     this.build_codestral_context_menu(window, cx)
-                                }))
+                                })
+                                .ok()
                             } else {
                                 Some(ContextMenu::build(window, cx, |menu, _, _| {
                                     let fs = fs.clone();
@@ -379,11 +383,12 @@ impl Render for EditPredictionButton {
                         })
                     });
 
-                let this = cx.entity();
+                let this = cx.weak_entity();
 
                 let mut popover_menu = PopoverMenu::new("zeta")
                     .menu(move |window, cx| {
-                        Some(this.update(cx, |this, cx| this.build_zeta_context_menu(window, cx)))
+                        this.update(cx, |this, cx| this.build_zeta_context_menu(window, cx))
+                            .ok()
                     })
                     .anchor(Corner::BottomRight)
                     .with_handle(self.popover_menu_handle.clone());

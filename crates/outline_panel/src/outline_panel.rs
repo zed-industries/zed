@@ -656,13 +656,7 @@ struct SerializedOutlinePanel {
     active: Option<bool>,
 }
 
-pub fn init_settings(cx: &mut App) {
-    OutlinePanelSettings::register(cx);
-}
-
 pub fn init(cx: &mut App) {
-    init_settings(cx);
-
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<OutlinePanel>(window, cx);
@@ -5204,6 +5198,9 @@ fn subscribe_for_editor_events(
                         outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
                     }
                 }
+                EditorEvent::TitleChanged => {
+                    outline_panel.update_fs_entries(editor.clone(), debounce, window, cx);
+                }
                 _ => {}
             }
         },
@@ -6622,13 +6619,11 @@ outline: struct OutlineEntryExcerpt
                 format!(
                     r#"frontend-project/
   public/lottie/
-    syntax-tree.json
-      search: {{ "something": "«static»" }}
+    syntax-tree.json  <==== selected
   src/
     app/(site)/
     components/
-      ErrorBoundary.tsx  <==== selected
-        search: «static»"#
+      ErrorBoundary.tsx"#
                 )
             );
         });
@@ -6670,7 +6665,7 @@ outline: struct OutlineEntryExcerpt
                 format!(
                     r#"frontend-project/
   public/lottie/
-    syntax-tree.json
+    syntax-tree.json  <==== selected
       search: {{ "something": "«static»" }}
   src/
     app/(site)/
@@ -6681,7 +6676,7 @@ outline: struct OutlineEntryExcerpt
         page.tsx
           search: «static»
     components/
-      ErrorBoundary.tsx  <==== selected
+      ErrorBoundary.tsx
         search: «static»"#
                 )
             );
@@ -6820,10 +6815,7 @@ outline: struct OutlineEntryExcerpt
 
             theme::init(theme::LoadThemes::JustBase, cx);
 
-            language::init(cx);
             editor::init(cx);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
             project_search::init(cx);
             buffer_search::init(cx);
             super::init(cx);

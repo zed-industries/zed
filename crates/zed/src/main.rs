@@ -15,7 +15,7 @@ use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, UpdateGlobal as _};
+use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, QuitMode, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
@@ -87,31 +87,33 @@ fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
         .collect::<Vec<_>>().join("\n\n");
 
     eprintln!("{message}: {error_details}");
-    Application::new().run(move |cx| {
-        if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |_, cx| {
-            cx.new(|_| gpui::Empty)
-        }) {
-            window
-                .update(cx, |_, window, cx| {
-                    let response = window.prompt(
-                        gpui::PromptLevel::Critical,
-                        message,
-                        Some(&error_details),
-                        &["Exit"],
-                        cx,
-                    );
+    Application::new()
+        .with_quit_mode(QuitMode::Explicit)
+        .run(move |cx| {
+            if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |_, cx| {
+                cx.new(|_| gpui::Empty)
+            }) {
+                window
+                    .update(cx, |_, window, cx| {
+                        let response = window.prompt(
+                            gpui::PromptLevel::Critical,
+                            message,
+                            Some(&error_details),
+                            &["Exit"],
+                            cx,
+                        );
 
-                    cx.spawn_in(window, async move |_, cx| {
-                        response.await?;
-                        cx.update(|_, cx| cx.quit())
+                        cx.spawn_in(window, async move |_, cx| {
+                            response.await?;
+                            cx.update(|_, cx| cx.quit())
+                        })
+                        .detach_and_log_err(cx);
                     })
-                    .detach_and_log_err(cx);
-                })
-                .log_err();
-        } else {
-            fail_to_open_window(anyhow::anyhow!("{message}: {error_details}"), cx)
-        }
-    })
+                    .log_err();
+            } else {
+                fail_to_open_window(anyhow::anyhow!("{message}: {error_details}"), cx)
+            }
+        })
 }
 
 fn fail_to_open_window_async(e: anyhow::Error, cx: &mut AsyncApp) {
@@ -190,6 +192,15 @@ pub fn main() {
         }
     }
 
+    #[cfg(all(not(debug_assertions), target_os = "windows"))]
+    unsafe {
+        use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+
+        if args.foreground {
+            let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+
     // `zed --printenv` Outputs environment variables as JSON to stdout
     if args.printenv {
         util::shell_env::print_env();
@@ -204,15 +215,6 @@ pub fn main() {
     // Set custom data directory.
     if let Some(dir) = &args.user_data_dir {
         paths::set_custom_data_dir(dir);
-    }
-
-    #[cfg(all(not(debug_assertions), target_os = "windows"))]
-    unsafe {
-        use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
-
-        if args.foreground {
-            let _ = AttachConsole(ATTACH_PARENT_PROCESS);
-        }
     }
 
     #[cfg(target_os = "windows")]
@@ -409,7 +411,7 @@ pub fn main() {
             handle_settings_changed,
         );
         handle_keymap_file_changes(user_keymap_file_rx, cx);
-        client::init_settings(cx);
+
         let user_agent = format!(
             "Zed/{} ({}; {})",
             AppVersion::global(cx),
@@ -468,7 +470,6 @@ pub fn main() {
         let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
-        language::init(cx);
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
@@ -538,7 +539,7 @@ pub fn main() {
         });
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
-        auto_update::init(client.http_client(), cx);
+        auto_update::init(client.clone(), cx);
         dap_adapters::init(cx);
         auto_update_ui::init(cx);
         reliability::init(
@@ -573,7 +574,6 @@ pub fn main() {
         supermaven::init(app_state.client.clone(), cx);
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
-        agent_settings::init(cx);
         acp_tools::init(cx);
         zeta2_tools::init(cx);
         web_search::init(cx);
@@ -859,15 +859,19 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 // zed://settings/languages/Rust/tab_size  - SUPPORT
                 // languages.$(language).tab_size
                 // [ languages $(language) tab_size]
-                workspace::with_active_or_new_workspace(cx, |_workspace, window, cx| {
-                    match setting_path {
+                cx.spawn(async move |cx| {
+                    let workspace =
+                        workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+
+                    workspace.update(cx, |_, window, cx| match setting_path {
                         None => window.dispatch_action(Box::new(zed_actions::OpenSettings), cx),
                         Some(setting_path) => window.dispatch_action(
                             Box::new(zed_actions::OpenSettingsAt { path: setting_path }),
                             cx,
                         ),
-                    }
-                });
+                    })
+                })
+                .detach_and_log_err(cx);
             }
         }
 

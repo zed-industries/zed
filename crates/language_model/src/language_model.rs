@@ -4,6 +4,7 @@ mod registry;
 mod request;
 mod role;
 mod telemetry;
+pub mod tool_schema;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_provider;
@@ -35,6 +36,7 @@ pub use crate::registry::*;
 pub use crate::request::*;
 pub use crate::role::*;
 pub use crate::telemetry::*;
+pub use crate::tool_schema::LanguageModelToolSchemaFormat;
 
 pub const ANTHROPIC_PROVIDER_ID: LanguageModelProviderId =
     LanguageModelProviderId::new("anthropic");
@@ -407,15 +409,6 @@ impl From<open_router::ApiError> for LanguageModelCompletionError {
             },
         }
     }
-}
-
-/// Indicates the format used to define the input schema for a language model tool.
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub enum LanguageModelToolSchemaFormat {
-    /// A JSON schema, see https://json-schema.org
-    JsonSchema,
-    /// A subset of an OpenAPI 3.0 schema object supported by Google AI, see https://ai.google.dev/api/caching#Schema
-    JsonSchemaSubset,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]

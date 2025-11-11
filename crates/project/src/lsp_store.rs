@@ -563,8 +563,8 @@ impl LocalLspStore {
         allow_binary_download: bool,
         cx: &mut App,
     ) -> Task<Result<LanguageServerBinary>> {
-        if let Some(settings) = settings.binary.as_ref()
-            && settings.path.is_some()
+        if let Some(settings) = &settings.binary
+            && let Some(path) = settings.path.as_ref().map(PathBuf::from)
         {
             let settings = settings.clone();
 
@@ -573,7 +573,8 @@ impl LocalLspStore {
                 env.extend(settings.env.unwrap_or_default());
 
                 Ok(LanguageServerBinary {
-                    path: PathBuf::from(&settings.path.unwrap()),
+                    // if `path` is absolute, `.join()` will keep it unmodified
+                    path: delegate.worktree_root_path().join(path),
                     env: Some(env),
                     arguments: settings
                         .arguments
@@ -2035,7 +2036,7 @@ impl LocalLspStore {
         cx: &mut AsyncApp,
     ) -> Result<Vec<(Range<Anchor>, Arc<str>)>> {
         let logger = zlog::scoped!("lsp_format");
-        zlog::info!(logger => "Formatting via LSP");
+        zlog::debug!(logger => "Formatting via LSP");
 
         let uri = file_path_to_lsp_url(abs_path)?;
         let text_document = lsp::TextDocumentIdentifier::new(uri);
@@ -4193,7 +4194,7 @@ impl LspStore {
             })
             .detach();
         } else {
-            panic!("oops!");
+            // Our remote connection got closed
         }
         handle
     }
@@ -4519,7 +4520,6 @@ impl LspStore {
         ) {
             Ok(LspParamsOrResponse::Params(lsp_params)) => lsp_params,
             Ok(LspParamsOrResponse::Response(response)) => return Task::ready(Ok(response)),
-
             Err(err) => {
                 let message = format!(
                     "{} via {} failed: {}",
@@ -4527,7 +4527,10 @@ impl LspStore {
                     language_server.name(),
                     err
                 );
-                log::warn!("{message}");
+                // rust-analyzer likes to error with this when its still loading up
+                if !message.ends_with("content modified") {
+                    log::warn!("{message}");
+                }
                 return Task::ready(Err(anyhow!(message)));
             }
         };
@@ -4585,7 +4588,10 @@ impl LspStore {
                     language_server.name(),
                     err
                 );
-                log::warn!("{message}");
+                // rust-analyzer likes to error with this when its still loading up
+                if !message.ends_with("content modified") {
+                    log::warn!("{message}");
+                }
                 anyhow::anyhow!(message)
             })?;
 
@@ -6907,6 +6913,8 @@ impl LspStore {
                         let mut responses = Vec::new();
                         match server_task.await {
                             Ok(response) => responses.push((server_id, response)),
+                            // rust-analyzer likes to error with this when its still loading up
+                            Err(e) if format!("{e:#}").ends_with("content modified") => (),
                             Err(e) => log::error!(
                                 "Error handling response for inlay hints request: {e:#}"
                             ),
@@ -7643,14 +7651,16 @@ impl LspStore {
         let buffer = buffer.read(cx);
         let file = File::from_dyn(buffer.file())?;
         let abs_path = file.as_local()?.abs_path(cx);
-        let uri = lsp::Uri::from_file_path(abs_path).unwrap();
+        let uri = lsp::Uri::from_file_path(&abs_path)
+            .ok()
+            .with_context(|| format!("Failed to convert path to URI: {}", abs_path.display()))
+            .log_err()?;
         let next_snapshot = buffer.text_snapshot();
         for language_server in language_servers {
             let language_server = language_server.clone();
 
             let buffer_snapshots = self
-                .as_local_mut()
-                .unwrap()
+                .as_local_mut()?
                 .buffer_snapshots
                 .get_mut(&buffer.remote_id())
                 .and_then(|m| m.get_mut(&language_server.server_id()))?;
@@ -8432,6 +8442,8 @@ impl LspStore {
             while let Some((server_id, response_result)) = response_results.next().await {
                 match response_result {
                     Ok(response) => responses.push((server_id, response)),
+                    // rust-analyzer likes to error with this when its still loading up
+                    Err(e) if format!("{e:#}").ends_with("content modified") => (),
                     Err(e) => log::error!("Error handling response for request {request:?}: {e:#}"),
                 }
             }
@@ -12425,6 +12437,8 @@ impl LspStore {
                         let mut responses = Vec::new();
                         match server_task.await {
                             Ok(response) => responses.push((server_id, response)),
+                            // rust-analyzer likes to error with this when its still loading up
+                            Err(e) if format!("{e:#}").ends_with("content modified") => (),
                             Err(e) => log::error!(
                                 "Error handling response for request {request:?}: {e:#}"
                             ),

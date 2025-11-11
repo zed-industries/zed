@@ -107,7 +107,6 @@ fn auto_release_preview(deps: &[&NamedJob; 1]) -> NamedJob {
                 )
                 .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)),
             )
-            .add_step(create_sentry_release()),
     )
 }
 

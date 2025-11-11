@@ -28,7 +28,6 @@ use workspace::{ModalView, Workspace, WorkspaceSettings};
 use zed_actions::{OpenZedUrl, command_palette::Toggle};
 
 pub fn init(cx: &mut App) {
-    client::init_settings(cx);
     command_palette_hooks::init(cx);
     cx.observe_new(CommandPalette::register).detach();
 }
@@ -789,13 +788,11 @@ mod tests {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
-            language::init(cx);
             editor::init(cx);
             menu::init();
             go_to_line::init(cx);
             workspace::init(app_state.clone(), cx);
             init(cx);
-            Project::init_settings(cx);
             cx.bind_keys(KeymapFile::load_panic_on_failure(
                 r#"[
                     {

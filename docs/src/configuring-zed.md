@@ -213,7 +213,7 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 ## Auto Install extensions
 
 - Description: Define extensions to be autoinstalled or never be installed.
-- Setting: `auto_install_extension`
+- Setting: `auto_install_extensions`
 - Default: `{ "html": true }`
 
 **Options**
@@ -929,6 +929,8 @@ List of `string` values
 - Setting: `cursors`
 - Default: `true`
 
+Cursor indicators appear as small marks on the scrollbar showing where other collaborators' cursors are positioned in the file.
+
 **Options**
 
 `boolean` values
@@ -938,6 +940,8 @@ List of `string` values
 - Description: Whether to show git diff indicators in the scrollbar.
 - Setting: `git_diff`
 - Default: `true`
+
+Git diff indicators appear as colored marks showing lines that have been added, modified, or deleted compared to the git HEAD.
 
 **Options**
 
@@ -949,6 +953,8 @@ List of `string` values
 - Setting: `search_results`
 - Default: `true`
 
+Search result indicators appear as marks showing all locations in the file where your current search query matches.
+
 **Options**
 
 `boolean` values
@@ -958,6 +964,8 @@ List of `string` values
 - Description: Whether to show selected text occurrences in the scrollbar.
 - Setting: `selected_text`
 - Default: `true`
+
+Selected text indicators appear as marks showing all occurrences of the currently selected text throughout the file.
 
 **Options**
 
@@ -969,6 +977,8 @@ List of `string` values
 - Setting: `selected_symbol`
 - Default: `true`
 
+Selected symbol indicators appear as marks showing all occurrences of the currently selected symbol (like a function or variable name) throughout the file.
+
 **Options**
 
 `boolean` values
@@ -978,6 +988,8 @@ List of `string` values
 - Description: Which diagnostic indicators to show in the scrollbar.
 - Setting: `diagnostics`
 - Default: `all`
+
+Diagnostic indicators appear as colored marks showing errors, warnings, and other language server diagnostics at their corresponding line positions in the file.
 
 **Options**
 
@@ -2507,11 +2519,12 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
   "path": "~",
   "hour_format": "hour12"
 }
+
 ```
 
 ### Path
 
-- Description: The path of the directory where journal entries are stored.
+- Description: The path of the directory where journal entries are stored. If an invalid path is specified, the journal will fall back to using `~` (the home directory).
 - Setting: `path`
 - Default: `~`
 
@@ -3172,12 +3185,52 @@ Non-negative `integer` values
 
 ```json [settings]
 "search": {
+  "button": true,
   "whole_word": false,
   "case_sensitive": false,
   "include_ignored": false,
-  "regex": false
+  "regex": false,
+  "center_on_match": false
 },
 ```
+
+### Button
+
+- Description: Whether to show the project search button in the status bar.
+- Setting: `button`
+- Default: `true`
+
+### Whole Word
+
+- Description: Whether to only match on whole words.
+- Setting: `whole_word`
+- Default: `false`
+
+### Case Sensitive
+
+- Description: Whether to match case sensitively. This setting affects both
+  searches and editor actions like "Select Next Occurrence", "Select Previous
+  Occurrence", and "Select All Occurrences".
+- Setting: `case_sensitive`
+- Default: `false`
+
+### Include Ignore
+
+- Description: Whether to include gitignored files in search results.
+- Setting: `include_ignored`
+- Default: `false`
+
+### Regex
+
+- Description: Whether to interpret the search query as a regular expression.
+- Setting: `regex`
+- Default: `false`
+
+### Center On Match
+
+- Description: Whether to center the cursor on each search match when navigating.
+- Setting: `center_on_match`
+- Default: `false`
 
 ## Search Wrap
 
