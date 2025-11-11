@@ -4095,10 +4095,11 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 ### Terminal: Path Hyperlink Regexes
 
-- Description: Regexes used to identify path hyperlinks. The regexes can be specified in two forms - a single regex string, or an array of strings (which will be collected into a single multi-line regex string)
+- Description: Regexes used to identify path hyperlinks. The regexes can be specified in two forms - a single regex string, or an array of strings (which will be collected into a single multi-line regex string).
 - Setting: `path_hyperlink_regexes`
 - Default:
-```json
+
+```json [settings]
 [
   // Python-style diagnostics
   "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
