@@ -282,6 +282,7 @@ impl Vim {
                             // that the end replacement string does not exceed
                             // this value. Helpful when dealing with newlines.
                             let mut edit_len = 0;
+                            let mut forward_end: Option<usize> = None;
                             let mut chars_and_offset = display_map
                                 .buffer_chars_at(range.start.to_offset(&display_map, Bias::Left))
                                 .peekable();
@@ -308,6 +309,7 @@ impl Vim {
                                     edit_len = end - start;
                                     edits.push((start..end, open_str));
                                     anchors.push(start..start);
+                                    forward_end = Some(end);
                                     break;
                                 }
                             }
@@ -323,7 +325,9 @@ impl Vim {
                                     let mut start = offset;
                                     let end = start + 1;
                                     while let Some((next_ch, _)) = reverse_chars_and_offsets.next()
-                                        && next_ch.to_string() == " "
+                                        && (next_ch.to_string() == " "
+                                            && forward_end
+                                                .map_or(true, |open_end| start > open_end))
                                         && close_str.len() < edit_len - 1
                                     {
                                         start -= 1;
@@ -1233,6 +1237,23 @@ mod test {
                     println!(\"it is fine\");
                 ]
             ];"},
+            Mode::Normal,
+        );
+
+        // test spaces with quote change surrounds
+        cx.set_state(
+            indoc! {"
+            fn test_surround() {
+                \"ˇ \"
+            };"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("c s \" '");
+        cx.assert_state(
+            indoc! {"
+            fn test_surround() {
+                'ˇ '
+            };"},
             Mode::Normal,
         );
 
