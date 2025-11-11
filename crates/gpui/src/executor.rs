@@ -281,7 +281,11 @@ impl BackgroundExecutor {
         });
         let mut cx = std::task::Context::from_waker(&waker);
 
-        let duration = Duration::from_secs(180);
+        let duration = Duration::from_secs(
+            option_env!("BLOCK_INTERNAL_TIMEOUT")
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(180),
+        );
         let mut test_should_end_by = Instant::now() + duration;
 
         loop {
