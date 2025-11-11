@@ -2519,11 +2519,12 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
   "path": "~",
   "hour_format": "hour12"
 }
+
 ```
 
 ### Path
 
-- Description: The path of the directory where journal entries are stored.
+- Description: The path of the directory where journal entries are stored. If an invalid path is specified, the journal will fall back to using `~` (the home directory).
 - Setting: `path`
 - Default: `~`
 
