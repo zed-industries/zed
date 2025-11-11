@@ -1419,7 +1419,44 @@ impl GitStore {
                     diffs.remove(buffer_id);
                 }
             }
+            BufferStoreEvent::BufferChangedFilePath { buffer, .. } => {
+                // Whenever a buffer's file path changes, it's possible that the
+                // new path is actually a path that is being tracked by a git
+                // repository. In that case, we'll want to update the buffer's
+                // `BufferDiffState`, in case it already has one.
+                let buffer_id = buffer.read(cx).remote_id();
+                let diff_state = self.diffs.get(&buffer_id);
+                let repo = self.repository_and_path_for_buffer_id(buffer_id, cx);
 
+                if let Some(diff_state) = diff_state
+                    && let Some((repo, repo_path)) = repo
+                {
+                    let buffer = buffer.clone();
+                    let diff_state = diff_state.clone();
+
+                    cx.spawn(async move |_git_store, cx| {
+                        async {
+                            let diff_bases_change = repo
+                                .update(cx, |repo, cx| {
+                                    repo.load_committed_text(buffer_id, repo_path, cx)
+                                })?
+                                .await?;
+
+                            diff_state.update(cx, |diff_state, cx| {
+                                let buffer_snapshot = buffer.read(cx).text_snapshot();
+                                diff_state.diff_bases_changed(
+                                    buffer_snapshot,
+                                    Some(diff_bases_change),
+                                    cx,
+                                );
+                            })
+                        }
+                        .await
+                        .log_err();
+                    })
+                    .detach();
+                }
+            }
             _ => {}
         }
     }
