@@ -438,6 +438,7 @@ impl std::ops::Sub for GitSummary {
 #[derive(Clone, Debug)]
 pub struct GitStatus {
     pub entries: Arc<[(RepoPath, FileStatus)]>,
+    pub renamed_paths: HashMap<RepoPath, RepoPath>,
 }
 
 impl FromStr for GitStatus {
@@ -446,6 +447,7 @@ impl FromStr for GitStatus {
     fn from_str(s: &str) -> Result<Self> {
         let mut parts = s.split('\0').peekable();
         let mut entries = Vec::new();
+        let mut renamed_paths = HashMap::default();
 
         while let Some(entry) = parts.next() {
             if entry.is_empty() {
@@ -470,7 +472,7 @@ impl FromStr for GitStatus {
                 Err(_) => continue,
             };
 
-            let path = if matches!(
+            let is_rename = matches!(
                 status,
                 FileStatus::Tracked(TrackedStatus {
                     index_status: StatusCode::Renamed | StatusCode::Copied,
@@ -479,25 +481,35 @@ impl FromStr for GitStatus {
                     worktree_status: StatusCode::Renamed | StatusCode::Copied,
                     ..
                 })
-            ) {
-                match parts.next() {
+            );
+
+            let (old_path_str, new_path_str) = if is_rename {
+                let new_path = match parts.next() {
                     Some(new_path) if !new_path.is_empty() => new_path,
                     _ => continue,
-                }
+                };
+                (path_or_old_path, new_path)
             } else {
-                path_or_old_path
+                (path_or_old_path, path_or_old_path)
             };
 
-            if path.ends_with('/') {
+            if new_path_str.ends_with('/') {
                 continue;
             }
 
-            let path = match RelPath::unix(path).log_err() {
+            let new_path = match RelPath::unix(new_path_str).log_err() {
                 Some(p) => RepoPath::from_rel_path(p),
                 None => continue,
             };
 
-            entries.push((path, status));
+            if is_rename {
+                if let Some(old_path_rel) = RelPath::unix(old_path_str).log_err() {
+                    let old_path_repo = RepoPath::from_rel_path(old_path_rel);
+                    renamed_paths.insert(new_path.clone(), old_path_repo);
+                }
+            }
+
+            entries.push((new_path, status));
         }
         entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
         // When a file exists in HEAD, is deleted in the index, and exists again in the working copy,
@@ -522,6 +534,7 @@ impl FromStr for GitStatus {
         });
         Ok(Self {
             entries: entries.into(),
+            renamed_paths,
         })
     }
 }
@@ -530,6 +543,7 @@ impl Default for GitStatus {
     fn default() -> Self {
         Self {
             entries: Arc::new([]),
+            renamed_paths: HashMap::default(),
         }
     }
 }
