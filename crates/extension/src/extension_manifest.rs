@@ -268,10 +268,7 @@ impl ExtensionManifest {
         let mut extension_manifest_path = extension_dir.join("extension.json");
         if fs.is_file(&extension_manifest_path).await {
             let manifest_content = fs.load(&extension_manifest_path).await.with_context(|| {
-                format!(
-                    "failed to load {extension_name} extension.json, {:?}",
-                    extension_manifest_path
-                )
+                format!("loading {extension_name} extension.json, {extension_manifest_path:?}")
             })?;
             let manifest_json = serde_json::from_str::<OldExtensionManifest>(&manifest_content)
                 .with_context(|| {

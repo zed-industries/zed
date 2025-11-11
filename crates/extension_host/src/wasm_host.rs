@@ -759,20 +759,21 @@ impl WasmExtension {
     ) -> Result<Self> {
         let path = extension_dir.join("extension.wasm");
 
-        let mut wasm_file = wasm_host.fs.open_sync(&path).await.context(format!(
-            "failed to open wasm file, path: {}",
-            path.display()
-        ))?;
+        let mut wasm_file = wasm_host
+            .fs
+            .open_sync(&path)
+            .await
+            .context(format!("opening wasm file, path: {path:?}"))?;
 
         let mut wasm_bytes = Vec::new();
         wasm_file
             .read_to_end(&mut wasm_bytes)
-            .context(format!("failed to read wasm, path: {}", path.display()))?;
+            .context(format!("reading wasm file, path: {path:?}"))?;
 
         wasm_host
             .load_extension(wasm_bytes, manifest, cx)
             .await
-            .with_context(|| format!("failed to load wasm extension {}", manifest.id))
+            .with_context(|| format!("loading wasm extension: {}", manifest.id))
     }
 
     pub async fn call<T, Fn>(&self, f: Fn) -> Result<T>
