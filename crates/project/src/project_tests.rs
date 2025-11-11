@@ -1211,32 +1211,27 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
 async fn test_language_server_relative_path(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let rel_path = path!("relative_path/to/my_fake_lsp_binary.exe");
-    let settings_json_contents = format!(
-        r#"
-        {{
-            "languages": {{
-                "Rust": {{
-                    "language_servers": ["my_fake_lsp"]
-                }}
-            }},
-            "lsp": {{
-                "my_fake_lsp": {{
-                    "binary": {{
-                        "path": "{rel_path}",
-                    }}
-                }}
-            }},
-
-        }}"#
-    );
+    let settings_json_contents = json!({
+        "languages": {
+            "Rust": {
+                "language_servers": ["my_fake_lsp"]
+            }
+        },
+        "lsp": {
+            "my_fake_lsp": {
+                "binary": {
+                    "path": path!("relative_path/to/my_fake_lsp_binary.exe").to_string(),
+                }
+            }
+        },
+    });
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/the-root"),
         json!({
             ".zed": {
-                "settings.json": settings_json_contents,
+                "settings.json": settings_json_contents.to_string(),
             },
             "relative_path": {
                 "to": {
