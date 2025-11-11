@@ -905,26 +905,15 @@ async fn install_release_macos(
 
 #[cfg(target_os = "windows")]
 async fn cleanup_windows() -> Result<()> {
-    use util::ResultExt;
-
     let parent = std::env::current_exe()?
         .parent()
         .context("No parent dir for Zed.exe")?
         .to_owned();
 
     // keep in sync with crates/auto_update_helper/src/updater.rs
-    smol::fs::remove_dir(parent.join("updates"))
-        .await
-        .context("failed to remove updates dir")
-        .log_err();
-    smol::fs::remove_dir(parent.join("install"))
-        .await
-        .context("failed to remove install dir")
-        .log_err();
-    smol::fs::remove_dir(parent.join("old"))
-        .await
-        .context("failed to remove old version dir")
-        .log_err();
+    _ = smol::fs::remove_dir(parent.join("updates")).await;
+    _ = smol::fs::remove_dir(parent.join("install")).await;
+    _ = smol::fs::remove_dir(parent.join("old")).await;
 
     Ok(())
 }
