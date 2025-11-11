@@ -8952,6 +8952,7 @@ impl Element for EditorElement {
                         } = diff_hunk
                             && !diff_base_byte_range.is_empty()
                             && status.is_modified()
+                            && status.has_secondary_hunk()
                         {
                             let buffer = snapshot.buffer_snapshot();
                             let mut multi_buffer_range = multi_buffer_range.clone();
@@ -8965,12 +8966,39 @@ impl Element for EditorElement {
                             }
 
                             let current_text: String =
-                                buffer.text_for_range(multi_buffer_range).collect();
+                                buffer.text_for_range(multi_buffer_range.clone()).collect();
                             let old_text: String = buffer
                                 .text_for_range(diff_base_byte_range.clone())
                                 .collect();
 
-                            dbg!(current_text, old_text);
+                            let diff = similar::TextDiff::configure()
+                                .algorithm(similar::Algorithm::Myers)
+                                .diff_words(&old_text, &current_text);
+
+                            let mut current_off = multi_buffer_range.start.to_offset(buffer);
+                            for change in diff.iter_all_changes() {
+                                match change.tag() {
+                                    similar::ChangeTag::Equal => {
+                                        current_off += change.value().len();
+                                    }
+                                    similar::ChangeTag::Insert => {
+                                        let start = buffer.anchor_after(current_off);
+                                        current_off += change.value().len();
+                                        let end = buffer.anchor_before(current_off);
+
+                                        let start_point =
+                                            start.to_display_point(&snapshot.display_snapshot);
+                                        let end_point =
+                                            end.to_display_point(&snapshot.display_snapshot);
+
+                                        if start_point.row() == end_point.row() {
+                                            highlighted_ranges
+                                                .push((start_point..end_point, Hsla::blue()));
+                                        }
+                                    }
+                                    similar::ChangeTag::Delete => {}
+                                }
+                            }
                         }
                     }
 
