@@ -734,7 +734,6 @@ fn register_actions(
                     cx.open_url(parsed_url.as_str());
                 }
                 Err(e) => {
-                    log::error!("Failed to parse URL '{}': {}", action.url, e);
                     workspace.show_toast(
                         Toast::new(
                             NotificationId::unique::<OpenBrowser>(),
