@@ -32,7 +32,7 @@ pub(crate) fn run_unit_evals() -> Workflow {
     let model_name = Input::string("model_name", None);
     let commit_sha = Input::string("commit_sha", None);
 
-    let unit_evals = named::job(unit_evals(Some(commit_sha)));
+    let unit_evals = named::job(unit_evals(Some(&commit_sha)));
 
     named::workflow()
         .name("run_unit_evals")
@@ -117,7 +117,7 @@ fn cron_unit_evals() -> NamedJob {
     named::job(unit_evals(None).add_step(send_failure_to_slack()))
 }
 
-fn unit_evals(commit: Option<Input>) -> Job {
+fn unit_evals(commit: Option<&Input>) -> Job {
     fn send_failure_to_slack() -> Step<Use> {
         named::uses(
             "slackapi",
