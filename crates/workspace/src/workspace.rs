@@ -1931,42 +1931,14 @@ impl Workspace {
 
     pub fn clear_recent_files_history(
         &mut self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Workspace>,
-    ) -> Task<()> {
-        let panes = self.panes.clone();
-
-        cx.spawn_in(window, async move |workspace, cx| {
-            let answer = workspace
-                .update_in(cx, |_, window, cx| {
-                    window.prompt(
-                        PromptLevel::Warning,
-                        "Clear Recent Files History",
-                        Some("This action will clear all navigation history (forward/backward/closed tabs). \n\nThis action is irreversible, do you want to continue?"),
-                        &["Clear", "Cancel"],
-                        cx,
-                    )
-                })
-                .ok();
-
-            let Some(answer) = answer else {
-                return;
-            };
-
-            let result = answer.await;
-
-            if result != Ok(0) {
-                return;
-            }
-
-            let _ = workspace.update(cx, |_, cx| {
-                for pane in &panes {
-                    pane.update(cx, |pane, cx| {
-                        pane.nav_history_mut().clear(cx)
-                    });
-                }
+    ) {
+        for pane in &self.panes {
+            pane.update(cx, |pane, cx| {
+                pane.nav_history_mut().clear(cx)
             });
-        })
+        }
     }
 
     fn navigate_history(
