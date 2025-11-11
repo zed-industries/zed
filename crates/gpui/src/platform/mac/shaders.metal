@@ -419,12 +419,11 @@ vertex InstRectVertexOutput instanced_rect_vertex(
     constant float2 *unit_vertices [[buffer(InstancedRectInputIndex_Vertices)]],
     constant InstancedRect *rects [[buffer(InstancedRectInputIndex_Rects)]],
     constant Size_DevicePixels *viewport_size [[buffer(InstancedRectInputIndex_ViewportSize)]],
-    constant ContentMask_ScaledPixels *content_mask [[buffer(InstancedRectInputIndex_ContentMask)]],
-    constant TransformationMatrix *transform [[buffer(InstancedRectInputIndex_Transform)]]) {
+    constant ContentMask_ScaledPixels *content_mask [[buffer(InstancedRectInputIndex_ContentMask)]]) {
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   InstancedRect rect = rects[rect_id];
-  float4 device_position = to_device_position_transformed(unit_vertex, rect.bounds, *transform, viewport_size);
-  float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, rect.bounds, content_mask->bounds, *transform);
+  float4 device_position = to_device_position(unit_vertex, rect.bounds, viewport_size);
+  float4 clip_distance = distance_from_clip_rect(unit_vertex, rect.bounds, content_mask->bounds);
   float4 color = hsla_to_rgba(rect.color);
   return InstRectVertexOutput{
     rect_id,
@@ -463,33 +462,25 @@ vertex InstLineVertexOutput instanced_line_vertex(
     constant float2 *unit_vertices [[buffer(InstancedLineInputIndex_Vertices)]],
     constant LineSegmentInstance *segments [[buffer(InstancedLineInputIndex_Segments)]],
     constant Size_DevicePixels *viewport_size [[buffer(InstancedLineInputIndex_ViewportSize)]],
-    constant ContentMask_ScaledPixels *content_mask [[buffer(InstancedLineInputIndex_ContentMask)]],
-    constant TransformationMatrix *transform [[buffer(InstancedLineInputIndex_Transform)]]) {
+    constant ContentMask_ScaledPixels *content_mask [[buffer(InstancedLineInputIndex_ContentMask)]]) {
   float2 uv = unit_vertices[unit_vertex_id];
   LineSegmentInstance seg = segments[seg_id];
-  // Segment in screen via transform
+  // Use segment endpoints directly (no transform)
   float2 p0 = float2(seg.p0.x, seg.p0.y);
   float2 p1 = float2(seg.p1.x, seg.p1.y);
-  // Apply transform to both endpoints
-  float2 t0;
-  t0.x = p0.x * transform->rotation_scale[0][0] + p0.y * transform->rotation_scale[0][1] + transform->translation[0];
-  t0.y = p0.x * transform->rotation_scale[1][0] + p0.y * transform->rotation_scale[1][1] + transform->translation[1];
-  float2 t1;
-  t1.x = p1.x * transform->rotation_scale[0][0] + p1.y * transform->rotation_scale[0][1] + transform->translation[0];
-  t1.y = p1.x * transform->rotation_scale[1][0] + p1.y * transform->rotation_scale[1][1] + transform->translation[1];
-  float2 dir = t1 - t0;
+  float2 dir = p1 - p0;
   float len = max(length(dir), 1e-6);
   float2 n = float2(-dir.y, dir.x) / len;
   float half_w = seg.width * 0.5;
   // uv.x in {0,1} picks endpoint, uv.y in {0,1} picks side
-  float2 base = mix(t0, t1, uv.x);
+  float2 base = mix(p0, p1, uv.x);
   float side = (uv.y * 2.0 - 1.0);
   float2 pos = base + n * side * half_w;
 
   float2 viewport = float2((float)viewport_size->width, (float)viewport_size->height);
   float2 ndc_xy = pos / viewport * float2(2., -2.) + float2(-1., 1.);
   float4 device_position = float4(ndc_xy, 0., 1.);
-  // Skip content-mask clip distances for lines (or compute per-vertex if needed)
+  // Use simple clipping for lines  
   float4 clip_distance = float4(1e6);
   float4 color = hsla_to_rgba(seg.color);
   return InstLineVertexOutput{ seg_id, device_position, color, {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w} };

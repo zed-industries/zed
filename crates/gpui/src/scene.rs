@@ -563,8 +563,6 @@ pub(crate) struct InstancedRects {
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub rects: Vec<InstancedRect>,
-    /// Per-batch 2D transform (local→device).
-    pub transform: TransformationMatrix,
 }
 
 impl From<InstancedRects> for Primitive {
@@ -594,8 +592,6 @@ pub(crate) struct InstancedLines {
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub segments: Vec<LineSegmentInstance>,
-    /// Per-batch 2D transform (local→device).
-    pub transform: TransformationMatrix,
 }
 
 impl From<InstancedLines> for Primitive {

@@ -828,11 +828,6 @@ impl MetalRenderer {
                 std::mem::size_of_val(&b.content_mask) as u64,
                 &b.content_mask as *const crate::ContentMask<crate::ScaledPixels> as *const _,
             );
-            command_encoder.set_vertex_bytes(
-                InstancedRectInputIndex::Transform as u64,
-                std::mem::size_of_val(&b.transform) as u64,
-                &b.transform as *const crate::TransformationMatrix as *const _,
-            );
 
             let total = b.rects.len();
             let mut i = 0;
@@ -908,11 +903,6 @@ impl MetalRenderer {
                 InstancedLineInputIndex::ContentMask as u64,
                 std::mem::size_of_val(&b.content_mask) as u64,
                 &b.content_mask as *const crate::ContentMask<crate::ScaledPixels> as *const _,
-            );
-            command_encoder.set_vertex_bytes(
-                InstancedLineInputIndex::Transform as u64,
-                std::mem::size_of_val(&b.transform) as u64,
-                &b.transform as *const crate::TransformationMatrix as *const _,
             );
 
             let total = b.segments.len();
@@ -1513,7 +1503,6 @@ enum InstancedRectInputIndex {
     Rects = 1,
     ViewportSize = 2,
     ContentMask = 3,
-    Transform = 4,
 }
 
 #[repr(C)]
@@ -1554,7 +1543,6 @@ enum InstancedLineInputIndex {
     Segments = 1,
     ViewportSize = 2,
     ContentMask = 3,
-    Transform = 4,
 }
 
  
