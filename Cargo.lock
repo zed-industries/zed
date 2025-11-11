@@ -7281,7 +7281,6 @@ dependencies = [
  "calloop",
  "calloop-wayland-source",
  "cbindgen",
- "chrono",
  "circular-buffer",
  "cocoa 0.26.0",
  "cocoa-foundation 0.2.0",
@@ -10014,9 +10013,7 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 name = "miniprofiler_ui"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "gpui",
- "log",
  "serde_json",
  "smol",
  "util",
