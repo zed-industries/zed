@@ -14,7 +14,9 @@ use objc::{
     sel, sel_impl,
 };
 use std::{
-    ffi::c_void, ptr::{NonNull, addr_of}, time::{Duration, Instant}
+    ffi::c_void,
+    ptr::{NonNull, addr_of},
+    time::{Duration, Instant},
 };
 
 /// All items in the generated file are marked as pub, so we're gonna wrap it in a separate mod to prevent
