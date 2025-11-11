@@ -322,37 +322,40 @@ async fn get_cached_ts_server_binary(
     .log_err()
 }
 
-mod test {
+#[cfg(test)]
+mod tests {
     use crate::vtsls::VtslsLspAdapter;
 
     #[test]
     fn test_diagnostic_message_to_markdown() {
+        // Leaves simple messages unchanged
+        let message = "The expected type comes from the return type of this signature.";
+
+        let expected = "The expected type comes from the return type of this signature.";
+
+        assert_eq!(
+            VtslsLspAdapter::enhance_diagnostic_message(message).expect("Should be some"),
+            expected
+        );
+
+        // Parses both multi-word and single-word correctly
+        let message = "Property 'baz' is missing in type '{ foo: string; bar: string; }' but required in type 'User'.";
+
+        let expected = "Property `baz` is missing in type \n```typescript\n{ foo: string; bar: string; }\n```\n but required in type `User`.";
+
+        assert_eq!(
+            VtslsLspAdapter::enhance_diagnostic_message(message).expect("Should be some"),
+            expected
+        );
+
+        // Parses multi-and-single word in any order, and ignores existing newlines
         let message = "Type '() => { foo: string; bar: string; }' is not assignable to type 'GetUserFunction'.\n  Property 'baz' is missing in type '{ foo: string; bar: string; }' but required in type 'User'.";
 
         let expected = "Type \n```typescript\n() => { foo: string; bar: string; }\n```\n is not assignable to type `GetUserFunction`.\n  Property `baz` is missing in type \n```typescript\n{ foo: string; bar: string; }\n```\n but required in type `User`.";
 
-        let actual = VtslsLspAdapter::enhance_diagnostic_message(message).expect("Should be some");
-
-        assert_eq!(actual, expected);
+        assert_eq!(
+            VtslsLspAdapter::enhance_diagnostic_message(message).expect("Should be some"),
+            expected
+        );
     }
-    // Other cases
-    //
-    // "Property 'baz' is missing in type '{ foo: string; bar: string; }' but required in type 'User'."
-    // "'baz' is declared here."
-    // "The expected type comes from the return type of this signature."
-    // "Type '() => { foo: string; bar: string; }' is not assignable to type 'GetUserFunction'.\n  Property 'baz' is missing in type '{ foo: string; bar: string; }' but required in type 'User'."
-    // " but required in type 'User'."
-    // "'baz' is declared here."
-    // "Binding element 'input' implicitly has an 'any' type."
-    // "Binding element 'ctx' implicitly has an 'any' type."
-    // "Parameter 'file' implicitly has an 'any' type."
-    // "Parameter 'file' implicitly has an 'any' type."
-    // "Parameter 'file' implicitly has an 'any' type."
-    // "Binding element 'ctx' implicitly has an 'any' type."
-    // "Binding element 'input' implicitly has an 'any' type."
-    // "'otherThing' is declared but its value is never read."
-    // "'getInstanceThing' is declared but its value is never read."
-    // "'bar' is declared but its value is never read."
-    // "'baz' is declared but its value is never read."
-    //
 }
