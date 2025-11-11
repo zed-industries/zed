@@ -44,7 +44,7 @@ actions!(
 );
 
 const COPILOT_SETTINGS_PATH: &str = "/settings/copilot";
-const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
+const COPILOT_SETTINGS_URL: &str = concat!("https://github.com", "/settings/copilot");
 const PRIVACY_DOCS: &str = "https://zed.dev/docs/ai/privacy-and-security";
 
 struct CopilotErrorToast;
