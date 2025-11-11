@@ -1386,7 +1386,15 @@ impl Terminal {
     /// (This is a no-op for display-only terminals.)
     fn write_to_pty(&self, input: impl Into<Cow<'static, [u8]>>) {
         if let TerminalType::Pty { pty_tx, .. } = &self.terminal_type {
-            pty_tx.notify(input.into());
+            let input = input.into();
+            if log::log_enabled!(log::Level::Debug) {
+                if let Ok(str) = str::from_utf8(&input) {
+                    log::debug!("Writing to PTY: {:?}", str);
+                } else {
+                    log::debug!("Writing to PTY: {:?}", input);
+                }
+            }
+            pty_tx.notify(input);
         }
     }
 

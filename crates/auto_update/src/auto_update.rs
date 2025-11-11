@@ -350,8 +350,7 @@ impl AutoUpdater {
 
     pub fn start_polling(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         cx.spawn(async move |this, cx| {
-            #[cfg(target_os = "windows")]
-            {
+            if cfg!(target_os = "windows") {
                 use util::ResultExt;
 
                 cleanup_windows()
@@ -903,7 +902,6 @@ async fn install_release_macos(
     Ok(None)
 }
 
-#[cfg(target_os = "windows")]
 async fn cleanup_windows() -> Result<()> {
     use util::ResultExt;
 
