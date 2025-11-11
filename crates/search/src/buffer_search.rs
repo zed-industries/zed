@@ -1023,16 +1023,17 @@ impl BufferSearchBar {
                 .get(&searchable_item.downgrade())
                 .filter(|matches| !matches.is_empty())
         {
-            // If 'wrapscan' is disabled, searches do not wrap around the end of the file.
+            let new_match_index = searchable_item
+                .match_index_for_direction(matches, index, direction, count, window, cx);
+
+            // If 'search_wrap' is disabled, searches do not wrap around the file.
             if !EditorSettings::get_global(cx).search_wrap
-                && ((direction == Direction::Next && index + count >= matches.len())
-                    || (direction == Direction::Prev && index < count))
+                && ((direction == Direction::Next && new_match_index < index)
+                    || (direction == Direction::Prev && new_match_index > index))
             {
                 crate::show_no_more_matches(window, cx);
                 return;
             }
-            let new_match_index = searchable_item
-                .match_index_for_direction(matches, index, direction, count, window, cx);
 
             searchable_item.update_matches(matches, window, cx);
             searchable_item.activate_match(new_match_index, matches, collapse, window, cx);
