@@ -9,7 +9,7 @@ use task::ZedDebugConfig;
 use util::debug_panic;
 
 use std::sync::Arc;
-use sysinfo::System;
+use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
 use ui::{Context, Tooltip, prelude::*};
 use ui::{ListItem, ListItemSpacing};
 use workspace::{ModalView, Workspace};
@@ -362,7 +362,12 @@ fn get_processes_for_project(project: &Entity<Project>, cx: &mut App) -> Task<Ar
             Arc::from(processes.into_boxed_slice())
         })
     } else {
-        let mut processes: Box<[_]> = System::new_all()
+        let refresh_kind = RefreshKind::nothing().with_processes(
+            ProcessRefreshKind::nothing()
+                .without_tasks()
+                .with_cmd(UpdateKind::Always),
+        );
+        let mut processes: Box<[_]> = System::new_with_specifics(refresh_kind)
             .processes()
             .values()
             .map(|process| {
@@ -373,7 +378,7 @@ fn get_processes_for_project(project: &Entity<Project>, cx: &mut App) -> Task<Ar
                     command: process
                         .cmd()
                         .iter()
-                        .map(|s| s.to_string_lossy().to_string())
+                        .map(|s| s.to_string_lossy().into_owned())
                         .collect::<Vec<_>>(),
                 }
             })

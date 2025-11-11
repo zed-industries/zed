@@ -95,7 +95,6 @@ actions!(
 pub fn init(cx: &mut App) {
     assistant_slash_command::init(cx);
     terminal_panel::init(cx);
-    terminal::init(cx);
 
     register_serializable_item::<TerminalView>(cx);
 
@@ -234,9 +233,7 @@ impl TerminalView {
                 terminal_view.focus_out(window, cx);
             },
         );
-        let cursor_shape = TerminalSettings::get_global(cx)
-            .cursor_shape
-            .unwrap_or_default();
+        let cursor_shape = TerminalSettings::get_global(cx).cursor_shape;
 
         let scroll_handle = TerminalScrollHandle::new(terminal.read(cx));
 
@@ -427,7 +424,7 @@ impl TerminalView {
         let breadcrumb_visibility_changed = self.show_breadcrumbs != settings.toolbar.breadcrumbs;
         self.show_breadcrumbs = settings.toolbar.breadcrumbs;
 
-        let new_cursor_shape = settings.cursor_shape.unwrap_or_default();
+        let new_cursor_shape = settings.cursor_shape;
         let old_cursor_shape = self.cursor_shape;
         if old_cursor_shape != new_cursor_shape {
             self.cursor_shape = new_cursor_shape;
@@ -842,9 +839,7 @@ impl TerminalView {
                 .size(ButtonSize::Compact)
                 .icon_color(Color::Default)
                 .shape(ui::IconButtonShape::Square)
-                .tooltip(move |window, cx| {
-                    Tooltip::for_action("Rerun task", &RerunTask, window, cx)
-                })
+                .tooltip(move |_window, cx| Tooltip::for_action("Rerun task", &RerunTask, cx))
                 .on_click(move |_, window, cx| {
                     window.dispatch_action(Box::new(terminal_rerun_override(&task_id)), cx);
                 }),
@@ -1142,10 +1137,11 @@ impl Item for TerminalView {
     fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent> {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(false);
-        let pid = terminal.pty_info.pid_getter().fallback_pid();
+        let pid = terminal.pid_getter()?.fallback_pid();
 
         Some(TabTooltipContent::Custom(Box::new(move |_window, cx| {
-            cx.new(|_| TerminalTooltip::new(title.clone(), pid)).into()
+            cx.new(|_| TerminalTooltip::new(title.clone(), pid.as_u32()))
+                .into()
         })))
     }
 
@@ -1213,33 +1209,44 @@ impl Item for TerminalView {
         None
     }
 
+    fn buffer_kind(&self, _: &App) -> workspace::item::ItemBufferKind {
+        workspace::item::ItemBufferKind::Singleton
+    }
+
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>> {
-        let terminal = self
-            .project
-            .update(cx, |project, cx| {
-                let cwd = project
-                    .active_project_directory(cx)
-                    .map(|it| it.to_path_buf());
-                project.clone_terminal(self.terminal(), cx, || cwd)
+    ) -> Task<Option<Entity<Self>>> {
+        let Ok(terminal) = self.project.update(cx, |project, cx| {
+            let cwd = project
+                .active_project_directory(cx)
+                .map(|it| it.to_path_buf());
+            project.clone_terminal(self.terminal(), cx, cwd)
+        }) else {
+            return Task::ready(None);
+        };
+        cx.spawn_in(window, async move |this, cx| {
+            let terminal = terminal.await.log_err()?;
+            this.update_in(cx, |this, window, cx| {
+                cx.new(|cx| {
+                    TerminalView::new(
+                        terminal,
+                        this.workspace.clone(),
+                        workspace_id,
+                        this.project.clone(),
+                        window,
+                        cx,
+                    )
+                })
             })
-            .ok()?
-            .log_err()?;
-
-        Some(cx.new(|cx| {
-            TerminalView::new(
-                terminal,
-                self.workspace.clone(),
-                workspace_id,
-                self.project.clone(),
-                window,
-                cx,
-            )
-        }))
+            .ok()
+        })
     }
 
     fn is_dirty(&self, cx: &gpui::App) -> bool {
@@ -1255,10 +1262,6 @@ impl Item for TerminalView {
 
     fn can_save_as(&self, _cx: &App) -> bool {
         false
-    }
-
-    fn is_singleton(&self, _cx: &App) -> bool {
-        true
     }
 
     fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
@@ -1444,6 +1447,7 @@ impl SearchableItem for TerminalView {
         &mut self,
         index: usize,
         _: &[Self::Match],
+        _collapse: bool,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1687,10 +1691,7 @@ mod tests {
     pub async fn init_test(cx: &mut TestAppContext) -> (Entity<Project>, Entity<Workspace>) {
         let params = cx.update(AppState::test);
         cx.update(|cx| {
-            terminal::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
-            Project::init_settings(cx);
-            language::init(cx);
         });
 
         let project = Project::test(params.fs.clone(), [], cx).await;

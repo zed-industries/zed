@@ -24,7 +24,7 @@ The Zed PowerShell extensions will attempt to download [PowerShell Editor Servic
 
 If want to use a specific binary, you can specify in your that in your Zed settings.json:
 
-```json
+```json [settings]
   "lsp": {
     "powershell-es": {
       "binary": {

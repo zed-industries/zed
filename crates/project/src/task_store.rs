@@ -149,7 +149,7 @@ impl TaskStore {
             project_env: task_context.project_env.into_iter().collect(),
             cwd: task_context
                 .cwd
-                .map(|cwd| cwd.to_string_lossy().to_string()),
+                .map(|cwd| cwd.to_string_lossy().into_owned()),
             task_variables: task_context
                 .task_variables
                 .into_iter()
@@ -317,7 +317,7 @@ fn local_task_context_for_location(
     cx.spawn(async move |cx| {
         let project_env = environment
             .update(cx, |environment, cx| {
-                environment.get_buffer_environment(&location.buffer, &worktree_store, cx)
+                environment.buffer_environment(&location.buffer, &worktree_store, cx)
             })
             .ok()?
             .await;

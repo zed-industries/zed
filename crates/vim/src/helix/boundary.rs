@@ -166,14 +166,16 @@ impl DerefMut for Offset {
 }
 impl Offset {
     fn next(self, map: &DisplaySnapshot) -> Option<Self> {
-        let next = Self(map.buffer_snapshot.clip_offset(*self + 1, Bias::Right));
+        let next = Self(map.buffer_snapshot().clip_offset(*self + 1, Bias::Right));
         (*next > *self).then(|| next)
     }
     fn previous(self, map: &DisplaySnapshot) -> Option<Self> {
         if *self == 0 {
             return None;
         }
-        Some(Self(map.buffer_snapshot.clip_offset(*self - 1, Bias::Left)))
+        Some(Self(
+            map.buffer_snapshot().clip_offset(*self - 1, Bias::Left),
+        ))
     }
     fn range(
         start: (DisplayPoint, Bias),
@@ -388,7 +390,7 @@ impl ImmediateBoundary {
 impl BoundedObject for ImmediateBoundary {
     fn next_start(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset> {
         try_find_boundary(map, from, |left, right| {
-            let classifier = map.buffer_snapshot.char_classifier_at(*from);
+            let classifier = map.buffer_snapshot().char_classifier_at(*from);
             if outer {
                 self.is_outer_start(left, right, classifier)
             } else {
@@ -398,7 +400,7 @@ impl BoundedObject for ImmediateBoundary {
     }
     fn next_end(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset> {
         try_find_boundary(map, from, |left, right| {
-            let classifier = map.buffer_snapshot.char_classifier_at(*from);
+            let classifier = map.buffer_snapshot().char_classifier_at(*from);
             if outer {
                 self.is_outer_end(left, right, classifier)
             } else {
@@ -408,7 +410,7 @@ impl BoundedObject for ImmediateBoundary {
     }
     fn previous_start(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset> {
         try_find_preceding_boundary(map, from, |left, right| {
-            let classifier = map.buffer_snapshot.char_classifier_at(*from);
+            let classifier = map.buffer_snapshot().char_classifier_at(*from);
             if outer {
                 self.is_outer_start(left, right, classifier)
             } else {
@@ -418,7 +420,7 @@ impl BoundedObject for ImmediateBoundary {
     }
     fn previous_end(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset> {
         try_find_preceding_boundary(map, from, |left, right| {
-            let classifier = map.buffer_snapshot.char_classifier_at(*from);
+            let classifier = map.buffer_snapshot().char_classifier_at(*from);
             if outer {
                 self.is_outer_end(left, right, classifier)
             } else {
@@ -570,7 +572,7 @@ impl FuzzyBoundary {
         boundary_kind: Boundary,
     ) -> Option<Offset> {
         let generate_boundary_data = |left, right, point: Offset| {
-            let classifier = map.buffer_snapshot.char_classifier_at(*from);
+            let classifier = map.buffer_snapshot().char_classifier_at(*from);
             let reach_boundary = if outer && boundary_kind == Boundary::Start {
                 self.is_near_potential_outer_start(left, right, &classifier)
             } else if !outer && boundary_kind == Boundary::Start {
@@ -659,12 +661,12 @@ fn try_find_boundary_data<T>(
     boundary_information: impl Fn(char, char, Offset) -> Option<T>,
 ) -> Option<T> {
     let mut prev_ch = map
-        .buffer_snapshot
+        .buffer_snapshot()
         .reversed_chars_at(*from)
         .next()
         .unwrap_or('\0');
 
-    for ch in map.buffer_snapshot.chars_at(*from).chain(['\0']) {
+    for ch in map.buffer_snapshot().chars_at(*from).chain(['\0']) {
         if let Some(boundary_information) = boundary_information(prev_ch, ch, from) {
             return Some(boundary_information);
         }
@@ -700,9 +702,9 @@ fn try_find_preceding_boundary_data<T>(
     mut from: Offset,
     is_boundary: impl Fn(char, char, Offset) -> Option<T>,
 ) -> Option<T> {
-    let mut prev_ch = map.buffer_snapshot.chars_at(*from).next().unwrap_or('\0');
+    let mut prev_ch = map.buffer_snapshot().chars_at(*from).next().unwrap_or('\0');
 
-    for ch in map.buffer_snapshot.reversed_chars_at(*from).chain(['\0']) {
+    for ch in map.buffer_snapshot().reversed_chars_at(*from).chain(['\0']) {
         if let Some(boundary_information) = is_boundary(ch, prev_ch, from) {
             return Some(boundary_information);
         }

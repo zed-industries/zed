@@ -1027,7 +1027,7 @@ impl ContextProvider for BasicContextProvider {
             let path_style = worktree.path_style();
             task_variables.insert(
                 VariableName::WorktreeRoot,
-                worktree.abs_path().to_string_lossy().to_string(),
+                worktree.abs_path().to_string_lossy().into_owned(),
             );
             if let Some(current_file) = current_file.as_ref() {
                 let relative_path = current_file.path();
@@ -1062,7 +1062,7 @@ impl ContextProvider for BasicContextProvider {
                 task_variables.insert(VariableName::Dirname, dirname.into());
             }
 
-            task_variables.insert(VariableName::File, path.to_string_lossy().to_string());
+            task_variables.insert(VariableName::File, path.to_string_lossy().into_owned());
         }
 
         Task::ready(Ok(task_variables))

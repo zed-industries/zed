@@ -22,7 +22,6 @@ gpui.workspace = true
 language.workspace = true
 log.workspace = true
 postage.workspace = true
-project.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -32,7 +31,6 @@ text.workspace = true
 ui.workspace = true
 unicode-segmentation.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

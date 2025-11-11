@@ -358,8 +358,10 @@ message UpdateView {
         repeated Selection selections = 3;
         optional Selection pending_selection = 4;
         EditorAnchor scroll_top_anchor = 5;
-        float scroll_x = 6;
-        float scroll_y = 7;
+        reserved 6;
+        reserved 7;
+        double scroll_x = 8;
+        double scroll_y = 9;
     }
 }
 
@@ -381,8 +383,10 @@ message View {
         repeated Selection selections = 4;
         optional Selection pending_selection = 5;
         EditorAnchor scroll_top_anchor = 6;
-        float scroll_x = 7;
-        float scroll_y = 8;
+        reserved 7;
+        reserved 8;
+        double scroll_x = 9;
+        double scroll_y = 10;
     }
 
     message ChannelView {

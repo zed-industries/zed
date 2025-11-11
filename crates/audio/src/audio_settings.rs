@@ -1,9 +1,9 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::App;
-use settings::{Settings, SettingsStore};
+use settings::{RegisterSetting, Settings, SettingsStore};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, RegisterSetting)]
 pub struct AudioSettings {
     /// Opt into the new audio system.
     ///
@@ -42,7 +42,7 @@ pub struct AudioSettings {
 
 /// Configuration of audio in Zed
 impl Settings for AudioSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let audio = &content.audio.as_ref().unwrap();
         AudioSettings {
             rodio_audio: audio.rodio_audio.unwrap(),

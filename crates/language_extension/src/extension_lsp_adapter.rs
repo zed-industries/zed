@@ -33,7 +33,7 @@ impl WorktreeDelegate for WorktreeDelegateAdapter {
     }
 
     fn root_path(&self) -> String {
-        self.0.worktree_root_path().to_string_lossy().to_string()
+        self.0.worktree_root_path().to_string_lossy().into_owned()
     }
 
     async fn read_text_file(&self, path: &RelPath) -> Result<String> {
@@ -44,7 +44,7 @@ impl WorktreeDelegate for WorktreeDelegateAdapter {
         self.0
             .which(binary_name.as_ref())
             .await
-            .map(|path| path.to_string_lossy().to_string())
+            .map(|path| path.to_string_lossy().into_owned())
     }
 
     async fn shell_env(&self) -> Vec<(String, String)> {
@@ -463,11 +463,7 @@ fn build_code_label(
 
     let filter_range = label.filter_range.clone();
     text.get(filter_range.clone())?;
-    Some(CodeLabel {
-        text,
-        runs,
-        filter_range,
-    })
+    Some(CodeLabel::new(text, filter_range, runs))
 }
 
 fn lsp_completion_to_extension(value: lsp::CompletionItem) -> extension::Completion {
@@ -615,11 +611,7 @@ fn test_build_code_label() {
 
     assert_eq!(
         label,
-        CodeLabel {
-            text: label_text,
-            runs: label_runs,
-            filter_range: label.filter_range.clone()
-        }
+        CodeLabel::new(label_text, label.filter_range.clone(), label_runs)
     )
 }
 

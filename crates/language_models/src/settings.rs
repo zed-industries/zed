@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use collections::HashMap;
-use gpui::App;
-use settings::Settings;
+use settings::RegisterSetting;
 
 use crate::provider::{
     anthropic::AnthropicSettings, bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings,
@@ -12,11 +11,7 @@ use crate::provider::{
     vercel::VercelSettings, x_ai::XAiSettings,
 };
 
-/// Initializes the language model settings.
-pub fn init_settings(cx: &mut App) {
-    AllLanguageModelSettings::register(cx);
-}
-
+#[derive(Debug, RegisterSetting)]
 pub struct AllLanguageModelSettings {
     pub anthropic: AnthropicSettings,
     pub bedrock: AmazonBedrockSettings,
@@ -36,7 +31,7 @@ pub struct AllLanguageModelSettings {
 impl settings::Settings for AllLanguageModelSettings {
     const PRESERVED_KEYS: Option<&'static [&'static str]> = Some(&["version"]);
 
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let language_models = content.language_models.clone().unwrap();
         let anthropic = language_models.anthropic.unwrap();
         let bedrock = language_models.bedrock.unwrap();

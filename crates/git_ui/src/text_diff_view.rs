@@ -49,7 +49,7 @@ impl TextDiffView {
         let selection_data = source_editor.update(cx, |editor, cx| {
             let multibuffer = editor.buffer().read(cx);
             let source_buffer = multibuffer.as_singleton()?;
-            let selections = editor.selections.all::<Point>(cx);
+            let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
             let buffer_snapshot = source_buffer.read(cx);
             let first_selection = selections.first()?;
             let max_point = buffer_snapshot.max_point();
@@ -193,7 +193,7 @@ impl TextDiffView {
             .and_then(|b| {
                 b.read(cx)
                     .file()
-                    .map(|f| f.full_path(cx).compact().to_string_lossy().to_string())
+                    .map(|f| f.full_path(cx).compact().to_string_lossy().into_owned())
             })
             .unwrap_or("untitled".into());
 
@@ -324,10 +324,6 @@ impl Item for TextDiffView {
             .update(cx, |editor, cx| editor.deactivated(window, cx));
     }
 
-    fn is_singleton(&self, _: &App) -> bool {
-        false
-    }
-
     fn act_as_type<'a>(
         &'a self,
         type_id: TypeId,
@@ -454,7 +450,7 @@ mod tests {
     use gpui::{TestAppContext, VisualContext};
     use project::{FakeFs, Project};
     use serde_json::json;
-    use settings::{Settings, SettingsStore};
+    use settings::SettingsStore;
     use unindent::unindent;
     use util::{path, test::marked_text_ranges};
 
@@ -462,11 +458,7 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
-            workspace::init_settings(cx);
-            editor::init_settings(cx);
-            theme::ThemeSettings::register(cx)
+            theme::init(theme::LoadThemes::JustBase, cx);
         });
     }
 

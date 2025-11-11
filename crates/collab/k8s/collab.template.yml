@@ -214,11 +214,6 @@ spec:
                 secretKeyRef:
                   name: blob-store
                   key: bucket
-            - name: SLACK_PANICS_WEBHOOK
-              valueFrom:
-                secretKeyRef:
-                  name: slack
-                  key: panics_webhook
             - name: COMPLETE_WITH_LANGUAGE_MODEL_RATE_LIMIT_PER_HOUR
               value: "1000"
             - name: SUPERMAVEN_ADMIN_API_KEY

@@ -23,7 +23,6 @@ mod list;
 mod modal;
 mod navigable;
 mod notification;
-mod numeric_stepper;
 mod popover;
 mod popover_menu;
 mod progress;
@@ -38,6 +37,7 @@ mod tab;
 mod tab_bar;
 mod toggle;
 mod tooltip;
+mod tree_view_item;
 
 #[cfg(feature = "stories")]
 mod stories;
@@ -67,7 +67,6 @@ pub use list::*;
 pub use modal::*;
 pub use navigable::*;
 pub use notification::*;
-pub use numeric_stepper::*;
 pub use popover::*;
 pub use popover_menu::*;
 pub use progress::*;
@@ -82,6 +81,7 @@ pub use tab::*;
 pub use tab_bar::*;
 pub use toggle::*;
 pub use tooltip::*;
+pub use tree_view_item::*;
 
 #[cfg(feature = "stories")]
 pub use stories::*;

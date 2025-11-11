@@ -22,9 +22,9 @@ use dap::{
     inline_value::VariableLookupKind,
     messages::Message,
 };
-use fs::Fs;
+use fs::{Fs, RemoveOptions};
 use futures::{
-    StreamExt,
+    StreamExt, TryStreamExt as _,
     channel::mpsc::{self, UnboundedSender},
     future::{Shared, join_all},
 };
@@ -78,12 +78,15 @@ pub struct LocalDapStore {
     http_client: Arc<dyn HttpClient>,
     environment: Entity<ProjectEnvironment>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
+    is_headless: bool,
 }
 
 pub struct RemoteDapStore {
     remote_client: Entity<RemoteClient>,
     upstream_client: AnyProtoClient,
     upstream_project_id: u64,
+    node_runtime: NodeRuntime,
+    http_client: Arc<dyn HttpClient>,
 }
 
 pub struct DapStore {
@@ -134,17 +137,19 @@ impl DapStore {
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         worktree_store: Entity<WorktreeStore>,
         breakpoint_store: Entity<BreakpointStore>,
+        is_headless: bool,
         cx: &mut Context<Self>,
     ) -> Self {
         let mode = DapStoreMode::Local(LocalDapStore {
-            fs,
+            fs: fs.clone(),
             environment,
             http_client,
             node_runtime,
             toolchain_store,
+            is_headless,
         });
 
-        Self::new(mode, breakpoint_store, worktree_store, cx)
+        Self::new(mode, breakpoint_store, worktree_store, fs, cx)
     }
 
     pub fn new_remote(
@@ -152,15 +157,20 @@ impl DapStore {
         remote_client: Entity<RemoteClient>,
         breakpoint_store: Entity<BreakpointStore>,
         worktree_store: Entity<WorktreeStore>,
+        node_runtime: NodeRuntime,
+        http_client: Arc<dyn HttpClient>,
+        fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
     ) -> Self {
         let mode = DapStoreMode::Remote(RemoteDapStore {
             upstream_client: remote_client.read(cx).proto_client(),
             remote_client,
             upstream_project_id: project_id,
+            node_runtime,
+            http_client,
         });
 
-        Self::new(mode, breakpoint_store, worktree_store, cx)
+        Self::new(mode, breakpoint_store, worktree_store, fs, cx)
     }
 
     pub fn new_collab(
@@ -168,17 +178,55 @@ impl DapStore {
         _upstream_client: AnyProtoClient,
         breakpoint_store: Entity<BreakpointStore>,
         worktree_store: Entity<WorktreeStore>,
+        fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::new(DapStoreMode::Collab, breakpoint_store, worktree_store, cx)
+        Self::new(
+            DapStoreMode::Collab,
+            breakpoint_store,
+            worktree_store,
+            fs,
+            cx,
+        )
     }
 
     fn new(
         mode: DapStoreMode,
         breakpoint_store: Entity<BreakpointStore>,
         worktree_store: Entity<WorktreeStore>,
-        _cx: &mut Context<Self>,
+        fs: Arc<dyn Fs>,
+        cx: &mut Context<Self>,
     ) -> Self {
+        cx.background_spawn(async move {
+            let dir = paths::debug_adapters_dir().join("js-debug-companion");
+
+            let mut children = fs.read_dir(&dir).await?.try_collect::<Vec<_>>().await?;
+            children.sort_by_key(|child| semver::Version::parse(child.file_name()?.to_str()?).ok());
+
+            if let Some(child) = children.last()
+                && let Some(name) = child.file_name()
+                && let Some(name) = name.to_str()
+                && semver::Version::parse(name).is_ok()
+            {
+                children.pop();
+            }
+
+            for child in children {
+                fs.remove_dir(
+                    &child,
+                    RemoveOptions {
+                        recursive: true,
+                        ignore_if_not_exists: true,
+                    },
+                )
+                .await
+                .ok();
+            }
+
+            anyhow::Ok(())
+        })
+        .detach();
+
         Self {
             mode,
             next_session_id: 0,
@@ -213,16 +261,27 @@ impl DapStore {
                     .get(&adapter.name());
                 let user_installed_path = dap_settings.and_then(|s| match &s.binary {
                     DapBinary::Default => None,
-                    DapBinary::Custom(binary) => Some(PathBuf::from(binary)),
+                    DapBinary::Custom(binary) => {
+                        // if `binary` is absolute, `.join()` will keep it unmodified
+                        Some(worktree.read(cx).abs_path().join(PathBuf::from(binary)))
+                    }
                 });
                 let user_args = dap_settings.map(|s| s.args.clone());
+                let user_env = dap_settings.map(|s| s.env.clone());
 
                 let delegate = self.delegate(worktree, console, cx);
-                let cwd: Arc<Path> = worktree.read(cx).abs_path().as_ref().into();
 
+                let worktree = worktree.clone();
                 cx.spawn(async move |this, cx| {
                     let mut binary = adapter
-                        .get_binary(&delegate, &definition, user_installed_path, user_args, cx)
+                        .get_binary(
+                            &delegate,
+                            &definition,
+                            user_installed_path,
+                            user_args,
+                            user_env,
+                            cx,
+                        )
                         .await?;
 
                     let env = this
@@ -231,7 +290,7 @@ impl DapStore {
                                 .unwrap()
                                 .environment
                                 .update(cx, |environment, cx| {
-                                    environment.get_directory_environment(cwd, cx)
+                                    environment.worktree_environment(worktree, cx)
                                 })
                         })?
                         .await;
@@ -401,6 +460,15 @@ impl DapStore {
             });
         }
 
+        let (remote_client, node_runtime, http_client) = match &self.mode {
+            DapStoreMode::Local(_) => (None, None, None),
+            DapStoreMode::Remote(remote_dap_store) => (
+                Some(remote_dap_store.remote_client.clone()),
+                Some(remote_dap_store.node_runtime.clone()),
+                Some(remote_dap_store.http_client.clone()),
+            ),
+            DapStoreMode::Collab => (None, None, None),
+        };
         let session = Session::new(
             self.breakpoint_store.clone(),
             session_id,
@@ -409,6 +477,9 @@ impl DapStore {
             adapter,
             task_context,
             quirks,
+            remote_client,
+            node_runtime,
+            http_client,
             cx,
         );
 
@@ -535,9 +606,10 @@ impl DapStore {
             local_store.node_runtime.clone(),
             local_store.http_client.clone(),
             local_store.toolchain_store.clone(),
-            local_store.environment.update(cx, |env, cx| {
-                env.get_worktree_environment(worktree.clone(), cx)
-            }),
+            local_store
+                .environment
+                .update(cx, |env, cx| env.worktree_environment(worktree.clone(), cx)),
+            local_store.is_headless,
         ))
     }
 
@@ -870,6 +942,7 @@ pub struct DapAdapterDelegate {
     http_client: Arc<dyn HttpClient>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
     load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
+    is_headless: bool,
 }
 
 impl DapAdapterDelegate {
@@ -881,6 +954,7 @@ impl DapAdapterDelegate {
         http_client: Arc<dyn HttpClient>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
+        is_headless: bool,
     ) -> Self {
         Self {
             fs,
@@ -890,6 +964,7 @@ impl DapAdapterDelegate {
             node_runtime,
             toolchain_store,
             load_shell_env_task,
+            is_headless,
         }
     }
 }
@@ -952,5 +1027,9 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
         let abs_path = self.worktree.absolutize(&entry.path);
 
         self.fs.load(&abs_path).await
+    }
+
+    fn is_headless(&self) -> bool {
+        self.is_headless
     }
 }

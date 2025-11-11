@@ -192,7 +192,7 @@
             "font_weight": null
           },
           "comment": {
-            "color": "#abb5be8c",
+            "color": "#5c6773ff",
             "font_style": null,
             "font_weight": null
           },
@@ -239,7 +239,7 @@
           "hint": {
             "color": "#628b80ff",
             "font_style": null,
-            "font_weight": 700
+            "font_weight": null
           },
           "keyword": {
             "color": "#ff8f3fff",
@@ -583,7 +583,7 @@
             "font_weight": null
           },
           "comment": {
-            "color": "#787b8099",
+            "color": "#abb0b6ff",
             "font_style": null,
             "font_weight": null
           },
@@ -630,7 +630,7 @@
           "hint": {
             "color": "#8ca7c2ff",
             "font_style": null,
-            "font_weight": 700
+            "font_weight": null
           },
           "keyword": {
             "color": "#fa8d3eff",
@@ -974,7 +974,7 @@
             "font_weight": null
           },
           "comment": {
-            "color": "#b8cfe680",
+            "color": "#5c6773ff",
             "font_style": null,
             "font_weight": null
           },
@@ -1021,7 +1021,7 @@
           "hint": {
             "color": "#7399a3ff",
             "font_style": null,
-            "font_weight": 700
+            "font_weight": null
           },
           "keyword": {
             "color": "#ffad65ff",

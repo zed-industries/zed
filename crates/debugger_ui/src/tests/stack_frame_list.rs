@@ -341,8 +341,8 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
                     editor
                         .highlighted_rows::<editor::ActiveDebugLine>()
                         .map(|(range, _)| {
-                            let start = range.start.to_point(&snapshot.buffer_snapshot);
-                            let end = range.end.to_point(&snapshot.buffer_snapshot);
+                            let start = range.start.to_point(&snapshot.buffer_snapshot());
+                            let end = range.end.to_point(&snapshot.buffer_snapshot());
                             start.row..end.row
                         })
                         .collect::<Vec<_>>()
@@ -404,8 +404,8 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
                 editor
                     .highlighted_rows::<editor::ActiveDebugLine>()
                     .map(|(range, _)| {
-                        let start = range.start.to_point(&snapshot.buffer_snapshot);
-                        let end = range.end.to_point(&snapshot.buffer_snapshot);
+                        let start = range.start.to_point(&snapshot.buffer_snapshot());
+                        let end = range.end.to_point(&snapshot.buffer_snapshot());
                         start.row..end.row
                     })
                     .collect::<Vec<_>>()

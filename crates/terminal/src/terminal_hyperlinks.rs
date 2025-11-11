@@ -1127,7 +1127,7 @@ mod tests {
             let Ok(path) = url.to_file_path() else {
                 panic!("Failed to interpret file IRI `{iri_or_path}` as a path");
             };
-            iri_or_path = path.to_string_lossy().to_string();
+            iri_or_path = path.to_string_lossy().into_owned();
         }
 
         if cfg!(windows) {

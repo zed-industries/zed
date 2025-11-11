@@ -1,5 +1,6 @@
 mod acp;
 mod claude;
+mod codex;
 mod custom;
 mod gemini;
 
@@ -8,6 +9,7 @@ pub mod e2e_tests;
 
 pub use claude::*;
 use client::ProxySettings;
+pub use codex::*;
 use collections::HashMap;
 pub use custom::*;
 use fs::Fs;
@@ -99,6 +101,9 @@ pub fn load_proxy_env(cx: &mut App) -> HashMap<String, String> {
 
     if let Some(no_proxy) = read_no_proxy_from_env() {
         env.insert("NO_PROXY".to_owned(), no_proxy);
+    } else if proxy_url.is_some() {
+        // We sometimes need local MCP servers that we don't want to proxy
+        env.insert("NO_PROXY".to_owned(), "localhost,127.0.0.1".to_owned());
     }
 
     env

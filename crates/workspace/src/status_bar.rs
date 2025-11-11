@@ -9,6 +9,7 @@ use ui::{h_flex, prelude::*};
 use util::ResultExt;
 
 pub trait StatusItemView: Render {
+    /// Event callback that is triggered when the active pane item changes.
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn crate::ItemHandle>,

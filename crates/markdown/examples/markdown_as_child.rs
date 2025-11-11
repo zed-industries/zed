@@ -22,7 +22,6 @@ pub fn main() {
     Application::new().with_assets(Assets).run(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
-        language::init(cx);
         cx.bind_keys([KeyBinding::new("cmd-c", markdown::Copy, None)]);
 
         let node_runtime = NodeRuntime::unavailable();
@@ -97,7 +96,7 @@ impl Render for HelloWorld {
         div()
             .flex()
             .bg(rgb(0x2e7d32))
-            .size(Length::Definite(Pixels(700.0).into()))
+            .size(Length::Definite(px(700.0).into()))
             .justify_center()
             .items_center()
             .shadow_lg()

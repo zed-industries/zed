@@ -1,6 +1,8 @@
 mod image_info;
 mod image_viewer_settings;
 
+use std::path::Path;
+
 use anyhow::Context as _;
 use editor::{EditorSettings, items::entry_git_aware_label_color};
 use file_icons::FileIcons;
@@ -13,11 +15,12 @@ use language::{DiskState, File as _};
 use persistence::IMAGE_VIEWER;
 use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
-use theme::Theme;
+use theme::{Theme, ThemeSettings};
 use ui::prelude::*;
 use util::paths::PathExt;
 use workspace::{
     ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
+    invalid_item_view::InvalidItemView,
     item::{BreadcrumbText, Item, ProjectItem, SerializableItem, TabContentParams},
 };
 
@@ -98,13 +101,9 @@ impl Item for ImageView {
         f(self.image_item.entity_id(), self.image_item.read(cx))
     }
 
-    fn is_singleton(&self, _cx: &App) -> bool {
-        true
-    }
-
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
         let abs_path = self.image_item.read(cx).abs_path(cx)?;
-        let file_path = abs_path.compact().to_string_lossy().to_string();
+        let file_path = abs_path.compact().to_string_lossy().into_owned();
         Some(file_path.into())
     }
 
@@ -166,11 +165,17 @@ impl Item for ImageView {
 
     fn breadcrumbs(&self, _theme: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
         let text = breadcrumbs_text_for_image(self.project.read(cx), self.image_item.read(cx), cx);
+        let settings = ThemeSettings::get_global(cx);
+
         Some(vec![BreadcrumbText {
             text,
             highlights: None,
-            font: None,
+            font: Some(settings.buffer_font.clone()),
         }])
+    }
+
+    fn can_split(&self) -> bool {
+        true
     }
 
     fn clone_on_split(
@@ -178,19 +183,22 @@ impl Item for ImageView {
         _workspace_id: Option<WorkspaceId>,
         _: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| Self {
+        Task::ready(Some(cx.new(|cx| Self {
             image_item: self.image_item.clone(),
             project: self.project.clone(),
             focus_handle: cx.focus_handle(),
-        }))
+        })))
     }
 
     fn has_deleted_file(&self, cx: &App) -> bool {
         self.image_item.read(cx).file.disk_state() == DiskState::Deleted
+    }
+    fn buffer_kind(&self, _: &App) -> workspace::item::ItemBufferKind {
+        workspace::item::ItemBufferKind::Singleton
     }
 }
 
@@ -297,72 +305,79 @@ impl Focusable for ImageView {
 impl Render for ImageView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let image = self.image_item.read(cx).image.clone();
-        let checkered_background = |bounds: Bounds<Pixels>,
-                                    _,
-                                    window: &mut Window,
-                                    _cx: &mut App| {
-            let square_size = 32.0;
+        let checkered_background =
+            |bounds: Bounds<Pixels>, _, window: &mut Window, _cx: &mut App| {
+                let square_size: f32 = 32.0;
 
-            let start_y = bounds.origin.y.0;
-            let height = bounds.size.height.0;
-            let start_x = bounds.origin.x.0;
-            let width = bounds.size.width.0;
+                let start_y = bounds.origin.y.into();
+                let height: f32 = bounds.size.height.into();
+                let start_x = bounds.origin.x.into();
+                let width: f32 = bounds.size.width.into();
 
-            let mut y = start_y;
-            let mut x = start_x;
-            let mut color_swapper = true;
-            // draw checkerboard pattern
-            while y <= start_y + height {
-                // Keeping track of the grid in order to be resilient to resizing
-                let start_swap = color_swapper;
-                while x <= start_x + width {
-                    let rect =
-                        Bounds::new(point(px(x), px(y)), size(px(square_size), px(square_size)));
+                let mut y = start_y;
+                let mut x = start_x;
+                let mut color_swapper = true;
+                // draw checkerboard pattern
+                while y < start_y + height {
+                    // Keeping track of the grid in order to be resilient to resizing
+                    let start_swap = color_swapper;
+                    while x < start_x + width {
+                        // Clamp square dimensions to not exceed bounds
+                        let square_width = square_size.min(start_x + width - x);
+                        let square_height = square_size.min(start_y + height - y);
 
-                    let color = if color_swapper {
-                        opaque_grey(0.6, 0.4)
-                    } else {
-                        opaque_grey(0.7, 0.4)
-                    };
+                        let rect = Bounds::new(
+                            point(px(x), px(y)),
+                            size(px(square_width), px(square_height)),
+                        );
 
-                    window.paint_quad(fill(rect, color));
-                    color_swapper = !color_swapper;
-                    x += square_size;
+                        let color = if color_swapper {
+                            opaque_grey(0.6, 0.4)
+                        } else {
+                            opaque_grey(0.7, 0.4)
+                        };
+
+                        window.paint_quad(fill(rect, color));
+                        color_swapper = !color_swapper;
+                        x += square_size;
+                    }
+                    x = start_x;
+                    color_swapper = !start_swap;
+                    y += square_size;
                 }
-                x = start_x;
-                color_swapper = !start_swap;
-                y += square_size;
-            }
-        };
+            };
 
-        let checkered_background = canvas(|_, _, _| (), checkered_background)
-            .border_2()
-            .border_color(cx.theme().styles.colors.border)
-            .size_full()
-            .absolute()
-            .top_0()
-            .left_0();
-
-        div()
-            .track_focus(&self.focus_handle(cx))
-            .size_full()
-            .child(checkered_background)
-            .child(
-                div()
-                    .flex()
-                    .justify_center()
-                    .items_center()
-                    .w_full()
-                    // TODO: In browser based Tailwind & Flex this would be h-screen and we'd use w-full
-                    .h_full()
-                    .child(
-                        img(image)
-                            .object_fit(ObjectFit::ScaleDown)
-                            .max_w_full()
-                            .max_h_full()
-                            .id("img"),
-                    ),
-            )
+        div().track_focus(&self.focus_handle(cx)).size_full().child(
+            div()
+                .flex()
+                .justify_center()
+                .items_center()
+                .w_full()
+                // TODO: In browser based Tailwind & Flex this would be h-screen and we'd use w-full
+                .h_full()
+                .child(
+                    div()
+                        .relative()
+                        .max_w_full()
+                        .max_h_full()
+                        .child(
+                            canvas(|_, _, _| (), checkered_background)
+                                .border_2()
+                                .border_color(cx.theme().styles.colors.border)
+                                .size_full()
+                                .absolute()
+                                .top_0()
+                                .left_0(),
+                        )
+                        .child(
+                            img(image)
+                                .object_fit(ObjectFit::ScaleDown)
+                                .max_w_full()
+                                .max_h_full()
+                                .id("img"),
+                        ),
+                ),
+        )
     }
 }
 
@@ -381,10 +396,22 @@ impl ProjectItem for ImageView {
     {
         Self::new(item, project, window, cx)
     }
+
+    fn for_broken_project_item(
+        abs_path: &Path,
+        is_local: bool,
+        e: &anyhow::Error,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<InvalidItemView>
+    where
+        Self: Sized,
+    {
+        Some(InvalidItemView::new(abs_path, is_local, e, window, cx))
+    }
 }
 
 pub fn init(cx: &mut App) {
-    ImageViewerSettings::register(cx);
     workspace::register_project_item::<ImageView>(cx);
     workspace::register_serializable_item::<ImageView>(cx);
 }

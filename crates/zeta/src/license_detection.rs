@@ -390,8 +390,7 @@ mod tests {
     use gpui::TestAppContext;
     use rand::Rng as _;
     use serde_json::json;
-    use settings::{Settings as _, SettingsStore};
-    use worktree::WorktreeSettings;
+    use settings::SettingsStore;
 
     use super::*;
 
@@ -435,7 +434,7 @@ mod tests {
             let Ok(contents) = std::fs::read_to_string(entry.path()) else {
                 continue;
             };
-            let path_string = entry.path().to_string_lossy().to_string();
+            let path_string = entry.path().to_string_lossy().into_owned();
             let license = detect_license(&contents);
             match license {
                 Some(license) => detected.push((license, path_string)),
@@ -720,7 +719,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            WorktreeSettings::register(cx);
         });
     }
 

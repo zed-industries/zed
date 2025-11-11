@@ -4,7 +4,7 @@ use fs::Fs;
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
     KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, KeybindingKeystroke, Keystroke,
-    NoAction, SharedString,
+    NoAction, SharedString, register_action,
 };
 use schemars::{JsonSchema, json_schema};
 use serde::Deserialize;
@@ -17,8 +17,9 @@ use util::{
     markdown::{MarkdownEscaped, MarkdownInlineCode, MarkdownString},
 };
 
-use crate::{
-    SettingsAssets, append_top_level_array_value_in_json_text, parse_json_with_comments,
+use crate::SettingsAssets;
+use settings_json::{
+    append_top_level_array_value_in_json_text, parse_json_with_comments,
     replace_top_level_array_value_in_json_text,
 };
 
@@ -150,6 +151,9 @@ pub enum KeymapFileLoadResult {
 
 impl KeymapFile {
     pub fn parse(content: &str) -> anyhow::Result<Self> {
+        if content.trim().is_empty() {
+            return Ok(Self(Vec::new()));
+        }
         parse_json_with_comments::<Self>(content)
     }
 
@@ -211,11 +215,6 @@ impl KeymapFile {
     }
 
     pub fn load(content: &str, cx: &App) -> KeymapFileLoadResult {
-        if content.is_empty() {
-            return KeymapFileLoadResult::Success {
-                key_bindings: Vec::new(),
-            };
-        }
         let keymap_file = match Self::parse(content) {
             Ok(keymap_file) => keymap_file,
             Err(error) => {
@@ -330,7 +329,40 @@ impl KeymapFile {
         use_key_equivalents: bool,
         cx: &App,
     ) -> std::result::Result<KeyBinding, String> {
-        let (build_result, action_input_string) = match &action.0 {
+        let (action, action_input_string) = Self::build_keymap_action(action, cx)?;
+
+        let key_binding = match KeyBinding::load(
+            keystrokes,
+            action,
+            context,
+            use_key_equivalents,
+            action_input_string.map(SharedString::from),
+            cx.keyboard_mapper().as_ref(),
+        ) {
+            Ok(key_binding) => key_binding,
+            Err(InvalidKeystrokeError { keystroke }) => {
+                return Err(format!(
+                    "invalid keystroke {}. {}",
+                    MarkdownInlineCode(&format!("\"{}\"", &keystroke)),
+                    KEYSTROKE_PARSE_EXPECTED_MESSAGE
+                ));
+            }
+        };
+
+        if let Some(validator) = KEY_BINDING_VALIDATORS.get(&key_binding.action().type_id()) {
+            match validator.validate(&key_binding) {
+                Ok(()) => Ok(key_binding),
+                Err(error) => Err(error.0),
+            }
+        } else {
+            Ok(key_binding)
+        }
+    }
+
+    pub fn parse_action(
+        action: &KeymapAction,
+    ) -> Result<Option<(&String, Option<&Value>)>, String> {
+        let name_and_input = match &action.0 {
             Value::Array(items) => {
                 if items.len() != 2 {
                     return Err(format!(
@@ -346,15 +378,10 @@ impl KeymapFile {
                         MarkdownInlineCode(&action.0.to_string())
                     ));
                 };
-                let action_input = items[1].clone();
-                let action_input_string = action_input.to_string();
-                (
-                    cx.build_action(name, Some(action_input)),
-                    Some(action_input_string),
-                )
+                Some((name, Some(&items[1])))
             }
-            Value::String(name) => (cx.build_action(name, None), None),
-            Value::Null => (Ok(NoAction.boxed_clone()), None),
+            Value::String(name) => Some((name, None)),
+            Value::Null => None,
             _ => {
                 return Err(format!(
                     "expected two-element array of `[name, input]`. \
@@ -362,6 +389,33 @@ impl KeymapFile {
                     MarkdownInlineCode(&action.0.to_string())
                 ));
             }
+        };
+        Ok(name_and_input)
+    }
+
+    fn build_keymap_action(
+        action: &KeymapAction,
+        cx: &App,
+    ) -> std::result::Result<(Box<dyn Action>, Option<String>), String> {
+        let (build_result, action_input_string) = match Self::parse_action(action)? {
+            Some((name, action_input)) if name.as_str() == ActionSequence::name_for_type() => {
+                match action_input {
+                    Some(action_input) => (
+                        ActionSequence::build_sequence(action_input.clone(), cx),
+                        None,
+                    ),
+                    None => (Err(ActionSequence::expected_array_error()), None),
+                }
+            }
+            Some((name, Some(action_input))) => {
+                let action_input_string = action_input.to_string();
+                (
+                    cx.build_action(name, Some(action_input.clone())),
+                    Some(action_input_string),
+                )
+            }
+            Some((name, None)) => (cx.build_action(name, None), None),
+            None => (Ok(NoAction.boxed_clone()), None),
         };
 
         let action = match build_result {
@@ -391,32 +445,7 @@ impl KeymapFile {
             },
         };
 
-        let key_binding = match KeyBinding::load(
-            keystrokes,
-            action,
-            context,
-            use_key_equivalents,
-            action_input_string.map(SharedString::from),
-            cx.keyboard_mapper().as_ref(),
-        ) {
-            Ok(key_binding) => key_binding,
-            Err(InvalidKeystrokeError { keystroke }) => {
-                return Err(format!(
-                    "invalid keystroke {}. {}",
-                    MarkdownInlineCode(&format!("\"{}\"", &keystroke)),
-                    KEYSTROKE_PARSE_EXPECTED_MESSAGE
-                ));
-            }
-        };
-
-        if let Some(validator) = KEY_BINDING_VALIDATORS.get(&key_binding.action().type_id()) {
-            match validator.validate(&key_binding) {
-                Ok(()) => Ok(key_binding),
-                Err(error) => Err(error.0),
-            }
-        } else {
-            Ok(key_binding)
-        }
+        Ok((action, action_input_string))
     }
 
     /// Creates a JSON schema generator, suitable for generating json schemas
@@ -1024,6 +1053,119 @@ impl From<KeyBindingMetaIndex> for KeybindSource {
 impl From<KeybindSource> for KeyBindingMetaIndex {
     fn from(source: KeybindSource) -> Self {
         source.meta()
+    }
+}
+
+/// Runs a sequence of actions. Does not wait for asynchronous actions to complete before running
+/// the next action. Currently only works in workspace windows.
+///
+/// This action is special-cased in keymap parsing to allow it to access `App` while parsing, so
+/// that it can parse its input actions.
+pub struct ActionSequence(pub Vec<Box<dyn Action>>);
+
+register_action!(ActionSequence);
+
+impl ActionSequence {
+    fn build_sequence(
+        value: Value,
+        cx: &App,
+    ) -> std::result::Result<Box<dyn Action>, ActionBuildError> {
+        match value {
+            Value::Array(values) => {
+                let actions = values
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, action)| {
+                        match KeymapFile::build_keymap_action(&KeymapAction(action), cx) {
+                            Ok((action, _)) => Ok(action),
+                            Err(err) => {
+                                return Err(ActionBuildError::BuildError {
+                                    name: Self::name_for_type().to_string(),
+                                    error: anyhow::anyhow!(
+                                        "error at sequence index {index}: {err}"
+                                    ),
+                                });
+                            }
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Box::new(Self(actions)))
+            }
+            _ => Err(Self::expected_array_error()),
+        }
+    }
+
+    fn expected_array_error() -> ActionBuildError {
+        ActionBuildError::BuildError {
+            name: Self::name_for_type().to_string(),
+            error: anyhow::anyhow!("expected array of actions"),
+        }
+    }
+}
+
+impl Action for ActionSequence {
+    fn name(&self) -> &'static str {
+        Self::name_for_type()
+    }
+
+    fn name_for_type() -> &'static str
+    where
+        Self: Sized,
+    {
+        "action::Sequence"
+    }
+
+    fn partial_eq(&self, action: &dyn Action) -> bool {
+        action
+            .as_any()
+            .downcast_ref::<Self>()
+            .map_or(false, |other| {
+                self.0.len() == other.0.len()
+                    && self
+                        .0
+                        .iter()
+                        .zip(other.0.iter())
+                        .all(|(a, b)| a.partial_eq(b.as_ref()))
+            })
+    }
+
+    fn boxed_clone(&self) -> Box<dyn Action> {
+        Box::new(ActionSequence(
+            self.0
+                .iter()
+                .map(|action| action.boxed_clone())
+                .collect::<Vec<_>>(),
+        ))
+    }
+
+    fn build(_value: Value) -> Result<Box<dyn Action>> {
+        Err(anyhow::anyhow!(
+            "{} cannot be built directly",
+            Self::name_for_type()
+        ))
+    }
+
+    fn action_json_schema(generator: &mut schemars::SchemaGenerator) -> Option<schemars::Schema> {
+        let keymap_action_schema = generator.subschema_for::<KeymapAction>();
+        Some(json_schema!({
+            "type": "array",
+            "items": keymap_action_schema
+        }))
+    }
+
+    fn deprecated_aliases() -> &'static [&'static str] {
+        &[]
+    }
+
+    fn deprecation_message() -> Option<&'static str> {
+        None
+    }
+
+    fn documentation() -> Option<&'static str> {
+        Some(
+            "Runs a sequence of actions.\n\n\
+            NOTE: This does **not** wait for asynchronous actions to complete before running the next action.",
+        )
     }
 }
 

@@ -330,6 +330,7 @@ async fn upload_minidump(
             metadata.init.release_channel.clone(),
         )
         .text("sentry[tags][version]", metadata.init.zed_version.clone())
+        .text("sentry[tags][binary]", metadata.init.binary.clone())
         .text("sentry[release]", metadata.init.commit_sha.clone())
         .text("platform", "rust");
     let mut panic_message = "".to_owned();

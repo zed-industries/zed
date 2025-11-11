@@ -35,6 +35,9 @@
 //! being created (unless no tests were run). These results can be automatically
 //! compared. To do so, run `cargo perf-compare new-ident old-ident`.
 //!
+//! To save the markdown output to a file instead, run `cargo perf-compare --save=$FILE
+//! new-ident old-ident`.
+//!
 //! NB: All files matching `.perf-runs/ident.*.json` will be considered when
 //! doing this comparison, so ensure there aren't leftover files in your `.perf-runs`
 //! directory that might match that!
@@ -43,11 +46,13 @@
 //! This should probably not be called manually unless you're working on the profiler
 //! itself; use the `cargo perf-test` alias (after building this crate) instead.
 
-use perf::{FailKind, Importance, Output, TestMdata, Timings, consts};
+mod implementation;
+
+use implementation::{FailKind, Importance, Output, TestMdata, Timings, consts};
 
 use std::{
     fs::OpenOptions,
-    io::Write,
+    io::{Read, Write},
     num::NonZero,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -91,7 +96,7 @@ impl OutputKind<'_> {
     /// Logs the output of a run as per the `OutputKind`.
     fn log(&self, output: &Output, t_bin: &str) {
         match self {
-            OutputKind::Markdown => print!("{output}"),
+            OutputKind::Markdown => println!("{output}"),
             OutputKind::Json(ident) => {
                 // We're going to be in tooling/perf/$whatever.
                 let wspace_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
@@ -215,8 +220,23 @@ fn parse_mdata(t_bin: &str, mdata_fn: &str) -> Result<TestMdata, FailKind> {
 
 /// Compares the perf results of two profiles as per the arguments passed in.
 fn compare_profiles(args: &[String]) {
-    let ident_new = args.first().expect("FATAL: missing identifier for new run");
-    let ident_old = args.get(1).expect("FATAL: missing identifier for old run");
+    let mut save_to = None;
+    let mut ident_idx = 0;
+    args.first().inspect(|a| {
+        if a.starts_with("--save") {
+            save_to = Some(
+                a.strip_prefix("--save=")
+                    .expect("FATAL: save param formatted incorrectly"),
+            );
+            ident_idx = 1;
+        }
+    });
+    let ident_new = args
+        .get(ident_idx)
+        .expect("FATAL: missing identifier for new run");
+    let ident_old = args
+        .get(ident_idx + 1)
+        .expect("FATAL: missing identifier for old run");
     let wspace_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let runs_dir = PathBuf::from(&wspace_dir)
         .join("..")
@@ -246,8 +266,14 @@ fn compare_profiles(args: &[String]) {
                 let prefix = elems.next().unwrap();
                 assert_eq!("json", elems.next().unwrap());
                 assert!(elems.next().is_none());
-                let handle = OpenOptions::new().read(true).open(entry.path()).unwrap();
-                let o_other: Output = serde_json::from_reader(handle).unwrap();
+                let mut buffer = Vec::new();
+                let _ = OpenOptions::new()
+                    .read(true)
+                    .open(entry.path())
+                    .unwrap()
+                    .read_to_end(&mut buffer)
+                    .unwrap();
+                let o_other: Output = serde_json::from_slice(&buffer).unwrap();
                 output.merge(o_other, prefix);
             };
 
@@ -260,7 +286,17 @@ fn compare_profiles(args: &[String]) {
     }
 
     let res = outputs_new.compare_perf(outputs_old);
-    println!("{res}");
+    if let Some(filename) = save_to {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(filename)
+            .expect("FATAL: couldn't save run results to file");
+        file.write_all(format!("{res}").as_bytes()).unwrap();
+    } else {
+        println!("{res}");
+    }
 }
 
 /// Runs a test binary, filtering out tests which aren't marked for perf triage
@@ -377,10 +413,26 @@ fn triage_test(
     }
 }
 
+/// Try to find the hyperfine binary the user has installed.
+fn hyp_binary() -> Option<Command> {
+    const HYP_PATH: &str = "hyperfine";
+    const HYP_HOME: &str = "~/.cargo/bin/hyperfine";
+    if Command::new(HYP_PATH).output().is_err() {
+        if Command::new(HYP_HOME).output().is_err() {
+            None
+        } else {
+            Some(Command::new(HYP_HOME))
+        }
+    } else {
+        Some(Command::new(HYP_PATH))
+    }
+}
+
 /// Profiles a given test with hyperfine, returning the mean and standard deviation
 /// for its runtime. If the test errors, returns `None` instead.
 fn hyp_profile(t_bin: &str, t_name: &str, iterations: NonZero<usize>) -> Option<Timings> {
-    let mut perf_cmd = Command::new("hyperfine");
+    let mut perf_cmd = hyp_binary().expect("Couldn't find the Hyperfine binary on the system");
+
     // Warm up the cache and print markdown output to stdout, which we parse.
     perf_cmd.args([
         "--style",

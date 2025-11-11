@@ -9,7 +9,10 @@ use gpui::{
     Action, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ListState,
     Subscription, Task, WeakEntity, list,
 };
-use util::debug_panic;
+use util::{
+    debug_panic,
+    paths::{PathStyle, is_absolute},
+};
 
 use crate::{StackTraceView, ToggleUserFrames};
 use language::PointUtf16;
@@ -470,8 +473,12 @@ impl StackFrameList {
         stack_frame.source.as_ref().and_then(|s| {
             s.path
                 .as_deref()
+                .filter(|path| {
+                    // Since we do not know if we are debugging on the host or (a remote/WSL) target,
+                    // we need to check if either the path is absolute as Posix or Windows.
+                    is_absolute(path, PathStyle::Posix) || is_absolute(path, PathStyle::Windows)
+                })
                 .map(|path| Arc::<Path>::from(Path::new(path)))
-                .filter(|path| path.is_absolute())
         })
     }
 
@@ -559,6 +566,7 @@ impl StackFrameList {
                 this.activate_selected_entry(window, cx);
             }))
             .hover(|style| style.bg(cx.theme().colors().element_hover).cursor_pointer())
+            .overflow_x_scroll()
             .child(
                 v_flex()
                     .gap_0p5()
@@ -865,8 +873,8 @@ impl StackFrameList {
                     "filter-by-visible-worktree-stack-frame-list",
                     IconName::ListFilter,
                 )
-                .tooltip(move |window, cx| {
-                    Tooltip::for_action(tooltip_title, &ToggleUserFrames, window, cx)
+                .tooltip(move |_window, cx| {
+                    Tooltip::for_action(tooltip_title, &ToggleUserFrames, cx)
                 })
                 .toggle_state(self.list_filter == StackFrameFilter::OnlyUserFrames)
                 .icon_size(IconSize::Small)

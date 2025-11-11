@@ -130,9 +130,17 @@ impl ContextServerConfiguration {
                     .ok()
                     .flatten()?;
 
-                let command = descriptor.command(worktree_store, cx).await.log_err()?;
-
-                Some(ContextServerConfiguration::Extension { command, settings })
+                match descriptor.command(worktree_store, cx).await {
+                    Ok(command) => {
+                        Some(ContextServerConfiguration::Extension { command, settings })
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to create context server configuration from settings: {e:#}"
+                        );
+                        None
+                    }
+                }
             }
         }
     }
@@ -472,22 +480,23 @@ impl ContextServerStore {
         configuration: Arc<ContextServerConfiguration>,
         cx: &mut Context<Self>,
     ) -> Arc<ContextServer> {
-        let root_path = self
-            .project
-            .read_with(cx, |project, cx| project.active_project_directory(cx))
-            .ok()
-            .flatten()
-            .or_else(|| {
-                self.worktree_store.read_with(cx, |store, cx| {
-                    store.visible_worktrees(cx).fold(None, |acc, item| {
-                        if acc.is_none() {
-                            item.read(cx).root_dir()
-                        } else {
-                            acc
+        let project = self.project.upgrade();
+        let mut root_path = None;
+        if let Some(project) = project {
+            let project = project.read(cx);
+            if project.is_local() {
+                if let Some(path) = project.active_project_directory(cx) {
+                    root_path = Some(path);
+                } else {
+                    for worktree in self.worktree_store.read(cx).visible_worktrees(cx) {
+                        if let Some(path) = worktree.read(cx).root_dir() {
+                            root_path = Some(path);
+                            break;
                         }
-                    })
-                })
-            });
+                    }
+                }
+            }
+        };
 
         if let Some(factory) = self.context_server_factory.as_ref() {
             factory(id, configuration)
@@ -1298,7 +1307,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            Project::init_settings(cx);
             let mut settings = ProjectSettings::get_global(cx).clone();
             for (id, config) in context_server_configurations {
                 settings.context_servers.insert(id, config);

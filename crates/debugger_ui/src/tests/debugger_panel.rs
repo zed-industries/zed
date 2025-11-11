@@ -351,7 +351,7 @@ async fn test_handle_successful_run_in_terminal_reverse_request(
         .fake_reverse_request::<RunInTerminal>(RunInTerminalRequestArguments {
             kind: None,
             title: None,
-            cwd: std::env::temp_dir().to_string_lossy().to_string(),
+            cwd: std::env::temp_dir().to_string_lossy().into_owned(),
             args: vec![],
             env: None,
             args_can_be_interpreted_by_shell: None,
@@ -1604,7 +1604,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
 
         let point = editor
             .snapshot(window, cx)
-            .buffer_snapshot
+            .buffer_snapshot()
             .summary_for_anchor::<language::Point>(&active_debug_lines.first().unwrap().0.start);
 
         assert_eq!(point.row, 1);
@@ -1679,7 +1679,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
 
         let point = editor
             .snapshot(window, cx)
-            .buffer_snapshot
+            .buffer_snapshot()
             .summary_for_anchor::<language::Point>(&active_debug_lines.first().unwrap().0.start);
 
         assert_eq!(point.row, 2);

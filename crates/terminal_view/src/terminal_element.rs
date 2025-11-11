@@ -114,8 +114,20 @@ impl BatchedTextRun {
     }
 
     fn append_char(&mut self, c: char) {
+        self.append_char_internal(c, true);
+    }
+
+    fn append_zero_width_chars(&mut self, chars: &[char]) {
+        for &c in chars {
+            self.append_char_internal(c, false);
+        }
+    }
+
+    fn append_char_internal(&mut self, c: char, counts_cell: bool) {
         self.text.push(c);
-        self.cell_count += 1;
+        if counts_cell {
+            self.cell_count += 1;
+        }
         self.style.len += c.len_utf8();
     }
 
@@ -380,7 +392,8 @@ impl TerminalElement {
                     continue;
                 }
                 // Update tracking for next iteration
-                previous_cell_had_extras = cell.extra.is_some();
+                previous_cell_had_extras =
+                    matches!(cell.zerowidth(), Some(chars) if !chars.is_empty());
 
                 //Layout current cell text
                 {
@@ -397,6 +410,7 @@ impl TerminalElement {
                         );
 
                         let cell_point = AlacPoint::new(alac_line, cell.point.column.0 as i32);
+                        let zero_width_chars = cell.zerowidth();
 
                         // Try to batch with existing run
                         if let Some(ref mut batch) = current_batch {
@@ -406,25 +420,36 @@ impl TerminalElement {
                                     == cell_point.column
                             {
                                 batch.append_char(cell.c);
+                                if let Some(chars) = zero_width_chars {
+                                    batch.append_zero_width_chars(chars);
+                                }
                             } else {
                                 // Flush current batch and start new one
                                 let old_batch = current_batch.take().unwrap();
                                 batched_runs.push(old_batch);
-                                current_batch = Some(BatchedTextRun::new_from_char(
+                                let mut new_batch = BatchedTextRun::new_from_char(
                                     cell_point,
                                     cell.c,
                                     cell_style,
                                     text_style.font_size,
-                                ));
+                                );
+                                if let Some(chars) = zero_width_chars {
+                                    new_batch.append_zero_width_chars(chars);
+                                }
+                                current_batch = Some(new_batch);
                             }
                         } else {
                             // Start new batch
-                            current_batch = Some(BatchedTextRun::new_from_char(
+                            let mut new_batch = BatchedTextRun::new_from_char(
                                 cell_point,
                                 cell.c,
                                 cell_style,
                                 text_style.font_size,
-                            ));
+                            );
+                            if let Some(chars) = zero_width_chars {
+                                new_batch.append_zero_width_chars(chars);
+                            }
+                            current_batch = Some(new_batch);
                         }
                     };
                 }
@@ -512,9 +537,10 @@ impl TerminalElement {
 
             // Private Use Area - Powerline separator symbols only
             | 0xE0B0..=0xE0B7 // Powerline separators: triangles (E0B0-E0B3) and half circles (E0B4-E0B7)
-            | 0xE0B8..=0xE0BF // Additional Powerline separators: angles, flames, etc.
-            | 0xE0C0..=0xE0C8 // Powerline separators: pixelated triangles, curves
-            | 0xE0CC..=0xE0D4 // Powerline separators: rounded triangles, ice/lego style
+            | 0xE0B8..=0xE0BF // Powerline separators: corner triangles
+            | 0xE0C0..=0xE0CA // Powerline separators: flames (E0C0-E0C3), pixelated (E0C4-E0C7), and ice (E0C8 & E0CA)
+            | 0xE0CC..=0xE0D1 // Powerline separators: honeycombs (E0CC-E0CD) and lego (E0CE-E0D1)
+            | 0xE0D2..=0xE0D7 // Powerline separators: trapezoid (E0D2 & E0D4) and inverted triangles (E0D6-E0D7)
         )
     }
 
@@ -809,12 +835,11 @@ impl Element for TerminalElement {
                 total_lines: _,
             } => {
                 let rem_size = window.rem_size();
-                let line_height = window.text_style().font_size.to_pixels(rem_size)
+                let line_height = f32::from(window.text_style().font_size.to_pixels(rem_size))
                     * TerminalSettings::get_global(cx)
                         .line_height
                         .value()
-                        .to_pixels(rem_size)
-                        .0;
+                        .to_pixels(rem_size);
                 (displayed_lines * line_height).into()
             }
             ContentMode::Scrollable => {
@@ -939,7 +964,7 @@ impl Element for TerminalElement {
                     let rem_size = window.rem_size();
                     let font_pixels = text_style.font_size.to_pixels(rem_size);
                     // TODO: line_height should be an f32 not an AbsoluteLength.
-                    let line_height = font_pixels * line_height.to_pixels(rem_size).0;
+                    let line_height = f32::from(font_pixels) * line_height.to_pixels(rem_size);
                     let font_id = cx.text_system().resolve_font(&text_style.font());
 
                     let cell_width = text_system
@@ -1088,9 +1113,7 @@ impl Element for TerminalElement {
                                 len,
                                 font: text_style.font(),
                                 color: theme.colors().terminal_ansi_background,
-                                background_color: None,
-                                underline: Default::default(),
-                                strikethrough: None,
+                                ..Default::default()
                             }],
                             None,
                         )
@@ -1298,9 +1321,8 @@ impl Element for TerminalElement {
                                         len: text_to_mark.len(),
                                         font: ime_style.font(),
                                         color: ime_style.color,
-                                        background_color: None,
                                         underline: ime_style.underline,
-                                        strikethrough: None,
+                                        ..Default::default()
                                     }],
                                     None
                                 );
@@ -1640,6 +1662,8 @@ mod tests {
         assert!(TerminalElement::is_decorative_character('\u{E0B2}')); // Powerline left triangle
         assert!(TerminalElement::is_decorative_character('\u{E0B4}')); // Powerline right half circle (the actual issue!)
         assert!(TerminalElement::is_decorative_character('\u{E0B6}')); // Powerline left half circle
+        assert!(TerminalElement::is_decorative_character('\u{E0CA}')); // Powerline mirrored ice waveform
+        assert!(TerminalElement::is_decorative_character('\u{E0D7}')); // Powerline left triangle inverted
 
         // Characters that should NOT be considered decorative
         assert!(!TerminalElement::is_decorative_character('A')); // Regular letter
@@ -1818,27 +1842,21 @@ mod tests {
             len: 1,
             font: font("Helvetica"),
             color: Hsla::red(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            ..Default::default()
         };
 
         let style2 = TextRun {
             len: 1,
             font: font("Helvetica"),
             color: Hsla::red(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            ..Default::default()
         };
 
         let style3 = TextRun {
             len: 1,
             font: font("Helvetica"),
             color: Hsla::blue(), // Different color
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            ..Default::default()
         };
 
         let font_size = AbsoluteLength::Pixels(px(12.0));
@@ -1857,9 +1875,7 @@ mod tests {
             len: 1,
             font: font("Helvetica"),
             color: Hsla::red(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            ..Default::default()
         };
 
         let font_size = AbsoluteLength::Pixels(px(12.0));
@@ -1888,9 +1904,7 @@ mod tests {
             len: 1,
             font: font("Helvetica"),
             color: Hsla::red(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            ..Default::default()
         };
 
         let font_size = AbsoluteLength::Pixels(px(12.0));
@@ -1912,6 +1926,26 @@ mod tests {
         assert_eq!(batch.text, "xy😀");
         assert_eq!(batch.cell_count, 3);
         assert_eq!(batch.style.len, 6); // 1 + 1 + 4 bytes for emoji
+    }
+
+    #[test]
+    fn test_batched_text_run_append_zero_width_char() {
+        let style = TextRun {
+            len: 1,
+            font: font("Helvetica"),
+            color: Hsla::red(),
+            ..Default::default()
+        };
+
+        let font_size = AbsoluteLength::Pixels(px(12.0));
+        let mut batch = BatchedTextRun::new_from_char(AlacPoint::new(0, 0), 'x', style, font_size);
+
+        let combining = '\u{0301}';
+        batch.append_zero_width_chars(&[combining]);
+
+        assert_eq!(batch.text, format!("x{}", combining));
+        assert_eq!(batch.cell_count, 1);
+        assert_eq!(batch.style.len, 1 + combining.len_utf8());
     }
 
     #[test]

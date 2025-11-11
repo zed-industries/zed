@@ -252,7 +252,7 @@ impl sqlez::bindable::Bind for SerializedPixels {
         statement: &sqlez::statement::Statement,
         start_index: i32,
     ) -> anyhow::Result<i32> {
-        let this: i32 = self.0.0 as i32;
+        let this: i32 = u32::from(self.0) as _;
         this.bind(statement, start_index)
     }
 }
@@ -791,12 +791,11 @@ impl WorkspaceDb {
                     remote_connection_id IS ?
                 LIMIT 1
             })
-            .map(|mut prepared_statement| {
+            .and_then(|mut prepared_statement| {
                 (prepared_statement)((
                     root_paths.serialize().paths,
                     remote_connection_id.map(|id| id.0 as i32),
                 ))
-                .unwrap()
             })
             .context("No workspaces found")
             .warn_on_err()
@@ -997,6 +996,13 @@ impl WorkspaceDb {
                         }
                     }
                 }
+
+                conn.exec_bound(
+                    sql!(
+                        DELETE FROM user_toolchains WHERE workspace_id = ?1;
+                    )
+                )?(workspace.id).context("Clearing old user toolchains")?;
+
                 for (scope, toolchains) in workspace.user_toolchains {
                     for toolchain in toolchains {
                         let query = sql!(INSERT OR REPLACE INTO user_toolchains(remote_connection_id, workspace_id, worktree_id, relative_worktree_path, language_name, name, path, raw_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8));
@@ -1340,7 +1346,21 @@ impl WorkspaceDb {
                 continue;
             }
 
-            if paths.paths().iter().all(|path| path.exists())
+            let has_wsl_path = if cfg!(windows) {
+                paths
+                    .paths()
+                    .iter()
+                    .any(|path| util::paths::WslPath::from_path(path).is_some())
+            } else {
+                false
+            };
+
+            // Delete the workspace if any of the paths are WSL paths.
+            // If a local workspace points to WSL, this check will cause us to wait for the
+            // WSL VM and file server to boot up. This can block for many seconds.
+            // Supported scenarios use remote workspaces.
+            if !has_wsl_path
+                && paths.paths().iter().all(|path| path.exists())
                 && paths.paths().iter().any(|path| path.is_dir())
             {
                 result.push((id, SerializedWorkspaceLocation::Local, paths));
@@ -2486,7 +2506,7 @@ mod tests {
 
         let workspace_6 = SerializedWorkspace {
             id: WorkspaceId(6),
-            paths: PathList::new(&["/tmp6a", "/tmp6b", "/tmp6c"]),
+            paths: PathList::new(&["/tmp6c", "/tmp6b", "/tmp6a"]),
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -2527,7 +2547,7 @@ mod tests {
         assert_eq!(locations.len(), 1);
         assert_eq!(
             locations[0].0,
-            PathList::new(&["/tmp6a", "/tmp6b", "/tmp6c"]),
+            PathList::new(&["/tmp6c", "/tmp6b", "/tmp6a"]),
         );
         assert_eq!(locations[0].1, Some(60));
     }

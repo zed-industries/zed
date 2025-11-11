@@ -63,6 +63,7 @@ Although there are few hard and fast rules, typically we don't merge:
 - New file icons. Zed's default icon theme consists of icons that are hand-designed to fit together in a cohesive manner, please don't submit PRs with off-the-shelf SVGs.
 - Giant refactorings.
 - Non-trivial changes with no tests.
+- Stylistic code changes that do not alter any app logic. Reducing allocations, removing `.unwrap()`s, fixing typos is great; making code "more readable" — maybe not so much.
 - Features where (in our subjective opinion) the extra complexity isn't worth it for the number of people who will benefit.
 - Anything that seems completely AI generated.
 

@@ -32,7 +32,7 @@ use ui::{
     SharedString, Styled, StyledExt, ToggleButton, ToggleState, Toggleable, Tooltip, Window, div,
     h_flex, relative, rems, v_flex,
 };
-use util::{ResultExt, rel_path::RelPath};
+use util::{ResultExt, rel_path::RelPath, shell::ShellKind};
 use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr, pane};
 
 use crate::{attach_modal::AttachModal, debugger_panel::DebugPanel};
@@ -96,7 +96,9 @@ impl NewProcessModal {
                     let debug_picker = cx.new(|cx| {
                         let delegate =
                             DebugDelegate::new(debug_panel.downgrade(), task_store.clone());
-                        Picker::uniform_list(delegate, window, cx).modal(false)
+                        Picker::list(delegate, window, cx)
+                            .modal(false)
+                            .list_measure_all()
                     });
 
                     let configure_mode = ConfigureMode::new(window, cx);
@@ -695,6 +697,7 @@ impl Render for NewProcessModal {
                     .justify_between()
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant);
+                let secondary_action = menu::SecondaryConfirm.boxed_clone();
                 match self.mode {
                     NewProcessMode::Launch => el.child(
                         container
@@ -704,6 +707,7 @@ impl Render for NewProcessModal {
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.save_debug_scenario(window, cx);
                                         }))
+                                        .key_binding(KeyBinding::for_action(&*secondary_action, cx))
                                         .disabled(
                                             self.debugger.is_none()
                                                 || self
@@ -745,22 +749,14 @@ impl Render for NewProcessModal {
                                 == 0;
                         let secondary_action = menu::SecondaryConfirm.boxed_clone();
                         container
-                            .child(div().children(
-                                KeyBinding::for_action(&*secondary_action, window, cx).map(
-                                    |keybind| {
-                                        Button::new("edit-attach-task", "Edit in debug.json")
-                                            .label_size(LabelSize::Small)
-                                            .key_binding(keybind)
-                                            .on_click(move |_, window, cx| {
-                                                window.dispatch_action(
-                                                    secondary_action.boxed_clone(),
-                                                    cx,
-                                                )
-                                            })
-                                            .disabled(disabled)
-                                    },
-                                ),
-                            ))
+                            .child(div().child({
+                                Button::new("edit-attach-task", "Edit in debug.json")
+                                    .key_binding(KeyBinding::for_action(&*secondary_action, cx))
+                                    .on_click(move |_, window, cx| {
+                                        window.dispatch_action(secondary_action.boxed_clone(), cx)
+                                    })
+                                    .disabled(disabled)
+                            }))
                             .child(
                                 h_flex()
                                     .child(div().child(self.adapter_drop_down_menu(window, cx))),
@@ -844,7 +840,11 @@ impl ConfigureMode {
             };
         }
         let command = self.program.read(cx).text(cx);
-        let mut args = shlex::split(&command).into_iter().flatten().peekable();
+        let mut args = ShellKind::Posix
+            .split(&command)
+            .into_iter()
+            .flatten()
+            .peekable();
         let mut env = FxHashMap::default();
         while args.peek().is_some_and(|arg| arg.contains('=')) {
             let arg = args.next().unwrap();
@@ -1053,7 +1053,7 @@ impl DebugDelegate {
             Some(TaskSourceKind::Lsp { language_name, .. }) => {
                 Some(format!("LSP: {language_name}"))
             }
-            Some(TaskSourceKind::Language { .. }) => None,
+            Some(TaskSourceKind::Language { name }) => Some(format!("Lang: {name}")),
             _ => context.clone().and_then(|ctx| {
                 ctx.task_context
                     .task_variables
@@ -1193,7 +1193,7 @@ impl PickerDelegate for DebugDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> std::sync::Arc<str> {
-        "Find a debug task, or debug a command.".into()
+        "Find a debug task, or debug a command".into()
     }
 
     fn update_matches(
@@ -1270,7 +1270,11 @@ impl PickerDelegate for DebugDelegate {
             })
             .unwrap_or_default();
 
-        let mut args = shlex::split(&text).into_iter().flatten().peekable();
+        let mut args = ShellKind::Posix
+            .split(&text)
+            .into_iter()
+            .flatten()
+            .peekable();
         let mut env = HashMap::default();
         while args.peek().is_some_and(|arg| arg.contains('=')) {
             let arg = args.next().unwrap();
@@ -1447,56 +1451,47 @@ impl PickerDelegate for DebugDelegate {
             .justify_between()
             .border_t_1()
             .border_color(cx.theme().colors().border_variant)
-            .children({
+            .child({
                 let action = menu::SecondaryConfirm.boxed_clone();
                 if self.matches.is_empty() {
-                    Some(
-                        Button::new("edit-debug-json", "Edit debug.json")
-                            .label_size(LabelSize::Small)
-                            .on_click(cx.listener(|_picker, _, window, cx| {
-                                window.dispatch_action(
-                                    zed_actions::OpenProjectDebugTasks.boxed_clone(),
-                                    cx,
-                                );
-                                cx.emit(DismissEvent);
-                            })),
-                    )
+                    Button::new("edit-debug-json", "Edit debug.json").on_click(cx.listener(
+                        |_picker, _, window, cx| {
+                            window.dispatch_action(
+                                zed_actions::OpenProjectDebugTasks.boxed_clone(),
+                                cx,
+                            );
+                            cx.emit(DismissEvent);
+                        },
+                    ))
                 } else {
-                    KeyBinding::for_action(&*action, window, cx).map(|keybind| {
-                        Button::new("edit-debug-task", "Edit in debug.json")
-                            .label_size(LabelSize::Small)
-                            .key_binding(keybind)
-                            .on_click(move |_, window, cx| {
-                                window.dispatch_action(action.boxed_clone(), cx)
-                            })
-                    })
+                    Button::new("edit-debug-task", "Edit in debug.json")
+                        .key_binding(KeyBinding::for_action(&*action, cx))
+                        .on_click(move |_, window, cx| {
+                            window.dispatch_action(action.boxed_clone(), cx)
+                        })
                 }
             })
             .map(|this| {
                 if (current_modifiers.alt || self.matches.is_empty()) && !self.prompt.is_empty() {
                     let action = picker::ConfirmInput { secondary: false }.boxed_clone();
-                    this.children(KeyBinding::for_action(&*action, window, cx).map(|keybind| {
+                    this.child({
                         Button::new("launch-custom", "Launch Custom")
-                            .key_binding(keybind)
+                            .key_binding(KeyBinding::for_action(&*action, cx))
                             .on_click(move |_, window, cx| {
                                 window.dispatch_action(action.boxed_clone(), cx)
                             })
-                    }))
+                    })
                 } else {
-                    this.children(KeyBinding::for_action(&menu::Confirm, window, cx).map(
-                        |keybind| {
-                            let is_recent_selected =
-                                self.divider_index >= Some(self.selected_index);
-                            let run_entry_label =
-                                if is_recent_selected { "Rerun" } else { "Spawn" };
+                    this.child({
+                        let is_recent_selected = self.divider_index >= Some(self.selected_index);
+                        let run_entry_label = if is_recent_selected { "Rerun" } else { "Spawn" };
 
-                            Button::new("spawn", run_entry_label)
-                                .key_binding(keybind)
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(menu::Confirm.boxed_clone(), cx);
-                                })
-                        },
-                    ))
+                        Button::new("spawn", run_entry_label)
+                            .key_binding(KeyBinding::for_action(&menu::Confirm, cx))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(menu::Confirm.boxed_clone(), cx);
+                            })
+                    })
                 }
             });
         Some(footer.into_any_element())
@@ -1578,7 +1573,7 @@ impl PickerDelegate for DebugDelegate {
 
 pub(crate) fn resolve_path(path: &mut String) {
     if path.starts_with('~') {
-        let home = paths::home_dir().to_string_lossy().to_string();
+        let home = paths::home_dir().to_string_lossy().into_owned();
         let trimmed_path = path.trim().to_owned();
         *path = trimmed_path.replacen('~', &home, 1);
     } else if let Some(strip_path) = path.strip_prefix(&format!(".{}", std::path::MAIN_SEPARATOR)) {

@@ -28,7 +28,7 @@ use editor::Editor;
 use editor::{Anchor, SelectionEffects};
 use editor::{Bias, ToPoint};
 use editor::{display_map::ToDisplayPoint, movement};
-use gpui::{Action, Context, Window, actions};
+use gpui::{Context, Window, actions};
 use language::{Point, SelectionGoal};
 use log::error;
 use multi_buffer::MultiBufferRow;
@@ -74,6 +74,8 @@ actions!(
         Yank,
         /// Yanks the entire line.
         YankLine,
+        /// Yanks from cursor to end of line.
+        YankToEndOfLine,
         /// Toggles the case of selected text.
         ChangeCase,
         /// Converts selected text to uppercase.
@@ -98,6 +100,10 @@ actions!(
         GoToTab,
         /// Go to previous tab page (with count support).
         GoToPreviousTab,
+        /// Go to tab page (with count support).
+        GoToPreviousReference,
+        /// Go to previous tab page (with count support).
+        GoToNextReference,
     ]
 );
 
@@ -117,11 +123,10 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::convert_to_rot13);
     Vim::action(editor, cx, Vim::convert_to_rot47);
     Vim::action(editor, cx, Vim::yank_line);
+    Vim::action(editor, cx, Vim::yank_to_end_of_line);
     Vim::action(editor, cx, Vim::toggle_comments);
     Vim::action(editor, cx, Vim::paste);
     Vim::action(editor, cx, Vim::show_location);
-    Vim::action(editor, cx, Vim::go_to_tab);
-    Vim::action(editor, cx, Vim::go_to_previous_tab);
 
     Vim::action(editor, cx, |vim, _: &DeleteLeft, window, cx| {
         vim.record_current_action(cx);
@@ -199,6 +204,36 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
     Vim::action(editor, cx, |vim, _: &JoinLinesNoWhitespace, window, cx| {
         vim.join_lines_impl(false, window, cx);
+    });
+
+    Vim::action(editor, cx, |vim, _: &GoToPreviousReference, window, cx| {
+        let count = Vim::take_count(cx);
+        vim.update_editor(cx, |_, editor, cx| {
+            let task = editor.go_to_reference_before_or_after_position(
+                editor::Direction::Prev,
+                count.unwrap_or(1),
+                window,
+                cx,
+            );
+            if let Some(task) = task {
+                task.detach_and_log_err(cx);
+            };
+        });
+    });
+
+    Vim::action(editor, cx, |vim, _: &GoToNextReference, window, cx| {
+        let count = Vim::take_count(cx);
+        vim.update_editor(cx, |_, editor, cx| {
+            let task = editor.go_to_reference_before_or_after_position(
+                editor::Direction::Next,
+                count.unwrap_or(1),
+                window,
+                cx,
+            );
+            if let Some(task) = task {
+                task.detach_and_log_err(cx);
+            };
+        });
     });
 
     Vim::action(editor, cx, |vim, _: &Undo, window, cx| {
@@ -447,6 +482,7 @@ impl Vim {
         &mut self,
         object: Object,
         times: Option<usize>,
+        opening: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -517,10 +553,11 @@ impl Vim {
             Some(Operator::DeleteSurrounds) => {
                 waiting_operator = Some(Operator::DeleteSurrounds);
             }
-            Some(Operator::ChangeSurrounds { target: None }) => {
+            Some(Operator::ChangeSurrounds { target: None, .. }) => {
                 if self.check_and_move_to_valid_bracket_pair(object, window, cx) {
                     waiting_operator = Some(Operator::ChangeSurrounds {
                         target: Some(object),
+                        opening,
                     });
                 }
             }
@@ -654,7 +691,7 @@ impl Vim {
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                let selections = editor.selections.all::<Point>(cx);
+                let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
 
                 let selection_start_rows: BTreeSet<u32> = selections
@@ -676,7 +713,7 @@ impl Vim {
                 editor.edit_with_autoindent(edits, cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_cursors_with(|map, cursor, _| {
-                        let previous_line = motion::start_of_relative_buffer_row(map, cursor, -1);
+                        let previous_line = map.start_of_relative_buffer_row(cursor, -1);
                         let insert_point = motion::end_of_line(map, false, previous_line, 1);
                         (insert_point, SelectionGoal::None)
                     });
@@ -696,7 +733,7 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
-                let selections = editor.selections.all::<Point>(cx);
+                let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
 
                 let selection_end_rows: BTreeSet<u32> = selections
@@ -742,7 +779,7 @@ impl Vim {
         Vim::take_forced_motion(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, _, cx| {
-                let selections = editor.selections.all::<Point>(cx);
+                let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
 
                 let selection_start_rows: BTreeSet<u32> = selections
                     .into_iter()
@@ -771,9 +808,10 @@ impl Vim {
         Vim::take_forced_motion(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                let selections = editor.selections.all::<Point>(cx);
+                let display_map = editor.display_snapshot(cx);
+                let selections = editor.selections.all::<Point>(&display_map);
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
-                let (_map, display_selections) = editor.selections.all_display(cx);
+                let display_selections = editor.selections.all_display(&display_map);
                 let original_positions = display_selections
                     .iter()
                     .map(|s| (s.id, s.head()))
@@ -843,6 +881,25 @@ impl Vim {
         )
     }
 
+    fn yank_to_end_of_line(
+        &mut self,
+        _: &YankToEndOfLine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = Vim::take_count(cx);
+        let forced_motion = Vim::take_forced_motion(cx);
+        self.yank_motion(
+            motion::Motion::EndOfLine {
+                display_lines: false,
+            },
+            count,
+            forced_motion,
+            window,
+            cx,
+        )
+    }
+
     fn show_location(&mut self, _: &ShowLocation, _: &mut Window, cx: &mut Context<Self>) {
         let count = Vim::take_count(cx);
         Vim::take_forced_motion(cx);
@@ -858,9 +915,9 @@ impl Vim {
             let filename = if let Some(file) = buffer.read(cx).file() {
                 if count.is_some() {
                     if let Some(local) = file.as_local() {
-                        local.abs_path(cx).to_string_lossy().to_string()
+                        local.abs_path(cx).to_string_lossy().into_owned()
                     } else {
-                        file.full_path(cx).to_string_lossy().to_string()
+                        file.full_path(cx).to_string_lossy().into_owned()
                     }
                 } else {
                     file.path().display(file.path_style(cx)).into_owned()
@@ -908,20 +965,30 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // We need to use `text.chars().count()` instead of `text.len()` here as
+        // `len()` counts bytes, not characters.
+        let char_count = text.chars().count();
+        let count = Vim::take_count(cx).unwrap_or(char_count);
         let is_return_char = text == "\n".into() || text == "\r".into();
-        let count = Vim::take_count(cx).unwrap_or(1);
+        let repeat_count = match (is_return_char, char_count) {
+            (true, _) => 0,
+            (_, 1) => count,
+            (_, _) => 1,
+        };
+
         Vim::take_forced_motion(cx);
         self.stop_recording(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
-                let (map, display_selections) = editor.selections.all_display(cx);
+                let display_map = editor.display_snapshot(cx);
+                let display_selections = editor.selections.all_display(&display_map);
 
-                let mut edits = Vec::new();
+                let mut edits = Vec::with_capacity(display_selections.len());
                 for selection in &display_selections {
                     let mut range = selection.range();
                     for _ in 0..count {
-                        let new_point = movement::saturating_right(&map, range.end);
+                        let new_point = movement::saturating_right(&display_map, range.end);
                         if range.end == new_point {
                             return;
                         }
@@ -929,9 +996,9 @@ impl Vim {
                     }
 
                     edits.push((
-                        range.start.to_offset(&map, Bias::Left)
-                            ..range.end.to_offset(&map, Bias::Left),
-                        text.repeat(if is_return_char { 0 } else { count }),
+                        range.start.to_offset(&display_map, Bias::Left)
+                            ..range.end.to_offset(&display_map, Bias::Left),
+                        text.repeat(repeat_count),
                     ));
                 }
 
@@ -954,16 +1021,16 @@ impl Vim {
     pub fn save_selection_starts(
         &self,
         editor: &Editor,
-
         cx: &mut Context<Editor>,
     ) -> HashMap<usize, Anchor> {
-        let (map, selections) = editor.selections.all_display(cx);
+        let display_map = editor.display_snapshot(cx);
+        let selections = editor.selections.all_display(&display_map);
         selections
             .iter()
             .map(|selection| {
                 (
                     selection.id,
-                    map.display_point_to_anchor(selection.start, Bias::Right),
+                    display_map.display_point_to_anchor(selection.start, Bias::Right),
                 )
             })
             .collect::<HashMap<_, _>>()
@@ -990,55 +1057,8 @@ impl Vim {
             self.switch_mode(Mode::Insert, true, window, cx);
         }
     }
-
-    fn go_to_tab(&mut self, _: &GoToTab, window: &mut Window, cx: &mut Context<Self>) {
-        let count = Vim::take_count(cx);
-        Vim::take_forced_motion(cx);
-
-        if let Some(tab_index) = count {
-            // <count>gt goes to tab <count> (1-based).
-            let zero_based_index = tab_index.saturating_sub(1);
-            window.dispatch_action(
-                workspace::pane::ActivateItem(zero_based_index).boxed_clone(),
-                cx,
-            );
-        } else {
-            // If no count is provided, go to the next tab.
-            window.dispatch_action(workspace::pane::ActivateNextItem.boxed_clone(), cx);
-        }
-    }
-
-    fn go_to_previous_tab(
-        &mut self,
-        _: &GoToPreviousTab,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let count = Vim::take_count(cx);
-        Vim::take_forced_motion(cx);
-
-        if let Some(count) = count {
-            // gT with count goes back that many tabs with wraparound (not the same as gt!).
-            if let Some(workspace) = self.workspace(window) {
-                let pane = workspace.read(cx).active_pane().read(cx);
-                let item_count = pane.items().count();
-                if item_count > 0 {
-                    let current_index = pane.active_item_index();
-                    let target_index = (current_index as isize - count as isize)
-                        .rem_euclid(item_count as isize)
-                        as usize;
-                    window.dispatch_action(
-                        workspace::pane::ActivateItem(target_index).boxed_clone(),
-                        cx,
-                    );
-                }
-            }
-        } else {
-            // No count provided, go to the previous tab.
-            window.dispatch_action(workspace::pane::ActivatePreviousItem.boxed_clone(), cx);
-        }
-    }
 }
+
 #[cfg(test)]
 mod test {
     use gpui::{KeyBinding, TestAppContext, UpdateGlobal};

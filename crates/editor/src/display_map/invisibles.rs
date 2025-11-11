@@ -53,9 +53,12 @@ pub fn replacement(c: char) -> Option<&'static str> {
     } else if contains(c, PRESERVE) {
         None
     } else {
-        Some("\u{2007}") // fixed width space
+        Some(FIXED_WIDTH_SPACE)
     }
 }
+
+const FIXED_WIDTH_SPACE: &str = "\u{2007}";
+
 // IDEOGRAPHIC SPACE is common alongside Chinese and other wide character sets.
 // We don't highlight this for now (as it already shows up wide in the editor),
 // but could if we tracked state in the classifier.
@@ -117,11 +120,11 @@ const PRESERVE: &[(char, char)] = &[
 ];
 
 fn contains(c: char, list: &[(char, char)]) -> bool {
-    for (start, end) in list {
-        if c < *start {
+    for &(start, end) in list {
+        if c < start {
             return false;
         }
-        if c <= *end {
+        if c <= end {
             return true;
         }
     }

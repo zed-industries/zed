@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+set -euxo pipefail
+
+GPUI_TEST_TIMEOUT=1500 cargo nextest run --workspace --no-fail-fast --features unit-eval --no-capture -E 'test(::eval_)'

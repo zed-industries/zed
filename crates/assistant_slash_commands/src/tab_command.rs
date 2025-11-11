@@ -7,7 +7,7 @@ use collections::{HashMap, HashSet};
 use editor::Editor;
 use futures::future::join_all;
 use gpui::{Task, WeakEntity};
-use language::{BufferSnapshot, CodeLabel, HighlightId, LspAdapterDelegate};
+use language::{BufferSnapshot, CodeLabel, CodeLabelBuilder, HighlightId, LspAdapterDelegate};
 use std::sync::{Arc, atomic::AtomicBool};
 use ui::{ActiveTheme, App, Window, prelude::*};
 use util::{ResultExt, paths::PathStyle};
@@ -308,10 +308,10 @@ fn create_tab_completion_label(
     comment_id: Option<HighlightId>,
 ) -> CodeLabel {
     let (parent_path, file_name) = path_style.split(path);
-    let mut label = CodeLabel::default();
+    let mut label = CodeLabelBuilder::default();
     label.push_str(file_name, None);
     label.push_str(" ", None);
     label.push_str(parent_path.unwrap_or_default(), comment_id);
-    label.filter_range = 0..file_name.len();
-    label
+    label.respan_filter_range(Some(file_name));
+    label.build()
 }
