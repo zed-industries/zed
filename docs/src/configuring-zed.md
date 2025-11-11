@@ -4100,34 +4100,38 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 - Default:
 
 ```json [settings]
-[
-  // Python-style diagnostics
-  "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
-  // Common path syntax with optional line, column, description, trailing punctuation, or
-  // surrounding symbols or quotes
-  [
-    "(?x)",
-    "# optionally starts with 0-2 opening prefix symbols",
-    "[({\\[<]{0,2}",
-    "# which may be followed by an opening quote",
-    "(?<quote>[\"'`])?",
-    "# `path` is the shortest sequence of any non-space character",
-    "(?<path>[^ ]+?",
-    "    # which may end with a line and optionally a column,",
-    "    (?<line_column>:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))?",
-    ")",
-    "# which must be followed by a matching quote",
-    "(?(<quote>)\\k<quote>)",
-    "# and optionally a single closing symbol",
-    "[)}\\]>]?",
-    "# if line/column matched, may be followed by a description",
-    "(?(<line_column>):[^ 0-9][^ ]*)?",
-    "# which may be followed by trailing punctuation",
-    "[.,:)}\\]>]*",
-    "# and always includes trailing whitespace or end of line",
-    "([ ]+|$)"
-  ]
-]
+{
+  "terminal": {
+    "path_hyperlink_regexes": [
+      // Python-style diagnostics
+      "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
+      // Common path syntax with optional line, column, description, trailing punctuation, or
+      // surrounding symbols or quotes
+      [
+        "(?x)",
+        "# optionally starts with 0-2 opening prefix symbols",
+        "[({\\[<]{0,2}",
+        "# which may be followed by an opening quote",
+        "(?<quote>[\"'`])?",
+        "# `path` is the shortest sequence of any non-space character",
+        "(?<path>[^ ]+?",
+        "    # which may end with a line and optionally a column,",
+        "    (?<line_column>:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))?",
+        ")",
+        "# which must be followed by a matching quote",
+        "(?(<quote>)\\k<quote>)",
+        "# and optionally a single closing symbol",
+        "[)}\\]>]?",
+        "# if line/column matched, may be followed by a description",
+        "(?(<line_column>):[^ 0-9][^ ]*)?",
+        "# which may be followed by trailing punctuation",
+        "[.,:)}\\]>]*",
+        "# and always includes trailing whitespace or end of line",
+        "([ ]+|$)"
+      ]
+    ]
+  }
+}
 ```
 
 ### Terminal: Path Hyperlink Timeout (ms)
