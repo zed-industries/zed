@@ -668,7 +668,7 @@ mod test {
     use indoc::indoc;
     use search::BufferSearchBar;
     use settings::SettingsStore;
-    
+
     #[gpui::test]
     async fn test_move_to_next(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
@@ -1178,4 +1178,4 @@ mod test {
                  "
         });
     }
-    }
+}
