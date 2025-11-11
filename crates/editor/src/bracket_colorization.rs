@@ -48,7 +48,7 @@ impl Editor {
                             }
                         })
                         .filter_map(|pair| {
-                            let id = pair.color_index?;
+                            let color_index = pair.color_index?;
                             let buffer_open_range = buffer_snapshot
                                 .anchor_before(pair.open_range.start)
                                 ..buffer_snapshot.anchor_after(pair.open_range.end);
@@ -64,7 +64,7 @@ impl Editor {
                                 ..multi_buffer_snapshot
                                     .anchor_in_excerpt(excerpt_id, buffer_close_range.end)?;
                             Some((
-                                id % accents_count,
+                                color_index % accents_count,
                                 multi_buffer_open_range,
                                 multi_buffer_close_range,
                             ))
