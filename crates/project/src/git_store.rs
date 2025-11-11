@@ -4434,7 +4434,6 @@ impl Repository {
         remote_name: String,
         remote_url: Url,
     ) -> oneshot::Receiver<Result<()>> {
-        let id = self.id;
         self.send_job(
             Some(format!("git remote add {remote_name} {remote_url}").into()),
             move |repo, _cx| async move {
@@ -4469,7 +4468,7 @@ impl Repository {
                         backend.remove_remote(remote_name).await
                     }
                     RepositoryState::Remote { project_id, client } => {
-                        todo!();
+                        unimplemented!();
                         // client
                         //     .request(proto::GitChangeBranch {
                         //         project_id: project_id.0,

@@ -212,6 +212,8 @@ pub mod git {
             SelectRepo,
             /// Selects a different remote.
             SelectRemote,
+            /// Create a git remote.
+            CreateRemote,
             /// Opens the git branch selector.
             #[action(deprecated_aliases = ["branches::OpenRecent"])]
             Branch,

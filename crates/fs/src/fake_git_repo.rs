@@ -646,6 +646,18 @@ impl GitRepository for FakeGitRepository {
     ) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
     }
+
+    fn change_remote(&self, name: String) -> BoxFuture<'_, Result<()>> {
+        unimplemented!()
+    }
+
+    fn remove_remote(&self, name: String) -> BoxFuture<'_, Result<()>> {
+        unimplemented!()
+    }
+
+    fn remote(&self) -> BoxFuture<'_, Result<Option<Remote>>> {
+        unimplemented!()
+    }
 }
 
 #[cfg(test)]

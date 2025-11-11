@@ -3,6 +3,7 @@ use crate::commit_modal::CommitModal;
 use crate::commit_tooltip::CommitTooltip;
 use crate::commit_view::CommitView;
 use crate::project_diff::{self, Diff, ProjectDiff};
+use crate::remote_modal::RemoteModal;
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
 use crate::{branch_picker, picker_prompt, remote_picker, render_remote_button};
 use crate::{
@@ -54,7 +55,6 @@ use settings::{Settings, SettingsStore, StatusStyle};
 use std::future::Future;
 use std::ops::Range;
 use std::path::Path;
-use std::str::FromStr;
 use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
@@ -65,6 +65,7 @@ use ui::{
 use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::SERIALIZATION_THROTTLE_TIME;
+use zed_actions::git::CreateRemote;
 
 use cloud_llm_client::CompletionIntent;
 use workspace::{
@@ -187,6 +188,9 @@ pub fn register(workspace: &mut Workspace) {
     });
     workspace.register_action(|workspace, _: &ExpandCommitEditor, window, cx| {
         CommitModal::toggle(workspace, None, window, cx)
+    });
+    workspace.register_action(|workspace, _: &CreateRemote, window, cx| {
+        RemoteModal::toggle(workspace, window, cx)
     });
 }
 
@@ -3390,9 +3394,7 @@ impl GitPanel {
         let expand_tooltip_focus_handle = editor_focus_handle;
 
         let branch = active_repository.read(cx).branch.clone();
-        let remote = active_repository.read(cx).remote.clone();
         let head_commit = active_repository.read(cx).head_commit.clone();
-        let remote_origin_url = active_repository.read(cx).remote_origin_url.clone();
 
         let footer_size = px(32.);
         let gap = px(9.0);
@@ -3417,10 +3419,8 @@ impl GitPanel {
             .child(PanelRepoFooter::new(
                 display_name,
                 branch,
-                remote,
                 head_commit,
                 Some(git_panel),
-                self.workspace.clone(),
             ))
             .child(
                 panel_editor_container(window, cx)
@@ -4559,47 +4559,35 @@ impl Render for GitPanelMessageTooltip {
 pub struct PanelRepoFooter {
     active_repository: SharedString,
     branch: Option<Branch>,
-    remote: Option<Remote>,
     head_commit: Option<CommitDetails>,
 
     // Getting a GitPanel in previews will be difficult.
     //
     // For now just take an option here, and we won't bind handlers to buttons in previews.
     git_panel: Option<Entity<GitPanel>>,
-    workspace: WeakEntity<Workspace>,
 }
 
 impl PanelRepoFooter {
     pub fn new(
         active_repository: SharedString,
         branch: Option<Branch>,
-        remote: Option<Remote>,
         head_commit: Option<CommitDetails>,
         git_panel: Option<Entity<GitPanel>>,
-        workspace: WeakEntity<Workspace>,
     ) -> Self {
         Self {
             active_repository,
             branch,
-            remote,
             head_commit,
             git_panel,
-            workspace,
         }
     }
 
-    pub fn new_preview(
-        active_repository: SharedString,
-        branch: Option<Branch>,
-        remote: Option<Remote>,
-    ) -> Self {
+    pub fn new_preview(active_repository: SharedString, branch: Option<Branch>) -> Self {
         Self {
             active_repository,
-            remote,
             branch,
             head_commit: None,
             git_panel: None,
-            workspace: WeakEntity::new_invalid(), // Is it correct in preview ?
         }
     }
 }
@@ -4727,19 +4715,11 @@ impl RenderOnce for PanelRepoFooter {
         .on_click(|_, window, cx| {
             window.dispatch_action(zed_actions::git::SelectRemote.boxed_clone(), cx);
         });
-        let workspace = self.workspace.clone();
         let remote_selector = PopoverMenu::new("popover-button")
-            .menu(move |window, cx| {
-                Some(remote_picker::popover(
-                    repo.clone(),
-                    workspace.clone(),
-                    window,
-                    cx,
-                ))
-            })
+            .menu(move |window, cx| Some(remote_picker::popover(repo.clone(), window, cx)))
             .trigger_with_tooltip(
                 remote_selector_button,
-                Tooltip::for_action_title("Switch Remote", &zed_actions::git::SelectRemote),
+                Tooltip::for_action_title("Select Remote", &zed_actions::git::SelectRemote),
             )
             .anchor(Corner::BottomLeft)
             .offset(gpui::Point {
@@ -4888,11 +4868,7 @@ impl Component for PanelRepoFooter {
                                 div()
                                     .w(example_width)
                                     .overflow_hidden()
-                                    .child(PanelRepoFooter::new_preview(
-                                        active_repository(1),
-                                        None,
-                                        None,
-                                    ))
+                                    .child(PanelRepoFooter::new_preview(active_repository(1), None))
                                     .into_any_element(),
                             ),
                             single_example(
@@ -4903,7 +4879,6 @@ impl Component for PanelRepoFooter {
                                     .child(PanelRepoFooter::new_preview(
                                         active_repository(2),
                                         Some(branch(unknown_upstream)),
-                                        None,
                                     ))
                                     .into_any_element(),
                             ),
@@ -4915,7 +4890,6 @@ impl Component for PanelRepoFooter {
                                     .child(PanelRepoFooter::new_preview(
                                         active_repository(3),
                                         Some(branch(no_remote_upstream)),
-                                        None,
                                     ))
                                     .into_any_element(),
                             ),
@@ -4927,7 +4901,6 @@ impl Component for PanelRepoFooter {
                                     .child(PanelRepoFooter::new_preview(
                                         active_repository(4),
                                         Some(branch(not_ahead_or_behind_upstream)),
-                                        None,
                                     ))
                                     .into_any_element(),
                             ),
@@ -4939,7 +4912,6 @@ impl Component for PanelRepoFooter {
                                     .child(PanelRepoFooter::new_preview(
                                         active_repository(5),
                                         Some(branch(behind_upstream)),
-                                        None,
                                     ))
                                     .into_any_element(),
                             ),
@@ -4951,7 +4923,6 @@ impl Component for PanelRepoFooter {
                                     .child(PanelRepoFooter::new_preview(
                                         active_repository(6),
                                         Some(branch(ahead_of_upstream)),
-                                        None,
                                     ))
                                     .into_any_element(),
                             ),
@@ -4963,7 +4934,6 @@ impl Component for PanelRepoFooter {
                                     .child(PanelRepoFooter::new_preview(
                                         active_repository(7),
                                         Some(branch(ahead_and_behind_upstream)),
-                                        None,
                                     ))
                                     .into_any_element(),
                             ),
@@ -4984,7 +4954,6 @@ impl Component for PanelRepoFooter {
                                     .child(PanelRepoFooter::new_preview(
                                         SharedString::from("zed"),
                                         Some(custom("main", behind_upstream)),
-                                        None,
                                     ))
                                     .into_any_element(),
                             ),
@@ -4999,7 +4968,6 @@ impl Component for PanelRepoFooter {
                                             "redesign-and-update-git-ui-list-entry-style",
                                             behind_upstream,
                                         )),
-                                        None,
                                     ))
                                     .into_any_element(),
                             ),
@@ -5011,7 +4979,6 @@ impl Component for PanelRepoFooter {
                                     .child(PanelRepoFooter::new_preview(
                                         SharedString::from("zed-industries-community-examples"),
                                         Some(custom("gpui", ahead_of_upstream)),
-                                        None,
                                     ))
                                     .into_any_element(),
                             ),
@@ -5026,7 +4993,6 @@ impl Component for PanelRepoFooter {
                                             "redesign-and-update-git-ui-list-entry-style",
                                             behind_upstream,
                                         )),
-                                        None,
                                     ))
                                     .into_any_element(),
                             ),
@@ -5038,7 +5004,6 @@ impl Component for PanelRepoFooter {
                                     .child(PanelRepoFooter::new_preview(
                                         SharedString::from("LICENSES"),
                                         Some(custom("main", ahead_of_upstream)),
-                                        None,
                                     ))
                                     .into_any_element(),
                             ),
@@ -5050,7 +5015,6 @@ impl Component for PanelRepoFooter {
                                     .child(PanelRepoFooter::new_preview(
                                         SharedString::from("zed"),
                                         Some(custom("update-README", behind_upstream)),
-                                        None,
                                     ))
                                     .into_any_element(),
                             ),

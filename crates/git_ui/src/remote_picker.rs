@@ -1,26 +1,20 @@
 use anyhow::Context as _;
 use fuzzy::StringMatchCandidate;
 
-use collections::HashSet;
 use git::{Remote, RemoteUrl};
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render, SharedString, Styled,
-    Subscription, Task, WeakEntity, Window, rems,
+    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
+    SharedString, Styled, Subscription, Task, Window, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::Repository;
-use project::project_settings::ProjectSettings;
 use settings::Settings;
-use std::str::FromStr;
 use std::sync::Arc;
-use time::OffsetDateTime;
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
-
-use crate::remote_modal::RemoteModal;
 
 pub fn register(workspace: &mut Workspace) {
     workspace.register_action(select_remote);
@@ -43,27 +37,18 @@ pub fn open(
 ) {
     let repository = workspace.project().read(cx).active_repository(cx);
     let style = RemoteListStyle::Modal;
-    let workspace_weak = workspace.weak_handle();
     workspace.toggle_modal(window, cx, move |window, cx| {
-        RemoteList::new(repository, style, rems(34.), workspace_weak, window, cx)
+        RemoteList::new(repository, style, rems(34.), window, cx)
     })
 }
 
 pub fn popover(
     repository: Option<Entity<Repository>>,
-    workspace: WeakEntity<Workspace>,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<RemoteList> {
     cx.new(move |cx| {
-        let list = RemoteList::new(
-            repository,
-            RemoteListStyle::Popover,
-            rems(20.),
-            workspace,
-            window,
-            cx,
-        );
+        let list = RemoteList::new(repository, RemoteListStyle::Popover, rems(20.), window, cx);
         list.focus_handle(cx).focus(window);
         list
     })
@@ -86,7 +71,6 @@ impl RemoteList {
         repository: Option<Entity<Repository>>,
         style: RemoteListStyle,
         width: Rems,
-        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -128,7 +112,7 @@ impl RemoteList {
             .as_ref()
             .and_then(|repo| repo.read(cx).remote.as_ref())
             .map(|remote| remote.name.clone());
-        let delegate = RemoteListDelegate::new(workspace, repository, default_remote, style);
+        let delegate = RemoteListDelegate::new(repository, default_remote, style);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
@@ -186,7 +170,6 @@ struct RemoteEntry {
 }
 
 pub struct RemoteListDelegate {
-    workspace: WeakEntity<Workspace>,
     matches: Vec<RemoteEntry>,
     all_remotes: Option<Vec<Remote>>,
     default_remote: Option<SharedString>,
@@ -199,13 +182,11 @@ pub struct RemoteListDelegate {
 
 impl RemoteListDelegate {
     fn new(
-        workspace: WeakEntity<Workspace>,
         repo: Option<Entity<Repository>>,
         default_remote: Option<SharedString>,
         style: RemoteListStyle,
     ) -> Self {
         Self {
-            workspace,
             matches: vec![],
             repo,
             style,
@@ -217,37 +198,9 @@ impl RemoteListDelegate {
         }
     }
 
-    fn open_create_remote(
-        &self,
-        new_remote_name: SharedString,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
-        dbg!("open_create-remote");
-        let Some(repository) = self.repo.clone() else {
-            dbg!("return");
-            return;
-        };
-        let this = cx.weak_entity();
-        let window = window.window_handle();
-        // FIXME it doesn't work
-        window
-            .update(cx, |_, window, cx| {
-                dbg!("update");
-                this.update(cx, |this, cx| {
-                    dbg!("laaa");
-                    this.delegate.workspace.update(cx, |workspace, cx| {
-                        dbg!("maaaa");
-
-                        workspace.toggle_modal(window, cx, |window, cx| {
-                            dbg!("iciii");
-                            RemoteModal::new(repository, new_remote_name.clone(), window, cx)
-                        });
-                    })
-                })
-            })
-            .ok();
-        cx.notify();
+    fn open_create_remote(&self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        window.dispatch_action(zed_actions::git::CreateRemote.boxed_clone(), cx);
+        cx.emit(DismissEvent);
     }
 
     fn remove_remote(
@@ -301,7 +254,6 @@ impl PickerDelegate for RemoteListDelegate {
         _window: &mut Window,
         _: &mut Context<Picker<Self>>,
     ) {
-        dbg!(ix);
         self.selected_index = ix;
     }
 
@@ -388,53 +340,21 @@ impl PickerDelegate for RemoteListDelegate {
         };
 
         if entry.is_new {
-            dbg!("confirm");
-            self.open_create_remote(entry.remote.name.to_owned(), window, cx);
+            self.open_create_remote(window, cx);
             return;
         }
 
-        // TODO: get it from local storage
-        // let current_remote = self.repo.as_ref().map(|repo| {
-        //     repo.read_with(cx, |repo, _| {
-        //         repo.branch.as_ref().map(|branch| branch.ref_name.clone())
-        //     })
-        // });
-
-        // if current_remote
-        //     .flatten()
-        //     .is_some_and(|current_branch| current_branch == entry.remote.ref_name)
-        // {
-        //     cx.emit(DismissEvent);
-        //     return;
-        // }
-        dbg!(&self.repo.is_some());
-        dbg!(&entry.remote);
         let Some(repo) = self.repo.clone() else {
             return;
         };
         let remote_name = entry.remote.name.to_string();
-        let Some(repo) = self.repo.clone() else {
-            return;
-        };
         cx.spawn(async move |_, cx| {
-            dbg!("CHANGE REMOTE !!!!!!!!!!!!");
-
             repo.update(cx, |repo, _| repo.change_remote(remote_name))?
                 .await??;
 
             anyhow::Ok(())
         })
         .detach_and_prompt_err("Failed to change remote", window, cx, |_, _, _| None);
-        // self.workspace.update(cx, |workspace, cx| {
-        //     workspace.project().update(cx, |project, cx| {
-        //         let Some(active_repo) = project.active_repository(cx) else {
-        //             return;
-        //         };
-        //         active_repo.update(cx, |repo, cx| {
-        //             repo.change_remote(&entry.remote.name);
-        //         });
-        //     });
-        // });
 
         cx.emit(DismissEvent);
     }
@@ -458,9 +378,7 @@ impl PickerDelegate for RemoteListDelegate {
             .map(|remote| remote.name == entry.remote.name)
             .unwrap_or_default();
 
-        let icon = if let Some(default_remote) = self.default_remote.clone()
-            && entry.is_new
-        {
+        let icon = if self.repo.is_some() && entry.is_new {
             Some(
                 IconButton::new("remote-from-default", IconName::GitBranchAlt)
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -529,7 +447,7 @@ impl PickerDelegate for RemoteListDelegate {
                                 .when(!entry.is_new && !is_selected_remote, |label| {
                                     let remote_name = entry.remote.name.clone();
                                     label.child(
-                                        IconButton::new("remote-remove", IconName::ToolDeleteFile)
+                                        IconButton::new("remote-remove", IconName::Trash)
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 this.delegate.remove_remote(
                                                     remote_name.clone(),
