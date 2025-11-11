@@ -1,8 +1,8 @@
 use gh_workflow::*;
 
 use crate::tasks::workflows::{
-    runners,
-    steps::{NamedJob, dependant_job, named},
+    release, runners,
+    steps::{NamedJob, checkout_repo, dependant_job, named},
     vars::{self, StepOutput},
 };
 
@@ -10,24 +10,36 @@ pub fn after_release() -> Workflow {
     let refresh_zed_dev = rebuild_releases_page();
     let post_to_discord = post_to_discord(&[&refresh_zed_dev]);
     let publish_winget = publish_winget();
+    let create_sentry_release = create_sentry_release();
 
     named::workflow()
         .on(Event::default().release(Release::default().types(vec![ReleaseType::Published])))
         .add_job(refresh_zed_dev.name, refresh_zed_dev.job)
         .add_job(post_to_discord.name, post_to_discord.job)
         .add_job(publish_winget.name, publish_winget.job)
+        .add_job(create_sentry_release.name, create_sentry_release.job)
 }
 
 fn rebuild_releases_page() -> NamedJob {
+    fn refresh_cloud_releases() -> Step<Run> {
+        named::bash(
+            "curl -fX POST https://cloud.zed.dev/releases/refresh?expect_tag=${{ github.event.release.tag_name }}",
+        )
+    }
+
+    fn redeploy_zed_dev() -> Step<Run> {
+        named::bash("npm exec --yes -- vercel@37 --token=\"$VERCEL_TOKEN\" --scope zed-industries redeploy https://zed.dev")
+            .add_env(("VERCEL_TOKEN", vars::VERCEL_TOKEN))
+    }
+
     named::job(
         Job::default()
             .runs_on(runners::LINUX_SMALL)
             .cond(Expression::new(
                 "github.repository_owner == 'zed-industries'",
             ))
-            .add_step(named::bash(
-                "curl https://zed.dev/api/revalidate-releases -H \"Authorization: Bearer ${RELEASE_NOTES_API_TOKEN}\"",
-            ).add_env(("RELEASE_NOTES_API_TOKEN", vars::RELEASE_NOTES_API_TOKEN))),
+            .add_step(refresh_cloud_releases())
+            .add_step(redeploy_zed_dev()),
     )
 }
 
@@ -116,8 +128,19 @@ fn publish_winget() -> NamedJob {
 
     named::job(
         Job::default()
-            .runs_on(runners::LINUX_SMALL)
+            .runs_on(runners::WINDOWS_DEFAULT)
             .add_step(set_package_name)
             .add_step(winget_releaser(&package_name)),
     )
+}
+
+fn create_sentry_release() -> NamedJob {
+    let job = Job::default()
+        .runs_on(runners::LINUX_SMALL)
+        .cond(Expression::new(
+            "github.repository_owner == 'zed-industries'",
+        ))
+        .add_step(checkout_repo())
+        .add_step(release::create_sentry_release());
+    named::job(job)
 }

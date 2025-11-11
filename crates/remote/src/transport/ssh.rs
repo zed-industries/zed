@@ -306,7 +306,7 @@ impl RemoteConnection for SshRemoteConnection {
                     use futures::AsyncWriteExt;
                     let sftp_batch = format!("put -r {src_path_display} {dest_path_str}\n");
                     stdin.write_all(sftp_batch.as_bytes()).await?;
-                    drop(stdin);
+                    stdin.flush().await?;
                 }
 
                 let output = child.output().await?;
@@ -606,12 +606,12 @@ impl SshRemoteConnection {
             .unwrap(),
         );
         if !self.socket.connection_options.upload_binary_over_ssh
-            && let Some((url, body)) = delegate
-                .get_download_params(self.ssh_platform, release_channel, wanted_version, cx)
+            && let Some(url) = delegate
+                .get_download_url(self.ssh_platform, release_channel, wanted_version, cx)
                 .await?
         {
             match self
-                .download_binary_on_server(&url, &body, &tmp_path_gz, delegate, cx)
+                .download_binary_on_server(&url, &tmp_path_gz, delegate, cx)
                 .await
             {
                 Ok(_) => {
@@ -644,7 +644,6 @@ impl SshRemoteConnection {
     async fn download_binary_on_server(
         &self,
         url: &str,
-        body: &str,
         tmp_path_gz: &RelPath,
         delegate: &Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
@@ -670,12 +669,6 @@ impl SshRemoteConnection {
                 &[
                     "-f",
                     "-L",
-                    "-X",
-                    "GET",
-                    "-H",
-                    "Content-Type: application/json",
-                    "-d",
-                    body,
                     url,
                     "-o",
                     &tmp_path_gz.display(self.path_style()),
@@ -700,14 +693,7 @@ impl SshRemoteConnection {
                     .run_command(
                         self.ssh_shell_kind,
                         "wget",
-                        &[
-                            "--header=Content-Type: application/json",
-                            "--body-data",
-                            body,
-                            url,
-                            "-O",
-                            &tmp_path_gz.display(self.path_style()),
-                        ],
+                        &[url, "-O", &tmp_path_gz.display(self.path_style())],
                         true,
                     )
                     .await

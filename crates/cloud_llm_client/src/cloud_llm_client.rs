@@ -1,5 +1,4 @@
 pub mod predict_edits_v3;
-pub mod udiff;
 
 use std::str::FromStr;
 use std::sync::Arc;
@@ -184,13 +183,13 @@ pub struct PredictEditsGitInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictEditsResponse {
-    pub request_id: Uuid,
+    pub request_id: String,
     pub output_excerpt: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcceptEditPredictionBody {
-    pub request_id: Uuid,
+    pub request_id: String,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]

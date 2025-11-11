@@ -266,7 +266,7 @@ impl language::File for GitBlob {
     }
 
     fn path(&self) -> &Arc<RelPath> {
-        &self.path.0
+        self.path.as_ref()
     }
 
     fn full_path(&self, _: &App) -> PathBuf {
