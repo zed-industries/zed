@@ -29,6 +29,7 @@ use lsp::{
     DiagnosticServerCapabilities, DocumentHighlightKind, LanguageServer, LanguageServerId,
     LinkedEditingRangeServerCapabilities, OneOf, RenameOptions, ServerCapabilities,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
 use std::{
@@ -1925,10 +1926,26 @@ impl LspCommand for GetSignatureHelp {
     }
 }
 
+pub struct HoverRequest(lsp::HoverRequest);
+
+impl lsp::request::Request for HoverRequest {
+    type Params = lsp::HoverParams;
+    type Result = Option<Hover2>;
+    const METHOD: &'static str = lsp::HoverRequest::METHOD;
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Hover2 {
+    #[serde(flatten)]
+    lsp_hover: lsp::Hover,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actions: Option<Vec<lsp::Command>>,
+}
+
 #[async_trait(?Send)]
 impl LspCommand for GetHover {
     type Response = Option<Hover>;
-    type LspRequest = lsp::request::HoverRequest;
+    type LspRequest = HoverRequest;
     type ProtoRequest = proto::GetHover;
 
     fn display_name(&self) -> &str {
@@ -1958,7 +1975,7 @@ impl LspCommand for GetHover {
 
     async fn response_from_lsp(
         self,
-        message: Option<lsp::Hover>,
+        message: Option<Hover2>,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
         _: LanguageServerId,
@@ -1968,10 +1985,13 @@ impl LspCommand for GetHover {
             return Ok(None);
         };
 
+        let lsp_hover = hover.lsp_hover;
+        dbg!(hover.actions);
+
         let (language, range) = buffer.read_with(&cx, |buffer, _| {
             (
                 buffer.language().cloned(),
-                hover.range.map(|range| {
+                lsp_hover.range.map(|range| {
                     let token_start =
                         buffer.clip_point_utf16(point_from_lsp(range.start), Bias::Left);
                     let token_end = buffer.clip_point_utf16(point_from_lsp(range.end), Bias::Left);
@@ -2000,7 +2020,7 @@ impl LspCommand for GetHover {
             }
         }
 
-        let contents = match hover.contents {
+        let contents = match lsp_hover.contents {
             lsp::HoverContents::Scalar(marked_string) => {
                 hover_blocks_from_marked_string(marked_string)
                     .into_iter()

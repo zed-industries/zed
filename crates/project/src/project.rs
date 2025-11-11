@@ -3802,8 +3802,14 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Option<Vec<Hover>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.lsp_store
-            .update(cx, |lsp_store, cx| lsp_store.hover(buffer, position, cx))
+        let hovers = self
+            .lsp_store
+            .update(cx, |lsp_store, cx| lsp_store.hover(buffer, position, cx));
+        cx.foreground_executor().spawn(async move {
+            let hovers = hovers.await;
+            dbg!(&hovers);
+            hovers
+        })
     }
 
     pub fn linked_edits(
