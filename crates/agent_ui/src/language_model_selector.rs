@@ -57,7 +57,7 @@ fn all_models(cx: &App) -> GroupedModels {
         })
         .collect();
 
-    let other = providers
+    let all = providers
         .iter()
         .flat_map(|provider| {
             provider
@@ -70,7 +70,7 @@ fn all_models(cx: &App) -> GroupedModels {
         })
         .collect();
 
-    GroupedModels::new(other, recommended)
+    GroupedModels::new(all, recommended)
 }
 
 #[derive(Clone)]
