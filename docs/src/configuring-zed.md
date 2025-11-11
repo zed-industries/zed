@@ -213,7 +213,7 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 ## Auto Install extensions
 
 - Description: Define extensions to be autoinstalled or never be installed.
-- Setting: `auto_install_extension`
+- Setting: `auto_install_extensions`
 - Default: `{ "html": true }`
 
 **Options**
