@@ -1078,6 +1078,14 @@ mod tests {
         cx.background_executor.advance_clock(POLL_INTERVAL);
         cx.background_executor.run_until_parked();
 
+        loop {
+            cx.background_executor.timer(Duration::from_millis(0)).await;
+            cx.run_until_parked();
+            let status = auto_updater.read_with(cx, |updater, _| updater.status());
+            if !matches!(status, AutoUpdateStatus::Idle) {
+                break;
+            }
+        }
         let status = auto_updater.read_with(cx, |updater, _| updater.status());
         assert_eq!(
             status,
