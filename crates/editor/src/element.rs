@@ -4042,24 +4042,36 @@ impl EditorElement {
                                                     )
                                                     .group_hover("", |div| div.underline()),
                                             )
-                                            .on_click({
-                                                let focus_handle = focus_handle.clone();
-                                                move |event, window, cx| {
-                                                    if event.modifiers().secondary() {
-                                                        focus_handle.dispatch_action(
-                                                            &OpenExcerptsSplit,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    } else {
-                                                        focus_handle.dispatch_action(
-                                                            &OpenExcerpts,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    }
+                                            .on_click(window.listener_for(&self.editor, {
+                                                let jump_data = jump_data.clone();
+
+                                                move |editor, e: &ClickEvent, window, cx| {
+                                                    editor.open_excerpts_common(
+                                                        Some(jump_data.clone()),
+                                                        e.modifiers().secondary(),
+                                                        window,
+                                                        cx,
+                                                    );
                                                 }
-                                            }),
+                                            })),
+                                        // .on_click({
+                                        //     let focus_handle = focus_handle.clone();
+                                        //     move |event, window, cx| {
+                                        //         if event.modifiers().secondary() {
+                                        //             focus_handle.dispatch_action(
+                                        //                 &OpenExcerptsSplit,
+                                        //                 window,
+                                        //                 cx,
+                                        //             );
+                                        //         } else {
+                                        //             focus_handle.dispatch_action(
+                                        //                 &OpenExcerpts,
+                                        //                 window,
+                                        //                 cx,
+                                        //             );
+                                        //         }
+                                        //     }
+                                        // }),
                                     )
                                     .when_some(parent_path, |then, path| {
                                         then.child(div().child(path).text_color(
@@ -4087,24 +4099,18 @@ impl EditorElement {
                                                         cx,
                                                     )),
                                             )
-                                            .on_click({
-                                                let focus_handle = focus_handle.clone();
-                                                move |event, window, cx| {
-                                                    if event.modifiers().secondary() {
-                                                        focus_handle.dispatch_action(
-                                                            &OpenExcerptsSplit,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    } else {
-                                                        focus_handle.dispatch_action(
-                                                            &OpenExcerpts,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    }
+                                            .on_click(window.listener_for(&self.editor, {
+                                                let jump_data = jump_data.clone();
+
+                                                move |editor, e: &ClickEvent, window, cx| {
+                                                    editor.open_excerpts_common(
+                                                        Some(jump_data.clone()),
+                                                        e.modifiers().secondary(),
+                                                        window,
+                                                        cx,
+                                                    );
                                                 }
-                                            }),
+                                            })),
                                     )
                                 },
                             )
