@@ -235,6 +235,7 @@ mod tests {
         use super::super::*;
 
         #[test]
+        #[cfg(target_family = "unix")]
         fn test_absolute_unix_path() {
             let result = journal_dir("/home/user");
             assert!(result.is_some());
