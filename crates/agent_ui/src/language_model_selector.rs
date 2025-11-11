@@ -1,6 +1,6 @@
 use std::{cmp::Reverse, sync::Arc};
 
-use collections::{HashSet, IndexMap};
+use collections::IndexMap;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{Action, AnyElement, App, BackgroundExecutor, DismissEvent, Subscription, Task};
 use language_model::{
