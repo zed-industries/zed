@@ -4076,17 +4076,24 @@ impl Editor {
         self.selection_mark_mode = false;
         self.selection_drag_state = SelectionDragState::None;
 
+        if self.dismiss_menus_and_popups(true, window, cx) {
+            cx.notify();
+            return;
+        }
         if self.clear_expanded_diff_hunks(cx) {
             cx.notify();
             return;
         }
-        if self.dismiss_menus_and_popups(true, window, cx) {
+        if self.show_git_blame_gutter {
+            self.show_git_blame_gutter = false;
+            cx.notify();
             return;
         }
 
         if self.mode.is_full()
             && self.change_selections(Default::default(), window, cx, |s| s.try_cancel())
         {
+            cx.notify();
             return;
         }
 
