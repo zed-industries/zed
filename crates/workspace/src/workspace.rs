@@ -199,8 +199,8 @@ actions!(
         AddFolderToProject,
         /// Clears all notifications.
         ClearAllNotifications,
-        /// Clears the recent files history.
-        ClearRecentFilesHistory,
+        /// Clears all navigation history, including forward/backward navigation, recently opened files, and recently closed tabs. **This action is irreversible**.
+        ClearNavigationHistory,
         /// Closes the active dock.
         CloseActiveDock,
         /// Closes all docks.
@@ -1929,7 +1929,7 @@ impl Workspace {
             .collect()
     }
 
-    pub fn clear_recent_files_history(
+    pub fn clear_navigation_history(
         &mut self,
         _window: &mut Window,
         cx: &mut Context<Workspace>,
@@ -5883,8 +5883,8 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, _: &ClearRecentFilesHistory, window, cx| {
-                    workspace.clear_recent_files_history(window, cx);
+                |workspace: &mut Workspace, _: &ClearNavigationHistory, window, cx| {
+                    workspace.clear_navigation_history(window, cx);
                 },
             ))
             .on_action(cx.listener(
