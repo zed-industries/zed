@@ -19,7 +19,7 @@ You can configure various [yaml-language-server settings](https://github.com/red
             "singleQuote": true
           },
           "schemas": {
-              "http://www.schemastore.org/composer": ["/*"],
+              "https://getcomposer.org/schema.json": ["/*"],
               "../relative/path/schema.json": ["/config*.yaml"]
           }
         }
