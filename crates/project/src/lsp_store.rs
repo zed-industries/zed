@@ -4776,6 +4776,7 @@ impl LspStore {
             cx.emit(message);
         }
         local.lsp_tree = new_tree;
+        // todo this tries to kill a server before it even started?
         for (id, _) in to_stop {
             self.stop_local_language_server(id, cx).detach();
         }

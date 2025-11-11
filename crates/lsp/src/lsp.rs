@@ -541,8 +541,11 @@ impl LanguageServer {
         let stdout = BufReader::new(stdout);
         let _clear_response_handlers = util::defer({
             let response_handlers = response_handlers.clone();
+            // todo: check if this makes
             move || {
-                response_handlers.lock().take();
+                if let Some(handlers) = response_handlers.lock().as_mut() {
+                    handlers.clear();
+                }
             }
         });
         let mut input_handler = input_handler::LspStdoutHandler::new(
@@ -621,8 +624,11 @@ impl LanguageServer {
         let mut stdin = BufWriter::new(stdin);
         let _clear_response_handlers = util::defer({
             let response_handlers = response_handlers.clone();
+            // todo: check if this makes
             move || {
-                response_handlers.lock().take();
+                if let Some(handlers) = response_handlers.lock().as_mut() {
+                    handlers.clear();
+                }
             }
         });
         let mut content_len_buffer = Vec::new();
