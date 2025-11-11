@@ -74,7 +74,7 @@ use ::git::{
     blame::{BlameEntry, ParsedCommitMessage},
     status::FileStatus,
 };
-use aho_corasick::AhoCorasick;
+use aho_corasick::{AhoCorasick, AhoCorasickBuilder, BuildError};
 use anyhow::{Context as _, Result, anyhow};
 use blink_manager::BlinkManager;
 use buffer_diff::DiffHunkStatus;
@@ -1190,6 +1190,7 @@ pub struct Editor {
     refresh_colors_task: Task<()>,
     inlay_hints: Option<LspInlayHintData>,
     folding_newlines: Task<()>,
+    select_next_is_case_sensitive: Option<bool>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
 }
 
@@ -2333,6 +2334,7 @@ impl Editor {
             selection_drag_state: SelectionDragState::None,
             folding_newlines: Task::ready(()),
             lookup_key: None,
+            select_next_is_case_sensitive: None,
         };
 
         if is_minimap {
@@ -14645,7 +14647,7 @@ impl Editor {
                         .collect::<String>();
                     let is_empty = query.is_empty();
                     let select_state = SelectNextState {
-                        query: AhoCorasick::new(&[query])?,
+                        query: self.build_query(&[query], cx)?,
                         wordwise: true,
                         done: is_empty,
                     };
@@ -14655,7 +14657,7 @@ impl Editor {
                 }
             } else if let Some(selected_text) = selected_text {
                 self.select_next_state = Some(SelectNextState {
-                    query: AhoCorasick::new(&[selected_text])?,
+                    query: self.build_query(&[selected_text], cx)?,
                     wordwise: false,
                     done: false,
                 });
@@ -14863,7 +14865,7 @@ impl Editor {
                         .collect::<String>();
                     let is_empty = query.is_empty();
                     let select_state = SelectNextState {
-                        query: AhoCorasick::new(&[query.chars().rev().collect::<String>()])?,
+                        query: self.build_query(&[query.chars().rev().collect::<String>()], cx)?,
                         wordwise: true,
                         done: is_empty,
                     };
@@ -14873,7 +14875,8 @@ impl Editor {
                 }
             } else if let Some(selected_text) = selected_text {
                 self.select_prev_state = Some(SelectNextState {
-                    query: AhoCorasick::new(&[selected_text.chars().rev().collect::<String>()])?,
+                    query: self
+                        .build_query(&[selected_text.chars().rev().collect::<String>()], cx)?,
                     wordwise: false,
                     done: false,
                 });
@@ -14881,6 +14884,25 @@ impl Editor {
             }
         }
         Ok(())
+    }
+
+    /// Builds an `AhoCorasick` automaton from the provided patterns, while
+    /// setting the case sensitivity based on the global
+    /// `SelectNextCaseSensitive` setting, if set, otherwise based on the
+    /// editor's settings.
+    fn build_query<I, P>(&self, patterns: I, cx: &Context<Self>) -> Result<AhoCorasick, BuildError>
+    where
+        I: IntoIterator<Item = P>,
+        P: AsRef<[u8]>,
+    {
+        let case_sensitive = self.select_next_is_case_sensitive.map_or_else(
+            || EditorSettings::get_global(cx).search.case_sensitive,
+            |value| value,
+        );
+
+        let mut builder = AhoCorasickBuilder::new();
+        builder.ascii_case_insensitive(!case_sensitive);
+        builder.build(patterns)
     }
 
     pub fn find_next_match(
