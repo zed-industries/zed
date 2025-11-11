@@ -57,7 +57,7 @@ To start a new project, create a directory using your terminal or file manager, 
 You can also launch Zed from the terminal inside any folder with:
 `zed .`
 
-Once inside a project, use `Cmd+P` to jump between files quickly. `Cmd+Shift+P` opens the command palette for running actions / tasks, toggling settings, or starting a collaboration session.
+Once inside a project, use `Cmd+P` to jump between files quickly. `Cmd+Shift+P` (`Ctrl+Shift+P` on Linux) opens the command palette for running actions / tasks, toggling settings, or starting a collaboration session.
 
 Open buffers appear as tabs across the top. The sidebar shows your file tree and Git status. Collapse it with `Cmd+B` for a distraction-free view.
 
@@ -94,6 +94,12 @@ Here’s a quick reference guide for how our keybindings compare to what you’r
 | Move lines up/down | `Opt + Up/Down` | `Cmd + Ctrl + Up/Down` |
 | Split panes | `Cmd + \` | `Cmd + K, then Arrow Keys` |
 
+### Unique to Zed
+| Action | Shortcut | Notes |
+| --- | --- | --- |
+| Toggle right dock | `Ctrl + R` |  |
+| Syntactic selection| `Opt + Up/Down` | Selects code by structure (e.g., inside braces). |
+
 ####  How to Customize Keybindings
 
 To edit your keybindings:
@@ -103,3 +109,34 @@ To edit your keybindings:
 This opens a list of all available bindings. You can override individual shortcuts, remove conflicts, or build a layout that works better for your setup.
 
 Zed also supports chords (multi-key sequences) like `Ctrl+K Ctrl+C`, just like VS Code.
+
+## Differences in User Interfaces
+
+### No Workspace
+
+### Navigating in a Project
+
+In VS Code, the standard entry point is opening a folder. From there, the left-hand sidebar is central to your navigation.
+Zed takes a different approach:
+
+- You can still open folders, but you don’t need to. Opening a single file or even starting with an empty workspace is valid.
+- The Command Palette (`Cmd+Shift+P`) and File Finder (`Cmd+P`) are your primary navigation tools. The File Finder searches across the entire workspace instantly; files, symbols, commands, even teammates if you're collaborating.
+- Instead of a persistent sidebar, Zed encourages you to:
+  - Fuzzy-find files by name (⌘P)
+  - Jump directly to symbols (⌘⇧O)
+  - Use split panes and tabs for context, rather than keeping a large file tree open (though you can do this with the Project Panel if you prefer).
+
+The UI is intentionally minimal. Panels slide in only when needed, then get out of your way. The focus is on flowing between code instead of managing panes.
+
+### Extensions vs. Marketplace
+Zed does not offer as many extensions as VS Code. The available extensions are focused on language support, themes, syntax highlighting, and other core editing enhancements.
+
+However there are several features that typically require extensions in VS Code which we built directly into Zed:
+- Real-time collaboration with voice and cursor sharing (no Live Share required)
+- AI coding assistance (no Copilot extension needed)
+- Built-in terminal panel
+- Project-wide fuzzy search
+- Task runner with JSON config
+- Inline diagnostics and code actions via LSP
+
+You won’t find one-to-one replacements for every VS Code extension, especially if you rely on tools for DevOps, containers, or test runners. Zed's extension ecosystem is still growing, and the catalog is smaller by design.
