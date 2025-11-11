@@ -147,6 +147,5 @@ fn unit_evals(commit: Option<&Input>) -> Job {
             Some(commit) => script_step.add_env(("UNIT_EVAL_COMMIT", commit)),
             None => script_step,
         })
-        .add_step(send_failure_to_slack())
         .add_step(steps::cleanup_cargo_config(Platform::Linux))
 }
