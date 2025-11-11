@@ -737,7 +737,7 @@ fn register_actions(
                     log::error!("Failed to parse URL '{}': {}", action.url, e);
                     workspace.show_error(
                         &anyhow::anyhow!(
-                            "Opening this URL in a browser failed because the URL is invalid: {}",
+                            "Opening this URL in a browser failed because the URL is invalid: {}\n\nError was: {e}",
                             action.url
                         ),
                         cx,
