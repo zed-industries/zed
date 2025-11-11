@@ -12,10 +12,8 @@ workspace = true
 path = "src/miniprofiler_ui.rs"
 
 [dependencies]
-anyhow.workspace = true
 gpui.workspace = true
 zed_actions.workspace = true
-log.workspace = true
 workspace.workspace = true
 util.workspace = true
 serde_json.workspace = true
