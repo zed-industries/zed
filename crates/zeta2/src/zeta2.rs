@@ -47,6 +47,7 @@ mod prediction;
 mod provider;
 pub mod retrieval_search;
 pub mod udiff;
+mod xml_edits;
 
 use crate::merge_excerpts::merge_excerpts;
 use crate::prediction::EditPrediction;
@@ -948,8 +949,9 @@ impl Zeta {
                     llm_token,
                     app_version,
                     #[cfg(feature = "llm-response-cache")]
-                    llm_response_cache
-                ).await;
+                    llm_response_cache,
+                )
+                .await;
                 let request_time = chrono::Utc::now() - before_request;
 
                 log::trace!("Got edit prediction response");
@@ -969,7 +971,7 @@ impl Zeta {
                 let (res, usage) = response?;
                 let request_id = EditPredictionId(res.id.clone().into());
                 let Some(mut output_text) = text_from_response(res) else {
-                    return Ok((None, usage))
+                    return Ok((None, usage));
                 };
 
                 if output_text.contains(CURSOR_MARKER) {
@@ -977,20 +979,25 @@ impl Zeta {
                     output_text = output_text.replace(CURSOR_MARKER, "");
                 }
 
+                let get_buffer_from_context = |path: &Path| {
+                    included_files
+                        .iter()
+                        .find_map(|(_, buffer, probe_path, ranges)| {
+                            if probe_path.as_ref() == path {
+                                Some((buffer, ranges.as_slice()))
+                            } else {
+                                None
+                            }
+                        })
+                };
+
                 let (edited_buffer_snapshot, edits) = match options.prompt_format {
                     PromptFormat::NumLinesUniDiff => {
-                        crate::udiff::parse_diff(&output_text, |path| {
-                            included_files
-                                .iter()
-                                .find_map(|(_, buffer, probe_path, ranges)| {
-                                    if probe_path.as_ref() == path {
-                                        Some((buffer, ranges.as_slice()))
-                                    } else {
-                                        None
-                                    }
-                                })
-                        })
-                        .await?
+                        crate::udiff::parse_diff(&output_text, get_buffer_from_context).await?
+                    }
+                    PromptFormat::OldTextNewText => {
+                        crate::xml_edits::parse_xml_edits(&output_text, get_buffer_from_context)
+                            .await?
                     }
                     _ => {
                         bail!("unsupported prompt format {}", options.prompt_format)
@@ -1006,9 +1013,17 @@ impl Zeta {
                             None
                         }
                     })
-                    .context("Failed to find buffer in included_buffers, even though we just found the snapshot")?;
+                    .context("Failed to find buffer in included_buffers")?;
 
-                anyhow::Ok((Some((request_id, edited_buffer, edited_buffer_snapshot.clone(), edits)), usage))
+                anyhow::Ok((
+                    Some((
+                        request_id,
+                        edited_buffer,
+                        edited_buffer_snapshot.clone(),
+                        edits,
+                    )),
+                    usage,
+                ))
             }
         });
 
@@ -1387,7 +1402,8 @@ impl Zeta {
                     continue;
                 }
 
-                let input: SearchToolInput = serde_json::from_str(&function.arguments)?;
+                let input: SearchToolInput = serde_json::from_str(&function.arguments)
+                    .with_context(|| format!("invalid search json {}", &function.arguments))?;
                 queries.extend(input.queries);
             }
 
@@ -1445,6 +1461,16 @@ impl Zeta {
                 }
             })?
         })
+    }
+
+    pub fn set_context(
+        &mut self,
+        project: Entity<Project>,
+        context: HashMap<Entity<Buffer>, Vec<Range<Anchor>>>,
+    ) {
+        if let Some(zeta_project) = self.projects.get_mut(&project.entity_id()) {
+            zeta_project.context = Some(context);
+        }
     }
 
     fn gather_nearby_diagnostics(

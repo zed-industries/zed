@@ -19,7 +19,7 @@ use std::{
     cell::RefCell,
     cmp::{self, Ordering},
     fmt::Debug,
-    ops::{Deref, DerefMut, Range, RangeBounds, RangeInclusive},
+    ops::{Deref, DerefMut, Not, Range, RangeBounds, RangeInclusive},
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -1879,18 +1879,14 @@ impl Iterator for BlockRows<'_> {
         }
 
         let transform = self.transforms.item()?;
-        if let Some(block) = transform.block.as_ref() {
-            if block.is_replacement() && self.transforms.start().0 == self.output_row {
-                if matches!(block, Block::FoldedBuffer { .. }) {
-                    Some(RowInfo::default())
-                } else {
-                    Some(self.input_rows.next().unwrap())
-                }
-            } else {
-                Some(RowInfo::default())
-            }
+        if transform.block.as_ref().is_none_or(|block| {
+            block.is_replacement()
+                && self.transforms.start().0 == self.output_row
+                && matches!(block, Block::FoldedBuffer { .. }).not()
+        }) {
+            self.input_rows.next()
         } else {
-            Some(self.input_rows.next().unwrap())
+            Some(RowInfo::default())
         }
     }
 }

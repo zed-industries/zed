@@ -638,15 +638,13 @@ impl AgentConfiguration {
 
         let is_running = matches!(server_status, ContextServerStatus::Running);
         let item_id = SharedString::from(context_server_id.0.clone());
-        let is_from_extension = server_configuration
-            .as_ref()
-            .map(|config| {
-                matches!(
-                    config.as_ref(),
-                    ContextServerConfiguration::Extension { .. }
-                )
-            })
-            .unwrap_or(false);
+        // Servers without a configuration can only be provided by extensions.
+        let provided_by_extension = server_configuration.is_none_or(|config| {
+            matches!(
+                config.as_ref(),
+                ContextServerConfiguration::Extension { .. }
+            )
+        });
 
         let error = if let ContextServerStatus::Error(error) = server_status.clone() {
             Some(error)
@@ -660,7 +658,7 @@ impl AgentConfiguration {
             .tools_for_server(&context_server_id)
             .count();
 
-        let (source_icon, source_tooltip) = if is_from_extension {
+        let (source_icon, source_tooltip) = if provided_by_extension {
             (
                 IconName::ZedSrcExtension,
                 "This MCP server was installed from an extension.",
@@ -710,7 +708,6 @@ impl AgentConfiguration {
                 let fs = self.fs.clone();
                 let context_server_id = context_server_id.clone();
                 let language_registry = self.language_registry.clone();
-                let context_server_store = self.context_server_store.clone();
                 let workspace = self.workspace.clone();
                 let context_server_registry = self.context_server_registry.clone();
 
@@ -752,23 +749,10 @@ impl AgentConfiguration {
                         .entry("Uninstall", None, {
                             let fs = fs.clone();
                             let context_server_id = context_server_id.clone();
-                            let context_server_store = context_server_store.clone();
                             let workspace = workspace.clone();
                             move |_, cx| {
-                                let is_provided_by_extension = context_server_store
-                                    .read(cx)
-                                    .configuration_for_server(&context_server_id)
-                                    .as_ref()
-                                    .map(|config| {
-                                        matches!(
-                                            config.as_ref(),
-                                            ContextServerConfiguration::Extension { .. }
-                                        )
-                                    })
-                                    .unwrap_or(false);
-
                                 let uninstall_extension_task = match (
-                                    is_provided_by_extension,
+                                    provided_by_extension,
                                     resolve_extension_for_context_server(&context_server_id, cx),
                                 ) {
                                     (true, Some((id, manifest))) => {

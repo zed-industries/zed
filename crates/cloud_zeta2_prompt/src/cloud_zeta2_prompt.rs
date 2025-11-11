@@ -100,6 +100,54 @@ const UNIFIED_DIFF_REMINDER: &str = indoc! {"
     to uniquely identify it amongst all excerpts of code provided.
 "};
 
+const XML_TAGS_INSTRUCTIONS: &str = indoc! {r#"
+    # Instructions
+
+    You are an edit prediction agent in a code editor.
+    Your job is to predict the next edit that the user will make,
+    based on their last few edits and their current cursor location.
+
+    # Output Format
+
+    You must briefly explain your understanding of the user's goal, in one
+    or two sentences, and then specify their next edit, using the following
+    XML format:
+
+    <edits path="my-project/src/myapp/cli.py">
+    <old_text>
+    OLD TEXT 1 HERE
+    </old_text>
+    <new_text>
+    NEW TEXT 1 HERE
+    </new_text>
+
+    <old_text>
+    OLD TEXT 1 HERE
+    </old_text>
+    <new_text>
+    NEW TEXT 1 HERE
+    </new_text>
+    </edits>
+
+    - Specify the file to edit using the `path` attribute.
+    - Use `<old_text>` and `<new_text>` tags to replace content
+    - `<old_text>` must exactly match existing file content, including indentation
+    - `<old_text>` cannot be empty
+    - Do not escape quotes, newlines, or other characters within tags
+    - Always close all tags properly
+    - Don't include the <|user_cursor|> marker in your output.
+
+    # Edit History:
+
+"#};
+
+const OLD_TEXT_NEW_TEXT_REMINDER: &str = indoc! {r#"
+    ---
+
+    Remember that the edits in the edit history have already been deployed.
+    The files are currently as shown in the Code Excerpts section.
+"#};
+
 pub fn build_prompt(
     request: &predict_edits_v3::PredictEditsRequest,
 ) -> Result<(String, SectionLabels)> {
@@ -121,7 +169,9 @@ pub fn build_prompt(
                 EDITABLE_REGION_END_MARKER_WITH_NEWLINE,
             ),
         ],
-        PromptFormat::LabeledSections | PromptFormat::NumLinesUniDiff => {
+        PromptFormat::LabeledSections
+        | PromptFormat::NumLinesUniDiff
+        | PromptFormat::OldTextNewText => {
             vec![(request.cursor_point, CURSOR_MARKER)]
         }
         PromptFormat::OnlySnippets => vec![],
@@ -131,6 +181,7 @@ pub fn build_prompt(
         PromptFormat::MarkedExcerpt => MARKED_EXCERPT_INSTRUCTIONS.to_string(),
         PromptFormat::LabeledSections => LABELED_SECTIONS_INSTRUCTIONS.to_string(),
         PromptFormat::NumLinesUniDiff => NUMBERED_LINES_INSTRUCTIONS.to_string(),
+        PromptFormat::OldTextNewText => XML_TAGS_INSTRUCTIONS.to_string(),
         PromptFormat::OnlySnippets => String::new(),
     };
 
@@ -185,6 +236,9 @@ pub fn build_prompt(
     match request.prompt_format {
         PromptFormat::NumLinesUniDiff => {
             prompt.push_str(UNIFIED_DIFF_REMINDER);
+        }
+        PromptFormat::OldTextNewText => {
+            prompt.push_str(OLD_TEXT_NEW_TEXT_REMINDER);
         }
         _ => {}
     }
@@ -611,6 +665,7 @@ impl<'a> SyntaxBasedPrompt<'a> {
                 match self.request.prompt_format {
                     PromptFormat::MarkedExcerpt
                     | PromptFormat::OnlySnippets
+                    | PromptFormat::OldTextNewText
                     | PromptFormat::NumLinesUniDiff => {
                         if range.start.0 > 0 && !skipped_last_snippet {
                             output.push_str("…\n");

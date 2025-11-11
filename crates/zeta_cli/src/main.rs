@@ -171,6 +171,7 @@ enum PromptFormat {
     OnlySnippets,
     #[default]
     NumberedLines,
+    OldTextNewText,
 }
 
 impl Into<predict_edits_v3::PromptFormat> for PromptFormat {
@@ -180,6 +181,7 @@ impl Into<predict_edits_v3::PromptFormat> for PromptFormat {
             Self::LabeledSections => predict_edits_v3::PromptFormat::LabeledSections,
             Self::OnlySnippets => predict_edits_v3::PromptFormat::OnlySnippets,
             Self::NumberedLines => predict_edits_v3::PromptFormat::NumLinesUniDiff,
+            Self::OldTextNewText => predict_edits_v3::PromptFormat::OldTextNewText,
         }
     }
 }
