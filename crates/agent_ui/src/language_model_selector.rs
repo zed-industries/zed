@@ -210,24 +210,24 @@ impl LanguageModelPickerDelegate {
 
 struct GroupedModels {
     recommended: Vec<ModelInfo>,
-    other: IndexMap<LanguageModelProviderId, Vec<ModelInfo>>,
+    all: IndexMap<LanguageModelProviderId, Vec<ModelInfo>>,
 }
 
 impl GroupedModels {
-    pub fn new(other: Vec<ModelInfo>, recommended: Vec<ModelInfo>) -> Self {
-        let mut other_by_provider: IndexMap<_, Vec<ModelInfo>> = IndexMap::default();
-        for model in other {
+    pub fn new(all: Vec<ModelInfo>, recommended: Vec<ModelInfo>) -> Self {
+        let mut all_by_provider: IndexMap<_, Vec<ModelInfo>> = IndexMap::default();
+        for model in all {
             let provider = model.model.provider_id();
-            if let Some(models) = other_by_provider.get_mut(&provider) {
+            if let Some(models) = all_by_provider.get_mut(&provider) {
                 models.push(model);
             } else {
-                other_by_provider.insert(provider, vec![model]);
+                all_by_provider.insert(provider, vec![model]);
             }
         }
 
         Self {
             recommended,
-            other: other_by_provider,
+            all: all_by_provider,
         }
     }
 
@@ -243,7 +243,7 @@ impl GroupedModels {
             );
         }
 
-        for models in self.other.values() {
+        for models in self.all.values() {
             if models.is_empty() {
                 continue;
             }
@@ -260,15 +260,15 @@ impl GroupedModels {
     }
 
     fn model_infos(&self) -> Vec<ModelInfo> {
-        let other = self
-            .other
+        let all = self
+            .all
             .values()
             .flat_map(|model| model.iter())
             .cloned()
             .collect::<Vec<_>>();
         self.recommended
             .iter()
-            .chain(&other)
+            .chain(&all)
             .cloned()
             .collect::<Vec<_>>()
     }
@@ -765,16 +765,16 @@ mod tests {
 
         let grouped_models = GroupedModels::new(all_models, recommended_models);
 
-        let actual_other_models = grouped_models
-            .other
+        let actual_all_models = grouped_models
+            .all
             .values()
             .flatten()
             .cloned()
             .collect::<Vec<_>>();
 
-        // Recommended models should also appear in "other"
+        // Recommended models should also appear in "all"
         assert_models_eq(
-            actual_other_models,
+            actual_all_models,
             vec!["zed/claude", "zed/gemini", "copilot/o3"],
         );
     }
@@ -790,16 +790,16 @@ mod tests {
 
         let grouped_models = GroupedModels::new(all_models, recommended_models);
 
-        let actual_other_models = grouped_models
-            .other
+        let actual_all_models = grouped_models
+            .all
             .values()
             .flatten()
             .cloned()
             .collect::<Vec<_>>();
 
-        // All models should appear in "other" regardless of recommended status
+        // All models should appear in "all" regardless of recommended status
         assert_models_eq(
-            actual_other_models,
+            actual_all_models,
             vec!["zed/claude", "zed/gemini", "copilot/claude"],
         );
     }
