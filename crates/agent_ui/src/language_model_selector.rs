@@ -258,20 +258,6 @@ impl GroupedModels {
         }
         entries
     }
-
-    fn model_infos(&self) -> Vec<ModelInfo> {
-        let all = self
-            .all
-            .values()
-            .flat_map(|model| model.iter())
-            .cloned()
-            .collect::<Vec<_>>();
-        self.recommended
-            .iter()
-            .chain(&all)
-            .cloned()
-            .collect::<Vec<_>>()
-    }
 }
 
 enum LanguageModelPickerEntry {
@@ -416,8 +402,9 @@ impl PickerDelegate for LanguageModelPickerDelegate {
             .collect::<Vec<_>>();
 
         let available_models = all_models
-            .model_infos()
-            .iter()
+            .all
+            .values()
+            .flat_map(|models| models.iter())
             .filter(|m| configured_provider_ids.contains(&m.model.provider_id()))
             .cloned()
             .collect::<Vec<_>>();
