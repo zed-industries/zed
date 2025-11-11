@@ -1525,13 +1525,13 @@ impl BufferSearchBar {
         }
     }
 
-    /// Updates the global `SelectNextCaseSensitive` to match the search bar's
-    /// current case sensitivity setting. This ensures that editor's
-    /// `select_next`/ `select_previous` operations respect the buffer search
-    /// bar's search options.
+    /// Updates the searchable item's case sensitivity option to match the
+    /// search bar's current case sensitivity setting. This ensures that
+    /// editor's `select_next`/ `select_previous` operations respect the buffer
+    /// search bar's search options.
     ///
-    /// Clears the global case sensitivity override when the search bar is
-    /// dismissed so that only the editor's settings are respected.
+    /// Clears the case sensitivity when the search bar is dismissed so that
+    /// only the editor's settings are respected.
     fn sync_select_next_case_sensitivity(&self, cx: &mut Context<Self>) {
         let case_sensitive = match self.dismissed {
             true => None,
