@@ -15,6 +15,10 @@ on:
         description: model_name
         required: true
         type: string
+      commit_sha:
+        description: commit_sha
+        required: true
+        type: string
 jobs:
   run_unit_evals:
     runs-on: namespace-profile-16x32-ubuntu-2204
