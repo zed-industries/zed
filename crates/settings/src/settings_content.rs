@@ -263,6 +263,10 @@ impl strum::VariantNames for BaseKeymapContent {
 #[skip_serializing_none]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct TitleBarSettingsContent {
+    /// Whether to show the titlebar in the editor.
+    ///
+    /// Default: true
+    pub show: Option<bool>,
     /// Whether to show the branch icon beside branch switcher in the title bar.
     ///
     /// Default: false

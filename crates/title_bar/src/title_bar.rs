@@ -72,8 +72,22 @@ pub fn init(cx: &mut App) {
         let Some(window) = window else {
             return;
         };
-        let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
-        workspace.set_titlebar_item(item.into(), window, cx);
+        if TitleBarSettings::get_global(cx).show {
+            let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
+            workspace.set_titlebar_item(Some(item.into()), window, cx);
+        }
+
+        cx.observe_global_in::<settings::SettingsStore>(window, |workspace, window, cx| {
+            if TitleBarSettings::get_global(cx).show {
+                if workspace.titlebar_item().is_none() {
+                    let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
+                    workspace.set_titlebar_item(Some(item.into()), window, cx);
+                }
+            } else {
+                workspace.set_titlebar_item(None, window, cx);
+            }
+        })
+        .detach();
 
         #[cfg(not(target_os = "macos"))]
         workspace.register_action(|workspace, action: &OpenApplicationMenu, window, cx| {
