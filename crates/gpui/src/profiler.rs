@@ -7,7 +7,6 @@ use std::{
     time::Instant,
 };
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
@@ -15,12 +14,13 @@ use serde::{Deserialize, Serialize};
 pub struct TaskTiming {
     pub location: &'static core::panic::Location<'static>,
     pub start: Instant,
-    pub end: Instant,
+    pub end: Option<Instant>,
 }
 
 #[doc(hidden)]
 #[derive(Debug, Clone)]
 pub struct ThreadTaskTimings {
+    pub thread_name: Option<String>,
     pub thread_id: ThreadId,
     pub timings: Vec<TaskTiming>,
 }
@@ -34,7 +34,9 @@ impl ThreadTaskTimings {
                 _ => None,
             })
             .map(|(thread_id, timings)| {
-                let timings = &timings.lock().timings;
+                let timings = timings.lock();
+                let thread_name = timings.thread_name.clone();
+                let timings = &timings.timings;
 
                 let mut vec = Vec::with_capacity(timings.len());
 
@@ -43,6 +45,7 @@ impl ThreadTaskTimings {
                 vec.extend_from_slice(s2);
 
                 ThreadTaskTimings {
+                    thread_name,
                     thread_id,
                     timings: vec,
                 }
@@ -78,36 +81,41 @@ pub struct SerializedTaskTiming<'a> {
     /// Location of the timing
     #[serde(borrow)]
     pub location: SerializedLocation<'a>,
-    /// Time at which the measurement was reported
-    pub start: DateTime<Utc>,
+    /// Time at which the measurement was reported in nanoseconds
+    pub start: u128,
     /// Duration of the measurement in nanoseconds
     pub duration: u128,
 }
 
 impl<'a> SerializedTaskTiming<'a> {
     /// Convert an array of [`TaskTiming`] into their serializable format
-    pub fn convert(timings: &[TaskTiming]) -> Vec<SerializedTaskTiming<'static>> {
-        let now = Utc::now();
-        let instant_now = Instant::now();
-
-        timings
+    ///
+    /// # Params
+    ///
+    /// `anchor` - [`Instant`] that should be earlier than all timings to use as base anchor
+    pub fn convert(anchor: Instant, timings: &[TaskTiming]) -> Vec<SerializedTaskTiming<'static>> {
+        let serialized = timings
             .iter()
             .map(|timing| {
-                let start = now - instant_now.duration_since(timing.start);
-                let duration = instant_now.duration_since(timing.end).as_nanos();
+                let start = timing.start.duration_since(anchor).as_nanos();
+                let duration = timing.end.unwrap_or_else(|| Instant::now()).duration_since(timing.start).as_nanos();
                 SerializedTaskTiming {
                     location: timing.location.into(),
                     start,
                     duration,
                 }
             })
-            .collect()
+            .collect::<Vec<_>>();
+
+        serialized
     }
 }
 
 /// Serializable variant of [`ThreadTaskTimings`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializedThreadTaskTimings<'a> {
+    /// Thread name
+    pub thread_name: Option<String>,
     /// Hash of the thread id
     pub thread_id: u64,
     /// Timing records for this thread
@@ -117,14 +125,19 @@ pub struct SerializedThreadTaskTimings<'a> {
 
 impl<'a> SerializedThreadTaskTimings<'a> {
     /// Convert [`ThreadTaskTimings`] into their serializable format
-    pub fn convert(timings: ThreadTaskTimings) -> SerializedThreadTaskTimings<'static> {
-        let serialized_timings = SerializedTaskTiming::convert(&timings.timings);
+    ///
+    /// # Params
+    ///
+    /// `anchor` - [`Instant`] that should be earlier than all timings to use as base anchor
+    pub fn convert(anchor: Instant, timings: ThreadTaskTimings) -> SerializedThreadTaskTimings<'static> {
+        let serialized_timings = SerializedTaskTiming::convert(anchor, &timings.timings);
 
         let mut hasher = DefaultHasher::new();
         timings.thread_id.hash(&mut hasher);
         let thread_id = hasher.finish();
 
         SerializedThreadTaskTimings {
+            thread_name: timings.thread_name,
             thread_id,
             timings: serialized_timings,
         }
@@ -147,8 +160,10 @@ pub(crate) static GLOBAL_THREAD_TIMINGS: spin::Mutex<Vec<GlobalThreadTimings>> =
 
 thread_local! {
     pub(crate) static THREAD_TIMINGS: LazyCell<Arc<GuardedTaskTimings>> = LazyCell::new(|| {
-        let thread_id = std::thread::current().id();
-        let timings = ThreadTimings::new(thread_id);
+        let current_thread = std::thread::current();
+        let thread_name = current_thread.name();
+        let thread_id = current_thread.id();
+        let timings = ThreadTimings::new(thread_name.map(|e| e.to_string()), thread_id);
         let timings = Arc::new(spin::Mutex::new(timings));
 
         {
@@ -165,13 +180,15 @@ thread_local! {
 }
 
 pub(crate) struct ThreadTimings {
+    pub thread_name: Option<String>,
     pub thread_id: ThreadId,
     pub timings: Box<TaskTimings>,
 }
 
 impl ThreadTimings {
-    pub(crate) fn new(thread_id: ThreadId) -> Self {
+    pub(crate) fn new(thread_name: Option<String>, thread_id: ThreadId) -> Self {
         ThreadTimings {
+            thread_name,
             thread_id,
             timings: TaskTimings::boxed(),
         }

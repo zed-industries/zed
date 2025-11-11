@@ -14,9 +14,7 @@ use objc::{
     sel, sel_impl,
 };
 use std::{
-    ffi::c_void,
-    ptr::{NonNull, addr_of},
-    time::{Duration, Instant},
+    ffi::c_void, ptr::{NonNull, addr_of}, time::{Duration, Instant}
 };
 
 /// All items in the generated file are marked as pub, so we're gonna wrap it in a separate mod to prevent
@@ -122,11 +120,12 @@ extern "C" fn trampoline(runnable: *mut c_void) {
     let timing = TaskTiming {
         location,
         start,
-        end: start,
+        end: None,
     };
 
     THREAD_TIMINGS.with(|timings| {
-        let timings = &mut timings.lock().timings;
+        let mut timings = timings.lock();
+        let timings = &mut timings.timings;
         if let Some(last_timing) = timings.iter_mut().rev().next() {
             if last_timing.location == timing.location {
                 return;
@@ -140,11 +139,12 @@ extern "C" fn trampoline(runnable: *mut c_void) {
     let end = Instant::now();
 
     THREAD_TIMINGS.with(|timings| {
-        let timings = &mut timings.lock().timings;
+        let mut timings = timings.lock();
+        let timings = &mut timings.timings;
         let Some(last_timing) = timings.iter_mut().rev().next() else {
             return;
         };
-        last_timing.end = end;
+        last_timing.end = Some(end);
     });
 }
 
@@ -160,11 +160,12 @@ extern "C" fn trampoline_compat(runnable: *mut c_void) {
     let timing = TaskTiming {
         location,
         start,
-        end,
+        end: Some(end),
     };
 
     THREAD_TIMINGS.with(|timings| {
-        let timings = &mut timings.lock().timings;
+        let mut timings = timings.lock();
+        let timings = &mut timings.timings;
         timings.push_back(timing);
     });
 }

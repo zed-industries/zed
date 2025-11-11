@@ -9,8 +9,10 @@ use proto::{CrashReport, GetCrashFilesResponse};
 use reqwest::multipart::{Form, Part};
 use settings::Settings;
 use smol::stream::StreamExt;
-use std::{ffi::OsStr, fs, sync::Arc, time::Duration};
+use std::{ffi::OsStr, fs, sync::Arc, time::Duration, thread::ThreadId};
 use util::ResultExt;
+
+use crate::STARTUP_TIME;
 
 pub fn init(http_client: Arc<HttpClientWithUrl>, installation_id: Option<String>, cx: &mut App) {
     monitor_hangs(cx);
@@ -276,6 +278,8 @@ pub fn monitor_main_thread_hangs(
 }
 
 fn monitor_hangs(cx: &App) {
+    let main_thread_id = std::thread::current().id();
+
     let foreground_executor = cx.foreground_executor();
     let background_executor = cx.background_executor();
 
@@ -308,7 +312,7 @@ fn monitor_hangs(cx: &App) {
                             }
 
                             if is_full {
-                                save_hang_trace(&background_executor, hang_time.unwrap());
+                                save_hang_trace(main_thread_id, &background_executor, hang_time.unwrap());
                             }
                         }
                     }
@@ -319,13 +323,20 @@ fn monitor_hangs(cx: &App) {
 }
 
 fn save_hang_trace(
+    main_thread_id: ThreadId,
     background_executor: &gpui::BackgroundExecutor,
     hang_time: chrono::DateTime<chrono::Local>,
 ) {
     let thread_timings = background_executor.dispatcher.get_all_timings();
     let thread_timings = thread_timings
         .into_iter()
-        .map(|timings| SerializedThreadTaskTimings::convert(timings))
+        .map(|mut timings| {
+            if timings.thread_id == main_thread_id {
+                timings.thread_name = Some("main".to_string());
+            }
+
+            SerializedThreadTaskTimings::convert(*STARTUP_TIME.get().unwrap(), timings)
+        })
         .collect::<Vec<_>>();
 
     let trace_path = paths::hang_traces_dir().join(&format!(

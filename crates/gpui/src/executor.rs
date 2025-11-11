@@ -146,6 +146,7 @@ impl BackgroundExecutor {
     }
 
     /// Enqueues the given future to be run to completion on a background thread.
+    #[track_caller]
     pub fn spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
     where
         R: Send + 'static,
@@ -155,6 +156,7 @@ impl BackgroundExecutor {
 
     /// Enqueues the given future to be run to completion on a background thread.
     /// The given label can be used to control the priority of the task in tests.
+    #[track_caller]
     pub fn spawn_labeled<R>(
         &self,
         label: TaskLabel,
@@ -166,6 +168,7 @@ impl BackgroundExecutor {
         self.spawn_internal::<R>(Box::pin(future), Some(label))
     }
 
+    #[track_caller]
     fn spawn_internal<R: Send + 'static>(
         &self,
         future: AnyFuture<R>,
@@ -487,6 +490,7 @@ impl ForegroundExecutor {
     }
 
     /// Enqueues the given Task to run on the main thread at some point in the future.
+    #[track_caller]
     pub fn spawn<R>(&self, future: impl Future<Output = R> + 'static) -> Task<R>
     where
         R: 'static,
@@ -608,6 +612,7 @@ impl<'a> Scope<'a> {
     }
 
     /// Spawn a future into this scope.
+    #[track_caller]
     pub fn spawn<F>(&mut self, f: F)
     where
         F: Future<Output = ()> + Send + 'a,

@@ -20,20 +20,21 @@ use workspace::{
 };
 use zed_actions::OpenPerformanceProfiler;
 
-pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
-        workspace.register_action(|workspace, _: &OpenPerformanceProfiler, window, cx| {
+pub fn init(startup_time: Instant, cx: &mut App) {
+    cx.observe_new(move |workspace: &mut workspace::Workspace, _, _| {
+        workspace.register_action(move |workspace, _: &OpenPerformanceProfiler, window, cx| {
             let window_handle = window
                 .window_handle()
                 .downcast::<Workspace>()
                 .expect("Workspaces are root Windows");
-            open_performance_profiler(workspace, window_handle, cx);
+            open_performance_profiler(startup_time, workspace, window_handle, cx);
         });
     })
     .detach();
 }
 
 fn open_performance_profiler(
+    startup_time: Instant,
     _workspace: &mut workspace::Workspace,
     workspace_handle: WindowHandle<Workspace>,
     cx: &mut App,
@@ -72,7 +73,7 @@ fn open_performance_profiler(
             window_bounds: Some(WindowBounds::centered(default_bounds, cx)),
             ..Default::default()
         },
-        |_window, cx| ProfilerWindow::new(Some(workspace_handle), cx),
+        |_window, cx| ProfilerWindow::new(startup_time, Some(workspace_handle), cx),
     )
     .log_err();
 }
@@ -90,6 +91,7 @@ struct TimingBar {
 }
 
 pub struct ProfilerWindow {
+    startup_time: Instant,
     data: DataMode,
     include_self_timings: ToggleState,
     autoscroll: bool,
@@ -99,8 +101,9 @@ pub struct ProfilerWindow {
 }
 
 impl ProfilerWindow {
-    pub fn new(workspace_handle: Option<WindowHandle<Workspace>>, cx: &mut App) -> Entity<Self> {
+    pub fn new(startup_time: Instant, workspace_handle: Option<WindowHandle<Workspace>>, cx: &mut App) -> Entity<Self> {
         let entity = cx.new(|cx| ProfilerWindow {
+            startup_time,
             data: DataMode::Realtime(None),
             include_self_timings: ToggleState::Unselected,
             autoscroll: true,
@@ -280,7 +283,7 @@ impl Render for ProfilerWindow {
                                         let Some(data) = this.get_timings() else {
                                             return;
                                         };
-                                        let timings = SerializedTaskTiming::convert(&data);
+                                        let timings = SerializedTaskTiming::convert(this.startup_time, &data);
 
                                         let active_path = workspace
                                             .read_with(cx, |workspace, cx| {
@@ -332,7 +335,7 @@ impl Render for ProfilerWindow {
                 }
 
                 let min = e[0].start;
-                let max = e[e.len() - 1].end;
+                let max = e[e.len() - 1].end.unwrap_or_else(|| Instant::now());
                 div.child(
                     v_flex()
                         .id("timings.bars")
@@ -349,7 +352,7 @@ impl Render for ProfilerWindow {
                         .children(
                             e.iter()
                                 .filter(|timing| {
-                                    timing.end.duration_since(timing.start).as_millis() >= 1
+                                    timing.end.unwrap_or_else(|| Instant::now()).duration_since(timing.start).as_millis() >= 1
                                 })
                                 .filter(|timing| {
                                     if self.include_self_timings.selected() {
@@ -366,7 +369,7 @@ impl Render for ProfilerWindow {
                                         TimingBar {
                                             location: timing.location,
                                             start: timing.start,
-                                            end: timing.end,
+                                            end: timing.end.unwrap_or_else(|| Instant::now()),
                                             color: cx.theme().accents().color_for_index(i as u32),
                                         },
                                         cx,
