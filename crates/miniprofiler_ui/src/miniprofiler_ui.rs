@@ -101,7 +101,11 @@ pub struct ProfilerWindow {
 }
 
 impl ProfilerWindow {
-    pub fn new(startup_time: Instant, workspace_handle: Option<WindowHandle<Workspace>>, cx: &mut App) -> Entity<Self> {
+    pub fn new(
+        startup_time: Instant,
+        workspace_handle: Option<WindowHandle<Workspace>>,
+        cx: &mut App,
+    ) -> Entity<Self> {
         let entity = cx.new(|cx| ProfilerWindow {
             startup_time,
             data: DataMode::Realtime(None),
@@ -283,7 +287,8 @@ impl Render for ProfilerWindow {
                                         let Some(data) = this.get_timings() else {
                                             return;
                                         };
-                                        let timings = SerializedTaskTiming::convert(this.startup_time, &data);
+                                        let timings =
+                                            SerializedTaskTiming::convert(this.startup_time, &data);
 
                                         let active_path = workspace
                                             .read_with(cx, |workspace, cx| {
@@ -352,7 +357,12 @@ impl Render for ProfilerWindow {
                         .children(
                             e.iter()
                                 .filter(|timing| {
-                                    timing.end.unwrap_or_else(|| Instant::now()).duration_since(timing.start).as_millis() >= 1
+                                    timing
+                                        .end
+                                        .unwrap_or_else(|| Instant::now())
+                                        .duration_since(timing.start)
+                                        .as_millis()
+                                        >= 1
                                 })
                                 .filter(|timing| {
                                     if self.include_self_timings.selected() {
