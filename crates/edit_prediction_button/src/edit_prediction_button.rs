@@ -1229,9 +1229,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_copilot_settings_url_with_enterprise_uri_trailing_slash(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_copilot_settings_url_with_enterprise_uri_trailing_slash(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
