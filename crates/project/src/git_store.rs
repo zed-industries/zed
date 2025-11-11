@@ -1019,9 +1019,9 @@ impl GitStore {
             repo.send_job(None, move |state, _| async move {
                 match state {
                     RepositoryState::Local { backend, .. } => backend.file_history(path).await,
-                    RepositoryState::Remote { .. } => {
-                        Err(anyhow!("file history not supported for remote repositories yet"))
-                    }
+                    RepositoryState::Remote { .. } => Err(anyhow!(
+                        "file history not supported for remote repositories yet"
+                    )),
                 }
             })
         });

@@ -230,48 +230,41 @@ pub fn init(cx: &mut App) {
                 };
             },
         );
-            workspace.register_action(
-                |workspace, _: &git::FileHistory, window, cx| {
-                    let Some(active_item) = workspace.active_item(cx) else {
-                        return;
-                    };
-                    let Some(editor) = active_item.downcast::<Editor>() else {
-                        return;
-                    };
-                    let Some(buffer) = editor
-                        .read(cx)
-                        .buffer()
-                        .read(cx)
-                        .as_singleton()
-                    else {
-                        return;
-                    };
-                    let Some(file) = buffer.read(cx).file() else {
-                        return;
-                    };
-                    let worktree_id = file.worktree_id(cx);
-                    let project_path = ProjectPath {
-                        worktree_id,
-                        path: file.path().clone(),
-                    };
-                    let project = workspace.project();
-                    let git_store = project.read(cx).git_store();
-                    let Some((repo, repo_path)) = git_store
-                        .read(cx)
-                        .repository_and_path_for_project_path(&project_path, cx)
-                    else {
-                        return;
-                    };
-                    file_history_view::FileHistoryView::open(
-                        repo_path,
-                        git_store.downgrade(),
-                        repo.downgrade(),
-                        workspace.weak_handle(),
-                        window,
-                        cx,
-                    );
-                },
+        workspace.register_action(|workspace, _: &git::FileHistory, window, cx| {
+            let Some(active_item) = workspace.active_item(cx) else {
+                return;
+            };
+            let Some(editor) = active_item.downcast::<Editor>() else {
+                return;
+            };
+            let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() else {
+                return;
+            };
+            let Some(file) = buffer.read(cx).file() else {
+                return;
+            };
+            let worktree_id = file.worktree_id(cx);
+            let project_path = ProjectPath {
+                worktree_id,
+                path: file.path().clone(),
+            };
+            let project = workspace.project();
+            let git_store = project.read(cx).git_store();
+            let Some((repo, repo_path)) = git_store
+                .read(cx)
+                .repository_and_path_for_project_path(&project_path, cx)
+            else {
+                return;
+            };
+            file_history_view::FileHistoryView::open(
+                repo_path,
+                git_store.downgrade(),
+                repo.downgrade(),
+                workspace.weak_handle(),
+                window,
+                cx,
             );
+        });
     })
     .detach();
 }

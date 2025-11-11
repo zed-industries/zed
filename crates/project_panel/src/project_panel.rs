@@ -1130,7 +1130,8 @@ impl ProjectPanel {
                                 Box::new(zed_actions::workspace::CopyRelativePath),
                             )
                             .when(has_git_repo, |menu| {
-                                menu.separator().action("File History", Box::new(git::FileHistory))
+                                menu.separator()
+                                    .action("File History", Box::new(git::FileHistory))
                             })
                             .when(!should_hide_rename, |menu| {
                                 menu.separator().action("Rename", Box::new(Rename))

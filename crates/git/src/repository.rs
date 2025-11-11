@@ -1452,7 +1452,10 @@ impl GitRepository for RealGitRepository {
                         "--no-optional-locks",
                         "log",
                         "--follow",
-                        &format!("--pretty=format:%H%x00%s%x00%B%x00%at%x00%an%x00%ae{}", COMMIT_DELIMITER),
+                        &format!(
+                            "--pretty=format:%H%x00%s%x00%B%x00%at%x00%an%x00%ae{}",
+                            COMMIT_DELIMITER
+                        ),
                         "--",
                     ])
                     .arg(path.as_unix_str())

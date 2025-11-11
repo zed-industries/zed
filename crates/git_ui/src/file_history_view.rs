@@ -1,13 +1,14 @@
 use anyhow::Result;
-use editor::{Editor, MultiBuffer};
 use git::repository::{FileHistory, FileHistoryEntry, RepoPath};
 use gpui::{
-    actions, uniform_list, App, AnyElement, AnyView, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, IntoElement, ListSizingBehavior, Render, Task, UniformListScrollHandle, WeakEntity,
-    Window, rems,
+    AnyElement, AnyView, App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    ListSizingBehavior, Render, Task, UniformListScrollHandle, WeakEntity, Window, actions, rems,
+    uniform_list,
 };
-use language::Capability;
-use project::{Project, ProjectPath, git_store::{GitStore, Repository}};
+use project::{
+    Project, ProjectPath,
+    git_store::{GitStore, Repository},
+};
 use std::any::{Any, TypeId};
 use time::OffsetDateTime;
 use ui::{Icon, IconName, Label, LabelCommon as _, SharedString, prelude::*};
@@ -24,15 +25,13 @@ actions!(git, [ViewCommitFromHistory]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
-        workspace.register_action(|_workspace, _: &ViewCommitFromHistory, _window, _cx| {
-        });
+        workspace.register_action(|_workspace, _: &ViewCommitFromHistory, _window, _cx| {});
     })
     .detach();
 }
 
 pub struct FileHistoryView {
     history: FileHistory,
-    editor: Entity<Editor>,
     repository: WeakEntity<Repository>,
     workspace: WeakEntity<Workspace>,
     selected_entry: Option<usize>,
@@ -98,20 +97,15 @@ impl FileHistoryView {
         history: FileHistory,
         repository: Entity<Repository>,
         workspace: WeakEntity<Workspace>,
-        project: Entity<Project>,
-        window: &mut Window,
+        _project: Entity<Project>,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadOnly));
-        let editor = cx.new(|cx| {
-            Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx)
-        });
         let focus_handle = cx.focus_handle();
         let scroll_handle = UniformListScrollHandle::new();
 
         Self {
             history,
-            editor,
             repository: repository.downgrade(),
             workspace,
             selected_entry: None,
@@ -136,7 +130,7 @@ impl FileHistoryView {
         } else {
             entry.sha.to_string()
         };
-        
+
         let commit_time = OffsetDateTime::from_unix_timestamp(entry.commit_timestamp)
             .unwrap_or_else(|_| OffsetDateTime::UNIX_EPOCH);
         let relative_timestamp = time_format::format_localized_timestamp(
@@ -177,7 +171,7 @@ impl FileHistoryView {
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selected_entry = Some(ix);
                 cx.notify();
-                
+
                 // Open the commit view filtered to show only this file's changes
                 if let Some(repo) = repo.upgrade() {
                     let sha_str = sha.to_string();
@@ -213,15 +207,12 @@ impl FileHistoryView {
                     .single_line(),
             )
             .child(
-                div()
-                    .flex_none()
-                    .w(rems(6.5))
-                    .child(
-                        Label::new(relative_timestamp)
-                            .size(LabelSize::Small)
-                            .color(ui::Color::Muted)
-                            .single_line(),
-                    ),
+                div().flex_none().w(rems(6.5)).child(
+                    Label::new(relative_timestamp)
+                        .size(LabelSize::Small)
+                        .color(ui::Color::Muted)
+                        .single_line(),
+                ),
             )
             .into_any_element()
     }
@@ -236,7 +227,7 @@ impl Focusable for FileHistoryView {
 }
 
 impl Render for FileHistoryView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let file_name = self.history.path.file_name().unwrap_or("File");
         let entry_count = self.history.entries.len();
 
@@ -392,7 +383,12 @@ impl Item for FileHistoryView {
         None
     }
 
-    fn added_to_workspace(&mut self, _workspace: &mut Workspace, window: &mut Window, _cx: &mut Context<Self>) {
+    fn added_to_workspace(
+        &mut self,
+        _workspace: &mut Workspace,
+        window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
         window.focus(&self.focus_handle);
     }
 
@@ -408,7 +404,13 @@ impl Item for FileHistoryView {
         None
     }
 
-    fn set_nav_history(&mut self, _: workspace::ItemNavHistory, _window: &mut Window, _: &mut Context<Self>) {}
+    fn set_nav_history(
+        &mut self,
+        _: workspace::ItemNavHistory,
+        _window: &mut Window,
+        _: &mut Context<Self>,
+    ) {
+    }
 
     fn act_as_type<'a>(
         &'a self,
@@ -419,4 +421,3 @@ impl Item for FileHistoryView {
         None
     }
 }
-
