@@ -1,4 +1,4 @@
-use std::{cmp, ops::Range};
+use std::{cmp, collections::VecDeque, ops::Range};
 
 use buffer_diff::DiffHunkStatusKind;
 use multi_buffer::{
@@ -113,8 +113,14 @@ struct FilterSnapshot {
 }
 
 /// A byte index into the buffer (after ignored diff hunk lines are deleted)
-#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
 struct FilterOffset(usize);
+
+impl std::fmt::Debug for FilterOffset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "FilterOffset({})", self.0)
+    }
+}
 
 impl FilterOffset {
     /// Convert a range of offsets to a range of [`FilterOffset`]s, given that
@@ -248,6 +254,9 @@ impl FilterMap {
         dbg!(&mode);
 
         #[cfg(test)]
+        self.snapshot.print_transforms();
+
+        #[cfg(test)]
         log::info!("filter map output text:\n{}", self.snapshot.text());
 
         let mut expected_summary = TextSummary::default();
@@ -303,6 +312,10 @@ impl FilterMap {
         buffer_snapshot: MultiBufferSnapshot,
         buffer_edits: Vec<text::Edit<usize>>,
     ) -> (FilterSnapshot, Vec<FilterEdit>) {
+        if buffer_edits.is_empty() {
+            return (self.snapshot.clone(), Vec::new());
+        }
+
         let Some(mode) = self.mode else {
             // If we're not filtering out anything, edits can be passed through
             // unchanged and we only need one isomorphic transform.
@@ -328,9 +341,8 @@ impl FilterMap {
         };
 
         dbg!(&buffer_edits);
-        #[cfg(test)]
-        self.snapshot.print_transforms();
 
+        // Extend the new range of each edit to the next line boundary--most convenient to work in terms of points for this.
         let buffer_edits = {
             let mut buffer_point_edits = buffer_edits
                 .into_iter()
@@ -348,21 +360,17 @@ impl FilterMap {
             while let Some(mut buffer_edit) = buffer_point_edits.next() {
                 let start_of_next_line =
                     Point::new(buffer_edit.new.end.row + 1, 0).min(buffer_snapshot.max_point());
-                if start_of_next_line > buffer_edit.new.end {
-                    let mut last_overlapping_buffer_edit = buffer_edit.clone();
-                    while let Some(next_buffer_edit) = buffer_point_edits.peek()
-                        && next_buffer_edit.new.start < start_of_next_line
-                    {
-                        last_overlapping_buffer_edit = next_buffer_edit.clone();
-                        buffer_point_edits.next();
-                    }
-                    buffer_edit.old.end = last_overlapping_buffer_edit.old.end;
-                    buffer_edit.new.end = last_overlapping_buffer_edit.new.end;
-                    if start_of_next_line > buffer_edit.new.end {
-                        buffer_edit.old.end += start_of_next_line - buffer_edit.new.end;
-                        buffer_edit.new.end = start_of_next_line;
-                    }
+
+                if let Some(next_buffer_edit) = buffer_point_edits.peek_mut()
+                    && next_buffer_edit.new.start < start_of_next_line
+                {
+                    next_buffer_edit.old.start = buffer_edit.old.start;
+                    next_buffer_edit.new.start = buffer_edit.new.start;
+                    continue;
                 }
+
+                buffer_edit.old.end += start_of_next_line - buffer_edit.new.end;
+                buffer_edit.new.end = start_of_next_line;
                 merged_buffer_point_edits.push(buffer_edit);
             }
             merged_buffer_point_edits
