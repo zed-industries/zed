@@ -3283,8 +3283,7 @@ mod tests {
         {
             let mut state = handle.0.borrow_mut();
             state.bounds = Bounds::new(point(px(0.), px(0.)), size(px(80.), px(20.)));
-            state.child_bounds =
-                vec![Bounds::new(point(px(25.), px(0.)), size(px(200.), px(20.)))];
+            state.child_bounds = vec![Bounds::new(point(px(25.), px(0.)), size(px(200.), px(20.)))];
             state.overflow.x = Overflow::Scroll;
             state.active_item = Some(ScrollActiveItem {
                 index: 0,
