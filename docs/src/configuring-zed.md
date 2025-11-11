@@ -4491,103 +4491,25 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 }
 ```
 
-### Auto Open Files
+### Auto Open
 
-- Description: Control when files are automatically opened in the editor during various project panel operations
+- Description: Control whether files are opened automatically after different creation flows in the project panel.
 - Setting: `auto_open`
 - Default:
 
 ```json [settings]
-{
-  "auto_open": {
-    "on_create": true,
-    "on_paste": false,
-    "on_drop": true
-  }
+"auto_open": {
+  "on_create": true,
+  "on_paste": true,
+  "on_drop": true
 }
 ```
-
-**Sub-settings**
-
-#### On Create
-
-Whether to automatically open newly created files in the editor. When enabled, files created via the "New File" action will open immediately in the editor.
 
 **Options**
 
-1. Enable auto-open on create (default)
-
-```json [settings]
-{
-  "auto_open": {
-    "on_create": true
-  }
-}
-```
-
-2. Disable auto-open on create
-
-```json [settings]
-{
-  "auto_open": {
-    "on_create": false
-  }
-}
-```
-
-#### On Paste
-
-Whether to automatically open files after pasting or duplicating them in the project panel. When disabled (default), this prevents auto-opening of potentially problematic files like binary files or fonts that may cause errors.
-
-**Options**
-
-1. Disable auto-open on paste (default - prevents binary file errors)
-
-```json [settings]
-{
-  "auto_open": {
-    "on_paste": false
-  }
-}
-```
-
-2. Enable auto-open on paste
-
-```json [settings]
-{
-  "auto_open": {
-    "on_paste": true
-  }
-}
-```
-
-#### On Drop
-
-Whether to automatically open files dropped from external sources (e.g., from file explorer, desktop). When enabled (default), the first file dropped will open in the editor.
-
-**Options**
-
-1. Enable auto-open on drop (default)
-
-```json [settings]
-{
-  "auto_open": {
-    "on_drop": true
-  }
-}
-```
-
-2. Disable auto-open on drop
-
-```json [settings]
-{
-  "auto_open": {
-    "on_drop": false
-  }
-}
-```
-
-**Note**: These settings control when files open, not how they open. The behavior of preview tabs is controlled separately by the [`preview_tabs`](#preview-tabs) settings.
+- `on_create`: Whether to automatically open newly created files in the editor.
+- `on_paste`: Whether to automatically open files after pasting or duplicating them.
+- `on_drop`: Whether to automatically open files dropped from external sources.
 
 ## Agent
 
