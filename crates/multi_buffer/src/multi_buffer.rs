@@ -3190,12 +3190,7 @@ impl MultiBufferSnapshot {
             )
         })
         .filter_map(move |(range, hunk, excerpt)| {
-            if hunk
-                .buffer_range
-                .start
-                .cmp(&excerpt.range.context.start, &excerpt.buffer)
-                .is_lt()
-            {
+            if hunk.range.start < excerpt.range.context.start.to_point(&excerpt.buffer) {
                 return None;
             }
             if range.start != range.end && range.end == query_range.start && !hunk.range.is_empty()
@@ -3451,6 +3446,8 @@ impl MultiBufferSnapshot {
                     while let Some(region) = cursor.region() {
                         if region.is_main_buffer
                             && (region.buffer_range.end > metadata_buffer_range.end
+                                || (region.buffer_range.end == metadata_buffer_range.end
+                                    && region.diff_hunk_status.is_some())
                                 || cursor.is_at_end_of_excerpt())
                         {
                             break;
