@@ -178,10 +178,7 @@ fn journal_dir(path: &str) -> Option<PathBuf> {
     let absolute_path = if base_path.is_absolute() {
         base_path.to_path_buf()
     } else {
-        log::warn!(
-            "Invalid journal path '{}' (not absolute), falling back to home directory",
-            path
-        );
+        log::warn!("Invalid journal path {path:?} (not absolute), falling back to home directory",);
         std::env::home_dir()?
     };
     Some(absolute_path.join("journal"))
@@ -243,7 +240,7 @@ mod tests {
             assert!(result.is_some());
             let path = result.unwrap();
             assert!(path.is_absolute());
-            assert!(path.ends_with("journal"));
+            assert_eq!(path, PathBuf::from("/home/user/journal"));
         }
 
         #[test]
@@ -253,8 +250,10 @@ mod tests {
             let path = result.unwrap();
 
             assert!(path.is_absolute(), "Tilde should expand to absolute path");
-            assert!(path.ends_with("journal"));
-            println!("path: {:?}", path);
+
+            if let Some(home) = std::env::home_dir() {
+                assert_eq!(path, home.join("documents").join("journal"));
+            }
         }
 
         #[test]
@@ -270,11 +269,11 @@ mod tests {
                     relative_path,
                     path
                 );
-                assert!(path.ends_with("journal"));
 
                 if let Some(home) = std::env::home_dir() {
-                    assert!(
-                        path.starts_with(home),
+                    assert_eq!(
+                        path,
+                        home.join("journal"),
                         "Should fall back to home directory for input '{}'",
                         relative_path
                     );
@@ -288,8 +287,7 @@ mod tests {
             let result = journal_dir("C:\\Users\\user\\Documents");
             assert!(result.is_some());
             let path = result.unwrap();
-            assert!(path.is_absolute());
-            assert!(path.ends_with("journal"));
+            assert_eq!(path, PathBuf::from("C:\\Users\\user\\Documents\\journal"));
         }
     }
 }

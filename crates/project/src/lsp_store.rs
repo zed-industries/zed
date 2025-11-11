@@ -7654,7 +7654,7 @@ impl LspStore {
         let uri = lsp::Uri::from_file_path(&abs_path)
             .ok()
             .with_context(|| format!("Failed to convert path to URI: {}", abs_path.display()))
-            .ok()?;
+            .log_err()?;
         let next_snapshot = buffer.text_snapshot();
         for language_server in language_servers {
             let language_server = language_server.clone();
