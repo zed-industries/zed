@@ -154,18 +154,32 @@ extern "C" fn trampoline_compat(runnable: *mut c_void) {
     let location = core::panic::Location::caller();
 
     let start = Instant::now();
-    task.run();
-    let end = Instant::now();
-
     let timing = TaskTiming {
         location,
         start,
-        end: Some(end),
+        end: None,
     };
+    THREAD_TIMINGS.with(|timings| {
+        let mut timings = timings.lock();
+        let timings = &mut timings.timings;
+        if let Some(last_timing) = timings.iter_mut().rev().next() {
+            if last_timing.location == timing.location {
+                return;
+            }
+        }
+
+        timings.push_back(timing);
+    });
+
+    task.run();
+    let end = Instant::now();
 
     THREAD_TIMINGS.with(|timings| {
         let mut timings = timings.lock();
         let timings = &mut timings.timings;
-        timings.push_back(timing);
+        let Some(last_timing) = timings.iter_mut().rev().next() else {
+            return;
+        };
+        last_timing.end = Some(end);
     });
 }
