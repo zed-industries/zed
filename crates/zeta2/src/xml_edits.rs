@@ -102,6 +102,7 @@ fn resolve_new_text_old_text_in_buffer(
         }))
 }
 
+#[cfg(debug_assertions)]
 fn closest_old_text_match(buffer: &TextBufferSnapshot, old_text: &str) -> Option<String> {
     let buffer_text = buffer.text();
     let mut cursor = 0;
