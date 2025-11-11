@@ -845,7 +845,7 @@ impl EditPredictionButton {
                 .enterprise_uri
                 .clone(),
         };
-        let settings_url = match Self::parse_domain(enterprise_uri) {
+        let settings_url = match enterprise_uri {
             Some(uri) => {
                 format!("{}/{COPILOT_SETTINGS_PATH}", uri.trim_end_matches('/'))
             }
