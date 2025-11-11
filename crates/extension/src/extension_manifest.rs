@@ -279,10 +279,7 @@ impl ExtensionManifest {
         } else {
             extension_manifest_path.set_extension("toml");
             let manifest_content = fs.load(&extension_manifest_path).await.with_context(|| {
-                format!(
-                    "failed to load {extension_name} extension.toml, {:?}",
-                    extension_manifest_path
-                )
+                format!("loading {extension_name} extension.toml, {extension_manifest_path:?}")
             })?;
             toml::from_str(&manifest_content).map_err(|err| {
                 anyhow!("Invalid extension.toml for extension {extension_name}:\n{err}")
