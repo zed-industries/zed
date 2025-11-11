@@ -845,12 +845,7 @@ impl EditPredictionButton {
                 .enterprise_uri
                 .clone(),
         };
-        let settings_url = match enterprise_uri {
-            Some(uri) => {
-                format!("{}/{COPILOT_SETTINGS_PATH}", uri.trim_end_matches('/'))
-            }
-            None => COPILOT_SETTINGS_URL.to_string(),
-        };
+        let settings_url = copilot_settings_url(copilot_config.enterprise_uri.as_deref());
 
         ContextMenu::build(window, cx, |menu, window, cx| {
             let menu = self.build_language_settings_menu(menu, window, cx);
@@ -1187,5 +1182,14 @@ fn toggle_edit_prediction_mode(fs: Arc<dyn Fs>, mode: EditPredictionsMode, cx: &
                     });
             }
         });
+    }
+}
+
+fn copilot_settings_url(enterprise_uri: Option<&str>) -> String {
+    match enterprise_uri {
+        Some(uri) => {
+            format!("{}{}", uri.trim_end_matches('/'), COPILOT_SETTINGS_PATH)
+        }
+        None => COPILOT_SETTINGS_URL.to_string(),
     }
 }
