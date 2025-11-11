@@ -5884,7 +5884,7 @@ impl Workspace {
             ))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ClearRecentFilesHistory, window, cx| {
-                    workspace.clear_recent_files_history(window, cx).detach();
+                    workspace.clear_recent_files_history(window, cx);
                 },
             ))
             .on_action(cx.listener(
