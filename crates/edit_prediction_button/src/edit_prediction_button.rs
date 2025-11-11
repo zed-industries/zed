@@ -1193,3 +1193,28 @@ fn copilot_settings_url(enterprise_uri: Option<&str>) -> String {
         None => COPILOT_SETTINGS_URL.to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[gpui::test]
+    fn test_copilot_settings_url_with_enterprise_uri() {
+        let enterprise_uri = Some("https://my-company.ghe.com");
+        let url = copilot_settings_url(enterprise_uri);
+        assert_eq!(url, "https://my-company.ghe.com/settings/copilot");
+    }
+
+    #[gpui::test]
+    fn test_copilot_settings_url_with_enterprise_uri_trailing_slash() {
+        let enterprise_uri = Some("https://my-company.ghe.com/");
+        let url = copilot_settings_url(enterprise_uri);
+        assert_eq!(url, "https://my-company.ghe.com/settings/copilot");
+    }
+
+    #[gpui::test]
+    fn test_copilot_settings_url_without_enterprise_uri() {
+        let url = copilot_settings_url(None);
+        assert_eq!(url, "https://github.com/settings/copilot");
+    }
+}
