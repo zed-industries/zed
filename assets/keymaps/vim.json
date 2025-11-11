@@ -960,7 +960,10 @@
       "enter": "editor::ToggleFocus",
       "/": "menu::Cancel",
       "ctrl-u": "outline_panel::ScrollUp",
-      "ctrl-d": "outline_panel::ScrollDown"
+      "ctrl-d": "outline_panel::ScrollDown",
+      "z t": "outline_panel::ScrollCursorTop",
+      "z z": "outline_panel::ScrollCursorCenter",
+      "z b": "outline_panel::ScrollCursorBottom"
     }
   },
   {

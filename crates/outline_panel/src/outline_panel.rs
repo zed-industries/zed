@@ -81,6 +81,12 @@ actions!(
         ScrollUp,
         /// Scroll half a page downwards
         ScrollDown,
+        /// Scroll until the cursor displays at the center
+        ScrollCursorCenter,
+        /// Scroll until the cursor displays at the top
+        ScrollCursorTop,
+        /// Scroll until the cursor displays at the bottom
+        ScrollCursorBottom,
         /// Selects the parent of the current entry.
         SelectParent,
         /// Toggles the pin status of the active editor.
@@ -1171,6 +1177,58 @@ impl OutlinePanel {
     fn scroll_down(&mut self, _: &ScrollDown, window: &mut Window, cx: &mut Context<Self>) {
         for _ in 0..self.rendered_entries_len / 2 {
             window.dispatch_action(SelectNext.boxed_clone(), cx);
+        }
+    }
+
+    fn scroll_cursor_center(
+        &mut self,
+        _: &ScrollCursorCenter,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(selected_entry) = self.selected_entry() {
+            let index = self
+                .cached_entries
+                .iter()
+                .position(|cached_entry| &cached_entry.entry == selected_entry);
+            if let Some(index) = index {
+                self.scroll_handle
+                    .scroll_to_item_strict(index, ScrollStrategy::Center);
+                cx.notify();
+            }
+        }
+    }
+
+    fn scroll_cursor_top(&mut self, _: &ScrollCursorTop, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(selected_entry) = self.selected_entry() {
+            let index = self
+                .cached_entries
+                .iter()
+                .position(|cached_entry| &cached_entry.entry == selected_entry);
+            if let Some(index) = index {
+                self.scroll_handle
+                    .scroll_to_item_strict(index, ScrollStrategy::Top);
+                cx.notify();
+            }
+        }
+    }
+
+    fn scroll_cursor_bottom(
+        &mut self,
+        _: &ScrollCursorBottom,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(selected_entry) = self.selected_entry() {
+            let index = self
+                .cached_entries
+                .iter()
+                .position(|cached_entry| &cached_entry.entry == selected_entry);
+            if let Some(index) = index {
+                self.scroll_handle
+                    .scroll_to_item_strict(index, ScrollStrategy::Bottom);
+                cx.notify();
+            }
         }
     }
 
@@ -5005,6 +5063,9 @@ impl Render for OutlinePanel {
             .on_action(cx.listener(Self::scroll_up))
             .on_action(cx.listener(Self::scroll_down))
             .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::scroll_cursor_center))
+            .on_action(cx.listener(Self::scroll_cursor_top))
+            .on_action(cx.listener(Self::scroll_cursor_bottom))
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
