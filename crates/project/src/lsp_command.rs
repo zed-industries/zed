@@ -14,7 +14,7 @@ use client::proto::{self, PeerId};
 use clock::Global;
 use collections::{HashMap, HashSet};
 use futures::future;
-use gpui::{App, AsyncApp, Entity, Task};
+use gpui::{App, AsyncApp, Entity, SharedString, Task};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, CharScopeContext,
     OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
@@ -3755,6 +3755,7 @@ impl GetDocumentDiagnostics {
             .into_iter()
             .filter_map(|diagnostics| {
                 Some(LspPullDiagnostics::Response {
+                    registration_id: response.registration_id.clone().map(SharedString::from),
                     server_id: LanguageServerId::from_proto(diagnostics.server_id),
                     uri: lsp::Uri::from_str(diagnostics.uri.as_str()).log_err()?,
                     diagnostics: if diagnostics.changed {
@@ -4170,6 +4171,7 @@ impl LspCommand for GetDocumentDiagnostics {
                     server_id,
                     uri,
                     diagnostics,
+                    registration_id,
                 } => {
                     let mut changed = false;
                     let (diagnostics, result_id) = match diagnostics {
