@@ -117,42 +117,4 @@ impl Settings for ProjectPanelSettings {
             },
         }
     }
-
-    fn import_from_vscode(
-        vscode: &settings::VsCodeSettings,
-        current: &mut settings::SettingsContent,
-    ) {
-        if let Some(hide_gitignore) = vscode.read_bool("explorer.excludeGitIgnore") {
-            current.project_panel.get_or_insert_default().hide_gitignore = Some(hide_gitignore);
-        }
-        if let Some(auto_reveal) = vscode.read_bool("explorer.autoReveal") {
-            current
-                .project_panel
-                .get_or_insert_default()
-                .auto_reveal_entries = Some(auto_reveal);
-        }
-        if let Some(compact_folders) = vscode.read_bool("explorer.compactFolders") {
-            current.project_panel.get_or_insert_default().auto_fold_dirs = Some(compact_folders);
-        }
-
-        if Some(false) == vscode.read_bool("git.decorations.enabled") {
-            current.project_panel.get_or_insert_default().git_status = Some(false);
-        }
-        if Some(false) == vscode.read_bool("problems.decorations.enabled") {
-            current
-                .project_panel
-                .get_or_insert_default()
-                .show_diagnostics = Some(ShowDiagnostics::Off);
-        }
-        if let (Some(false), Some(false)) = (
-            vscode.read_bool("explorer.decorations.badges"),
-            vscode.read_bool("explorer.decorations.colors"),
-        ) {
-            current.project_panel.get_or_insert_default().git_status = Some(false);
-            current
-                .project_panel
-                .get_or_insert_default()
-                .show_diagnostics = Some(ShowDiagnostics::Off);
-        }
-    }
 }

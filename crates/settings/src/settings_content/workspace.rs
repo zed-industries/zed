@@ -511,7 +511,7 @@ impl OnLastWindowClosed {
 }
 
 #[skip_serializing_none]
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct ProjectPanelAutoOpenSettings {
     /// Whether to automatically open newly created files in the editor.
     ///
@@ -519,7 +519,7 @@ pub struct ProjectPanelAutoOpenSettings {
     pub on_create: Option<bool>,
     /// Whether to automatically open files after pasting or duplicating them.
     ///
-    /// Default: false
+    /// Default: true
     pub on_paste: Option<bool>,
     /// Whether to automatically open files dropped from external sources.
     ///
@@ -607,7 +607,7 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub drag_and_drop: Option<bool>,
-    /// Settings for automatically opening files in various operations.
+    /// Settings for automatically opening files.
     pub auto_open: Option<ProjectPanelAutoOpenSettings>,
 }
 

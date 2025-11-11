@@ -748,13 +748,13 @@
     "hide_root": false,
     // Whether to hide the hidden entries in the project panel.
     "hide_hidden": false,
-    // Settings for automatically opening files in various operations.
+    // Settings for automatically opening files.
     "auto_open": {
-      // Automatically open newly created files in the editor
+      // Whether to automatically open newly created files in the editor.
       "on_create": true,
-      // Automatically open files after pasting or duplicating them
-      "on_paste": false,
-      // Automatically open files dropped from external sources
+      // Whether to automatically open files after pasting or duplicating them.
+      "on_paste": true,
+      // Whether to automatically open files dropped from external sources.
       "on_drop": true
     }
   },

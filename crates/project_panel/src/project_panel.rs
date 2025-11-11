@@ -2711,6 +2711,7 @@ impl ProjectPanel {
                             });
 
                             if item_count == 1 {
+                                // open entry if not dir, setting is enabled, and only focus if rename is not pending
                                 if !entry.is_dir() {
                                     let settings = ProjectPanelSettings::get_global(cx);
                                     if settings.auto_open.should_open_on_paste() {
@@ -3595,13 +3596,14 @@ impl ProjectPanel {
 
                 let opened_entries = task.await.with_context(|| "failed to copy external paths")?;
                 this.update(cx, |this, cx| {
-                if open_file_after_drop && !opened_entries.is_empty() {
-                    let settings = ProjectPanelSettings::get_global(cx);
-                    if settings.auto_open.should_open_on_drop() {
-                        this.open_entry(opened_entries[0], true, false, cx);
+                    if open_file_after_drop && !opened_entries.is_empty() {
+                        let settings = ProjectPanelSettings::get_global(cx);
+                        if settings.auto_open.should_open_on_drop() {
+                            this.open_entry(opened_entries[0], true, false, cx);
+                        }
                     }
-                }
-            })
+                })
+            }
             .log_err().await
         })
         .detach();

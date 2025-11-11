@@ -3784,15 +3784,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(SettingField {
                         json_path: Some("project_panel.open_file_on_paste"),
                         pick: |settings_content| {
-                            if let Some(project_panel) = &settings_content.project_panel {
-                                if let Some(auto_open) = &project_panel.auto_open {
-                                    &auto_open.on_create
-                                } else {
-                                    &None
-                                }
-                            } else {
-                                &None
-                            }
+                            settings_content.project_panel.as_ref()?.auto_open.as_ref()?.on_create.as_ref()
                         },
                         write: |settings_content, value| {
                             settings_content.project_panel.get_or_insert_default().auto_open.get_or_insert_default().on_create = value;
@@ -3806,15 +3798,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Automatically open files after pasting or duplicating them in the project panel",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
-                            if let Some(project_panel) = &settings_content.project_panel {
-                                if let Some(auto_open) = &project_panel.auto_open {
-                                    &auto_open.on_paste
-                                } else {
-                                    &None
-                                }
-                            } else {
-                                &None
-                            }
+                            settings_content.project_panel.as_ref()?.auto_open.as_ref()?.on_paste.as_ref()
                         },
                         write: |settings_content, value| {
                             settings_content.project_panel.get_or_insert_default().auto_open.get_or_insert_default().on_paste = value;
@@ -3828,15 +3812,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Automatically open files dropped from external sources into the project panel",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
-                            if let Some(project_panel) = &settings_content.project_panel {
-                                if let Some(auto_open) = &project_panel.auto_open {
-                                    &auto_open.on_drop
-                                } else {
-                                    &None
-                                }
-                            } else {
-                                &None
-                            }
+                            settings_content.project_panel.as_ref()?.auto_open.as_ref()?.on_drop.as_ref()
                         },
                         write: |settings_content, value| {
                             settings_content.project_panel.get_or_insert_default().auto_open.get_or_insert_default().on_drop = value;
