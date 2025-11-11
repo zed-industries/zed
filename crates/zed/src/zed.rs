@@ -726,7 +726,18 @@ fn register_actions(
                 ..Default::default()
             })
         })
-        .register_action(|_, action: &OpenBrowser, _window, cx| cx.open_url(&action.url))
+        .register_action(|_, action: &OpenBrowser, _window, cx| {
+            // Parse and validate the URL to ensure it's properly formatted
+            match url::Url::parse(&action.url) {
+                Ok(parsed_url) => {
+                    // Use the parsed URL's string representation which is properly escaped
+                    cx.open_url(parsed_url.as_str());
+                }
+                Err(e) => {
+                    log::error!("Failed to parse URL '{}': {}", action.url, e);
+                }
+            }
+        })
         .register_action(|workspace, _: &workspace::Open, window, cx| {
             telemetry::event!("Project Opened");
             let paths = workspace.prompt_for_open_path(
