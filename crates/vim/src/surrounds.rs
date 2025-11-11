@@ -327,7 +327,7 @@ impl Vim {
                                     while let Some((next_ch, _)) = reverse_chars_and_offsets.next()
                                         && (next_ch.to_string() == " "
                                             && forward_end
-                                                .map_or(true, |open_end| start > open_end))
+                                                .map_or(true, |open_end| start >= open_end))
                                         && close_str.len() < edit_len - 1
                                     {
                                         start -= 1;
