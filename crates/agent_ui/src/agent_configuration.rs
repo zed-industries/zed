@@ -26,7 +26,9 @@ use language_model::{
 use language_models::AllLanguageModelSettings;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
-    agent_server_store::{AgentServerStore, CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
+    agent_server_store::{
+        AgentServerStore, CLAUDE_CODE_NAME, CODEX_NAME, ExternalAgentServerName, GEMINI_NAME,
+    },
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
 };
 use settings::{Settings, SettingsStore, update_settings_file};
@@ -943,7 +945,7 @@ impl AgentConfiguration {
             .cloned()
             .collect::<Vec<_>>();
 
-        let user_defined_agents = user_defined_agents
+        let user_defined_agents: Vec<_> = user_defined_agents
             .into_iter()
             .map(|name| {
                 let icon = if let Some(icon_path) = agent_server_store.agent_icon(&name) {
@@ -951,10 +953,9 @@ impl AgentConfiguration {
                 } else {
                     AgentIcon::Name(IconName::Ai)
                 };
-                self.render_agent_server(icon, name, true)
-                    .into_any_element()
+                (name, icon)
             })
-            .collect::<Vec<_>>();
+            .collect();
 
         let add_agens_button = Button::new("add-agent", "Add Agent")
             .style(ButtonStyle::Outlined)
@@ -993,26 +994,29 @@ impl AgentConfiguration {
                                 AgentIcon::Name(IconName::AiClaude),
                                 "Claude Code",
                                 false,
+                                cx,
                             ))
                             .child(Divider::horizontal().color(DividerColor::BorderFaded))
                             .child(self.render_agent_server(
                                 AgentIcon::Name(IconName::AiOpenAi),
                                 "Codex CLI",
                                 false,
+                                cx,
                             ))
                             .child(Divider::horizontal().color(DividerColor::BorderFaded))
                             .child(self.render_agent_server(
                                 AgentIcon::Name(IconName::AiGemini),
                                 "Gemini CLI",
                                 false,
+                                cx,
                             ))
                             .map(|mut parent| {
-                                for agent in user_defined_agents {
+                                for (name, icon) in user_defined_agents {
                                     parent = parent
                                         .child(
                                             Divider::horizontal().color(DividerColor::BorderFaded),
                                         )
-                                        .child(agent);
+                                        .child(self.render_agent_server(icon, name, true, cx));
                                 }
                                 parent
                             }),
@@ -1025,6 +1029,7 @@ impl AgentConfiguration {
         icon: AgentIcon,
         name: impl Into<SharedString>,
         external: bool,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let name = name.into();
         let icon = match icon {
@@ -1039,28 +1044,53 @@ impl AgentConfiguration {
         let tooltip_id = SharedString::new(format!("agent-source-{}", name));
         let tooltip_message = format!("The {} agent was installed from an extension.", name);
 
+        let agent_server_name = ExternalAgentServerName(name.clone());
+
+        let uninstall_btn_id = SharedString::from(format!("uninstall-{}", name));
+        let uninstall_button = IconButton::new(uninstall_btn_id, IconName::Trash)
+            .icon_color(Color::Muted)
+            .icon_size(IconSize::Small)
+            .tooltip(Tooltip::text("Uninstall Agent Extension"))
+            .on_click(cx.listener(move |this, _, _window, cx| {
+                let agent_name = agent_server_name.clone();
+
+                if let Some(ext_id) = this.agent_server_store.update(cx, |store, _cx| {
+                    store.get_extension_id_for_agent(&agent_name)
+                }) {
+                    ExtensionStore::global(cx)
+                        .update(cx, |store, cx| store.uninstall_extension(ext_id, cx))
+                        .detach_and_log_err(cx);
+                }
+            }));
+
         h_flex()
-            .gap_1p5()
-            .child(icon)
-            .child(Label::new(name))
-            .when(external, |this| {
-                this.child(
-                    div()
-                        .id(tooltip_id)
-                        .flex_none()
-                        .tooltip(Tooltip::text(tooltip_message))
-                        .child(
-                            Icon::new(IconName::ZedSrcExtension)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        ),
-                )
-            })
+            .gap_1()
+            .justify_between()
             .child(
-                Icon::new(IconName::Check)
-                    .color(Color::Success)
-                    .size(IconSize::Small),
+                h_flex()
+                    .gap_1p5()
+                    .child(icon)
+                    .child(Label::new(name))
+                    .when(external, |this| {
+                        this.child(
+                            div()
+                                .id(tooltip_id)
+                                .flex_none()
+                                .tooltip(Tooltip::text(tooltip_message))
+                                .child(
+                                    Icon::new(IconName::ZedSrcExtension)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                        )
+                    })
+                    .child(
+                        Icon::new(IconName::Check)
+                            .color(Color::Success)
+                            .size(IconSize::Small),
+                    ),
             )
+            .when(external, |this| this.child(uninstall_button))
     }
 }
 
