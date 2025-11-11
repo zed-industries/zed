@@ -117,7 +117,7 @@ impl DapLocator for CargoLocator {
             .cwd
             .clone()
             .context("Couldn't get cwd from debug config which is needed for locators")?;
-        let builder = ShellBuilder::new(&build_config.shell).non_interactive();
+        let builder = ShellBuilder::new(&build_config.shell, cfg!(windows)).non_interactive();
         let (program, args) = builder.build(
             Some("cargo".into()),
             &build_config

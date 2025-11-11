@@ -259,6 +259,7 @@ impl GitHostingProvider for Github {
 
 #[cfg(test)]
 mod tests {
+    use git::repository::repo_path;
     use indoc::indoc;
     use pretty_assertions::assert_eq;
 
@@ -400,11 +401,11 @@ mod tests {
         };
         let permalink = Github::public_instance().build_permalink(
             remote,
-            BuildPermalinkParams {
-                sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
-                path: "crates/editor/src/git/permalink.rs",
-                selection: None,
-            },
+            BuildPermalinkParams::new(
+                "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
+                &repo_path("crates/editor/src/git/permalink.rs"),
+                None,
+            ),
         );
 
         let expected_url = "https://github.com/zed-industries/zed/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs";
@@ -418,11 +419,11 @@ mod tests {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
             },
-            BuildPermalinkParams {
-                sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
-                path: "crates/zed/src/main.rs",
-                selection: None,
-            },
+            BuildPermalinkParams::new(
+                "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
+                &repo_path("crates/zed/src/main.rs"),
+                None,
+            ),
         );
 
         let expected_url = "https://github.com/zed-industries/zed/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs";
@@ -436,11 +437,11 @@ mod tests {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
             },
-            BuildPermalinkParams {
-                sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
-                path: "crates/editor/src/git/permalink.rs",
-                selection: Some(6..6),
-            },
+            BuildPermalinkParams::new(
+                "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
+                &repo_path("crates/editor/src/git/permalink.rs"),
+                Some(6..6),
+            ),
         );
 
         let expected_url = "https://github.com/zed-industries/zed/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs#L7";
@@ -454,11 +455,11 @@ mod tests {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
             },
-            BuildPermalinkParams {
-                sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
-                path: "crates/editor/src/git/permalink.rs",
-                selection: Some(23..47),
-            },
+            BuildPermalinkParams::new(
+                "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
+                &repo_path("crates/editor/src/git/permalink.rs"),
+                Some(23..47),
+            ),
         );
 
         let expected_url = "https://github.com/zed-industries/zed/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs#L24-L48";
@@ -505,5 +506,24 @@ mod tests {
             "#
         };
         assert_eq!(github.extract_pull_request(&remote, message), None);
+    }
+
+    /// Regression test for issue #39875
+    #[test]
+    fn test_git_permalink_url_escaping() {
+        let permalink = Github::public_instance().build_permalink(
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "nonexistent".into(),
+            },
+            BuildPermalinkParams::new(
+                "3ef1539900037dd3601be7149b2b39ed6d0ce3db",
+                &repo_path("app/blog/[slug]/page.tsx"),
+                Some(7..7),
+            ),
+        );
+
+        let expected_url = "https://github.com/zed-industries/nonexistent/blob/3ef1539900037dd3601be7149b2b39ed6d0ce3db/app/blog/%5Bslug%5D/page.tsx#L8";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 }

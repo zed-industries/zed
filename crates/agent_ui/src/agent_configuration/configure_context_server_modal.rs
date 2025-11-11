@@ -124,15 +124,17 @@ impl ConfigurationSource {
                 ),
                 is_remote: false,
             },
-            ConfigurationTarget::ExistingRemote { id, url, auth } => ConfigurationSource::Existing {
-                editor: create_editor(
-                    context_server_remote_input(Some((id, url, auth))),
-                    jsonc_language,
-                    window,
-                    cx,
-                ),
-                is_remote: true,
-            },
+            ConfigurationTarget::ExistingRemote { id, url, auth } => {
+                ConfigurationSource::Existing {
+                    editor: create_editor(
+                        context_server_remote_input(Some((id, url, auth))),
+                        jsonc_language,
+                        window,
+                        cx,
+                    ),
+                    is_remote: true,
+                }
+            }
             ConfigurationTarget::Extension {
                 id,
                 repository_url,
@@ -171,8 +173,16 @@ impl ConfigurationSource {
             ConfigurationSource::New { editor, is_remote }
             | ConfigurationSource::Existing { editor, is_remote } => {
                 if *is_remote {
-                    parse_remote_input(&editor.read(cx).text(cx))
-                        .map(|(id, url, auth)| (id, ContextServerSettings::Remote { enabled: true, url, auth }))
+                    parse_remote_input(&editor.read(cx).text(cx)).map(|(id, url, auth)| {
+                        (
+                            id,
+                            ContextServerSettings::Remote {
+                                enabled: true,
+                                url,
+                                auth,
+                            },
+                        )
+                    })
                 } else {
                     parse_input(&editor.read(cx).text(cx)).map(|(id, command)| {
                         (
@@ -330,7 +340,9 @@ fn context_server_remote_input(
     )
 }
 
-fn parse_remote_input(text: &str) -> Result<(ContextServerId, String, Option<settings::ContextServerAuth>)> {
+fn parse_remote_input(
+    text: &str,
+) -> Result<(ContextServerId, String, Option<settings::ContextServerAuth>)> {
     let value: serde_json::Value = serde_json_lenient::from_str(text)?;
     let object = value.as_object().context("Expected object")?;
     anyhow::ensure!(object.len() == 1, "Expected exactly one key-value pair");
@@ -342,13 +354,13 @@ fn parse_remote_input(text: &str) -> Result<(ContextServerId, String, Option<set
         .get("url")
         .and_then(|v| v.as_str())
         .context("Expected 'url' field as string")?;
-    
+
     let auth = server_config
         .get("auth")
         .map(|auth_value| serde_json::from_value::<settings::ContextServerAuth>(auth_value.clone()))
         .transpose()
         .context("Failed to parse auth configuration")?;
-    
+
     Ok((
         ContextServerId(context_server_name.clone().into()),
         url.to_string(),
@@ -403,13 +415,11 @@ impl ConfigureContextServerModal {
     pub fn new_remote_server(
         project: Entity<project::Project>,
         workspace: WeakEntity<Workspace>,
-        language_registry: Option<Arc<LanguageRegistry>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
         let target = ConfigurationTarget::NewRemote;
-        let language_registry =
-            language_registry.unwrap_or_else(|| project.read(cx).languages().clone());
+        let language_registry = project.read(cx).languages().clone();
 
         window.spawn(cx, async move |mut cx| {
             Self::show_modal(target, language_registry, workspace, &mut cx).await
@@ -471,9 +481,15 @@ impl ConfigureContextServerModal {
                     id: server_id,
                     command,
                 }),
-                ContextServerSettings::Remote { enabled: _, url, auth } => {
-                    Some(ConfigurationTarget::ExistingRemote { id: server_id, url, auth })
-                }
+                ContextServerSettings::Remote {
+                    enabled: _,
+                    url,
+                    auth,
+                } => Some(ConfigurationTarget::ExistingRemote {
+                    id: server_id,
+                    url,
+                    auth,
+                }),
                 ContextServerSettings::Extension { .. } => {
                     match workspace
                         .update(cx, |workspace, cx| {
@@ -732,7 +748,7 @@ impl ConfigureContextServerModal {
             .into_any_element()
     }
 
-    fn render_modal_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> ModalFooter {
+    fn render_modal_footer(&self, cx: &mut Context<Self>) -> ModalFooter {
         let focus_handle = self.focus_handle(cx);
         let is_connecting = matches!(self.state, State::Waiting);
 
@@ -750,12 +766,11 @@ impl ConfigureContextServerModal {
                             .icon_size(IconSize::Small)
                             .tooltip({
                                 let repository_url = repository_url.clone();
-                                move |window, cx| {
+                                move |_window, cx| {
                                     Tooltip::with_meta(
                                         "Open Repository",
                                         None,
                                         repository_url.clone(),
-                                        window,
                                         cx,
                                     )
                                 }
@@ -782,7 +797,7 @@ impl ConfigureContextServerModal {
                             },
                         )
                         .key_binding(
-                            KeyBinding::for_action_in(&menu::Cancel, &focus_handle, window, cx)
+                            KeyBinding::for_action_in(&menu::Cancel, &focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(
@@ -800,7 +815,7 @@ impl ConfigureContextServerModal {
                         )
                         .disabled(is_connecting)
                         .key_binding(
-                            KeyBinding::for_action_in(&menu::Confirm, &focus_handle, window, cx)
+                            KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(
@@ -875,7 +890,7 @@ impl Render for ConfigureContextServerModal {
                                 State::Error(error) => Self::render_modal_error(error.clone()),
                             }),
                     )
-                    .footer(self.render_modal_footer(window, cx)),
+                    .footer(self.render_modal_footer(cx)),
             )
     }
 }

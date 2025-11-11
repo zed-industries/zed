@@ -9,7 +9,7 @@ use std::{path::PathBuf, sync::Arc};
 use async_trait::async_trait;
 use collections::HashMap;
 use fs::Fs;
-use gpui::{AsyncApp, SharedString};
+use gpui::{App, AsyncApp, SharedString};
 use settings::WorktreeId;
 use task::ShellKind;
 use util::rel_path::RelPath;
@@ -98,6 +98,7 @@ pub trait ToolchainLister: Send + Sync + 'static {
         worktree_root: PathBuf,
         subroot_relative_path: Arc<RelPath>,
         project_env: Option<HashMap<String, String>>,
+        fs: &dyn Fs,
     ) -> ToolchainList;
 
     /// Given a user-created toolchain, resolve lister-specific details.
@@ -106,14 +107,11 @@ pub trait ToolchainLister: Send + Sync + 'static {
         &self,
         path: PathBuf,
         project_env: Option<HashMap<String, String>>,
+        fs: &dyn Fs,
     ) -> anyhow::Result<Toolchain>;
 
-    async fn activation_script(
-        &self,
-        toolchain: &Toolchain,
-        shell: ShellKind,
-        fs: &dyn Fs,
-    ) -> Vec<String>;
+    fn activation_script(&self, toolchain: &Toolchain, shell: ShellKind, cx: &App) -> Vec<String>;
+
     /// Returns various "static" bits of information about this toolchain lister. This function should be pure.
     fn meta(&self) -> ToolchainMetadata;
 }

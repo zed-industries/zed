@@ -27,14 +27,12 @@ impl Example for AddArgToTraitMethod {
 
     async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
         const FILENAME: &str = "assistant_tool.rs";
-        cx.push_user_message(format!(
+        let _ = cx.prompt(format!(
             r#"
             Add a `window: Option<gpui::AnyWindowHandle>` argument to the `Tool::run` trait method in {FILENAME},
             and update all the implementations of the trait and call sites accordingly.
             "#
-        ));
-
-        let _ = cx.run_to_end().await?;
+        )).await?;
 
         // Adds ignored argument to all but `batch_tool`
 

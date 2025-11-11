@@ -618,7 +618,7 @@ impl MacWindow {
             }
 
             let native_window: id = match kind {
-                WindowKind::Normal => msg_send![WINDOW_CLASS, alloc],
+                WindowKind::Normal | WindowKind::Floating => msg_send![WINDOW_CLASS, alloc],
                 WindowKind::PopUp => {
                     style_mask |= NSWindowStyleMaskNonactivatingPanel;
                     msg_send![PANEL_CLASS, alloc]
@@ -776,7 +776,7 @@ impl MacWindow {
             native_window.makeFirstResponder_(native_view);
 
             match kind {
-                WindowKind::Normal => {
+                WindowKind::Normal | WindowKind::Floating => {
                     native_window.setLevel_(NSNormalWindowLevel);
                     native_window.setAcceptsMouseMovedEvents_(YES);
 
@@ -1753,9 +1753,9 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 }
             }
 
-            // Don't send key equivalents to the input handler,
-            // or macOS shortcuts like cmd-` will stop working.
-            if key_equivalent {
+            // Don't send key equivalents to the input handler if there are key modifiers other
+            // than Function key, or macOS shortcuts like cmd-` will stop working.
+            if key_equivalent && key_down_event.keystroke.modifiers != Modifiers::function() {
                 return NO;
             }
 
@@ -2318,6 +2318,7 @@ extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
         let handled = (callback)(PlatformInput::KeyDown(KeyDownEvent {
             keystroke,
             is_held: false,
+            prefer_character_input: false,
         }));
         state.as_ref().lock().do_command_handled = Some(!handled.propagate);
     }

@@ -85,11 +85,45 @@ pub struct CandidateWithRanges {
     close_range: Range<usize>,
 }
 
+/// Selects text at the same indentation level.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+struct Parentheses {
+    #[serde(default)]
+    opening: bool,
+}
+
+/// Selects text at the same indentation level.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+struct SquareBrackets {
+    #[serde(default)]
+    opening: bool,
+}
+
+/// Selects text at the same indentation level.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+struct AngleBrackets {
+    #[serde(default)]
+    opening: bool,
+}
+/// Selects text at the same indentation level.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+struct CurlyBrackets {
+    #[serde(default)]
+    opening: bool,
+}
+
 fn cover_or_next<I: Iterator<Item = (Range<usize>, Range<usize>)>>(
     candidates: Option<I>,
     caret: DisplayPoint,
     map: &DisplaySnapshot,
-    range_filter: Option<&dyn Fn(Range<usize>, Range<usize>) -> bool>,
 ) -> Option<CandidateWithRanges> {
     let caret_offset = caret.to_offset(map, Bias::Left);
     let mut covering = vec![];
@@ -100,11 +134,6 @@ fn cover_or_next<I: Iterator<Item = (Range<usize>, Range<usize>)>>(
         for (open_range, close_range) in ranges {
             let start_off = open_range.start;
             let end_off = close_range.end;
-            if let Some(range_filter) = range_filter
-                && !range_filter(open_range.clone(), close_range.clone())
-            {
-                continue;
-            }
             let candidate = CandidateWithRanges {
                 candidate: CandidateRange {
                     start: start_off.to_display_point(map),
@@ -179,16 +208,35 @@ fn find_mini_delimiters(
     let visible_line_range = get_visible_line_range(&line_range);
 
     let snapshot = &map.buffer_snapshot();
-    let excerpt = snapshot.excerpt_containing(offset..offset)?;
+    let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
     let buffer = excerpt.buffer();
+    let buffer_offset = excerpt.map_offset_to_buffer(offset);
 
     let bracket_filter = |open: Range<usize>, close: Range<usize>| {
         is_valid_delimiter(buffer, open.start, close.start)
     };
 
     // Try to find delimiters in visible range first
-    let ranges = map.buffer_snapshot().bracket_ranges(visible_line_range);
-    if let Some(candidate) = cover_or_next(ranges, display_point, map, Some(&bracket_filter)) {
+    let ranges = map
+        .buffer_snapshot()
+        .bracket_ranges(visible_line_range)
+        .map(|ranges| {
+            ranges.filter_map(move |(open, close)| {
+                // Convert the ranges from multibuffer space to buffer space as
+                // that is what `is_valid_delimiter` expects, otherwise it might
+                // panic as the values might be out of bounds.
+                let buffer_open = excerpt.map_range_to_buffer(open.clone());
+                let buffer_close = excerpt.map_range_to_buffer(close.clone());
+
+                if is_valid_delimiter(buffer, buffer_open.start, buffer_close.start) {
+                    Some((open, close))
+                } else {
+                    None
+                }
+            })
+        });
+
+    if let Some(candidate) = cover_or_next(ranges, display_point, map) {
         return Some(
             DelimiterRange {
                 open: candidate.open_range,
@@ -199,8 +247,8 @@ fn find_mini_delimiters(
     }
 
     // Fall back to innermost enclosing brackets
-    let (open_bracket, close_bracket) =
-        buffer.innermost_enclosing_bracket_ranges(offset..offset, Some(&bracket_filter))?;
+    let (open_bracket, close_bracket) = buffer
+        .innermost_enclosing_bracket_ranges(buffer_offset..buffer_offset, Some(&bracket_filter))?;
 
     Some(
         DelimiterRange {
@@ -275,18 +323,10 @@ actions!(
         DoubleQuotes,
         /// Selects text within vertical bars (pipes).
         VerticalBars,
-        /// Selects text within parentheses.
-        Parentheses,
         /// Selects text within the nearest brackets.
         MiniBrackets,
         /// Selects text within any type of brackets.
         AnyBrackets,
-        /// Selects text within square brackets.
-        SquareBrackets,
-        /// Selects text within curly brackets.
-        CurlyBrackets,
-        /// Selects text within angle brackets.
-        AngleBrackets,
         /// Selects a function argument.
         Argument,
         /// Selects an HTML/XML tag.
@@ -350,17 +390,17 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &DoubleQuotes, window, cx| {
         vim.object(Object::DoubleQuotes, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &Parentheses, window, cx| {
-        vim.object(Object::Parentheses, window, cx)
+    Vim::action(editor, cx, |vim, action: &Parentheses, window, cx| {
+        vim.object_impl(Object::Parentheses, action.opening, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &SquareBrackets, window, cx| {
-        vim.object(Object::SquareBrackets, window, cx)
+    Vim::action(editor, cx, |vim, action: &SquareBrackets, window, cx| {
+        vim.object_impl(Object::SquareBrackets, action.opening, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &CurlyBrackets, window, cx| {
-        vim.object(Object::CurlyBrackets, window, cx)
+    Vim::action(editor, cx, |vim, action: &CurlyBrackets, window, cx| {
+        vim.object_impl(Object::CurlyBrackets, action.opening, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &AngleBrackets, window, cx| {
-        vim.object(Object::AngleBrackets, window, cx)
+    Vim::action(editor, cx, |vim, action: &AngleBrackets, window, cx| {
+        vim.object_impl(Object::AngleBrackets, action.opening, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &VerticalBars, window, cx| {
         vim.object(Object::VerticalBars, window, cx)
@@ -394,10 +434,22 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
 impl Vim {
     fn object(&mut self, object: Object, window: &mut Window, cx: &mut Context<Self>) {
+        self.object_impl(object, false, window, cx);
+    }
+
+    fn object_impl(
+        &mut self,
+        object: Object,
+        opening: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let count = Self::take_count(cx);
 
         match self.mode {
-            Mode::Normal | Mode::HelixNormal => self.normal_object(object, count, window, cx),
+            Mode::Normal | Mode::HelixNormal => {
+                self.normal_object(object, count, opening, window, cx)
+            }
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::HelixSelect => {
                 self.visual_object(object, count, window, cx)
             }
@@ -1697,8 +1749,10 @@ pub fn surrounding_markers(
 
 #[cfg(test)]
 mod test {
+    use editor::{Editor, EditorMode, MultiBuffer, test::editor_test_context::EditorTestContext};
     use gpui::KeyBinding;
     use indoc::indoc;
+    use text::Point;
 
     use crate::{
         object::{AnyBrackets, AnyQuotes, MiniBrackets},
@@ -3144,6 +3198,78 @@ mod test {
 
             cx.assert_state(initial_state, *mode);
         }
+    }
+
+    #[gpui::test]
+    async fn test_minibrackets_multibuffer(cx: &mut gpui::TestAppContext) {
+        // Initialize test context with the TypeScript language loaded, so we
+        // can actually get brackets definition.
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Update `b` to `MiniBrackets` so we can later use it when simulating
+        // keystrokes.
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new("b", MiniBrackets, None)]);
+        });
+
+        let (editor, cx) = cx.add_window_view(|window, cx| {
+            let multi_buffer = MultiBuffer::build_multi(
+                [
+                    ("111\n222\n333\n444\n", vec![Point::row_range(0..2)]),
+                    ("111\na {bracket} example\n", vec![Point::row_range(0..2)]),
+                ],
+                cx,
+            );
+
+            // In order for the brackets to actually be found, we need to update
+            // the language used for the second buffer. This is something that
+            // is handled automatically when simply using `VimTestContext::new`
+            // but, since this is being set manually, the language isn't
+            // automatically set.
+            let editor = Editor::new(EditorMode::full(), multi_buffer.clone(), None, window, cx);
+            let buffer_ids = multi_buffer.read(cx).excerpt_buffer_ids();
+            if let Some(buffer) = multi_buffer.read(cx).buffer(buffer_ids[1]) {
+                buffer.update(cx, |buffer, cx| {
+                    buffer.set_language(Some(language::rust_lang()), cx);
+                })
+            };
+
+            editor
+        });
+
+        let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+
+        cx.assert_excerpts_with_selections(indoc! {"
+            [EXCERPT]
+            ˇ111
+            222
+            [EXCERPT]
+            111
+            a {bracket} example
+            "
+        });
+
+        cx.simulate_keystrokes("j j j j f r");
+        cx.assert_excerpts_with_selections(indoc! {"
+            [EXCERPT]
+            111
+            222
+            [EXCERPT]
+            111
+            a {bˇracket} example
+            "
+        });
+
+        cx.simulate_keystrokes("d i b");
+        cx.assert_excerpts_with_selections(indoc! {"
+            [EXCERPT]
+            111
+            222
+            [EXCERPT]
+            111
+            a {ˇ} example
+            "
+        });
     }
 
     #[gpui::test]

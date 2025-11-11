@@ -1,3 +1,4 @@
+use clock::Lamport;
 use std::{fmt::Debug, ops::Add};
 use sum_tree::{ContextLessSummary, Dimension, Edit, Item, KeyedItem, SumTree};
 
@@ -11,10 +12,10 @@ struct OperationItem<T>(T);
 #[derive(Clone, Debug)]
 pub struct OperationQueue<T: Operation>(SumTree<OperationItem<T>>);
 
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct OperationKey(clock::Lamport);
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OperationSummary {
     pub key: OperationKey,
     pub len: usize,
@@ -69,7 +70,10 @@ impl<T: Operation> OperationQueue<T> {
 
 impl ContextLessSummary for OperationSummary {
     fn zero() -> Self {
-        Default::default()
+        OperationSummary {
+            key: OperationKey::new(Lamport::MIN),
+            len: 0,
+        }
     }
 
     fn add_summary(&mut self, other: &Self) {
@@ -93,7 +97,7 @@ impl Add<&Self> for OperationSummary {
 
 impl Dimension<'_, OperationSummary> for OperationKey {
     fn zero(_cx: ()) -> Self {
-        Default::default()
+        OperationKey::new(Lamport::MIN)
     }
 
     fn add_summary(&mut self, summary: &OperationSummary, _: ()) {
@@ -123,11 +127,13 @@ impl<T: Operation> KeyedItem for OperationItem<T> {
 
 #[cfg(test)]
 mod tests {
+    use clock::ReplicaId;
+
     use super::*;
 
     #[test]
     fn test_len() {
-        let mut clock = clock::Lamport::new(0);
+        let mut clock = clock::Lamport::new(ReplicaId::LOCAL);
 
         let mut queue = OperationQueue::new();
         assert_eq!(queue.len(), 0);

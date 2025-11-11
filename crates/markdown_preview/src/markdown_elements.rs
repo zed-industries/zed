@@ -1,9 +1,10 @@
 use gpui::{
-    DefiniteLength, FontStyle, FontWeight, HighlightStyle, Hsla, SharedString, StrikethroughStyle,
+    DefiniteLength, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle,
     UnderlineStyle, px,
 };
 use language::HighlightId;
 use std::{fmt::Display, ops::Range, path::PathBuf};
+use urlencoding;
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
@@ -64,6 +65,8 @@ pub struct ParsedMarkdownListItem {
     pub depth: u16,
     pub item_type: ParsedMarkdownListItemType,
     pub content: Vec<ParsedMarkdownElement>,
+    /// Whether we can expect nested list items inside of this items `content`.
+    pub nested: bool,
 }
 
 #[derive(Debug)]
@@ -104,15 +107,15 @@ pub enum HeadingLevel {
 #[derive(Debug)]
 pub struct ParsedMarkdownTable {
     pub source_range: Range<usize>,
-    pub header: ParsedMarkdownTableRow,
+    pub header: Vec<ParsedMarkdownTableRow>,
     pub body: Vec<ParsedMarkdownTableRow>,
-    pub column_alignments: Vec<ParsedMarkdownTableAlignment>,
+    pub caption: Option<MarkdownParagraph>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 #[cfg_attr(test, derive(PartialEq))]
 pub enum ParsedMarkdownTableAlignment {
-    /// Default text alignment.
+    #[default]
     None,
     Left,
     Center,
@@ -121,8 +124,18 @@ pub enum ParsedMarkdownTableAlignment {
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
+pub struct ParsedMarkdownTableColumn {
+    pub col_span: usize,
+    pub row_span: usize,
+    pub is_header: bool,
+    pub children: MarkdownParagraph,
+    pub alignment: ParsedMarkdownTableAlignment,
+}
+
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct ParsedMarkdownTableRow {
-    pub children: Vec<MarkdownParagraph>,
+    pub columns: Vec<ParsedMarkdownTableColumn>,
 }
 
 impl Default for ParsedMarkdownTableRow {
@@ -134,12 +147,12 @@ impl Default for ParsedMarkdownTableRow {
 impl ParsedMarkdownTableRow {
     pub fn new() -> Self {
         Self {
-            children: Vec::new(),
+            columns: Vec::new(),
         }
     }
 
-    pub fn with_children(children: Vec<MarkdownParagraph>) -> Self {
-        Self { children }
+    pub fn with_columns(columns: Vec<ParsedMarkdownTableColumn>) -> Self {
+        Self { columns }
     }
 }
 
@@ -155,7 +168,7 @@ pub struct ParsedMarkdownText {
     /// Where the text is located in the source Markdown document.
     pub source_range: Range<usize>,
     /// The text content stripped of any formatting symbols.
-    pub contents: String,
+    pub contents: SharedString,
     /// The list of highlights contained in the Markdown document.
     pub highlights: Vec<(Range<usize>, MarkdownHighlight)>,
     /// The regions of the various ranges in the Markdown document.
@@ -175,11 +188,7 @@ pub enum MarkdownHighlight {
 
 impl MarkdownHighlight {
     /// Converts this [`MarkdownHighlight`] to a [`HighlightStyle`].
-    pub fn to_highlight_style(
-        &self,
-        theme: &theme::SyntaxTheme,
-        link_color: Hsla,
-    ) -> Option<HighlightStyle> {
+    pub fn to_highlight_style(&self, theme: &theme::SyntaxTheme) -> Option<HighlightStyle> {
         match self {
             MarkdownHighlight::Style(style) => {
                 let mut highlight = HighlightStyle::default();
@@ -209,10 +218,12 @@ impl MarkdownHighlight {
                 if style.link {
                     highlight.underline = Some(UnderlineStyle {
                         thickness: px(1.),
-                        color: Some(link_color),
                         ..Default::default()
                     });
-                    highlight.color = Some(link_color);
+                }
+
+                if style.oblique {
+                    highlight.font_style = Some(FontStyle::Oblique)
                 }
 
                 Some(highlight)
@@ -236,6 +247,8 @@ pub struct MarkdownHighlightStyle {
     pub weight: FontWeight,
     /// Whether the text should be stylized as link.
     pub link: bool,
+    // Whether the text should be obliqued.
+    pub oblique: bool,
 }
 
 /// A parsed region in a Markdown document.
@@ -272,7 +285,12 @@ impl Link {
             return Some(Link::Web { url: text });
         }
 
-        let path = PathBuf::from(&text);
+        // URL decode the text to handle spaces and other special characters
+        let decoded_text = urlencoding::decode(&text)
+            .map(|s| s.into_owned())
+            .unwrap_or(text);
+
+        let path = PathBuf::from(&decoded_text);
         if path.is_absolute() && path.exists() {
             return Some(Link::Path {
                 display_path: path.clone(),
@@ -282,7 +300,7 @@ impl Link {
 
         if let Some(file_location_directory) = file_location_directory {
             let display_path = path;
-            let path = file_location_directory.join(text);
+            let path = file_location_directory.join(decoded_text);
             if path.exists() {
                 return Some(Link::Path { display_path, path });
             }

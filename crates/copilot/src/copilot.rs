@@ -1,5 +1,6 @@
 pub mod copilot_chat;
 mod copilot_completion_provider;
+pub mod copilot_responses;
 pub mod request;
 mod sign_in;
 
@@ -270,7 +271,7 @@ impl RegisteredBuffer {
                             server
                                 .lsp
                                 .notify::<lsp::notification::DidChangeTextDocument>(
-                                    &lsp::DidChangeTextDocumentParams {
+                                    lsp::DidChangeTextDocumentParams {
                                         text_document: lsp::VersionedTextDocumentIdentifier::new(
                                             buffer.uri.clone(),
                                             buffer.snapshot_version,
@@ -488,7 +489,11 @@ impl Copilot {
             let node_path = node_runtime.binary_path().await?;
             ensure_node_version_for_copilot(&node_path).await?;
 
-            let arguments: Vec<OsString> = vec![server_path.into(), "--stdio".into()];
+            let arguments: Vec<OsString> = vec![
+                "--experimental-sqlite".into(),
+                server_path.into(),
+                "--stdio".into(),
+            ];
             let binary = LanguageServerBinary {
                 path: node_path,
                 arguments,
@@ -744,7 +749,7 @@ impl Copilot {
                 let snapshot = buffer.read(cx).snapshot();
                 server
                     .notify::<lsp::notification::DidOpenTextDocument>(
-                        &lsp::DidOpenTextDocumentParams {
+                        lsp::DidOpenTextDocumentParams {
                             text_document: lsp::TextDocumentItem {
                                 uri: uri.clone(),
                                 language_id: language_id.clone(),
@@ -792,13 +797,14 @@ impl Copilot {
                     server
                         .lsp
                         .notify::<lsp::notification::DidSaveTextDocument>(
-                            &lsp::DidSaveTextDocumentParams {
+                            lsp::DidSaveTextDocumentParams {
                                 text_document: lsp::TextDocumentIdentifier::new(
                                     registered_buffer.uri.clone(),
                                 ),
                                 text: None,
                             },
-                        )?;
+                        )
+                        .ok();
                 }
                 language::BufferEvent::FileHandleChanged
                 | language::BufferEvent::LanguageChanged => {
@@ -814,14 +820,15 @@ impl Copilot {
                         server
                             .lsp
                             .notify::<lsp::notification::DidCloseTextDocument>(
-                                &lsp::DidCloseTextDocumentParams {
+                                lsp::DidCloseTextDocumentParams {
                                     text_document: lsp::TextDocumentIdentifier::new(old_uri),
                                 },
-                            )?;
+                            )
+                            .ok();
                         server
                             .lsp
                             .notify::<lsp::notification::DidOpenTextDocument>(
-                                &lsp::DidOpenTextDocumentParams {
+                                lsp::DidOpenTextDocumentParams {
                                     text_document: lsp::TextDocumentItem::new(
                                         registered_buffer.uri.clone(),
                                         registered_buffer.language_id.clone(),
@@ -829,7 +836,8 @@ impl Copilot {
                                         registered_buffer.snapshot.text(),
                                     ),
                                 },
-                            )?;
+                            )
+                            .ok();
                     }
                 }
                 _ => {}
@@ -846,7 +854,7 @@ impl Copilot {
             server
                 .lsp
                 .notify::<lsp::notification::DidCloseTextDocument>(
-                    &lsp::DidCloseTextDocumentParams {
+                    lsp::DidCloseTextDocumentParams {
                         text_document: lsp::TextDocumentIdentifier::new(buffer.uri),
                     },
                 )
@@ -1151,9 +1159,12 @@ fn notify_did_change_config_to_server(
         }
     });
 
-    server.notify::<lsp::notification::DidChangeConfiguration>(&lsp::DidChangeConfigurationParams {
-        settings,
-    })
+    server
+        .notify::<lsp::notification::DidChangeConfiguration>(lsp::DidChangeConfigurationParams {
+            settings,
+        })
+        .ok();
+    Ok(())
 }
 
 async fn clear_copilot_dir() {

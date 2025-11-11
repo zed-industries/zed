@@ -6,7 +6,6 @@ mod db_tests;
 #[cfg(target_os = "macos")]
 mod embedding_tests;
 mod extension_tests;
-mod user_tests;
 
 use crate::migrations::run_database_migrations;
 
@@ -196,7 +195,7 @@ fn channel_tree(channels: &[(ChannelId, &[ChannelId], &'static str)]) -> Vec<Cha
 
         result.push(Channel {
             id: *id,
-            name: name.to_string(),
+            name: (*name).to_owned(),
             visibility: ChannelVisibility::Members,
             parent_path: parent_key,
             channel_order: order,

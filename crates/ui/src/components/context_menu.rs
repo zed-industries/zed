@@ -47,6 +47,8 @@ pub struct ContextMenuEntry {
     toggle: Option<(IconPosition, bool)>,
     label: SharedString,
     icon: Option<IconName>,
+    custom_icon_path: Option<SharedString>,
+    custom_icon_svg: Option<SharedString>,
     icon_position: IconPosition,
     icon_size: IconSize,
     icon_color: Option<Color>,
@@ -66,6 +68,8 @@ impl ContextMenuEntry {
             toggle: None,
             label: label.into(),
             icon: None,
+            custom_icon_path: None,
+            custom_icon_svg: None,
             icon_position: IconPosition::Start,
             icon_size: IconSize::Small,
             icon_color: None,
@@ -87,6 +91,20 @@ impl ContextMenuEntry {
 
     pub fn icon(mut self, icon: IconName) -> Self {
         self.icon = Some(icon);
+        self
+    }
+
+    pub fn custom_icon_path(mut self, path: impl Into<SharedString>) -> Self {
+        self.custom_icon_path = Some(path.into());
+        self.custom_icon_svg = None; // Clear other icon sources if custom path is set
+        self.icon = None;
+        self
+    }
+
+    pub fn custom_icon_svg(mut self, svg: impl Into<SharedString>) -> Self {
+        self.custom_icon_svg = Some(svg.into());
+        self.custom_icon_path = None; // Clear other icon sources if custom path is set
+        self.icon = None;
         self
     }
 
@@ -206,39 +224,46 @@ impl EventEmitter<DismissEvent> for ContextMenu {}
 impl FluentBuilder for ContextMenu {}
 
 impl ContextMenu {
+    pub fn new(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(Self, &mut Window, &mut Context<Self>) -> Self,
+    ) -> Self {
+        let focus_handle = cx.focus_handle();
+        let _on_blur_subscription = cx.on_blur(
+            &focus_handle,
+            window,
+            |this: &mut ContextMenu, window, cx| this.cancel(&menu::Cancel, window, cx),
+        );
+        window.refresh();
+
+        f(
+            Self {
+                builder: None,
+                items: Default::default(),
+                focus_handle,
+                action_context: None,
+                selected_index: None,
+                delayed: false,
+                clicked: false,
+                key_context: "menu".into(),
+                _on_blur_subscription,
+                keep_open_on_confirm: false,
+                documentation_aside: None,
+                fixed_width: None,
+                end_slot_action: None,
+            },
+            window,
+            cx,
+        )
+    }
+
     pub fn build(
         window: &mut Window,
         cx: &mut App,
         f: impl FnOnce(Self, &mut Window, &mut Context<Self>) -> Self,
     ) -> Entity<Self> {
-        cx.new(|cx| {
-            let focus_handle = cx.focus_handle();
-            let _on_blur_subscription = cx.on_blur(
-                &focus_handle,
-                window,
-                |this: &mut ContextMenu, window, cx| this.cancel(&menu::Cancel, window, cx),
-            );
-            window.refresh();
-            f(
-                Self {
-                    builder: None,
-                    items: Default::default(),
-                    focus_handle,
-                    action_context: None,
-                    selected_index: None,
-                    delayed: false,
-                    clicked: false,
-                    key_context: "menu".into(),
-                    _on_blur_subscription,
-                    keep_open_on_confirm: false,
-                    documentation_aside: None,
-                    fixed_width: None,
-                    end_slot_action: None,
-                },
-                window,
-                cx,
-            )
-        })
+        cx.new(|cx| Self::new(window, cx, f))
     }
 
     /// Builds a [`ContextMenu`] that will stay open when making changes instead of closing after each confirmation.
@@ -380,6 +405,8 @@ impl ContextMenu {
             label: label.into(),
             handler: Rc::new(move |_, window, cx| handler(window, cx)),
             icon: None,
+            custom_icon_path: None,
+            custom_icon_svg: None,
             icon_position: IconPosition::End,
             icon_size: IconSize::Small,
             icon_color: None,
@@ -408,6 +435,8 @@ impl ContextMenu {
             label: label.into(),
             handler: Rc::new(move |_, window, cx| handler(window, cx)),
             icon: None,
+            custom_icon_path: None,
+            custom_icon_svg: None,
             icon_position: IconPosition::End,
             icon_size: IconSize::Small,
             icon_color: None,
@@ -436,6 +465,8 @@ impl ContextMenu {
             label: label.into(),
             handler: Rc::new(move |_, window, cx| handler(window, cx)),
             icon: None,
+            custom_icon_path: None,
+            custom_icon_svg: None,
             icon_position: IconPosition::End,
             icon_size: IconSize::Small,
             icon_color: None,
@@ -463,6 +494,8 @@ impl ContextMenu {
             label: label.into(),
             handler: Rc::new(move |_, window, cx| handler(window, cx)),
             icon: None,
+            custom_icon_path: None,
+            custom_icon_svg: None,
             icon_position: position,
             icon_size: IconSize::Small,
             icon_color: None,
@@ -509,9 +542,22 @@ impl ContextMenu {
         self
     }
 
-    pub fn action(mut self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
+    pub fn action(self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
+        self.action_checked(label, action, false)
+    }
+
+    pub fn action_checked(
+        mut self,
+        label: impl Into<SharedString>,
+        action: Box<dyn Action>,
+        checked: bool,
+    ) -> Self {
         self.items.push(ContextMenuItem::Entry(ContextMenuEntry {
-            toggle: None,
+            toggle: if checked {
+                Some((IconPosition::Start, true))
+            } else {
+                None
+            },
             label: label.into(),
             action: Some(action.boxed_clone()),
             handler: Rc::new(move |context, window, cx| {
@@ -521,6 +567,8 @@ impl ContextMenu {
                 window.dispatch_action(action.boxed_clone(), cx);
             }),
             icon: None,
+            custom_icon_path: None,
+            custom_icon_svg: None,
             icon_position: IconPosition::End,
             icon_size: IconSize::Small,
             icon_color: None,
@@ -551,6 +599,8 @@ impl ContextMenu {
                 window.dispatch_action(action.boxed_clone(), cx);
             }),
             icon: None,
+            custom_icon_path: None,
+            custom_icon_svg: None,
             icon_size: IconSize::Small,
             icon_position: IconPosition::End,
             icon_color: None,
@@ -571,6 +621,8 @@ impl ContextMenu {
             action: Some(action.boxed_clone()),
             handler: Rc::new(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx)),
             icon: Some(IconName::ArrowUpRight),
+            custom_icon_path: None,
+            custom_icon_svg: None,
             icon_size: IconSize::XSmall,
             icon_position: IconPosition::End,
             icon_color: None,
@@ -834,9 +886,9 @@ impl ContextMenu {
                 .disabled(true)
                 .child(Label::new(label.clone()))
                 .into_any_element(),
-            ContextMenuItem::Entry(entry) => self
-                .render_menu_entry(ix, entry, window, cx)
-                .into_any_element(),
+            ContextMenuItem::Entry(entry) => {
+                self.render_menu_entry(ix, entry, cx).into_any_element()
+            }
             ContextMenuItem::CustomEntry {
                 entry_render,
                 handler,
@@ -883,7 +935,6 @@ impl ContextMenu {
         &self,
         ix: usize,
         entry: &ContextMenuEntry,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let ContextMenuEntry {
@@ -891,6 +942,8 @@ impl ContextMenu {
             label,
             handler,
             icon,
+            custom_icon_path,
+            custom_icon_svg,
             icon_position,
             icon_size,
             icon_color,
@@ -921,7 +974,51 @@ impl ContextMenu {
             Color::Default
         };
 
-        let label_element = if let Some(icon_name) = icon {
+        let label_element = if let Some(custom_path) = custom_icon_path {
+            h_flex()
+                .gap_1p5()
+                .when(
+                    *icon_position == IconPosition::Start && toggle.is_none(),
+                    |flex| {
+                        flex.child(
+                            Icon::from_path(custom_path.clone())
+                                .size(*icon_size)
+                                .color(icon_color),
+                        )
+                    },
+                )
+                .child(Label::new(label.clone()).color(label_color).truncate())
+                .when(*icon_position == IconPosition::End, |flex| {
+                    flex.child(
+                        Icon::from_path(custom_path.clone())
+                            .size(*icon_size)
+                            .color(icon_color),
+                    )
+                })
+                .into_any_element()
+        } else if let Some(custom_icon_svg) = custom_icon_svg {
+            h_flex()
+                .gap_1p5()
+                .when(
+                    *icon_position == IconPosition::Start && toggle.is_none(),
+                    |flex| {
+                        flex.child(
+                            Icon::from_external_svg(custom_icon_svg.clone())
+                                .size(*icon_size)
+                                .color(icon_color),
+                        )
+                    },
+                )
+                .child(Label::new(label.clone()).color(label_color).truncate())
+                .when(*icon_position == IconPosition::End, |flex| {
+                    flex.child(
+                        Icon::from_external_svg(custom_icon_svg.clone())
+                            .size(*icon_size)
+                            .color(icon_color),
+                    )
+                })
+                .into_any_element()
+        } else if let Some(icon_name) = icon {
             h_flex()
                 .gap_1p5()
                 .when(
@@ -980,18 +1077,18 @@ impl ContextMenu {
                             .justify_between()
                             .child(label_element)
                             .debug_selector(|| format!("MENU_ITEM-{}", label))
-                            .children(action.as_ref().and_then(|action| {
-                                self.action_context
+                            .children(action.as_ref().map(|action| {
+                                let binding = self
+                                    .action_context
                                     .as_ref()
-                                    .and_then(|focus| {
-                                        KeyBinding::for_action_in(&**action, focus, window, cx)
-                                    })
-                                    .or_else(|| KeyBinding::for_action(&**action, window, cx))
-                                    .map(|binding| {
-                                        div().ml_4().child(binding.disabled(*disabled)).when(
-                                            *disabled && documentation_aside.is_some(),
-                                            |parent| parent.invisible(),
-                                        )
+                                    .map(|focus| KeyBinding::for_action_in(&**action, focus, cx))
+                                    .unwrap_or_else(|| KeyBinding::for_action(&**action, cx));
+
+                                div()
+                                    .ml_4()
+                                    .child(binding.disabled(*disabled))
+                                    .when(*disabled && documentation_aside.is_some(), |parent| {
+                                        parent.invisible()
                                     })
                             }))
                             .when(*disabled && documentation_aside.is_some(), |parent| {
@@ -1016,7 +1113,7 @@ impl ContextMenu {
                                         let action_context = self.action_context.clone();
                                         let title = title.clone();
                                         let action = action.boxed_clone();
-                                        move |window, cx| {
+                                        move |_window, cx| {
                                             action_context
                                                 .as_ref()
                                                 .map(|focus| {
@@ -1024,17 +1121,11 @@ impl ContextMenu {
                                                         title.clone(),
                                                         &*action,
                                                         focus,
-                                                        window,
                                                         cx,
                                                     )
                                                 })
                                                 .unwrap_or_else(|| {
-                                                    Tooltip::for_action(
-                                                        title.clone(),
-                                                        &*action,
-                                                        window,
-                                                        cx,
-                                                    )
+                                                    Tooltip::for_action(title.clone(), &*action, cx)
                                                 })
                                         }
                                     })

@@ -48,3 +48,13 @@ message SpawnInTerminal {
     map<string, string> env = 4;
     optional string cwd = 5;
 }
+
+message GetDirectoryEnvironment {
+    uint64 project_id = 1;
+    Shell shell = 2;
+    string directory = 3;
+}
+
+message DirectoryEnvironment {
+    map<string, string> environment = 1;
+}

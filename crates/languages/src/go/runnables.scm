@@ -71,6 +71,15 @@
   (#set! tag go-subtest)
 )
 
+; Functions names start with `Example`
+(
+  (
+    (function_declaration name: (_) @run @_name
+      (#match? @_name "^Example.*"))
+  ) @_
+  (#set! tag go-example)
+)
+
 ; Functions names start with `Benchmark`
 (
   (

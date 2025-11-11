@@ -1,8 +1,8 @@
 [package]
-name = "zed-http-client"
+name = "http_client"
 version = "0.1.0"
 edition.workspace = true
-publish = true
+publish = false
 license = "Apache-2.0"
 description = "A HTTP client library for Zed and GPUI"
 
@@ -35,4 +35,3 @@ sha2.workspace = true
 tempfile.workspace = true
 url.workspace = true
 util.workspace = true
-workspace-hack.workspace = true

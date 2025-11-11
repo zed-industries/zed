@@ -9,6 +9,7 @@ pub mod rel_path;
 pub mod schemars;
 pub mod serde;
 pub mod shell;
+pub mod shell_builder;
 pub mod shell_env;
 pub mod size;
 #[cfg(any(test, feature = "test-support"))]
@@ -18,7 +19,9 @@ pub mod time;
 use anyhow::{Context as _, Result};
 use futures::Future;
 use itertools::Either;
+use paths::PathExt;
 use regex::Regex;
+use std::path::PathBuf;
 use std::sync::{LazyLock, OnceLock};
 use std::{
     borrow::Cow,
@@ -277,7 +280,11 @@ fn load_shell_from_passwd() -> Result<()> {
     );
 
     let shell = unsafe { std::ffi::CStr::from_ptr(entry.pw_shell).to_str().unwrap() };
-    if env::var("SHELL").map_or(true, |shell_env| shell_env != shell) {
+    let should_set_shell = env::var("SHELL").map_or(true, |shell_env| {
+        shell_env != shell && !std::path::Path::new(&shell_env).exists()
+    });
+
+    if should_set_shell {
         log::info!(
             "updating SHELL environment variable to value from passwd entry: {:?}",
             shell,
@@ -288,27 +295,19 @@ fn load_shell_from_passwd() -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 /// Returns a shell escaped path for the current zed executable
-pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
-    let zed_path = std::env::current_exe()
-        .context("Failed to determine current zed executable path.")?
-        .to_string_lossy()
-        .trim_end_matches(" (deleted)") // see https://github.com/rust-lang/rust/issues/69343
-        .to_string();
+pub fn get_shell_safe_zed_path(shell_kind: shell::ShellKind) -> anyhow::Result<String> {
+    let zed_path =
+        std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
-    // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
-    // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
-    // errors are introduced in the future :(
-    let zed_path_escaped =
-        shlex::try_quote(&zed_path).context("Failed to shell-escape Zed executable path.")?;
-
-    Ok(zed_path_escaped.to_string())
+    zed_path
+        .try_shell_safe(shell_kind)
+        .context("Failed to shell-escape Zed executable path.")
 }
 
-/// Returns a shell escaped path for the zed cli executable, this function
+/// Returns a path for the zed cli executable, this function
 /// should be called from the zed executable, not zed-cli.
-pub fn get_shell_safe_zed_cli_path() -> Result<String> {
+pub fn get_zed_cli_path() -> Result<PathBuf> {
     let zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
     let parent = zed_path
@@ -329,7 +328,7 @@ pub fn get_shell_safe_zed_cli_path() -> Result<String> {
         anyhow::bail!("unsupported platform for determining zed-cli path");
     };
 
-    let zed_cli_path = possible_locations
+    possible_locations
         .iter()
         .find_map(|p| {
             parent
@@ -343,20 +342,7 @@ pub fn get_shell_safe_zed_cli_path() -> Result<String> {
                 "could not find zed-cli from any of: {}",
                 possible_locations.join(", ")
             )
-        })?
-        .to_string_lossy()
-        .to_string();
-
-    #[cfg(target_os = "windows")]
-    {
-        Ok(zed_cli_path)
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        Ok(shlex::try_quote(&zed_cli_path)
-            .context("Failed to shell-escape Zed executable path.")?
-            .to_string())
-    }
+        })
 }
 
 #[cfg(unix)]
@@ -368,7 +354,10 @@ pub async fn load_login_shell_environment() -> Result<()> {
     // into shell's `cd` command (and hooks) to manipulate env.
     // We do this so that we get the env a user would have when spawning a shell
     // in home directory.
-    for (name, value) in shell_env::capture(get_system_shell(), &[], paths::home_dir()).await? {
+    for (name, value) in shell_env::capture(get_system_shell(), &[], paths::home_dir())
+        .await
+        .with_context(|| format!("capturing environment with {:?}", get_system_shell()))?
+    {
         unsafe { env::set_var(&name, &value) };
     }
 
@@ -622,15 +611,21 @@ where
     let file = caller.file().replace('\\', "/");
     // In this codebase all crates reside in a `crates` directory,
     // so discard the prefix up to that segment to find the crate name
-    let target = file
-        .split_once("crates/")
-        .and_then(|(_, s)| s.split_once('/'))
-        .map(|(p, _)| p);
+    let file = file.split_once("crates/");
+    let target = file.as_ref().and_then(|(_, s)| s.split_once("/src/"));
 
+    let module_path = target.map(|(krate, module)| {
+        if module.starts_with(krate) {
+            module.trim_end_matches(".rs").replace('/', "::")
+        } else {
+            krate.to_owned() + "::" + &module.trim_end_matches(".rs").replace('/', "::")
+        }
+    });
+    let file = file.map(|(_, file)| format!("crates/{file}"));
     log::logger().log(
         &log::Record::builder()
-            .target(target.unwrap_or(""))
-            .module_path(target)
+            .target(module_path.as_deref().unwrap_or(""))
+            .module_path(file.as_deref())
             .args(format_args!("{:?}", error))
             .file(Some(caller.file()))
             .line(Some(caller.line()))
@@ -640,7 +635,7 @@ where
 }
 
 pub fn log_err<E: std::fmt::Debug>(error: &E) {
-    log_error_with_caller(*Location::caller(), error, log::Level::Warn);
+    log_error_with_caller(*Location::caller(), error, log::Level::Error);
 }
 
 pub trait TryFutureExt {
@@ -940,7 +935,7 @@ impl PartialOrd for NumericPrefixWithSuffix<'_> {
 /// # Examples
 ///
 /// ```
-/// use zed_util::capitalize;
+/// use util::capitalize;
 ///
 /// assert_eq!(capitalize("hello"), "Hello");
 /// assert_eq!(capitalize("WORLD"), "WORLD");
