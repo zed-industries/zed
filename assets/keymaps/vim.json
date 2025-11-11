@@ -348,6 +348,12 @@
     }
   },
   {
+    "context": "mode == single_line && vim_mode == insert",
+    "bindings": {
+      "shift-escape": "vim::SwitchToNormalMode"
+    }
+  },
+  {
     "context": "vim_mode == insert",
     "bindings": {
       "ctrl-c": "vim::NormalBefore",
@@ -385,6 +391,12 @@
       "ctrl-u": "vim::ScrollUp",
       "ctrl-e": "vim::LineDown",
       "ctrl-y": "vim::LineUp"
+    }
+  },
+  {
+    "context": "mode == single_line && vim_mode == insert",
+    "bindings": {
+      "escape": "menu::Cancel"
     }
   },
   {
