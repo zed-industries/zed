@@ -53,6 +53,7 @@ pub(crate) fn run_unit_evals() -> Workflow {
     let unit_evals = unit_evals();
 
     named::workflow()
+        .name("run_unit_evals")
         .on(Event::default()
             .schedule([
                 // GitHub might drop jobs at busy times, so we choose a random time in the middle of the night.
