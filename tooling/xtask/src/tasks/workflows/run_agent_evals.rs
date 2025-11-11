@@ -118,21 +118,6 @@ fn cron_unit_evals() -> NamedJob {
 }
 
 fn unit_evals(commit: Option<&Input>) -> Job {
-    fn send_failure_to_slack() -> Step<Use> {
-        named::uses(
-            "slackapi",
-            "slack-github-action",
-            "b0fa283ad8fea605de13dc3f449259339835fc52",
-        )
-        .if_condition(Expression::new("${{ failure() }}"))
-        .add_with(("method", "chat.postMessage"))
-        .add_with(("token", vars::SLACK_APP_ZED_UNIT_EVALS_BOT_TOKEN))
-        .add_with(("payload", indoc::indoc!{r#"
-            channel: C04UDRNNJFQ
-            text: "Unit Evals Failed: https://github.com/zed-industries/zed/actions/runs/${{ github.run_id }}"
-        "#}))
-    }
-
     let script_step = add_api_keys(steps::script("./script/run-unit-evals"));
 
     Job::default()
