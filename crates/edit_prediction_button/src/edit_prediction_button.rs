@@ -837,17 +837,16 @@ impl EditPredictionButton {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        let all_language_settings = all_language_settings(None, cx);
-        let copilot_config = copilot::copilot_chat::CopilotChatConfiguration {
-            enterprise_uri: all_language_settings
-                .edit_predictions
-                .copilot
-                .enterprise_uri
-                .clone(),
-        };
-        let settings_url = copilot_settings_url(copilot_config.enterprise_uri.as_deref());
-
         ContextMenu::build(window, cx, |menu, window, cx| {
+            let all_language_settings = all_language_settings(None, cx);
+            let settings_url = copilot_settings_url(
+                all_language_settings
+                    .edit_predictions
+                    .copilot
+                    .enterprise_uri
+                    .as_deref(),
+            );
+
             let menu = self.build_language_settings_menu(menu, window, cx);
             let menu =
                 self.add_provider_switching_section(menu, EditPredictionProvider::Copilot, cx);
