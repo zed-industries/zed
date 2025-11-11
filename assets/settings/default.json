@@ -1567,8 +1567,8 @@
     // output,
     //
     // [
-    //   ["\\s+(-->|:::|at) (?<path>.+?)(:$|$)"],
-    //   ["\\s+(Compiling|Checking|Documenting) [^(]+\\((?<path>.+)\\)"]
+    //   "\\s+(-->|:::|at) (?<path>.+?)(:$|$)",
+    //   "\\s+(Compiling|Checking|Documenting) [^(]+\\((?<path>.+)\\)"
     // ],
     //
     // could be used. Processing stops at the first regex with a match, even if no link is
