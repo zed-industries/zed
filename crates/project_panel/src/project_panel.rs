@@ -1047,6 +1047,12 @@ impl ProjectPanel {
                                 "Copy Relative Path",
                                 Box::new(zed_actions::workspace::CopyRelativePath),
                             )
+                            .when(!is_dir && self.has_git_changes(entry_id), |menu| {
+                                menu.separator().action(
+                                    "Restore File",
+                                    Box::new(git::RestoreFile { skip_prompt: false }),
+                                )
+                            })
                             .when(!should_hide_rename, |menu| {
                                 menu.separator().action("Rename", Box::new(Rename))
                             })
@@ -1081,6 +1087,20 @@ impl ProjectPanel {
         }
 
         cx.notify();
+    }
+
+    fn has_git_changes(&self, entry_id: ProjectEntryId) -> bool {
+        for visible in &self.state.visible_entries {
+            if let Some(git_entry) = visible.entries.iter().find(|e| e.id == entry_id) {
+                return git_entry.git_summary.index.modified
+                    + git_entry.git_summary.worktree.modified
+                    > 0
+                    || git_entry.git_summary.index.deleted
+                        + git_entry.git_summary.worktree.deleted
+                        > 0;
+            }
+        }
+        false
     }
 
     fn is_unfoldable(&self, entry: &Entry, worktree: &Worktree) -> bool {
@@ -1911,6 +1931,84 @@ impl ProjectPanel {
 
     fn delete(&mut self, action: &Delete, window: &mut Window, cx: &mut Context<Self>) {
         self.remove(false, action.skip_prompt, window, cx);
+    }
+
+    fn restore_file(
+        &mut self,
+        action: &git::RestoreFile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        maybe!({
+            let selection = self.state.selection?;
+            let project = self.project.read(cx);
+
+            let (_worktree, entry) = self.selected_sub_entry(cx)?;
+            if entry.is_dir() {
+                return None;
+            }
+
+            let project_path = project.path_for_entry(selection.entry_id, cx)?;
+
+            let git_store = project.git_store();
+            let (repository, repo_path) = git_store
+                .read(cx)
+                .repository_and_path_for_project_path(&project_path, cx)?;
+
+            let snapshot = repository.read(cx).snapshot();
+            let status = snapshot.status_for_path(&repo_path)?;
+            if !status.status.is_modified() && !status.status.is_deleted() {
+                return None;
+            }
+
+            let file_name = entry.path.file_name()?.to_string();
+
+            let answer = if !action.skip_prompt {
+                let prompt = format!("Discard changes to {}?", file_name);
+                Some(window.prompt(PromptLevel::Info, &prompt, None, &["Restore", "Cancel"], cx))
+            } else {
+                None
+            };
+
+            cx.spawn_in(window, async move |panel, cx| {
+                if let Some(answer) = answer
+                    && answer.await != Ok(0)
+                {
+                    return anyhow::Ok(());
+                }
+
+                let task = panel.update(cx, |_panel, cx| {
+                    repository.update(cx, |repo, cx| {
+                        repo.checkout_files("HEAD", vec![repo_path], cx)
+                    })
+                })?;
+
+                task.await.log_err();
+
+                panel
+                    .update(cx, |panel, cx| {
+                        panel.project.update(cx, |project, cx| {
+                            if let Some(buffer_id) = project
+                                .buffer_store()
+                                .read(cx)
+                                .buffer_id_for_project_path(&project_path)
+                            {
+                                if let Some(buffer) = project.buffer_for_id(*buffer_id, cx) {
+                                    buffer.update(cx, |buffer, cx| {
+                                        let _ = buffer.reload(cx);
+                                    });
+                                }
+                            }
+                        })
+                    })
+                    .ok();
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+
+            Some(())
+        });
     }
 
     fn remove(
@@ -5476,6 +5574,7 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::copy))
                         .on_action(cx.listener(Self::paste))
                         .on_action(cx.listener(Self::duplicate))
+                        .on_action(cx.listener(Self::restore_file))
                         .when(!project.is_remote(), |el| {
                             el.on_action(cx.listener(Self::trash))
                         })
