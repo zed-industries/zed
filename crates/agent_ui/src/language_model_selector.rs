@@ -260,9 +260,15 @@ impl GroupedModels {
     }
 
     fn model_infos(&self) -> Vec<ModelInfo> {
-        self.other
+        let other = self
+            .other
             .values()
             .flat_map(|model| model.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        self.recommended
+            .iter()
+            .chain(&other)
             .cloned()
             .collect::<Vec<_>>()
     }
