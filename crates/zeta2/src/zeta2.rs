@@ -136,23 +136,6 @@ pub struct Zeta {
     eval_cache: Option<Arc<dyn EvalCache>>,
 }
 
-#[cfg(feature = "eval-support")]
-pub type EvalCacheKey = (EvalCacheEntryKind, u64);
-
-#[cfg(feature = "eval-support")]
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum EvalCacheEntryKind {
-    Search,
-    LlmResponse,
-    LlmRequest,
-}
-
-#[cfg(feature = "eval-support")]
-pub trait EvalCache: Send + Sync {
-    fn read(&self, key: EvalCacheKey) -> Option<String>;
-    fn write(&self, key: EvalCacheKey, value: &str);
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct ZetaOptions {
     pub context: ContextMode,
@@ -973,6 +956,10 @@ impl Zeta {
                     app_version,
                     #[cfg(feature = "eval-support")]
                     eval_cache,
+                    #[cfg(feature = "eval-support")]
+                    EvalCacheEntryKind::PredictionRequest,
+                    #[cfg(feature = "eval-support")]
+                    EvalCacheEntryKind::PredictionResponse,
                 )
                 .await;
                 let request_time = chrono::Utc::now() - before_request;
@@ -1073,6 +1060,8 @@ impl Zeta {
         llm_token: LlmApiToken,
         app_version: SemanticVersion,
         #[cfg(feature = "eval-support")] eval_cache: Option<Arc<dyn EvalCache>>,
+        #[cfg(feature = "eval-support")] eval_cache_req_kind: EvalCacheEntryKind,
+        #[cfg(feature = "eval-support")] eval_cache_res_kind: EvalCacheEntryKind,
     ) -> Result<(open_ai::Response, Option<EditPredictionUsage>)> {
         let url = if let Some(predict_edits_url) = PREDICT_EDITS_URL.as_ref() {
             http_client::Url::parse(&predict_edits_url)?
@@ -1091,10 +1080,11 @@ impl Zeta {
             url.hash(&mut hasher);
             let request_str = serde_json::to_string(&request)?;
             request_str.hash(&mut hasher);
-            let key = (EvalCacheEntryKind::LlmResponse, hasher.finish());
+            let hash = hasher.finish();
 
-            cache.write((EvalCacheEntryKind::LlmRequest, key.1), &request_str);
+            cache.write((eval_cache_req_kind, hash), &request_str);
 
+            let key = (eval_cache_res_kind, hash);
             if let Some(response_str) = cache.read(key) {
                 return Ok((serde_json::from_str(&response_str)?, None));
             }
@@ -1402,6 +1392,10 @@ impl Zeta {
                 app_version,
                 #[cfg(feature = "eval-support")]
                 eval_cache.clone(),
+                #[cfg(feature = "eval-support")]
+                EvalCacheEntryKind::ContextRequest,
+                #[cfg(feature = "eval-support")]
+                EvalCacheEntryKind::ContextResponse,
             )
             .await;
             let mut response = Self::handle_api_response(&this, response, cx)?;
@@ -1805,6 +1799,38 @@ fn add_signature(
     });
     declaration_to_signature_index.insert(declaration_id, signature_index);
     Some(signature_index)
+}
+
+#[cfg(feature = "eval-support")]
+pub type EvalCacheKey = (EvalCacheEntryKind, u64);
+
+#[cfg(feature = "eval-support")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EvalCacheEntryKind {
+    ContextRequest,
+    ContextResponse,
+    SearchResults,
+    PredictionRequest,
+    PredictionResponse,
+}
+
+#[cfg(feature = "eval-support")]
+impl std::fmt::Display for EvalCacheEntryKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EvalCacheEntryKind::SearchResults => write!(f, "search-results"),
+            EvalCacheEntryKind::ContextRequest => write!(f, "context-request"),
+            EvalCacheEntryKind::ContextResponse => write!(f, "context-response"),
+            EvalCacheEntryKind::PredictionRequest => write!(f, "prediction-request"),
+            EvalCacheEntryKind::PredictionResponse => write!(f, "prediction-response"),
+        }
+    }
+}
+
+#[cfg(feature = "eval-support")]
+pub trait EvalCache: Send + Sync {
+    fn read(&self, key: EvalCacheKey) -> Option<String>;
+    fn write(&self, key: EvalCacheKey, value: &str);
 }
 
 #[cfg(test)]

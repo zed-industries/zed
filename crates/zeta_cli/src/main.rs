@@ -54,6 +54,7 @@ enum Command {
         #[arg(long, value_enum, default_value_t = ExampleFormat::Md)]
         output_format: ExampleFormat,
     },
+    Clean,
 }
 
 #[derive(Subcommand, Debug)]
@@ -470,6 +471,7 @@ fn main() {
                     let example = NamedExample::load(path).unwrap();
                     example.write(output_format, io::stdout()).unwrap();
                 }
+                Command::Clean => std::fs::remove_dir_all(&*crate::paths::TARGET_ZETA_DIR).unwrap(),
             };
 
             let _ = cx.update(|cx| cx.quit());

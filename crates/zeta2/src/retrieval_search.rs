@@ -51,7 +51,7 @@ pub async fn run_retrieval_searches(
         })?;
 
         queries.hash(&mut hasher);
-        let key = (EvalCacheEntryKind::Search, hasher.finish());
+        let key = (EvalCacheEntryKind::SearchResults, hasher.finish());
 
         if let Some(cached_results) = eval_cache.read(key) {
             let file_results = serde_json::from_str::<CachedSearchResults>(&cached_results)

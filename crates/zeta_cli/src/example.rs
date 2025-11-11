@@ -398,7 +398,7 @@ impl NamedExample {
         Ok(worktree_path)
     }
 
-    fn file_name(&self) -> String {
+    pub fn file_name(&self) -> String {
         self.name
             .chars()
             .map(|c| {

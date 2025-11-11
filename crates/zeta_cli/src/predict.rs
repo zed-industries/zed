@@ -2,11 +2,11 @@ use crate::PromptFormat;
 use crate::example::{ActualExcerpt, ExpectedExcerpt, NamedExample};
 use crate::headless::ZetaCliAppState;
 use crate::paths::{
-    CACHE_DIR, LOGS_DIR, LOGS_PREDICTION_PROMPT, LOGS_PREDICTION_RESPONSE, LOGS_SEARCH_PROMPT,
-    LOGS_SEARCH_QUERIES,
+    CACHE_DIR, LATEST_EXAMPLE_RUN_DIR, LOGS_DIR, LOGS_PREDICTION_PROMPT, LOGS_PREDICTION_RESPONSE,
+    LOGS_SEARCH_PROMPT, LOGS_SEARCH_QUERIES, RUN_DIR,
 };
 use ::serde::Serialize;
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use clap::{Args, ValueEnum};
 use collections::HashMap;
 use language::{Anchor, Buffer, Point};
@@ -148,8 +148,25 @@ pub async fn zeta2_predict(
 
     let zeta = cx.update(|cx| zeta2::Zeta::global(&app_state.client, &app_state.user_store, cx))?;
 
+    let example_run_dir = RUN_DIR.join(&example.file_name());
+    fs::create_dir_all(&example_run_dir)?;
+    if LATEST_EXAMPLE_RUN_DIR.exists() {
+        fs::remove_file(&*LATEST_EXAMPLE_RUN_DIR)?;
+    }
+
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&example_run_dir, &*LATEST_EXAMPLE_RUN_DIR)
+        .context("creating latest link")?;
+
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(&example_run_dir, &*LATEST_EXAMPLE_RUN_DIR)
+        .context("creating latest link")?;
+
     zeta.update(cx, |zeta, _cx| {
-        zeta.with_eval_cache(Arc::new(Cache { cache_mode }));
+        zeta.with_eval_cache(Arc::new(RunCache {
+            example_run_dir,
+            cache_mode,
+        }));
     })?;
 
     cx.subscribe(&buffer_store, {
@@ -350,35 +367,44 @@ async fn resolve_context_entry(
     Ok((buffer, ranges))
 }
 
-struct Cache {
+struct RunCache {
     cache_mode: CacheMode,
+    example_run_dir: PathBuf,
 }
 
-impl Cache {
-    fn path((kind, key): EvalCacheKey) -> PathBuf {
-        CACHE_DIR.join(format!(
-            "{}-{key:x}.json",
-            match kind {
-                EvalCacheEntryKind::Search => "search",
-                EvalCacheEntryKind::LlmResponse => "llm-response",
-                EvalCacheEntryKind::LlmRequest => "llm-request",
-            }
-        ))
+impl RunCache {
+    fn cache_path((kind, key): &EvalCacheKey) -> PathBuf {
+        CACHE_DIR.join(format!("{kind}-{key:x}.json",))
+    }
+
+    fn link_to_run(&self, key: &EvalCacheKey) {
+        let link_path = self.example_run_dir.join(format!("{}.json", key.0));
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(Self::cache_path(key), link_path).unwrap();
+
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(Self::cache_path(key), link_path).unwrap();
     }
 }
 
-impl EvalCache for Cache {
+impl EvalCache for RunCache {
     fn read(&self, key: EvalCacheKey) -> Option<String> {
-        let path = Cache::path(key);
+        let path = RunCache::cache_path(&key);
+
         if path.exists() {
             let use_cache = match key.0 {
-                EvalCacheEntryKind::Search => self.cache_mode.use_cached_search_results(),
-                EvalCacheEntryKind::LlmResponse | EvalCacheEntryKind::LlmRequest => {
+                EvalCacheEntryKind::SearchResults => self.cache_mode.use_cached_search_results(),
+                EvalCacheEntryKind::ContextRequest
+                | EvalCacheEntryKind::ContextResponse
+                | EvalCacheEntryKind::PredictionRequest
+                | EvalCacheEntryKind::PredictionResponse => {
                     self.cache_mode.use_cached_llm_responses()
                 }
             };
             if use_cache {
                 log::info!("Using cache entry: {}", path.display());
+                self.link_to_run(&key);
                 Some(fs::read_to_string(path).unwrap())
             } else {
                 log::info!("Skipping cached entry: {}", path.display());
@@ -397,9 +423,10 @@ impl EvalCache for Cache {
     fn write(&self, key: EvalCacheKey, value: &str) {
         fs::create_dir_all(&*CACHE_DIR).unwrap();
 
-        let path = Cache::path(key);
+        let path = RunCache::cache_path(&key);
         log::info!("Writing cache entry: {}", path.display());
-        fs::write(path, value).unwrap();
+        fs::write(&path, value).unwrap();
+        self.link_to_run(&key);
     }
 }
 
