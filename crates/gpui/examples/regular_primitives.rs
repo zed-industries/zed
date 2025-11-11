@@ -3,7 +3,9 @@ use gpui::{
     canvas, div, fill, point, prelude::*, px, size,
 };
 
-fn background() -> Hsla { gpui::rgb(0x000000).into() }
+fn background() -> Hsla {
+    gpui::rgb(0x000000).into()
+}
 
 struct RegularPrimitives {
     viewport_x: f32,
@@ -14,10 +16,20 @@ struct RegularPrimitives {
 
 impl RegularPrimitives {
     fn new() -> Self {
-        Self { viewport_x: 0.0, viewport_y: 0.0, dragging: false, last_mouse: None }
+        Self {
+            viewport_x: 0.0,
+            viewport_y: 0.0,
+            dragging: false,
+            last_mouse: None,
+        }
     }
 
-    fn on_mouse_down(&mut self, _e: &gpui::MouseDownEvent, _w: &mut Window, _cx: &mut Context<Self>) {
+    fn on_mouse_down(
+        &mut self,
+        _e: &gpui::MouseDownEvent,
+        _w: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
         self.dragging = true;
     }
     fn on_mouse_up(&mut self, _e: &gpui::MouseUpEvent, _w: &mut Window, _cx: &mut Context<Self>) {
@@ -50,9 +62,13 @@ impl RegularPrimitives {
         const SCALE_IN: f32 = 0.10;
         const JITTER: f32 = 8.0;
 
-        struct Rng { state: u64 }
+        struct Rng {
+            state: u64,
+        }
         impl Rng {
-            fn new(seed: u64) -> Self { Self { state: seed } }
+            fn new(seed: u64) -> Self {
+                Self { state: seed }
+            }
             fn next_f32(&mut self) -> f32 {
                 self.state = self.state.wrapping_mul(6364136223846793005).wrapping_add(1);
                 let v = (self.state >> 32) as u32;
@@ -74,8 +90,16 @@ impl RegularPrimitives {
             let jy = (rng.next_f32() - 0.5) * 2.0 * JITTER;
             x += jx;
             y += jy;
-            let bounds = Bounds { origin: point(px(x), px(y)), size: size(px(SIZE), px(SIZE)) };
-            let color = Hsla { h: 210.0, s: 0.85, l: 0.55, a: 1.0 };
+            let bounds = Bounds {
+                origin: point(px(x), px(y)),
+                size: size(px(SIZE), px(SIZE)),
+            };
+            let color = Hsla {
+                h: 210.0,
+                s: 0.85,
+                l: 0.55,
+                a: 1.0,
+            };
             out.push((bounds, color));
         }
         out
@@ -107,11 +131,13 @@ pub fn main() {
     Application::new().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(800.0), px(560.0)), cx);
         cx.open_window(
-            WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() },
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                ..Default::default()
+            },
             |_, cx| cx.new(|_| RegularPrimitives::new()),
         )
         .unwrap();
         cx.activate(true);
     });
 }
-

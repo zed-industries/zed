@@ -10,7 +10,9 @@ mod demo {
         WindowOptions, canvas, div, point, prelude::*, px, rgb, size,
     };
 
-    fn background() -> Hsla { rgb(0x000000).into() }
+    fn background() -> Hsla {
+        rgb(0x000000).into()
+    }
 
     struct BatchedPrimitives {
         viewport_x: f32,
@@ -21,17 +23,37 @@ mod demo {
 
     impl BatchedPrimitives {
         fn new() -> Self {
-            Self { viewport_x: 0.0, viewport_y: 0.0, dragging: false, last_mouse: None }
+            Self {
+                viewport_x: 0.0,
+                viewport_y: 0.0,
+                dragging: false,
+                last_mouse: None,
+            }
         }
 
-        fn on_mouse_down(&mut self, _e: &gpui::MouseDownEvent, _w: &mut Window, _cx: &mut Context<Self>) {
+        fn on_mouse_down(
+            &mut self,
+            _e: &gpui::MouseDownEvent,
+            _w: &mut Window,
+            _cx: &mut Context<Self>,
+        ) {
             self.dragging = true;
         }
-        fn on_mouse_up(&mut self, _e: &gpui::MouseUpEvent, _w: &mut Window, _cx: &mut Context<Self>) {
+        fn on_mouse_up(
+            &mut self,
+            _e: &gpui::MouseUpEvent,
+            _w: &mut Window,
+            _cx: &mut Context<Self>,
+        ) {
             self.dragging = false;
             self.last_mouse = None;
         }
-        fn on_mouse_move(&mut self, e: &gpui::MouseMoveEvent, w: &mut Window, _cx: &mut Context<Self>) {
+        fn on_mouse_move(
+            &mut self,
+            e: &gpui::MouseMoveEvent,
+            w: &mut Window,
+            _cx: &mut Context<Self>,
+        ) {
             if !self.dragging {
                 self.last_mouse = Some(e.position);
                 return;
@@ -57,9 +79,13 @@ mod demo {
             const SCALE_IN: f32 = 0.10;
             const JITTER: f32 = 8.0;
 
-            struct Rng { state: u64 }
+            struct Rng {
+                state: u64,
+            }
             impl Rng {
-                fn new(seed: u64) -> Self { Self { state: seed } }
+                fn new(seed: u64) -> Self {
+                    Self { state: seed }
+                }
                 fn next_f32(&mut self) -> f32 {
                     self.state = self.state.wrapping_mul(6364136223846793005).wrapping_add(1);
                     let v = (self.state >> 32) as u32;
@@ -82,8 +108,16 @@ mod demo {
                 x += jx;
                 y += jy;
                 rects.push(RectInstance {
-                    bounds: Bounds { origin: point(px(x), px(y)), size: size(px(SIZE), px(SIZE)) },
-                    color: Hsla { h: 210.0, s: 0.85, l: 0.55, a: 1.0 },
+                    bounds: Bounds {
+                        origin: point(px(x), px(y)),
+                        size: size(px(SIZE), px(SIZE)),
+                    },
+                    color: Hsla {
+                        h: 210.0,
+                        s: 0.85,
+                        l: 0.55,
+                        a: 1.0,
+                    },
                 });
             }
             rects
@@ -113,7 +147,10 @@ mod demo {
         Application::new().run(|cx: &mut App| {
             let bounds = Bounds::centered(None, size(px(800.0), px(560.0)), cx);
             cx.open_window(
-                WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() },
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
                 |_, cx| cx.new(|_| BatchedPrimitives::new()),
             )
             .unwrap();
@@ -123,4 +160,6 @@ mod demo {
 }
 
 #[cfg(target_os = "macos")]
-fn main() { demo::main(); }
+fn main() {
+    demo::main();
+}

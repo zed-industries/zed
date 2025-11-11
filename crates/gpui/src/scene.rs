@@ -328,7 +328,6 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.instanced_rects_iter.peek().map(|b| b.order),
                 PrimitiveKind::InstancedRects,
             ),
-            
             (
                 self.instanced_lines_iter.peek().map(|b| b.order),
                 PrimitiveKind::InstancedLines,
@@ -570,8 +569,6 @@ impl From<InstancedRects> for Primitive {
         Primitive::InstancedRects(batch)
     }
 }
-
- 
 
 #[derive(Debug, Clone)]
 #[repr(C)]

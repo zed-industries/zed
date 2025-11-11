@@ -258,7 +258,7 @@ impl MetalRenderer {
             "surface_fragment",
             MTLPixelFormat::BGRA8Unorm,
         );
-        
+
         let instanced_lines_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -543,25 +543,21 @@ impl MetalRenderer {
                     viewport_size,
                     command_encoder,
                 ),
-                PrimitiveBatch::InstancedRects(batches) => {
-                    self.draw_instanced_rects(
-                        batches,
-                        instance_buffer,
-                        &mut instance_offset,
-                        viewport_size,
-                        command_encoder,
-                    )
-                }
-                
-                PrimitiveBatch::InstancedLines(batches) => {
-                    self.draw_instanced_lines(
-                        batches,
-                        instance_buffer,
-                        &mut instance_offset,
-                        viewport_size,
-                        command_encoder,
-                    )
-                }
+                PrimitiveBatch::InstancedRects(batches) => self.draw_instanced_rects(
+                    batches,
+                    instance_buffer,
+                    &mut instance_offset,
+                    viewport_size,
+                    command_encoder,
+                ),
+
+                PrimitiveBatch::InstancedLines(batches) => self.draw_instanced_lines(
+                    batches,
+                    instance_buffer,
+                    &mut instance_offset,
+                    viewport_size,
+                    command_encoder,
+                ),
             };
             if !ok {
                 command_encoder.end_encoding();
@@ -847,8 +843,8 @@ impl MetalRenderer {
 
                 let bytes_len = std::mem::size_of_val(slice);
                 unsafe {
-                    let dst = (instance_buffer.metal_buffer.contents() as *mut u8)
-                        .add(*instance_offset);
+                    let dst =
+                        (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset);
                     std::ptr::copy_nonoverlapping(slice.as_ptr() as *const u8, dst, bytes_len);
                 }
 
@@ -884,7 +880,9 @@ impl MetalRenderer {
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) -> bool {
-        if batches.is_empty() { return true; }
+        if batches.is_empty() {
+            return true;
+        }
         command_encoder.set_render_pipeline_state(&self.instanced_lines_pipeline_state);
         command_encoder.set_vertex_buffer(
             InstancedLineInputIndex::Vertices as u64,
@@ -912,14 +910,18 @@ impl MetalRenderer {
                 align_offset(instance_offset);
                 let bytes_avail = instance_buffer.size.saturating_sub(*instance_offset);
                 let max_fit = bytes_avail / stride;
-                if max_fit == 0 { ok_all = false; break; }
+                if max_fit == 0 {
+                    ok_all = false;
+                    break;
+                }
                 let upper_cap = 32_768usize;
                 let to_copy = max_fit.min(upper_cap).min(total - i);
                 let slice = &b.segments[i..(i + to_copy)];
 
                 let bytes_len = std::mem::size_of_val(slice);
                 unsafe {
-                    let dst = (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset);
+                    let dst =
+                        (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset);
                     std::ptr::copy_nonoverlapping(slice.as_ptr() as *const u8, dst, bytes_len);
                 }
                 command_encoder.set_vertex_buffer(
@@ -936,12 +938,12 @@ impl MetalRenderer {
                 *instance_offset += bytes_len;
                 i += to_copy;
             }
-            if !ok_all { break; }
+            if !ok_all {
+                break;
+            }
         }
         ok_all
     }
-
-    
 
     fn draw_paths_from_intermediate(
         &self,
@@ -1544,8 +1546,6 @@ enum InstancedLineInputIndex {
     ViewportSize = 2,
     ContentMask = 3,
 }
-
- 
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
