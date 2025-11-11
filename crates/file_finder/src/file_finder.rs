@@ -332,8 +332,8 @@ impl FileFinder {
                         }
                     }
                     Match::Search(m) => ProjectPath {
-                        worktree_id: WorktreeId::from_usize(m.0.worktree_id),
-                        path: m.0.path.clone(),
+                        worktree_id: WorktreeId::from_usize(m.worktree_id),
+                        path: m.path.clone(),
                     },
                     Match::CreateNew(p) => p.clone(),
                 };
@@ -413,39 +413,6 @@ pub struct FileFinderDelegate {
     include_ignored_refresh: Task<()>,
 }
 
-/// Use a custom ordering for file finder: the regular one
-/// defines max element with the highest score and the latest alphanumerical path (in case of a tie on other params), e.g:
-/// `[{score: 0.5, path = "c/d" }, { score: 0.5, path = "/a/b" }]`
-///
-/// In the file finder, we would prefer to have the max element with the highest score and the earliest alphanumerical path, e.g:
-/// `[{ score: 0.5, path = "/a/b" }, {score: 0.5, path = "c/d" }]`
-/// as the files are shown in the project panel lists.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ProjectPanelOrdMatch(PathMatch);
-
-impl Ord for ProjectPanelOrdMatch {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.0
-            .score
-            .partial_cmp(&other.0.score)
-            .unwrap_or(cmp::Ordering::Equal)
-            .then_with(|| self.0.worktree_id.cmp(&other.0.worktree_id))
-            .then_with(|| {
-                other
-                    .0
-                    .distance_to_relative_ancestor
-                    .cmp(&self.0.distance_to_relative_ancestor)
-            })
-            .then_with(|| self.0.path.cmp(&other.0.path).reverse())
-    }
-}
-
-impl PartialOrd for ProjectPanelOrdMatch {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
 #[derive(Debug, Default)]
 struct Matches {
     separate_history: bool,
@@ -456,9 +423,9 @@ struct Matches {
 enum Match {
     History {
         path: FoundPath,
-        panel_match: Option<ProjectPanelOrdMatch>,
+        panel_match: Option<PathMatch>,
     },
-    Search(ProjectPanelOrdMatch),
+    Search(PathMatch),
     CreateNew(ProjectPath),
 }
 
@@ -466,7 +433,7 @@ impl Match {
     fn relative_path(&self) -> Option<&Arc<RelPath>> {
         match self {
             Match::History { path, .. } => Some(&path.project.path),
-            Match::Search(panel_match) => Some(&panel_match.0.path),
+            Match::Search(panel_match) => Some(&panel_match.path),
             Match::CreateNew(_) => None,
         }
     }
@@ -474,7 +441,7 @@ impl Match {
     fn abs_path(&self, project: &Entity<Project>, cx: &App) -> Option<PathBuf> {
         match self {
             Match::History { path, .. } => Some(path.absolute.clone()),
-            Match::Search(ProjectPanelOrdMatch(path_match)) => Some(
+            Match::Search(path_match) => Some(
                 project
                     .read(cx)
                     .worktree_for_id(WorktreeId::from_usize(path_match.worktree_id), cx)?
@@ -485,7 +452,7 @@ impl Match {
         }
     }
 
-    fn panel_match(&self) -> Option<&ProjectPanelOrdMatch> {
+    fn panel_match(&self) -> Option<&PathMatch> {
         match self {
             Match::History { panel_match, .. } => panel_match.as_ref(),
             Match::Search(panel_match) => Some(panel_match),
@@ -526,9 +493,7 @@ impl Matches {
                 .ok_or(0)
         } else {
             self.matches.binary_search_by(|m| {
-                // `reverse()` since if cmp_matches(a, b) == Ordering::Greater, then a is better than b.
-                // And we want the better entries go first.
-                Self::cmp_matches(self.separate_history, currently_opened, m, entry).reverse()
+                Self::cmp_matches(self.separate_history, currently_opened, m, entry)
             })
         }
     }
@@ -540,7 +505,7 @@ impl Matches {
         history_items: impl IntoIterator<Item = &'a FoundPath> + Clone,
         currently_opened: Option<&'a FoundPath>,
         query: Option<&FileSearchQuery>,
-        new_search_matches: impl Iterator<Item = ProjectPanelOrdMatch>,
+        new_search_matches: impl Iterator<Item = PathMatch>,
         extend_old_matches: bool,
         path_style: PathStyle,
     ) {
@@ -578,8 +543,8 @@ impl Matches {
         let new_search_matches: Vec<Match> = new_search_matches
             .filter(|path_match| {
                 !new_history_matches.contains_key(&ProjectPath {
-                    path: path_match.0.path.clone(),
-                    worktree_id: WorktreeId::from_usize(path_match.0.worktree_id),
+                    path: path_match.path.clone(),
+                    worktree_id: WorktreeId::from_usize(path_match.worktree_id),
                 })
             })
             .map(Match::Search)
@@ -599,7 +564,7 @@ impl Matches {
         // It is possible that the new search matches' paths contain some of the old search matches' paths.
         // History matches' paths are unique, since store in a HashMap by path.
         // We build a sorted Vec<Match>, eliminating duplicate search matches.
-        // Search matches with the same paths should have equal `ProjectPanelOrdMatch`, so we should
+        // Search matches with the same paths should have equal `PathMatch`, so we should
         // not have any duplicates after building the final list.
         for new_match in new_history_matches
             .into_values()
@@ -617,7 +582,6 @@ impl Matches {
         }
     }
 
-    /// If a < b, then a is a worse match, aligning with the `ProjectPanelOrdMatch` ordering.
     fn cmp_matches(
         separate_history: bool,
         currently_opened: Option<&FoundPath>,
@@ -682,19 +646,19 @@ impl Matches {
     }
 
     /// Determines if the match occurred within the filename rather than in the path
-    fn is_filename_match(panel_match: &ProjectPanelOrdMatch) -> bool {
-        if panel_match.0.positions.is_empty() {
+    fn is_filename_match(panel_match: &PathMatch) -> bool {
+        if panel_match.positions.is_empty() {
             return false;
         }
 
-        if let Some(filename) = panel_match.0.path.file_name() {
-            let path_str = panel_match.0.path.as_unix_str();
+        if let Some(filename) = panel_match.path.file_name() {
+            let path_str = panel_match.path.as_unix_str();
 
             if let Some(filename_pos) = path_str.rfind(filename)
-                && panel_match.0.positions[0] >= filename_pos
+                && panel_match.positions[0] >= filename_pos
             {
-                let mut prev_position = panel_match.0.positions[0];
-                for p in &panel_match.0.positions[1..] {
+                let mut prev_position = panel_match.positions[0];
+                for p in &panel_match.positions[1..] {
                     if *p != prev_position + 1 {
                         return false;
                     }
@@ -778,7 +742,7 @@ fn matching_history_items<'a>(
                             project_path.clone(),
                             Match::History {
                                 path: found_path.clone(),
-                                panel_match: Some(ProjectPanelOrdMatch(path_match)),
+                                panel_match: Some(path_match),
                             },
                         )
                     })
@@ -924,9 +888,7 @@ impl FileFinderDelegate {
                 &cancel_flag,
                 cx.background_executor().clone(),
             )
-            .await
-            .into_iter()
-            .map(ProjectPanelOrdMatch);
+            .await;
             let did_cancel = cancel_flag.load(atomic::Ordering::Acquire);
             picker
                 .update(cx, |picker, cx| {
@@ -943,7 +905,7 @@ impl FileFinderDelegate {
         search_id: usize,
         did_cancel: bool,
         query: FileSearchQuery,
-        matches: impl IntoIterator<Item = ProjectPanelOrdMatch>,
+        matches: impl IntoIterator<Item = PathMatch>,
         cx: &mut Context<Picker<Self>>,
     ) {
         if search_id >= self.latest_search_id {
@@ -1050,7 +1012,7 @@ impl FileFinderDelegate {
                         .filter(|worktree| worktree.read(cx).is_visible());
 
                     if let Some(panel_match) = panel_match {
-                        self.labels_for_path_match(&panel_match.0, path_style)
+                        self.labels_for_path_match(&panel_match, path_style)
                     } else if let Some(worktree) = worktree {
                         let full_path =
                             worktree.read(cx).root_name().join(&entry_path.project.path);
@@ -1077,7 +1039,7 @@ impl FileFinderDelegate {
                         )
                     }
                 }
-                Match::Search(path_match) => self.labels_for_path_match(&path_match.0, path_style),
+                Match::Search(path_match) => self.labels_for_path_match(&path_match, path_style),
                 Match::CreateNew(project_path) => (
                     format!("Create file: {}", project_path.path.display(path_style)),
                     vec![],
@@ -1239,7 +1201,7 @@ impl FileFinderDelegate {
                         if let Some((worktree, relative_path)) =
                             project.find_worktree(query_path, cx)
                         {
-                            path_matches.push(ProjectPanelOrdMatch(PathMatch {
+                            path_matches.push(PathMatch {
                                 score: 1.0,
                                 positions: Vec::new(),
                                 worktree_id: worktree.read(cx).id().to_usize(),
@@ -1247,7 +1209,7 @@ impl FileFinderDelegate {
                                 path_prefix: RelPath::empty().into(),
                                 is_dir: false, // File finder doesn't support directories
                                 distance_to_relative_ancestor: usize::MAX,
-                            }));
+                            });
                         }
                     })
                     .log_err();
@@ -1353,11 +1315,12 @@ impl PickerDelegate for FileFinderDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let raw_query = raw_query.replace(' ', "");
         let raw_query = raw_query.trim();
 
         let raw_query = match &raw_query.get(0..2) {
             Some(".\\" | "./") => &raw_query[2..],
+            // git diff can add `a\`, `a/`, `b\` or `b/` in front of paths. This
+            // makes it easy to copy those into the file finder.
             Some(prefix @ ("a\\" | "a/" | "b\\" | "b/")) => {
                 if self
                     .workspace
@@ -1556,8 +1519,8 @@ impl PickerDelegate for FileFinderDelegate {
                     Match::Search(m) => split_or_open(
                         workspace,
                         ProjectPath {
-                            worktree_id: WorktreeId::from_usize(m.0.worktree_id),
-                            path: m.0.path.clone(),
+                            worktree_id: WorktreeId::from_usize(m.worktree_id),
+                            path: m.path.clone(),
                         },
                         window,
                         cx,
@@ -1826,7 +1789,7 @@ impl<'a> PathComponentSlice<'a> {
 
     fn elision_range(&self, budget: usize, matches: &[usize]) -> Option<Range<usize>> {
         let eligible_range = {
-            assert!(matches.windows(2).all(|w| w[0] <= w[1]));
+            assert!(matches.is_sorted());
             let mut matches = matches.iter().copied().peekable();
             let mut longest: Option<Range<usize>> = None;
             let mut cur = 0..0;

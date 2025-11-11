@@ -1069,7 +1069,7 @@ impl CompletionsMenu {
                 fuzzy::match_strings(
                     &match_candidates,
                     &query,
-                    query.chars().any(|c| c.is_uppercase()),
+                    true,
                     false,
                     1000,
                     &cancel_filter,
@@ -1179,7 +1179,7 @@ impl CompletionsMenu {
             });
         }
 
-        matches.sort_unstable_by_key(|string_match| {
+        let match_tier = |string_match: &StringMatch| {
             let completion = &completions[string_match.candidate_id];
 
             let is_snippet = matches!(
@@ -1195,9 +1195,7 @@ impl CompletionsMenu {
             };
 
             let (sort_kind, sort_label) = completion.sort_key();
-
-            let score = string_match.score;
-            let sort_score = Reverse(OrderedFloat(score));
+            let sort_score = Reverse(OrderedFloat(string_match.score.floor()));
 
             let query_start_doesnt_match_split_words = query_start_lower
                 .map(|query_char| {
@@ -1234,7 +1232,11 @@ impl CompletionsMenu {
                     sort_label,
                 }
             }
-        });
+        };
+
+        let tomato: Vec<_> = matches.iter().map(match_tier).collect();
+        dbg!(tomato);
+        matches.sort_unstable_by_key(|string_match| match_tier(string_match));
 
         matches
     }
