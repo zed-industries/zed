@@ -1,5 +1,7 @@
 use gpui::{App, Context, Window};
+use notifications::status_toast::{StatusToast, ToastIcon};
 use std::sync::Arc;
+use ui::{Color, IconName};
 use util::ResultExt;
 use workspace::{self, AppState};
 
@@ -22,10 +24,9 @@ pub fn clone_and_open(
             prompt: Some("Select directory for cloned repository".into()),
         });
 
-        let workspace_weak = cx.weak_entity();
         cx.spawn_in(window, async move |workspace, cx| {
             let mut paths = path_prompt.await.ok()?.ok()??;
-            let path = paths.pop()?;
+            let mut path = paths.pop()?;
 
             let repo_name = repo_url
                 .split('/')
@@ -38,21 +39,8 @@ pub fn clone_and_open(
                 .read_with(cx, |workspace, _| workspace.app_state().fs.clone())
                 .ok()?;
 
-            let clone_result = fs.git_clone(&repo_url, path.as_path()).await;
-
-            workspace_weak
-                .update_in(cx, |workspace, window, cx| {
-                    workspace.hide_modal(window, cx);
-                })
-                .ok();
-
-            clone_result.ok()?;
-
-            let mut cloned_path = path;
-            cloned_path.push(&repo_name);
-
-            let prompt_answer = cx
-                .update(|window, cx| {
+            let prompt_answer = match fs.git_clone(&repo_url, path.as_path()).await {
+                Ok(_) => cx.update(|window, cx| {
                     window.prompt(
                         gpui::PromptLevel::Info,
                         &format!("Git Clone: \"{}\"", repo_name),
@@ -60,26 +48,38 @@ pub fn clone_and_open(
                         &["Add to current project", "Open in new window"],
                         cx,
                     )
-                })
-                .ok()?
-                .await
-                .ok()?;
+                }),
+                Err(e) => {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            let toast = StatusToast::new(e.to_string(), cx, |this, _| {
+                                this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
+                                    .dismiss_button(true)
+                            });
+                            workspace.toggle_status_toast(toast, cx);
+                        })
+                        .ok()?;
 
-            match prompt_answer {
+                    return None;
+                }
+            }
+            .ok()?;
+
+            path.push(&repo_name);
+
+            match prompt_answer.await.ok()? {
                 0 => {
-                    let on_success_clone = on_success.clone();
                     workspace
                         .update_in(cx, |workspace, window, cx| {
                             let worktree_task = workspace.project().update(cx, |project, cx| {
-                                project.create_worktree(cloned_path.as_path(), true, cx)
+                                project.create_worktree(path.as_path(), true, cx)
                             });
                             let workspace_weak = cx.weak_entity();
-                            let on_success_clone = on_success_clone.clone();
                             cx.spawn_in(window, async move |_window, cx| {
                                 if worktree_task.await.log_err().is_some() {
                                     workspace_weak
                                         .update_in(cx, |workspace, window, cx| {
-                                            (on_success_clone)(workspace, window, cx);
+                                            (on_success)(workspace, window, cx);
                                         })
                                         .ok();
                                 }
@@ -89,7 +89,6 @@ pub fn clone_and_open(
                         .ok()?;
                 }
                 1 => {
-                    let on_success_clone = on_success.clone();
                     workspace
                         .update(cx, move |_workspace, cx| {
                             workspace::open_new(
@@ -100,15 +99,14 @@ pub fn clone_and_open(
                                     cx.activate(true);
                                     let worktree_task =
                                         workspace.project().update(cx, |project, cx| {
-                                            project.create_worktree(&cloned_path, true, cx)
+                                            project.create_worktree(&path, true, cx)
                                         });
                                     let workspace_weak = cx.weak_entity();
-                                    let on_success_clone = on_success_clone.clone();
                                     cx.spawn_in(window, async move |_window, cx| {
                                         if worktree_task.await.log_err().is_some() {
                                             workspace_weak
                                                 .update_in(cx, |workspace, window, cx| {
-                                                    (on_success_clone)(workspace, window, cx);
+                                                    (on_success)(workspace, window, cx);
                                                 })
                                                 .ok();
                                         }
