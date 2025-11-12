@@ -86,6 +86,8 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
     #[serde(default)]
+    pub custom_actions: BTreeMap<Arc<str>, CustomActionManifestEntry>,
+    #[serde(default)]
     pub snippets: Option<PathBuf>,
     #[serde(default)]
     pub capabilities: Vec<ExtensionCapability>,
@@ -251,6 +253,12 @@ pub struct SlashCommandManifestEntry {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct CustomActionManifestEntry {
+    pub description: String,
+    // pub schema: Option<schemars::Schema>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct DebugAdapterManifestEntry {
     pub schema_path: Option<PathBuf>,
 }
@@ -323,6 +331,7 @@ fn manifest_from_old_manifest(
         context_servers: BTreeMap::default(),
         agent_servers: BTreeMap::default(),
         slash_commands: BTreeMap::default(),
+        custom_actions: BTreeMap::default(),
         snippets: None,
         capabilities: Vec::new(),
         debug_adapters: Default::default(),
@@ -356,6 +365,7 @@ mod tests {
             context_servers: BTreeMap::default(),
             agent_servers: BTreeMap::default(),
             slash_commands: BTreeMap::default(),
+            custom_actions: BTreeMap::default(),
             snippets: None,
             capabilities: vec![],
             debug_adapters: Default::default(),

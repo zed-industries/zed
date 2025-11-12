@@ -881,6 +881,9 @@ impl process::Host for WasmState {
 impl slash_command::Host for WasmState {}
 
 #[async_trait]
+impl custom_action::Host for WasmState {}
+
+#[async_trait]
 impl context_server::Host for WasmState {}
 
 impl dap::Host for WasmState {

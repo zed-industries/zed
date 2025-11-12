@@ -109,6 +109,7 @@ mod tests {
             context_servers: BTreeMap::default(),
             agent_servers: BTreeMap::default(),
             slash_commands: BTreeMap::default(),
+            custom_actions: BTreeMap::default(),
             snippets: None,
             capabilities: vec![],
             debug_adapters: Default::default(),
