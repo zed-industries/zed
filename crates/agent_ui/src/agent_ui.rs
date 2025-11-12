@@ -425,3 +425,6 @@ fn register_slash_commands(cx: &mut App) {
     })
     .detach();
 }
+
+#[cfg(test)]
+mod agent_ui_tests;
