@@ -3989,7 +3989,7 @@ mod tests {
             "Should have 1 entry after restore (only the first user message)"
         );
 
-        // BUG REPRODUCTION: The terminal still exists after checkpoint restore
+        // The terminal should no longer exist after checkpoint restore
         let terminal_exists_after =
             thread.read_with(cx, |thread, _| thread.terminals.contains_key(&terminal_id));
 
