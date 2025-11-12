@@ -745,7 +745,7 @@ impl GitPanel {
     ) {
         self.select_first_entry_if_none(cx);
 
-        cx.focus_self(window);
+        self.focus_handle.focus(window);
         cx.notify();
     }
 
