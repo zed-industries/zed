@@ -36,6 +36,11 @@ async fn parse_xml_edits_inner<'a>(
     let (buffer, context_ranges) = get_buffer(file_path.as_ref())
         .with_context(|| format!("no buffer for file {file_path}"))?;
 
+    let context_points = context_ranges
+        .iter()
+        .map(|r| r.to_point(buffer))
+        .collect::<Vec<_>>();
+
     let mut edits = vec![];
     while let Some(old_text_tag) = parse_tag(&mut input, "old_text")? {
         let new_text_tag =

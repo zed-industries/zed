@@ -100,8 +100,7 @@ fn write_aggregated_scores(
             Ok(eval_result) => successful.push(eval_result),
             Err((err, name, repetition_ix)) => {
                 failed_count += 1;
-                let err = err
-                    .to_string()
+                let err = format!("{err:?}")
                     .replace("<edits", "```xml\n<edits")
                     .replace("</edits>", "</edits>\n```");
                 writeln!(

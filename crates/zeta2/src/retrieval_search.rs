@@ -64,7 +64,7 @@ pub async fn run_retrieval_searches(
                     })?
                     .await?;
                 let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-                let mut ranges = ranges
+                let mut ranges: Vec<_> = ranges
                     .into_iter()
                     .map(|range| {
                         snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end)
@@ -172,11 +172,11 @@ pub async fn run_retrieval_searches(
     .await
 }
 
-fn merge_anchor_ranges(ranges: &mut Vec<Range<Anchor>>, snapshot: &BufferSnapshot) {
+pub(crate) fn merge_anchor_ranges(ranges: &mut Vec<Range<Anchor>>, snapshot: &BufferSnapshot) {
     ranges.sort_unstable_by(|a, b| {
         a.start
             .cmp(&b.start, snapshot)
-            .then(b.end.cmp(&b.end, snapshot))
+            .then(b.end.cmp(&a.end, snapshot))
     });
 
     let mut index = 1;
