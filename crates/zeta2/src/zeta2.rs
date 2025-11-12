@@ -736,9 +736,7 @@ impl Zeta {
 
         #[cfg(feature = "eval-support")]
         let parsed_fut = futures::future::join_all(
-            context_files
-                .iter()
-                .map(|(buffer, _)| buffer.read(cx).parsing_idle()),
+            context_files.keys().map(|buffer| buffer.read(cx).parsing_idle()),
         );
 
         let mut included_files = context_files
