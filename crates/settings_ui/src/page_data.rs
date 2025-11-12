@@ -5148,18 +5148,15 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Scroll Multiplier",
                     description: "The multiplier for scrolling in the terminal with the mouse wheel",
                     field: Box::new(SettingField {
+                        json_path: Some("terminal.scroll_multiplier"),
                         pick: |settings_content| {
-                            if let Some(terminal) = &settings_content.terminal {
-                                &terminal.scroll_multiplier
-                            } else {
-                                &None
-                            }
+                            settings_content.terminal.as_ref()?.scroll_multiplier.as_ref()
                         },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
+                        write: |settings_content, value| {
+                            settings_content
                                 .terminal
                                 .get_or_insert_default()
-                                .scroll_multiplier
+                                .scroll_multiplier = value;
                         },
                     }),
                     metadata: None,
