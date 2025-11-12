@@ -71,6 +71,7 @@ use std::{
 };
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::{ActiveTheme, GlobalTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
+use title_bar::TitleBarSettings;
 use ui::{PopoverMenuHandle, prelude::*};
 use util::markdown::MarkdownString;
 use util::rel_path::RelPath;
@@ -91,7 +92,7 @@ use workspace::{
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
     OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettingsFile, OpenZedUrl,
-    Quit,
+    Quit, ToggleTitleBar,
 };
 
 actions!(
@@ -812,6 +813,15 @@ fn register_actions(
                 }
             })
             .detach()
+        })
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, _: &ToggleTitleBar, _window, cx| {
+                let current_show = TitleBarSettings::get_global(cx).show;
+                update_settings_file(fs.clone(), cx, move |settings, _| {
+                    settings.title_bar.get_or_insert_default().show = Some(!current_show);
+                });
+            }
         })
         .register_action({
             let fs = app_state.fs.clone();

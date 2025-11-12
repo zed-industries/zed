@@ -65,6 +65,8 @@ actions!(
         OpenLicenses,
         /// Opens the telemetry log.
         OpenTelemetryLog,
+        /// Toggles the title bar display.
+        ToggleTitleBar,
     ]
 );
 
