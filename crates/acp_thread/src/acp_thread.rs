@@ -3996,7 +3996,7 @@ mod tests {
         // This assertion demonstrates the bug - it should be false but is true
         assert!(
             !terminal_exists_after,
-            "Terminal should be removed after checkpoint restore (BUG: it still exists)"
+            "Terminal should have been removed after checkpoint restore"
         );
 
         // Additionally, if the terminal still exists, it should at least be killed
