@@ -511,6 +511,19 @@ struct MultiBufferRegion<'a, D: TextDimension> {
     has_trailing_newline: bool,
 }
 
+impl<'a, D: TextDimension + fmt::Debug> fmt::Debug for MultiBufferRegion<'a, D> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MultiBufferRegion")
+            .field("is_main_buffer", &self.is_main_buffer)
+            .field("diff_hunk_status", &self.diff_hunk_status)
+            .field("excerpt", &self.excerpt)
+            .field("buffer_range", &self.buffer_range)
+            .field("range", &self.range)
+            .field("has_trailing_newline", &self.has_trailing_newline)
+            .finish()
+    }
+}
+
 struct ExcerptChunks<'a> {
     excerpt_id: ExcerptId,
     content_chunks: BufferChunks<'a>,
@@ -2606,6 +2619,8 @@ impl MultiBuffer {
         snapshot: &MultiBufferSnapshot,
         change_kind: DiffChangeKind,
     ) -> (bool, Option<Edit<TypedOffset<Excerpt>>>) {
+        dbg!("before", new_diff_transforms.summary().output.len);
+
         log::trace!(
             "recomputing diff transform for edit {:?} => {:?}",
             edit.old.start.value..edit.old.end.value,
@@ -2619,7 +2634,6 @@ impl MultiBuffer {
                     "previously expanded hunk at {}",
                     old_diff_transforms.start().0
                 );
-                // FIXME w/ range
                 old_expanded_hunks.insert(hunk_info);
             }
             if old_diff_transforms.end().0 > edit.old.end {
@@ -2654,8 +2668,16 @@ impl MultiBuffer {
                 let edit_buffer_end =
                     excerpt_buffer_start + edit.new.end.value.saturating_sub(excerpt_start.value);
                 let edit_buffer_end = edit_buffer_end.min(excerpt_buffer_end);
-                let edit_anchor_range =
+                let mut edit_anchor_range =
                     buffer.anchor_before(edit_buffer_start)..buffer.anchor_after(edit_buffer_end);
+
+                // FIXME
+                if new_diff_transforms.summary().excerpt_len() >= excerpt_start {
+                    let insertion_point_buffer_start =
+                        (new_diff_transforms.summary().excerpt_len() - excerpt_start).value
+                            + excerpt_buffer_start;
+                    edit_anchor_range.start = buffer.anchor_before(insertion_point_buffer_start);
+                }
 
                 for hunk in diff
                     .valid_and_invalid_hunks_intersecting_range(edit_anchor_range.clone(), buffer)
@@ -2774,6 +2796,8 @@ impl MultiBuffer {
                 break;
             }
         }
+
+        dbg!("after", new_diff_transforms.summary().output.len);
 
         (
             did_expand_hunks || !old_expanded_hunks.is_empty(),

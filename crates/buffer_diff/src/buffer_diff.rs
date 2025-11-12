@@ -530,14 +530,16 @@ impl BufferDiffInner {
         secondary: Option<&'a Self>,
     ) -> impl 'a + Iterator<Item = DiffHunk> {
         let range = range.to_offset(buffer);
+        dbg!(&range);
 
         let mut cursor = self
             .hunks
             .filter::<_, DiffHunkSummary>(buffer, move |summary| {
                 let summary_range = summary.buffer_range.to_offset(buffer);
+                dbg!(&summary_range);
                 let before_start = summary_range.end < range.start;
                 let after_end = summary_range.start > range.end;
-                !before_start && !after_end
+                dbg!(!before_start) && dbg!(!after_end)
             });
 
         let anchor_iter = iter::from_fn(move || {
@@ -545,6 +547,7 @@ impl BufferDiffInner {
             cursor.item()
         })
         .flat_map(move |hunk| {
+            dbg!(&hunk);
             [
                 (
                     &hunk.buffer_range.start,
@@ -572,7 +575,10 @@ impl BufferDiffInner {
         iter::from_fn(move || {
             loop {
                 let (start_point, (start_anchor, start_base)) = summaries.next()?;
+                dbg!(&start_anchor.is_valid(buffer));
+                dbg!(&start_point);
                 let (mut end_point, (mut end_anchor, end_base)) = summaries.next()?;
+                dbg!(&end_point);
 
                 if end_point.column > 0 && end_point < max_point {
                     end_point.row += 1;
