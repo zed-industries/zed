@@ -3653,13 +3653,14 @@ impl Workspace {
         let item_id = item.item_id();
         let mut destination_index = None;
         pane.update(cx, |pane, cx| {
-            if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation
-                && let Some(preview_item_id) = pane.preview_item_id()
-                && preview_item_id != item_id
-            {
-                destination_index = pane.close_current_preview_item(window, cx);
+            if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
+                if let Some(preview_item_id) = pane.preview_item_id()
+                    && preview_item_id != item_id
+                {
+                    destination_index = pane.close_current_preview_item(window, cx);
+                }
+                pane.set_preview_item_id(Some(item.item_id()), cx)
             }
-            pane.set_preview_item_id(Some(item.item_id()), cx)
         });
 
         self.add_item(
