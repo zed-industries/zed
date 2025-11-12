@@ -4,17 +4,21 @@ mod object;
 mod paste;
 mod select;
 
-use editor::display_map::DisplaySnapshot;
+use editor::display_map::{
+    BlockContext, BlockPlacement, BlockProperties, BlockStyle, DisplayRow, DisplaySnapshot,
+};
 use editor::{
-    DisplayPoint, Editor, EditorSettings, HideMouseCursorOrigin, SelectionEffects, ToOffset,
-    ToPoint, movement,
+    Anchor, DisplayPoint, Editor, EditorSettings, HideMouseCursorOrigin, SelectionEffects,
+    ToOffset, ToPoint, movement,
 };
 use gpui::actions;
-use gpui::{Context, Window};
+use gpui::{Context, Hsla, Window};
 use language::{CharClassifier, CharKind, Point};
+use multi_buffer::MultiBufferSnapshot;
 use search::{BufferSearchBar, SearchOptions};
 use settings::Settings;
 use text::{Bias, SelectionGoal};
+use ui::prelude::*;
 use workspace::searchable;
 use workspace::searchable::FilteredSearchRange;
 
@@ -23,7 +27,22 @@ use crate::state::SearchState;
 use crate::{
     Vim,
     motion::{Motion, right},
-    state::Mode,
+    state::{HelixJumpBehaviour, HelixJumpLabel, Mode, Operator},
+};
+use std::{ops::Range, sync::Arc};
+
+pub(crate) const HELIX_JUMP_ACCENT: Hsla = Hsla {
+    h: 0.0,
+    s: 0.78,
+    l: 0.55,
+    a: 1.0,
+};
+
+const HELIX_JUMP_LABEL_BACKGROUND: Hsla = Hsla {
+    h: HELIX_JUMP_ACCENT.h,
+    s: (HELIX_JUMP_ACCENT.s * 0.35).clamp(0.0, 1.0),
+    l: (HELIX_JUMP_ACCENT.l + 0.35).min(1.0),
+    a: 0.75,
 };
 
 actions!(
@@ -52,6 +71,8 @@ actions!(
         HelixSubstitute,
         /// Delete the selection and enter edit mode, without yanking the selection.
         HelixSubstituteNoYank,
+        /// Activate Helix-style word jump labels.
+        HelixJumpToWord,
     ]
 );
 
@@ -74,6 +95,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
     Vim::action(editor, cx, Vim::helix_substitute);
     Vim::action(editor, cx, Vim::helix_substitute_no_yank);
+    Vim::action(editor, cx, Vim::helix_jump_to_word);
 }
 
 impl Vim {
@@ -664,13 +686,247 @@ impl Vim {
     ) {
         self.do_helix_substitute(false, window, cx);
     }
+
+    pub fn helix_jump_to_word(
+        &mut self,
+        _: &HelixJumpToWord,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.start_helix_jump(HelixJumpBehaviour::Move, window, cx);
+    }
+
+    fn start_helix_jump(
+        &mut self,
+        behaviour: HelixJumpBehaviour,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(data) = self.collect_helix_jump_data(window, cx) else {
+            return;
+        };
+
+        if data.labels.is_empty() {
+            self.clear_helix_jump_ui(window, cx);
+            return;
+        }
+
+        if !self.apply_helix_jump_ui(data.highlights, data.blocks, window, cx) {
+            return;
+        }
+
+        self.push_operator(
+            Operator::HelixJump {
+                behaviour,
+                first_char: None,
+                labels: data.labels,
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn collect_helix_jump_data(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<HelixJumpUiData> {
+        self.update_editor(cx, |_, editor, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let display_snapshot = &snapshot.display_snapshot;
+            let buffer_snapshot = display_snapshot.buffer_snapshot();
+
+            let scroll_position = snapshot.scroll_position();
+            let top_row = scroll_position.y.floor().max(0.0) as u32;
+
+            let visible_rows = editor
+                .visible_line_count()
+                .map(|count| count.ceil() as u32 + 1)
+                .filter(|count| *count > 0)
+                .unwrap_or_else(|| {
+                    display_snapshot
+                        .max_point()
+                        .row()
+                        .0
+                        .saturating_sub(top_row)
+                        .saturating_add(1)
+                });
+
+            let start_display_point = DisplayPoint::new(DisplayRow(top_row), 0);
+            let end_display_point =
+                DisplayPoint::new(DisplayRow(top_row.saturating_add(visible_rows)), 0);
+
+            let start_point =
+                display_snapshot.display_point_to_point(start_display_point, Bias::Left);
+            let end_point = display_snapshot.display_point_to_point(end_display_point, Bias::Right);
+
+            let start_offset = buffer_snapshot.point_to_offset(start_point);
+            let end_offset = buffer_snapshot.point_to_offset(end_point);
+
+            Self::build_helix_jump_ui_data(buffer_snapshot, start_offset, end_offset)
+        })
+    }
+
+    fn build_helix_jump_ui_data(
+        buffer: &MultiBufferSnapshot,
+        start_offset: usize,
+        end_offset: usize,
+    ) -> HelixJumpUiData {
+        if start_offset >= end_offset {
+            return HelixJumpUiData::default();
+        }
+        let mut labels = Vec::new();
+        let mut highlights = Vec::new();
+        let mut blocks = Vec::new();
+
+        let limit = HELIX_JUMP_ALPHABET.len() * HELIX_JUMP_ALPHABET.len();
+        let mut offset = start_offset;
+        let mut in_word = false;
+        let mut word_start = start_offset;
+        let mut first_two_end = start_offset;
+        let mut char_count = 0;
+
+        'chunks: for chunk in buffer.text_for_range(start_offset..end_offset) {
+            for (idx, ch) in chunk.char_indices() {
+                let absolute = offset + idx;
+                let is_word = is_jump_word_char(ch);
+                if is_word {
+                    if !in_word {
+                        in_word = true;
+                        word_start = absolute;
+                        char_count = 0;
+                    }
+                    char_count += 1;
+                    if char_count == 2 {
+                        first_two_end = absolute + ch.len_utf8();
+                    }
+                }
+
+                if !is_word && in_word {
+                    Self::finalize_jump_candidate(
+                        buffer,
+                        word_start,
+                        absolute,
+                        first_two_end,
+                        char_count,
+                        &mut labels,
+                        &mut highlights,
+                        &mut blocks,
+                    );
+                    in_word = false;
+                    if labels.len() == limit {
+                        break 'chunks;
+                    }
+                }
+            }
+            offset += chunk.len();
+        }
+
+        if in_word && labels.len() < limit {
+            Self::finalize_jump_candidate(
+                buffer,
+                word_start,
+                end_offset,
+                first_two_end,
+                char_count,
+                &mut labels,
+                &mut highlights,
+                &mut blocks,
+            );
+        }
+
+        HelixJumpUiData {
+            labels,
+            highlights,
+            blocks,
+        }
+    }
+
+    fn finalize_jump_candidate(
+        buffer: &MultiBufferSnapshot,
+        word_start: usize,
+        word_end: usize,
+        first_two_end: usize,
+        char_count: usize,
+        labels: &mut Vec<HelixJumpLabel>,
+        highlights: &mut Vec<Range<Anchor>>,
+        blocks: &mut Vec<BlockProperties<Anchor>>,
+    ) {
+        if char_count < 2 || word_start >= word_end {
+            return;
+        }
+
+        let start_anchor = buffer.anchor_after(word_start);
+        let end_anchor = buffer.anchor_after(word_end);
+        let first_two_anchor = buffer.anchor_after(first_two_end);
+
+        highlights.push(start_anchor..first_two_anchor);
+
+        let label_index = labels.len();
+        let label = [
+            HELIX_JUMP_ALPHABET[label_index / HELIX_JUMP_ALPHABET.len()],
+            HELIX_JUMP_ALPHABET[label_index % HELIX_JUMP_ALPHABET.len()],
+        ];
+
+        labels.push(HelixJumpLabel {
+            label,
+            range: start_anchor..end_anchor,
+        });
+
+        blocks.push(Self::jump_label_block(start_anchor, label));
+    }
+
+    fn jump_label_block(anchor: Anchor, label: [char; 2]) -> BlockProperties<Anchor> {
+        let text: SharedString = label.iter().collect::<String>().into();
+        BlockProperties {
+            placement: BlockPlacement::Near(anchor),
+            height: Some(0),
+            style: BlockStyle::Fixed,
+            render: Arc::new(move |cx: &mut BlockContext| {
+                div()
+                    .block_mouse_except_scroll()
+                    .child(
+                        div()
+                            .px_1()
+                            .rounded_sm()
+                            .bg(HELIX_JUMP_LABEL_BACKGROUND)
+                            .child(
+                                Label::new(text.clone())
+                                    .size(LabelSize::Small)
+                                    .color(Color::Custom(HELIX_JUMP_ACCENT)),
+                            ),
+                    )
+                    .into_any_element()
+            }),
+            priority: 0,
+        }
+    }
+}
+
+const HELIX_JUMP_ALPHABET: &[char; 26] = &[
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
+    't', 'u', 'v', 'w', 'x', 'y', 'z',
+];
+
+fn is_jump_word_char(ch: char) -> bool {
+    ch == '_' || ch.is_alphanumeric()
+}
+
+#[derive(Default)]
+struct HelixJumpUiData {
+    labels: Vec<HelixJumpLabel>,
+    highlights: Vec<Range<Anchor>>,
+    blocks: Vec<BlockProperties<Anchor>>,
 }
 
 #[cfg(test)]
 mod test {
     use indoc::indoc;
 
-    use crate::{state::Mode, test::VimTestContext};
+    use crate::{
+        state::{Mode, Operator},
+        test::VimTestContext,
+    };
 
     #[gpui::test]
     async fn test_word_motions(cx: &mut gpui::TestAppContext) {
@@ -1418,6 +1674,20 @@ mod test {
             ˇ
             "},
             Mode::Insert,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_jump_starts_operator(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state("hello world\njump labels", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("g w");
+
+        assert!(
+            matches!(cx.active_operator(), Some(Operator::HelixJump { .. })),
+            "expected HelixJump operator to be active"
         );
     }
 }

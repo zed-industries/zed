@@ -489,6 +489,7 @@
       "shift-l": "pane::ActivateNextItem",
       "g p": "pane::ActivatePreviousItem",
       "shift-h": "pane::ActivatePreviousItem",
+      "g w": "vim::HelixJumpToWord",
       "g .": "vim::HelixGotoLastModification", // go to last modification
 
       // Window mode
@@ -520,8 +521,7 @@
       "m": "vim::PushHelixMatch",
       "]": ["vim::PushHelixNext", { "around": true }],
       "[": ["vim::PushHelixPrevious", { "around": true }],
-      "g q": "vim::PushRewrap",
-      "g w": "vim::PushRewrap"
+      "g q": "vim::PushRewrap"
       // "tab": "pane::ActivateNextItem",
       // "shift-tab": "pane::ActivatePrevItem",
     }

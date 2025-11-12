@@ -19,7 +19,8 @@ mod state;
 mod surrounds;
 mod visual;
 
-use collections::HashMap;
+use collections::{HashMap, HashSet};
+use editor::display_map::{BlockProperties, CustomBlockId};
 use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, SelectionEffects,
     ToPoint,
@@ -27,8 +28,8 @@ use editor::{
     movement::{self, FindRange},
 };
 use gpui::{
-    Action, App, AppContext, Axis, Context, Entity, EventEmitter, KeyContext, KeystrokeEvent,
-    Render, Subscription, Task, WeakEntity, Window, actions,
+    Action, App, AppContext, Axis, Context, Entity, EventEmitter, HighlightStyle, KeyContext,
+    KeystrokeEvent, Render, Subscription, Task, WeakEntity, Window, actions,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{
@@ -44,7 +45,9 @@ use settings::RegisterSetting;
 pub use settings::{
     ModeContent, Settings, SettingsStore, UseSystemClipboard, update_settings_file,
 };
-use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
+use state::{
+    HelixJumpBehaviour, HelixJumpLabel, Mode, Operator, RecordedSelection, SearchState, VimGlobals,
+};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
@@ -54,6 +57,7 @@ use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
 
 use crate::{
+    helix::HELIX_JUMP_ACCENT,
     normal::{GoToPreviousTab, GoToTab},
     state::ReplayableAction,
 };
@@ -508,6 +512,8 @@ pub(crate) struct Vim {
     selected_register: Option<char>,
     pub search: SearchState,
 
+    helix_jump_ui: Option<HelixJumpUi>,
+
     editor: WeakEntity<Editor>,
 
     last_command: Option<String>,
@@ -522,6 +528,13 @@ impl Render for Vim {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         gpui::Empty
     }
+}
+
+pub(crate) struct HelixJumpHighlight;
+
+#[derive(Default)]
+struct HelixJumpUi {
+    block_ids: Vec<CustomBlockId>,
 }
 
 enum VimEvent {
@@ -570,6 +583,8 @@ impl Vim {
 
             last_command: None,
             running_command: None,
+
+            helix_jump_ui: None,
 
             editor: editor.downgrade(),
             _subscriptions: vec![
@@ -1642,11 +1657,125 @@ impl Vim {
     }
 
     fn clear_operator(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.active_operator(), Some(Operator::HelixJump { .. })) {
+            self.clear_helix_jump_ui(window, cx);
+        }
         Vim::take_count(cx);
         Vim::take_forced_motion(cx);
         self.selected_register.take();
         self.operator_stack.clear();
         self.sync_vim_settings(window, cx);
+    }
+
+    fn clear_helix_jump_ui(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let state = self.helix_jump_ui.take();
+        self.update_editor(cx, move |_, editor, cx| {
+            editor.clear_highlights::<HelixJumpHighlight>(cx);
+            if let Some(state) = state {
+                if !state.block_ids.is_empty() {
+                    let block_ids: HashSet<_> = state.block_ids.into_iter().collect();
+                    editor.remove_blocks(block_ids, None, cx);
+                }
+            }
+        });
+    }
+
+    fn apply_helix_jump_ui(
+        &mut self,
+        highlight_ranges: Vec<Range<Anchor>>,
+        blocks: Vec<BlockProperties<Anchor>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.clear_helix_jump_ui(window, cx);
+        let Some(block_ids) = self.update_editor(cx, |_, editor, cx| {
+            if !highlight_ranges.is_empty() {
+                editor.highlight_text::<HelixJumpHighlight>(
+                    highlight_ranges,
+                    HighlightStyle {
+                        color: Some(HELIX_JUMP_ACCENT),
+                        ..Default::default()
+                    },
+                    cx,
+                );
+            }
+            if blocks.is_empty() {
+                Vec::new()
+            } else {
+                editor.insert_blocks(blocks, None, cx)
+            }
+        }) else {
+            return false;
+        };
+        self.helix_jump_ui = Some(HelixJumpUi { block_ids });
+        true
+    }
+
+    fn handle_helix_jump_input(
+        &mut self,
+        operator: Operator,
+        input_char: char,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Operator::HelixJump {
+            behaviour,
+            first_char,
+            labels,
+        } = operator
+        else {
+            return;
+        };
+
+        let input = input_char.to_ascii_lowercase();
+        self.pop_operator(window, cx);
+
+        if let Some(first) = first_char {
+            let first = first.to_ascii_lowercase();
+            if let Some(candidate) = labels.into_iter().find(|label| {
+                label.label[0].eq_ignore_ascii_case(&first)
+                    && label.label[1].eq_ignore_ascii_case(&input)
+            }) {
+                self.finish_helix_jump(candidate, behaviour, window, cx);
+            } else {
+                self.clear_helix_jump_ui(window, cx);
+            }
+        } else {
+            if !labels
+                .iter()
+                .any(|label| label.label[0].eq_ignore_ascii_case(&input))
+            {
+                self.clear_helix_jump_ui(window, cx);
+                return;
+            }
+
+            self.push_operator(
+                Operator::HelixJump {
+                    behaviour,
+                    first_char: Some(input),
+                    labels,
+                },
+                window,
+                cx,
+            );
+        }
+    }
+
+    fn finish_helix_jump(
+        &mut self,
+        candidate: HelixJumpLabel,
+        behaviour: HelixJumpBehaviour,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_editor(cx, |_, editor, cx| match behaviour {
+            HelixJumpBehaviour::Move | HelixJumpBehaviour::Extend => {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_anchor_ranges([candidate.range.clone()])
+                });
+            }
+        });
+        self.clear_helix_jump_ui(window, cx);
     }
 
     fn active_operator(&self) -> Option<Operator> {
@@ -1825,6 +1954,11 @@ impl Vim {
                     let first_char = text.chars().next();
                     self.pop_operator(window, cx);
                     self.push_operator(Operator::SneakBackward { first_char }, window, cx);
+                }
+            }
+            Some(operator @ Operator::HelixJump { .. }) => {
+                if let Some(input_char) = text.chars().next() {
+                    self.handle_helix_jump_input(operator, input_char, window, cx);
                 }
             }
             Some(Operator::Replace) => match self.mode {
