@@ -2385,7 +2385,9 @@ impl LocalLspStore {
                 }
             }
 
-            registration_id = entry.diagnostic.registration_id.clone();
+            if new_diagnostic {
+                registration_id = entry.diagnostic.registration_id.clone();
+            }
 
             sanitized_diagnostics.push(DiagnosticEntry {
                 range,
@@ -2404,6 +2406,9 @@ impl LocalLspStore {
                     .or_default()
                     .insert(abs_path, result_id);
             }
+
+            println!("Registration ID:");
+            dbg!(&registration_id);
 
             buffer.update_diagnostics(server_id, set, cx)
         });
