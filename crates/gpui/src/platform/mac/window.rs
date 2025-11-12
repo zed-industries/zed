@@ -473,6 +473,28 @@ impl MacWindowState {
         }
     }
 
+    fn set_traffic_light_visible(&self, visible: bool) {
+        let native_window = self.native_window;
+        let hidden = if visible { NO } else { YES };
+        self.executor
+            .spawn(async move {
+                unsafe {
+                    let buttons = [
+                        NSWindowButton::NSWindowCloseButton,
+                        NSWindowButton::NSWindowMiniaturizeButton,
+                        NSWindowButton::NSWindowZoomButton,
+                    ];
+                    for button in buttons {
+                        let view: id = msg_send![native_window, standardWindowButton: button];
+                        if !view.is_null() {
+                            let _: () = msg_send![view, setHidden: hidden];
+                        }
+                    }
+                }
+            })
+            .detach();
+    }
+
     fn start_display_link(&mut self) {
         self.stop_display_link();
         unsafe {
@@ -951,6 +973,10 @@ impl Drop for MacWindow {
 }
 
 impl PlatformWindow for MacWindow {
+    fn set_traffic_light_visible(&self, visible: bool) {
+        self.0.lock().set_traffic_light_visible(visible);
+    }
+
     fn bounds(&self) -> Bounds<Pixels> {
         self.0.as_ref().lock().bounds()
     }

@@ -65,6 +65,27 @@ actions!(
     ]
 );
 
+fn apply_title_bar_visibility(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let should_show = TitleBarSettings::get_global(cx).show;
+    let has_titlebar = workspace.titlebar_item().is_some();
+
+    if should_show {
+        if !has_titlebar {
+            let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
+            workspace.set_titlebar_item(Some(item.into()), window, cx);
+        }
+    } else {
+        workspace.set_titlebar_item(None, window, cx);
+    }
+
+    #[cfg(target_os = "macos")]
+    window.set_traffic_light_visible(should_show);
+}
+
 pub fn init(cx: &mut App) {
     SystemWindowTabs::init(cx);
 
@@ -72,20 +93,10 @@ pub fn init(cx: &mut App) {
         let Some(window) = window else {
             return;
         };
-        if TitleBarSettings::get_global(cx).show {
-            let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
-            workspace.set_titlebar_item(Some(item.into()), window, cx);
-        }
+        apply_title_bar_visibility(workspace, window, cx);
 
         cx.observe_global_in::<settings::SettingsStore>(window, |workspace, window, cx| {
-            if TitleBarSettings::get_global(cx).show {
-                if workspace.titlebar_item().is_none() {
-                    let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
-                    workspace.set_titlebar_item(Some(item.into()), window, cx);
-                }
-            } else {
-                workspace.set_titlebar_item(None, window, cx);
-            }
+            apply_title_bar_visibility(workspace, window, cx);
         })
         .detach();
 
