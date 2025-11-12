@@ -3860,6 +3860,105 @@ mod tests {
         .await
         .unwrap();
 
+        // Create 2 terminals BEFORE the checkpoint that have completed running
+        let terminal_id_1 = acp::TerminalId(uuid::Uuid::new_v4().to_string().into());
+        let mock_terminal_1 = cx.new(|cx| {
+            let builder = ::terminal::TerminalBuilder::new_display_only(
+                ::terminal::terminal_settings::CursorShape::default(),
+                ::terminal::terminal_settings::AlternateScroll::On,
+                None,
+                0,
+            )
+            .unwrap();
+            builder.subscribe(cx)
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Created {
+                    terminal_id: terminal_id_1.clone(),
+                    label: "echo 'first'".to_string(),
+                    cwd: Some(PathBuf::from("/test")),
+                    output_byte_limit: None,
+                    terminal: mock_terminal_1.clone(),
+                },
+                cx,
+            );
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Output {
+                    terminal_id: terminal_id_1.clone(),
+                    data: b"first\n".to_vec(),
+                },
+                cx,
+            );
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Exit {
+                    terminal_id: terminal_id_1.clone(),
+                    status: acp::TerminalExitStatus {
+                        exit_code: Some(0),
+                        signal: None,
+                        meta: None,
+                    },
+                },
+                cx,
+            );
+        });
+
+        let terminal_id_2 = acp::TerminalId(uuid::Uuid::new_v4().to_string().into());
+        let mock_terminal_2 = cx.new(|cx| {
+            let builder = ::terminal::TerminalBuilder::new_display_only(
+                ::terminal::terminal_settings::CursorShape::default(),
+                ::terminal::terminal_settings::AlternateScroll::On,
+                None,
+                0,
+            )
+            .unwrap();
+            builder.subscribe(cx)
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Created {
+                    terminal_id: terminal_id_2.clone(),
+                    label: "echo 'second'".to_string(),
+                    cwd: Some(PathBuf::from("/test")),
+                    output_byte_limit: None,
+                    terminal: mock_terminal_2.clone(),
+                },
+                cx,
+            );
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Output {
+                    terminal_id: terminal_id_2.clone(),
+                    data: b"second\n".to_vec(),
+                },
+                cx,
+            );
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Exit {
+                    terminal_id: terminal_id_2.clone(),
+                    status: acp::TerminalExitStatus {
+                        exit_code: Some(0),
+                        signal: None,
+                        meta: None,
+                    },
+                },
+                cx,
+            );
+        });
+
         // Get the second message ID to restore to
         let second_message_id = thread.read_with(cx, |thread, _| {
             // At this point we have:
@@ -3989,11 +4088,49 @@ mod tests {
             "Should have 1 entry after restore (only the first user message)"
         );
 
-        // Verify no terminals are running after checkpoint restore
+        // Verify the 2 completed terminals from before the checkpoint still exist
+        let terminal_1_exists = thread.read_with(cx, |thread, _| {
+            thread.terminals.contains_key(&terminal_id_1)
+        });
+        assert!(
+            terminal_1_exists,
+            "Terminal 1 (from before checkpoint) should still exist"
+        );
+
+        let terminal_2_exists = thread.read_with(cx, |thread, _| {
+            thread.terminals.contains_key(&terminal_id_2)
+        });
+        assert!(
+            terminal_2_exists,
+            "Terminal 2 (from before checkpoint) should still exist"
+        );
+
+        // Verify they're still in completed state
+        let terminal_1_completed = thread.read_with(cx, |thread, _cx| {
+            let terminal_entity = thread.terminals.get(&terminal_id_1).unwrap();
+            terminal_entity.read_with(cx, |term, _cx| term.output().is_some())
+        });
+        assert!(terminal_1_completed, "Terminal 1 should still be completed");
+
+        let terminal_2_completed = thread.read_with(cx, |thread, _cx| {
+            let terminal_entity = thread.terminals.get(&terminal_id_2).unwrap();
+            terminal_entity.read_with(cx, |term, _cx| term.output().is_some())
+        });
+        assert!(terminal_2_completed, "Terminal 2 should still be completed");
+
+        // Verify the running terminal (created after checkpoint) was removed
+        let terminal_3_exists =
+            thread.read_with(cx, |thread, _| thread.terminals.contains_key(&terminal_id));
+        assert!(
+            !terminal_3_exists,
+            "Terminal 3 (created after checkpoint) should have been removed"
+        );
+
+        // Verify total count is 2 (the two from before the checkpoint)
         let terminal_count = thread.read_with(cx, |thread, _| thread.terminals.len());
         assert_eq!(
-            terminal_count, 0,
-            "No terminals should be running after checkpoint restore"
+            terminal_count, 2,
+            "Should have exactly 2 terminals (the completed ones from before checkpoint)"
         );
     }
 }
