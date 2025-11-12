@@ -983,7 +983,7 @@
     }
   },
   {
-    "context": "Editor && mode == auto_height && VimControl",
+    "context": "Editor && (mode == auto_height || mode == single_line) && VimControl",
     "bindings": {
       // TODO: Implement search
       "/": null,
