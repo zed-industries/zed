@@ -41,7 +41,7 @@ pub(crate) fn run_unit_evals() -> Workflow {
                 .add_input(model_name.name, model_name.input())
                 .add_input(commit_sha.name, commit_sha.input()),
         ))
-        .concurrency(vars::one_workflow_per_non_main_branch())
+        .concurrency(vars::allow_concurrent_runs())
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("CARGO_INCREMENTAL", 0))
         .add_env(("RUST_BACKTRACE", 1))

@@ -81,6 +81,12 @@ pub(crate) fn one_workflow_per_non_main_branch() -> Concurrency {
         .cancel_in_progress(true)
 }
 
+pub(crate) fn allow_concurrent_runs() -> Concurrency {
+    Concurrency::default()
+        .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.run_id }}")
+        .cancel_in_progress(true)
+}
+
 // Represents a pattern to check for changed files and corresponding output variable
 pub(crate) struct PathCondition {
     pub name: &'static str,
