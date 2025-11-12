@@ -5168,6 +5168,24 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Scroll Multiplier",
+                    description: "The multiplier for scrolling in the terminal with the mouse wheel",
+                    field: Box::new(SettingField {
+                        json_path: Some("terminal.scroll_multiplier"),
+                        pick: |settings_content| {
+                            settings_content.terminal.as_ref()?.scroll_multiplier.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .scroll_multiplier = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Toolbar"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Breadcrumbs",

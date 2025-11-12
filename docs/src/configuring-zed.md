@@ -3586,6 +3586,7 @@ List of `integer` column numbers
     "option_as_meta": false,
     "button": true,
     "shell": "system",
+    "scroll_multiplier": 3.0,
     "toolbar": {
       "breadcrumbs": false
     },
@@ -3994,6 +3995,26 @@ Disable with:
 {
   "terminal": {
     "detect_venv": "off"
+  }
+}
+```
+
+### Terminal: Scroll Multiplier
+
+- Description: The multiplier for scrolling speed in the terminal when using mouse wheel or trackpad.
+- Setting: `scroll_multiplier`
+- Default: `1.0`
+
+**Options**
+
+Positive floating point values. Values less than or equal to 0 will be clamped to a minimum of 0.01.
+
+**Example**
+
+```json
+{
+  "terminal": {
+    "scroll_multiplier": 5.0
   }
 }
 ```

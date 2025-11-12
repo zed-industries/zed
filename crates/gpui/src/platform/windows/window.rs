@@ -12,7 +12,6 @@ use std::{
 
 use ::util::ResultExt;
 use anyhow::{Context as _, Result};
-use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
@@ -63,14 +62,14 @@ pub(crate) struct WindowsWindowInner {
     hwnd: HWND,
     drop_target_helper: IDropTargetHelper,
     pub(crate) state: RefCell<WindowsWindowState>,
-    pub(crate) system_settings: RefCell<WindowsSystemSettings>,
+    system_settings: RefCell<WindowsSystemSettings>,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
     pub(crate) is_movable: bool,
     pub(crate) executor: ForegroundExecutor,
     pub(crate) windows_version: WindowsVersion,
     pub(crate) validation_number: usize,
-    pub(crate) main_receiver: flume::Receiver<Runnable>,
+    pub(crate) main_receiver: flume::Receiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
 }
 
@@ -321,6 +320,14 @@ impl WindowsWindowInner {
         }
         Ok(())
     }
+
+    pub(crate) fn system_settings(&self) -> std::cell::Ref<'_, WindowsSystemSettings> {
+        self.system_settings.borrow()
+    }
+
+    pub(crate) fn system_settings_mut(&self) -> std::cell::RefMut<'_, WindowsSystemSettings> {
+        self.system_settings.borrow_mut()
+    }
 }
 
 #[derive(Default)]
@@ -349,7 +356,7 @@ struct WindowCreateContext {
     windows_version: WindowsVersion,
     drop_target_helper: IDropTargetHelper,
     validation_number: usize,
-    main_receiver: flume::Receiver<Runnable>,
+    main_receiver: flume::Receiver<RunnableVariant>,
     platform_window_handle: HWND,
     appearance: WindowAppearance,
     disable_direct_composition: bool,
