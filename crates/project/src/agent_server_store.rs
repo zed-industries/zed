@@ -228,9 +228,32 @@ mod ext_agent_tests {
             .collect();
         assert_eq!(remaining, vec!["custom".to_string()]);
     }
+
+    #[test]
+    fn has_external_agents_returns_true_when_agents_configured() {
+        let mut store = collab_store();
+        assert!(!store.has_external_agents());
+
+        store.external_agents.insert(
+            ExternalAgentServerName(SharedString::from("goose")),
+            Box::new(NoopExternalAgent),
+        );
+        assert!(store.has_external_agents());
+    }
+
+    #[test]
+    fn has_external_agents_returns_false_when_empty() {
+        let store = collab_store();
+        assert!(!store.has_external_agents());
+    }
 }
 
 impl AgentServerStore {
+    /// Returns true if any external agent servers are registered.
+    pub fn has_external_agents(&self) -> bool {
+        !self.external_agents.is_empty()
+    }
+
     /// Synchronizes extension-provided agent servers with the store.
     pub fn sync_extension_agents<'a, I>(
         &mut self,
