@@ -38,8 +38,9 @@ use util::rel_path::RelPath;
 use workspace::searchable::Direction;
 use workspace::{Workspace, WorkspaceDb, WorkspaceId};
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Mode {
+    #[default]
     Normal,
     Insert,
     Replace,
@@ -75,12 +76,6 @@ impl Mode {
 
     pub fn is_helix(self) -> bool {
         matches!(self, Mode::HelixNormal | Mode::HelixSelect)
-    }
-}
-
-impl Default for Mode {
-    fn default() -> Self {
-        Self::Normal
     }
 }
 

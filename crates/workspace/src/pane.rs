@@ -422,20 +422,15 @@ struct NavHistoryState {
     next_timestamp: Arc<AtomicUsize>,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone)]
 pub enum NavigationMode {
+    #[default]
     Normal,
     GoingBack,
     GoingForward,
     ClosingItem,
     ReopeningClosedItem,
     Disabled,
-}
-
-impl Default for NavigationMode {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 pub struct NavigationEntry {
