@@ -81,7 +81,19 @@ impl MouseContextMenu {
         cx: &mut Context<Editor>,
     ) -> Self {
         let context_menu_focus = context_menu.focus_handle(cx);
-        window.focus(&context_menu_focus);
+
+        // Since `ContextMenu` is rendered in a deferred fashion its focus
+        // handle is not linked to the Editor's until after the deferred draw
+        // callback runs.
+        // We need to wait for that to happen before focusing it, so that
+        // calling `contains_focused` on the editor's focus handle returns
+        // `true` when the `ContextMenu` is focused.
+        let focus_handle = context_menu_focus.clone();
+        cx.on_next_frame(window, move |_, window, cx| {
+            cx.on_next_frame(window, move |_, window, _cx| {
+                window.focus(&focus_handle);
+            });
+        });
 
         let _dismiss_subscription = cx.subscribe_in(&context_menu, window, {
             let context_menu_focus = context_menu_focus.clone();
