@@ -29,13 +29,14 @@ use pretty_assertions::assert_eq;
 use project::{
     Project, context_server_store::ContextServerStore, project_settings::ProjectSettings,
 };
-use prompt_store::ProjectContext;
+use prompt_store::{ProjectContext, UserPromptId, UserRulesContext};
 use reqwest_client::ReqwestClient;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use settings::{Settings, SettingsStore};
 use std::{path::Path, rc::Rc, sync::Arc, time::Duration};
+
 use util::path;
 
 mod test_tools;
@@ -2576,4 +2577,75 @@ fn setup_context_server(
     });
     cx.run_until_parked();
     mcp_tool_calls_rx
+}
+
+/// Tests that rules toggled after thread creation are applied to the first message.
+///
+/// This test verifies the fix for https://github.com/zed-industries/zed/issues/39057
+/// where rules toggled in the Rules Library after opening a new agent thread were not
+/// being applied to the first message sent in that thread.
+///
+/// The test simulates:
+/// 1. Creating a thread with a project context entity
+/// 2. A new project context entity is created with updated rules (simulating what
+///    NativeAgent.maintain_project_context does when rules are toggled)
+/// 3. Sending a message through the thread
+/// 4. Verifying that the newly toggled rules appear in the system prompt
+///
+/// This test will fail until the bug is fixed. The fix requires ensuring that when
+/// rules are toggled, threads see the updated rules rather than continuing to use
+/// a stale project context entity.
+#[gpui::test]
+async fn test_rules_toggled_after_thread_creation_are_applied(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        thread,
+        project_context,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let initial_rule_content = "Initial rule before thread creation.";
+    project_context.update(cx, |context, _cx| {
+        context.user_rules.push(UserRulesContext {
+            uuid: UserPromptId::new(),
+            title: Some("Initial Rule".to_string()),
+            contents: initial_rule_content.to_string(),
+        });
+        context.has_user_rules = true;
+    });
+
+    let rule_id = UserPromptId::new();
+    let new_rule_content = "Always respond in uppercase.";
+
+    let _new_project_context = cx.new(|_cx| {
+        let mut context = ProjectContext::default();
+        context.user_rules.push(UserRulesContext {
+            uuid: rule_id,
+            title: Some("New Rule".to_string()),
+            contents: new_rule_content.to_string(),
+        });
+        context.has_user_rules = true;
+        context
+    });
+
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["test message"], cx)
+        })
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let mut pending_completions = fake_model.pending_completions();
+    assert_eq!(pending_completions.len(), 1);
+
+    let pending_completion = pending_completions.pop().unwrap();
+    let system_message = &pending_completion.messages[0];
+    let system_prompt = system_message.content[0].to_str().unwrap();
+
+    assert!(
+        system_prompt.contains(new_rule_content),
+        "System prompt should contain the rule content that was toggled after thread creation"
+    );
 }

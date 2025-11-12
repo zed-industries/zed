@@ -964,6 +964,11 @@ impl Thread {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub fn replace_project_context(&mut self, new_context: Entity<ProjectContext>) {
+        self.project_context = new_context;
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub fn last_message(&self) -> Option<Message> {
         if let Some(message) = self.pending_message.clone() {
             Some(Message::Agent(message))
