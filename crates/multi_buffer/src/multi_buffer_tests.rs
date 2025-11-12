@@ -3570,6 +3570,7 @@ fn assert_new_snapshot(
     let line_infos = new_snapshot
         .row_infos(MultiBufferRow(0))
         .collect::<Vec<_>>();
+    dbg!(&line_infos);
     let actual_diff = format_diff(&actual_text, &line_infos, &Default::default(), None);
     pretty_assertions::assert_eq!(actual_diff, expected_diff);
     check_edits(
