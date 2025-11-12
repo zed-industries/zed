@@ -554,7 +554,7 @@ impl SettingsPageItem {
                     renderers.get(&AnySettingField::type_id(setting_item.field.as_ref()));
                 let field_renderer_or_warning =
                     field_renderer.ok_or("NO RENDERER").and_then(|renderer| {
-                        if false && cfg!(debug_assertions) && !found {
+                        if cfg!(debug_assertions) && !found {
                             Err("NO DEFAULT")
                         } else {
                             Ok(renderer)
@@ -2336,20 +2336,12 @@ fn render_font_picker(
 fn render_number_field<T: NumberFieldType + Send + Sync>(
     field: SettingField<T>,
     file: SettingsUiFile,
-    metadata: Option<&SettingsFieldMetadata>,
+    _metadata: Option<&SettingsFieldMetadata>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
-    let value = value
-        .copied()
-        .or_else(|| {
-            metadata.and_then(|data| {
-                data.placeholder
-                    .and_then(|placeholder| T::from_str(placeholder).ok())
-            })
-        })
-        .unwrap_or_else(T::min_value);
+    let value = value.copied().unwrap_or_else(T::min_value);
     NumberField::new("numeric_stepper", value, window, cx)
         .on_change({
             move |value, _window, cx| {
