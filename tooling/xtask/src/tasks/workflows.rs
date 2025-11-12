@@ -33,6 +33,10 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         ("cherry_pick.yml", cherry_pick::cherry_pick()),
         ("compare_perf.yml", compare_perf::compare_perf()),
         ("run_unit_evals.yml", run_agent_evals::run_unit_evals()),
+        (
+            "run_cron_unit_evals.yml",
+            run_agent_evals::run_cron_unit_evals(),
+        ),
         ("run_agent_evals.yml", run_agent_evals::run_agent_evals()),
         ("after_release.yml", after_release::after_release()),
     ];

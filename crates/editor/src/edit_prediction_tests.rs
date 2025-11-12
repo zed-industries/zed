@@ -2,7 +2,7 @@ use edit_prediction::EditPredictionProvider;
 use gpui::{Entity, KeyBinding, Modifiers, prelude::*};
 use indoc::indoc;
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 use text::{Point, ToOffset};
 
 use crate::{
@@ -24,7 +24,7 @@ async fn test_edit_prediction_insert(cx: &mut gpui::TestAppContext) {
 
     assert_editor_active_edit_completion(&mut cx, |_, edits| {
         assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].1.as_str(), "-273.15");
+        assert_eq!(edits[0].1.as_ref(), "-273.15");
     });
 
     accept_completion(&mut cx);
@@ -46,7 +46,7 @@ async fn test_edit_prediction_modification(cx: &mut gpui::TestAppContext) {
 
     assert_editor_active_edit_completion(&mut cx, |_, edits| {
         assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].1.as_str(), "3.14159");
+        assert_eq!(edits[0].1.as_ref(), "3.14159");
     });
 
     accept_completion(&mut cx);
@@ -330,7 +330,7 @@ async fn test_edit_prediction_preview_cleanup_on_toggle_off(cx: &mut gpui::TestA
 
 fn assert_editor_active_edit_completion(
     cx: &mut EditorTestContext,
-    assert: impl FnOnce(MultiBufferSnapshot, &Vec<(Range<Anchor>, String)>),
+    assert: impl FnOnce(MultiBufferSnapshot, &Vec<(Range<Anchor>, Arc<str>)>),
 ) {
     cx.editor(|editor, _, cx| {
         let completion_state = editor

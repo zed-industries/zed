@@ -15,7 +15,6 @@ use std::{
 };
 
 use anyhow::{Context as _, anyhow};
-use async_task::Runnable;
 use calloop::{LoopSignal, channel::Channel};
 use futures::channel::oneshot;
 use util::ResultExt as _;
@@ -26,7 +25,8 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
     Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformWindow, Point, Result, Task, WindowAppearance, WindowParams, px,
+    PlatformTextSystem, PlatformWindow, Point, Result, RunnableVariant, Task, WindowAppearance,
+    WindowParams, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -105,8 +105,8 @@ pub(crate) struct LinuxCommon {
 }
 
 impl LinuxCommon {
-    pub fn new(signal: LoopSignal) -> (Self, Channel<Runnable>) {
-        let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
+    pub fn new(signal: LoopSignal) -> (Self, Channel<RunnableVariant>) {
+        let (main_sender, main_receiver) = calloop::channel::channel::<RunnableVariant>();
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
         let text_system = Arc::new(crate::CosmicTextSystem::new());

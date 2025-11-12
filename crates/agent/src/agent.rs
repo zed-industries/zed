@@ -6,7 +6,6 @@ mod native_agent_server;
 pub mod outline;
 mod templates;
 mod thread;
-mod tool_schema;
 mod tools;
 
 #[cfg(test)]
@@ -134,9 +133,7 @@ impl LanguageModels {
             for model in provider.provided_models(cx) {
                 let model_info = Self::map_language_model_to_info(&model, &provider);
                 let model_id = model_info.id.clone();
-                if !recommended_models.contains(&(model.provider_id(), model.id())) {
-                    provider_models.push(model_info);
-                }
+                provider_models.push(model_info);
                 models.insert(model_id, model);
             }
             if !provider_models.is_empty() {
@@ -218,7 +215,7 @@ impl LanguageModels {
                                 }
                                 _ => {
                                     log::error!(
-                                        "Failed to authenticate provider: {}: {err}",
+                                        "Failed to authenticate provider: {}: {err:#}",
                                         provider_name.0
                                     );
                                 }
@@ -967,6 +964,10 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
 }
 
 impl acp_thread::AgentConnection for NativeAgentConnection {
+    fn telemetry_id(&self) -> &'static str {
+        "zed"
+    }
+
     fn new_thread(
         self: Rc<Self>,
         project: Entity<Project>,
@@ -1107,10 +1108,6 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 }
 
 impl acp_thread::AgentTelemetry for NativeAgentConnection {
-    fn agent_name(&self) -> String {
-        "Zed".into()
-    }
-
     fn thread_data(
         &self,
         session_id: &acp::SessionId,
@@ -1627,9 +1624,7 @@ mod internal_tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            Project::init_settings(cx);
-            agent_settings::init(cx);
-            language::init(cx);
+
             LanguageModelRegistry::test(cx);
         });
     }

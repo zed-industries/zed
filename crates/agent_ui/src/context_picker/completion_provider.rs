@@ -42,7 +42,7 @@ use super::{
     ContextPickerAction, ContextPickerEntry, ContextPickerMode, MentionLink, RecentEntry,
     available_context_picker_entries, recent_context_picker_entries_with_store, selection_ranges,
 };
-use crate::message_editor::ContextCreasesAddon;
+use crate::inline_prompt_editor::ContextCreasesAddon;
 
 pub(crate) enum Match {
     File(FileMatch),
@@ -278,6 +278,8 @@ impl ContextPickerCompletionProvider {
                 icon_path: Some(mode.icon().path().into()),
                 documentation: None,
                 source: project::CompletionSource::Custom,
+                match_start: None,
+                snippet_deduplication_key: None,
                 insert_text_mode: None,
                 // This ensures that when a user accepts this completion, the
                 // completion menu will still be shown after "@category " is
@@ -386,6 +388,8 @@ impl ContextPickerCompletionProvider {
                     icon_path: Some(action.icon().path().into()),
                     documentation: None,
                     source: project::CompletionSource::Custom,
+                    match_start: None,
+                    snippet_deduplication_key: None,
                     insert_text_mode: None,
                     // This ensures that when a user accepts this completion, the
                     // completion menu will still be shown after "@category " is
@@ -417,6 +421,8 @@ impl ContextPickerCompletionProvider {
             replace_range: source_range.clone(),
             new_text,
             label: CodeLabel::plain(thread_entry.title().to_string(), None),
+            match_start: None,
+            snippet_deduplication_key: None,
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
@@ -484,6 +490,8 @@ impl ContextPickerCompletionProvider {
             replace_range: source_range.clone(),
             new_text,
             label: CodeLabel::plain(rules.title.to_string(), None),
+            match_start: None,
+            snippet_deduplication_key: None,
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
@@ -524,6 +532,8 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(IconName::ToolWeb.path().into()),
+            match_start: None,
+            snippet_deduplication_key: None,
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 IconName::ToolWeb.path().into(),
@@ -612,6 +622,8 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(completion_icon_path),
+            match_start: None,
+            snippet_deduplication_key: None,
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 crease_icon_path,
@@ -689,6 +701,8 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(IconName::Code.path().into()),
+            match_start: None,
+            snippet_deduplication_key: None,
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 IconName::Code.path().into(),
@@ -1182,10 +1196,8 @@ mod tests {
         let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
-            language::init(cx);
             editor::init(cx);
             workspace::init(app_state.clone(), cx);
-            Project::init_settings(cx);
         });
 
         app_state
@@ -1486,10 +1498,8 @@ mod tests {
         let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
-            language::init(cx);
             editor::init(cx);
             workspace::init(app_state.clone(), cx);
-            Project::init_settings(cx);
         });
 
         app_state
@@ -1686,11 +1696,6 @@ mod tests {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             theme::init(theme::LoadThemes::JustBase, cx);
-            client::init_settings(cx);
-            language::init(cx);
-            Project::init_settings(cx);
-            workspace::init_settings(cx);
-            editor::init_settings(cx);
         });
     }
 }

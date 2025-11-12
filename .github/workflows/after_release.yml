@@ -10,11 +10,14 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
-    - name: after_release::rebuild_releases_page
-      run: 'curl https://zed.dev/api/revalidate-releases -H "Authorization: Bearer ${RELEASE_NOTES_API_TOKEN}"'
+    - name: after_release::rebuild_releases_page::refresh_cloud_releases
+      run: curl -fX POST https://cloud.zed.dev/releases/refresh?expect_tag=${{ github.event.release.tag_name }}
+      shell: bash -euxo pipefail {0}
+    - name: after_release::rebuild_releases_page::redeploy_zed_dev
+      run: npm exec --yes -- vercel@37 --token="$VERCEL_TOKEN" --scope zed-industries redeploy https://zed.dev
       shell: bash -euxo pipefail {0}
       env:
-        RELEASE_NOTES_API_TOKEN: ${{ secrets.RELEASE_NOTES_API_TOKEN }}
+        VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
   post_to_discord:
     needs:
     - rebuild_releases_page
@@ -48,7 +51,7 @@ jobs:
         webhook-url: ${{ secrets.DISCORD_WEBHOOK_RELEASE_NOTES }}
         content: ${{ steps.get-content.outputs.string }}
   publish_winget:
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: self-32vcpu-windows-2022
     steps:
     - id: set-package-name
       name: after_release::publish_winget::set_package_name
@@ -67,3 +70,19 @@ jobs:
         identifier: ${{ steps.set-package-name.outputs.PACKAGE_NAME }}
         max-versions-to-keep: 5
         token: ${{ secrets.WINGET_TOKEN }}
+  create_sentry_release:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: release::create_sentry_release
+      uses: getsentry/action-release@526942b68292201ac6bbb99b9a0747d4abee354c
+      with:
+        environment: production
+      env:
+        SENTRY_ORG: zed-dev
+        SENTRY_PROJECT: zed
+        SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}

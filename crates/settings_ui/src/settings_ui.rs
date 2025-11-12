@@ -486,7 +486,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
         .add_basic_renderer::<settings::DocumentColorsRenderMode>(render_dropdown)
         .add_basic_renderer::<settings::ThemeSelectionDiscriminants>(render_dropdown)
-        .add_basic_renderer::<settings::ThemeMode>(render_dropdown)
+        .add_basic_renderer::<settings::ThemeAppearanceMode>(render_dropdown)
         .add_basic_renderer::<settings::ThemeName>(render_theme_picker)
         .add_basic_renderer::<settings::IconThemeSelectionDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::IconThemeName>(render_icon_theme_picker)
@@ -3651,9 +3651,6 @@ pub mod test {
     pub fn register_settings(cx: &mut App) {
         settings::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
-        workspace::init_settings(cx);
-        project::Project::init_settings(cx);
-        language::init(cx);
         editor::init(cx);
         menu::init();
     }

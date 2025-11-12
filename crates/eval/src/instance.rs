@@ -322,7 +322,7 @@ impl ExampleInstance {
                     thread.add_default_tools(Rc::new(EvalThreadEnvironment {
                         project: project.clone(),
                     }), cx);
-                    thread.set_profile(meta.profile_id.clone());
+                    thread.set_profile(meta.profile_id.clone(), cx);
                     thread.set_model(
                         LanguageModelInterceptor::new(
                             LanguageModelRegistry::read_global(cx).default_model().expect("Missing model").model.clone(),

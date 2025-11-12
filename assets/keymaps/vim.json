@@ -455,6 +455,7 @@
       "<": "vim::Outdent",
       "=": "vim::AutoIndent",
       "d": "vim::HelixDelete",
+      "alt-d": "editor::Delete", // Delete selection, without yanking
       "c": "vim::HelixSubstitute",
       "alt-c": "vim::HelixSubstituteNoYank",
 

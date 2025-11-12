@@ -20,7 +20,7 @@ use remote::RemoteClient;
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::SettingsStore;
+use settings::{RegisterSetting, SettingsStore};
 use task::Shell;
 use util::{ResultExt as _, debug_panic};
 
@@ -757,6 +757,18 @@ impl AgentServerStore {
                     .send(Some(envelope.payload.version))
                     .ok();
             }
+        })
+    }
+
+    pub fn get_extension_id_for_agent(
+        &mut self,
+        name: &ExternalAgentServerName,
+    ) -> Option<Arc<str>> {
+        self.external_agents.get_mut(name).and_then(|agent| {
+            agent
+                .as_any_mut()
+                .downcast_ref::<LocalExtensionArchiveAgent>()
+                .map(|ext_agent| ext_agent.extension_id.clone())
         })
     }
 }
@@ -1618,7 +1630,7 @@ pub const GEMINI_NAME: &'static str = "gemini";
 pub const CLAUDE_CODE_NAME: &'static str = "claude";
 pub const CODEX_NAME: &'static str = "codex";
 
-#[derive(Default, Clone, JsonSchema, Debug, PartialEq)]
+#[derive(Default, Clone, JsonSchema, Debug, PartialEq, RegisterSetting)]
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
     pub claude: Option<BuiltinAgentServerSettings>,

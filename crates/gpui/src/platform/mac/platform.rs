@@ -19,7 +19,7 @@ use cocoa::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
         NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
         NSPasteboardTypePNG, NSPasteboardTypeRTF, NSPasteboardTypeRTFD, NSPasteboardTypeString,
-        NSPasteboardTypeTIFF, NSSavePanel, NSWindow,
+        NSPasteboardTypeTIFF, NSSavePanel, NSVisualEffectState, NSVisualEffectView, NSWindow,
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
@@ -315,6 +315,7 @@ impl MacPlatform {
                     name,
                     action,
                     os_action,
+                    checked,
                 } => {
                     // Note that this is intentionally using earlier bindings, whereas typically
                     // later ones take display precedence. See the discussion on
@@ -407,6 +408,10 @@ impl MacPlatform {
                                 ns_string(""),
                             )
                             .autorelease();
+                    }
+
+                    if *checked {
+                        item.setState_(NSVisualEffectState::Active);
                     }
 
                     let tag = actions.len() as NSInteger;
@@ -646,9 +651,12 @@ impl Platform for MacPlatform {
 
     fn open_url(&self, url: &str) {
         unsafe {
-            let url = NSURL::alloc(nil)
-                .initWithString_(ns_string(url))
-                .autorelease();
+            let ns_url = NSURL::alloc(nil).initWithString_(ns_string(url));
+            if ns_url.is_null() {
+                log::error!("Failed to create NSURL from string: {}", url);
+                return;
+            }
+            let url = ns_url.autorelease();
             let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
             msg_send![workspace, openURL: url]
         }

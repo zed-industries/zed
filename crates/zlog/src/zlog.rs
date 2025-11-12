@@ -30,16 +30,17 @@ pub fn init_test() {
     }
 }
 
-pub fn init_test_with(filter: &str) {
-    if try_init(Some(filter.to_owned())).is_ok() {
-        init_output_stdout();
-    }
-}
-
 fn get_env_config() -> Option<String> {
     std::env::var("ZED_LOG")
         .or_else(|_| std::env::var("RUST_LOG"))
         .ok()
+        .or_else(|| {
+            if std::env::var("CI").is_ok() {
+                Some("info".to_owned())
+            } else {
+                None
+            }
+        })
 }
 
 pub fn process_env(filter: Option<String>) {
@@ -80,7 +81,7 @@ impl log::Log for Zlog {
             None => (private::scope_new(&[]), private::scope_new(&["*unknown*"])),
         };
         let level = record.metadata().level();
-        if !filter::is_scope_enabled(&crate_name_scope, record.module_path(), level) {
+        if !filter::is_scope_enabled(&crate_name_scope, Some(record.target()), level) {
             return;
         }
         sink::submit(sink::Record {
@@ -89,6 +90,7 @@ impl log::Log for Zlog {
             message: record.args(),
             // PERF(batching): store non-static paths in a cache + leak them and pass static str here
             module_path: record.module_path().or(record.file()),
+            line: record.line(),
         });
     }
 
@@ -109,6 +111,7 @@ macro_rules! log {
                 level,
                 message: &format_args!($($arg)+),
                 module_path: Some(module_path!()),
+                line: Some(line!()),
             });
         }
     }
@@ -291,7 +294,7 @@ impl log::Log for Logger {
             return;
         }
         let level = record.metadata().level();
-        if !filter::is_scope_enabled(&self.scope, record.module_path(), level) {
+        if !filter::is_scope_enabled(&self.scope, Some(record.target()), level) {
             return;
         }
         sink::submit(sink::Record {
@@ -299,6 +302,7 @@ impl log::Log for Logger {
             level,
             message: record.args(),
             module_path: record.module_path(),
+            line: record.line(),
         });
     }
 

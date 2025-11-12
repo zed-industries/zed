@@ -12,7 +12,6 @@ use std::{
 
 use ::util::ResultExt;
 use anyhow::{Context as _, Result};
-use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
@@ -61,17 +60,16 @@ pub struct WindowsWindowState {
 
 pub(crate) struct WindowsWindowInner {
     hwnd: HWND,
-    pub(super) this: Weak<Self>,
     drop_target_helper: IDropTargetHelper,
     pub(crate) state: RefCell<WindowsWindowState>,
-    pub(crate) system_settings: RefCell<WindowsSystemSettings>,
+    system_settings: RefCell<WindowsSystemSettings>,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
     pub(crate) is_movable: bool,
     pub(crate) executor: ForegroundExecutor,
     pub(crate) windows_version: WindowsVersion,
     pub(crate) validation_number: usize,
-    pub(crate) main_receiver: flume::Receiver<Runnable>,
+    pub(crate) main_receiver: flume::Receiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
 }
 
@@ -215,9 +213,8 @@ impl WindowsWindowInner {
             context.disable_direct_composition,
         )?);
 
-        Ok(Rc::new_cyclic(|this| Self {
+        Ok(Rc::new(Self {
             hwnd,
-            this: this.clone(),
             drop_target_helper: context.drop_target_helper.clone(),
             state,
             handle: context.handle,
@@ -232,11 +229,8 @@ impl WindowsWindowInner {
         }))
     }
 
-    fn toggle_fullscreen(&self) {
-        let Some(this) = self.this.upgrade() else {
-            log::error!("Unable to toggle fullscreen: window has been dropped");
-            return;
-        };
+    fn toggle_fullscreen(self: &Rc<Self>) {
+        let this = self.clone();
         self.executor
             .spawn(async move {
                 let mut lock = this.state.borrow_mut();
@@ -246,36 +240,42 @@ impl WindowsWindowInner {
                     y,
                     cx,
                     cy,
-                } = if let Some(state) = lock.fullscreen.take() {
-                    state
-                } else {
-                    let (window_bounds, _) = lock.calculate_window_bounds();
-                    lock.fullscreen_restore_bounds = window_bounds;
-                    let style = WINDOW_STYLE(unsafe { get_window_long(this.hwnd, GWL_STYLE) } as _);
-                    let mut rc = RECT::default();
-                    unsafe { GetWindowRect(this.hwnd, &mut rc) }
-                        .context("failed to get window rect")
-                        .log_err();
-                    let _ = lock.fullscreen.insert(StyleAndBounds {
-                        style,
-                        x: rc.left,
-                        y: rc.top,
-                        cx: rc.right - rc.left,
-                        cy: rc.bottom - rc.top,
-                    });
-                    let style = style
-                        & !(WS_THICKFRAME
-                            | WS_SYSMENU
-                            | WS_MAXIMIZEBOX
-                            | WS_MINIMIZEBOX
-                            | WS_CAPTION);
-                    let physical_bounds = lock.display.physical_bounds();
-                    StyleAndBounds {
-                        style,
-                        x: physical_bounds.left().0,
-                        y: physical_bounds.top().0,
-                        cx: physical_bounds.size.width.0,
-                        cy: physical_bounds.size.height.0,
+                } = match lock.fullscreen.take() {
+                    Some(state) => state,
+                    None => {
+                        let (window_bounds, _) = lock.calculate_window_bounds();
+                        lock.fullscreen_restore_bounds = window_bounds;
+                        drop(lock);
+
+                        let style =
+                            WINDOW_STYLE(unsafe { get_window_long(this.hwnd, GWL_STYLE) } as _);
+                        let mut rc = RECT::default();
+                        unsafe { GetWindowRect(this.hwnd, &mut rc) }
+                            .context("failed to get window rect")
+                            .log_err();
+
+                        lock = this.state.borrow_mut();
+                        let _ = lock.fullscreen.insert(StyleAndBounds {
+                            style,
+                            x: rc.left,
+                            y: rc.top,
+                            cx: rc.right - rc.left,
+                            cy: rc.bottom - rc.top,
+                        });
+                        let style = style
+                            & !(WS_THICKFRAME
+                                | WS_SYSMENU
+                                | WS_MAXIMIZEBOX
+                                | WS_MINIMIZEBOX
+                                | WS_CAPTION);
+                        let physical_bounds = lock.display.physical_bounds();
+                        StyleAndBounds {
+                            style,
+                            x: physical_bounds.left().0,
+                            y: physical_bounds.top().0,
+                            cx: physical_bounds.size.width.0,
+                            cy: physical_bounds.size.height.0,
+                        }
                     }
                 };
                 drop(lock);
@@ -296,7 +296,7 @@ impl WindowsWindowInner {
             .detach();
     }
 
-    fn set_window_placement(&self) -> Result<()> {
+    fn set_window_placement(self: &Rc<Self>) -> Result<()> {
         let Some(open_status) = self.state.borrow_mut().initial_placement.take() else {
             return Ok(());
         };
@@ -319,6 +319,14 @@ impl WindowsWindowInner {
             },
         }
         Ok(())
+    }
+
+    pub(crate) fn system_settings(&self) -> std::cell::Ref<'_, WindowsSystemSettings> {
+        self.system_settings.borrow()
+    }
+
+    pub(crate) fn system_settings_mut(&self) -> std::cell::RefMut<'_, WindowsSystemSettings> {
+        self.system_settings.borrow_mut()
     }
 }
 
@@ -348,7 +356,7 @@ struct WindowCreateContext {
     windows_version: WindowsVersion,
     drop_target_helper: IDropTargetHelper,
     validation_number: usize,
-    main_receiver: flume::Receiver<Runnable>,
+    main_receiver: flume::Receiver<RunnableVariant>,
     platform_window_handle: HWND,
     appearance: WindowAppearance,
     disable_direct_composition: bool,
@@ -452,8 +460,9 @@ impl WindowsWindow {
 
         // Failure to create a `WindowsWindowState` can cause window creation to fail,
         // so check the inner result first.
-        let this = context.inner.take().unwrap()?;
+        let this = context.inner.take().transpose()?;
         let hwnd = creation_result?;
+        let this = this.unwrap();
 
         register_drag_drop(&this)?;
         configure_dwm_dark_mode(hwnd, appearance);
@@ -900,9 +909,9 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 if idata.u.hGlobal.is_invalid() {
                     return Ok(());
                 }
-                let hdrop = idata.u.hGlobal.0 as *mut HDROP;
+                let hdrop = HDROP(idata.u.hGlobal.0);
                 let mut paths = SmallVec::<[PathBuf; 2]>::new();
-                with_file_names(*hdrop, |file_name| {
+                with_file_names(hdrop, |file_name| {
                     if let Some(path) = PathBuf::from_str(&file_name).log_err() {
                         paths.push(path);
                     }
@@ -1166,8 +1175,7 @@ unsafe extern "system" fn window_procedure(
     lparam: LPARAM,
 ) -> LRESULT {
     if msg == WM_NCCREATE {
-        let window_params = lparam.0 as *const CREATESTRUCTW;
-        let window_params = unsafe { &*window_params };
+        let window_params = unsafe { &*(lparam.0 as *const CREATESTRUCTW) };
         let window_creation_context = window_params.lpCreateParams as *mut WindowCreateContext;
         let window_creation_context = unsafe { &mut *window_creation_context };
         return match WindowsWindowInner::new(window_creation_context, hwnd, window_params) {
