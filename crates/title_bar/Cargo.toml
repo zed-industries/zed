@@ -38,6 +38,7 @@ db.workspace = true
 gpui = { workspace = true, features = ["screen-capture"] }
 notifications.workspace = true
 project.workspace = true
+release_channel.workspace = true
 remote.workspace = true
 rpc.workspace = true
 schemars.workspace = true
