@@ -1,6 +1,4 @@
-use std::{collections::BTreeMap, ops::Range, path::PathBuf, sync::Arc};
-
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use cloud_zeta2_prompt::retrieval_prompt::SearchToolQuery;
 use collections::HashMap;
 use futures::{
@@ -14,28 +12,28 @@ use project::{
     search::{SearchQuery, SearchResult},
 };
 use smol::channel;
+use std::ops::Range;
 use util::{
     ResultExt as _,
     paths::{PathMatcher, PathStyle},
 };
 use workspace::item::Settings as _;
 
-use crate::EvalCache;
-
-type CachedSearchResults = BTreeMap<PathBuf, Vec<Range<usize>>>;
+#[cfg(feature = "eval-support")]
+type CachedSearchResults = std::collections::BTreeMap<std::path::PathBuf, Vec<Range<usize>>>;
 
 pub async fn run_retrieval_searches(
     queries: Vec<SearchToolQuery>,
     project: Entity<Project>,
-    #[cfg(feature = "eval-support")] eval_cache: Option<Arc<dyn EvalCache>>,
+    #[cfg(feature = "eval-support")] eval_cache: Option<std::sync::Arc<dyn crate::EvalCache>>,
     cx: &mut AsyncApp,
 ) -> Result<HashMap<Entity<Buffer>, Vec<Range<Anchor>>>> {
     #[cfg(feature = "eval-support")]
     let cache = if let Some(eval_cache) = eval_cache {
+        use crate::EvalCacheEntryKind;
+        use anyhow::Context;
         use collections::FxHasher;
         use std::hash::{Hash, Hasher};
-
-        use crate::EvalCacheEntryKind;
 
         let mut hasher = FxHasher::default();
         project.read_with(cx, |project, cx| {
@@ -117,6 +115,7 @@ pub async fn run_retrieval_searches(
     }
     drop(results_tx);
 
+    #[cfg(feature = "eval-support")]
     let cache = cache.clone();
     cx.background_spawn(async move {
         let mut results: HashMap<Entity<Buffer>, Vec<Range<Anchor>>> = HashMap::default();
