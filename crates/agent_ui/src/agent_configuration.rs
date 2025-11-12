@@ -8,6 +8,7 @@ use std::{ops::Range, sync::Arc};
 
 use agent::ContextServerRegistry;
 use anyhow::Result;
+use client::zed_urls;
 use cloud_llm_client::{Plan, PlanV1, PlanV2};
 use collections::HashMap;
 use context_server::ContextServerId;
@@ -26,18 +27,20 @@ use language_model::{
 use language_models::AllLanguageModelSettings;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
-    agent_server_store::{AgentServerStore, CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
+    agent_server_store::{
+        AgentServerStore, CLAUDE_CODE_NAME, CODEX_NAME, ExternalAgentServerName, GEMINI_NAME,
+    },
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
 };
 use settings::{Settings, SettingsStore, update_settings_file};
 use ui::{
-    Button, ButtonStyle, Chip, CommonAnimationExt, ContextMenu, Disclosure, Divider, DividerColor,
-    ElevationIndex, IconName, IconPosition, IconSize, Indicator, LabelSize, PopoverMenu, Switch,
-    SwitchColor, Tooltip, WithScrollbar, prelude::*,
+    Button, ButtonStyle, Chip, CommonAnimationExt, ContextMenu, ContextMenuEntry, Disclosure,
+    Divider, DividerColor, ElevationIndex, IconName, IconPosition, IconSize, Indicator, LabelSize,
+    PopoverMenu, Switch, SwitchColor, Tooltip, WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{Workspace, create_and_open_local_file};
-use zed_actions::ExtensionCategoryFilter;
+use zed_actions::{ExtensionCategoryFilter, OpenBrowser};
 
 pub(crate) use configure_context_server_modal::ConfigureContextServerModal;
 pub(crate) use configure_context_server_tools_modal::ConfigureContextServerToolsModal;
@@ -415,6 +418,7 @@ impl AgentConfiguration {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let providers = LanguageModelRegistry::read_global(cx).providers();
+
         let popover_menu = PopoverMenu::new("add-provider-popover")
             .trigger(
                 Button::new("add-provider", "Add Provider")
@@ -425,7 +429,6 @@ impl AgentConfiguration {
                     .icon_color(Color::Muted)
                     .label_size(LabelSize::Small),
             )
-            .anchor(gpui::Corner::TopRight)
             .menu({
                 let workspace = self.workspace.clone();
                 move |window, cx| {
@@ -447,6 +450,11 @@ impl AgentConfiguration {
                         })
                     }))
                 }
+            })
+            .anchor(gpui::Corner::TopRight)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(2.0),
             });
 
         v_flex()
@@ -541,7 +549,6 @@ impl AgentConfiguration {
                     .icon_color(Color::Muted)
                     .label_size(LabelSize::Small),
             )
-            .anchor(gpui::Corner::TopRight)
             .menu({
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
@@ -564,6 +571,11 @@ impl AgentConfiguration {
                         })
                     }))
                 }
+            })
+            .anchor(gpui::Corner::TopRight)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(2.0),
             });
 
         v_flex()
@@ -943,7 +955,7 @@ impl AgentConfiguration {
             .cloned()
             .collect::<Vec<_>>();
 
-        let user_defined_agents = user_defined_agents
+        let user_defined_agents: Vec<_> = user_defined_agents
             .into_iter()
             .map(|name| {
                 let icon = if let Some(icon_path) = agent_server_store.agent_icon(&name) {
@@ -951,27 +963,93 @@ impl AgentConfiguration {
                 } else {
                     AgentIcon::Name(IconName::Ai)
                 };
-                self.render_agent_server(icon, name, true)
-                    .into_any_element()
+                (name, icon)
             })
-            .collect::<Vec<_>>();
+            .collect();
 
-        let add_agens_button = Button::new("add-agent", "Add Agent")
-            .style(ButtonStyle::Outlined)
-            .icon_position(IconPosition::Start)
-            .icon(IconName::Plus)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .label_size(LabelSize::Small)
-            .on_click(move |_, window, cx| {
-                if let Some(workspace) = window.root().flatten() {
-                    let workspace = workspace.downgrade();
-                    window
-                        .spawn(cx, async |cx| {
-                            open_new_agent_servers_entry_in_settings_editor(workspace, cx).await
+        let add_agent_popover = PopoverMenu::new("add-agent-server-popover")
+            .trigger(
+                Button::new("add-agent", "Add Agent")
+                    .style(ButtonStyle::Outlined)
+                    .icon_position(IconPosition::Start)
+                    .icon(IconName::Plus)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .label_size(LabelSize::Small),
+            )
+            .menu({
+                move |window, cx| {
+                    Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
+                        menu.entry("Install from Extensions", None, {
+                            |window, cx| {
+                                window.dispatch_action(
+                                    zed_actions::Extensions {
+                                        category_filter: Some(
+                                            ExtensionCategoryFilter::AgentServers,
+                                        ),
+                                        id: None,
+                                    }
+                                    .boxed_clone(),
+                                    cx,
+                                )
+                            }
                         })
-                        .detach_and_log_err(cx);
+                        .entry("Add Custom Agent", None, {
+                            move |window, cx| {
+                                if let Some(workspace) = window.root().flatten() {
+                                    let workspace = workspace.downgrade();
+                                    window
+                                        .spawn(cx, async |cx| {
+                                            open_new_agent_servers_entry_in_settings_editor(
+                                                workspace, cx,
+                                            )
+                                            .await
+                                        })
+                                        .detach_and_log_err(cx);
+                                }
+                            }
+                        })
+                        .separator()
+                        .header("Learn More")
+                        .item(
+                            ContextMenuEntry::new("Agent Servers Docs")
+                                .icon(IconName::ArrowUpRight)
+                                .icon_color(Color::Muted)
+                                .icon_position(IconPosition::End)
+                                .handler({
+                                    move |window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(OpenBrowser {
+                                                url: zed_urls::agent_server_docs(cx),
+                                            }),
+                                            cx,
+                                        );
+                                    }
+                                }),
+                        )
+                        .item(
+                            ContextMenuEntry::new("ACP Docs")
+                                .icon(IconName::ArrowUpRight)
+                                .icon_color(Color::Muted)
+                                .icon_position(IconPosition::End)
+                                .handler({
+                                    move |window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(OpenBrowser {
+                                                url: "https://agentclientprotocol.com/".into(),
+                                            }),
+                                            cx,
+                                        );
+                                    }
+                                }),
+                        )
+                    }))
                 }
+            })
+            .anchor(gpui::Corner::TopRight)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(2.0),
             });
 
         v_flex()
@@ -982,7 +1060,7 @@ impl AgentConfiguration {
                     .child(self.render_section_title(
                         "External Agents",
                         "All agents connected through the Agent Client Protocol.",
-                        add_agens_button.into_any_element(),
+                        add_agent_popover.into_any_element(),
                     ))
                     .child(
                         v_flex()
@@ -993,26 +1071,29 @@ impl AgentConfiguration {
                                 AgentIcon::Name(IconName::AiClaude),
                                 "Claude Code",
                                 false,
+                                cx,
                             ))
                             .child(Divider::horizontal().color(DividerColor::BorderFaded))
                             .child(self.render_agent_server(
                                 AgentIcon::Name(IconName::AiOpenAi),
                                 "Codex CLI",
                                 false,
+                                cx,
                             ))
                             .child(Divider::horizontal().color(DividerColor::BorderFaded))
                             .child(self.render_agent_server(
                                 AgentIcon::Name(IconName::AiGemini),
                                 "Gemini CLI",
                                 false,
+                                cx,
                             ))
                             .map(|mut parent| {
-                                for agent in user_defined_agents {
+                                for (name, icon) in user_defined_agents {
                                     parent = parent
                                         .child(
                                             Divider::horizontal().color(DividerColor::BorderFaded),
                                         )
-                                        .child(agent);
+                                        .child(self.render_agent_server(icon, name, true, cx));
                                 }
                                 parent
                             }),
@@ -1025,6 +1106,7 @@ impl AgentConfiguration {
         icon: AgentIcon,
         name: impl Into<SharedString>,
         external: bool,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let name = name.into();
         let icon = match icon {
@@ -1039,28 +1121,53 @@ impl AgentConfiguration {
         let tooltip_id = SharedString::new(format!("agent-source-{}", name));
         let tooltip_message = format!("The {} agent was installed from an extension.", name);
 
+        let agent_server_name = ExternalAgentServerName(name.clone());
+
+        let uninstall_btn_id = SharedString::from(format!("uninstall-{}", name));
+        let uninstall_button = IconButton::new(uninstall_btn_id, IconName::Trash)
+            .icon_color(Color::Muted)
+            .icon_size(IconSize::Small)
+            .tooltip(Tooltip::text("Uninstall Agent Extension"))
+            .on_click(cx.listener(move |this, _, _window, cx| {
+                let agent_name = agent_server_name.clone();
+
+                if let Some(ext_id) = this.agent_server_store.update(cx, |store, _cx| {
+                    store.get_extension_id_for_agent(&agent_name)
+                }) {
+                    ExtensionStore::global(cx)
+                        .update(cx, |store, cx| store.uninstall_extension(ext_id, cx))
+                        .detach_and_log_err(cx);
+                }
+            }));
+
         h_flex()
-            .gap_1p5()
-            .child(icon)
-            .child(Label::new(name))
-            .when(external, |this| {
-                this.child(
-                    div()
-                        .id(tooltip_id)
-                        .flex_none()
-                        .tooltip(Tooltip::text(tooltip_message))
-                        .child(
-                            Icon::new(IconName::ZedSrcExtension)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        ),
-                )
-            })
+            .gap_1()
+            .justify_between()
             .child(
-                Icon::new(IconName::Check)
-                    .color(Color::Success)
-                    .size(IconSize::Small),
+                h_flex()
+                    .gap_1p5()
+                    .child(icon)
+                    .child(Label::new(name))
+                    .when(external, |this| {
+                        this.child(
+                            div()
+                                .id(tooltip_id)
+                                .flex_none()
+                                .tooltip(Tooltip::text(tooltip_message))
+                                .child(
+                                    Icon::new(IconName::ZedSrcExtension)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                        )
+                    })
+                    .child(
+                        Icon::new(IconName::Check)
+                            .color(Color::Success)
+                            .size(IconSize::Small),
+                    ),
             )
+            .when(external, |this| this.child(uninstall_button))
     }
 }
 

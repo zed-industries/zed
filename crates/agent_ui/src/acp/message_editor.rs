@@ -15,6 +15,7 @@ use editor::{
     EditorEvent, EditorMode, EditorSnapshot, EditorStyle, ExcerptId, FoldPlaceholder, Inlay,
     MultiBuffer, ToOffset,
     actions::Paste,
+    code_context_menus::CodeContextMenu,
     display_map::{Crease, CreaseId, FoldId},
     scroll::Autoscroll,
 };
@@ -270,6 +271,15 @@ impl MessageEditor {
 
     pub fn is_empty(&self, cx: &App) -> bool {
         self.editor.read(cx).is_empty(cx)
+    }
+
+    pub fn is_completions_menu_visible(&self, cx: &App) -> bool {
+        self.editor
+            .read(cx)
+            .context_menu()
+            .borrow()
+            .as_ref()
+            .is_some_and(|menu| matches!(menu, CodeContextMenu::Completions(_)) && menu.visible())
     }
 
     pub fn mentions(&self) -> HashSet<MentionUri> {
@@ -834,6 +844,45 @@ impl MessageEditor {
             editor.clear_inlay_hints(cx);
         });
         cx.emit(MessageEditorEvent::Send)
+    }
+
+    pub fn trigger_completion_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let editor = self.editor.clone();
+
+        cx.spawn_in(window, async move |_, cx| {
+            editor
+                .update_in(cx, |editor, window, cx| {
+                    let menu_is_open =
+                        editor.context_menu().borrow().as_ref().is_some_and(|menu| {
+                            matches!(menu, CodeContextMenu::Completions(_)) && menu.visible()
+                        });
+
+                    let has_at_sign = {
+                        let snapshot = editor.display_snapshot(cx);
+                        let cursor = editor.selections.newest::<text::Point>(&snapshot).head();
+                        let offset = cursor.to_offset(&snapshot);
+                        if offset > 0 {
+                            snapshot
+                                .buffer_snapshot()
+                                .reversed_chars_at(offset)
+                                .next()
+                                .map(|sign| sign == '@')
+                                .unwrap_or(false)
+                        } else {
+                            false
+                        }
+                    };
+
+                    if menu_is_open && has_at_sign {
+                        return;
+                    }
+
+                    editor.insert("@", window, cx);
+                    editor.show_completions(&editor::actions::ShowCompletions, window, cx);
+                })
+                .log_err();
+        })
+        .detach();
     }
 
     fn chat(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {

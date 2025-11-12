@@ -59,6 +59,17 @@ impl EditorTestContext {
             })
             .await
             .unwrap();
+
+        let language = project
+            .read_with(cx, |project, _cx| {
+                project.languages().language_for_name("Plain Text")
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_language(Some(language), cx);
+        });
+
         let editor = cx.add_window(|window, cx| {
             let editor = build_editor_with_project(
                 project,

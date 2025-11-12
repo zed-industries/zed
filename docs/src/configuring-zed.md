@@ -213,7 +213,7 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 ## Auto Install extensions
 
 - Description: Define extensions to be autoinstalled or never be installed.
-- Setting: `auto_install_extension`
+- Setting: `auto_install_extensions`
 - Default: `{ "html": true }`
 
 **Options**
@@ -2519,11 +2519,12 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
   "path": "~",
   "hour_format": "hour12"
 }
+
 ```
 
 ### Path
 
-- Description: The path of the directory where journal entries are stored.
+- Description: The path of the directory where journal entries are stored. If an invalid path is specified, the journal will fall back to using `~` (the home directory).
 - Setting: `path`
 - Default: `~`
 
@@ -4279,7 +4280,11 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "hide_root": false,
     "hide_hidden": false,
     "starts_open": true,
-    "open_file_on_paste": true
+    "auto_open": {
+      "on_create": true,
+      "on_paste": true,
+      "on_drop": true
+    }
   }
 }
 ```
@@ -4487,6 +4492,26 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
   }
 }
 ```
+
+### Auto Open
+
+- Description: Control whether files are opened automatically after different creation flows in the project panel.
+- Setting: `auto_open`
+- Default:
+
+```json [settings]
+"auto_open": {
+  "on_create": true,
+  "on_paste": true,
+  "on_drop": true
+}
+```
+
+**Options**
+
+- `on_create`: Whether to automatically open newly created files in the editor.
+- `on_paste`: Whether to automatically open files after pasting or duplicating them.
+- `on_drop`: Whether to automatically open files dropped from external sources.
 
 ## Agent
 
