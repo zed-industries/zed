@@ -32,9 +32,12 @@ use project::{
     },
 };
 use settings::{Settings, SettingsStore};
-use std::any::{Any, TypeId};
-use std::ops::Range;
 use std::sync::Arc;
+use std::{
+    any::{Any, TypeId},
+    sync::atomic::{AtomicUsize, Ordering},
+};
+use std::{ops::Range, time::Duration};
 use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::rel_path::RelPath;
@@ -563,12 +566,15 @@ impl ProjectDiff {
                 let repo = repo.read(cx);
 
                 path_keys = Vec::with_capacity(buffers_to_load.len());
-                for entry in buffers_to_load.iter() {
-                    let sort_prefix = sort_prefix(&repo, &entry.repo_path, entry.file_status, cx);
-                    let path_key =
-                        PathKey::with_sort_prefix(sort_prefix, entry.repo_path.0.clone());
-                    previous_paths.remove(&path_key);
-                    path_keys.push(path_key)
+                for group in buffers_to_load.iter() {
+                    for (repo_path, file_status) in
+                        group.repo_paths.iter().zip(group.file_statussus.iter())
+                    {
+                        let sort_prefix = sort_prefix(&repo, &repo_path, *file_status, cx);
+                        let path_key = PathKey::with_sort_prefix(sort_prefix, repo_path.0.clone());
+                        previous_paths.remove(&path_key);
+                        path_keys.push(path_key)
+                    }
                 }
             }
 
@@ -581,23 +587,49 @@ impl ProjectDiff {
             buffers_to_load
         })?;
 
-        for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys.into_iter()) {
-            let this = this.clone();
-            cx.spawn(async move |cx| {
-                let (buffer, diff) = entry.load.await?;
-                cx.update(|window, cx| {
-                    this.update(cx, |this, cx| {
-                        this.register_buffer(path_key, entry.file_status, buffer, diff, window, cx);
-                        cx.notify();
-                    })
+        let buffers_still_to_load = Arc::new(AtomicUsize::new(buffers_to_load.len()));
+        let buffers_still_to_load2 = Arc::clone(&buffers_still_to_load);
+        let this2 = this.clone();
+        cx.spawn(async move |cx| {
+            for (group, path_key) in buffers_to_load.into_iter().zip(path_keys.into_iter()) {
+                let buffer_and_diffs = group.load.await;
+                let buffers_still_to_load = buffers_still_to_load.clone();
+                for (res, file_status) in buffer_and_diffs.into_iter().zip(group.file_statussus) {
+                    let (buffer, diff) = res?;
+
+                    cx.background_executor().timer(Duration::from_secs(5)).await;
+                    cx.update(|window, cx| {
+                        this2.update(cx, |this2, cx| {
+                            this2.register_buffer(
+                                path_key.clone(),
+                                file_status,
+                                buffer,
+                                diff,
+                                window,
+                                cx,
+                            );
+                            buffers_still_to_load.fetch_sub(1, Ordering::Relaxed);
+                        })
+                    })??;
+                }
+            }
+            Ok::<(), anyhow::Error>(())
+        })
+        .detach();
+
+        loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
+            if buffers_still_to_load2.load(Ordering::Relaxed) == 0 {
+                this.update(cx, |this, cx| {
+                    this.pending_scroll.take();
+                    cx.notify();
                 })
-            })
-            .detach();
+                .ok();
+                break;
+            }
         }
-        this.update(cx, |this, cx| {
-            this.pending_scroll.take();
-            cx.notify();
-        })?;
 
         Ok(())
     }
