@@ -44,6 +44,24 @@ pub async fn get_buffer_content_or_outline(
                 .collect::<Vec<_>>()
         })?;
 
+        if outline_items.is_empty() {
+            let text = buffer.read_with(cx, |buffer, _| {
+                let snapshot = buffer.snapshot();
+                let len = snapshot.len().min(1024);
+                let content = snapshot.text_for_range(0..len).collect::<String>();
+                if let Some(path) = path {
+                    format!("# First 1KB of {path} (file too large to show full content, and no outline available)\n\n{content}")
+                } else {
+                    format!("# First 1KB of file (file too large to show full content, and no outline available)\n\n{content}")
+                }
+            })?;
+
+            return Ok(BufferContent {
+                text,
+                is_outline: false,
+            });
+        }
+
         let outline_text = render_outline(outline_items, None, 0, usize::MAX).await?;
 
         let text = if let Some(path) = path {
