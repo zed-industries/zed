@@ -4,3 +4,17 @@ sequential-db-tests = { max-threads = 1 }
 [[profile.default.overrides]]
 filter = 'package(db)'
 test-group = 'sequential-db-tests'
+
+# Run slowest tests first.
+#
+[[profile.default.overrides]]
+filter = 'package(worktree) and test(test_random_worktree_changes)'
+priority = 100
+
+[[profile.default.overrides]]
+filter = 'package(collab) and (test(random_project_collaboration_tests) or test(random_channel_buffer_tests) or test(test_contact_requests) or test(test_basic_following))'
+priority = 99
+
+[[profile.default.overrides]]
+filter = 'package(extension_host) and test(test_extension_store_with_test_extension)'
+priority = 99

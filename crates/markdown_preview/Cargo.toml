@@ -31,8 +31,8 @@ pulldown-cmark.workspace = true
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true
+urlencoding.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]

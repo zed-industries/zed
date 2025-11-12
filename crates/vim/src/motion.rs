@@ -672,31 +672,40 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
 impl Vim {
     pub(crate) fn search_motion(&mut self, m: Motion, window: &mut Window, cx: &mut Context<Self>) {
-        if let Motion::ZedSearchResult {
-            prior_selections, ..
+        let Motion::ZedSearchResult {
+            prior_selections,
+            new_selections,
         } = &m
-        {
-            match self.mode {
-                Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                    if !prior_selections.is_empty() {
-                        self.update_editor(cx, |_, editor, cx| {
-                            editor.change_selections(Default::default(), window, cx, |s| {
-                                s.select_ranges(prior_selections.iter().cloned())
-                            })
-                        });
-                    }
-                }
-                Mode::Normal | Mode::Replace | Mode::Insert => {
-                    if self.active_operator().is_none() {
-                        return;
-                    }
-                }
+        else {
+            return;
+        };
 
-                Mode::HelixNormal | Mode::HelixSelect => {}
+        match self.mode {
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                if !prior_selections.is_empty() {
+                    self.update_editor(cx, |_, editor, cx| {
+                        editor.change_selections(Default::default(), window, cx, |s| {
+                            s.select_ranges(prior_selections.iter().cloned());
+                        });
+                    });
+                }
+                self.motion(m, window, cx);
+            }
+            Mode::Normal | Mode::Replace | Mode::Insert => {
+                if self.active_operator().is_some() {
+                    self.motion(m, window, cx);
+                }
+            }
+
+            Mode::HelixNormal => {}
+            Mode::HelixSelect => {
+                self.update_editor(cx, |_, editor, cx| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
+                        s.select_ranges(prior_selections.iter().chain(new_selections).cloned());
+                    });
+                });
             }
         }
-
-        self.motion(m, window, cx)
     }
 
     pub(crate) fn motion(&mut self, motion: Motion, window: &mut Window, cx: &mut Context<Self>) {
@@ -1525,29 +1534,6 @@ fn wrapping_right_single(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayP
     }
 }
 
-/// Given a point, returns the start of the buffer row that is a given number of
-/// buffer rows away from the current position.
-///
-/// This moves by buffer rows instead of display rows, a distinction that is
-/// important when soft wrapping is enabled.
-pub(crate) fn start_of_relative_buffer_row(
-    map: &DisplaySnapshot,
-    point: DisplayPoint,
-    times: isize,
-) -> DisplayPoint {
-    let start = map.display_point_to_fold_point(point, Bias::Left);
-    let target = start.row() as isize + times;
-    let new_row = (target.max(0) as u32).min(map.fold_snapshot().max_point().row());
-
-    map.clip_point(
-        map.fold_point_to_display_point(
-            map.fold_snapshot()
-                .clip_point(FoldPoint::new(new_row, 0), Bias::Right),
-        ),
-        Bias::Right,
-    )
-}
-
 fn up_down_buffer_rows(
     map: &DisplaySnapshot,
     mut point: DisplayPoint,
@@ -2127,7 +2113,7 @@ pub(crate) fn end_of_line(
     times: usize,
 ) -> DisplayPoint {
     if times > 1 {
-        point = start_of_relative_buffer_row(map, point, times as isize - 1);
+        point = map.start_of_relative_buffer_row(point, times as isize - 1);
     }
     if display_lines {
         map.clip_point(
@@ -2732,17 +2718,17 @@ fn sneak_backward(
 }
 
 fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
-    let correct_line = start_of_relative_buffer_row(map, point, times as isize);
+    let correct_line = map.start_of_relative_buffer_row(point, times as isize);
     first_non_whitespace(map, false, correct_line)
 }
 
 fn previous_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
-    let correct_line = start_of_relative_buffer_row(map, point, -(times as isize));
+    let correct_line = map.start_of_relative_buffer_row(point, -(times as isize));
     first_non_whitespace(map, false, correct_line)
 }
 
 fn go_to_column(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
-    let correct_line = start_of_relative_buffer_row(map, point, 0);
+    let correct_line = map.start_of_relative_buffer_row(point, 0);
     right(map, correct_line, times.saturating_sub(1))
 }
 
@@ -2752,7 +2738,7 @@ pub(crate) fn next_line_end(
     times: usize,
 ) -> DisplayPoint {
     if times > 1 {
-        point = start_of_relative_buffer_row(map, point, times as isize - 1);
+        point = map.start_of_relative_buffer_row(point, times as isize - 1);
     }
     end_of_line(map, false, point, 1)
 }
@@ -3106,7 +3092,7 @@ mod test {
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
-    use editor::display_map::Inlay;
+    use editor::Inlay;
     use indoc::indoc;
     use language::Point;
     use multi_buffer::MultiBufferRow;

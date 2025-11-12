@@ -3,7 +3,7 @@ use editor::scroll::Autoscroll;
 use editor::{Editor, SelectionEffects};
 use gpui::{App, AppContext as _, Context, Window, actions};
 pub use settings::HourFormat;
-use settings::Settings;
+use settings::{RegisterSetting, Settings};
 use std::{
     fs::OpenOptions,
     path::{Path, PathBuf},
@@ -20,7 +20,7 @@ actions!(
 );
 
 /// Settings specific to journaling
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, RegisterSetting)]
 pub struct JournalSettings {
     /// The path of the directory where journal entries are stored.
     ///
@@ -44,8 +44,6 @@ impl settings::Settings for JournalSettings {
 }
 
 pub fn init(_: Arc<AppState>, cx: &mut App) {
-    JournalSettings::register(cx);
-
     cx.observe_new(
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
             workspace.register_action(|workspace, _: &NewJournalEntry, window, cx| {

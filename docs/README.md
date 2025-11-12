@@ -10,7 +10,7 @@ To preview the docs locally you will need to install [mdBook](https://rust-lang.
 mdbook serve docs
 ```
 
-It's important to note the version number above. For an unknown reason, as of 2025-04-23, running 0.4.48 will cause odd URL behavior that breaks docs.
+It's important to note the version number above. For an unknown reason, as of 2025-04-23, running 0.4.48 will cause odd URL behavior that breaks things.
 
 Before committing, verify that the docs are formatted in the way Prettier expects with:
 

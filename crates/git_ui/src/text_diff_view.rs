@@ -49,7 +49,7 @@ impl TextDiffView {
         let selection_data = source_editor.update(cx, |editor, cx| {
             let multibuffer = editor.buffer().read(cx);
             let source_buffer = multibuffer.as_singleton()?;
-            let selections = editor.selections.all::<Point>(cx);
+            let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
             let buffer_snapshot = source_buffer.read(cx);
             let first_selection = selections.first()?;
             let max_point = buffer_snapshot.max_point();
@@ -458,10 +458,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
-            workspace::init_settings(cx);
-            editor::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
         });
     }

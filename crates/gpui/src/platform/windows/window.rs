@@ -45,13 +45,11 @@ pub struct WindowsWindowState {
     pub pending_surrogate: Option<u16>,
     pub last_reported_modifiers: Option<Modifiers>,
     pub last_reported_capslock: Option<Capslock>,
-    pub system_key_handled: bool,
     pub hovered: bool,
 
     pub renderer: DirectXRenderer,
 
     pub click_state: ClickState,
-    pub system_settings: WindowsSystemSettings,
     pub current_cursor: Option<HCURSOR>,
     pub nc_button_pressed: Option<u32>,
 
@@ -63,9 +61,9 @@ pub struct WindowsWindowState {
 
 pub(crate) struct WindowsWindowInner {
     hwnd: HWND,
-    pub(super) this: Weak<Self>,
     drop_target_helper: IDropTargetHelper,
     pub(crate) state: RefCell<WindowsWindowState>,
+    pub(crate) system_settings: RefCell<WindowsSystemSettings>,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
     pub(crate) is_movable: bool,
@@ -112,10 +110,8 @@ impl WindowsWindowState {
         let pending_surrogate = None;
         let last_reported_modifiers = None;
         let last_reported_capslock = None;
-        let system_key_handled = false;
         let hovered = false;
         let click_state = ClickState::new();
-        let system_settings = WindowsSystemSettings::new(display);
         let nc_button_pressed = None;
         let fullscreen = None;
         let initial_placement = None;
@@ -134,11 +130,9 @@ impl WindowsWindowState {
             pending_surrogate,
             last_reported_modifiers,
             last_reported_capslock,
-            system_key_handled,
             hovered,
             renderer,
             click_state,
-            system_settings,
             current_cursor,
             nc_button_pressed,
             display,
@@ -171,7 +165,9 @@ impl WindowsWindowState {
                 length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
                 ..Default::default()
             };
-            GetWindowPlacement(self.hwnd, &mut placement).log_err();
+            GetWindowPlacement(self.hwnd, &mut placement)
+                .context("failed to get window placement")
+                .log_err();
             placement
         };
         (
@@ -218,9 +214,8 @@ impl WindowsWindowInner {
             context.disable_direct_composition,
         )?);
 
-        Ok(Rc::new_cyclic(|this| Self {
+        Ok(Rc::new(Self {
             hwnd,
-            this: this.clone(),
             drop_target_helper: context.drop_target_helper.clone(),
             state,
             handle: context.handle,
@@ -231,14 +226,12 @@ impl WindowsWindowInner {
             validation_number: context.validation_number,
             main_receiver: context.main_receiver.clone(),
             platform_window_handle: context.platform_window_handle,
+            system_settings: RefCell::new(WindowsSystemSettings::new(context.display)),
         }))
     }
 
-    fn toggle_fullscreen(&self) {
-        let Some(this) = self.this.upgrade() else {
-            log::error!("Unable to toggle fullscreen: window has been dropped");
-            return;
-        };
+    fn toggle_fullscreen(self: &Rc<Self>) {
+        let this = self.clone();
         self.executor
             .spawn(async move {
                 let mut lock = this.state.borrow_mut();
@@ -248,34 +241,42 @@ impl WindowsWindowInner {
                     y,
                     cx,
                     cy,
-                } = if let Some(state) = lock.fullscreen.take() {
-                    state
-                } else {
-                    let (window_bounds, _) = lock.calculate_window_bounds();
-                    lock.fullscreen_restore_bounds = window_bounds;
-                    let style = WINDOW_STYLE(unsafe { get_window_long(this.hwnd, GWL_STYLE) } as _);
-                    let mut rc = RECT::default();
-                    unsafe { GetWindowRect(this.hwnd, &mut rc) }.log_err();
-                    let _ = lock.fullscreen.insert(StyleAndBounds {
-                        style,
-                        x: rc.left,
-                        y: rc.top,
-                        cx: rc.right - rc.left,
-                        cy: rc.bottom - rc.top,
-                    });
-                    let style = style
-                        & !(WS_THICKFRAME
-                            | WS_SYSMENU
-                            | WS_MAXIMIZEBOX
-                            | WS_MINIMIZEBOX
-                            | WS_CAPTION);
-                    let physical_bounds = lock.display.physical_bounds();
-                    StyleAndBounds {
-                        style,
-                        x: physical_bounds.left().0,
-                        y: physical_bounds.top().0,
-                        cx: physical_bounds.size.width.0,
-                        cy: physical_bounds.size.height.0,
+                } = match lock.fullscreen.take() {
+                    Some(state) => state,
+                    None => {
+                        let (window_bounds, _) = lock.calculate_window_bounds();
+                        lock.fullscreen_restore_bounds = window_bounds;
+                        drop(lock);
+
+                        let style =
+                            WINDOW_STYLE(unsafe { get_window_long(this.hwnd, GWL_STYLE) } as _);
+                        let mut rc = RECT::default();
+                        unsafe { GetWindowRect(this.hwnd, &mut rc) }
+                            .context("failed to get window rect")
+                            .log_err();
+
+                        lock = this.state.borrow_mut();
+                        let _ = lock.fullscreen.insert(StyleAndBounds {
+                            style,
+                            x: rc.left,
+                            y: rc.top,
+                            cx: rc.right - rc.left,
+                            cy: rc.bottom - rc.top,
+                        });
+                        let style = style
+                            & !(WS_THICKFRAME
+                                | WS_SYSMENU
+                                | WS_MAXIMIZEBOX
+                                | WS_MINIMIZEBOX
+                                | WS_CAPTION);
+                        let physical_bounds = lock.display.physical_bounds();
+                        StyleAndBounds {
+                            style,
+                            x: physical_bounds.left().0,
+                            y: physical_bounds.top().0,
+                            cx: physical_bounds.size.width.0,
+                            cy: physical_bounds.size.height.0,
+                        }
                     }
                 };
                 drop(lock);
@@ -296,21 +297,26 @@ impl WindowsWindowInner {
             .detach();
     }
 
-    fn set_window_placement(&self) -> Result<()> {
+    fn set_window_placement(self: &Rc<Self>) -> Result<()> {
         let Some(open_status) = self.state.borrow_mut().initial_placement.take() else {
             return Ok(());
         };
         match open_status.state {
             WindowOpenState::Maximized => unsafe {
-                SetWindowPlacement(self.hwnd, &open_status.placement)?;
+                SetWindowPlacement(self.hwnd, &open_status.placement)
+                    .context("failed to set window placement")?;
                 ShowWindowAsync(self.hwnd, SW_MAXIMIZE).ok()?;
             },
             WindowOpenState::Fullscreen => {
-                unsafe { SetWindowPlacement(self.hwnd, &open_status.placement)? };
+                unsafe {
+                    SetWindowPlacement(self.hwnd, &open_status.placement)
+                        .context("failed to set window placement")?
+                };
                 self.toggle_fullscreen();
             }
             WindowOpenState::Windowed => unsafe {
-                SetWindowPlacement(self.hwnd, &open_status.placement)?;
+                SetWindowPlacement(self.hwnd, &open_status.placement)
+                    .context("failed to set window placement")?;
             },
         }
         Ok(())
@@ -447,8 +453,9 @@ impl WindowsWindow {
 
         // Failure to create a `WindowsWindowState` can cause window creation to fail,
         // so check the inner result first.
-        let this = context.inner.take().unwrap()?;
+        let this = context.inner.take().transpose()?;
         let hwnd = creation_result?;
+        let this = this.unwrap();
 
         register_drag_drop(&this)?;
         configure_dwm_dark_mode(hwnd, appearance);
@@ -644,10 +651,12 @@ impl PlatformWindow for WindowsWindow {
                     let mut btn_encoded = Vec::new();
                     for (index, btn) in answers.iter().enumerate() {
                         let encoded = HSTRING::from(btn.label().as_ref());
-                        let button_id = if btn.is_cancel() {
-                            IDCANCEL.0
-                        } else {
-                            index as i32 - 100
+                        let button_id = match btn {
+                            PromptButton::Ok(_) => IDOK.0,
+                            PromptButton::Cancel(_) => IDCANCEL.0,
+                            // the first few low integer values are reserved for known buttons
+                            // so for simplicity we just go backwards from -1
+                            PromptButton::Other(_) => -(index as i32) - 1,
                         };
                         button_id_map.push(button_id);
                         buttons.push(TASKDIALOG_BUTTON {
@@ -665,11 +674,11 @@ impl PlatformWindow for WindowsWindow {
                         .context("unable to create task dialog")
                         .log_err();
 
-                    let clicked = button_id_map
-                        .iter()
-                        .position(|&button_id| button_id == res)
-                        .unwrap();
-                    let _ = done_tx.send(clicked);
+                    if let Some(clicked) =
+                        button_id_map.iter().position(|&button_id| button_id == res)
+                    {
+                        let _ = done_tx.send(clicked);
+                    }
                 }
             })
             .detach();
@@ -893,9 +902,9 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 if idata.u.hGlobal.is_invalid() {
                     return Ok(());
                 }
-                let hdrop = idata.u.hGlobal.0 as *mut HDROP;
+                let hdrop = HDROP(idata.u.hGlobal.0);
                 let mut paths = SmallVec::<[PathBuf; 2]>::new();
-                with_file_names(*hdrop, |file_name| {
+                with_file_names(hdrop, |file_name| {
                     if let Some(path) = PathBuf::from_str(&file_name).log_err() {
                         paths.push(path);
                     }
@@ -1159,8 +1168,7 @@ unsafe extern "system" fn window_procedure(
     lparam: LPARAM,
 ) -> LRESULT {
     if msg == WM_NCCREATE {
-        let window_params = lparam.0 as *const CREATESTRUCTW;
-        let window_params = unsafe { &*window_params };
+        let window_params = unsafe { &*(lparam.0 as *const CREATESTRUCTW) };
         let window_creation_context = window_params.lpCreateParams as *mut WindowCreateContext;
         let window_creation_context = unsafe { &mut *window_creation_context };
         return match WindowsWindowInner::new(window_creation_context, hwnd, window_params) {

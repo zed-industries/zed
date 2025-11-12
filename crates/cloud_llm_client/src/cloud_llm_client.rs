@@ -183,13 +183,13 @@ pub struct PredictEditsGitInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictEditsResponse {
-    pub request_id: Uuid,
+    pub request_id: String,
     pub output_excerpt: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcceptEditPredictionBody {
-    pub request_id: Uuid,
+    pub request_id: String,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
@@ -322,6 +322,9 @@ pub struct LanguageModel {
     pub supports_images: bool,
     pub supports_thinking: bool,
     pub supports_max_mode: bool,
+    // only used by OpenAI and xAI
+    #[serde(default)]
+    pub supports_parallel_tool_calls: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

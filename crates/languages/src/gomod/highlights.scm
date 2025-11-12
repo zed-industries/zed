@@ -7,6 +7,7 @@
   "exclude"
   "retract"
   "module"
+  "ignore"
 ] @keyword
 
 "=>" @operator

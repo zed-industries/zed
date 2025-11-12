@@ -78,13 +78,7 @@ struct Section<const COLS: usize> {
 }
 
 impl<const COLS: usize> Section<COLS> {
-    fn render(
-        self,
-        index_offset: usize,
-        focus: &FocusHandle,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> impl IntoElement {
+    fn render(self, index_offset: usize, focus: &FocusHandle, cx: &mut App) -> impl IntoElement {
         v_flex()
             .min_w_full()
             .child(
@@ -104,7 +98,7 @@ impl<const COLS: usize> Section<COLS> {
                 self.entries
                     .iter()
                     .enumerate()
-                    .map(|(index, entry)| entry.render(index_offset + index, focus, window, cx)),
+                    .map(|(index, entry)| entry.render(index_offset + index, focus, cx)),
             )
     }
 }
@@ -116,13 +110,7 @@ struct SectionEntry {
 }
 
 impl SectionEntry {
-    fn render(
-        &self,
-        button_index: usize,
-        focus: &FocusHandle,
-        window: &Window,
-        cx: &App,
-    ) -> impl IntoElement {
+    fn render(&self, button_index: usize, focus: &FocusHandle, cx: &App) -> impl IntoElement {
         ButtonLike::new(("onboarding-button-id", button_index))
             .tab_index(button_index as isize)
             .full_width()
@@ -141,9 +129,8 @@ impl SectionEntry {
                             )
                             .child(Label::new(self.title)),
                     )
-                    .children(
-                        KeyBinding::for_action_in(self.action, focus, window, cx)
-                            .map(|s| s.size(rems_from_px(12.))),
+                    .child(
+                        KeyBinding::for_action_in(self.action, focus, cx).size(rems_from_px(12.)),
                     ),
             )
             .on_click(|_, window, cx| window.dispatch_action(self.action.boxed_clone(), cx))
@@ -151,7 +138,6 @@ impl SectionEntry {
 }
 
 pub struct WelcomePage {
-    first_paint: bool,
     focus_handle: FocusHandle,
 }
 
@@ -168,11 +154,7 @@ impl WelcomePage {
 }
 
 impl Render for WelcomePage {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.first_paint {
-            window.request_animation_frame();
-            self.first_paint = false;
-        }
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (first_section, second_section) = CONTENT;
         let first_section_entries = first_section.entries.len();
         let last_index = first_section_entries + second_section.entries.len();
@@ -220,13 +202,11 @@ impl Render for WelcomePage {
                                     .child(first_section.render(
                                         Default::default(),
                                         &self.focus_handle,
-                                        window,
                                         cx,
                                     ))
                                     .child(second_section.render(
                                         first_section_entries,
                                         &self.focus_handle,
-                                        window,
                                         cx,
                                     ))
                                     .child(
@@ -316,10 +296,7 @@ impl WelcomePage {
             cx.on_focus(&focus_handle, window, |_, _, cx| cx.notify())
                 .detach();
 
-            WelcomePage {
-                first_paint: true,
-                focus_handle,
-            }
+            WelcomePage { focus_handle }
         })
     }
 }

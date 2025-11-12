@@ -246,10 +246,6 @@ impl X11ClientStatePtr {
             state.keyboard_focused_window = None;
         }
         state.cursor_styles.remove(&x_window);
-
-        if state.windows.is_empty() {
-            state.common.signal.stop();
-        }
     }
 
     pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
@@ -1047,6 +1043,7 @@ impl X11Client {
                 window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
                     keystroke,
                     is_held: false,
+                    prefer_character_input: false,
                 }));
             }
             Event::KeyRelease(event) => {

@@ -2,7 +2,7 @@ mod color;
 mod vscode;
 
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
@@ -89,15 +89,16 @@ fn main() -> Result<()> {
 
     let theme_file_path = args.theme_path;
 
-    let theme_file = match File::open(&theme_file_path) {
-        Ok(file) => file,
+    let mut buffer = Vec::new();
+    match File::open(&theme_file_path).and_then(|mut file| file.read_to_end(&mut buffer)) {
+        Ok(_) => {}
         Err(err) => {
             log::info!("Failed to open file at path: {:?}", theme_file_path);
             return Err(err)?;
         }
     };
 
-    let vscode_theme: VsCodeTheme = serde_json_lenient::from_reader(theme_file)
+    let vscode_theme: VsCodeTheme = serde_json_lenient::from_slice(&buffer)
         .context(format!("failed to parse theme {theme_file_path:?}"))?;
 
     let theme_metadata = ThemeMetadata {

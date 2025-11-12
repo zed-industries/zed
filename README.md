@@ -1,7 +1,7 @@
 # Zed
 
 [![Zed](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json)](https://zed.dev)
-[![CI](https://github.com/zed-industries/zed/actions/workflows/ci.yml/badge.svg)](https://github.com/zed-industries/zed/actions/workflows/ci.yml)
+[![CI](https://github.com/zed-industries/zed/actions/workflows/run_tests.yml/badge.svg)](https://github.com/zed-industries/zed/actions/workflows/run_tests.yml)
 
 Welcome to Zed, a high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
 
@@ -9,11 +9,10 @@ Welcome to Zed, a high-performance, multiplayer code editor from the creators of
 
 ### Installation
 
-On macOS and Linux you can [download Zed directly](https://zed.dev/download) or [install Zed via your local package manager](https://zed.dev/docs/linux#installing-via-a-package-manager).
+On macOS, Linux, and Windows you can [download Zed directly](https://zed.dev/download) or [install Zed via your local package manager](https://zed.dev/docs/linux#installing-via-a-package-manager).
 
 Other platforms are not yet available:
 
-- Windows ([tracking issue](https://github.com/zed-industries/zed/issues/5394))
 - Web ([tracking issue](https://github.com/zed-industries/zed/issues/5396))
 
 ### Developing Zed
