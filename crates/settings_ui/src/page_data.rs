@@ -4350,6 +4350,27 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SectionHeader("Advanced Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
+                    title: "Scroll Multiplier",
+                    description: "The multiplier for scrolling with the mouse wheel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.scroll_multiplier
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .scroll_multiplier
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
                     title: "Max Scroll History Lines",
                     description: "Maximum number of lines to keep in scrollback history (max: 100,000; 0 disables scrolling)",
                     field: Box::new(SettingField {

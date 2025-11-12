@@ -108,10 +108,7 @@ impl settings::Settings for TerminalSettings {
             default_width: px(user_content.default_width.unwrap()),
             default_height: px(user_content.default_height.unwrap()),
             detect_venv: project_content.detect_venv.unwrap(),
-            #[cfg(target_os = "macos")]
-            scroll_multiplier: user_content.scroll_multiplier.unwrap_or(4.),
-            #[cfg(not(target_os = "macos"))]
-            scroll_multiplier: user_content.scroll_multiplier.unwrap_or(1.),
+            scroll_multiplier: user_content.scroll_multiplier.unwrap(),
             max_scroll_history_lines: user_content.max_scroll_history_lines,
             toolbar: Toolbar {
                 breadcrumbs: user_content.toolbar.unwrap().breadcrumbs.unwrap(),
