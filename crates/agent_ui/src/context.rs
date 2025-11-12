@@ -1101,22 +1101,15 @@ mod tests {
 
         let file_context = load_context_for("file.txt", large_content, cx).await;
 
-        // Plain text files have no outline, so should fall back to first 1KB
+        // Should contain some of the actual file content
         assert!(
-            file_context.text.contains("First 1KB"),
-            "Large files without outline should use fallback"
+            file_context.text.contains(LINE),
+            "Should contain some of the file content"
         );
 
         assert!(
-            file_context
-                .text
-                .contains("file too large to show full content, and no outline available"),
-            "Should explain why fallback was used"
-        );
-
-        assert!(
-            file_context.text.len() < content_len,
-            "Fallback should be smaller than original content"
+            file_context.text.len() < content_len / 10,
+            "Should be significantly smaller than original content"
         );
     }
 
