@@ -315,10 +315,8 @@ impl BackgroundExecutor {
                                 "parked with nothing left to run{waiting_message}{backtrace_message}",
                             )
                         }
-                        dispatcher.set_unparker(unparker.clone());
-                        parker.park_timeout(
-                            test_should_end_by.saturating_duration_since(Instant::now()),
-                        );
+                        dispatcher.push_unparker(unparker.clone());
+                        parker.park_timeout(Duration::from_millis(1));
                         if Instant::now() > test_should_end_by {
                             panic!("test timed out after {duration:?} with allow_parking")
                         }
