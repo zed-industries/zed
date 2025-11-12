@@ -1818,7 +1818,9 @@ impl Terminal {
         {
             let mouse_cell_index =
                 content_index_for_mouse(position, &self.last_content.terminal_bounds);
-            self.mouse_down_link = self.last_content.cells
+            self.mouse_down_link = self
+                .last_content
+                .cells
                 .get(mouse_cell_index)
                 .and_then(|cell| cell.hyperlink().map(Arc::new));
         }
@@ -1897,7 +1899,9 @@ impl Terminal {
             if let Some(down_link) = self.mouse_down_link.take() {
                 let mouse_cell_index =
                     content_index_for_mouse(position, &self.last_content.terminal_bounds);
-                if let Some(up_link) = self.last_content.cells
+                if let Some(up_link) = self
+                    .last_content
+                    .cells
                     .get(mouse_cell_index)
                     .and_then(|cell| cell.hyperlink())
                 {
