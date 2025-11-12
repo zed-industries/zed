@@ -148,9 +148,7 @@ impl DapLocator for CargoLocator {
             .first()
             .is_some_and(|arg| arg == "test" || arg == "t");
 
-        let is_ignored = build_config
-            .args
-            .contains(&"--include-ignored".to_owned());
+        let is_ignored = build_config.args.contains(&"--include-ignored".to_owned());
 
         let executables = output
             .lines()
