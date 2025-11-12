@@ -253,7 +253,6 @@ impl GitListEntry {
 pub struct GitStatusEntry {
     pub(crate) repo_path: RepoPath,
     pub(crate) status: FileStatus,
-    pub(crate) staging: StageStatus,
 }
 
 impl GitStatusEntry {
@@ -268,6 +267,17 @@ impl GitStatusEntry {
         self.repo_path
             .parent()
             .map(|parent| parent.display(path_style).to_string())
+    }
+
+    fn staging(&self, panel: &GitPanel, repo: &Repository) -> StageStatus {
+        if let Some(staging) = panel.entry_staging(&self.repo_path) {
+            return staging;
+        }
+        repo.snapshot()
+            .status_for_path(&self.repo_path)
+            .unwrap()
+            .status
+            .staging()
     }
 }
 
@@ -963,12 +973,11 @@ impl GitPanel {
     ) {
         maybe!({
             let active_repo = self.active_repository.clone()?;
-            let path = active_repo
-                .read(cx)
-                .repo_path_to_project_path(&entry.repo_path, cx)?;
+            let repo = active_repo.read(cx);
+            let path = repo.repo_path_to_project_path(&entry.repo_path, cx)?;
             let workspace = self.workspace.clone();
 
-            if entry.status.staging().has_staged() {
+            if entry.staging(self, repo).has_staged() {
                 self.change_file_stage(false, vec![entry.clone()], cx);
             }
             let filename = path.path.file_name()?.to_string();
@@ -1199,11 +1208,17 @@ impl GitPanel {
                     })
                     .collect::<Vec<_>>()
             })?;
-            let to_unstage = to_delete
-                .into_iter()
-                .filter(|entry| !entry.status.staging().is_fully_unstaged())
-                .collect();
-            this.update(cx, |this, cx| this.change_file_stage(false, to_unstage, cx))?;
+            this.update(cx, |this, cx| {
+                let to_unstage = to_delete
+                    .into_iter()
+                    .filter(|entry| {
+                        !entry
+                            .staging(this, active_repo.read(cx))
+                            .is_fully_unstaged()
+                    })
+                    .collect();
+                this.change_file_stage(false, to_unstage, cx)
+            })?;
             for task in tasks {
                 task.await?;
             }
@@ -1219,7 +1234,11 @@ impl GitPanel {
             .entries
             .iter()
             .filter_map(|entry| entry.status_entry())
-            .filter(|status_entry| status_entry.staging.has_unstaged())
+            .filter(|status_entry| {
+                status_entry
+                    .staging(self, self.active_repository.as_ref().unwrap().read(cx))
+                    .has_unstaged()
+            })
             .cloned()
             .collect::<Vec<_>>();
         self.change_file_stage(true, entries, cx);
@@ -1230,7 +1249,11 @@ impl GitPanel {
             .entries
             .iter()
             .filter_map(|entry| entry.status_entry())
-            .filter(|status_entry| status_entry.staging.has_staged())
+            .filter(|status_entry| {
+                status_entry
+                    .staging(self, self.active_repository.as_ref().unwrap().read(cx))
+                    .has_staged()
+            })
             .cloned()
             .collect::<Vec<_>>();
         self.change_file_stage(false, entries, cx);
@@ -1242,18 +1265,18 @@ impl GitPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        println!("      toggle_staged_for_entry");
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
+        let repo = active_repository.read(cx);
         let (stage, repo_paths) = match entry {
             GitListEntry::Status(status_entry) => {
                 let repo_paths = vec![status_entry.clone()];
-                println!("{}", status_entry.repo_path.as_unix_str());
-                println!("  >>> pending_ops: {:?}", self.pending);
-                println!("  >>> entry: {:?}", status_entry);
-                let stage = if let Some(status) = self.entry_staging(&status_entry) {
-                    !status.is_fully_staged()
-                } else if status_entry.status.staging().is_fully_staged() {
+                println!("      {}", status_entry.repo_path.as_unix_str());
+                println!("        >>> pending_ops: {:?}", self.pending);
+                println!("        >>> entry: {:?}", status_entry);
+                let stage = if status_entry.staging(self, repo).is_fully_staged() {
                     if let Some(op) = self.bulk_staging.clone()
                         && op.anchor == status_entry.repo_path
                     {
@@ -1264,19 +1287,18 @@ impl GitPanel {
                     self.set_bulk_staging_anchor(status_entry.repo_path.clone(), cx);
                     true
                 };
-                println!("  >>> stage={stage}");
+                println!("        >>> stage={stage}");
                 (stage, repo_paths)
             }
             GitListEntry::Header(section) => {
                 let goal_staged_state = !self.header_state(section.header).selected();
-                let repository = active_repository.read(cx);
                 let entries = self
                     .entries
                     .iter()
                     .filter_map(|entry| entry.status_entry())
                     .filter(|status_entry| {
-                        section.contains(status_entry, repository)
-                            && status_entry.staging.as_bool() != Some(goal_staged_state)
+                        section.contains(status_entry, repo)
+                            && status_entry.staging(self, repo).as_bool() != Some(goal_staged_state)
                     })
                     .cloned()
                     .collect::<Vec<_>>();
@@ -1460,7 +1482,9 @@ impl GitPanel {
         let Some(status_entry) = selected_entry.status_entry() else {
             return;
         };
-        if status_entry.staging != StageStatus::Staged {
+        if status_entry.staging(self, self.active_repository.as_ref().unwrap().read(cx))
+            != StageStatus::Staged
+        {
             self.change_file_stage(true, vec![status_entry.clone()], cx);
         }
     }
@@ -1477,7 +1501,9 @@ impl GitPanel {
         let Some(status_entry) = selected_entry.status_entry() else {
             return;
         };
-        if status_entry.staging != StageStatus::Unstaged {
+        if status_entry.staging(self, self.active_repository.as_ref().unwrap().read(cx))
+            != StageStatus::Unstaged
+        {
             self.change_file_stage(false, vec![status_entry.clone()], cx);
         }
     }
@@ -2700,7 +2726,6 @@ impl GitPanel {
             let entry = GitStatusEntry {
                 repo_path: entry.repo_path.clone(),
                 status: entry.status,
-                staging,
             };
 
             if staging.has_staged() {
@@ -2806,7 +2831,7 @@ impl GitPanel {
             && let Some(index) = bulk_staging_anchor_new_index
             && let Some(entry) = self.entries.get(index)
             && let Some(entry) = entry.status_entry()
-            && self.entry_staging(entry).unwrap_or(entry.staging) == StageStatus::Staged
+            && entry.staging(self, repo) == StageStatus::Staged
         {
             self.bulk_staging = bulk_staging;
         }
@@ -2854,38 +2879,26 @@ impl GitPanel {
             self.entry_count += 1;
             if repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path) {
                 self.conflicted_count += 1;
-                if self
-                    .entry_staging(status_entry)
-                    .unwrap_or(status_entry.staging)
-                    .has_staged()
-                {
+                if status_entry.staging(self, repo).has_staged() {
                     self.conflicted_staged_count += 1;
                 }
             } else if status_entry.status.is_created() {
                 self.new_count += 1;
-                if self
-                    .entry_staging(status_entry)
-                    .unwrap_or(status_entry.staging)
-                    .has_staged()
-                {
+                if status_entry.staging(self, repo).has_staged() {
                     self.new_staged_count += 1;
                 }
             } else {
                 self.tracked_count += 1;
-                if self
-                    .entry_staging(status_entry)
-                    .unwrap_or(status_entry.staging)
-                    .has_staged()
-                {
+                if status_entry.staging(self, repo).has_staged() {
                     self.tracked_staged_count += 1;
                 }
             }
         }
     }
 
-    fn entry_staging(&self, entry: &GitStatusEntry) -> Option<StageStatus> {
+    fn entry_staging(&self, repo_path: &RepoPath) -> Option<StageStatus> {
         for pending in self.pending.iter().rev() {
-            if pending.contains_path(&entry.repo_path) {
+            if pending.contains_path(repo_path) {
                 match pending.target_status {
                     TargetStatus::Staged => return Some(StageStatus::Staged),
                     TargetStatus::Unstaged => return Some(StageStatus::Unstaged),
@@ -3735,7 +3748,7 @@ impl GitPanel {
         let entry = self.entries.get(ix)?;
 
         let status = entry.status_entry()?;
-        let entry_staging = self.entry_staging(status).unwrap_or(status.staging);
+        let entry_staging = status.staging(self, repo);
 
         let checkbox = Checkbox::new("stage-file", entry_staging.as_bool().into())
             .disabled(!self.has_write_access(cx))
@@ -3773,6 +3786,7 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let entry_count = self.entries.len();
+        println!("render_entries");
 
         v_flex()
             .flex_1()
@@ -3990,6 +4004,7 @@ impl GitPanel {
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
+        println!("  render_entry");
         let path_style = self.project.read(cx).path_style(cx);
         let display_name = entry.display_name(path_style);
 
@@ -4029,16 +4044,12 @@ impl GitPanel {
         let checkbox_id: ElementId =
             ElementId::Name(format!("entry_{}_{}_checkbox", display_name, ix).into());
 
-        let entry_staging = self.entry_staging(entry).unwrap_or(entry.staging);
+        let entry_staging = entry.staging(self, self.active_repository.as_ref().unwrap().read(cx));
         let mut is_staged: ToggleState = entry_staging.as_bool().into();
         if self.show_placeholders && !self.has_staged_changes() && !entry.status.is_created() {
             is_staged = ToggleState::Selected;
         }
-        println!(
-            "Checkbox status = {is_staged:?}, self.entry_staging = {:?}, entry.staging = {:?}",
-            self.entry_staging(entry),
-            entry.staging
-        );
+        println!("    Checkbox status = {is_staged:?},  entry.staging = {entry_staging:?}");
 
         let handle = cx.weak_entity();
 
@@ -4136,7 +4147,7 @@ impl GitPanel {
                                 let this = cx.weak_entity();
                                 move |_, click, window, cx| {
                                     println!(
-                                        "{} - *** Clicked - checkbox {} ***",
+                                        "    {} - *** Clicked - checkbox {} ***",
                                         std::time::SystemTime::now()
                                             .duration_since(std::time::UNIX_EPOCH)
                                             .unwrap()
