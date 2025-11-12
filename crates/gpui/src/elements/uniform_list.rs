@@ -699,3 +699,150 @@ impl InteractiveElement for UniformList {
         &mut self.interactivity
     }
 }
+
+#[cfg(test)]
+mod test {
+    use crate::TestAppContext;
+
+    #[gpui::test]
+    fn test_scroll_strategy_nearest(cx: &mut TestAppContext) {
+        use crate::{
+            Context, FocusHandle, ScrollStrategy, UniformListScrollHandle, Window, actions, div,
+            prelude::*, px, uniform_list,
+        };
+        use std::ops::Range;
+
+        actions!(example, [SelectNext, SelectPrev]);
+
+        struct TestView {
+            index: usize,
+            length: usize,
+            scroll_handle: UniformListScrollHandle,
+            focus_handle: FocusHandle,
+            visible_range: Range<usize>,
+        }
+
+        impl TestView {
+            pub fn select_next(
+                &mut self,
+                _: &SelectNext,
+                window: &mut Window,
+                _: &mut Context<Self>,
+            ) {
+                if self.index + 1 == self.length {
+                    self.index = 0
+                } else {
+                    self.index += 1;
+                }
+                self.scroll_handle
+                    .scroll_to_item(self.index, ScrollStrategy::Nearest);
+                window.refresh();
+            }
+
+            pub fn select_previous(
+                &mut self,
+                _: &SelectPrev,
+                window: &mut Window,
+                _: &mut Context<Self>,
+            ) {
+                if self.index == 0 {
+                    self.index = self.length - 1
+                } else {
+                    self.index -= 1;
+                }
+                self.scroll_handle
+                    .scroll_to_item(self.index, ScrollStrategy::Nearest);
+                window.refresh();
+            }
+        }
+
+        impl Render for TestView {
+            fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .id("list-example")
+                    .track_focus(&self.focus_handle)
+                    .on_action(cx.listener(Self::select_next))
+                    .on_action(cx.listener(Self::select_previous))
+                    .size_full()
+                    .child(
+                        uniform_list(
+                            "entries",
+                            self.length,
+                            cx.processor(|this, range: Range<usize>, _window, _cx| {
+                                this.visible_range = range.clone();
+                                range
+                                    .map(|ix| div().id(ix).h(px(20.0)).child(format!("Item {ix}")))
+                                    .collect()
+                            }),
+                        )
+                        .track_scroll(self.scroll_handle.clone())
+                        .h(px(200.0)),
+                    )
+            }
+        }
+
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            let focus_handle = cx.focus_handle();
+            window.focus(&focus_handle);
+            TestView {
+                scroll_handle: UniformListScrollHandle::new(),
+                index: 0,
+                focus_handle,
+                length: 47,
+                visible_range: 0..0,
+            }
+        });
+
+        // 10 out of 47 items are visible
+
+        // First 9 times selecting next item does not scroll
+        for ix in 1..10 {
+            cx.dispatch_action(SelectNext);
+            view.read_with(cx, |view, _| {
+                assert_eq!(view.index, ix);
+                assert_eq!(view.visible_range, 0..10);
+            })
+        }
+
+        // Now each time the list scrolls down by 1
+        for ix in 10..47 {
+            cx.dispatch_action(SelectNext);
+            view.read_with(cx, |view, _| {
+                assert_eq!(view.index, ix);
+                assert_eq!(view.visible_range, ix - 9..ix + 1);
+            })
+        }
+
+        // After the last item we move back to the start
+        cx.dispatch_action(SelectNext);
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.index, 0);
+            assert_eq!(view.visible_range, 0..10);
+        });
+
+        // Return to the last element
+        cx.dispatch_action(SelectPrev);
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.index, 46);
+            assert_eq!(view.visible_range, 37..47);
+        });
+
+        // First 9 times selecting previous does not scroll
+        for ix in (37..46).rev() {
+            cx.dispatch_action(SelectPrev);
+            view.read_with(cx, |view, _| {
+                assert_eq!(view.index, ix);
+                assert_eq!(view.visible_range, 37..47);
+            })
+        }
+
+        // Now each time the list scrolls up by 1
+        for ix in (0..37).rev() {
+            cx.dispatch_action(SelectPrev);
+            view.read_with(cx, |view, _| {
+                assert_eq!(view.index, ix);
+                assert_eq!(view.visible_range, ix..ix + 10);
+            })
+        }
+    }
+}
