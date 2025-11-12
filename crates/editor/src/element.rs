@@ -64,6 +64,7 @@ use multi_buffer::{
 use project::{
     Entry, ProjectPath,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
+    git_store::branch_diff::DiffBase,
     project_settings::ProjectSettings,
 };
 use settings::{
@@ -8959,7 +8960,6 @@ impl Element for EditorElement {
                                     buffer.anchor_after(diff_base_byte_range.end);
                             }
 
-                            // Check if first row has HunkRemovedColor and last row has HunkAddedColor
                             let first_is_removed = highlighted_rows
                                 .get(&display_row_range.start)
                                 .and_then(|highlight| highlight.type_id)
@@ -8975,17 +8975,49 @@ impl Element for EditorElement {
                                 continue;
                             }
 
-                            let current_text: String =
-                                buffer.text_for_range(multi_buffer_range.clone()).collect();
-                            let old_text: String = buffer
-                                .text_for_range(diff_base_byte_range.clone())
-                                .collect();
+                            let mut display_row = display_row_range.start;
+
+                            let mut old_text = Vec::default();
+                            while display_row < display_row_range.end {
+                                if !highlighted_rows
+                                    .get(&display_row)
+                                    .and_then(|highlight| highlight.type_id)
+                                    .is_some_and(|type_id| {
+                                        type_id == TypeId::of::<HunkRemovedColor>()
+                                    })
+                                {
+                                    break;
+                                }
+
+                                old_text.push(snapshot.line(display_row));
+                                display_row.0 += 1;
+                            }
+
+                            let mut current_text = Vec::default();
+                            while display_row < display_row_range.end {
+                                if !highlighted_rows
+                                    .get(&display_row)
+                                    .and_then(|highlight| highlight.type_id)
+                                    .is_some_and(|type_id| {
+                                        type_id == TypeId::of::<HunkAddedColor>()
+                                    })
+                                {
+                                    break;
+                                }
+
+                                current_text.push(snapshot.line(display_row));
+                                display_row.0 += 1;
+                            }
+
+                            let current_text = current_text.concat();
+                            let old_text = old_text.concat();
 
                             let diff = similar::TextDiff::configure()
                                 .algorithm(similar::Algorithm::Myers)
                                 .diff_words(&old_text, &current_text);
 
                             let mut current_off = multi_buffer_range.start.to_offset(buffer);
+
                             for change in diff.iter_all_changes() {
                                 match change.tag() {
                                     similar::ChangeTag::Equal => {
@@ -9006,7 +9038,9 @@ impl Element for EditorElement {
                                                 .push((start_point..end_point, Hsla::blue()));
                                         }
                                     }
-                                    similar::ChangeTag::Delete => {}
+                                    similar::ChangeTag::Delete => {
+                                        dbg!(change.as_str());
+                                    }
                                 }
                             }
                         }
