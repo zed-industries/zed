@@ -44,6 +44,7 @@ pub async fn get_buffer_content_or_outline(
                 .collect::<Vec<_>>()
         })?;
 
+        // If no outline exists, fall back to first 1KB so the agent has some context
         if outline_items.is_empty() {
             let text = buffer.read_with(cx, |buffer, _| {
                 let snapshot = buffer.snapshot();
