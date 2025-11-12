@@ -8994,6 +8994,13 @@ impl Element for EditorElement {
                             }
 
                             let mut current_text = Vec::default();
+                            let mut current_off = snapshot
+                                .display_point_to_anchor(
+                                    DisplayPoint::new(display_row, 0),
+                                    Bias::Left,
+                                )
+                                .to_offset(buffer);
+
                             while display_row < display_row_range.end {
                                 if !highlighted_rows
                                     .get(&display_row)
@@ -9013,10 +9020,8 @@ impl Element for EditorElement {
                             let old_text = old_text.concat();
 
                             let diff = similar::TextDiff::configure()
-                                .algorithm(similar::Algorithm::Myers)
+                                .algorithm(similar::Algorithm::Patience)
                                 .diff_words(&old_text, &current_text);
-
-                            let mut current_off = multi_buffer_range.start.to_offset(buffer);
 
                             for change in diff.iter_all_changes() {
                                 match change.tag() {
@@ -9038,9 +9043,7 @@ impl Element for EditorElement {
                                                 .push((start_point..end_point, Hsla::blue()));
                                         }
                                     }
-                                    similar::ChangeTag::Delete => {
-                                        dbg!(change.as_str());
-                                    }
+                                    similar::ChangeTag::Delete => {}
                                 }
                             }
                         }
