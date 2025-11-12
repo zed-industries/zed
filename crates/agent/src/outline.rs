@@ -196,6 +196,14 @@ mod tests {
             result.text.contains("AAAAAAAAAA"),
             "Result did not contain content subset"
         );
+
+        // Should be marked as not an outline (it's truncated content)
+        assert!(
+            !result.is_outline,
+            "Large file without outline should not be marked as outline"
+        );
+
+        // Should be reasonably sized (much smaller than original)
         assert!(
             result.text.len() < 50 * 1024,
             "Result size {} should be smaller than 50KB",
