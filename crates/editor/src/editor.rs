@@ -17329,18 +17329,11 @@ impl Editor {
             let pane = workspace.adjacent_pane(window, cx);
             workspace.add_item(pane, item, None, true, true, window, cx);
         } else if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
-            let (preview_item_id, preview_item_idx) =
-                workspace.active_pane().read_with(cx, |pane, _| {
-                    (pane.preview_item_id(), pane.preview_item_idx())
-                });
+            let preview_item_idx = workspace
+                .active_pane()
+                .update(cx, |pane, cx| pane.close_current_preview_item(window, cx));
 
             workspace.add_item_to_active_pane(item, preview_item_idx, true, window, cx);
-
-            if let Some(preview_item_id) = preview_item_id {
-                workspace.active_pane().update(cx, |pane, cx| {
-                    pane.remove_item(preview_item_id, false, false, window, cx);
-                });
-            }
         } else {
             workspace.add_item_to_active_pane(item, None, true, window, cx);
         }
