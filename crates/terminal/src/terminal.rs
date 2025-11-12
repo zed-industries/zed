@@ -379,6 +379,7 @@ impl TerminalBuilder {
             is_remote_terminal: false,
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
+            mouse_down_link: None,
             #[cfg(windows)]
             shell_program: None,
             activation_script: Vec::new(),
@@ -604,6 +605,7 @@ impl TerminalBuilder {
                 is_remote_terminal,
                 last_mouse_move_time: Instant::now(),
                 last_hyperlink_search_position: None,
+                mouse_down_link: None,
                 #[cfg(windows)]
                 shell_program,
                 activation_script: activation_script.clone(),
@@ -833,6 +835,7 @@ pub struct Terminal {
     is_remote_terminal: bool,
     last_mouse_move_time: Instant,
     last_hyperlink_search_position: Option<Point<Pixels>>,
+    mouse_down_link: Option<Arc<alacritty_terminal::term::cell::Hyperlink>>,
     #[cfg(windows)]
     shell_program: Option<String>,
     template: CopyTemplate,
@@ -1761,6 +1764,8 @@ impl Terminal {
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
         if !self.mouse_mode(e.modifiers.shift) {
             self.selection_phase = SelectionPhase::Selecting;
+            // Clear link tracking when dragging (user is selecting text, not clicking link)
+            self.mouse_down_link = None;
             // Alacritty has the same ordering, of first updating the selection
             // then scrolling 15ms later
             self.events
@@ -1805,6 +1810,18 @@ impl Terminal {
             self.last_content.terminal_bounds,
             self.last_content.display_offset,
         );
+
+        // Store link on Ctrl/Cmd+click for link-based click detection
+        if e.button == MouseButton::Left
+            && e.modifiers.secondary()
+            && !self.mouse_mode(e.modifiers.shift)
+        {
+            let mouse_cell_index =
+                content_index_for_mouse(position, &self.last_content.terminal_bounds);
+            self.mouse_down_link = self.last_content.cells
+                .get(mouse_cell_index)
+                .and_then(|cell| cell.hyperlink().map(Arc::new));
+        }
 
         if self.mouse_mode(e.modifiers.shift) {
             if let Some(bytes) =
@@ -1874,6 +1891,23 @@ impl Terminal {
         } else {
             if e.button == MouseButton::Left && setting.copy_on_select {
                 self.copy(Some(true));
+            }
+
+            // Check for link click first (works even with mouse movement during click)
+            if let Some(down_link) = self.mouse_down_link.take() {
+                let mouse_cell_index =
+                    content_index_for_mouse(position, &self.last_content.terminal_bounds);
+                if let Some(up_link) = self.last_content.cells
+                    .get(mouse_cell_index)
+                    .and_then(|cell| cell.hyperlink())
+                {
+                    if down_link.uri() == up_link.uri() {
+                        cx.open_url(up_link.uri());
+                        self.selection_phase = SelectionPhase::Ended;
+                        self.last_mouse = None;
+                        return;
+                    }
+                }
             }
 
             //Hyperlinks
