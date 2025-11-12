@@ -1240,27 +1240,19 @@ mod tests {
 
     #[perf]
     fn compare_paths_mixed_case_numeric_ordering() {
-        let mut paths = vec![
-            (Path::new(".cargo"), false),
-            (Path::new(".cloudflare"), false),
+        let mut entries = vec![
             (Path::new(".config"), false),
-            (Path::new(".github"), false),
-            (Path::new(".zed"), false),
-            (Path::new("assets"), false),
-            (Path::new("crates"), false),
             (Path::new("Dir1"), false),
+            (Path::new("dir01"), false),
             (Path::new("dir2"), false),
-            (Path::new("Dir3"), false),
-            (Path::new("docs"), false),
-            (Path::new("extensions"), false),
-            (Path::new("legal"), false),
-            (Path::new("nix"), false),
-            (Path::new("script"), false),
+            (Path::new("Dir02"), false),
+            (Path::new("dir10"), false),
+            (Path::new("Dir10"), false),
         ];
 
-        paths.sort_by(|&a, &b| compare_paths(a, b));
+        entries.sort_by(|&a, &b| compare_paths(a, b));
 
-        let ordered: Vec<&str> = paths
+        let ordered: Vec<&str> = entries
             .iter()
             .map(|(path, _)| path.to_str().unwrap())
             .collect();
@@ -1268,21 +1260,7 @@ mod tests {
         assert_eq!(
             ordered,
             vec![
-                ".cargo",
-                ".cloudflare",
-                ".config",
-                ".github",
-                ".zed",
-                "assets",
-                "crates",
-                "Dir1",
-                "dir2",
-                "Dir3",
-                "docs",
-                "extensions",
-                "legal",
-                "nix",
-                "script"
+                ".config", "Dir1", "dir01", "dir2", "Dir02", "dir10", "Dir10"
             ]
         );
     }
@@ -1958,17 +1936,25 @@ mod tests {
             ),
             Ordering::Less
         );
-
-        // Mixed case with numbers
-        assert_eq!(natural_sort("File1", "file2"), Ordering::Less);
-        assert_eq!(natural_sort("file1", "File2"), Ordering::Less);
     }
 
     #[perf]
-    fn test_natural_sort_mixed_case_numeric_ordering() {
-        let mut entries = vec!["Dir1", "dir2", "Dir3"];
-        entries.sort_by(|a, b| natural_sort(a, b));
-        assert_eq!(entries, vec!["Dir1", "dir2", "Dir3"]);
+    fn test_natural_sort_case_sensitive() {
+        // Numerically smaller values come first.
+        assert_eq!(natural_sort("File1", "file2"), Ordering::Less);
+        assert_eq!(natural_sort("file1", "File2"), Ordering::Less);
+
+        // Numerically equal values: the case-insensitive comparison decides first.
+        // Case-sensitive comparison only occurs when both are equal case-insensitively.
+        assert_eq!(natural_sort("Dir1", "dir01"), Ordering::Less);
+        assert_eq!(natural_sort("dir2", "Dir02"), Ordering::Less);
+        assert_eq!(natural_sort("dir2", "dir02"), Ordering::Less);
+
+        // Numerically equal and case-insensitively equal:
+        // the lexicographically smaller (case-sensitive) one wins.
+        assert_eq!(natural_sort("dir1", "Dir1"), Ordering::Less);
+        assert_eq!(natural_sort("dir02", "Dir02"), Ordering::Less);
+        assert_eq!(natural_sort("dir10", "Dir10"), Ordering::Less);
     }
 
     #[perf]
