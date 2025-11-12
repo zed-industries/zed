@@ -65,5 +65,5 @@ jobs:
         rm -rf ./../.cargo
       shell: bash -euxo pipefail {0}
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.run_id }}
   cancel-in-progress: true
