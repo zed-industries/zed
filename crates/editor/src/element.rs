@@ -6,10 +6,10 @@ use crate::{
     EditDisplayMode, EditPrediction, Editor, EditorMode, EditorSettings, EditorSnapshot,
     EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp,
     HandleInput, HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp,
-    MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts,
-    OpenExcerptsSplit, PageDown, PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt,
-    SelectPhase, SelectedTextHighlight, Selection, SelectionDragState, SelectionEffects,
-    SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
+    MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown,
+    PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase,
+    SelectedTextHighlight, Selection, SelectionDragState, SelectionEffects, SizingBehavior,
+    SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
@@ -4042,24 +4042,17 @@ impl EditorElement {
                                                     )
                                                     .group_hover("", |div| div.underline()),
                                             )
-                                            .on_click({
-                                                let focus_handle = focus_handle.clone();
-                                                move |event, window, cx| {
-                                                    if event.modifiers().secondary() {
-                                                        focus_handle.dispatch_action(
-                                                            &OpenExcerptsSplit,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    } else {
-                                                        focus_handle.dispatch_action(
-                                                            &OpenExcerpts,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    }
+                                            .on_click(window.listener_for(&self.editor, {
+                                                let jump_data = jump_data.clone();
+                                                move |editor, e: &ClickEvent, window, cx| {
+                                                    editor.open_excerpts_common(
+                                                        Some(jump_data.clone()),
+                                                        e.modifiers().secondary(),
+                                                        window,
+                                                        cx,
+                                                    );
                                                 }
-                                            }),
+                                            })),
                                     )
                                     .when_some(parent_path, |then, path| {
                                         then.child(div().child(path).text_color(
@@ -4087,24 +4080,17 @@ impl EditorElement {
                                                         cx,
                                                     )),
                                             )
-                                            .on_click({
-                                                let focus_handle = focus_handle.clone();
-                                                move |event, window, cx| {
-                                                    if event.modifiers().secondary() {
-                                                        focus_handle.dispatch_action(
-                                                            &OpenExcerptsSplit,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    } else {
-                                                        focus_handle.dispatch_action(
-                                                            &OpenExcerpts,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    }
+                                            .on_click(window.listener_for(&self.editor, {
+                                                let jump_data = jump_data.clone();
+                                                move |editor, e: &ClickEvent, window, cx| {
+                                                    editor.open_excerpts_common(
+                                                        Some(jump_data.clone()),
+                                                        e.modifiers().secondary(),
+                                                        window,
+                                                        cx,
+                                                    );
                                                 }
-                                            }),
+                                            })),
                                     )
                                 },
                             )
