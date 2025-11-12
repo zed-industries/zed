@@ -4103,15 +4103,18 @@ impl NavHistory {
                 });
             }
             NavigationMode::ClosingItem => {
-                if state.closed_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
-                    state.closed_stack.pop_front();
+                dbg!(is_preview);
+                if !is_preview {
+                    if state.closed_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
+                        state.closed_stack.pop_front();
+                    }
+                    state.closed_stack.push_back(NavigationEntry {
+                        item,
+                        data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
+                        timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
+                        is_preview,
+                    });
                 }
-                state.closed_stack.push_back(NavigationEntry {
-                    item,
-                    data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
-                    timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
-                    is_preview,
-                });
             }
         }
         state.did_update(cx);
