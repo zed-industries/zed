@@ -107,26 +107,174 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, sync::Arc, time::Duration};
+    use std::{cmp, sync::Arc, time::Duration};
 
     use super::*;
     use crate::{
         DisplayPoint,
         display_map::{DisplayRow, ToDisplayPoint},
         editor_tests::init_test,
-        test::editor_lsp_test_context::EditorLspTestContext,
+        test::{
+            editor_lsp_test_context::EditorLspTestContext, editor_test_context::EditorTestContext,
+        },
     };
+    use collections::HashSet;
     use indoc::indoc;
+    use itertools::Itertools;
     use languages::rust_lang;
+    use pretty_assertions::assert_eq;
     use rope::Point;
     use text::OffsetRangeExt;
+    use util::post_inc;
+
+    #[gpui::test]
+    async fn test_basic_bracket_colorization(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+        let mut cx = EditorLspTestContext::new(
+            Arc::into_inner(rust_lang()).unwrap(),
+            lsp::ServerCapabilities::default(),
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {r#"ˇuse std::{collections::HashMap, future::Future};
+
+fn main() {
+    let a = one((), { () }, ());
+    println!("{a}");
+    println!("{a}");
+    for i in 0..a {
+        println!("{i}");
+    }
+
+    let b = {
+        {
+            {
+                [([([([([([([([([([((), ())])])])])])])])])])]
+            }
+        }
+    };
+}
+
+#[rustfmt::skip]
+fn one(a: (), (): (), c: ()) -> usize { 1 }
+
+fn two<T>(a: HashMap<String, Vec<Option<T>>>) -> usize
+where
+    T: Future<Output = HashMap<String, Vec<Option<Box<()>>>>>,
+{
+    2
+}
+"#});
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        assert_bracket_colors(
+            r#"use std::«1{collections::HashMap, future::Future}1»;
+
+fn main«1()1» «1{
+    let a = one«2(«3()3», «3{ «4()4» }3», «3()3»)2»;
+    println!«2("{a}")2»;
+    println!«2("{a}")2»;
+    for i in 0..a «2{
+        println!«3("{i}")3»;
+    }2»
+
+    let b = «2{
+        «3{
+            «4{
+                «5[«6(«7[«1(«2[«3(«4[«5(«6[«7(«1[«2(«3[«4(«5[«6(«7[«1(«2[«3(«4()4», «4()4»)3»]2»)1»]7»)6»]5»)4»]3»)2»]1»)7»]6»)5»]4»)3»]2»)1»]7»)6»]5»
+            }4»
+        }3»
+    }2»;
+}1»
+
+#«1[rustfmt::skip]1»
+fn one«1(a: «2()2», «2()2»: «2()2», c: «2()2»)1» -> usize «1{ 1 }1»
+
+fn two«1<T>1»«1(a: HashMap«2<String, Vec«3<Option«4<T>4»>3»>2»)1» -> usize
+where
+    T: Future«1<Output = HashMap«2<String, Vec«3<Option«4<Box«5<«6()6»>5»>4»>3»>2»>1»,
+«1{
+    2
+}1»
+
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+3 hsla(286.00, 51.00%, 75.25%, 1.00)
+4 hsla(187.00, 47.00%, 59.22%, 1.00)
+5 hsla(355.00, 65.00%, 75.94%, 1.00)
+6 hsla(95.00, 38.00%, 62.00%, 1.00)
+7 hsla(39.00, 67.00%, 69.00%, 1.00)
+"#,
+            &mut cx,
+        );
+    }
+
+    #[track_caller]
+    fn assert_bracket_colors(expected_markup: &str, cx: &mut EditorTestContext) {
+        let result = cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let actual_ranges = snapshot.all_text_highlight_ranges::<RainbowBracketHighlight>();
+            let editor_text = snapshot.text();
+
+            let mut next_index = 1;
+            let mut color_to_index = HashMap::default();
+            let mut annotations = Vec::new();
+            for (color, range) in &actual_ranges {
+                let color_index = *color_to_index
+                    .entry(*color)
+                    .or_insert_with(|| post_inc(&mut next_index));
+                let start_offset = snapshot.buffer_snapshot().point_to_offset(range.start);
+                let end_offset = snapshot.buffer_snapshot().point_to_offset(range.end);
+                let bracket_text = &editor_text[start_offset..end_offset];
+                let bracket_char = bracket_text.chars().next().unwrap();
+
+                if matches!(bracket_char, '{' | '[' | '(' | '<') {
+                    annotations.push((start_offset, format!("«{color_index}")));
+                } else {
+                    annotations.push((end_offset, format!("{color_index}»")));
+                }
+            }
+
+            annotations.sort_by(|(pos_a, text_a), (pos_b, text_b)| {
+                pos_a.cmp(pos_b).reverse().then_with(|| {
+                    let a_is_opening = text_a.starts_with('«');
+                    let b_is_opening = text_b.starts_with('«');
+                    match (a_is_opening, b_is_opening) {
+                        (true, false) => cmp::Ordering::Less,
+                        (false, true) => cmp::Ordering::Greater,
+                        _ => cmp::Ordering::Equal,
+                    }
+                })
+            });
+
+            let mut text_with_annotations = editor_text;
+            for (pos, text) in annotations {
+                text_with_annotations.insert_str(pos, &text);
+            }
+
+            text_with_annotations.push_str("\n");
+            for (index, color) in color_to_index
+                .iter()
+                .map(|(color, index)| (*index, *color))
+                .sorted_by_key(|(index, _)| *index)
+            {
+                text_with_annotations.push_str(&format!("{index} {color}\n"));
+            }
+
+            text_with_annotations
+        });
+        assert_eq!(expected_markup, result);
+    }
 
     #[gpui::test]
     async fn test_rainbow_bracket_highlights(cx: &mut gpui::TestAppContext) {
         init_test(cx, |language_settings| {
             language_settings.defaults.colorize_brackets = Some(true);
         });
-
         let mut cx = EditorLspTestContext::new(
             Arc::into_inner(rust_lang()).unwrap(),
             lsp::ServerCapabilities::default(),

@@ -1412,6 +1412,8 @@ impl DisplaySnapshot {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn all_text_highlight_ranges<Tag: ?Sized + 'static>(&self) -> Vec<(Hsla, Range<Point>)> {
+        use itertools::Itertools;
+
         let needed_type_id = TypeId::of::<Tag>();
         self.text_highlights
             .iter()
@@ -1429,6 +1431,7 @@ impl DisplaySnapshot {
                     })
                     .collect::<Vec<_>>()
             })
+            .sorted_by_key(|(_, range)| range.start)
             .collect()
     }
 
