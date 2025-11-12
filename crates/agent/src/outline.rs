@@ -140,3 +140,47 @@ fn render_entries(
 
     entries_rendered
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use project::Project;
+    use settings::SettingsStore;
+
+    #[gpui::test]
+    async fn test_large_file_fallback_to_subset(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        let content = "A".repeat(100 * 1024); // 100KB
+        let buffer = project
+            .update(cx, |project, cx| project.create_buffer(true, cx))
+            .await
+            .expect("failed to create buffer");
+
+        buffer.update(cx, |buffer, cx| buffer.set_text(content, cx));
+
+        let result = cx
+            .spawn(|cx| async move { get_buffer_content_or_outline(buffer, None, &cx).await })
+            .await
+            .unwrap();
+
+        assert!(
+            result.text.contains("AAAAAAAAAA"),
+            "Result did not contain content subset. Result starts with: {}",
+            &result.text.chars().take(100).collect::<String>()
+        );
+        assert!(
+            result.text.len() < 50 * 1024,
+            "Result size {} is too large",
+            result.text.len()
+        );
+    }
+}
