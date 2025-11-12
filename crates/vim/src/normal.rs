@@ -671,13 +671,13 @@ impl Vim {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(cx, |vim, editor, cx| {
-            let Some(Mark::Local(marks)) = vim.get_mark("^", editor, window, cx) else {
-                return;
-            };
-
-            editor.change_selections(Default::default(), window, cx, |s| {
-                s.select_anchor_ranges(marks.iter().map(|mark| *mark..*mark))
-            });
+            if let Some(Mark::Local(marks)) = vim.get_mark("^", editor, window, cx)
+                && !marks.is_empty()
+            {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_anchor_ranges(marks.iter().map(|mark| *mark..*mark))
+                });
+            }
         });
     }
 
