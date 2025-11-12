@@ -450,7 +450,8 @@ mod tests {
     use super::*;
     use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
     use command_palette_hooks::CommandPaletteFilter;
-    use gpui::{TestAppContext, px};
+    use editor::actions::AcceptEditPrediction;
+    use gpui::{BorrowAppContext, TestAppContext, px};
     use project::DisableAiSettings;
     use settings::{
         DefaultAgentView, DockPosition, NotifyWhenAgentWaiting, Settings, SettingsStore,
