@@ -411,16 +411,16 @@ impl Vim {
             self.clear_operator(window, cx)
         }
 
-        if let Some((query, options)) = current_search_params
-            .filter(|_| VimSettings::get_global(cx).use_occurrences_highlight)
+        if let Some((query, options)) =
+            current_search_params.filter(|_| VimSettings::get_global(cx).use_occurrences_highlight)
         {
             if let Some(workspace) = self.workspace(window) {
-                let pane_snapshot = {
+                let panes = {
                     let ws = workspace.read(cx);
                     ws.panes().iter().cloned().collect::<Vec<_>>()
                 };
 
-                for other_pane in pane_snapshot {
+                for other_pane in panes {
                     if other_pane.entity_id() == pane.entity_id() {
                         continue;
                     }
