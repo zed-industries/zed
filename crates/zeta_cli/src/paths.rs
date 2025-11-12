@@ -13,28 +13,41 @@ pub static RUN_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
 pub static LATEST_EXAMPLE_RUN_DIR: LazyLock<PathBuf> =
     LazyLock::new(|| TARGET_ZETA_DIR.join("latest"));
 
-pub fn print_run_data_dir() {
+pub fn print_run_data_dir(deep: bool) {
     println!("\n## Run Data\n");
+    let mut files = Vec::new();
 
     let current_dir = std::env::current_dir().unwrap();
     for file in std::fs::read_dir(&*RUN_DIR).unwrap() {
         let file = file.unwrap();
-        if file.file_type().unwrap().is_dir() {
+        if file.file_type().unwrap().is_dir() && deep {
             for file in std::fs::read_dir(file.path()).unwrap() {
                 let path = file.unwrap().path();
                 let path = path.strip_prefix(&current_dir).unwrap_or(&path);
-                println!(
+                files.push(format!(
                     "- {}/\x1b[34m{}\x1b[0m",
                     path.parent().unwrap().display(),
                     path.file_name().unwrap().display(),
-                );
+                ));
             }
         } else {
             let path = file.path();
-            println!(
-                "- {} ",
-                path.strip_prefix(&current_dir).unwrap_or(&path).display()
-            );
+            let path = path.strip_prefix(&current_dir).unwrap_or(&path);
+            files.push(format!(
+                "- {}/\x1b[34m{}\x1b[0m",
+                path.parent().unwrap().display(),
+                path.file_name().unwrap().display(),
+            ));
         }
     }
+    files.sort();
+
+    for file in files {
+        println!("{}", file);
+    }
+
+    println!(
+        "\n💡 Tip of the day: {} always points to the latest run\n",
+        LATEST_EXAMPLE_RUN_DIR.display()
+    );
 }

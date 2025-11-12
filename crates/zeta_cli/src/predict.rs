@@ -12,7 +12,6 @@ use gpui::{AppContext, AsyncApp, Entity};
 use language::{Anchor, Buffer, Point};
 use project::Project;
 use serde::Deserialize;
-use std::cell::Cell;
 use std::fs;
 use std::io::Write;
 use std::ops::Range;
@@ -20,7 +19,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use zeta2::{EvalCache, EvalCacheEntryKind, EvalCacheKey};
+use zeta2::{EvalCache, EvalCacheEntryKind, EvalCacheKey, Zeta};
 
 #[derive(Debug, Args)]
 pub struct PredictArguments {
@@ -35,10 +34,12 @@ pub struct PredictArguments {
     cache: CacheMode,
 }
 
-#[derive(Debug, ValueEnum, Default, Clone, Copy)]
+#[derive(Debug, ValueEnum, Default, Clone, Copy, PartialEq)]
 pub enum CacheMode {
-    /// Use cached LLM requests and responses, based on the hash of the prompt and the endpoint.
+    /// Use cached LLM requests and responses, except when multiple repetitions are requested
     #[default]
+    Auto,
+    /// Use cached LLM requests and responses, based on the hash of the prompt and the endpoint.
     #[value(alias = "request")]
     Requests,
     /// Ignore existing cache entries for both LLM and search.
@@ -50,11 +51,21 @@ pub enum CacheMode {
 
 impl CacheMode {
     fn use_cached_llm_responses(&self) -> bool {
+        self.assert_not_auto();
         matches!(self, CacheMode::Requests | CacheMode::Force)
     }
 
     fn use_cached_search_results(&self) -> bool {
+        self.assert_not_auto();
         matches!(self, CacheMode::Force)
+    }
+
+    fn assert_not_auto(&self) {
+        assert_ne!(
+            *self,
+            CacheMode::Auto,
+            "Cache mode should not be auto at this point!"
+        );
     }
 }
 
@@ -71,72 +82,49 @@ pub async fn run_zeta2_predict(
     cx: &mut AsyncApp,
 ) {
     let example = NamedExample::load(args.example_path).unwrap();
+    let (project, mut zetas, _edited_buffers) =
+        example.setup_project(app_state, 1, cx).await.unwrap();
     let result = zeta2_predict(
         example,
+        project,
+        zetas.remove(0),
+        None,
         args.prompt_format,
         args.use_expected_context,
         args.cache,
-        &app_state,
         cx,
     )
     .await
     .unwrap();
     result.write(args.format, std::io::stdout()).unwrap();
 
-    print_run_data_dir();
-}
-
-thread_local! {
-    static AUTHENTICATED: Cell<bool> = const { Cell::new(false) };
+    print_run_data_dir(true);
 }
 
 pub async fn zeta2_predict(
     example: NamedExample,
+    project: Entity<Project>,
+    zeta: Entity<Zeta>,
+    repetition_ix: Option<u16>,
     prompt_format: PromptFormat,
     use_expected_context: bool,
-    cache_mode: CacheMode,
-    app_state: &Arc<ZetaCliAppState>,
+    mut cache_mode: CacheMode,
     cx: &mut AsyncApp,
 ) -> Result<PredictionDetails> {
-    let worktree_path = example.setup_worktree().await?;
-
-    if !AUTHENTICATED.get() {
-        AUTHENTICATED.set(true);
-
-        app_state
-            .client
-            .sign_in_with_optional_connect(true, cx)
-            .await?;
+    if repetition_ix.is_some() {
+        if cache_mode != CacheMode::Auto && cache_mode != CacheMode::Skip {
+            panic!("Repetitions are not supported in Auto cache mode");
+        } else {
+            cache_mode = CacheMode::Skip;
+        }
+    } else if cache_mode == CacheMode::Auto {
+        cache_mode = CacheMode::Requests;
     }
 
-    let project = cx.update(|cx| {
-        Project::local(
-            app_state.client.clone(),
-            app_state.node_runtime.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
-            None,
-            cx,
-        )
-    })?;
-
-    let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone())?;
-
-    let worktree = project
-        .update(cx, |project, cx| {
-            project.create_worktree(&worktree_path, true, cx)
-        })?
-        .await?;
-    worktree
-        .read_with(cx, |worktree, _cx| {
-            worktree.as_local().unwrap().scan_complete()
-        })?
-        .await;
-
-    let zeta = cx.update(|cx| zeta2::Zeta::global(&app_state.client, &app_state.user_store, cx))?;
-
-    let example_run_dir = RUN_DIR.join(&example.file_name());
+    let mut example_run_dir = RUN_DIR.join(&example.file_name());
+    if let Some(repetition_ix) = repetition_ix {
+        example_run_dir = example_run_dir.join(format!("{:03}", repetition_ix));
+    }
     fs::create_dir_all(&example_run_dir)?;
     if LATEST_EXAMPLE_RUN_DIR.exists() {
         fs::remove_file(&*LATEST_EXAMPLE_RUN_DIR)?;
@@ -157,23 +145,9 @@ pub async fn zeta2_predict(
         }));
     })?;
 
-    cx.subscribe(&buffer_store, {
-        let project = project.clone();
-        move |_, event, cx| match event {
-            project::buffer_store::BufferStoreEvent::BufferAdded(buffer) => {
-                zeta2::Zeta::try_global(cx)
-                    .unwrap()
-                    .update(cx, |zeta, cx| zeta.register_buffer(&buffer, &project, cx));
-            }
-            _ => {}
-        }
-    })?
-    .detach();
-
-    let _edited_buffers = example.apply_edit_history(&project, cx).await?;
     let (cursor_buffer, cursor_anchor) = example.cursor_position(&project, cx).await?;
 
-    let result = Arc::new(Mutex::new(PredictionDetails::default()));
+    let result = Arc::new(Mutex::new(PredictionDetails::new(example_run_dir.clone())));
     let mut debug_rx = zeta.update(cx, |zeta, _| zeta.debug_info())?;
 
     let debug_task = cx.background_spawn({
@@ -397,7 +371,7 @@ impl EvalCache for RunCache {
                 self.link_to_run(&key);
                 Some(fs::read_to_string(path).unwrap())
             } else {
-                log::info!("Skipping cached entry: {}", path.display());
+                log::trace!("Skipping cached entry: {}", path.display());
                 None
             }
         } else if matches!(self.cache_mode, CacheMode::Force) {
@@ -417,14 +391,14 @@ impl EvalCache for RunCache {
         fs::write(&input_path, input).unwrap();
 
         let output_path = RunCache::output_cache_path(&key);
-        log::info!("Writing cache entry: {}", output_path.display());
+        log::trace!("Writing cache entry: {}", output_path.display());
         fs::write(&output_path, output).unwrap();
 
         self.link_to_run(&key);
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PredictionDetails {
     pub diff: String,
     pub excerpts: Vec<ActualExcerpt>,
@@ -433,9 +407,23 @@ pub struct PredictionDetails {
     pub running_search_time: Option<Duration>,
     pub prediction_time: Duration,
     pub total_time: Duration,
+    pub run_example_dir: PathBuf,
 }
 
 impl PredictionDetails {
+    pub fn new(run_example_dir: PathBuf) -> Self {
+        Self {
+            diff: Default::default(),
+            excerpts: Default::default(),
+            excerpts_text: Default::default(),
+            planning_search_time: Default::default(),
+            running_search_time: Default::default(),
+            prediction_time: Default::default(),
+            total_time: Default::default(),
+            run_example_dir,
+        }
+    }
+
     pub fn write(&self, format: PredictionsOutputFormat, mut out: impl Write) -> Result<()> {
         let formatted = match format {
             PredictionsOutputFormat::Md => self.to_markdown(),
