@@ -1696,12 +1696,20 @@ fn show_markdown_app_notification<F>(
                     MessageNotification::new_from_builder(cx, move |window, cx| {
                         image_cache(retain_all("notification-cache"))
                             .text_xs()
-                            .child(markdown_preview::markdown_renderer::render_parsed_markdown(
-                                &parsed_markdown.clone(),
-                                Some(workspace_handle.clone()),
-                                window,
-                                cx,
-                            ))
+                            .child(
+                                div()
+                                    .id("parsed-markdown")
+                                    .max_h(vh(0.8, window))
+                                    .overflow_y_scroll()
+                                    .child(
+                                        markdown_preview::markdown_renderer::render_parsed_markdown(
+                                            &parsed_markdown.clone(),
+                                            Some(workspace_handle.clone()),
+                                            window,
+                                            cx,
+                                        ),
+                                    ),
+                            )
                             .into_any()
                     })
                     .primary_message(primary_button_message)
