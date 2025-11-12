@@ -1550,6 +1550,8 @@
     // Default: 10_000, maximum: 100_000 (all bigger values set will be treated as 100_000), 0 disables the scrolling.
     // Existing terminals will not pick up this change until they are recreated.
     "max_scroll_history_lines": 10000,
+    // The multiplier for scrolling speed in the terminal.
+    "scroll_multiplier": 1.0,
     // The minimum APCA perceptual contrast between foreground and background colors.
     // APCA (Accessible Perceptual Contrast Algorithm) is more accurate than WCAG 2.x,
     // especially for dark mode. Values range from 0 to 106.
