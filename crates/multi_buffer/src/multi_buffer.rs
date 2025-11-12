@@ -31,7 +31,7 @@ use language::{
 #[cfg(any(test, feature = "test-support"))]
 use gpui::AppContext as _;
 
-use rope::{ChunkSummary, DimensionPair};
+use rope::DimensionPair;
 use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
@@ -78,7 +78,7 @@ pub struct MultiBuffer {
     paths_by_excerpt: HashMap<ExcerptId, PathKey>,
     /// Mapping from buffer IDs to their diff states
     diffs: HashMap<BufferId, DiffState>,
-    subscriptions: Topic,
+    subscriptions: Topic<MultiBufferOffset>,
     /// If true, the multi-buffer only contains a single [`Buffer`] and a single [`Excerpt`]
     singleton: bool,
     /// The history of the multi-buffer.
@@ -200,6 +200,7 @@ pub trait MultiBufferDimension: 'static + Copy + Default + std::fmt::Debug {
     fn add_mb_text_summary(&mut self, summary: &MBTextSummary);
 }
 
+// todo(lw): MultiBufferPoint
 impl MultiBufferDimension for Point {
     type TextDimension = Point;
     fn from_summary(summary: &MBTextSummary) -> Self {
@@ -215,6 +216,7 @@ impl MultiBufferDimension for Point {
     }
 }
 
+// todo(lw): MultiBufferPointUtf16
 impl MultiBufferDimension for PointUtf16 {
     type TextDimension = PointUtf16;
     fn from_summary(summary: &MBTextSummary) -> Self {
@@ -1032,7 +1034,7 @@ impl MultiBuffer {
         self.singleton
     }
 
-    pub fn subscribe(&mut self) -> Subscription {
+    pub fn subscribe(&mut self) -> Subscription<MultiBufferOffset> {
         self.subscriptions.subscribe()
     }
 
@@ -2667,7 +2669,7 @@ impl MultiBuffer {
         buffers: &HashMap<BufferId, BufferState>,
         diffs: &HashMap<BufferId, DiffState>,
         cx: &App,
-    ) -> Vec<Edit<usize>> {
+    ) -> Vec<Edit<MultiBufferOffset>> {
         let MultiBufferSnapshot {
             excerpts,
             diffs: buffer_diff,
@@ -2795,7 +2797,7 @@ impl MultiBuffer {
         snapshot: &mut MultiBufferSnapshot,
         excerpt_edits: Vec<text::Edit<ExcerptOffset>>,
         change_kind: DiffChangeKind,
-    ) -> Vec<Edit<usize>> {
+    ) -> Vec<Edit<MultiBufferOffset>> {
         if excerpt_edits.is_empty() {
             return vec![];
         }
@@ -2835,7 +2837,8 @@ impl MultiBuffer {
             // Compute the start of the edit in output coordinates.
             let edit_start_overshoot = (edit.old.start - old_diff_transforms.start().0).value;
             let edit_old_start = old_diff_transforms.start().1 + edit_start_overshoot;
-            let edit_new_start = (edit_old_start.0 as isize + output_delta) as usize;
+            let edit_new_start =
+                MultiBufferOffset((edit_old_start.0 as isize + output_delta) as usize);
 
             let changed_diff_hunks = Self::recompute_diff_transforms_for_edit(
                 &edit,
@@ -2852,10 +2855,11 @@ impl MultiBuffer {
             let edit_old_end_overshoot = edit.old.end - old_diff_transforms.start().0;
             let edit_new_end_overshoot = edit.new.end - new_diff_transforms.summary().excerpt_len();
             let edit_old_end = old_diff_transforms.start().1 + edit_old_end_overshoot.value;
-            let edit_new_end =
-                new_diff_transforms.summary().output.len + edit_new_end_overshoot.value;
+            let edit_new_end = MultiBufferOffset(
+                new_diff_transforms.summary().output.len + edit_new_end_overshoot.value,
+            );
             let output_edit = Edit {
-                old: edit_old_start.0..edit_old_end.0,
+                old: edit_old_start..edit_old_end,
                 new: edit_new_start..edit_new_end,
             };
 
@@ -7133,15 +7137,15 @@ impl<'a, D: MultiBufferDimension> sum_tree::Dimension<'a, DiffTransformSummary>
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for usize {
-    fn zero(_: ()) -> Self {
-        0
-    }
+// impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for usize {
+//     fn zero(_: ()) -> Self {
+//         0
+//     }
 
-    fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: ()) {
-        *self += summary.output.len
-    }
-}
+//     fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: ()) {
+//         *self += summary.output.len
+//     }
+// }
 
 impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for Point {
     fn zero(_: ()) -> Self {

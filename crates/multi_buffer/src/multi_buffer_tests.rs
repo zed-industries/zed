@@ -130,8 +130,8 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
         assert_eq!(
             subscription.consume().into_inner(),
             [Edit {
-                old: 0..0,
-                new: 0..10
+                old: MultiBufferOffset(0)..MultiBufferOffset(0),
+                new: MultiBufferOffset(0)..MultiBufferOffset(10)
             }]
         );
 
@@ -148,8 +148,8 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
         assert_eq!(
             subscription.consume().into_inner(),
             [Edit {
-                old: 10..10,
-                new: 10..22
+                old: MultiBufferOffset(10)..MultiBufferOffset(10),
+                new: MultiBufferOffset(10)..MultiBufferOffset(22)
             }]
         );
 
@@ -282,8 +282,8 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
     assert_eq!(
         subscription.consume().into_inner(),
         [Edit {
-            old: 6..8,
-            new: 6..7
+            old: MultiBufferOffset(6)..MultiBufferOffset(8),
+            new: MultiBufferOffset(6)..MultiBufferOffset(7)
         }]
     );
 
@@ -3077,9 +3077,12 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
         let mut text = old_snapshot.text();
         for edit in edits {
             let new_text: String = snapshot
-                .text_for_range(MultiBufferOffset(edit.new.start)..MultiBufferOffset(edit.new.end))
+                .text_for_range(edit.new.start..edit.new.end)
                 .collect();
-            text.replace_range(edit.new.start..edit.new.start + edit.old.len(), &new_text);
+            text.replace_range(
+                edit.new.start.0..edit.new.start.0 + (edit.old.end.0 - edit.old.start.0),
+                &new_text,
+            );
         }
         assert_eq!(text.to_string(), snapshot.text());
     }
@@ -3561,7 +3564,7 @@ fn assert_excerpts_match(
 fn assert_new_snapshot(
     multibuffer: &Entity<MultiBuffer>,
     snapshot: &mut MultiBufferSnapshot,
-    subscription: &mut Subscription,
+    subscription: &mut Subscription<MultiBufferOffset>,
     cx: &mut TestAppContext,
     expected_diff: &str,
 ) {
@@ -3570,7 +3573,6 @@ fn assert_new_snapshot(
     let line_infos = new_snapshot
         .row_infos(MultiBufferRow(0))
         .collect::<Vec<_>>();
-    dbg!(&line_infos);
     let actual_diff = format_diff(&actual_text, &line_infos, &Default::default(), None);
     pretty_assertions::assert_eq!(actual_diff, expected_diff);
     check_edits(
@@ -3585,15 +3587,15 @@ fn assert_new_snapshot(
 fn check_edits(
     old_snapshot: &MultiBufferSnapshot,
     new_snapshot: &MultiBufferSnapshot,
-    edits: &[Edit<usize>],
+    edits: &[Edit<MultiBufferOffset>],
 ) {
     let mut text = old_snapshot.text();
     let new_text = new_snapshot.text();
     for edit in edits.iter().rev() {
-        if !text.is_char_boundary(edit.old.start)
-            || !text.is_char_boundary(edit.old.end)
-            || !new_text.is_char_boundary(edit.new.start)
-            || !new_text.is_char_boundary(edit.new.end)
+        if !text.is_char_boundary(edit.old.start.0)
+            || !text.is_char_boundary(edit.old.end.0)
+            || !new_text.is_char_boundary(edit.new.start.0)
+            || !new_text.is_char_boundary(edit.new.end.0)
         {
             panic!(
                 "invalid edits: {:?}\nold text: {:?}\nnew text: {:?}",
@@ -3602,8 +3604,8 @@ fn check_edits(
         }
 
         text.replace_range(
-            edit.old.start..edit.old.end,
-            &new_text[edit.new.start..edit.new.end],
+            edit.old.start.0..edit.old.end.0,
+            &new_text[edit.new.start.0..edit.new.end.0],
         );
     }
 
