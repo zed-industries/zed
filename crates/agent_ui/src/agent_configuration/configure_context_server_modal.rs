@@ -503,11 +503,7 @@ impl ConfigureContextServerModal {
         ModalHeader::new().headline(text)
     }
 
-    fn render_modal_description(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn render_modal_description(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         const MODAL_DESCRIPTION: &str = "Visit the MCP server configuration docs to find all necessary arguments and environment variables.";
 
         if let ConfigurationSource::Extension {
@@ -515,27 +511,13 @@ impl ConfigureContextServerModal {
             ..
         } = &self.source
         {
-            // Lazily initialize scroll handle only when rendering
-            if self.scroll_handle.is_none() {
-                self.scroll_handle = Some(ScrollHandle::new());
-            }
-            let scroll_handle = self.scroll_handle.as_ref().unwrap().clone();
-
             div()
                 .pb_2()
                 .text_sm()
-                .child(
-                    div()
-                        .id("installation_instructions")
-                        .max_h_96()
-                        .overflow_y_scroll()
-                        .track_scroll(&scroll_handle)
-                        .child(MarkdownElement::new(
-                            installation_instructions.clone(),
-                            default_markdown_style(window, cx),
-                        )),
-                )
-                .vertical_scrollbar_for(scroll_handle, window, cx)
+                .child(MarkdownElement::new(
+                    installation_instructions.clone(),
+                    default_markdown_style(window, cx),
+                ))
                 .into_any_element()
         } else {
             Label::new(MODAL_DESCRIPTION)
@@ -701,6 +683,12 @@ impl ConfigureContextServerModal {
 
 impl Render for ConfigureContextServerModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Lazily initialize scroll handle only when rendering
+        if self.scroll_handle.is_none() {
+            self.scroll_handle = Some(ScrollHandle::new());
+        }
+        let scroll_handle = self.scroll_handle.as_ref().unwrap().clone();
+
         div()
             .elevation_3(cx)
             .w(rems(34.))
@@ -720,14 +708,21 @@ impl Render for ConfigureContextServerModal {
                 Modal::new("configure-context-server", None)
                     .header(self.render_modal_header())
                     .section(
-                        Section::new()
-                            .child(self.render_modal_description(window, cx))
-                            .child(self.render_modal_content(cx))
-                            .child(match &self.state {
-                                State::Idle => div(),
-                                State::Waiting => Self::render_waiting_for_context_server(),
-                                State::Error(error) => Self::render_modal_error(error.clone()),
-                            }),
+                        Section::new().child(
+                            div()
+                                .id("modal-content")
+                                .max_h(rems(40.))
+                                .overflow_y_scroll()
+                                .track_scroll(&scroll_handle)
+                                .child(self.render_modal_description(window, cx))
+                                .child(self.render_modal_content(cx))
+                                .child(match &self.state {
+                                    State::Idle => div(),
+                                    State::Waiting => Self::render_waiting_for_context_server(),
+                                    State::Error(error) => Self::render_modal_error(error.clone()),
+                                })
+                                .vertical_scrollbar_for(scroll_handle, window, cx),
+                        ),
                     )
                     .footer(self.render_modal_footer(cx)),
             )
