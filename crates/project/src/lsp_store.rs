@@ -1,4 +1,5 @@
-//! LSP store provides unified access to the language server protocol. //! The consumers of LSP store can interact with language servers without knowing exactly which language server they're interacting with.
+//! LSP store provides unified access to the language server protocol.
+//! The consumers of LSP store can interact with language servers without knowing exactly which language server they're interacting with.
 //!
 //! # Local/Remote LSP Stores
 //! This module is split up into three distinct parts:
