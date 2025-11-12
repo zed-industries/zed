@@ -81,31 +81,35 @@ pub async fn run_retrieval_searches(
 
         for (buffer, ranges) in results.iter_mut() {
             if let Some(snapshot) = snapshots.get(&buffer.entity_id()) {
-                ranges.sort_unstable_by(|a, b| {
-                    a.start
-                        .cmp(&b.start, snapshot)
-                        .then(b.end.cmp(&b.end, snapshot))
-                });
-
-                let mut index = 1;
-                while index < ranges.len() {
-                    if ranges[index - 1]
-                        .end
-                        .cmp(&ranges[index].start, snapshot)
-                        .is_gt()
-                    {
-                        let removed = ranges.remove(index);
-                        ranges[index - 1].end = removed.end;
-                    } else {
-                        index += 1;
-                    }
-                }
+                merge_anchor_ranges(ranges, snapshot);
             }
         }
 
         Ok(results)
     })
     .await
+}
+
+fn merge_anchor_ranges(ranges: &mut Vec<Range<Anchor>>, snapshot: &BufferSnapshot) {
+    ranges.sort_unstable_by(|a, b| {
+        a.start
+            .cmp(&b.start, snapshot)
+            .then(b.end.cmp(&b.end, snapshot))
+    });
+
+    let mut index = 1;
+    while index < ranges.len() {
+        if ranges[index - 1]
+            .end
+            .cmp(&ranges[index].start, snapshot)
+            .is_ge()
+        {
+            let removed = ranges.remove(index);
+            ranges[index - 1].end = removed.end;
+        } else {
+            index += 1;
+        }
+    }
 }
 
 const MAX_EXCERPT_LEN: usize = 768;
