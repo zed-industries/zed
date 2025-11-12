@@ -737,6 +737,7 @@ impl VsCodeSettings {
             option_as_meta: self.read_bool("terminal.integrated.macOptionIsMeta"),
             project: self.project_terminal_settings_content(),
             scrollbar: None,
+            scroll_multiplier: None,
             toolbar: None,
         })
     }
