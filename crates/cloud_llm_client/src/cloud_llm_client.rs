@@ -58,6 +58,9 @@ pub const SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME: &str =
 /// The name of the header used by the client to indicate that it supports receiving xAI models.
 pub const CLIENT_SUPPORTS_X_AI_HEADER_NAME: &str = "x-zed-client-supports-x-ai";
 
+/// The maximum number of edit predictions that can be rejected per request.
+pub const MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST: usize = 100;
+
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UsageLimit {
@@ -166,8 +169,6 @@ pub struct PredictEditsBody {
     /// Info about the git repository state, only present when can_collect_data is true.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub git_info: Option<PredictEditsGitInfo>,
-    #[serde(default)]
-    pub discarded_predictions: Vec<EditPredictionRejection>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
