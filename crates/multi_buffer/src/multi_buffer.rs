@@ -43,7 +43,7 @@ use std::{
     io,
     iter::{self, FromIterator},
     mem,
-    ops::{AddAssign, Range, RangeBounds, Sub},
+    ops::{self, AddAssign, Range, RangeBounds, Sub},
     rc::Rc,
     str,
     sync::Arc,
@@ -183,7 +183,7 @@ impl MultiBufferRow {
     pub const MAX: Self = Self(u32::MAX);
 }
 
-impl std::ops::Add<usize> for MultiBufferRow {
+impl ops::Add<usize> for MultiBufferRow {
     type Output = Self;
 
     fn add(self, rhs: usize) -> Self::Output {
@@ -191,7 +191,7 @@ impl std::ops::Add<usize> for MultiBufferRow {
     }
 }
 
-pub trait MultiBufferDimension: Copy + Default + 'static {
+pub trait MultiBufferDimension: 'static + Copy + Default + std::fmt::Debug {
     type TextDimension: TextDimension;
     fn from_summary(summary: &MBTextSummary) -> Self;
 
@@ -214,7 +214,7 @@ impl MultiBufferDimension for Point {
         *self += summary.lines;
     }
 }
-// impl MultiBufferDimension for MultiBufferPointUtf16 {}
+
 impl MultiBufferDimension for PointUtf16 {
     type TextDimension = PointUtf16;
     fn from_summary(summary: &MBTextSummary) -> Self {
@@ -265,26 +265,6 @@ impl MultiBufferDimension for MultiBufferOffsetUtf16 {
 
     fn add_mb_text_summary(&mut self, summary: &MBTextSummary) {
         self.0 += summary.len_utf16;
-    }
-}
-
-impl Dimension<'_, ChunkSummary> for MultiBufferOffsetUtf16 {
-    fn zero((): ()) -> Self {
-        MultiBufferOffsetUtf16(OffsetUtf16(0))
-    }
-
-    fn add_summary(&mut self, summary: &ChunkSummary, cx: ()) {
-        self.0.add_summary(summary, cx);
-    }
-}
-
-impl Dimension<'_, ChunkSummary> for MultiBufferOffset {
-    fn zero((): ()) -> Self {
-        MultiBufferOffset(0)
-    }
-
-    fn add_summary(&mut self, summary: &ChunkSummary, cx: ()) {
-        self.0.add_summary(summary, cx);
     }
 }
 
@@ -356,7 +336,7 @@ impl MultiBufferOffset {
     }
 }
 
-impl std::ops::Sub for MultiBufferOffset {
+impl ops::Sub for MultiBufferOffset {
     type Output = usize;
 
     fn sub(self, other: MultiBufferOffset) -> Self::Output {
@@ -364,7 +344,7 @@ impl std::ops::Sub for MultiBufferOffset {
     }
 }
 
-impl std::ops::Sub<usize> for MultiBufferOffset {
+impl ops::Sub<usize> for MultiBufferOffset {
     type Output = Self;
 
     fn sub(self, other: usize) -> Self::Output {
@@ -372,13 +352,13 @@ impl std::ops::Sub<usize> for MultiBufferOffset {
     }
 }
 
-impl std::ops::SubAssign<usize> for MultiBufferOffset {
+impl ops::SubAssign<usize> for MultiBufferOffset {
     fn sub_assign(&mut self, other: usize) {
         self.0 -= other;
     }
 }
 
-impl std::ops::Add<usize> for BufferOffset {
+impl ops::Add<usize> for BufferOffset {
     type Output = Self;
 
     fn add(self, rhs: usize) -> Self::Output {
@@ -386,13 +366,13 @@ impl std::ops::Add<usize> for BufferOffset {
     }
 }
 
-impl std::ops::AddAssign<usize> for BufferOffset {
+impl ops::AddAssign<usize> for BufferOffset {
     fn add_assign(&mut self, other: usize) {
         self.0 += other;
     }
 }
 
-impl std::ops::Add<usize> for MultiBufferOffset {
+impl ops::Add<usize> for MultiBufferOffset {
     type Output = Self;
 
     fn add(self, rhs: usize) -> Self::Output {
@@ -400,7 +380,7 @@ impl std::ops::Add<usize> for MultiBufferOffset {
     }
 }
 
-impl std::ops::AddAssign<usize> for MultiBufferOffset {
+impl ops::AddAssign<usize> for MultiBufferOffset {
     fn add_assign(&mut self, other: usize) {
         self.0 += other;
     }
@@ -3699,21 +3679,14 @@ impl MultiBufferSnapshot {
     where
         I: Iterator<Item = (Range<MBR::TextDimension>, M)> + 'a,
         MBR: MultiBufferDimension
-            + Dimension<'a, ExcerptSummary>
-            + MultiBufferDimension
             + Ord
             + Sub<Output = MBR::TextDimension>
-            + std::ops::Add<MBR::TextDimension, Output = MBR>
-            + std::ops::AddAssign<MBR::TextDimension>
-            + Default
-            + Copy
-            + 'a,
+            + ops::Add<MBR::TextDimension, Output = MBR>
+            + ops::AddAssign<MBR::TextDimension>,
         MBR::TextDimension: Sub<Output = MBR::TextDimension>
-            + std::ops::Add<Output = MBR::TextDimension>
+            + ops::Add<Output = MBR::TextDimension>
             + AddAssign<MBR::TextDimension>
-            + TextDimension
-            + Ord
-            + Copy,
+            + Ord,
     {
         let mut current_excerpt_metadata: Option<(ExcerptId, I)> = None;
         let mut cursor = self.cursor::<MBR, MBR::TextDimension, MBR::TextDimension>();
@@ -4164,15 +4137,8 @@ impl MultiBufferSnapshot {
         clip_buffer_position: fn(&text::BufferSnapshot, BR, Bias) -> BR,
     ) -> MBR
     where
-        for<'a> MBR: Dimension<'a, ExcerptSummary>
-            + MultiBufferDimension
-            + Ord
-            + Sub<Output = R>
-            + std::ops::AddAssign<R>
-            + Copy
-            + Clone,
-        BR: TextDimension + Sub<Output = R> + Copy + AddAssign<R>,
-        MBR: MultiBufferDimension,
+        MBR: MultiBufferDimension + Ord + Sub<Output = R> + ops::AddAssign<R>,
+        BR: TextDimension + Sub<Output = R> + AddAssign<R>,
     {
         let mut cursor = self.cursor::<MBR, BR, R>();
         cursor.seek(&position);
@@ -4199,23 +4165,10 @@ impl MultiBufferSnapshot {
         convert_buffer_dimension: fn(&text::BufferSnapshot, BR1) -> BR2,
     ) -> MBR2
     where
-        for<'a> MBR1: Dimension<'a, ExcerptSummary>
-            + MultiBufferDimension
-            + Ord
-            + Sub<Output = R1>
-            + std::ops::AddAssign<R1>
-            + Copy
-            + Clone,
-        BR1: TextDimension + Sub<Output = R1> + Copy + AddAssign<R1>,
-        for<'a> MBR2: Dimension<'a, ExcerptSummary>
-            + MultiBufferDimension
-            + Ord
-            + Sub<Output = R2>
-            + std::ops::AddAssign<R2>
-            + Copy
-            + Clone,
-        BR2: TextDimension + Sub<Output = R2> + Copy + AddAssign<R2>,
-        MBR2: MultiBufferDimension,
+        MBR1: MultiBufferDimension + Ord + Sub<Output = R1> + ops::AddAssign<R1>,
+        BR1: TextDimension + Sub<Output = R1> + AddAssign<R1>,
+        MBR2: MultiBufferDimension + Ord + Sub<Output = R2> + ops::AddAssign<R2>,
+        BR2: TextDimension + Sub<Output = R2> + AddAssign<R2>,
     {
         let mut cursor = self.cursor::<DimensionPair<MBR1, MBR2>, DimensionPair<BR1, BR2>, _>();
         cursor.seek(&DimensionPair { key, value: None });
@@ -4621,9 +4574,8 @@ impl MultiBufferSnapshot {
     where
         D: MultiBufferDimension
             + Ord
-            + Sub<D, Output = D::TextDimension>
-            + AddAssign<D::TextDimension>
-            + Default,
+            + Sub<Output = D::TextDimension>
+            + AddAssign<D::TextDimension>,
         D::TextDimension: Sub<Output = D::TextDimension> + Ord,
     {
         self.summaries_for_anchors([anchor])[0]
@@ -4639,7 +4591,7 @@ impl MultiBufferSnapshot {
         >,
     ) -> D
     where
-        D: MultiBufferDimension + Ord + Sub<D, Output = R> + AddAssign<R> + Default,
+        D: MultiBufferDimension + Ord + Sub<Output = R> + AddAssign<R>,
     {
         loop {
             let transform_end_position = diff_transforms.end().0.0;
@@ -4732,9 +4684,8 @@ impl MultiBufferSnapshot {
     where
         D: MultiBufferDimension
             + Ord
-            + Sub<D, Output = D::TextDimension>
-            + AddAssign<D::TextDimension>
-            + Default,
+            + Sub<Output = D::TextDimension>
+            + AddAssign<D::TextDimension>,
         D::TextDimension: Sub<Output = D::TextDimension> + Ord,
         I: 'a + IntoIterator<Item = &'a Anchor>,
     {
@@ -4823,7 +4774,7 @@ impl MultiBufferSnapshot {
         points: impl 'a + IntoIterator<Item = Point>,
     ) -> impl 'a + Iterator<Item = D>
     where
-        D: MultiBufferDimension + Sub<D, Output = D> + Default + Copy + AddAssign,
+        D: MultiBufferDimension + Sub<D, Output = D> + AddAssign,
     {
         let mut cursor = self.cursor::<DimensionPair<Point, D>, Point, _>();
         cursor.seek(&DimensionPair {
@@ -5111,8 +5062,8 @@ impl MultiBufferSnapshot {
 
     fn cursor<'a, MBR, BR, R>(&'a self) -> MultiBufferCursor<'a, MBR, BR>
     where
-        MBR: MultiBufferDimension + Ord + Sub<Output = R> + std::ops::AddAssign<R> + Copy + Clone,
-        BR: TextDimension + Copy + AddAssign<R>,
+        MBR: MultiBufferDimension + Ord + Sub<Output = R> + ops::AddAssign<R>,
+        BR: TextDimension + AddAssign<R>,
     {
         let excerpts = self.excerpts.cursor(());
         let diff_transforms = self.diff_transforms.cursor(());
@@ -5848,23 +5799,16 @@ impl MultiBufferSnapshot {
         MBR::TextDimension: 'a
             + text::ToOffset
             + text::FromAnchor
-            + TextDimension
-            + Ord
             + Sub<Output = MBR::TextDimension>
             + fmt::Debug
-            + std::ops::Add<Output = MBR::TextDimension>
-            + std::ops::AddAssign
-            + TextDimension
+            + ops::Add<Output = MBR::TextDimension>
+            + ops::AddAssign
             + Ord,
         MBR: MultiBufferDimension
-            + Dimension<'a, ExcerptSummary>
-            + MultiBufferDimension
             + Ord
             + Sub<Output = MBR::TextDimension>
-            + std::ops::Add<MBR::TextDimension, Output = MBR>
-            + std::ops::AddAssign<MBR::TextDimension>
-            + Default
-            + Copy
+            + ops::Add<MBR::TextDimension, Output = MBR>
+            + ops::AddAssign<MBR::TextDimension>
             + 'a,
     {
         self.lift_buffer_metadata::<MBR, _, _>(range, move |buffer, buffer_range| {
@@ -5883,23 +5827,16 @@ impl MultiBufferSnapshot {
     ) -> impl Iterator<Item = (BufferId, DiagnosticEntryRef<'a, MBR>)> + 'a
     where
         MBR: MultiBufferDimension
-            + Dimension<'a, ExcerptSummary>
-            + MultiBufferDimension
             + Ord
             + Sub<Output = MBR::TextDimension>
-            + std::ops::Add<MBR::TextDimension, Output = MBR>
-            + std::ops::AddAssign<MBR::TextDimension>
-            + Default
-            + Copy
-            + 'a,
+            + ops::Add<MBR::TextDimension, Output = MBR>
+            + ops::AddAssign<MBR::TextDimension>,
         MBR::TextDimension: Sub<Output = MBR::TextDimension>
-            + std::ops::Add<Output = MBR::TextDimension>
+            + ops::Add<Output = MBR::TextDimension>
             + text::ToOffset
             + text::FromAnchor
             + AddAssign<MBR::TextDimension>
-            + TextDimension
-            + Ord
-            + Copy,
+            + Ord,
     {
         self.lift_buffer_metadata::<MBR, _, _>(range, move |buffer, buffer_range| {
             Some(
@@ -6342,8 +6279,8 @@ impl MultiBufferSnapshot {
 
 impl<'a, MBR, BR, R> MultiBufferCursor<'a, MBR, BR>
 where
-    MBR: MultiBufferDimension + Ord + Sub<Output = R> + std::ops::AddAssign<R> + Copy + Clone,
-    BR: TextDimension + Copy + AddAssign<R>,
+    MBR: MultiBufferDimension + Ord + Sub<Output = R> + ops::AddAssign<R>,
+    BR: TextDimension + AddAssign<R>,
 {
     fn seek(&mut self, position: &MBR) {
         self.cached_region.take();
@@ -7081,9 +7018,9 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Option<ExcerptId> {
 #[derive(Copy, Clone, PartialOrd, Ord, Eq, PartialEq, Debug)]
 struct ExcerptDimension<T>(T);
 
-impl<R, T: std::ops::Sub> std::ops::Sub for ExcerptDimension<T>
+impl<R, T: ops::Sub> ops::Sub for ExcerptDimension<T>
 where
-    T: std::ops::Sub<Output = R>,
+    T: ops::Sub<Output = R>,
 {
     type Output = ExcerptDimension<R>;
 

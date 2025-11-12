@@ -166,9 +166,8 @@ impl Anchor {
     where
         D: MultiBufferDimension
             + Ord
-            + Sub<D, Output = D::TextDimension>
-            + AddAssign<D::TextDimension>
-            + Default,
+            + Sub<Output = D::TextDimension>
+            + AddAssign<D::TextDimension>,
         D::TextDimension: Sub<Output = D::TextDimension> + Ord,
     {
         snapshot.summary_for_anchor(self)
