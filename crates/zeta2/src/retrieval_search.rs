@@ -147,10 +147,11 @@ pub async fn run_retrieval_searches(
                 .filter_map(|(buffer, ranges)| {
                     let snapshot = snapshots.get(&buffer.entity_id())?;
                     let path = snapshot.file().map(|f| f.path());
-                    let ranges = ranges
+                    let mut ranges = ranges
                         .iter()
                         .map(|range| range.to_offset(&snapshot))
                         .collect::<Vec<_>>();
+                    ranges.sort_unstable_by_key(|range| (range.start, range.end));
 
                     Some((path?.as_std_path().to_path_buf(), ranges))
                 })
