@@ -3989,13 +3989,11 @@ mod tests {
             "Should have 1 entry after restore (only the first user message)"
         );
 
-        // The terminal should no longer exist after checkpoint restore
-        let terminal_exists_after =
-            thread.read_with(cx, |thread, _| thread.terminals.contains_key(&terminal_id));
-
-        assert!(
-            !terminal_exists_after,
-            "Terminal should have been removed after checkpoint restore"
+        // Verify no terminals are running after checkpoint restore
+        let terminal_count = thread.read_with(cx, |thread, _| thread.terminals.len());
+        assert_eq!(
+            terminal_count, 0,
+            "No terminals should be running after checkpoint restore"
         );
     }
 }
