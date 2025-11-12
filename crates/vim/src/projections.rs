@@ -14,17 +14,24 @@
 // - [ ] Implement `:a` to open alternate file
 // - [ ] Implement `:as` to open alternate file in split
 // - [ ] Implement `:av` to open alternate file in vertical split
-// - [ ] Implement actually updating the state from the `projections.json` file
+// - [X] Implement actually updating the state from the `projections.json` file
 // - [ ] Make this work with excerpts in multibuffers
 
 use crate::Vim;
+use anyhow::Result;
 use editor::Editor;
 use gpui::Context;
 use gpui::Window;
 use gpui::actions;
+use project::Fs;
 use project::ProjectItem;
 use project::ProjectPath;
 use regex::Regex;
+use serde::Deserialize;
+use settings::parse_json_with_comments;
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Arc;
 use util::rel_path::RelPath;
 
 #[derive(Debug)]
@@ -32,6 +39,13 @@ struct Projection {
     source: Regex,
     target: String,
 }
+
+#[derive(Deserialize, Debug)]
+struct ProjectionValue {
+    alternate: String,
+}
+
+type ProjectionsConfig = HashMap<String, ProjectionValue>;
 
 impl Projection {
     fn new(source: &str, target: &str) -> Self {
@@ -50,8 +64,6 @@ impl Projection {
     }
 
     /// Determines whether the provided path matches this projection's source.
-    /// TODO!: We'll likely want to update this to use `ProjectPath` instead of
-    /// `&str`.
     fn matches(&self, path: &str) -> bool {
         self.source.is_match(path)
     }
@@ -82,6 +94,15 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::open_projection);
 }
 
+async fn load_projections(root_path: &Path, fs: Arc<dyn Fs>) -> Result<ProjectionsConfig> {
+    let projections_path = root_path.join(".zed").join("projections.json");
+
+    let content = fs.load(&projections_path).await?;
+    let config = parse_json_with_comments::<ProjectionsConfig>(&content)?;
+
+    Ok(config)
+}
+
 impl Vim {
     pub fn open_projection(
         &mut self,
@@ -89,44 +110,106 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Implementation for opening a projection
-        dbg!("[vim] attempting to open projection...");
         self.update_editor(cx, |_vim, editor, cx| {
-            let project_path = editor
+            let current_file_path = editor
                 .buffer()
                 .read(cx)
                 .as_singleton()
                 .and_then(|buffer| buffer.read(cx).project_path(cx));
 
-            // User is editing an empty buffer, can't even find a projection.
-            if project_path.is_none() {
+            // User is editing an empty buffer, can't find a projection.
+            let Some(current_file_path) = current_file_path else {
                 return;
-            }
+            };
 
-            if let Some(project_path) = project_path
-                && let Some(workspace) = editor.workspace()
-            {
-                dbg!(&project_path);
-                if project_path.path.as_unix_str()
-                    == "lib/phx_new_web/controllers/page_controller.ex"
-                {
-                    dbg!("[vim] opening projection...");
-                    workspace
-                        .update(cx, |workspace, cx| {
-                            let worktree_id = project_path.worktree_id;
-                            let mut project_path = ProjectPath::root_path(worktree_id);
-                            project_path.path = RelPath::unix(
-                                "test/phx_new_web/controllers/page_controller_test.exs",
-                            )
-                            .unwrap()
-                            .into_arc();
-                            dbg!(&project_path);
+            let Some(workspace) = editor.workspace() else {
+                return;
+            };
 
-                            workspace.open_path(project_path, None, true, window, cx)
-                        })
-                        .detach();
-                }
-            }
+            let Some(project) = editor.project() else {
+                return;
+            };
+
+            // Extract data we need before going async
+            let worktree_id = current_file_path.worktree_id;
+            let current_path = current_file_path.path.clone();
+            let fs = project.read(cx).fs().clone();
+
+            // Get the worktree to extract its root path
+            let worktree = project.read(cx).worktree_for_id(worktree_id, cx);
+
+            let Some(worktree) = worktree else {
+                return;
+            };
+
+            let root_path = worktree.read(cx).abs_path();
+
+            workspace.update(cx, |_workspace, cx| {
+                cx.spawn_in(window, async move |workspace, cx| {
+                    // Load the projections configuration
+                    let config = match load_projections(&root_path, fs).await {
+                        Ok(config) => {
+                            log::info!("Loaded projections config: {:?}", config);
+                            config
+                        }
+                        Err(err) => {
+                            log::warn!("Failed to load projections: {:?}", err);
+                            return;
+                        }
+                    };
+
+                    // Convert config to Projection instances and find a match
+                    let current_path_str = current_path.as_unix_str();
+                    log::info!("Looking for projection for path: {}", current_path_str);
+                    let mut alternate_path: Option<String> = None;
+
+                    for (source_pattern, projection_value) in config.iter() {
+                        log::debug!(
+                            "Trying pattern '{}' -> '{}'",
+                            source_pattern,
+                            projection_value.alternate
+                        );
+                        let projection =
+                            Projection::new(source_pattern, &projection_value.alternate);
+
+                        if projection.matches(current_path_str) {
+                            let alt = projection.alternate(current_path_str);
+                            log::info!("Found match! Alternate path: {}", alt);
+                            alternate_path = Some(alt);
+                            break;
+                        }
+                    }
+
+                    // If we found an alternate, open it
+                    if let Some(alternate_path) = alternate_path {
+                        let alternate_rel_path = match RelPath::unix(&alternate_path) {
+                            Ok(path) => path,
+                            Err(_) => return,
+                        };
+
+                        let alternate_project_path = ProjectPath {
+                            worktree_id,
+                            path: alternate_rel_path.into_arc(),
+                        };
+
+                        let result = workspace.update_in(cx, |workspace, window, cx| {
+                            workspace.open_path(alternate_project_path, None, true, window, cx)
+                        });
+
+                        match result {
+                            Ok(task) => {
+                                task.detach();
+                            }
+                            Err(err) => {
+                                log::error!("Failed to open alternate file: {:?}", err);
+                            }
+                        }
+                    } else {
+                        log::info!("No alternate projection found for: {}", current_path_str);
+                    }
+                })
+                .detach();
+            });
         });
     }
 }
@@ -134,7 +217,13 @@ impl Vim {
 #[cfg(test)]
 mod tests {
     use super::Projection;
+    use super::load_projections;
     use gpui::TestAppContext;
+    use project::FakeFs;
+    use project::Project;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
 
     #[gpui::test]
     async fn test_matches(_cx: &mut TestAppContext) {
@@ -157,5 +246,43 @@ mod tests {
 
         let path = "lib/app/module.ex";
         assert_eq!(projection.alternate(path), "test/app/module_test.exs");
+    }
+
+    #[gpui::test]
+    async fn test_load_projections(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                ".zed": {
+                    "projections.json": r#"{
+                        "src/main/java/*.java": {"alternate": "src/test/java/{}.java"},
+                        "src/test/java/*.java": {"alternate": "src/main/java/{}.java"}
+                    }"#
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let worktree = project.read_with(cx, |project, _cx| project.worktrees(_cx).next().unwrap());
+
+        let root_path = worktree.read_with(cx, |wt, _| wt.abs_path());
+        let config = load_projections(&root_path, fs).await.unwrap();
+
+        assert_eq!(config.len(), 2);
+        assert_eq!(
+            config.get("src/main/java/*.java").unwrap().alternate,
+            "src/test/java/{}.java"
+        );
+        assert_eq!(
+            config.get("src/test/java/*.java").unwrap().alternate,
+            "src/main/java/{}.java"
+        );
     }
 }
