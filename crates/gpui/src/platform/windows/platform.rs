@@ -728,7 +728,8 @@ impl WindowsPlatformInner {
         project: impl Fn(&mut PlatformCallbacks) -> &mut Option<T>,
         f: impl FnOnce(&mut T),
     ) {
-        if let Some(mut callback) = project(&mut self.state.borrow_mut().callbacks).take() {
+        let callback = project(&mut self.state.borrow_mut().callbacks).take();
+        if let Some(mut callback) = callback {
             f(&mut callback);
             *project(&mut self.state.borrow_mut().callbacks) = Some(callback)
         }

@@ -6,10 +6,10 @@ use crate::{
     EditDisplayMode, EditPrediction, Editor, EditorMode, EditorSettings, EditorSnapshot,
     EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp,
     HandleInput, HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp,
-    MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts,
-    OpenExcerptsSplit, PageDown, PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt,
-    SelectPhase, SelectedTextHighlight, Selection, SelectionDragState, SelectionEffects,
-    SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
+    MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown,
+    PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase,
+    SelectedTextHighlight, Selection, SelectionDragState, SelectionEffects, SizingBehavior,
+    SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
@@ -3664,6 +3664,7 @@ impl EditorElement {
         row_block_types: &mut HashMap<DisplayRow, bool>,
         selections: &[Selection<Point>],
         selected_buffer_ids: &Vec<BufferId>,
+        selection_anchors: &[Selection<Anchor>],
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         sticky_header_excerpt_id: Option<ExcerptId>,
         window: &mut Window,
@@ -3739,7 +3740,13 @@ impl EditorElement {
                 let selected = selected_buffer_ids.contains(&first_excerpt.buffer_id);
                 let result = v_flex().id(block_id).w_full().pr(editor_margins.right);
 
-                let jump_data = header_jump_data(snapshot, block_row_start, *height, first_excerpt);
+                let jump_data = header_jump_data(
+                    snapshot,
+                    block_row_start,
+                    *height,
+                    first_excerpt,
+                    selection_anchors,
+                );
                 result
                     .child(self.render_buffer_header(
                         first_excerpt,
@@ -3774,7 +3781,13 @@ impl EditorElement {
             Block::BufferHeader { excerpt, height } => {
                 let mut result = v_flex().id(block_id).w_full();
 
-                let jump_data = header_jump_data(snapshot, block_row_start, *height, excerpt);
+                let jump_data = header_jump_data(
+                    snapshot,
+                    block_row_start,
+                    *height,
+                    excerpt,
+                    selection_anchors,
+                );
 
                 if sticky_header_excerpt_id != Some(excerpt.id) {
                     let selected = selected_buffer_ids.contains(&excerpt.buffer_id);
@@ -4055,24 +4068,18 @@ impl EditorElement {
                                                     )
                                                     .group_hover("", |div| div.underline()),
                                             )
-                                            .on_click({
-                                                let focus_handle = focus_handle.clone();
-                                                move |event, window, cx| {
-                                                    if event.modifiers().secondary() {
-                                                        focus_handle.dispatch_action(
-                                                            &OpenExcerptsSplit,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    } else {
-                                                        focus_handle.dispatch_action(
-                                                            &OpenExcerpts,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    }
+                                            .on_click(window.listener_for(&self.editor, {
+                                                let jump_data = jump_data.clone();
+
+                                                move |editor, e: &ClickEvent, window, cx| {
+                                                    editor.open_excerpts_common(
+                                                        Some(jump_data.clone()),
+                                                        e.modifiers().secondary(),
+                                                        window,
+                                                        cx,
+                                                    );
                                                 }
-                                            }),
+                                            })),
                                     )
                                     .when_some(parent_path, |then, path| {
                                         then.child(div().child(path).text_color(
@@ -4100,24 +4107,18 @@ impl EditorElement {
                                                         cx,
                                                     )),
                                             )
-                                            .on_click({
-                                                let focus_handle = focus_handle.clone();
-                                                move |event, window, cx| {
-                                                    if event.modifiers().secondary() {
-                                                        focus_handle.dispatch_action(
-                                                            &OpenExcerptsSplit,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    } else {
-                                                        focus_handle.dispatch_action(
-                                                            &OpenExcerpts,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    }
+                                            .on_click(window.listener_for(&self.editor, {
+                                                let jump_data = jump_data.clone();
+
+                                                move |editor, e: &ClickEvent, window, cx| {
+                                                    editor.open_excerpts_common(
+                                                        Some(jump_data.clone()),
+                                                        e.modifiers().secondary(),
+                                                        window,
+                                                        cx,
+                                                    );
                                                 }
-                                            }),
+                                            })),
                                     )
                                 },
                             )
@@ -4263,6 +4264,7 @@ impl EditorElement {
         line_layouts: &mut [LineWithInvisibles],
         selections: &[Selection<Point>],
         selected_buffer_ids: &Vec<BufferId>,
+        selection_anchors: &[Selection<Anchor>],
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         sticky_header_excerpt_id: Option<ExcerptId>,
         window: &mut Window,
@@ -4306,6 +4308,7 @@ impl EditorElement {
                 &mut row_block_types,
                 selections,
                 selected_buffer_ids,
+                selection_anchors,
                 is_row_soft_wrapped,
                 sticky_header_excerpt_id,
                 window,
@@ -4363,6 +4366,7 @@ impl EditorElement {
                 &mut row_block_types,
                 selections,
                 selected_buffer_ids,
+                selection_anchors,
                 is_row_soft_wrapped,
                 sticky_header_excerpt_id,
                 window,
@@ -4418,6 +4422,7 @@ impl EditorElement {
                 &mut row_block_types,
                 selections,
                 selected_buffer_ids,
+                selection_anchors,
                 is_row_soft_wrapped,
                 sticky_header_excerpt_id,
                 window,
@@ -4500,6 +4505,7 @@ impl EditorElement {
         hitbox: &Hitbox,
         selected_buffer_ids: &Vec<BufferId>,
         blocks: &[BlockLayout],
+        selection_anchors: &[Selection<Anchor>],
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
@@ -4508,6 +4514,7 @@ impl EditorElement {
             DisplayRow(scroll_position.y as u32),
             FILE_HEADER_HEIGHT + MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
             excerpt,
+            selection_anchors,
         );
 
         let editor_bg_color = cx.theme().colors().editor_background;
@@ -7811,7 +7818,34 @@ fn header_jump_data(
     block_row_start: DisplayRow,
     height: u32,
     for_excerpt: &ExcerptInfo,
+    selection_anchors: &[Selection<Anchor>],
 ) -> JumpData {
+    if let Some(cursor_anchor) = latest_anchor_for_buffer(selection_anchors, for_excerpt.buffer_id)
+    {
+        let buffer_point =
+            language::ToPoint::to_point(&cursor_anchor.text_anchor, &for_excerpt.buffer);
+        let multibuffer_point = snapshot
+            .buffer_snapshot()
+            .summary_for_anchor::<Point>(&cursor_anchor);
+        let display_row = snapshot
+            .display_snapshot
+            .point_to_display_point(multibuffer_point, Bias::Left)
+            .row()
+            .0;
+        let scroll_row = snapshot
+            .scroll_anchor
+            .scroll_position(&snapshot.display_snapshot)
+            .y as u32;
+        let line_offset_from_top = display_row.saturating_sub(scroll_row);
+
+        return JumpData::MultiBufferPoint {
+            excerpt_id: cursor_anchor.excerpt_id,
+            anchor: cursor_anchor.text_anchor,
+            position: buffer_point,
+            line_offset_from_top,
+        };
+    }
+
     let range = &for_excerpt.range;
     let buffer = &for_excerpt.buffer;
     let jump_anchor = range.primary.start;
@@ -7839,6 +7873,20 @@ fn header_jump_data(
         position: jump_position,
         line_offset_from_top,
     }
+}
+
+fn latest_anchor_for_buffer(
+    selection_anchors: &[Selection<Anchor>],
+    buffer_id: BufferId,
+) -> Option<Anchor> {
+    selection_anchors
+        .iter()
+        .filter_map(|selection| {
+            let head = selection.head();
+            (head.buffer_id == Some(buffer_id)).then_some((selection.id, head))
+        })
+        .max_by_key(|(id, _)| *id)
+        .map(|(_, anchor)| anchor)
 }
 
 pub struct AcceptEditPredictionBinding(pub(crate) Option<gpui::KeyBinding>);
@@ -8633,7 +8681,7 @@ impl LineWithInvisibles {
                     let fragment_end_x = fragment_start_x + shaped_line.width;
                     if x < fragment_end_x {
                         return Some(
-                            fragment_start_index + shaped_line.index_for_x(x - fragment_start_x),
+                            fragment_start_index + shaped_line.index_for_x(x - fragment_start_x)?,
                         );
                     }
                     fragment_start_x = fragment_end_x;
@@ -9152,15 +9200,18 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let (local_selections, selected_buffer_ids): (
+                    let (local_selections, selected_buffer_ids, selection_anchors): (
                         Vec<Selection<Point>>,
                         Vec<BufferId>,
+                        Arc<[Selection<Anchor>]>,
                     ) = self
                         .editor_with_selections(cx)
                         .map(|editor| {
                             editor.update(cx, |editor, cx| {
                                 let all_selections =
                                     editor.selections.all::<Point>(&snapshot.display_snapshot);
+                                let all_anchor_selections =
+                                    editor.selections.all_anchors(&snapshot.display_snapshot);
                                 let selected_buffer_ids =
                                     if editor.buffer_kind(cx) == ItemBufferKind::Singleton {
                                         Vec::new()
@@ -9189,10 +9240,16 @@ impl Element for EditorElement {
                                 selections
                                     .extend(editor.selections.pending(&snapshot.display_snapshot));
 
-                                (selections, selected_buffer_ids)
+                                (selections, selected_buffer_ids, all_anchor_selections)
                             })
                         })
-                        .unwrap_or_default();
+                        .unwrap_or_else(|| {
+                            (
+                                Vec::new(),
+                                Vec::new(),
+                                Arc::<[Selection<Anchor>]>::from(Vec::new()),
+                            )
+                        });
 
                     let (selections, mut active_rows, newest_selection_head) = self
                         .layout_selections(
@@ -9423,6 +9480,7 @@ impl Element for EditorElement {
                                     &mut line_layouts,
                                     &local_selections,
                                     &selected_buffer_ids,
+                                    selection_anchors.as_ref(),
                                     is_row_soft_wrapped,
                                     sticky_header_excerpt_id,
                                     window,
@@ -9456,6 +9514,7 @@ impl Element for EditorElement {
                                 &hitbox,
                                 &selected_buffer_ids,
                                 &blocks,
+                                selection_anchors.as_ref(),
                                 window,
                                 cx,
                             )

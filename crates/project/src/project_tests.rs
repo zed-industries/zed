@@ -1215,13 +1215,20 @@ async fn test_language_server_relative_path(cx: &mut gpui::TestAppContext) {
     let settings_json_contents = json!({
         "languages": {
             "Rust": {
-                "language_servers": ["my_fake_lsp"]
+                "language_servers": ["my_fake_lsp", "lsp_on_path"]
             }
         },
         "lsp": {
             "my_fake_lsp": {
                 "binary": {
-                    "path": path!("relative_path/to/my_fake_lsp_binary.exe").to_string(),
+                    // file exists, so this is treated as a relative path
+                    "path": path!(".relative_path/to/my_fake_lsp_binary.exe").to_string(),
+                }
+            },
+            "lsp_on_path": {
+                "binary": {
+                    // file doesn't exist, so it will fall back on PATH env var
+                    "path": path!("lsp_on_path.exe").to_string(),
                 }
             }
         },
@@ -1234,7 +1241,7 @@ async fn test_language_server_relative_path(cx: &mut gpui::TestAppContext) {
             ".zed": {
                 "settings.json": settings_json_contents.to_string(),
             },
-            "relative_path": {
+            ".relative_path": {
                 "to": {
                     "my_fake_lsp.exe": "",
                 },
@@ -1250,10 +1257,17 @@ async fn test_language_server_relative_path(cx: &mut gpui::TestAppContext) {
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
 
-    let mut fake_rust_servers = language_registry.register_fake_lsp(
+    let mut my_fake_lsp = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             name: "my_fake_lsp",
+            ..Default::default()
+        },
+    );
+    let mut lsp_on_path = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "lsp_on_path",
             ..Default::default()
         },
     );
@@ -1268,11 +1282,14 @@ async fn test_language_server_relative_path(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    let lsp_path = fake_rust_servers.next().await.unwrap().binary.path;
+    let lsp_path = my_fake_lsp.next().await.unwrap().binary.path;
     assert_eq!(
         lsp_path.to_string_lossy(),
-        path!("/the-root/relative_path/to/my_fake_lsp_binary.exe"),
+        path!("/the-root/.relative_path/to/my_fake_lsp_binary.exe"),
     );
+
+    let lsp_path = lsp_on_path.next().await.unwrap().binary.path;
+    assert_eq!(lsp_path.to_string_lossy(), path!("lsp_on_path.exe"));
 }
 
 #[gpui::test]

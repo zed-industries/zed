@@ -6,12 +6,21 @@ env:
   CARGO_INCREMENTAL: '0'
   RUST_BACKTRACE: '1'
   ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+  ZED_EVAL_TELEMETRY: '1'
+  MODEL_NAME: ${{ inputs.model_name }}
 on:
-  schedule:
-  - cron: 47 1 * * 2
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      model_name:
+        description: model_name
+        required: true
+        type: string
+      commit_sha:
+        description: commit_sha
+        required: true
+        type: string
 jobs:
-  unit_evals:
+  run_unit_evals:
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - name: steps::checkout_repo
@@ -47,15 +56,10 @@ jobs:
       shell: bash -euxo pipefail {0}
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-    - name: run_agent_evals::unit_evals::send_failure_to_slack
-      if: ${{ failure() }}
-      uses: slackapi/slack-github-action@b0fa283ad8fea605de13dc3f449259339835fc52
-      with:
-        method: chat.postMessage
-        token: ${{ secrets.SLACK_APP_ZED_UNIT_EVALS_BOT_TOKEN }}
-        payload: |
-          channel: C04UDRNNJFQ
-          text: "Unit Evals Failed: https://github.com/zed-industries/zed/actions/runs/${{ github.run_id }}"
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+        GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+        UNIT_EVAL_COMMIT: ${{ inputs.commit_sha }}
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
