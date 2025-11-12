@@ -2779,9 +2779,6 @@ mod tests {
             Mention::Text { content, .. } => {
                 // Should contain the actual content
                 assert_eq!(content, small_content);
-                // Should not contain fallback or outline headers
-                assert!(!content.contains("File outline for"));
-                assert!(!content.contains("First 1KB"));
             }
             _ => panic!("Expected Text mention for small file"),
         }
