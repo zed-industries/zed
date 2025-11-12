@@ -875,8 +875,14 @@ impl Pane {
 
     /// Marks the item with the given ID as the preview item.
     /// This will be ignored if the global setting `preview_tabs` is disabled.
+    ///
+    /// The caller is responsible for ensuring the old preview item has been
+    /// closed using `close_current_preview_item()`.
     pub fn set_preview_item_id(&mut self, item_id: Option<EntityId>, cx: &App) {
         if PreviewTabsSettings::get_global(cx).enabled {
+            if self.preview_item_id.is_some() {
+                log::warn!("Preview tab is being mistakenly promoted to normal tab");
+            }
             self.preview_item_id = item_id;
         }
     }
