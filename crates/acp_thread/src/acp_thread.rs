@@ -3997,21 +3997,5 @@ mod tests {
             !terminal_exists_after,
             "Terminal should have been removed after checkpoint restore"
         );
-
-        // Additionally, if the terminal still exists, it should at least be killed
-        if terminal_exists_after {
-            let terminal_killed = thread.read_with(cx, |thread, _cx| {
-                let terminal_entity = thread.terminals.get(&terminal_id).unwrap();
-                terminal_entity.read_with(cx, |term, _cx| {
-                    // Check if the underlying terminal task was killed
-                    // If output exists, the task completed; if None, it's still running
-                    term.output().is_some()
-                })
-            });
-            assert!(
-                terminal_killed,
-                "If terminal still exists, it should at least be killed (BUG: it's still running)"
-            );
-        }
     }
 }
