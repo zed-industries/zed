@@ -39,6 +39,8 @@ pub use crease_map::*;
 pub use fold_map::{
     ChunkRenderer, ChunkRendererContext, ChunkRendererId, Fold, FoldId, FoldPlaceholder, FoldPoint,
 };
+#[cfg(any(test, feature = "test-support"))]
+use gpui::Hsla;
 pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
 
@@ -1409,9 +1411,7 @@ impl DisplaySnapshot {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn all_text_highlight_ranges<Tag: ?Sized + 'static>(
-        &self,
-    ) -> Vec<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
+    pub fn all_text_highlight_ranges<Tag: ?Sized + 'static>(&self) -> Vec<(Hsla, Range<Point>)> {
         let needed_type_id = TypeId::of::<Tag>();
         self.text_highlights
             .iter()
@@ -1420,6 +1420,15 @@ impl DisplaySnapshot {
                 HighlightKey::TypePlus(type_id, _) => type_id == &needed_type_id,
             })
             .map(|(_, value)| value.clone())
+            .flat_map(|ranges| {
+                ranges
+                    .1
+                    .iter()
+                    .flat_map(|range| {
+                        Some((ranges.0.color?, range.to_point(self.buffer_snapshot())))
+                    })
+                    .collect::<Vec<_>>()
+            })
             .collect()
     }
 

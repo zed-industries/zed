@@ -2644,8 +2644,9 @@ pub fn rust_lang() -> Arc<Language> {
 ("[" @open "]" @close)
 ("{" @open "}" @close)
 ("<" @open ">" @close)
-("\"" @open "\"" @close)
-(closure_parameters "|" @open "|" @close)"#,
+(closure_parameters "|" @open "|" @close)
+(("\"" @open "\"" @close) (#set! rainbow.exclude))
+(("'" @open "'" @close) (#set! rainbow.exclude))"#,
         )),
         text_objects: Some(Cow::from(
             r#"

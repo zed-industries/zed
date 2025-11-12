@@ -107,89 +107,32 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, ops::Range, time::Duration};
+    use std::{collections::HashSet, sync::Arc, time::Duration};
 
     use super::*;
     use crate::{
         DisplayPoint,
         display_map::{DisplayRow, ToDisplayPoint},
         editor_tests::init_test,
-        test::{
-            editor_lsp_test_context::EditorLspTestContext, editor_test_context::EditorTestContext,
-        },
+        test::editor_lsp_test_context::EditorLspTestContext,
     };
-    use gpui::Hsla;
     use indoc::indoc;
-    use language::{BracketPair, BracketPairConfig, Language, LanguageConfig, LanguageMatcher};
-    use multi_buffer::AnchorRangeExt as _;
+    use languages::rust_lang;
     use rope::Point;
     use text::OffsetRangeExt;
 
     #[gpui::test]
     async fn test_rainbow_bracket_highlights(cx: &mut gpui::TestAppContext) {
-        fn collect_colored_brackets(
-            cx: &mut EditorTestContext,
-        ) -> Vec<(Option<Hsla>, Range<Point>)> {
-            cx.update_editor(|editor, window, cx| {
-                let snapshot = editor.snapshot(window, cx);
-                snapshot
-                    .all_text_highlight_ranges::<RainbowBracketHighlight>()
-                    .iter()
-                    .flat_map(|ranges| {
-                        ranges.1.iter().map(|range| {
-                            (ranges.0.color, range.to_point(&snapshot.buffer_snapshot()))
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            })
-        }
-
         init_test(cx, |language_settings| {
             language_settings.defaults.colorize_brackets = Some(true);
         });
 
         let mut cx = EditorLspTestContext::new(
-            Language::new(
-                LanguageConfig {
-                    name: "Rust".into(),
-                    matcher: LanguageMatcher {
-                        path_suffixes: vec!["rs".to_string()],
-                        ..LanguageMatcher::default()
-                    },
-                    brackets: BracketPairConfig {
-                        pairs: vec![
-                            BracketPair {
-                                start: "{".to_string(),
-                                end: "}".to_string(),
-                                close: false,
-                                surround: false,
-                                newline: true,
-                            },
-                            BracketPair {
-                                start: "(".to_string(),
-                                end: ")".to_string(),
-                                close: false,
-                                surround: false,
-                                newline: true,
-                            },
-                        ],
-                        ..BracketPairConfig::default()
-                    },
-                    ..LanguageConfig::default()
-                },
-                Some(tree_sitter_rust::LANGUAGE.into()),
-            )
-            .with_brackets_query(indoc! {r#"
-                ("{" @open "}" @close)
-                ("(" @open ")" @close)
-                "#})
-            .unwrap(),
+            Arc::into_inner(rust_lang()).unwrap(),
             lsp::ServerCapabilities::default(),
             cx,
         )
         .await;
-
-        let mut highlighted_brackets = HashMap::default();
 
         // taken from r-a https://github.com/rust-lang/rust-analyzer/blob/d733c07552a2dc0ec0cc8f4df3f0ca969a93fd90/crates/ide/src/inlay_hints.rs#L81-L297
         cx.set_state(indoc! {r#"ˇ
@@ -414,8 +357,13 @@ mod tests {
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
 
-        let actual_ranges = collect_colored_brackets(&mut cx);
+        let actual_ranges = cx.update_editor(|editor, window, cx| {
+            editor
+                .snapshot(window, cx)
+                .all_text_highlight_ranges::<RainbowBracketHighlight>()
+        });
 
+        let mut highlighted_brackets = HashMap::default();
         for (color, range) in actual_ranges.iter().cloned() {
             highlighted_brackets.insert(range, color);
         }
@@ -437,7 +385,11 @@ mod tests {
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
 
-        let ranges_after_scrolling = collect_colored_brackets(&mut cx);
+        let ranges_after_scrolling = cx.update_editor(|editor, window, cx| {
+            editor
+                .snapshot(window, cx)
+                .all_text_highlight_ranges::<RainbowBracketHighlight>()
+        });
         let new_last_bracket = ranges_after_scrolling
             .iter()
             .max_by_key(|(_, p)| p.end.row)
@@ -460,7 +412,11 @@ mod tests {
             });
             cx.executor().run_until_parked();
 
-            let colored_brackets = collect_colored_brackets(&mut cx);
+            let colored_brackets = cx.update_editor(|editor, window, cx| {
+                editor
+                    .snapshot(window, cx)
+                    .all_text_highlight_ranges::<RainbowBracketHighlight>()
+            });
             for (color, range) in colored_brackets.clone() {
                 assert!(
                     highlighted_brackets.entry(range).or_insert(color) == &color,
