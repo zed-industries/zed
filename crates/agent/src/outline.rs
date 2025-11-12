@@ -191,14 +191,14 @@ mod tests {
             .await
             .unwrap();
 
+        // Should contain some of the actual file content
         assert!(
             result.text.contains("AAAAAAAAAA"),
-            "Result did not contain content subset. Result starts with: {}",
-            &result.text.chars().take(100).collect::<String>()
+            "Result did not contain content subset"
         );
         assert!(
             result.text.len() < 50 * 1024,
-            "Result size {} is too large",
+            "Result size {} should be smaller than 50KB",
             result.text.len()
         );
     }
