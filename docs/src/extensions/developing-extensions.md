@@ -106,7 +106,11 @@ zed::register_extension!(MyExtension);
 # git clone https://github.com/zed-industries/extensions
 cd extensions
 git submodule init
+# Running git submodule update without a path will update all extensions, which may take some time.
+# To update all submodules:
 git submodule update
+# To update only a specific extension submodule for faster operation:
+# git submodule update extensions/specific-extension-name
 ```
 
 ## Extension License Requirements
