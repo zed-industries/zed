@@ -310,7 +310,12 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.hide_action_types(&edit_prediction_actions);
             filter.hide_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
         } else {
-            filter.show_namespace("agent");
+            if agent_enabled {
+                filter.show_namespace("agent");
+            } else {
+                filter.hide_namespace("agent");
+            }
+
             filter.show_namespace("assistant");
             filter.show_namespace("copilot");
             filter.show_namespace("zed_predict_onboarding");
