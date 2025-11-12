@@ -1866,10 +1866,14 @@ impl AcpThread {
             .checkpoint
             .as_ref()
             .map(|c| c.git_checkpoint.clone());
+
+        // Cancel any in-progress generation before restoring
+        let cancel_task = self.cancel(cx);
         let rewind = self.rewind(id.clone(), cx);
         let git_store = self.project.read(cx).git_store().clone();
 
         cx.spawn(async move |_, cx| {
+            cancel_task.await;
             rewind.await?;
             if let Some(checkpoint) = checkpoint {
                 git_store
@@ -3821,11 +3825,11 @@ mod tests {
     }
 
     /// Tests that restoring a checkpoint properly cleans up terminals that were
-    /// created after that checkpoint.
+    /// created after that checkpoint, and cancels any in-progress generation.
     ///
     /// Reproduces issue #35142: When a checkpoint is restored, any terminal processes
-    /// that were started after that checkpoint should be terminated, but currently they
-    /// keep running.
+    /// that were started after that checkpoint should be terminated, and any in-progress
+    /// AI generation should be canceled.
     #[gpui::test]
     async fn test_restore_checkpoint_kills_terminal(cx: &mut TestAppContext) {
         init_test(cx);
@@ -3960,13 +3964,23 @@ mod tests {
         );
 
         // Restore the checkpoint to the second message.
-        // This should remove the terminal that was created after that point.
+        // This should:
+        // 1. Cancel any in-progress generation (via the cancel() call)
+        // 2. Remove the terminal that was created after that point
         thread
             .update(cx, |thread, cx| {
                 thread.restore_checkpoint(second_message_id, cx)
             })
             .await
             .unwrap();
+
+        // Verify that no send_task is in progress after restore
+        // (cancel() clears the send_task)
+        let has_send_task_after = thread.read_with(cx, |thread, _| thread.send_task.is_some());
+        assert!(
+            !has_send_task_after,
+            "Should not have a send_task after restore (cancel should have cleared it)"
+        );
 
         // Verify the entries were truncated (restoring to index 1 truncates at 1, keeping only index 0)
         let entry_count = thread.read_with(cx, |thread, _| thread.entries.len());
