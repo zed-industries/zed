@@ -1394,8 +1394,9 @@ impl Vim {
         });
         let editor = editor.read(cx);
         let editor_mode = editor.mode();
+        let is_full = editor_mode.is_full();
 
-        if editor_mode.is_full()
+        if is_full
             && !newest_selection_empty
             && self.mode == Mode::Normal
             // When following someone, don't switch vim mode.
@@ -1417,6 +1418,10 @@ impl Vim {
 
         cx.emit(VimEvent::Focused);
         self.sync_vim_settings(window, cx);
+
+        if !is_full {
+            return;
+        }
 
         if VimSettings::get_global(cx).toggle_relative_line_numbers {
             if let Some(old_vim) = Vim::globals(cx).focused_vim() {
