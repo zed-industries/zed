@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use collections::HashSet;
@@ -259,100 +261,113 @@ impl BranchDiff {
         self.repo.as_ref()
     }
 
-    pub fn load_buffers(&mut self, cx: &mut Context<Self>) -> Vec<DiffBufferGroup> {
+    pub async fn load_buffers(&mut self, cx: &mut Context<'_, Self>) -> Vec<DiffBufferGroup> {
         let mut output = Vec::new();
         let Some(repo) = self.repo.clone() else {
             return output;
         };
 
-        self.project.update(cx, |_project, cx| {
-            let mut seen = HashSet::default();
+        let mut seen = HashSet::default();
 
-            let max_tasks = 10;
-            // TODO split up here too? (@cached_status)
-            let cache_status: Vec<_> = repo.read(cx).cached_status().collect();
-            for items in cache_status.chunks((cache_status.len() / max_tasks).max(1)) {
-                // seen.extend(items.iter().map(|it| it.repo_path.clone()));
+        let max_tasks = 10;
+        // TODO split up here too? (@cached_status)
+        let cache_status: Vec<_> = self
+            .project
+            .update(cx, |_project, cx| repo.read(cx).cached_status().collect());
+        for items in cache_status.chunks((cache_status.len() / max_tasks).max(1)) {
+            // seen.extend(items.iter().map(|it| it.repo_path.clone()));
 
-                let mut branch_diffs = Vec::new();
-                let mut project_paths = Vec::new();
-                let mut repo_paths = Vec::new();
-                let mut file_statussus = Vec::new();
+            let mut branch_diffs = Vec::new();
+            let mut project_paths = Vec::new();
+            let mut repo_paths = Vec::new();
+            let mut file_statussus = Vec::new();
 
-                for item in items {
-                    seen.insert(item.repo_path.clone());
-                    let branch_diff = self
-                        .tree_diff
-                        .as_ref()
-                        .and_then(|t| t.entries.get(&item.repo_path))
-                        .cloned();
-                    let Some(status) = self.merge_statuses(Some(item.status), branch_diff.as_ref())
-                    else {
-                        continue;
-                    };
+            for item in items {
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
 
-                    if !status.has_changes() {
-                        continue;
-                    }
+                seen.insert(item.repo_path.clone());
+                let branch_diff = self
+                    .tree_diff
+                    .as_ref()
+                    .and_then(|t| t.entries.get(&item.repo_path))
+                    .cloned();
+                let Some(status) = self.merge_statuses(Some(item.status), branch_diff.as_ref())
+                else {
+                    continue;
+                };
 
-                    let Some(project_path) =
-                        repo.read(cx).repo_path_to_project_path(&item.repo_path, cx)
-                    else {
-                        continue;
-                    };
-
-                    branch_diffs.push(branch_diff);
-                    project_paths.push(project_path);
-                    repo_paths.push(item.repo_path.clone());
-                    file_statussus.push(item.status);
+                if !status.has_changes() {
+                    continue;
                 }
 
-                let task = Self::do_load_buffers(branch_diffs, project_paths, repo.clone(), cx);
-                output.push(DiffBufferGroup {
-                    repo_paths,
-                    file_statussus,
-                    load: task,
-                });
+                let Some(project_path) = self.project.update(cx, |_project, cx| {
+                    repo.read(cx).repo_path_to_project_path(&item.repo_path, cx)
+                }) else {
+                    continue;
+                };
+
+                branch_diffs.push(branch_diff);
+                project_paths.push(project_path);
+                repo_paths.push(item.repo_path.clone());
+                file_statussus.push(item.status);
             }
-            let Some(tree_diff) = self.tree_diff.as_ref() else {
-                return;
-            };
 
-            let tree_diff_len = tree_diff.entries.len();
-            for chunk in &tree_diff
-                .entries
-                .iter()
-                .chunks((tree_diff_len / max_tasks).max(1))
-            {
-                let mut branch_diffs = Vec::new();
-                let mut project_paths = Vec::new();
-                let mut repo_paths = Vec::new();
-                let mut file_statussus = Vec::new();
+            let task = self.project.update(cx, |_project, cx| {
+                Self::do_load_buffers(branch_diffs, project_paths, repo.clone(), cx)
+            });
+            output.push(DiffBufferGroup {
+                repo_paths,
+                file_statussus,
+                load: task,
+            });
+        }
+        let Some(tree_diff) = self.tree_diff.as_ref() else {
+            return output;
+        };
 
-                for (path, branch_diff) in chunk {
-                    if seen.contains(&path) {
-                        continue;
-                    }
+        let tree_diff_len = tree_diff.entries.len();
+        for chunk in &tree_diff
+            .entries
+            .iter()
+            .chunks((tree_diff_len / max_tasks).max(1))
+        {
+            let mut branch_diffs = Vec::new();
+            let mut project_paths = Vec::new();
+            let mut repo_paths = Vec::new();
+            let mut file_statussus = Vec::new();
 
-                    let Some(project_path) = repo.read(cx).repo_path_to_project_path(&path, cx)
-                    else {
-                        continue;
-                    };
-                    branch_diffs.push(Some(branch_diff.clone()));
-                    project_paths.push(project_path);
-                    let file_status = diff_status_to_file_status(branch_diff);
-                    file_statussus.push(file_status);
-                    repo_paths.push(path.clone());
+            for (path, branch_diff) in chunk {
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+
+                if seen.contains(&path) {
+                    continue;
                 }
 
-                let task = Self::do_load_buffers(branch_diffs, project_paths, repo.clone(), cx);
-                output.push(DiffBufferGroup {
-                    repo_paths,
-                    file_statussus,
-                    load: task,
-                });
+                let Some(project_path) = self.project.update(cx, |_project, cx| {
+                    repo.read(cx).repo_path_to_project_path(&path, cx)
+                }) else {
+                    continue;
+                };
+                branch_diffs.push(Some(branch_diff.clone()));
+                project_paths.push(project_path);
+                let file_status = diff_status_to_file_status(branch_diff);
+                file_statussus.push(file_status);
+                repo_paths.push(path.clone());
             }
-        });
+
+            let task = self.project.update(cx, |_project, cx| {
+                Self::do_load_buffers(branch_diffs, project_paths, repo.clone(), cx)
+            });
+            output.push(DiffBufferGroup {
+                repo_paths,
+                file_statussus,
+                load: task,
+            });
+        }
         output
     }
 
