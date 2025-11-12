@@ -61,7 +61,6 @@ pub async fn run_retrieval_searches(
             for (path, ranges) in file_results {
                 let buffer = project
                     .update(cx, |project, cx| {
-                        // todo!
                         let project_path = project.find_project_path(path, cx).unwrap();
                         project.open_buffer(project_path, cx)
                     })?
