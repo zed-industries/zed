@@ -1,20 +1,15 @@
 use crate::PromptFormat;
 use crate::example::{ActualExcerpt, ExpectedExcerpt, NamedExample};
 use crate::headless::ZetaCliAppState;
-use crate::paths::{
-    CACHE_DIR, LOGS_DIR, LOGS_PREDICTION_PROMPT, LOGS_PREDICTION_RESPONSE, LOGS_SEARCH_PROMPT,
-    LOGS_SEARCH_QUERIES,
-};
+use crate::paths::{CACHE_DIR, LATEST_EXAMPLE_RUN_DIR, RUN_DIR, print_run_data_dir};
 use ::serde::Serialize;
-use anyhow::{Result, anyhow};
-use clap::Args;
-use collections::HashMap;
-use gpui::http_client::Url;
-use language::{Anchor, Buffer, Point};
-// use cloud_llm_client::predict_edits_v3::PromptFormat;
+use anyhow::{Context, Result, anyhow};
+use clap::{Args, ValueEnum};
 use cloud_zeta2_prompt::{CURSOR_MARKER, write_codeblock};
+use collections::HashMap;
 use futures::StreamExt as _;
 use gpui::{AppContext, AsyncApp, Entity};
+use language::{Anchor, Buffer, Point};
 use project::Project;
 use serde::Deserialize;
 use std::cell::Cell;
@@ -25,7 +20,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use zeta2::LlmResponseCache;
+use zeta2::{EvalCache, EvalCacheEntryKind, EvalCacheKey};
 
 #[derive(Debug, Args)]
 pub struct PredictArguments {
@@ -36,8 +31,31 @@ pub struct PredictArguments {
     #[clap(long, short, value_enum, default_value_t = PredictionsOutputFormat::Md)]
     format: PredictionsOutputFormat,
     example_path: PathBuf,
-    #[clap(long)]
-    skip_cache: bool,
+    #[clap(long, value_enum, default_value_t = CacheMode::default())]
+    cache: CacheMode,
+}
+
+#[derive(Debug, ValueEnum, Default, Clone, Copy)]
+pub enum CacheMode {
+    /// Use cached LLM requests and responses, based on the hash of the prompt and the endpoint.
+    #[default]
+    #[value(alias = "request")]
+    Requests,
+    /// Ignore existing cache entries for both LLM and search.
+    Skip,
+    /// Use cached LLM responses AND search results for full determinism. Fails if they haven't been cached yet.
+    /// Useful for reproducing results and fixing bugs outside of search queries
+    Force,
+}
+
+impl CacheMode {
+    fn use_cached_llm_responses(&self) -> bool {
+        matches!(self, CacheMode::Requests | CacheMode::Force)
+    }
+
+    fn use_cached_search_results(&self) -> bool {
+        matches!(self, CacheMode::Force)
+    }
 }
 
 #[derive(clap::ValueEnum, Debug, Clone)]
@@ -55,9 +73,9 @@ pub async fn run_zeta2_predict(
     let example = NamedExample::load(args.example_path).unwrap();
     let result = zeta2_predict(
         example,
-        args.skip_cache,
         args.prompt_format,
         args.use_expected_context,
+        args.cache,
         &app_state,
         cx,
     )
@@ -65,14 +83,7 @@ pub async fn run_zeta2_predict(
     .unwrap();
     result.write(args.format, std::io::stdout()).unwrap();
 
-    println!("## Logs\n");
-    println!("Search prompt: {}", LOGS_SEARCH_PROMPT.display());
-    println!("Search queries: {}", LOGS_SEARCH_QUERIES.display());
-    println!("Prediction prompt: {}", LOGS_PREDICTION_PROMPT.display());
-    println!(
-        "Prediction response: {}",
-        LOGS_PREDICTION_RESPONSE.display()
-    );
+    print_run_data_dir();
 }
 
 thread_local! {
@@ -81,13 +92,12 @@ thread_local! {
 
 pub async fn zeta2_predict(
     example: NamedExample,
-    skip_cache: bool,
     prompt_format: PromptFormat,
     use_expected_context: bool,
+    cache_mode: CacheMode,
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) -> Result<PredictionDetails> {
-    fs::create_dir_all(&*LOGS_DIR)?;
     let worktree_path = example.setup_worktree().await?;
 
     if !AUTHENTICATED.get() {
@@ -126,8 +136,25 @@ pub async fn zeta2_predict(
 
     let zeta = cx.update(|cx| zeta2::Zeta::global(&app_state.client, &app_state.user_store, cx))?;
 
+    let example_run_dir = RUN_DIR.join(&example.file_name());
+    fs::create_dir_all(&example_run_dir)?;
+    if LATEST_EXAMPLE_RUN_DIR.exists() {
+        fs::remove_file(&*LATEST_EXAMPLE_RUN_DIR)?;
+    }
+
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&example_run_dir, &*LATEST_EXAMPLE_RUN_DIR)
+        .context("creating latest link")?;
+
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(&example_run_dir, &*LATEST_EXAMPLE_RUN_DIR)
+        .context("creating latest link")?;
+
     zeta.update(cx, |zeta, _cx| {
-        zeta.with_llm_response_cache(Arc::new(Cache { skip_cache }));
+        zeta.with_eval_cache(Arc::new(RunCache {
+            example_run_dir: example_run_dir.clone(),
+            cache_mode,
+        }));
     })?;
 
     cx.subscribe(&buffer_store, {
@@ -159,12 +186,15 @@ pub async fn zeta2_predict(
                 match event {
                     zeta2::ZetaDebugInfo::ContextRetrievalStarted(info) => {
                         start_time = Some(info.timestamp);
-                        fs::write(&*LOGS_SEARCH_PROMPT, &info.search_prompt)?;
+                        fs::write(
+                            example_run_dir.join("search_prompt.md"),
+                            &info.search_prompt,
+                        )?;
                     }
                     zeta2::ZetaDebugInfo::SearchQueriesGenerated(info) => {
                         search_queries_generated_at = Some(info.timestamp);
                         fs::write(
-                            &*LOGS_SEARCH_QUERIES,
+                            example_run_dir.join("search_queries.json"),
                             serde_json::to_string_pretty(&info.search_queries).unwrap(),
                         )?;
                     }
@@ -176,7 +206,7 @@ pub async fn zeta2_predict(
                         let prediction_started_at = Instant::now();
                         start_time.get_or_insert(prediction_started_at);
                         fs::write(
-                            &*LOGS_PREDICTION_PROMPT,
+                            example_run_dir.join("prediction_prompt.md"),
                             &request.local_prompt.unwrap_or_default(),
                         )?;
 
@@ -210,7 +240,7 @@ pub async fn zeta2_predict(
                         let response = request.response_rx.await?.0.map_err(|err| anyhow!(err))?;
                         let response = zeta2::text_from_response(response).unwrap_or_default();
                         let prediction_finished_at = Instant::now();
-                        fs::write(&*LOGS_PREDICTION_RESPONSE, &response)?;
+                        fs::write(example_run_dir.join("prediction_response.md"), &response)?;
 
                         let mut result = result.lock().unwrap();
 
@@ -328,48 +358,69 @@ async fn resolve_context_entry(
     Ok((buffer, ranges))
 }
 
-struct Cache {
-    skip_cache: bool,
+struct RunCache {
+    cache_mode: CacheMode,
+    example_run_dir: PathBuf,
 }
 
-impl Cache {
-    fn path(key: u64) -> PathBuf {
-        CACHE_DIR.join(format!("{key:x}.json"))
+impl RunCache {
+    fn output_cache_path((kind, key): &EvalCacheKey) -> PathBuf {
+        CACHE_DIR.join(format!("{kind}_out_{key:x}.json",))
+    }
+
+    fn input_cache_path((kind, key): &EvalCacheKey) -> PathBuf {
+        CACHE_DIR.join(format!("{kind}_in_{key:x}.json",))
+    }
+
+    fn link_to_run(&self, key: &EvalCacheKey) {
+        let output_link_path = self.example_run_dir.join(format!("{}_out.json", key.0));
+        fs::hard_link(Self::output_cache_path(key), &output_link_path).unwrap();
+
+        let input_link_path = self.example_run_dir.join(format!("{}_in.json", key.0));
+        fs::hard_link(Self::input_cache_path(key), &input_link_path).unwrap();
     }
 }
 
-impl LlmResponseCache for Cache {
-    fn get_key(&self, url: &Url, body: &str) -> u64 {
-        use collections::FxHasher;
-        use std::hash::{Hash, Hasher};
+impl EvalCache for RunCache {
+    fn read(&self, key: EvalCacheKey) -> Option<String> {
+        let path = RunCache::output_cache_path(&key);
 
-        let mut hasher = FxHasher::default();
-        url.hash(&mut hasher);
-        body.hash(&mut hasher);
-        hasher.finish()
-    }
-
-    fn read_response(&self, key: u64) -> Option<String> {
-        let path = Cache::path(key);
         if path.exists() {
-            if self.skip_cache {
-                log::info!("Skipping existing cached LLM response: {}", path.display());
-                None
-            } else {
-                log::info!("Using LLM response from cache: {}", path.display());
+            let use_cache = match key.0 {
+                EvalCacheEntryKind::Search => self.cache_mode.use_cached_search_results(),
+                EvalCacheEntryKind::Context | EvalCacheEntryKind::Prediction => {
+                    self.cache_mode.use_cached_llm_responses()
+                }
+            };
+            if use_cache {
+                log::info!("Using cache entry: {}", path.display());
+                self.link_to_run(&key);
                 Some(fs::read_to_string(path).unwrap())
+            } else {
+                log::info!("Skipping cached entry: {}", path.display());
+                None
             }
+        } else if matches!(self.cache_mode, CacheMode::Force) {
+            panic!(
+                "No cached entry found for {:?}. Run without `--cache force` at least once.",
+                key.0
+            );
         } else {
             None
         }
     }
 
-    fn write_response(&self, key: u64, value: &str) {
+    fn write(&self, key: EvalCacheKey, input: &str, output: &str) {
         fs::create_dir_all(&*CACHE_DIR).unwrap();
 
-        let path = Cache::path(key);
-        log::info!("Writing LLM response to cache: {}", path.display());
-        fs::write(path, value).unwrap();
+        let input_path = RunCache::input_cache_path(&key);
+        fs::write(&input_path, input).unwrap();
+
+        let output_path = RunCache::output_cache_path(&key);
+        log::info!("Writing cache entry: {}", output_path.display());
+        fs::write(&output_path, output).unwrap();
+
+        self.link_to_run(&key);
     }
 }
 

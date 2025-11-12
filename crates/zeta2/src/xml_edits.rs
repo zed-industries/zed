@@ -105,21 +105,58 @@ fn resolve_new_text_old_text_in_buffer(
 #[cfg(debug_assertions)]
 fn closest_old_text_match(buffer: &TextBufferSnapshot, old_text: &str) -> Option<String> {
     let buffer_text = buffer.text();
-    let mut cursor = 0;
     let len = old_text.len();
+
+    if len == 0 || buffer_text.len() < len {
+        return None;
+    }
 
     let mut min_score = usize::MAX;
     let mut min_start = 0;
 
+    let old_text_bytes = old_text.as_bytes();
+    let old_alpha_count = old_text_bytes
+        .iter()
+        .filter(|&&b| b.is_ascii_alphanumeric())
+        .count();
+
+    let old_line_count = old_text.lines().count();
+
+    let mut cursor = 0;
+
     while cursor + len <= buffer_text.len() {
         let candidate = &buffer_text[cursor..cursor + len];
+        let candidate_bytes = candidate.as_bytes();
+
+        if usize::abs_diff(candidate.lines().count(), old_line_count) > 4 {
+            cursor += 1;
+            continue;
+        }
+
+        let candidate_alpha_count = candidate_bytes
+            .iter()
+            .filter(|&&b| b.is_ascii_alphanumeric())
+            .count();
+
+        // If alphanumeric character count differs by more than 30%, skip
+        if usize::abs_diff(old_alpha_count, candidate_alpha_count) * 10 > old_alpha_count * 3 {
+            cursor += 1;
+            continue;
+        }
+
         let score = strsim::levenshtein(candidate, old_text);
         if score < min_score {
             min_score = score;
             min_start = cursor;
+
+            if min_score <= len / 10 {
+                break;
+            }
         }
+
         cursor += 1;
     }
+
     if min_score != usize::MAX {
         Some(buffer_text[min_start..min_start + len].to_string())
     } else {

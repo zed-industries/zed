@@ -132,15 +132,8 @@ pub struct Zeta {
     options: ZetaOptions,
     update_required: bool,
     debug_tx: Option<mpsc::UnboundedSender<ZetaDebugInfo>>,
-    #[cfg(feature = "llm-response-cache")]
-    llm_response_cache: Option<Arc<dyn LlmResponseCache>>,
-}
-
-#[cfg(feature = "llm-response-cache")]
-pub trait LlmResponseCache: Send + Sync {
-    fn get_key(&self, url: &gpui::http_client::Url, body: &str) -> u64;
-    fn read_response(&self, key: u64) -> Option<String>;
-    fn write_response(&self, key: u64, value: &str);
+    #[cfg(feature = "eval-support")]
+    eval_cache: Option<Arc<dyn EvalCache>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -369,14 +362,14 @@ impl Zeta {
             ),
             update_required: false,
             debug_tx: None,
-            #[cfg(feature = "llm-response-cache")]
-            llm_response_cache: None,
+            #[cfg(feature = "eval-support")]
+            eval_cache: None,
         }
     }
 
-    #[cfg(feature = "llm-response-cache")]
-    pub fn with_llm_response_cache(&mut self, cache: Arc<dyn LlmResponseCache>) {
-        self.llm_response_cache = Some(cache);
+    #[cfg(feature = "eval-support")]
+    pub fn with_eval_cache(&mut self, cache: Arc<dyn EvalCache>) {
+        self.eval_cache = Some(cache);
     }
 
     pub fn debug_info(&mut self) -> mpsc::UnboundedReceiver<ZetaDebugInfo> {
@@ -736,9 +729,19 @@ impl Zeta {
         // TODO data collection
         let can_collect_data = cx.is_staff();
 
-        let mut included_files = project_state
+        let empty_context_files = HashMap::default();
+        let context_files = project_state
             .and_then(|project_state| project_state.context.as_ref())
-            .unwrap_or(&HashMap::default())
+            .unwrap_or(&empty_context_files);
+
+        #[cfg(feature = "eval-support")]
+        let parsed_fut = futures::future::join_all(
+            context_files
+                .keys()
+                .map(|buffer| buffer.read(cx).parsing_idle()),
+        );
+
+        let mut included_files = context_files
             .iter()
             .filter_map(|(buffer_entity, ranges)| {
                 let buffer = buffer_entity.read(cx);
@@ -751,12 +754,19 @@ impl Zeta {
             })
             .collect::<Vec<_>>();
 
-        #[cfg(feature = "llm-response-cache")]
-        let llm_response_cache = self.llm_response_cache.clone();
+        included_files.sort_by(|(_, _, path_a, ranges_a), (_, _, path_b, ranges_b)| {
+            (path_a, ranges_a.len()).cmp(&(path_b, ranges_b.len()))
+        });
+
+        #[cfg(feature = "eval-support")]
+        let eval_cache = self.eval_cache.clone();
 
         let request_task = cx.background_spawn({
             let active_buffer = active_buffer.clone();
             async move {
+                #[cfg(feature = "eval-support")]
+                parsed_fut.await;
+
                 let index_state = if let Some(index_state) = index_state {
                     Some(index_state.lock_owned().await)
                 } else {
@@ -819,17 +829,17 @@ impl Zeta {
 
                         let included_files = included_files
                             .iter()
-                            .map(|(_, buffer, path, ranges)| {
+                            .map(|(_, snapshot, path, ranges)| {
                                 let excerpts = merge_excerpts(
-                                    &buffer,
+                                    &snapshot,
                                     ranges.iter().map(|range| {
-                                        let point_range = range.to_point(&buffer);
+                                        let point_range = range.to_point(&snapshot);
                                         Line(point_range.start.row)..Line(point_range.end.row)
                                     }),
                                 );
                                 predict_edits_v3::IncludedFile {
                                     path: path.clone(),
-                                    max_row: Line(buffer.max_point().row),
+                                    max_row: Line(snapshot.max_point().row),
                                     excerpts,
                                 }
                             })
@@ -948,8 +958,10 @@ impl Zeta {
                     client,
                     llm_token,
                     app_version,
-                    #[cfg(feature = "llm-response-cache")]
-                    llm_response_cache,
+                    #[cfg(feature = "eval-support")]
+                    eval_cache,
+                    #[cfg(feature = "eval-support")]
+                    EvalCacheEntryKind::Prediction,
                 )
                 .await;
                 let request_time = chrono::Utc::now() - before_request;
@@ -1049,9 +1061,8 @@ impl Zeta {
         client: Arc<Client>,
         llm_token: LlmApiToken,
         app_version: SemanticVersion,
-        #[cfg(feature = "llm-response-cache")] llm_response_cache: Option<
-            Arc<dyn LlmResponseCache>,
-        >,
+        #[cfg(feature = "eval-support")] eval_cache: Option<Arc<dyn EvalCache>>,
+        #[cfg(feature = "eval-support")] eval_cache_kind: EvalCacheEntryKind,
     ) -> Result<(open_ai::Response, Option<EditPredictionUsage>)> {
         let url = if let Some(predict_edits_url) = PREDICT_EDITS_URL.as_ref() {
             http_client::Url::parse(&predict_edits_url)?
@@ -1061,16 +1072,23 @@ impl Zeta {
                 .build_zed_llm_url("/predict_edits/raw", &[])?
         };
 
-        #[cfg(feature = "llm-response-cache")]
-        let cache_key = if let Some(cache) = llm_response_cache {
-            let request_json = serde_json::to_string(&request)?;
-            let key = cache.get_key(&url, &request_json);
+        #[cfg(feature = "eval-support")]
+        let cache_key = if let Some(cache) = eval_cache {
+            use collections::FxHasher;
+            use std::hash::{Hash, Hasher};
 
-            if let Some(response_str) = cache.read_response(key) {
+            let mut hasher = FxHasher::default();
+            url.hash(&mut hasher);
+            let request_str = serde_json::to_string_pretty(&request)?;
+            request_str.hash(&mut hasher);
+            let hash = hasher.finish();
+
+            let key = (eval_cache_kind, hash);
+            if let Some(response_str) = cache.read(key) {
                 return Ok((serde_json::from_str(&response_str)?, None));
             }
 
-            Some((cache, key))
+            Some((cache, request_str, key))
         } else {
             None
         };
@@ -1088,9 +1106,9 @@ impl Zeta {
         )
         .await?;
 
-        #[cfg(feature = "llm-response-cache")]
-        if let Some((cache, key)) = cache_key {
-            cache.write_response(key, &serde_json::to_string(&response)?);
+        #[cfg(feature = "eval-support")]
+        if let Some((cache, request, key)) = cache_key {
+            cache.write(key, &request, &serde_json::to_string_pretty(&response)?);
         }
 
         Ok((response, usage))
@@ -1361,8 +1379,8 @@ impl Zeta {
             reasoning_effort: None,
         };
 
-        #[cfg(feature = "llm-response-cache")]
-        let llm_response_cache = self.llm_response_cache.clone();
+        #[cfg(feature = "eval-support")]
+        let eval_cache = self.eval_cache.clone();
 
         cx.spawn(async move |this, cx| {
             log::trace!("Sending search planning request");
@@ -1371,8 +1389,10 @@ impl Zeta {
                 client,
                 llm_token,
                 app_version,
-                #[cfg(feature = "llm-response-cache")]
-                llm_response_cache,
+                #[cfg(feature = "eval-support")]
+                eval_cache.clone(),
+                #[cfg(feature = "eval-support")]
+                EvalCacheEntryKind::Context,
             )
             .await;
             let mut response = Self::handle_api_response(&this, response, cx)?;
@@ -1421,8 +1441,14 @@ impl Zeta {
 
             log::trace!("Running retrieval search: {queries:#?}");
 
-            let related_excerpts_result =
-                retrieval_search::run_retrieval_searches(project.clone(), queries, cx).await;
+            let related_excerpts_result = retrieval_search::run_retrieval_searches(
+                queries,
+                project.clone(),
+                #[cfg(feature = "eval-support")]
+                eval_cache,
+                cx,
+            )
+            .await;
 
             log::trace!("Search queries executed");
 
@@ -1770,6 +1796,34 @@ fn add_signature(
     });
     declaration_to_signature_index.insert(declaration_id, signature_index);
     Some(signature_index)
+}
+
+#[cfg(feature = "eval-support")]
+pub type EvalCacheKey = (EvalCacheEntryKind, u64);
+
+#[cfg(feature = "eval-support")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EvalCacheEntryKind {
+    Context,
+    Search,
+    Prediction,
+}
+
+#[cfg(feature = "eval-support")]
+impl std::fmt::Display for EvalCacheEntryKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EvalCacheEntryKind::Search => write!(f, "search"),
+            EvalCacheEntryKind::Context => write!(f, "context"),
+            EvalCacheEntryKind::Prediction => write!(f, "prediction"),
+        }
+    }
+}
+
+#[cfg(feature = "eval-support")]
+pub trait EvalCache: Send + Sync {
+    fn read(&self, key: EvalCacheKey) -> Option<String>;
+    fn write(&self, key: EvalCacheKey, input: &str, value: &str);
 }
 
 #[cfg(test)]

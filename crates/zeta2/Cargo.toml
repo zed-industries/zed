@@ -12,7 +12,7 @@ workspace = true
 path = "src/zeta2.rs"
 
 [features]
-llm-response-cache = []
+eval-support = []
 
 [dependencies]
 anyhow.workspace = true

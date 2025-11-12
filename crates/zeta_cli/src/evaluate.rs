@@ -14,18 +14,19 @@ use crate::{
     PromptFormat,
     example::{Example, NamedExample},
     headless::ZetaCliAppState,
-    predict::{PredictionDetails, zeta2_predict},
+    paths::print_run_data_dir,
+    predict::{CacheMode, PredictionDetails, zeta2_predict},
 };
 
 #[derive(Debug, Args)]
 pub struct EvaluateArguments {
     example_paths: Vec<PathBuf>,
-    #[clap(long)]
-    skip_cache: bool,
     #[arg(long, value_enum, default_value_t = PromptFormat::default())]
     prompt_format: PromptFormat,
     #[arg(long)]
     use_expected_context: bool,
+    #[clap(long, value_enum, default_value_t = CacheMode::default())]
+    cache: CacheMode,
 }
 
 pub async fn run_evaluate(
@@ -39,43 +40,49 @@ pub async fn run_evaluate(
         cx.spawn(async move |cx| {
             run_evaluate_one(
                 &path,
-                args.skip_cache,
                 args.prompt_format,
                 args.use_expected_context,
+                args.cache,
                 app_state.clone(),
                 cx,
             )
             .await
         })
     });
-    let all_results = futures::future::try_join_all(all_tasks).await.unwrap();
+    let all_results = futures::future::try_join_all(all_tasks).await;
 
-    let aggregated_result = EvaluationResult {
-        context: Scores::aggregate(all_results.iter().map(|r| &r.context)),
-        edit_prediction: Scores::aggregate(all_results.iter().map(|r| &r.edit_prediction)),
-    };
+    if let Ok(all_results) = &all_results {
+        let aggregated_result = EvaluationResult {
+            context: Scores::aggregate(all_results.iter().map(|r| &r.context)),
+            edit_prediction: Scores::aggregate(all_results.iter().map(|r| &r.edit_prediction)),
+        };
 
-    if example_len > 1 {
-        println!("\n{}", "-".repeat(80));
-        println!("# TOTAL SCORES:");
-        println!("{}", aggregated_result.to_markdown());
+        if example_len > 1 {
+            println!("\n{}", "-".repeat(80));
+            println!("\n## TOTAL SCORES");
+            println!("{}", aggregated_result.to_markdown());
+        }
     }
+
+    print_run_data_dir();
+
+    all_results.unwrap();
 }
 
 pub async fn run_evaluate_one(
     example_path: &Path,
-    skip_cache: bool,
     prompt_format: PromptFormat,
     use_expected_context: bool,
+    cache_mode: CacheMode,
     app_state: Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) -> Result<EvaluationResult> {
     let example = NamedExample::load(&example_path).unwrap();
     let predictions = zeta2_predict(
         example.clone(),
-        skip_cache,
         prompt_format,
         use_expected_context,
+        cache_mode,
         &app_state,
         cx,
     )

@@ -1,16 +1,40 @@
 use std::{env, path::PathBuf, sync::LazyLock};
 
-static TARGET_DIR: LazyLock<PathBuf> = LazyLock::new(|| env::current_dir().unwrap().join("target"));
-pub static CACHE_DIR: LazyLock<PathBuf> =
-    LazyLock::new(|| TARGET_DIR.join("zeta-llm-response-cache"));
-pub static REPOS_DIR: LazyLock<PathBuf> = LazyLock::new(|| TARGET_DIR.join("zeta-repos"));
-pub static WORKTREES_DIR: LazyLock<PathBuf> = LazyLock::new(|| TARGET_DIR.join("zeta-worktrees"));
-pub static LOGS_DIR: LazyLock<PathBuf> = LazyLock::new(|| TARGET_DIR.join("zeta-logs"));
-pub static LOGS_SEARCH_PROMPT: LazyLock<PathBuf> =
-    LazyLock::new(|| LOGS_DIR.join("search_prompt.md"));
-pub static LOGS_SEARCH_QUERIES: LazyLock<PathBuf> =
-    LazyLock::new(|| LOGS_DIR.join("search_queries.json"));
-pub static LOGS_PREDICTION_PROMPT: LazyLock<PathBuf> =
-    LazyLock::new(|| LOGS_DIR.join("prediction_prompt.md"));
-pub static LOGS_PREDICTION_RESPONSE: LazyLock<PathBuf> =
-    LazyLock::new(|| LOGS_DIR.join("prediction_response.md"));
+pub static TARGET_ZETA_DIR: LazyLock<PathBuf> =
+    LazyLock::new(|| env::current_dir().unwrap().join("target/zeta"));
+pub static CACHE_DIR: LazyLock<PathBuf> = LazyLock::new(|| TARGET_ZETA_DIR.join("cache"));
+pub static REPOS_DIR: LazyLock<PathBuf> = LazyLock::new(|| TARGET_ZETA_DIR.join("repos"));
+pub static WORKTREES_DIR: LazyLock<PathBuf> = LazyLock::new(|| TARGET_ZETA_DIR.join("worktrees"));
+pub static RUN_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
+    TARGET_ZETA_DIR
+        .join("runs")
+        .join(chrono::Local::now().format("%d-%m-%y-%H_%M_%S").to_string())
+});
+pub static LATEST_EXAMPLE_RUN_DIR: LazyLock<PathBuf> =
+    LazyLock::new(|| TARGET_ZETA_DIR.join("latest"));
+
+pub fn print_run_data_dir() {
+    println!("\n## Run Data\n");
+
+    let current_dir = std::env::current_dir().unwrap();
+    for file in std::fs::read_dir(&*RUN_DIR).unwrap() {
+        let file = file.unwrap();
+        if file.file_type().unwrap().is_dir() {
+            for file in std::fs::read_dir(file.path()).unwrap() {
+                let path = file.unwrap().path();
+                let path = path.strip_prefix(&current_dir).unwrap_or(&path);
+                println!(
+                    "- {}/\x1b[34m{}\x1b[0m",
+                    path.parent().unwrap().display(),
+                    path.file_name().unwrap().display(),
+                );
+            }
+        } else {
+            let path = file.path();
+            println!(
+                "- {} ",
+                path.strip_prefix(&current_dir).unwrap_or(&path).display()
+            );
+        }
+    }
+}

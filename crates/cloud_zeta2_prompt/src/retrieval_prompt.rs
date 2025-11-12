@@ -44,7 +44,7 @@ pub struct SearchToolInput {
 }
 
 /// Search for relevant code by path, syntax hierarchy, and content.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Hash)]
 pub struct SearchToolQuery {
     /// 1. A glob pattern to match file paths in the codebase to search in.
     pub glob: String,

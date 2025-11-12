@@ -1,5 +1,3 @@
-use std::ops::Range;
-
 use anyhow::Result;
 use cloud_zeta2_prompt::retrieval_prompt::SearchToolQuery;
 use collections::HashMap;
@@ -14,17 +12,76 @@ use project::{
     search::{SearchQuery, SearchResult},
 };
 use smol::channel;
+use std::ops::Range;
 use util::{
     ResultExt as _,
     paths::{PathMatcher, PathStyle},
 };
 use workspace::item::Settings as _;
 
+#[cfg(feature = "eval-support")]
+type CachedSearchResults = std::collections::BTreeMap<std::path::PathBuf, Vec<Range<usize>>>;
+
 pub async fn run_retrieval_searches(
-    project: Entity<Project>,
     queries: Vec<SearchToolQuery>,
+    project: Entity<Project>,
+    #[cfg(feature = "eval-support")] eval_cache: Option<std::sync::Arc<dyn crate::EvalCache>>,
     cx: &mut AsyncApp,
 ) -> Result<HashMap<Entity<Buffer>, Vec<Range<Anchor>>>> {
+    #[cfg(feature = "eval-support")]
+    let cache = if let Some(eval_cache) = eval_cache {
+        use crate::EvalCacheEntryKind;
+        use anyhow::Context;
+        use collections::FxHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = FxHasher::default();
+        project.read_with(cx, |project, cx| {
+            let mut worktrees = project.worktrees(cx);
+            let Some(worktree) = worktrees.next() else {
+                panic!("Expected a single worktree in eval project. Found none.");
+            };
+            assert!(
+                worktrees.next().is_none(),
+                "Expected a single worktree in eval project. Found more than one."
+            );
+            worktree.read(cx).abs_path().hash(&mut hasher);
+        })?;
+
+        queries.hash(&mut hasher);
+        let key = (EvalCacheEntryKind::Search, hasher.finish());
+
+        if let Some(cached_results) = eval_cache.read(key) {
+            let file_results = serde_json::from_str::<CachedSearchResults>(&cached_results)
+                .context("Failed to deserialize cached search results")?;
+            let mut results = HashMap::default();
+
+            for (path, ranges) in file_results {
+                let buffer = project
+                    .update(cx, |project, cx| {
+                        let project_path = project.find_project_path(path, cx).unwrap();
+                        project.open_buffer(project_path, cx)
+                    })?
+                    .await?;
+                let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+                let mut ranges = ranges
+                    .into_iter()
+                    .map(|range| {
+                        snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end)
+                    })
+                    .collect();
+                merge_anchor_ranges(&mut ranges, &snapshot);
+                results.insert(buffer, ranges);
+            }
+
+            return Ok(results);
+        }
+
+        Some((eval_cache, serde_json::to_string_pretty(&queries)?, key))
+    } else {
+        None
+    };
+
     let (exclude_matcher, path_style) = project.update(cx, |project, cx| {
         let global_settings = WorktreeSettings::get_global(cx);
         let exclude_patterns = global_settings
@@ -58,6 +115,8 @@ pub async fn run_retrieval_searches(
     }
     drop(results_tx);
 
+    #[cfg(feature = "eval-support")]
+    let cache = cache.clone();
     cx.background_spawn(async move {
         let mut results: HashMap<Entity<Buffer>, Vec<Range<Anchor>>> = HashMap::default();
         let mut snapshots = HashMap::default();
@@ -77,6 +136,29 @@ pub async fn run_retrieval_searches(
                 total_bytes += size;
                 existing.push(range);
             }
+        }
+
+        #[cfg(feature = "eval-support")]
+        if let Some((cache, queries, key)) = cache {
+            let cached_results: CachedSearchResults = results
+                .iter()
+                .filter_map(|(buffer, ranges)| {
+                    let snapshot = snapshots.get(&buffer.entity_id())?;
+                    let path = snapshot.file().map(|f| f.path());
+                    let mut ranges = ranges
+                        .iter()
+                        .map(|range| range.to_offset(&snapshot))
+                        .collect::<Vec<_>>();
+                    ranges.sort_unstable_by_key(|range| (range.start, range.end));
+
+                    Some((path?.as_std_path().to_path_buf(), ranges))
+                })
+                .collect();
+            cache.write(
+                key,
+                &queries,
+                &serde_json::to_string_pretty(&cached_results)?,
+            );
         }
 
         for (buffer, ranges) in results.iter_mut() {
@@ -489,9 +571,10 @@ mod tests {
         expected_output: &str,
         cx: &mut TestAppContext,
     ) {
-        let results = run_retrieval_searches(project.clone(), vec![query], &mut cx.to_async())
-            .await
-            .unwrap();
+        let results =
+            run_retrieval_searches(vec![query], project.clone(), None, &mut cx.to_async())
+                .await
+                .unwrap();
 
         let mut results = results.into_iter().collect::<Vec<_>>();
         results.sort_by_key(|results| {
