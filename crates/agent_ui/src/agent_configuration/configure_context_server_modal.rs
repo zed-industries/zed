@@ -23,7 +23,8 @@ use project::{
 use settings::{Settings as _, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
-    CommonAnimationExt, KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip, prelude::*,
+    CommonAnimationExt, KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{ModalView, Workspace};
@@ -513,10 +514,18 @@ impl ConfigureContextServerModal {
             div()
                 .pb_2()
                 .text_sm()
-                .child(MarkdownElement::new(
-                    installation_instructions.clone(),
-                    default_markdown_style(window, cx),
-                ))
+                .child(
+                    div()
+                        .id("installation_instructions")
+                        .max_h_96()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll_handle)
+                        .child(MarkdownElement::new(
+                            installation_instructions.clone(),
+                            default_markdown_style(window, cx),
+                        ))
+                )
+                .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
                 .into_any_element()
         } else {
             Label::new(MODAL_DESCRIPTION)
@@ -698,7 +707,7 @@ impl Render for ConfigureContextServerModal {
                 this.focus_handle(cx).focus(window);
             }))
             .child(
-                Modal::new("configure-context-server", Some(self.scroll_handle.clone()))
+                Modal::new("configure-context-server", None)
                     .header(self.render_modal_header())
                     .section(
                         Section::new()
