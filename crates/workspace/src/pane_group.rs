@@ -10,7 +10,7 @@ use gpui::{
     Along, AnyView, AnyWeakView, Axis, Bounds, Entity, Hsla, IntoElement, MouseButton, Pixels,
     Point, StyleRefinement, WeakEntity, Window, point, size,
 };
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use project::Project;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -524,13 +524,13 @@ pub struct PaneAxis {
     pub axis: Axis,
     pub members: Vec<Member>,
     pub flexes: Arc<Mutex<Vec<f32>>>,
-    pub bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
+    pub bounding_boxes: Arc<RwLock<Vec<Option<Bounds<Pixels>>>>>,
 }
 
 impl PaneAxis {
     pub fn new(axis: Axis, members: Vec<Member>) -> Self {
         let flexes = Arc::new(Mutex::new(vec![1.; members.len()]));
-        let bounding_boxes = Arc::new(Mutex::new(vec![None; members.len()]));
+        let bounding_boxes = Arc::new(RwLock::new(vec![None; members.len()]));
         Self {
             axis,
             members,
@@ -548,7 +548,7 @@ impl PaneAxis {
         }
 
         let flexes = Arc::new(Mutex::new(flexes));
-        let bounding_boxes = Arc::new(Mutex::new(vec![None; members.len()]));
+        let bounding_boxes = Arc::new(RwLock::new(vec![None; members.len()]));
         Self {
             axis,
             members,
@@ -669,7 +669,7 @@ impl PaneAxis {
     ) -> Option<bool> {
         let container_size = self
             .bounding_boxes
-            .lock()
+            .read()
             .iter()
             .filter_map(|e| *e)
             .reduce(|acc, e| acc.union(&e))
@@ -786,13 +786,13 @@ impl PaneAxis {
     }
 
     fn bounding_box_for_pane(&self, pane: &Entity<Pane>) -> Option<Bounds<Pixels>> {
-        debug_assert!(self.members.len() == self.bounding_boxes.lock().len());
+        debug_assert!(self.members.len() == self.bounding_boxes.read().len());
 
         for (idx, member) in self.members.iter().enumerate() {
             match member {
                 Member::Pane(found) => {
                     if pane == found {
-                        return self.bounding_boxes.lock()[idx];
+                        return self.bounding_boxes.read()[idx];
                     }
                 }
                 Member::Axis(axis) => {
@@ -806,9 +806,8 @@ impl PaneAxis {
     }
 
     fn pane_at_pixel_position(&self, coordinate: Point<Pixels>) -> Option<&Entity<Pane>> {
-        debug_assert!(self.members.len() == self.bounding_boxes.lock().len());
-
-        let bounding_boxes = self.bounding_boxes.lock();
+        let bounding_boxes = self.bounding_boxes.read();
+        debug_assert!(self.members.len() == bounding_boxes.len());
 
         for (idx, member) in self.members.iter().enumerate() {
             if let Some(coordinates) = bounding_boxes[idx]
@@ -975,7 +974,7 @@ mod element {
         Pixels, Point, Size, Style, WeakEntity, Window, px, relative, size,
     };
     use gpui::{CursorStyle, Hitbox};
-    use parking_lot::Mutex;
+    use parking_lot::{Mutex, RwLock};
     use settings::Settings;
     use smallvec::SmallVec;
     use ui::prelude::*;
@@ -993,7 +992,7 @@ mod element {
         axis: Axis,
         basis: usize,
         flexes: Arc<Mutex<Vec<f32>>>,
-        bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
+        bounding_boxes: Arc<RwLock<Vec<Option<Bounds<Pixels>>>>>,
         workspace: WeakEntity<Workspace>,
     ) -> PaneAxisElement {
         PaneAxisElement {
@@ -1014,7 +1013,7 @@ mod element {
         /// Equivalent to ColumnWidths (but in terms of flexes instead of percentages)
         /// For example, flexes "1.33, 1, 1", instead of "40%, 30%, 30%"
         flexes: Arc<Mutex<Vec<f32>>>,
-        bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
+        bounding_boxes: Arc<RwLock<Vec<Option<Bounds<Pixels>>>>>,
         children: SmallVec<[AnyElement; 2]>,
         active_pane_ix: Option<usize>,
         workspace: WeakEntity<Workspace>,
@@ -1239,8 +1238,10 @@ mod element {
             let mut origin = bounds.origin;
             let space_per_flex = bounds.size.along(self.axis) / total_flex;
 
-            let mut bounding_boxes = self.bounding_boxes.lock();
+            let mut bounding_boxes = self.bounding_boxes.write();
+            let new_bb_len = len.max(bounding_boxes.len());
             bounding_boxes.clear();
+            bounding_boxes.resize(new_bb_len, None);
 
             let mut layout = PaneAxisLayout {
                 dragged_handle,
@@ -1259,7 +1260,7 @@ mod element {
                     size: child_size,
                 };
 
-                bounding_boxes.push(Some(child_bounds));
+                bounding_boxes[ix] = Some(child_bounds);
                 child.layout_as_root(child_size.into(), window, cx);
                 child.prepaint_at(origin, window, cx);
 
