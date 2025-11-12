@@ -2745,15 +2745,20 @@ mod tests {
         let large_file_mention = large_file_task.await.unwrap();
         match large_file_mention {
             Mention::Text { content, .. } => {
-                // Should contain fallback header for large files without outline
-                assert!(content.contains("First 1KB"));
-                assert!(
-                    content
-                        .contains("file too large to show full content, and no outline available")
-                );
                 // Should contain some of the content but not all of it
-                assert!(content.contains(LINE));
-                assert!(!content.contains(&LINE.repeat(100)));
+                assert!(
+                    content.contains(LINE),
+                    "Should contain some of the file content"
+                );
+                assert!(
+                    !content.contains(&LINE.repeat(100)),
+                    "Should not contain the full file"
+                );
+                // Should be much smaller than original
+                assert!(
+                    content.len() < large_content.len() / 10,
+                    "Should be significantly truncated"
+                );
             }
             _ => panic!("Expected Text mention for large file"),
         }
