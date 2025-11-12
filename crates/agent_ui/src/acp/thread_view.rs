@@ -337,19 +337,7 @@ impl AcpThreadView {
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![]));
 
-        let placeholder = if agent.name() == "Zed Agent" {
-            format!("Message the {} — @ to include context", agent.name())
-        } else if agent.name() == "Claude Code"
-            || agent.name() == "Codex"
-            || !available_commands.borrow().is_empty()
-        {
-            format!(
-                "Message {} — @ to include context, / for commands",
-                agent.name()
-            )
-        } else {
-            format!("Message {} — @ to include context", agent.name())
-        };
+        let placeholder = placeholder_text(agent.name().as_ref(), false);
 
         let message_editor = cx.new(|cx| {
             let mut editor = MessageEditor::new(
@@ -1456,7 +1444,14 @@ impl AcpThreadView {
                     });
                 }
 
+                let has_commands = !available_commands.is_empty();
                 self.available_commands.replace(available_commands);
+
+                let new_placeholder = placeholder_text(self.agent.name().as_ref(), has_commands);
+
+                self.message_editor.update(cx, |editor, cx| {
+                    editor.set_placeholder_text(&new_placeholder, window, cx);
+                });
             }
             AcpThreadEvent::ModeUpdated(_mode) => {
                 // The connection keeps track of the mode
@@ -4193,6 +4188,8 @@ impl AcpThreadView {
                     .justify_between()
                     .child(
                         h_flex()
+                            .gap_0p5()
+                            .child(self.render_add_context_button(cx))
                             .child(self.render_follow_toggle(cx))
                             .children(self.render_burn_mode_toggle(cx)),
                     )
@@ -4504,6 +4501,29 @@ impl AcpThreadView {
             })
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.toggle_following(window, cx);
+            }))
+    }
+
+    fn render_add_context_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let message_editor = self.message_editor.clone();
+        let menu_visible = message_editor.read(cx).is_completions_menu_visible(cx);
+
+        IconButton::new("add-context", IconName::AtSign)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .when(!menu_visible, |this| {
+                this.tooltip(move |_window, cx| {
+                    Tooltip::with_meta("Add Context", None, "Or type @ to include context", cx)
+                })
+            })
+            .on_click(cx.listener(move |_this, _, window, cx| {
+                let message_editor_clone = message_editor.clone();
+
+                window.defer(cx, move |window, cx| {
+                    message_editor_clone.update(cx, |message_editor, cx| {
+                        message_editor.trigger_completion_menu(window, cx);
+                    });
+                });
             }))
     }
 
@@ -5706,6 +5726,19 @@ fn loading_contents_spinner(size: IconSize) -> AnyElement {
         .color(Color::Accent)
         .with_rotate_animation(3)
         .into_any_element()
+}
+
+fn placeholder_text(agent_name: &str, has_commands: bool) -> String {
+    if agent_name == "Zed Agent" {
+        format!("Message the {} — @ to include context", agent_name)
+    } else if has_commands {
+        format!(
+            "Message {} — @ to include context, / for commands",
+            agent_name
+        )
+    } else {
+        format!("Message {} — @ to include context", agent_name)
+    }
 }
 
 impl Focusable for AcpThreadView {

@@ -2993,6 +2993,8 @@ impl CompletionProvider for KeyContextCompletionProvider {
                     documentation: None,
                     source: project::CompletionSource::Custom,
                     icon_path: None,
+                    match_start: None,
+                    snippet_deduplication_key: None,
                     insert_text_mode: None,
                     confirm: None,
                 })

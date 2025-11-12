@@ -435,7 +435,7 @@ impl Telemetry {
         Some(project_types)
     }
 
-    fn report_event(self: &Arc<Self>, event: Event) {
+    fn report_event(self: &Arc<Self>, mut event: Event) {
         let mut state = self.state.lock();
         // RUST_LOG=telemetry=trace to debug telemetry events
         log::trace!(target: "telemetry", "{:?}", event);
@@ -443,6 +443,12 @@ impl Telemetry {
         if !state.settings.metrics {
             return;
         }
+
+        match &mut event {
+            Event::Flexible(event) => event
+                .event_properties
+                .insert("event_source".into(), "zed".into()),
+        };
 
         if state.flush_events_task.is_none() {
             let this = self.clone();

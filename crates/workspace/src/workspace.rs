@@ -199,6 +199,8 @@ actions!(
         AddFolderToProject,
         /// Clears all notifications.
         ClearAllNotifications,
+        /// Clears all navigation history, including forward/backward navigation, recently opened files, and recently closed tabs. **This action is irreversible**.
+        ClearNavigationHistory,
         /// Closes the active dock.
         CloseActiveDock,
         /// Closes all docks.
@@ -1915,6 +1917,12 @@ impl Workspace {
         self.recent_navigation_history_iter(cx)
             .take(limit.unwrap_or(usize::MAX))
             .collect()
+    }
+
+    pub fn clear_navigation_history(&mut self, _window: &mut Window, cx: &mut Context<Workspace>) {
+        for pane in &self.panes {
+            pane.update(cx, |pane, cx| pane.nav_history_mut().clear(cx));
+        }
     }
 
     fn navigate_history(
@@ -5856,6 +5864,11 @@ impl Workspace {
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ClearAllNotifications, _, cx| {
                     workspace.clear_all_notifications(cx);
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ClearNavigationHistory, window, cx| {
+                    workspace.clear_navigation_history(window, cx);
                 },
             ))
             .on_action(cx.listener(

@@ -32,7 +32,7 @@ pub struct ProjectPanelSettings {
     pub hide_root: bool,
     pub hide_hidden: bool,
     pub drag_and_drop: bool,
-    pub open_file_on_paste: bool,
+    pub auto_open: AutoOpenSettings,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -46,6 +46,30 @@ pub struct ScrollbarSettings {
     ///
     /// Default: inherits editor scrollbar settings
     pub show: Option<ShowScrollbar>,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct AutoOpenSettings {
+    pub on_create: bool,
+    pub on_paste: bool,
+    pub on_drop: bool,
+}
+
+impl AutoOpenSettings {
+    #[inline]
+    pub fn should_open_on_create(self) -> bool {
+        self.on_create
+    }
+
+    #[inline]
+    pub fn should_open_on_paste(self) -> bool {
+        self.on_paste
+    }
+
+    #[inline]
+    pub fn should_open_on_drop(self) -> bool {
+        self.on_drop
+    }
 }
 
 impl ScrollbarVisibility for ProjectPanelSettings {
@@ -83,7 +107,14 @@ impl Settings for ProjectPanelSettings {
             hide_root: project_panel.hide_root.unwrap(),
             hide_hidden: project_panel.hide_hidden.unwrap(),
             drag_and_drop: project_panel.drag_and_drop.unwrap(),
-            open_file_on_paste: project_panel.open_file_on_paste.unwrap(),
+            auto_open: {
+                let auto_open = project_panel.auto_open.unwrap();
+                AutoOpenSettings {
+                    on_create: auto_open.on_create.unwrap(),
+                    on_paste: auto_open.on_paste.unwrap(),
+                    on_drop: auto_open.on_drop.unwrap(),
+                }
+            },
         }
     }
 }
