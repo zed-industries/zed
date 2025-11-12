@@ -48,8 +48,8 @@ pub fn cargo_fmt() -> Step<Run> {
     named::bash("cargo fmt --all -- --check")
 }
 
-pub fn cargo_install_nextest(platform: Platform) -> Step<Run> {
-    named::run(platform, "cargo install cargo-nextest --locked")
+pub fn cargo_install_nextest() -> Step<Use> {
+    named::uses("taiki-e", "install-action", "nextest")
 }
 
 pub fn cargo_nextest(platform: Platform) -> Step<Run> {
