@@ -3803,4 +3803,186 @@ mod tests {
             }
         });
     }
+
+    /// Tests that restoring a checkpoint properly cleans up terminals that were
+    /// created after that checkpoint.
+    ///
+    /// Reproduces issue #35142: When a checkpoint is restored, any terminal processes
+    /// that were started after that checkpoint should be terminated, but currently they
+    /// keep running.
+    #[gpui::test]
+    async fn test_restore_checkpoint_kills_terminal(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .await
+            .unwrap();
+
+        // Send first user message to create a checkpoint
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.send(vec!["first message".into()], cx)
+            })
+        })
+        .await
+        .unwrap();
+
+        // Send second message (creates another checkpoint) - we'll restore to this one
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.send(vec!["second message".into()], cx)
+            })
+        })
+        .await
+        .unwrap();
+
+        // Get the second message ID to restore to
+        let second_message_id = thread.read_with(cx, |thread, _| {
+            // At this point we have:
+            // - Index 0: First user message (with checkpoint)
+            // - Index 1: Second user message (with checkpoint)
+            // No assistant responses because FakeAgentConnection just returns EndTurn
+            let AgentThreadEntry::UserMessage(message) = &thread.entries[1] else {
+                panic!("expected user message at index 1");
+            };
+            message.id.clone().unwrap()
+        });
+
+        // Create a terminal AFTER the checkpoint we'll restore to.
+        // This simulates the AI agent starting a long-running terminal command.
+        let terminal_id = acp::TerminalId(uuid::Uuid::new_v4().to_string().into());
+        let mock_terminal = cx.new(|cx| {
+            let builder = ::terminal::TerminalBuilder::new_display_only(
+                ::terminal::terminal_settings::CursorShape::default(),
+                ::terminal::terminal_settings::AlternateScroll::On,
+                None,
+                0,
+            )
+            .unwrap();
+            builder.subscribe(cx)
+        });
+
+        // Register the terminal as created
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Created {
+                    terminal_id: terminal_id.clone(),
+                    label: "sleep 1000".to_string(),
+                    cwd: Some(PathBuf::from("/test")),
+                    output_byte_limit: None,
+                    terminal: mock_terminal.clone(),
+                },
+                cx,
+            );
+        });
+
+        // Simulate the terminal producing output (still running)
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Output {
+                    terminal_id: terminal_id.clone(),
+                    data: b"terminal is running...\n".to_vec(),
+                },
+                cx,
+            );
+        });
+
+        // Create a tool call entry that references this terminal
+        // This represents the AI agent requesting a terminal command
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::ToolCall(acp::ToolCall {
+                        id: acp::ToolCallId("terminal-tool-1".into()),
+                        title: "Running command".into(),
+                        kind: acp::ToolKind::Execute,
+                        status: acp::ToolCallStatus::InProgress,
+                        content: vec![acp::ToolCallContent::Terminal {
+                            terminal_id: terminal_id.clone(),
+                        }],
+                        locations: vec![],
+                        raw_input: Some(
+                            serde_json::json!({"command": "sleep 1000", "cd": "/test"}),
+                        ),
+                        raw_output: None,
+                        meta: None,
+                    }),
+                    cx,
+                )
+                .unwrap();
+        });
+
+        // Verify terminal exists and is in the thread
+        let terminal_exists_before =
+            thread.read_with(cx, |thread, _| thread.terminals.contains_key(&terminal_id));
+        assert!(
+            terminal_exists_before,
+            "Terminal should exist before checkpoint restore"
+        );
+
+        // Verify the terminal's underlying task is still running (not completed)
+        let terminal_running_before = thread.read_with(cx, |thread, _cx| {
+            let terminal_entity = thread.terminals.get(&terminal_id).unwrap();
+            terminal_entity.read_with(cx, |term, _cx| {
+                term.output().is_none() // output is None means it's still running
+            })
+        });
+        assert!(
+            terminal_running_before,
+            "Terminal should be running before checkpoint restore"
+        );
+
+        // Verify we have the expected entries before restore
+        let entry_count_before = thread.read_with(cx, |thread, _| thread.entries.len());
+        assert!(
+            entry_count_before > 1,
+            "Should have multiple entries before restore"
+        );
+
+        // Restore the checkpoint to the second message.
+        // This should remove the terminal that was created after that point.
+        thread
+            .update(cx, |thread, cx| {
+                thread.restore_checkpoint(second_message_id, cx)
+            })
+            .await
+            .unwrap();
+
+        // Verify the entries were truncated (restoring to index 1 truncates at 1, keeping only index 0)
+        let entry_count = thread.read_with(cx, |thread, _| thread.entries.len());
+        assert_eq!(
+            entry_count, 1,
+            "Should have 1 entry after restore (only the first user message)"
+        );
+
+        // BUG REPRODUCTION: The terminal still exists after checkpoint restore
+        let terminal_exists_after =
+            thread.read_with(cx, |thread, _| thread.terminals.contains_key(&terminal_id));
+
+        // This assertion demonstrates the bug - it should be false but is true
+        assert!(
+            !terminal_exists_after,
+            "Terminal should be removed after checkpoint restore (BUG: it still exists)"
+        );
+
+        // Additionally, if the terminal still exists, it should at least be killed
+        if terminal_exists_after {
+            let terminal_killed = thread.read_with(cx, |thread, _cx| {
+                let terminal_entity = thread.terminals.get(&terminal_id).unwrap();
+                terminal_entity.read_with(cx, |term, _cx| {
+                    // Check if the underlying terminal task was killed
+                    // If output exists, the task completed; if None, it's still running
+                    term.output().is_some()
+                })
+            });
+            assert!(
+                terminal_killed,
+                "If terminal still exists, it should at least be killed (BUG: it's still running)"
+            );
+        }
+    }
 }
