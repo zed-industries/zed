@@ -2519,11 +2519,12 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
   "path": "~",
   "hour_format": "hour12"
 }
+
 ```
 
 ### Path
 
-- Description: The path of the directory where journal entries are stored.
+- Description: The path of the directory where journal entries are stored. If an invalid path is specified, the journal will fall back to using `~` (the home directory).
 - Setting: `path`
 - Default: `~`
 
@@ -3585,6 +3586,7 @@ List of `integer` column numbers
     "option_as_meta": false,
     "button": true,
     "shell": "system",
+    "scroll_multiplier": 3.0,
     "toolbar": {
       "breadcrumbs": false
     },
@@ -3997,6 +3999,26 @@ Disable with:
 }
 ```
 
+### Terminal: Scroll Multiplier
+
+- Description: The multiplier for scrolling speed in the terminal when using mouse wheel or trackpad.
+- Setting: `scroll_multiplier`
+- Default: `1.0`
+
+**Options**
+
+Positive floating point values. Values less than or equal to 0 will be clamped to a minimum of 0.01.
+
+**Example**
+
+```json
+{
+  "terminal": {
+    "scroll_multiplier": 5.0
+  }
+}
+```
+
 ## Terminal: Toolbar
 
 - Description: Whether or not to show various elements in the terminal toolbar.
@@ -4326,7 +4348,11 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "hide_root": false,
     "hide_hidden": false,
     "starts_open": true,
-    "open_file_on_paste": true
+    "auto_open": {
+      "on_create": true,
+      "on_paste": true,
+      "on_drop": true
+    }
   }
 }
 ```
@@ -4534,6 +4560,26 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
   }
 }
 ```
+
+### Auto Open
+
+- Description: Control whether files are opened automatically after different creation flows in the project panel.
+- Setting: `auto_open`
+- Default:
+
+```json [settings]
+"auto_open": {
+  "on_create": true,
+  "on_paste": true,
+  "on_drop": true
+}
+```
+
+**Options**
+
+- `on_create`: Whether to automatically open newly created files in the editor.
+- `on_paste`: Whether to automatically open files after pasting or duplicating them.
+- `on_drop`: Whether to automatically open files dropped from external sources.
 
 ## Agent
 

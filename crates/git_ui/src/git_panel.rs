@@ -3980,9 +3980,9 @@ impl GitPanel {
             .map(|ops| ops.staging() || ops.staged())
             .or_else(|| {
                 repo.status_for_path(&entry.repo_path)
-                    .map(|status| status.status.staging().has_staged())
+                    .and_then(|status| status.status.staging().as_bool())
             })
-            .unwrap_or(entry.staging.has_staged());
+            .or_else(|| entry.staging.as_bool());
         let mut is_staged: ToggleState = is_staging_or_staged.into();
         if self.show_placeholders && !self.has_staged_changes() && !entry.status.is_created() {
             is_staged = ToggleState::Selected;
@@ -4102,7 +4102,9 @@ impl GitPanel {
                                 }
                             })
                             .tooltip(move |_window, cx| {
-                                let action = if is_staging_or_staged {
+                                // If is_staging_or_staged is None, this implies the file was partially staged, and so
+                                // we allow the user to stage it in full by displaying `Stage` in the tooltip.
+                                let action = if is_staging_or_staged.unwrap_or(false) {
                                     "Unstage"
                                 } else {
                                     "Stage"

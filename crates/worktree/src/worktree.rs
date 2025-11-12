@@ -2384,6 +2384,27 @@ impl Snapshot {
             })
     }
 
+    /// Resolves a path to an executable using the following heuristics:
+    ///
+    /// 1. If the path is relative and contains more than one component,
+    ///    it is joined to the worktree root path.
+    /// 2. If the path is relative and exists in the worktree
+    ///    (even if falls under an exclusion filter),
+    ///    it is joined to the worktree root path.
+    /// 3. Otherwise the path is returned unmodified.
+    ///
+    /// Relative paths that do not exist in the worktree may
+    /// still be found using the `PATH` environment variable.
+    pub fn resolve_executable_path(&self, path: PathBuf) -> PathBuf {
+        if let Ok(rel_path) = RelPath::new(&path, self.path_style)
+            && (path.components().count() > 1 || self.entry_for_path(&rel_path).is_some())
+        {
+            self.abs_path().join(path)
+        } else {
+            path
+        }
+    }
+
     pub fn entry_for_id(&self, id: ProjectEntryId) -> Option<&Entry> {
         let entry = self.entries_by_id.get(&id, ())?;
         self.entry_for_path(&entry.path)

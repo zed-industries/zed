@@ -422,20 +422,15 @@ struct NavHistoryState {
     next_timestamp: Arc<AtomicUsize>,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone)]
 pub enum NavigationMode {
+    #[default]
     Normal,
     GoingBack,
     GoingForward,
     ClosingItem,
     ReopeningClosedItem,
     Disabled,
-}
-
-impl Default for NavigationMode {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 pub struct NavigationEntry {
@@ -4121,6 +4116,7 @@ impl NavHistory {
                     is_preview,
                 });
             }
+            NavigationMode::ClosingItem if is_preview => return,
             NavigationMode::ClosingItem => {
                 if state.closed_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
                     state.closed_stack.pop_front();

@@ -110,6 +110,7 @@ members = [
     "crates/menu",
     "crates/migrator",
     "crates/mistral",
+    "crates/miniprofiler_ui",
     "crates/multi_buffer",
     "crates/nc",
     "crates/net",
@@ -341,6 +342,7 @@ menu = { path = "crates/menu" }
 migrator = { path = "crates/migrator" }
 mistral = { path = "crates/mistral" }
 multi_buffer = { path = "crates/multi_buffer" }
+miniprofiler_ui = { path = "crates/miniprofiler_ui" }
 nc = { path = "crates/nc" }
 net = { path = "crates/net" }
 node_runtime = { path = "crates/node_runtime" }
@@ -504,7 +506,7 @@ emojis = "0.6.1"
 env_logger = "0.11"
 exec = "0.3.1"
 fancy-regex = "0.14.0"
-fork = "0.2.0"
+fork = "0.4.0"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"

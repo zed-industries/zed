@@ -2671,13 +2671,14 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_large_file_mention_uses_outline(cx: &mut TestAppContext) {
+    async fn test_large_file_mention_fallback(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
 
         // Create a large file that exceeds AUTO_OUTLINE_SIZE
-        const LINE: &str = "fn example_function() { /* some code */ }\n";
+        // Using plain text without a configured language, so no outline is available
+        const LINE: &str = "This is a line of text in the file\n";
         let large_content = LINE.repeat(2 * (outline::AUTO_OUTLINE_SIZE / LINE.len()));
         assert!(large_content.len() > outline::AUTO_OUTLINE_SIZE);
 
@@ -2688,8 +2689,8 @@ mod tests {
         fs.insert_tree(
             "/project",
             json!({
-                "large_file.rs": large_content.clone(),
-                "small_file.rs": small_content,
+                "large_file.txt": large_content.clone(),
+                "small_file.txt": small_content,
             }),
         )
         .await;
@@ -2735,7 +2736,7 @@ mod tests {
         let large_file_abs_path = project.read_with(cx, |project, cx| {
             let worktree = project.worktrees(cx).next().unwrap();
             let worktree_root = worktree.read(cx).abs_path();
-            worktree_root.join("large_file.rs")
+            worktree_root.join("large_file.txt")
         });
         let large_file_task = message_editor.update(cx, |editor, cx| {
             editor.confirm_mention_for_file(large_file_abs_path, cx)
@@ -2744,11 +2745,20 @@ mod tests {
         let large_file_mention = large_file_task.await.unwrap();
         match large_file_mention {
             Mention::Text { content, .. } => {
-                // Should contain outline header for large files
-                assert!(content.contains("File outline for"));
-                assert!(content.contains("file too large to show full content"));
-                // Should not contain the full repeated content
-                assert!(!content.contains(&LINE.repeat(100)));
+                // Should contain some of the content but not all of it
+                assert!(
+                    content.contains(LINE),
+                    "Should contain some of the file content"
+                );
+                assert!(
+                    !content.contains(&LINE.repeat(100)),
+                    "Should not contain the full file"
+                );
+                // Should be much smaller than original
+                assert!(
+                    content.len() < large_content.len() / 10,
+                    "Should be significantly truncated"
+                );
             }
             _ => panic!("Expected Text mention for large file"),
         }
@@ -2758,7 +2768,7 @@ mod tests {
         let small_file_abs_path = project.read_with(cx, |project, cx| {
             let worktree = project.worktrees(cx).next().unwrap();
             let worktree_root = worktree.read(cx).abs_path();
-            worktree_root.join("small_file.rs")
+            worktree_root.join("small_file.txt")
         });
         let small_file_task = message_editor.update(cx, |editor, cx| {
             editor.confirm_mention_for_file(small_file_abs_path, cx)
@@ -2767,10 +2777,8 @@ mod tests {
         let small_file_mention = small_file_task.await.unwrap();
         match small_file_mention {
             Mention::Text { content, .. } => {
-                // Should contain the actual content
+                // Should contain the full actual content
                 assert_eq!(content, small_content);
-                // Should not contain outline header
-                assert!(!content.contains("File outline for"));
             }
             _ => panic!("Expected Text mention for small file"),
         }

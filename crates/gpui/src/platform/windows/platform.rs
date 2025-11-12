@@ -8,7 +8,6 @@ use std::{
 
 use ::util::{ResultExt, paths::SanitizedPath};
 use anyhow::{Context as _, Result, anyhow};
-use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -46,7 +45,7 @@ struct WindowsPlatformInner {
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     // The below members will never change throughout the entire lifecycle of the app.
     validation_number: usize,
-    main_receiver: flume::Receiver<Runnable>,
+    main_receiver: flume::Receiver<RunnableVariant>,
     dispatcher: Arc<WindowsDispatcher>,
 }
 
@@ -93,7 +92,7 @@ impl WindowsPlatform {
             OleInitialize(None).context("unable to initialize Windows OLE")?;
         }
         let directx_devices = DirectXDevices::new().context("Creating DirectX devices")?;
-        let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
+        let (main_sender, main_receiver) = flume::unbounded::<RunnableVariant>();
         let validation_number = if usize::BITS == 64 {
             rand::random::<u64>() as usize
         } else {
@@ -728,7 +727,8 @@ impl WindowsPlatformInner {
         project: impl Fn(&mut PlatformCallbacks) -> &mut Option<T>,
         f: impl FnOnce(&mut T),
     ) {
-        if let Some(mut callback) = project(&mut self.state.borrow_mut().callbacks).take() {
+        let callback = project(&mut self.state.borrow_mut().callbacks).take();
+        if let Some(mut callback) = callback {
             f(&mut callback);
             *project(&mut self.state.borrow_mut().callbacks) = Some(callback)
         }
@@ -793,7 +793,7 @@ impl WindowsPlatformInner {
     fn run_foreground_task(&self) -> Option<isize> {
         loop {
             for runnable in self.main_receiver.drain() {
-                runnable.run();
+                WindowsDispatcher::execute_runnable(runnable);
             }
 
             // Someone could enqueue a Runnable here. The flag is still true, so they will not PostMessage.
@@ -804,7 +804,8 @@ impl WindowsPlatformInner {
             match self.main_receiver.try_recv() {
                 Ok(runnable) => {
                     let _ = dispatcher.wake_posted.swap(true, Ordering::AcqRel);
-                    runnable.run();
+
+                    WindowsDispatcher::execute_runnable(runnable);
                     continue;
                 }
                 _ => {
@@ -872,7 +873,7 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) windows_version: WindowsVersion,
     pub(crate) drop_target_helper: IDropTargetHelper,
     pub(crate) validation_number: usize,
-    pub(crate) main_receiver: flume::Receiver<Runnable>,
+    pub(crate) main_receiver: flume::Receiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
     pub(crate) disable_direct_composition: bool,
     pub(crate) directx_devices: DirectXDevices,
@@ -882,8 +883,8 @@ struct PlatformWindowCreateContext {
     inner: Option<Result<Rc<WindowsPlatformInner>>>,
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     validation_number: usize,
-    main_sender: Option<flume::Sender<Runnable>>,
-    main_receiver: Option<flume::Receiver<Runnable>>,
+    main_sender: Option<flume::Sender<RunnableVariant>>,
+    main_receiver: Option<flume::Receiver<RunnableVariant>>,
     directx_devices: Option<DirectXDevices>,
     dispatcher: Option<Arc<WindowsDispatcher>>,
 }

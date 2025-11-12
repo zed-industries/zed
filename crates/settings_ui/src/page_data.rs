@@ -3776,23 +3776,47 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SectionHeader("Auto Open Files"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Open File on Paste",
-                    description: "Whether to automatically open files when pasting them in the project panel.",
+                    title: "On Create",
+                    description: "Whether to automatically open newly created files in the editor.",
                     field: Box::new(SettingField {
-                        json_path: Some("project_panel.open_file_on_paste"),
+                        json_path: Some("project_panel.auto_open.on_create"),
                         pick: |settings_content| {
-                            settings_content
-                                .project_panel
-                                .as_ref()?
-                                .open_file_on_paste
-                                .as_ref()
+                            settings_content.project_panel.as_ref()?.auto_open.as_ref()?.on_create.as_ref()
                         },
                         write: |settings_content, value| {
-                            settings_content
-                                .project_panel
-                                .get_or_insert_default()
-                                .open_file_on_paste = value;
+                            settings_content.project_panel.get_or_insert_default().auto_open.get_or_insert_default().on_create = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "On Paste",
+                    description: "Whether to automatically open files after pasting or duplicating them.",
+                    field: Box::new(SettingField {
+                        json_path: Some("project_panel.auto_open.on_paste"),
+                        pick: |settings_content| {
+                            settings_content.project_panel.as_ref()?.auto_open.as_ref()?.on_paste.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.project_panel.get_or_insert_default().auto_open.get_or_insert_default().on_paste = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "On Drop",
+                    description: "Whether to automatically open files dropped from external sources.",
+                    field: Box::new(SettingField {
+                        json_path: Some("project_panel.auto_open.on_drop"),
+                        pick: |settings_content| {
+                            settings_content.project_panel.as_ref()?.auto_open.as_ref()?.on_drop.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.project_panel.get_or_insert_default().auto_open.get_or_insert_default().on_drop = value;
                         },
                     }),
                     metadata: None,
@@ -5139,6 +5163,24 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .terminal
                                 .get_or_insert_default()
                                 .max_scroll_history_lines = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Scroll Multiplier",
+                    description: "The multiplier for scrolling in the terminal with the mouse wheel",
+                    field: Box::new(SettingField {
+                        json_path: Some("terminal.scroll_multiplier"),
+                        pick: |settings_content| {
+                            settings_content.terminal.as_ref()?.scroll_multiplier.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .scroll_multiplier = value;
                         },
                     }),
                     metadata: None,
