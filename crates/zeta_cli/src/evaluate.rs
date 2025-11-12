@@ -91,7 +91,7 @@ fn write_aggregated_scores(
 ) -> Result<()> {
     let mut successful = Vec::new();
     let mut failed_count = 0;
-    writeln!("## Errors\n")?;
+    writeln!(w, "## Errors\n")?;
     for result in all_results.iter().flatten() {
         match result {
             Ok(eval_result) => successful.push(eval_result),
