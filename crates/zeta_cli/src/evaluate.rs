@@ -7,9 +7,10 @@ use std::{
 use anyhow::Result;
 use clap::Args;
 use collections::HashSet;
-use gpui::AsyncApp;
+use gpui::{AsyncApp, Entity};
+use project::Project;
 use util::ResultExt as _;
-use zeta2::udiff::DiffLine;
+use zeta2::{Zeta, udiff::DiffLine};
 
 use crate::{
     PromptFormat,
@@ -28,8 +29,8 @@ pub struct EvaluateArguments {
     use_expected_context: bool,
     #[clap(long, value_enum, default_value_t = CacheMode::default())]
     cache: CacheMode,
-    #[clap(long, default_value_t = 1)]
-    repeat: u16,
+    #[clap(short, long, default_value_t = 1, alias = "repeat")]
+    repetitions: u16,
 }
 
 pub async fn run_evaluate(
@@ -46,25 +47,27 @@ pub async fn run_evaluate(
         let example = NamedExample::load(&path).unwrap();
 
         cx.spawn(async move |cx| {
-            let worktree_path = example.setup_worktree().await.unwrap();
+            let (project, zetas, _edited_buffers) = example
+                .setup_project(&app_state, args.repetitions, cx)
+                .await
+                .unwrap();
 
-            let tasks = (0..args.repeat).map(|repetition_ix| {
-                let repetition_ix = (args.repeat > 1).then(|| repetition_ix);
+            let tasks = zetas.into_iter().enumerate().map(|(repetition_ix, zeta)| {
+                let repetition_ix = (args.repetitions > 1).then(|| repetition_ix as u16);
 
                 let example = example.clone();
-                let worktree_path = worktree_path.clone();
-                let app_state = app_state.clone();
+                let project = project.clone();
 
                 cx.spawn(async move |cx| {
                     let name = example.name.clone();
                     run_evaluate_one(
                         example,
                         repetition_ix,
-                        worktree_path,
+                        project,
+                        zeta,
                         args.prompt_format,
                         args.use_expected_context,
                         args.cache,
-                        app_state,
                         cx,
                     )
                     .await
@@ -82,7 +85,7 @@ pub async fn run_evaluate(
     {
         write_aggregated_scores(&mut output_file, &all_results).log_err();
     };
-    print_run_data_dir();
+    print_run_data_dir(args.repetitions == 1);
 }
 
 fn write_aggregated_scores(
@@ -97,11 +100,15 @@ fn write_aggregated_scores(
             Ok(eval_result) => successful.push(eval_result),
             Err((err, name, repetition_ix)) => {
                 failed_count += 1;
+                let err = err
+                    .to_string()
+                    .replace("<edits", "```xml\n<edits")
+                    .replace("</edits>", "</edits>\n```");
                 writeln!(
                     w,
-                    "{name}{}: {err}",
+                    "### ERROR {name}{}\n\n{err}\n",
                     repetition_ix
-                        .map(|ix| format!(" [{ix:03}]"))
+                        .map(|ix| format!(" [RUN {ix:03}]"))
                         .unwrap_or_default()
                 )?;
             }
@@ -114,9 +121,15 @@ fn write_aggregated_scores(
 
     writeln!(w, "\n{}", "-".repeat(80))?;
     writeln!(w, "\n## TOTAL SCORES")?;
+    writeln!(w, "\n### Success Rate")?;
+    writeln!(
+        w,
+        "\nCongratulations! {}/{} ({:.2}%) of runs weren't outright failures 🎉",
+        successful.len(),
+        successful.len() + failed_count,
+        (successful.len() as f64 / (successful.len() + failed_count) as f64) * 100.0
+    )?;
     writeln!(w, "{}", aggregated_result)?;
-    writeln!(w, "\n{}", "-".repeat(80))?;
-    writeln!(w, "{} failed examples", failed_count)?;
 
     Ok(())
 }
@@ -124,21 +137,21 @@ fn write_aggregated_scores(
 pub async fn run_evaluate_one(
     example: NamedExample,
     repetition_ix: Option<u16>,
-    worktree_path: PathBuf,
+    project: Entity<Project>,
+    zeta: Entity<Zeta>,
     prompt_format: PromptFormat,
     use_expected_context: bool,
     cache_mode: CacheMode,
-    app_state: Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) -> Result<EvaluationResult> {
     let predict_result = zeta2_predict(
         example.clone(),
-        &worktree_path,
+        project,
+        zeta,
         repetition_ix,
         prompt_format,
         use_expected_context,
         cache_mode,
-        &app_state,
         cx,
     )
     .await?;

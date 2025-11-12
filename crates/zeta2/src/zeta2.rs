@@ -208,7 +208,7 @@ pub struct ZetaSearchQueryDebugInfo {
 pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
 
 struct ZetaProject {
-    syntax_index: Entity<SyntaxIndex>,
+    syntax_index: Option<Entity<SyntaxIndex>>,
     events: VecDeque<Event>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
     current_prediction: Option<CurrentEditPrediction>,
@@ -445,9 +445,13 @@ impl Zeta {
         self.projects
             .entry(project.entity_id())
             .or_insert_with(|| ZetaProject {
-                syntax_index: cx.new(|cx| {
-                    SyntaxIndex::new(project, self.options.file_indexing_parallelism, cx)
-                }),
+                syntax_index: if let ContextMode::Syntax(_) = &self.options.context {
+                    Some(cx.new(|cx| {
+                        SyntaxIndex::new(project, self.options.file_indexing_parallelism, cx)
+                    }))
+                } else {
+                    None
+                },
                 events: VecDeque::new(),
                 registered_buffers: HashMap::default(),
                 current_prediction: None,
@@ -685,10 +689,11 @@ impl Zeta {
     ) -> Task<Result<Option<EditPrediction>>> {
         let project_state = self.projects.get(&project.entity_id());
 
-        let index_state = project_state.map(|state| {
+        let index_state = project_state.and_then(|state| {
             state
                 .syntax_index
-                .read_with(cx, |index, _cx| index.state().clone())
+                .as_ref()
+                .map(|syntax_index| syntax_index.read_with(cx, |index, _cx| index.state().clone()))
         });
         let options = self.options.clone();
         let active_snapshot = active_buffer.read(cx).snapshot();
@@ -1555,10 +1560,11 @@ impl Zeta {
     ) -> Task<Result<predict_edits_v3::PredictEditsRequest>> {
         let project_state = self.projects.get(&project.entity_id());
 
-        let index_state = project_state.map(|state| {
+        let index_state = project_state.and_then(|state| {
             state
                 .syntax_index
-                .read_with(cx, |index, _cx| index.state().clone())
+                .as_ref()
+                .map(|index| index.read_with(cx, |index, _cx| index.state().clone()))
         });
         let options = self.options.clone();
         let snapshot = buffer.read(cx).snapshot();
@@ -1628,10 +1634,11 @@ impl Zeta {
         cx: &mut App,
     ) -> Task<Result<()>> {
         let zeta_project = self.get_or_init_zeta_project(project, cx);
-        zeta_project
-            .syntax_index
-            .read(cx)
-            .wait_for_initial_file_indexing(cx)
+        if let Some(syntax_index) = &zeta_project.syntax_index {
+            syntax_index.read(cx).wait_for_initial_file_indexing(cx)
+        } else {
+            Task::ready(Ok(()))
+        }
     }
 }
 
