@@ -30,7 +30,10 @@ use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{Action, App, Entity, SharedString, actions};
-use language::LanguageRegistry;
+use language::{
+    LanguageRegistry,
+    language_settings::{AllLanguageSettings, EditPredictionProvider},
+};
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
@@ -286,7 +289,25 @@ pub fn init(
 
 fn update_command_palette_filter(cx: &mut App) {
     let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
+    let agent_enabled = AgentSettings::get_global(cx).enabled;
+    let edit_prediction_provider = AllLanguageSettings::get_global(cx)
+        .edit_predictions
+        .provider;
+
     CommandPaletteFilter::update_global(cx, |filter, _| {
+        use editor::actions::{
+            AcceptEditPrediction, AcceptPartialEditPrediction, NextEditPrediction,
+            PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
+        };
+        let edit_prediction_actions = [
+            TypeId::of::<AcceptEditPrediction>(),
+            TypeId::of::<AcceptPartialEditPrediction>(),
+            TypeId::of::<ShowEditPrediction>(),
+            TypeId::of::<NextEditPrediction>(),
+            TypeId::of::<PreviousEditPrediction>(),
+            TypeId::of::<ToggleEditPrediction>(),
+        ];
+
         if disable_ai {
             filter.hide_namespace("agent");
             filter.hide_namespace("assistant");
@@ -295,18 +316,6 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.hide_namespace("zed_predict_onboarding");
             filter.hide_namespace("edit_prediction");
 
-            use editor::actions::{
-                AcceptEditPrediction, AcceptPartialEditPrediction, NextEditPrediction,
-                PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
-            };
-            let edit_prediction_actions = [
-                TypeId::of::<AcceptEditPrediction>(),
-                TypeId::of::<AcceptPartialEditPrediction>(),
-                TypeId::of::<ShowEditPrediction>(),
-                TypeId::of::<NextEditPrediction>(),
-                TypeId::of::<PreviousEditPrediction>(),
-                TypeId::of::<ToggleEditPrediction>(),
-            ];
             filter.hide_action_types(&edit_prediction_actions);
             filter.hide_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
         } else {
@@ -317,25 +326,35 @@ fn update_command_palette_filter(cx: &mut App) {
             }
 
             filter.show_namespace("assistant");
-            filter.show_namespace("copilot");
+
+            match edit_prediction_provider {
+                EditPredictionProvider::None => {
+                    filter.hide_namespace("edit_prediction");
+                    filter.hide_namespace("copilot");
+                    filter.hide_namespace("supermaven");
+                    filter.hide_action_types(&edit_prediction_actions);
+                }
+                EditPredictionProvider::Copilot => {
+                    filter.show_namespace("edit_prediction");
+                    filter.show_namespace("copilot");
+                    filter.hide_namespace("supermaven");
+                    filter.show_action_types(edit_prediction_actions.iter());
+                }
+                EditPredictionProvider::Supermaven => {
+                    filter.show_namespace("edit_prediction");
+                    filter.hide_namespace("copilot");
+                    filter.show_namespace("supermaven");
+                    filter.show_action_types(edit_prediction_actions.iter());
+                }
+                _ => {
+                    filter.show_namespace("edit_prediction");
+                    filter.hide_namespace("copilot");
+                    filter.hide_namespace("supermaven");
+                    filter.show_action_types(edit_prediction_actions.iter());
+                }
+            }
+
             filter.show_namespace("zed_predict_onboarding");
-
-            filter.show_namespace("edit_prediction");
-
-            use editor::actions::{
-                AcceptEditPrediction, AcceptPartialEditPrediction, NextEditPrediction,
-                PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
-            };
-            let edit_prediction_actions = [
-                TypeId::of::<AcceptEditPrediction>(),
-                TypeId::of::<AcceptPartialEditPrediction>(),
-                TypeId::of::<ShowEditPrediction>(),
-                TypeId::of::<NextEditPrediction>(),
-                TypeId::of::<PreviousEditPrediction>(),
-                TypeId::of::<ToggleEditPrediction>(),
-            ];
-            filter.show_action_types(edit_prediction_actions.iter());
-
             filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
         }
     });
