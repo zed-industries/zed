@@ -3993,7 +3993,6 @@ mod tests {
         let terminal_exists_after =
             thread.read_with(cx, |thread, _| thread.terminals.contains_key(&terminal_id));
 
-        // This assertion demonstrates the bug - it should be false but is true
         assert!(
             !terminal_exists_after,
             "Terminal should have been removed after checkpoint restore"
