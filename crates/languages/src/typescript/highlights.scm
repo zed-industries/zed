@@ -9,6 +9,9 @@
 (type_identifier) @type
 (predefined_type) @type.builtin
 
+;; Enables ts-pretty-errors
+;; The Lsp returns "snippets" of typescript, which are not valid typescript in totality,
+;; but should still be highlighted
 ;; Highlights object literals by hijacking the statement_block pattern, but only if
 ;; the statement block follows an object literal pattern
 ((statement_block
