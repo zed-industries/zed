@@ -20,7 +20,7 @@
        (expression_statement
             ;; single identifier - treat as a type name
            [(identifier) @type.name
-            ;; object - treed as a propert - type pair
+            ;; object - treat as a property - type pair
             (object
                 (pair
                     key: (_) @property.name
@@ -34,7 +34,7 @@
             (template_string
                 (template_substitution
                     (identifier) @type.name))
-            ])           ;; primitive / type identifier
+            ])
        ;; match a nested statement block
        (statement_block) @nested
      ])))

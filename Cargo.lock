@@ -4948,7 +4948,6 @@ dependencies = [
  "indoc",
  "itertools 0.14.0",
  "language",
- "languages",
  "log",
  "lsp",
  "markdown",
