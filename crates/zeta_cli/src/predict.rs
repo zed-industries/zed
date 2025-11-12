@@ -7,18 +7,18 @@ use anyhow::{Context, Result, anyhow};
 use clap::{Args, ValueEnum};
 use cloud_zeta2_prompt::{CURSOR_MARKER, write_codeblock};
 use collections::HashMap;
-use futures::StreamExt as _;
-use gpui::{AppContext, AsyncApp, Entity};
+use futures::future::Shared;
+use futures::{FutureExt as _, StreamExt as _};
+use gpui::{AppContext, AsyncApp, Entity, Task};
 use language::{Anchor, Buffer, Point};
 use project::Project;
 use serde::Deserialize;
-use std::cell::Cell;
 use std::fs;
 use std::io::Write;
 use std::ops::Range;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use zeta2::{EvalCache, EvalCacheEntryKind, EvalCacheKey};
 
@@ -35,10 +35,12 @@ pub struct PredictArguments {
     cache: CacheMode,
 }
 
-#[derive(Debug, ValueEnum, Default, Clone, Copy)]
+#[derive(Debug, ValueEnum, Default, Clone, Copy, PartialEq)]
 pub enum CacheMode {
-    /// Use cached LLM requests and responses, based on the hash of the prompt and the endpoint.
+    /// Use cached LLM requests and responses, except when multiple repetitions are requested
     #[default]
+    Auto,
+    /// Use cached LLM requests and responses, based on the hash of the prompt and the endpoint.
     #[value(alias = "request")]
     Requests,
     /// Ignore existing cache entries for both LLM and search.
@@ -50,11 +52,21 @@ pub enum CacheMode {
 
 impl CacheMode {
     fn use_cached_llm_responses(&self) -> bool {
+        self.assert_not_auto();
         matches!(self, CacheMode::Requests | CacheMode::Force)
     }
 
     fn use_cached_search_results(&self) -> bool {
+        self.assert_not_auto();
         matches!(self, CacheMode::Force)
+    }
+
+    fn assert_not_auto(&self) {
+        assert_ne!(
+            *self,
+            CacheMode::Auto,
+            "Cache mode should not be auto at this point!"
+        );
     }
 }
 
@@ -71,8 +83,11 @@ pub async fn run_zeta2_predict(
     cx: &mut AsyncApp,
 ) {
     let example = NamedExample::load(args.example_path).unwrap();
+    let worktree_path = example.setup_worktree().await.unwrap();
     let result = zeta2_predict(
         example,
+        &worktree_path,
+        None,
         args.prompt_format,
         args.use_expected_context,
         args.cache,
@@ -86,28 +101,41 @@ pub async fn run_zeta2_predict(
     print_run_data_dir();
 }
 
-thread_local! {
-    static AUTHENTICATED: Cell<bool> = const { Cell::new(false) };
-}
+static AUTHENTICATED: OnceLock<Shared<Task<()>>> = OnceLock::new();
 
 pub async fn zeta2_predict(
     example: NamedExample,
+    worktree_path: &Path,
+    repetition_ix: Option<u16>,
     prompt_format: PromptFormat,
     use_expected_context: bool,
-    cache_mode: CacheMode,
+    mut cache_mode: CacheMode,
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) -> Result<PredictionDetails> {
-    let worktree_path = example.setup_worktree().await?;
-
-    if !AUTHENTICATED.get() {
-        AUTHENTICATED.set(true);
-
-        app_state
-            .client
-            .sign_in_with_optional_connect(true, cx)
-            .await?;
+    if repetition_ix.is_some() {
+        if cache_mode != CacheMode::Auto && cache_mode != CacheMode::Skip {
+            panic!("Repetitions are not supported in Auto cache mode");
+        } else {
+            cache_mode = CacheMode::Skip;
+        }
+    } else if cache_mode == CacheMode::Auto {
+        cache_mode = CacheMode::Requests;
     }
+
+    AUTHENTICATED
+        .get_or_init(|| {
+            let client = app_state.client.clone();
+            cx.spawn(async move |cx| {
+                client
+                    .sign_in_with_optional_connect(true, cx)
+                    .await
+                    .unwrap();
+            })
+            .shared()
+        })
+        .clone()
+        .await;
 
     let project = cx.update(|cx| {
         Project::local(
@@ -134,9 +162,13 @@ pub async fn zeta2_predict(
         })?
         .await;
 
-    let zeta = cx.update(|cx| zeta2::Zeta::global(&app_state.client, &app_state.user_store, cx))?;
+    let zeta =
+        cx.new(|cx| zeta2::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx))?;
 
-    let example_run_dir = RUN_DIR.join(&example.file_name());
+    let mut example_run_dir = RUN_DIR.join(&example.file_name());
+    if let Some(repetition_ix) = repetition_ix {
+        example_run_dir = example_run_dir.join(format!("{:03}", repetition_ix));
+    }
     fs::create_dir_all(&example_run_dir)?;
     if LATEST_EXAMPLE_RUN_DIR.exists() {
         fs::remove_file(&*LATEST_EXAMPLE_RUN_DIR)?;
@@ -159,11 +191,10 @@ pub async fn zeta2_predict(
 
     cx.subscribe(&buffer_store, {
         let project = project.clone();
+        let zeta = zeta.clone();
         move |_, event, cx| match event {
             project::buffer_store::BufferStoreEvent::BufferAdded(buffer) => {
-                zeta2::Zeta::try_global(cx)
-                    .unwrap()
-                    .update(cx, |zeta, cx| zeta.register_buffer(&buffer, &project, cx));
+                zeta.update(cx, |zeta, cx| zeta.register_buffer(&buffer, &project, cx));
             }
             _ => {}
         }

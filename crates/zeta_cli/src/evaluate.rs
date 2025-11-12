@@ -1,8 +1,4 @@
-use std::{
-    io::IsTerminal,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{io::IsTerminal, path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use clap::Args;
@@ -27,6 +23,8 @@ pub struct EvaluateArguments {
     use_expected_context: bool,
     #[clap(long, value_enum, default_value_t = CacheMode::default())]
     cache: CacheMode,
+    #[clap(long, default_value_t = 1)]
+    repeat: u16,
 }
 
 pub async fn run_evaluate(
@@ -37,24 +35,43 @@ pub async fn run_evaluate(
     let example_len = args.example_paths.len();
     let all_tasks = args.example_paths.into_iter().map(|path| {
         let app_state = app_state.clone();
+        let example = NamedExample::load(&path).unwrap();
+
         cx.spawn(async move |cx| {
-            run_evaluate_one(
-                &path,
-                args.prompt_format,
-                args.use_expected_context,
-                args.cache,
-                app_state.clone(),
-                cx,
-            )
-            .await
+            let worktree_path = example.setup_worktree().await.unwrap();
+
+            let tasks = (0..args.repeat).map(|repetition_ix| {
+                let repetition_ix = (args.repeat > 1).then(|| repetition_ix);
+
+                let example = example.clone();
+                let worktree_path = worktree_path.clone();
+                let app_state = app_state.clone();
+
+                cx.spawn(async move |cx| {
+                    run_evaluate_one(
+                        example,
+                        repetition_ix,
+                        worktree_path,
+                        args.prompt_format,
+                        args.use_expected_context,
+                        args.cache,
+                        app_state,
+                        cx,
+                    )
+                    .await
+                })
+            });
+            futures::future::try_join_all(tasks).await
         })
     });
     let all_results = futures::future::try_join_all(all_tasks).await;
 
     if let Ok(all_results) = &all_results {
         let aggregated_result = EvaluationResult {
-            context: Scores::aggregate(all_results.iter().map(|r| &r.context)),
-            edit_prediction: Scores::aggregate(all_results.iter().map(|r| &r.edit_prediction)),
+            context: Scores::aggregate(all_results.iter().flatten().map(|r| &r.context)),
+            edit_prediction: Scores::aggregate(
+                all_results.iter().flatten().map(|r| &r.edit_prediction),
+            ),
         };
 
         if example_len > 1 {
@@ -70,24 +87,26 @@ pub async fn run_evaluate(
 }
 
 pub async fn run_evaluate_one(
-    example_path: &Path,
+    example: NamedExample,
+    repetition_ix: Option<u16>,
+    worktree_path: PathBuf,
     prompt_format: PromptFormat,
     use_expected_context: bool,
     cache_mode: CacheMode,
     app_state: Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) -> Result<EvaluationResult> {
-    let example = NamedExample::load(&example_path).unwrap();
     let predictions = zeta2_predict(
         example.clone(),
+        &worktree_path,
+        repetition_ix,
         prompt_format,
         use_expected_context,
         cache_mode,
         &app_state,
         cx,
     )
-    .await
-    .unwrap();
+    .await?;
 
     let evaluation_result = evaluate(&example.example, &predictions);
 

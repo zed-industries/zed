@@ -15,6 +15,7 @@ pub static LATEST_EXAMPLE_RUN_DIR: LazyLock<PathBuf> =
 
 pub fn print_run_data_dir() {
     println!("\n## Run Data\n");
+    let mut files = Vec::new();
 
     let current_dir = std::env::current_dir().unwrap();
     for file in std::fs::read_dir(&*RUN_DIR).unwrap() {
@@ -23,18 +24,23 @@ pub fn print_run_data_dir() {
             for file in std::fs::read_dir(file.path()).unwrap() {
                 let path = file.unwrap().path();
                 let path = path.strip_prefix(&current_dir).unwrap_or(&path);
-                println!(
+                files.push(format!(
                     "- {}/\x1b[34m{}\x1b[0m",
                     path.parent().unwrap().display(),
                     path.file_name().unwrap().display(),
-                );
+                ));
             }
         } else {
             let path = file.path();
-            println!(
+            files.push(format!(
                 "- {} ",
                 path.strip_prefix(&current_dir).unwrap_or(&path).display()
-            );
+            ));
         }
+    }
+    files.sort();
+
+    for file in files {
+        println!("{}", file);
     }
 }
