@@ -204,7 +204,7 @@ pub async fn zeta2_predict(
     let _edited_buffers = example.apply_edit_history(&project, cx).await?;
     let (cursor_buffer, cursor_anchor) = example.cursor_position(&project, cx).await?;
 
-    let result = Arc::new(Mutex::new(PredictionDetails::default()));
+    let result = Arc::new(Mutex::new(PredictionDetails::new(example_run_dir.clone())));
     let mut debug_rx = zeta.update(cx, |zeta, _| zeta.debug_info())?;
 
     let debug_task = cx.background_spawn({
@@ -455,7 +455,7 @@ impl EvalCache for RunCache {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PredictionDetails {
     pub diff: String,
     pub excerpts: Vec<ActualExcerpt>,
@@ -464,9 +464,23 @@ pub struct PredictionDetails {
     pub running_search_time: Option<Duration>,
     pub prediction_time: Duration,
     pub total_time: Duration,
+    pub run_example_dir: PathBuf,
 }
 
 impl PredictionDetails {
+    pub fn new(run_example_dir: PathBuf) -> Self {
+        Self {
+            diff: Default::default(),
+            excerpts: Default::default(),
+            excerpts_text: Default::default(),
+            planning_search_time: Default::default(),
+            running_search_time: Default::default(),
+            prediction_time: Default::default(),
+            total_time: Default::default(),
+            run_example_dir,
+        }
+    }
+
     pub fn write(&self, format: PredictionsOutputFormat, mut out: impl Write) -> Result<()> {
         let formatted = match format {
             PredictionsOutputFormat::Md => self.to_markdown(),

@@ -1,9 +1,14 @@
-use std::{io::IsTerminal, path::PathBuf, sync::Arc};
+use std::{
+    io::{IsTerminal, Write},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use anyhow::Result;
 use clap::Args;
 use collections::HashSet;
 use gpui::AsyncApp;
+use util::ResultExt as _;
 use zeta2::udiff::DiffLine;
 
 use crate::{
@@ -32,8 +37,10 @@ pub async fn run_evaluate(
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) {
-    let example_len = args.example_paths.len();
-
+    if args.example_paths.is_empty() {
+        eprintln!("No examples provided");
+        return;
+    }
     let all_tasks = args.example_paths.into_iter().map(|path| {
         let app_state = app_state.clone();
         let example = NamedExample::load(&path).unwrap();
@@ -68,37 +75,50 @@ pub async fn run_evaluate(
         })
     });
     let all_results = futures::future::join_all(all_tasks).await;
+
+    write_aggregated_scores(&mut std::io::stdout(), &all_results).unwrap();
+    if let Some(mut output_file) =
+        std::fs::File::create(crate::paths::RUN_DIR.join("aggregated_results.md")).log_err()
+    {
+        write_aggregated_scores(&mut output_file, &all_results).log_err();
+    };
+    print_run_data_dir();
+}
+
+fn write_aggregated_scores(
+    w: &mut impl std::io::Write,
+    all_results: &Vec<Vec<Result<EvaluationResult, (anyhow::Error, String, Option<u16>)>>>,
+) -> Result<()> {
     let mut successful = Vec::new();
     let mut failed_count = 0;
+    writeln!("## Errors\n")?;
     for result in all_results.iter().flatten() {
         match result {
             Ok(eval_result) => successful.push(eval_result),
             Err((err, name, repetition_ix)) => {
                 failed_count += 1;
-                eprintln!(
+                writeln!(
+                    w,
                     "{name}{}: {err}",
                     repetition_ix
                         .map(|ix| format!(" [{ix:03}]"))
                         .unwrap_or_default()
-                );
+                )?;
             }
         }
     }
-
     let aggregated_result = EvaluationResult {
         context: Scores::aggregate(successful.iter().map(|r| &r.context)),
         edit_prediction: Scores::aggregate(successful.iter().map(|r| &r.edit_prediction)),
     };
 
-    if example_len > 1 {
-        println!("\n{}", "-".repeat(80));
-        println!("\n## TOTAL SCORES");
-        println!("{}", aggregated_result.to_markdown());
-        println!("\n{}", "-".repeat(80));
-        println!("{} failed examples", failed_count);
-    }
+    writeln!(w, "\n{}", "-".repeat(80))?;
+    writeln!(w, "\n## TOTAL SCORES")?;
+    writeln!(w, "{}", aggregated_result)?;
+    writeln!(w, "\n{}", "-".repeat(80))?;
+    writeln!(w, "{} failed examples", failed_count)?;
 
-    print_run_data_dir();
+    Ok(())
 }
 
 pub async fn run_evaluate_one(
@@ -111,7 +131,7 @@ pub async fn run_evaluate_one(
     app_state: Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) -> Result<EvaluationResult> {
-    let predictions = zeta2_predict(
+    let predict_result = zeta2_predict(
         example.clone(),
         &worktree_path,
         repetition_ix,
@@ -123,20 +143,51 @@ pub async fn run_evaluate_one(
     )
     .await?;
 
-    let evaluation_result = evaluate(&example.example, &predictions);
+    let evaluation_result = evaluate(&example.example, &predict_result);
 
-    println!(
-        "## Expected edit prediction:\n\n```diff\n{}\n```\n",
-        compare_diffs(&example.example.expected_patch, &predictions.diff)
-    );
-    println!(
-        "## Actual edit prediction:\n\n```diff\n{}\n```\n",
-        compare_diffs(&predictions.diff, &example.example.expected_patch)
-    );
+    if repetition_ix.is_none() {
+        write_eval_result(
+            &example,
+            &predict_result,
+            &evaluation_result,
+            &mut std::io::stdout(),
+        )?;
+    }
 
-    println!("{}", evaluation_result.to_markdown());
+    if let Some(mut results_file) =
+        std::fs::File::create(predict_result.run_example_dir.join("results.md")).log_err()
+    {
+        write_eval_result(
+            &example,
+            &predict_result,
+            &evaluation_result,
+            &mut results_file,
+        )
+        .log_err();
+    }
 
     anyhow::Ok(evaluation_result)
+}
+
+fn write_eval_result(
+    example: &NamedExample,
+    predictions: &PredictionDetails,
+    evaluation_result: &EvaluationResult,
+    out: &mut impl Write,
+) -> Result<()> {
+    writeln!(
+        out,
+        "## Expected edit prediction:\n\n```diff\n{}\n```\n",
+        compare_diffs(&example.example.expected_patch, &predictions.diff)
+    )?;
+    writeln!(
+        out,
+        "## Actual edit prediction:\n\n```diff\n{}\n```\n",
+        compare_diffs(&predictions.diff, &example.example.expected_patch)
+    )?;
+    writeln!(out, "{}", evaluation_result)?;
+
+    anyhow::Ok(())
 }
 
 #[derive(Debug, Default)]
@@ -228,9 +279,10 @@ False Negatives : {}",
     }
 }
 
-impl EvaluationResult {
-    pub fn to_markdown(&self) -> String {
-        format!(
+impl std::fmt::Display for EvaluationResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
             r#"
 ### Context Scores
 {}
