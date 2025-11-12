@@ -1240,7 +1240,7 @@ mod tests {
 
     #[perf]
     fn compare_paths_mixed_case_numeric_ordering() {
-        let mut entries = vec![
+        let mut entries = [
             (Path::new(".config"), false),
             (Path::new("Dir1"), false),
             (Path::new("dir01"), false),
