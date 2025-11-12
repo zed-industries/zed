@@ -37,7 +37,8 @@ use std::{
     io::{self, IsTerminal},
     path::{Path, PathBuf},
     process,
-    sync::Arc,
+    sync::{Arc, OnceLock},
+    time::Instant,
 };
 use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
 use util::{ResultExt, TryFutureExt, maybe};
@@ -162,7 +163,11 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
     }
 }
 
+pub static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
+
 pub fn main() {
+    STARTUP_TIME.get_or_init(|| Instant::now());
+
     #[cfg(unix)]
     util::prevent_root_execution();
 
@@ -637,6 +642,7 @@ pub fn main() {
         zeta::init(cx);
         inspector_ui::init(app_state.clone(), cx);
         json_schema_store::init(cx);
+        miniprofiler_ui::init(*STARTUP_TIME.get().unwrap(), cx);
 
         cx.observe_global::<SettingsStore>({
             let http = app_state.client.http_client();
@@ -1226,6 +1232,7 @@ fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
         paths::database_dir(),
         paths::logs_dir(),
         paths::temp_dir(),
+        paths::hang_traces_dir(),
     ]
     .into_iter()
     .fold(HashMap::default(), |mut errors, path| {

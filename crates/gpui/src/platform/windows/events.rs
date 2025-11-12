@@ -239,7 +239,7 @@ impl WindowsWindowInner {
     fn handle_timer_msg(&self, handle: HWND, wparam: WPARAM) -> Option<isize> {
         if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
             for runnable in self.main_receiver.drain() {
-                runnable.run();
+                WindowsDispatcher::execute_runnable(runnable);
             }
             self.handle_paint_msg(handle)
         } else {
@@ -1142,8 +1142,10 @@ impl WindowsWindowInner {
             require_presentation: false,
             force_render,
         });
+
         self.state.borrow_mut().callbacks.request_frame = Some(request_frame);
         unsafe { ValidateRect(Some(handle), None).ok().log_err() };
+
         Some(0)
     }
 
