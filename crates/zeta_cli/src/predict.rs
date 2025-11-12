@@ -367,7 +367,7 @@ impl EvalCache for RunCache {
                 }
             };
             if use_cache {
-                log::trace!("Using cache entry: {}", path.display());
+                log::info!("Using cache entry: {}", path.display());
                 self.link_to_run(&key);
                 Some(fs::read_to_string(path).unwrap())
             } else {

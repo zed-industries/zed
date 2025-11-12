@@ -79,7 +79,7 @@ fn resolve_new_text_old_text_in_buffer(
             }
         }
         offset.ok_or_else(|| {
-            #[cfg(debug_assertions)]
+            #[cfg(any(debug_assertions, feature = "eval-support"))]
             if let Some(closest_match) = closest_old_text_match(buffer, old_text) {
                 log::info!(
                     "Closest `old_text` match: {}",
@@ -102,7 +102,7 @@ fn resolve_new_text_old_text_in_buffer(
         }))
 }
 
-#[cfg(debug_assertions)]
+#[cfg(any(debug_assertions, feature = "eval-support"))]
 fn closest_old_text_match(buffer: &TextBufferSnapshot, old_text: &str) -> Option<String> {
     let buffer_text = buffer.text();
     let len = old_text.len();
