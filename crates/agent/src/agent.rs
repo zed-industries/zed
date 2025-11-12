@@ -368,13 +368,15 @@ impl NativeAgent {
         cx: &mut AsyncApp,
     ) -> Result<()> {
         while needs_refresh.changed().await.is_ok() {
-            let project_context = this
+            let new_project_context_data = this
                 .update(cx, |this, cx| {
                     Self::build_project_context(&this.project, this.prompt_store.as_ref(), cx)
                 })?
                 .await;
             this.update(cx, |this, cx| {
-                this.project_context = cx.new(|_| project_context);
+                this.project_context.update(cx, |project_context, _cx| {
+                    *project_context = new_project_context_data;
+                });
             })?;
         }
 

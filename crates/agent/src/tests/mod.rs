@@ -2586,15 +2586,14 @@ fn setup_context_server(
 /// being applied to the first message sent in that thread.
 ///
 /// The test simulates:
-/// 1. Creating a thread with a project context entity
-/// 2. A new project context entity is created with updated rules (simulating what
+/// 1. Creating a thread with an initial rule in the project context
+/// 2. Updating the project context entity with new rules (simulating what
 ///    NativeAgent.maintain_project_context does when rules are toggled)
 /// 3. Sending a message through the thread
 /// 4. Verifying that the newly toggled rules appear in the system prompt
 ///
-/// This test will fail until the bug is fixed. The fix requires ensuring that when
-/// rules are toggled, threads see the updated rules rather than continuing to use
-/// a stale project context entity.
+/// The fix ensures that threads see updated rules by updating the project_context
+/// entity in place rather than creating a new entity that threads wouldn't reference.
 #[gpui::test]
 async fn test_rules_toggled_after_thread_creation_are_applied(cx: &mut TestAppContext) {
     let ThreadTest {
@@ -2618,15 +2617,14 @@ async fn test_rules_toggled_after_thread_creation_are_applied(cx: &mut TestAppCo
     let rule_id = UserPromptId::new();
     let new_rule_content = "Always respond in uppercase.";
 
-    let _new_project_context = cx.new(|_cx| {
-        let mut context = ProjectContext::default();
+    project_context.update(cx, |context, _cx| {
+        context.user_rules.clear();
         context.user_rules.push(UserRulesContext {
             uuid: rule_id,
             title: Some("New Rule".to_string()),
             contents: new_rule_content.to_string(),
         });
         context.has_user_rules = true;
-        context
     });
 
     thread
