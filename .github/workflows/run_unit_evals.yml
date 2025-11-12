@@ -46,8 +46,7 @@ jobs:
       run: ./script/download-wasi-sdk
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
-      run: cargo install cargo-nextest --locked
-      shell: bash -euxo pipefail {0}
+      uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 250
       shell: bash -euxo pipefail {0}

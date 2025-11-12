@@ -47,9 +47,6 @@ jobs:
     - name: steps::clippy
       run: ./script/clippy.ps1
       shell: pwsh
-    - name: steps::cargo_install_nextest
-      run: cargo install cargo-nextest --locked
-      shell: pwsh
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
