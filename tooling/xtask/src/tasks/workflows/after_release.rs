@@ -88,14 +88,14 @@ fn post_to_discord(deps: &[&NamedJob]) -> NamedJob {
 
 fn publish_winget() -> NamedJob {
     fn set_package_name() -> (Step<Run>, StepOutput) {
-        let step = named::bash(indoc::indoc! {r#"
-            if [ "${{ github.event.release.prerelease }}" == "true" ]; then
-                PACKAGE_NAME=ZedIndustries.Zed.Preview
-            else
-                PACKAGE_NAME=ZedIndustries.Zed
-            fi
+        let step = named::pwsh(indoc::indoc! {r#"
+            if ("${{ github.event.release.prerelease }}" -eq "true") {
+                $PACKAGE_NAME = "ZedIndustries.Zed.Preview"
+            } else {
+                $PACKAGE_NAME = "ZedIndustries.Zed"
+            }
 
-            echo "PACKAGE_NAME=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"
+            echo "PACKAGE_NAME=$PACKAGE_NAME" >> $env:GITHUB_OUTPUT
         "#})
         .id("set-package-name");
 

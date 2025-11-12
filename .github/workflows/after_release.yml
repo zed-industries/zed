@@ -42,14 +42,14 @@ jobs:
     - id: set-package-name
       name: after_release::publish_winget::set_package_name
       run: |
-        if [ "${{ github.event.release.prerelease }}" == "true" ]; then
-            PACKAGE_NAME=ZedIndustries.Zed.Preview
-        else
-            PACKAGE_NAME=ZedIndustries.Zed
-        fi
+        if ("${{ github.event.release.prerelease }}" -eq "true") {
+            $PACKAGE_NAME = "ZedIndustries.Zed.Preview"
+        } else {
+            $PACKAGE_NAME = "ZedIndustries.Zed"
+        }
 
-        echo "PACKAGE_NAME=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"
-      shell: bash -euxo pipefail {0}
+        echo "PACKAGE_NAME=$PACKAGE_NAME" >> $env:GITHUB_OUTPUT
+      shell: pwsh
     - name: after_release::publish_winget::winget_releaser
       uses: vedantmgoyal9/winget-releaser@19e706d4c9121098010096f9c495a70a7518b30f
       with:
