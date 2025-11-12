@@ -1089,7 +1089,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_large_file_uses_outline(cx: &mut TestAppContext) {
+    async fn test_large_file_uses_fallback(cx: &mut TestAppContext) {
         init_test_settings(cx);
 
         // Create a large file that exceeds AUTO_OUTLINE_SIZE
@@ -1101,16 +1101,22 @@ mod tests {
 
         let file_context = load_context_for("file.txt", large_content, cx).await;
 
+        // Plain text files have no outline, so should fall back to first 1KB
+        assert!(
+            file_context.text.contains("First 1KB"),
+            "Large files without outline should use fallback"
+        );
+
         assert!(
             file_context
                 .text
-                .contains(&format!("# File outline for {}", path!("test/file.txt"))),
-            "Large files should not get an outline"
+                .contains("file too large to show full content, and no outline available"),
+            "Should explain why fallback was used"
         );
 
         assert!(
             file_context.text.len() < content_len,
-            "Outline should be smaller than original content"
+            "Fallback should be smaller than original content"
         );
     }
 
