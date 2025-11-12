@@ -3912,7 +3912,7 @@ mod tests {
         });
 
         // Create a tool call entry that references this terminal
-        // This represents the AI agent requesting a terminal command
+        // This represents the agent requesting a terminal command
         thread.update(cx, |thread, cx| {
             thread
                 .handle_session_update(
