@@ -13,17 +13,18 @@ use workspace::{Toast, notifications::NotificationId};
 mod blame_ui;
 
 use git::{
-    repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
+    repository::{Branch, CommitDetails, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
-    Window, actions,
+    Subscription, Task, Window, actions,
 };
 use menu::{Cancel, Confirm};
 use onboarding::GitOnboardingModal;
 use project::git_store::Repository;
 use project_diff::ProjectDiff;
+use time::OffsetDateTime;
 use ui::prelude::*;
 use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr};
 use zed_actions;
@@ -386,6 +387,9 @@ struct RefPickerModal {
     editor: Entity<Editor>,
     repo: Entity<Repository>,
     workspace: Entity<Workspace>,
+    commit_details: Option<CommitDetails>,
+    lookup_task: Option<Task<()>>,
+    _editor_subscription: Subscription,
 }
 
 impl RefPickerModal {
@@ -401,11 +405,60 @@ impl RefPickerModal {
             editor
         });
 
+        let _editor_subscription = cx.subscribe_in(
+            &editor,
+            window,
+            |this, _editor, event: &editor::EditorEvent, window, cx| {
+                if let editor::EditorEvent::BufferEdited = event {
+                    this.lookup_commit_details(window, cx);
+                }
+            },
+        );
+
         Self {
             editor,
             repo,
             workspace,
+            commit_details: None,
+            lookup_task: None,
+            _editor_subscription,
         }
+    }
+
+    fn lookup_commit_details(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let git_ref = self.editor.read(cx).text(cx);
+        let git_ref = git_ref.trim().to_string();
+
+        if git_ref.is_empty() {
+            self.commit_details = None;
+            cx.notify();
+            return;
+        }
+
+        let repo = self.repo.clone();
+        self.lookup_task = Some(cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(300))
+                .await;
+
+            let show_result = repo.update(cx, |repo, _| repo.show(git_ref.clone())).ok();
+
+            if let Some(show_future) = show_result {
+                if let Ok(Ok(details)) = show_future.await {
+                    this.update(cx, |this, cx| {
+                        this.commit_details = Some(details);
+                        cx.notify();
+                    })
+                    .ok();
+                } else {
+                    this.update(cx, |this, cx| {
+                        this.commit_details = None;
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        }));
     }
 
     fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
@@ -479,6 +532,42 @@ impl Focusable for RefPickerModal {
 
 impl Render for RefPickerModal {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_commit_details = self.commit_details.is_some();
+        let commit_preview = self.commit_details.as_ref().map(|details| {
+            let commit_time = OffsetDateTime::from_unix_timestamp(details.commit_timestamp)
+                .unwrap_or_else(|_| OffsetDateTime::now_utc());
+            let local_offset =
+                time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
+            let formatted_time = time_format::format_localized_timestamp(
+                commit_time,
+                OffsetDateTime::now_utc(),
+                local_offset,
+                time_format::TimestampFormat::Relative,
+            );
+
+            let subject = details.message.lines().next().unwrap_or("").to_string();
+            let author_and_subject = format!("{} • {}", details.author_name, subject);
+
+            h_flex()
+                .w_full()
+                .gap_6()
+                .justify_between()
+                .overflow_x_hidden()
+                .child(
+                    div().max_w_96().child(
+                        Label::new(author_and_subject)
+                            .size(LabelSize::Small)
+                            .truncate()
+                            .color(Color::Muted),
+                    ),
+                )
+                .child(
+                    Label::new(formatted_time)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+        });
+
         v_flex()
             .key_context("RefPickerModal")
             .on_action(cx.listener(Self::cancel))
@@ -493,9 +582,13 @@ impl Render for RefPickerModal {
                     .w_full()
                     .gap_1p5()
                     .child(Icon::new(IconName::Hash).size(IconSize::XSmall))
-                    .child(Headline::new("Open Commit").size(HeadlineSize::XSmall)),
+                    .child(Headline::new("View Commit").size(HeadlineSize::XSmall)),
             )
-            .child(div().px_3().pb_3().w_full().child(self.editor.clone()))
+            .child(div().px_3().w_full().child(self.editor.clone()))
+            .when_some(commit_preview, |el, preview| {
+                el.child(div().px_3().pb_3().w_full().child(preview))
+            })
+            .when(!has_commit_details, |el| el.child(div().pb_3()))
     }
 }
 
