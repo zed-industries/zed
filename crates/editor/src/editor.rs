@@ -1793,7 +1793,7 @@ impl Editor {
                     .cursor_pointer()
                     .child("⋯")
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(move |_, _window, cx| {
+                    .on_click(move |_, _win, cx| {
                         editor
                             .update(cx, |editor, cx| {
                                 editor.unfold_ranges(
@@ -24755,7 +24755,7 @@ fn render_diff_hunk_controls(
     is_created_file: bool,
     line_height: Pixels,
     editor: &Entity<Editor>,
-    _window: &mut Window,
+    _win: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     h_flex()

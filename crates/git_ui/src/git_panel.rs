@@ -279,6 +279,7 @@ enum TargetStatus {
     Unchanged,
 }
 
+#[derive(Debug)]
 struct PendingOperation {
     finished: bool,
     target_status: TargetStatus,
@@ -1247,6 +1248,9 @@ impl GitPanel {
         let (stage, repo_paths) = match entry {
             GitListEntry::Status(status_entry) => {
                 let repo_paths = vec![status_entry.clone()];
+                println!("{}", status_entry.repo_path.as_unix_str());
+                println!("  >>> pending_ops: {:?}", self.pending);
+                println!("  >>> entry: {:?}", status_entry);
                 let stage = if let Some(status) = self.entry_staging(&status_entry) {
                     !status.is_fully_staged()
                 } else if status_entry.status.staging().is_fully_staged() {
@@ -1260,6 +1264,7 @@ impl GitPanel {
                     self.set_bulk_staging_anchor(status_entry.repo_path.clone(), cx);
                     true
                 };
+                println!("  >>> stage={stage}");
                 (stage, repo_paths)
             }
             GitListEntry::Header(section) => {
@@ -2638,6 +2643,7 @@ impl GitPanel {
     }
 
     fn clear_pending(&mut self) {
+        println!("*** CLEAR ***");
         self.pending.retain(|v| !v.finished)
     }
 
@@ -4028,6 +4034,11 @@ impl GitPanel {
         if self.show_placeholders && !self.has_staged_changes() && !entry.status.is_created() {
             is_staged = ToggleState::Selected;
         }
+        println!(
+            "Checkbox status = {is_staged:?}, self.entry_staging = {:?}, entry.staging = {:?}",
+            self.entry_staging(entry),
+            entry.staging
+        );
 
         let handle = cx.weak_entity();
 
@@ -4124,6 +4135,14 @@ impl GitPanel {
                                 let entry = entry.clone();
                                 let this = cx.weak_entity();
                                 move |_, click, window, cx| {
+                                    println!(
+                                        "{} - *** Clicked - checkbox {} ***",
+                                        std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap()
+                                            .as_secs(),
+                                        entry_staging.is_fully_staged()
+                                    );
                                     this.update(cx, |this, cx| {
                                         if !has_write_access {
                                             return;
