@@ -209,5 +209,11 @@ mod tests {
             "Result size {} should be smaller than 50KB",
             result.text.len()
         );
+
+        // Should be significantly smaller than the original content
+        assert!(
+            result.text.len() < content_len / 10,
+            "Result should be much smaller than original content"
+        );
     }
 }
