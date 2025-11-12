@@ -236,13 +236,11 @@ impl Zeta {
         let (reject_tx, mut reject_rx) = mpsc::unbounded();
         cx.spawn(async move |this, cx| {
             while let Some(()) = reject_rx.next().await {
-                if this
-                    .update(cx, |this, cx| this.reject_edit_predictions(cx))
-                    .is_err()
-                {
-                    break;
-                }
+                this.update(cx, |this, cx| this.reject_edit_predictions(cx))?
+                    .await
+                    .log_err();
             }
+            anyhow::Ok(())
         })
         .detach();
 
@@ -1103,7 +1101,7 @@ impl Zeta {
             self.discarded_completions.len() >= MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST;
         let discard_completions_tx = self.discard_completions_tx.clone();
         self.discard_completions_debounce_task = Some(cx.spawn(async move |_this, cx| {
-            const DISCARD_COMPLETIONS_DEBOUNCE: Duration = Duration::from_secs(30);
+            const DISCARD_COMPLETIONS_DEBOUNCE: Duration = Duration::from_secs(15);
             if !reached_request_limit {
                 cx.background_executor()
                     .timer(DISCARD_COMPLETIONS_DEBOUNCE)
