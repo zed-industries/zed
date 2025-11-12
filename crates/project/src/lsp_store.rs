@@ -573,8 +573,7 @@ impl LocalLspStore {
                 env.extend(settings.env.unwrap_or_default());
 
                 Ok(LanguageServerBinary {
-                    // if `path` is absolute, `.join()` will keep it unmodified
-                    path: delegate.worktree_root_path().join(path),
+                    path: delegate.resolve_executable_path(path),
                     env: Some(env),
                     arguments: settings
                         .arguments
@@ -13514,6 +13513,10 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
 
     fn worktree_root_path(&self) -> &Path {
         self.worktree.abs_path().as_ref()
+    }
+
+    fn resolve_executable_path(&self, path: PathBuf) -> PathBuf {
+        self.worktree.resolve_executable_path(path)
     }
 
     async fn shell_env(&self) -> HashMap<String, String> {
