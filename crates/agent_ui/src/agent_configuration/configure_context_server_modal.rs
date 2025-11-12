@@ -7,8 +7,8 @@ use anyhow::{Context as _, Result};
 use context_server::{ContextServerCommand, ContextServerId};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
-    AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task,
-    TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
+    AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle,
+    Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
 };
 use language::{Language, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
@@ -23,7 +23,8 @@ use project::{
 use settings::{Settings as _, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
-    CommonAnimationExt, KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip, prelude::*,
+    CommonAnimationExt, KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{ModalView, Workspace};
@@ -252,6 +253,7 @@ pub struct ConfigureContextServerModal {
     source: ConfigurationSource,
     state: State,
     original_server_id: Option<ContextServerId>,
+    scroll_handle: ScrollHandle,
 }
 
 impl ConfigureContextServerModal {
@@ -361,6 +363,7 @@ impl ConfigureContextServerModal {
                         window,
                         cx,
                     ),
+                    scroll_handle: ScrollHandle::new(),
                 })
             })
         })
@@ -511,10 +514,18 @@ impl ConfigureContextServerModal {
             div()
                 .pb_2()
                 .text_sm()
-                .child(MarkdownElement::new(
-                    installation_instructions.clone(),
-                    default_markdown_style(window, cx),
-                ))
+                .child(
+                    div()
+                        .id("installation_instructions")
+                        .max_h_96()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll_handle)
+                        .child(MarkdownElement::new(
+                            installation_instructions.clone(),
+                            default_markdown_style(window, cx),
+                        ))
+                )
+                .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
                 .into_any_element()
         } else {
             Label::new(MODAL_DESCRIPTION)
