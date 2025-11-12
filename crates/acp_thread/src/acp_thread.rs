@@ -1894,9 +1894,25 @@ impl AcpThread {
             cx.update(|cx| truncate.run(id.clone(), cx))?.await?;
             this.update(cx, |this, cx| {
                 if let Some((ix, _)) = this.user_message_mut(&id) {
+                    // Collect all terminals from entries that will be removed
+                    let terminals_to_remove: Vec<acp::TerminalId> = this.entries[ix..]
+                        .iter()
+                        .flat_map(|entry| entry.terminals())
+                        .filter_map(|terminal| terminal.read(cx).id().clone().into())
+                        .collect();
+
                     let range = ix..this.entries.len();
                     this.entries.truncate(ix);
                     cx.emit(AcpThreadEvent::EntriesRemoved(range));
+
+                    // Kill and remove the terminals
+                    for terminal_id in terminals_to_remove {
+                        if let Some(terminal) = this.terminals.remove(&terminal_id) {
+                            terminal.update(cx, |terminal, cx| {
+                                terminal.kill(cx);
+                            });
+                        }
+                    }
                 }
                 this.action_log().update(cx, |action_log, cx| {
                     action_log.reject_all_edits(Some(telemetry), cx)
