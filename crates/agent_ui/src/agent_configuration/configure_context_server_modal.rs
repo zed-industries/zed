@@ -253,7 +253,7 @@ pub struct ConfigureContextServerModal {
     source: ConfigurationSource,
     state: State,
     original_server_id: Option<ContextServerId>,
-    scroll_handle: ScrollHandle,
+    scroll_handle: Option<ScrollHandle>,
 }
 
 impl ConfigureContextServerModal {
@@ -363,7 +363,7 @@ impl ConfigureContextServerModal {
                         window,
                         cx,
                     ),
-                    scroll_handle: ScrollHandle::new(),
+                    scroll_handle: None,
                 })
             })
         })
@@ -503,7 +503,11 @@ impl ConfigureContextServerModal {
         ModalHeader::new().headline(text)
     }
 
-    fn render_modal_description(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_modal_description(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         const MODAL_DESCRIPTION: &str = "Visit the MCP server configuration docs to find all necessary arguments and environment variables.";
 
         if let ConfigurationSource::Extension {
@@ -511,6 +515,12 @@ impl ConfigureContextServerModal {
             ..
         } = &self.source
         {
+            // Lazily initialize scroll handle only when rendering
+            if self.scroll_handle.is_none() {
+                self.scroll_handle = Some(ScrollHandle::new());
+            }
+            let scroll_handle = self.scroll_handle.as_ref().unwrap().clone();
+
             div()
                 .pb_2()
                 .text_sm()
@@ -519,13 +529,13 @@ impl ConfigureContextServerModal {
                         .id("installation_instructions")
                         .max_h_96()
                         .overflow_y_scroll()
-                        .track_scroll(&self.scroll_handle)
+                        .track_scroll(&scroll_handle)
                         .child(MarkdownElement::new(
                             installation_instructions.clone(),
                             default_markdown_style(window, cx),
-                        ))
+                        )),
                 )
-                .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
+                .vertical_scrollbar_for(scroll_handle, window, cx)
                 .into_any_element()
         } else {
             Label::new(MODAL_DESCRIPTION)
