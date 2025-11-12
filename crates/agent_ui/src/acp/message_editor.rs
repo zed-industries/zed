@@ -2777,7 +2777,7 @@ mod tests {
         let small_file_mention = small_file_task.await.unwrap();
         match small_file_mention {
             Mention::Text { content, .. } => {
-                // Should contain the actual content
+                // Should contain the full actual content
                 assert_eq!(content, small_content);
             }
             _ => panic!("Expected Text mention for small file"),
