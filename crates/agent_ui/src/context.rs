@@ -1107,6 +1107,7 @@ mod tests {
             "Should contain some of the file content"
         );
 
+        // Should be much smaller than original
         assert!(
             file_context.text.len() < content_len / 10,
             "Should be significantly smaller than original content"
