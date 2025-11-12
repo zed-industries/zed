@@ -465,6 +465,7 @@ mod tests {
             command_palette_hooks::init(cx);
             AgentSettings::register(cx);
             DisableAiSettings::register(cx);
+            AllLanguageSettings::register(cx);
         });
 
         let agent_settings = AgentSettings {
@@ -527,6 +528,51 @@ mod tests {
             assert!(
                 filter.is_hidden(&NewThread),
                 "NewThread should be hidden when agent is disabled"
+            );
+        });
+
+        // Test EditPredictionProvider
+        // Enable EditPredictionProvider::Copilot
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.project
+                        .all_languages
+                        .features
+                        .get_or_insert(Default::default())
+                        .edit_prediction_provider = Some(EditPredictionProvider::Copilot);
+                });
+            });
+            update_command_palette_filter(cx);
+        });
+
+        cx.update(|cx| {
+            let filter = CommandPaletteFilter::try_global(cx).unwrap();
+            assert!(
+                !filter.is_hidden(&AcceptEditPrediction),
+                "EditPrediction should be visible when provider is Copilot"
+            );
+        });
+
+        // Disable EditPredictionProvider (None)
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.project
+                        .all_languages
+                        .features
+                        .get_or_insert(Default::default())
+                        .edit_prediction_provider = Some(EditPredictionProvider::None);
+                });
+            });
+            update_command_palette_filter(cx);
+        });
+
+        cx.update(|cx| {
+            let filter = CommandPaletteFilter::try_global(cx).unwrap();
+            assert!(
+                filter.is_hidden(&AcceptEditPrediction),
+                "EditPrediction should be hidden when provider is None"
             );
         });
     }
