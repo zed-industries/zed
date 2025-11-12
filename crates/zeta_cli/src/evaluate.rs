@@ -33,6 +33,7 @@ pub async fn run_evaluate(
     cx: &mut AsyncApp,
 ) {
     let example_len = args.example_paths.len();
+
     let all_tasks = args.example_paths.into_iter().map(|path| {
         let app_state = app_state.clone();
         let example = NamedExample::load(&path).unwrap();
@@ -48,6 +49,7 @@ pub async fn run_evaluate(
                 let app_state = app_state.clone();
 
                 cx.spawn(async move |cx| {
+                    let name = example.name.clone();
                     run_evaluate_one(
                         example,
                         repetition_ix,
@@ -59,31 +61,44 @@ pub async fn run_evaluate(
                         cx,
                     )
                     .await
+                    .map_err(|err| (err, name, repetition_ix))
                 })
             });
-            futures::future::try_join_all(tasks).await
+            futures::future::join_all(tasks).await
         })
     });
-    let all_results = futures::future::try_join_all(all_tasks).await;
-
-    if let Ok(all_results) = &all_results {
-        let aggregated_result = EvaluationResult {
-            context: Scores::aggregate(all_results.iter().flatten().map(|r| &r.context)),
-            edit_prediction: Scores::aggregate(
-                all_results.iter().flatten().map(|r| &r.edit_prediction),
-            ),
-        };
-
-        if example_len > 1 {
-            println!("\n{}", "-".repeat(80));
-            println!("\n## TOTAL SCORES");
-            println!("{}", aggregated_result.to_markdown());
+    let all_results = futures::future::join_all(all_tasks).await;
+    let mut successful = Vec::new();
+    let mut failed_count = 0;
+    for result in all_results.iter().flatten() {
+        match result {
+            Ok(eval_result) => successful.push(eval_result),
+            Err((err, name, repetition_ix)) => {
+                failed_count += 1;
+                eprintln!(
+                    "{name}{}: {err}",
+                    repetition_ix
+                        .map(|ix| format!(" [{ix:03}]"))
+                        .unwrap_or_default()
+                );
+            }
         }
     }
 
-    print_run_data_dir();
+    let aggregated_result = EvaluationResult {
+        context: Scores::aggregate(successful.iter().map(|r| &r.context)),
+        edit_prediction: Scores::aggregate(successful.iter().map(|r| &r.edit_prediction)),
+    };
 
-    all_results.unwrap();
+    if example_len > 1 {
+        println!("\n{}", "-".repeat(80));
+        println!("\n## TOTAL SCORES");
+        println!("{}", aggregated_result.to_markdown());
+        println!("\n{}", "-".repeat(80));
+        println!("{} failed examples", failed_count);
+    }
+
+    print_run_data_dir();
 }
 
 pub async fn run_evaluate_one(
