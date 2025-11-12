@@ -282,7 +282,7 @@ impl Vim {
                             // that the end replacement string does not exceed
                             // this value. Helpful when dealing with newlines.
                             let mut edit_len = 0;
-                            let mut forward_end: Option<usize> = None;
+                            let mut open_range_end = 0;
                             let mut chars_and_offset = display_map
                                 .buffer_chars_at(range.start.to_offset(&display_map, Bias::Left))
                                 .peekable();
@@ -291,11 +291,11 @@ impl Vim {
                                 if ch.to_string() == will_replace_pair.start {
                                     let mut open_str = pair.start.clone();
                                     let start = offset;
-                                    let mut end = start + 1;
+                                    open_range_end = start + 1;
                                     while let Some((next_ch, _)) = chars_and_offset.next()
-                                        && next_ch.to_string() == " "
+                                        && next_ch == ' '
                                     {
-                                        end += 1;
+                                        open_range_end += 1;
 
                                         if preserve_space {
                                             open_str.push(next_ch);
@@ -306,10 +306,9 @@ impl Vim {
                                         open_str.push(' ');
                                     };
 
-                                    edit_len = end - start;
-                                    edits.push((start..end, open_str));
+                                    edit_len = open_range_end - start;
+                                    edits.push((start..open_range_end, open_str));
                                     anchors.push(start..start);
-                                    forward_end = Some(end);
                                     break;
                                 }
                             }
@@ -325,10 +324,9 @@ impl Vim {
                                     let mut start = offset;
                                     let end = start + 1;
                                     while let Some((next_ch, _)) = reverse_chars_and_offsets.next()
-                                        && (next_ch.to_string() == " "
-                                            && forward_end
-                                                .map_or(true, |open_end| start > open_end))
+                                        && next_ch == ' '
                                         && close_str.len() < edit_len - 1
+                                        && start > open_range_end
                                     {
                                         start -= 1;
 
