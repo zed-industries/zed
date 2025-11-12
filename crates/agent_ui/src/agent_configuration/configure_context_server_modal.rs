@@ -7,8 +7,8 @@ use anyhow::{Context as _, Result};
 use context_server::{ContextServerCommand, ContextServerId};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
-    AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task,
-    TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
+    AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle,
+    Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
 };
 use language::{Language, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
@@ -252,6 +252,7 @@ pub struct ConfigureContextServerModal {
     source: ConfigurationSource,
     state: State,
     original_server_id: Option<ContextServerId>,
+    scroll_handle: ScrollHandle,
 }
 
 impl ConfigureContextServerModal {
@@ -361,6 +362,7 @@ impl ConfigureContextServerModal {
                         window,
                         cx,
                     ),
+                    scroll_handle: ScrollHandle::new(),
                 })
             })
         })
@@ -696,7 +698,7 @@ impl Render for ConfigureContextServerModal {
                 this.focus_handle(cx).focus(window);
             }))
             .child(
-                Modal::new("configure-context-server", None)
+                Modal::new("configure-context-server", Some(self.scroll_handle.clone()))
                     .header(self.render_modal_header())
                     .section(
                         Section::new()
