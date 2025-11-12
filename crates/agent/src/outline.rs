@@ -179,6 +179,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
 
         let content = "A".repeat(100 * 1024); // 100KB
+        let content_len = content.len();
         let buffer = project
             .update(cx, |project, cx| project.create_buffer(true, cx))
             .await
