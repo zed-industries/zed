@@ -24,7 +24,7 @@ struct Args {
     #[clap(long)]
     whole_word: bool,
     /// Make matching case-sensitive.
-    #[clap(long, default_value_t = true)]
+    #[clap(long, default_value_t = false)]
     case_sensitive: bool,
     /// Include gitignored files in the search.
     #[clap(long)]
