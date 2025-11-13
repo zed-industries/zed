@@ -880,7 +880,10 @@ impl Pane {
     /// closed using `close_current_preview_item()`.
     pub fn set_preview_item_id(&mut self, item_id: Option<EntityId>, cx: &App) {
         if PreviewTabsSettings::get_global(cx).enabled {
-            if self.preview_item_id.is_some() {
+            if item_id.is_some()
+                && self.preview_item_id.is_some()
+                && self.preview_item_id != item_id
+            {
                 log::warn!("Preview tab is being mistakenly promoted to normal tab");
             }
             self.preview_item_id = item_id;
@@ -1042,6 +1045,7 @@ impl Pane {
     ) -> Option<usize> {
         let item_idx = self.preview_item_idx()?;
         let id = self.preview_item_id()?;
+        self.set_preview_item_id(None, cx);
 
         let prev_active_item_index = self.active_item_index;
         self.remove_item(id, false, false, window, cx);
