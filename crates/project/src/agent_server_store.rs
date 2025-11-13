@@ -347,13 +347,9 @@ impl AgentServerStore {
                 upstream_client
                     .read(cx)
                     .proto_client()
-                    .send(proto::ExternalAgentsUpdated {
+                    .send(proto::ExternalExtensionAgentsUpdated {
                         project_id: *project_id,
-                        names: self
-                            .external_agents
-                            .keys()
-                            .map(|name| name.to_string())
-                            .collect(),
+                        agents,
                     })
                     .log_err();
             }
