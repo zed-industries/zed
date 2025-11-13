@@ -298,6 +298,7 @@ impl AgentServerStore {
                         ));
                     }
                 }
+                self.reregister_agents(cx);
             }
             AgentServerStoreState::Remote {
                 project_id,
