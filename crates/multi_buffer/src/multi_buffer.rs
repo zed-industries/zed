@@ -2501,6 +2501,30 @@ impl MultiBuffer {
             let edit_old_start = old_diff_transforms.start().1 + edit_start_overshoot;
             let edit_new_start = (edit_old_start as isize + output_delta) as usize;
 
+            // -----OLD-----
+            // - foo
+            // + bar
+            //
+            // -----NEW----
+            // - foo
+            //   <b><AR>
+            //
+            //
+            // 1.  b  a  r
+            //    |-added-|
+            //
+            // 2.  b  a  r
+            //    |-added-|
+            //      <--e-->
+            // 3.  b  A  R
+            //    |-|-----|   // PROBLEM: "diff hunks intersecting `e`" is empty
+            //      <--e-->
+            // 4.  b  A  R    // recalculate diffs
+            //    |-------|
+            //
+            //
+            // solution 1:
+
             let (changed_diff_hunks, additional_edit) = Self::recompute_diff_transforms_for_edit(
                 &edit,
                 &mut excerpts,
@@ -2619,8 +2643,6 @@ impl MultiBuffer {
         snapshot: &MultiBufferSnapshot,
         change_kind: DiffChangeKind,
     ) -> (bool, Option<Edit<TypedOffset<Excerpt>>>) {
-        dbg!("before", new_diff_transforms.summary().output.len);
-
         log::trace!(
             "recomputing diff transform for edit {:?} => {:?}",
             edit.old.start.value..edit.old.end.value,
@@ -2651,6 +2673,8 @@ impl MultiBuffer {
             return (false, None);
         }
 
+        let mut override_query_range_start = Some(new_diff_transforms.summary().excerpt_len());
+
         // Visit each excerpt that intersects the edit.
         let mut did_expand_hunks = false;
         let mut additional_edit = None;
@@ -2668,20 +2692,21 @@ impl MultiBuffer {
                 let edit_buffer_end =
                     excerpt_buffer_start + edit.new.end.value.saturating_sub(excerpt_start.value);
                 let edit_buffer_end = edit_buffer_end.min(excerpt_buffer_end);
-                let mut edit_anchor_range =
-                    buffer.anchor_before(edit_buffer_start)..buffer.anchor_after(edit_buffer_end);
 
-                // FIXME
-                if new_diff_transforms.summary().excerpt_len() >= excerpt_start {
-                    let insertion_point_buffer_start =
-                        (new_diff_transforms.summary().excerpt_len() - excerpt_start).value
-                            + excerpt_buffer_start;
-                    edit_anchor_range.start = buffer.anchor_before(insertion_point_buffer_start);
-                }
-
-                for hunk in diff
-                    .valid_and_invalid_hunks_intersecting_range(edit_anchor_range.clone(), buffer)
+                let query_range = if let Some(query_range_start) = override_query_range_start.take()
                 {
+                    let query_range_buffer_start = query_range_start
+                        .max(excerpt_start)
+                        .sub(excerpt_start)
+                        .value
+                        + excerpt_buffer_start;
+                    buffer.anchor_before(query_range_buffer_start)
+                        ..buffer.anchor_after(edit_buffer_end)
+                } else {
+                    buffer.anchor_before(edit_buffer_start)..buffer.anchor_after(edit_buffer_end)
+                };
+
+                for hunk in diff.valid_and_invalid_hunks_intersecting_range(query_range, buffer) {
                     if hunk.is_created_file() && !all_diff_hunks_expanded {
                         continue;
                     }
@@ -2796,8 +2821,6 @@ impl MultiBuffer {
                 break;
             }
         }
-
-        dbg!("after", new_diff_transforms.summary().output.len);
 
         (
             did_expand_hunks || !old_expanded_hunks.is_empty(),

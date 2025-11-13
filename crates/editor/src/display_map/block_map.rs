@@ -666,59 +666,6 @@ impl BlockMap {
                 }
             }
 
-            // FIXME
-            // loop:
-            // peek next diff hunk in edit range
-            // peek next row boundary
-            // if they are equal, it's a diff hunk, so handle that (insert isomorphic and one non-isomorphic transform, possibly insert block)
-            // else must be a normal row boundary, so insert isomorphic transform and then block as needed
-            // and uh figure out what to do about the other kinds of block that exist
-            if true {
-                // FIXME persistent cursors/iterators for row boundaries and diff hunks
-                let mut current_wrap_row = new_start.0;
-                loop {
-                    if current_wrap_row > new_end.0 {
-                        break;
-                    }
-
-                    let Some(next_row_boundary) =
-                        wrap_snapshot.next_row_boundary(WrapPoint::new(current_wrap_row, 0))
-                    else {
-                        break;
-                    };
-
-                    push_isomorphic(
-                        &mut new_transforms,
-                        next_row_boundary - current_wrap_row,
-                        wrap_snapshot,
-                    );
-                    new_transforms.push(
-                        Transform {
-                            summary: TransformSummary {
-                                input_rows: 0,
-                                output_rows: 1,
-                                longest_row: 0,
-                                longest_row_chars: 0,
-                            },
-                            block: Some(Block::Spacer {
-                                height: 1,
-                                id: SpacerId(self.next_block_id.fetch_add(1, SeqCst)),
-                            }),
-                        },
-                        (),
-                    );
-                    current_wrap_row = next_row_boundary;
-                }
-
-                // FIXME
-                // let rows_after_last_block = new_end
-                //     .0
-                //     .saturating_sub(new_transforms.summary().input_rows);
-                // push_isomorphic(&mut new_transforms, rows_after_last_block, wrap_snapshot);
-
-                continue;
-            }
-
             // Find the blocks within this edited region.
             let new_buffer_start =
                 wrap_snapshot.to_point(WrapPoint::new(new_start.0, 0), Bias::Left);
@@ -1004,19 +951,6 @@ impl BlockMap {
             _ => false,
         });
     }
-
-    // fn spacer_blocks<'a, R, T>(
-    //     &'a self,
-    //     buffer: &'a multi_buffer::MultiBufferSnapshot,
-    //     range: R,
-    //     wrap_snapshot: &'a WrapSnapshot,
-    // ) -> impl Iterator<Item = (BlockPlacement<WrapRow>, Block)> + 'a
-    // where
-    //     R: RangeBounds<T>,
-    //     T: multi_buffer::ToOffset,
-    // {
-    //     let start_row = range.start_bound().map(|x| x.to_offset(snapshot))
-    // }
 }
 
 fn push_isomorphic(tree: &mut SumTree<Transform>, rows: u32, wrap_snapshot: &WrapSnapshot) {
@@ -3041,34 +2975,6 @@ mod tests {
             vec![None, None],
             "When fully folded, should be no buffer rows"
         );
-    }
-
-    #[gpui::test]
-    fn test_spacers(cx: &mut gpui::TestAppContext) {
-        cx.update(init_test);
-
-        let text = "aaa\nbbb\nccc\nddd\n";
-
-        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
-        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
-        let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
-        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
-        let (wrap_map, wrap_snapshot) =
-            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
-        let mut block_map = BlockMap::new(wrap_snapshot.clone(), 1, 1);
-
-        let snapshot = block_map.read(wrap_snapshot, Default::default());
-
-        let blocks = snapshot
-            .blocks_in_range(0..8)
-            .map(|(start_row, block)| start_row..start_row + block.height())
-            .collect::<Vec<_>>();
-
-        assert_eq!(blocks, &[1..2, 3..4, 5..6,]);
-
-        assert_eq!(snapshot.text(), "aaa\n\nbbb\n\nccc\n\nddd\n\n");
     }
 
     #[gpui::test(iterations = 100)]
