@@ -36,11 +36,6 @@ async fn parse_xml_edits_inner<'a>(
     let (buffer, context_ranges) = get_buffer(file_path.as_ref())
         .with_context(|| format!("no buffer for file {file_path}"))?;
 
-    let context_points = context_ranges
-        .iter()
-        .map(|r| r.to_point(buffer))
-        .collect::<Vec<_>>();
-
     let mut edits = vec![];
     while let Some(old_text_tag) = parse_tag(&mut input, "old_text")? {
         let new_text_tag =
@@ -62,6 +57,9 @@ fn resolve_new_text_old_text_in_buffer(
     buffer: &TextBufferSnapshot,
     ranges: &[Range<Anchor>],
 ) -> Result<impl Iterator<Item = (Range<Anchor>, Arc<str>)>, anyhow::Error> {
+    if ranges.is_empty() {
+        anyhow::bail!("no ranges provided");
+    }
     let context_offset = if old_text.is_empty() {
         Ok(0)
     } else {
@@ -84,14 +82,18 @@ fn resolve_new_text_old_text_in_buffer(
             }
         }
         offset.ok_or_else(|| {
-            #[cfg(any(debug_assertions, feature = "eval-support"))]
-            if let Some(closest_match) = closest_old_text_match(buffer, old_text) {
-                log::info!(
-                    "Closest `old_text` match: {}",
-                    pretty_assertions::StrComparison::new(old_text, &closest_match)
-                )
+            let mut closest_match = String::new();
+
+            if cfg!(any(debug_assertions, feature = "eval-support"))
+                && let Some(closest_old_text_match) =
+                    closest_old_text_match(buffer, ranges, old_text)
+            {
+                closest_match = format!(
+                    "\nClosest `old_text` match: {}",
+                    pretty_assertions::StrComparison::new(old_text, &closest_old_text_match)
+                );
             }
-            anyhow!("Failed to match old_text:\n{}", old_text)
+            anyhow!("Failed to match old_text:\n{}{}", old_text, closest_match)
         })
     }?;
 
@@ -107,63 +109,42 @@ fn resolve_new_text_old_text_in_buffer(
         }))
 }
 
-#[cfg(any(debug_assertions, feature = "eval-support"))]
-fn closest_old_text_match(buffer: &TextBufferSnapshot, old_text: &str) -> Option<String> {
-    let buffer_text = buffer.text();
+fn closest_old_text_match(
+    buffer: &TextBufferSnapshot,
+    ranges: &[Range<Anchor>],
+    old_text: &str,
+) -> Option<String> {
     let len = old_text.len();
 
-    if len == 0 || buffer_text.len() < len {
+    if len == 0 {
         return None;
     }
 
     let mut min_score = usize::MAX;
-    let mut min_start = 0;
+    let mut min_match = String::new();
 
-    let old_text_bytes = old_text.as_bytes();
-    let old_alpha_count = old_text_bytes
-        .iter()
-        .filter(|&&b| b.is_ascii_alphanumeric())
-        .count();
+    for range in ranges {
+        let buffer_text = buffer.text_for_range(range.clone()).collect::<String>();
+        let mut cursor = 0;
+        while cursor <= buffer_text.len() {
+            let candidate = &buffer_text[cursor..usize::min(buffer_text.len(), cursor + len)];
 
-    let old_line_count = old_text.lines().count();
+            let score = strsim::levenshtein(candidate, old_text);
+            if score < min_score {
+                min_score = score;
+                min_match = candidate.to_string();
+            }
 
-    let mut cursor = 0;
-
-    while cursor + len <= buffer_text.len() {
-        let candidate = &buffer_text[cursor..cursor + len];
-        let candidate_bytes = candidate.as_bytes();
-
-        if usize::abs_diff(candidate.lines().count(), old_line_count) > 4 {
-            cursor += 1;
-            continue;
-        }
-
-        let candidate_alpha_count = candidate_bytes
-            .iter()
-            .filter(|&&b| b.is_ascii_alphanumeric())
-            .count();
-
-        // If alphanumeric character count differs by more than 30%, skip
-        if usize::abs_diff(old_alpha_count, candidate_alpha_count) * 10 > old_alpha_count * 3 {
-            cursor += 1;
-            continue;
-        }
-
-        let score = strsim::levenshtein(candidate, old_text);
-        if score < min_score {
-            min_score = score;
-            min_start = cursor;
-
-            if min_score <= len / 10 {
+            if cursor + len > buffer_text.len() {
                 break;
             }
-        }
 
-        cursor += 1;
+            cursor += 1;
+        }
     }
 
     if min_score != usize::MAX {
-        Some(buffer_text[min_start..min_start + len].to_string())
+        Some(min_match)
     } else {
         None
     }
