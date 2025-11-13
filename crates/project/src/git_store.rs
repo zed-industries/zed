@@ -4060,7 +4060,7 @@ impl Repository {
                     } else {
                         Some(entry.repo_path)
                     }
-                } else if entry.status.staging().has_staged() {
+                } else if entry.status.staging().is_fully_staged() {
                     None
                 } else {
                     Some(entry.repo_path)
@@ -4080,7 +4080,7 @@ impl Repository {
                     } else {
                         Some(entry.repo_path)
                     }
-                } else if entry.status.staging().has_unstaged() {
+                } else if entry.status.staging().is_fully_unstaged() {
                     None
                 } else {
                     Some(entry.repo_path)
