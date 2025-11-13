@@ -3634,6 +3634,7 @@ impl Workspace {
         project_item: Entity<T::Item>,
         activate_pane: bool,
         focus_item: bool,
+        allow_preview: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<T>
@@ -3642,6 +3643,11 @@ impl Workspace {
     {
         if let Some(item) = self.find_project_item(&pane, &project_item, cx) {
             self.activate_item(&item, activate_pane, focus_item, window, cx);
+            if !allow_preview {
+                pane.update(cx, |pane, _| {
+                    pane.unpreview_item_if_preview(item.item_id());
+                });
+            }
             return item;
         }
 
@@ -3650,18 +3656,12 @@ impl Workspace {
                 T::for_project_item(self.project().clone(), Some(pane), project_item, window, cx)
             })
         });
-        let item_id = item.item_id();
         let mut destination_index = None;
-        pane.update(cx, |pane, cx| {
-            if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
-                if let Some(preview_item_id) = pane.preview_item_id()
-                    && preview_item_id != item_id
-                {
-                    destination_index = pane.close_current_preview_item(window, cx);
-                }
-                pane.set_preview_item_id(Some(item.item_id()), cx)
-            }
-        });
+        if allow_preview {
+            pane.update(cx, |pane, cx| {
+                destination_index = pane.replace_preview_item_id(item.item_id(), window, cx);
+            });
+        }
 
         self.add_item(
             pane,

@@ -16812,7 +16812,19 @@ impl Editor {
             })
             .collect();
 
-        let workspace = self.workspace();
+        let Some(workspace) = self.workspace() else {
+            return Task::ready(Ok(Navigated::No));
+        };
+
+        // FIXME this is too early.
+        let item_id = cx.entity().item_id();
+        if !PreviewTabsSettings::get_global(cx).enable_keep_preview_on_code_navigation {
+            workspace.update(cx, |workspace, cx| {
+                workspace.active_pane().update(cx, |pane, _| {
+                    pane.unpreview_item_if_preview(item_id);
+                })
+            });
+        }
 
         cx.spawn_in(window, async move |editor, cx| {
             let locations: Vec<Location> = future::join_all(definitions)
@@ -16838,10 +16850,6 @@ impl Editor {
             }
 
             if num_locations > 1 {
-                let Some(workspace) = workspace else {
-                    return Ok(Navigated::No);
-                };
-
                 let tab_kind = match kind {
                     Some(GotoDefinitionKind::Implementation) => "Implementations",
                     Some(GotoDefinitionKind::Symbol) | None => "Definitions",
@@ -16873,11 +16881,14 @@ impl Editor {
 
                 let opened = workspace
                     .update_in(cx, |workspace, window, cx| {
+                        let allow_preview = PreviewTabsSettings::get_global(cx)
+                            .enable_preview_multibuffer_from_code_navigation;
                         Self::open_locations_in_multibuffer(
                             workspace,
                             locations,
                             title,
                             split,
+                            allow_preview,
                             MultibufferSelectionMode::First,
                             window,
                             cx,
@@ -16887,6 +16898,7 @@ impl Editor {
 
                 anyhow::Ok(Navigated::from_bool(opened))
             } else if num_locations == 0 {
+                // FIXME in this case do we always want to unpreview it?
                 // If there is one url or file, open it directly
                 match first_url_or_file {
                     Some(Either::Left(url)) => {
@@ -16894,10 +16906,6 @@ impl Editor {
                         Ok(Navigated::Yes)
                     }
                     Some(Either::Right(path)) => {
-                        let Some(workspace) = workspace else {
-                            return Ok(Navigated::No);
-                        };
-
                         workspace
                             .update_in(cx, |workspace, window, cx| {
                                 workspace.open_resolved_path(path, window, cx)
@@ -16908,10 +16916,7 @@ impl Editor {
                     None => Ok(Navigated::No),
                 }
             } else {
-                let Some(workspace) = workspace else {
-                    return Ok(Navigated::No);
-                };
-
+                // FIXME in this case do we always want to unpreview it?
                 let (target_buffer, target_ranges) = locations.into_iter().next().unwrap();
                 let target_range = target_ranges.first().unwrap().clone();
 
@@ -16923,8 +16928,10 @@ impl Editor {
                     if !split
                         && Some(&target_buffer) == editor.buffer.read(cx).as_singleton().as_ref()
                     {
+                        // FIXME reuse same editor
                         editor.go_to_singleton_buffer_range(range, window, cx);
                     } else {
+                        // FIXME not reusing same editor
                         let pane = workspace.read(cx).active_pane().clone();
                         window.defer(cx, move |window, cx| {
                             let target_editor: Entity<Self> =
@@ -16935,11 +16942,15 @@ impl Editor {
                                         workspace.active_pane().clone()
                                     };
 
+                                    let allow_preview = PreviewTabsSettings::get_global(cx)
+                                        .enable_preview_file_from_code_navigation;
+
                                     workspace.open_project_item(
                                         pane,
                                         target_buffer.clone(),
                                         true,
                                         true,
+                                        allow_preview,
                                         window,
                                         cx,
                                     )
@@ -17216,11 +17227,14 @@ impl Editor {
                 } else {
                     format!("References to {target}")
                 };
+                let allow_preview = PreviewTabsSettings::get_global(cx)
+                    .enable_preview_multibuffer_from_code_navigation;
                 Self::open_locations_in_multibuffer(
                     workspace,
                     locations,
                     title,
                     false,
+                    allow_preview,
                     MultibufferSelectionMode::First,
                     window,
                     cx,
@@ -17236,6 +17250,7 @@ impl Editor {
         locations: std::collections::HashMap<Entity<Buffer>, Vec<Range<Point>>>,
         title: String,
         split: bool,
+        allow_preview: bool,
         multibuffer_selection_mode: MultibufferSelectionMode,
         window: &mut Window,
         cx: &mut Context<Workspace>,
@@ -17283,6 +17298,7 @@ impl Editor {
                         .is_some_and(|it| *it == key)
                 })
         });
+        let was_existing = existing.is_some();
         let editor = existing.unwrap_or_else(|| {
             cx.new(|cx| {
                 let mut editor = Editor::for_multibuffer(
@@ -17323,22 +17339,23 @@ impl Editor {
         });
 
         let item = Box::new(editor);
-        let item_id = item.item_id();
 
-        if split {
-            let pane = workspace.adjacent_pane(window, cx);
-            workspace.add_item(pane, item, None, true, true, window, cx);
-        } else if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
-            let preview_item_idx = workspace
-                .active_pane()
-                .update(cx, |pane, cx| pane.close_current_preview_item(window, cx));
-
-            workspace.add_item_to_active_pane(item, preview_item_idx, true, window, cx);
+        let pane = if split {
+            workspace.adjacent_pane(window, cx)
         } else {
-            workspace.add_item_to_active_pane(item, None, true, window, cx);
-        }
-        workspace.active_pane().update(cx, |pane, cx| {
-            pane.set_preview_item_id(Some(item_id), cx);
+            workspace.active_pane().clone()
+        };
+        let activate_pane = split;
+
+        let mut destination_index = None;
+        pane.update(cx, |pane, cx| {
+            if allow_preview && !was_existing {
+                destination_index = pane.replace_preview_item_id(item.item_id(), window, cx);
+            }
+            if was_existing && !allow_preview {
+                pane.unpreview_item_if_preview(item.item_id());
+            }
+            pane.add_item(item, activate_pane, true, destination_index, window, cx);
         });
     }
 
@@ -20484,6 +20501,7 @@ impl Editor {
                     locations,
                     format!("Selections for '{title}'"),
                     false,
+                    false,
                     MultibufferSelectionMode::All,
                     window,
                     cx,
@@ -21621,29 +21639,37 @@ impl Editor {
                             // Handle file-less buffers separately: those are not really the project items, so won't have a project path or entity id,
                             // so `workspace.open_project_item` will never find them, always opening a new editor.
                             // Instead, we try to activate the existing editor in the pane first.
-                            let (editor, pane_item_index) =
+                            let (editor, pane_item_index, pane_item_id) =
                                 pane.read(cx).items().enumerate().find_map(|(i, item)| {
                                     let editor = item.downcast::<Editor>()?;
                                     let singleton_buffer =
                                         editor.read(cx).buffer().read(cx).as_singleton()?;
                                     if singleton_buffer == buffer {
-                                        Some((editor, i))
+                                        Some((editor, i, item.item_id()))
                                     } else {
                                         None
                                     }
                                 })?;
                             pane.update(cx, |pane, cx| {
-                                pane.activate_item(pane_item_index, true, true, window, cx)
+                                pane.activate_item(pane_item_index, true, true, window, cx);
+                                if !PreviewTabsSettings::get_global(cx)
+                                    .enable_preview_from_multibuffer
+                                {
+                                    pane.unpreview_item_if_preview(pane_item_id);
+                                }
                             });
                             Some(editor)
                         })
                         .flatten()
                         .unwrap_or_else(|| {
+                            let allow_preview =
+                                PreviewTabsSettings::get_global(cx).enable_preview_from_multibuffer;
                             workspace.open_project_item::<Self>(
                                 pane.clone(),
                                 buffer,
                                 true,
                                 true,
+                                allow_preview,
                                 window,
                                 cx,
                             )
