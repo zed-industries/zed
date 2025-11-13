@@ -205,13 +205,9 @@ impl PasswordProxy {
         } else {
             ShellKind::Posix
         };
-        let askpass_program = ASKPASS_PROGRAM
-            .get_or_init(|| current_exec)
-            .try_shell_safe(shell_kind)
-            .context("Failed to shell-escape Askpass program path.")?
-            .to_string();
+        let askpass_program = ASKPASS_PROGRAM.get_or_init(|| current_exec);
         // Create an askpass script that communicates back to this process.
-        let askpass_script = generate_askpass_script(&askpass_program, &askpass_socket);
+        let askpass_script = generate_askpass_script(shell_kind, askpass_program, &askpass_socket)?;
         let _task = executor.spawn(async move {
             maybe!(async move {
                 let listener =
@@ -334,23 +330,51 @@ pub fn set_askpass_program(path: std::path::PathBuf) {
 
 #[inline]
 #[cfg(not(target_os = "windows"))]
-fn generate_askpass_script(askpass_program: &str, askpass_socket: &std::path::Path) -> String {
-    format!(
+fn generate_askpass_script(
+    shell_kind: ShellKind,
+    askpass_program: &std::path::Path,
+    askpass_socket: &std::path::Path,
+) -> Result<String> {
+    let askpass_program = shell_kind.prepend_command_prefix(
+        askpass_program
+            .to_str()
+            .context("Askpass program is on a non-utf8 path")?,
+    );
+    let askpass_program = shell_kind
+        .try_quote_prefix_aware(&askpass_program)
+        .context("Failed to shell-escape Askpass program path")?;
+    let askpass_socket = askpass_socket
+        .try_shell_safe(shell_kind)
+        .context("Failed to shell-escape Askpass socket path")?;
+    let print_args = "printf '%s\\0' \"$@\"";
+    let shebang = "#!/bin/sh";
+    Ok(format!(
         "{shebang}\n{print_args} | {askpass_program} --askpass={askpass_socket} 2> /dev/null \n",
-        askpass_socket = askpass_socket.display(),
-        print_args = "printf '%s\\0' \"$@\"",
-        shebang = "#!/bin/sh",
-    )
+    ))
 }
 
 #[inline]
 #[cfg(target_os = "windows")]
-fn generate_askpass_script(askpass_program: &str, askpass_socket: &std::path::Path) -> String {
-    format!(
+fn generate_askpass_script(
+    shell_kind: ShellKind,
+    askpass_program: &std::path::Path,
+    askpass_socket: &std::path::Path,
+) -> Result<String> {
+    let askpass_program = shell_kind.prepend_command_prefix(
+        askpass_program
+            .to_str()
+            .context("Askpass program is on a non-utf8 path")?,
+    );
+    let askpass_program = shell_kind
+        .try_quote_prefix_aware(&askpass_program)
+        .context("Failed to shell-escape Askpass program path")?;
+    let askpass_socket = askpass_socket
+        .try_shell_safe(shell_kind)
+        .context("Failed to shell-escape Askpass socket path")?;
+    Ok(format!(
         r#"
         $ErrorActionPreference = 'Stop';
         ($args -join [char]0) | & {askpass_program} --askpass={askpass_socket} 2> $null
         "#,
-        askpass_socket = askpass_socket.display(),
-    )
+    ))
 }

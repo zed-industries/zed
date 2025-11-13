@@ -84,12 +84,15 @@ impl WslRemoteConnection {
             .detect_shell()
             .await
             .context("failed detecting shell")?;
+        log::info!("Remote shell discovered: {}", this.shell);
         this.shell_kind = ShellKind::new(&this.shell, false);
         this.can_exec = this.detect_can_exec().await;
+        log::info!("Remote can exec: {}", this.can_exec);
         this.platform = this
             .detect_platform()
             .await
             .context("failed detecting platform")?;
+        log::info!("Remote platform discovered: {}", this.shell);
         this.remote_binary_path = Some(
             this.ensure_server_binary(&delegate, release_channel, version, commit, cx)
                 .await
@@ -178,7 +181,8 @@ impl WslRemoteConnection {
 
         if let Some(parent) = dst_path.parent() {
             let parent = parent.display(PathStyle::Posix);
-            self.run_wsl_command("mkdir", &["-p", &parent])
+            let mkdir = self.shell_kind.prepend_command_prefix("mkdir");
+            self.run_wsl_command(&mkdir, &["-p", &parent])
                 .await
                 .map_err(|e| anyhow!("Failed to create directory: {}", e))?;
         }
@@ -244,7 +248,8 @@ impl WslRemoteConnection {
 
         if let Some(parent) = dst_path.parent() {
             let parent = parent.display(PathStyle::Posix);
-            self.run_wsl_command("mkdir", &["-p", &parent])
+            let mkdir = self.shell_kind.prepend_command_prefix("mkdir");
+            self.run_wsl_command(&mkdir, &["-p", &parent])
                 .await
                 .map_err(|e| anyhow!("Failed to create directory when uploading file: {}", e))?;
         }
@@ -259,8 +264,9 @@ impl WslRemoteConnection {
         );
 
         let src_path_in_wsl = self.windows_path_to_wsl_path(src_path).await?;
+        let cp = self.shell_kind.prepend_command_prefix("cp");
         self.run_wsl_command(
-            "cp",
+            &cp,
             &["-f", &src_path_in_wsl, &dst_path.display(PathStyle::Posix)],
         )
         .await
