@@ -312,17 +312,25 @@ impl AgentServerStore {
                 let mut agents = vec![];
                 for (ext_id, manifest) in manifests {
                     for (agent_name, agent_entry) in &manifest.agent_servers {
+                        let display = SharedString::from(agent_entry.name.clone());
+
                         // Store absolute icon path if provided, resolving symlinks for dev extensions
                         let icon = if let Some(icon) = &agent_entry.icon {
                             let icon_path = extensions_dir.join(ext_id).join(icon);
                             // Canonicalize to resolve symlinks (dev extensions are symlinked)
-                            Some(
-                                icon_path
-                                    .canonicalize()
-                                    .unwrap_or(icon_path)
-                                    .to_string_lossy()
-                                    .to_string(),
-                            )
+                            let absolute_icon_path = icon_path
+                                .canonicalize()
+                                .unwrap_or(icon_path)
+                                .to_string_lossy()
+                                .to_string();
+
+                            // Store icon locally for remote client
+                            self.agent_icons.insert(
+                                ExternalAgentServerName(display.clone()),
+                                SharedString::from(absolute_icon_path.clone()),
+                            );
+
+                            Some(absolute_icon_path)
                         } else {
                             None
                         };
