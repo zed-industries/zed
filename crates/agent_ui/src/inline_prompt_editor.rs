@@ -30,9 +30,9 @@ use zed_actions::agent::ToggleModelSelector;
 use crate::agent_model_selector::AgentModelSelector;
 use crate::buffer_codegen::BufferCodegen;
 use crate::context::{AgentContextHandle, AgentContextKey};
-use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
+use crate::context_picker::{ContextPickerCompletionProvider, crease_for_mention};
 use crate::context_store::{ContextStore, ContextStoreEvent};
-use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
+use crate::context_strip::{ContextStrip, ContextStripEvent};
 use crate::terminal_codegen::TerminalCodegen;
 use crate::{
     CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext, RemoveAllContext,
@@ -43,8 +43,6 @@ pub struct PromptEditor<T> {
     pub editor: Entity<Editor>,
     mode: PromptEditorMode,
     context_store: Entity<ContextStore>,
-    context_strip: Entity<ContextStrip>,
-    context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AgentModelSelector>,
     edited_since_done: bool,
     prompt_history: VecDeque<String>,
@@ -52,7 +50,6 @@ pub struct PromptEditor<T> {
     pending_prompt: String,
     _codegen_subscription: Subscription,
     editor_subscriptions: Vec<Subscription>,
-    _context_strip_subscription: Subscription,
     show_rate_limit_notice: bool,
     _phantom: std::marker::PhantomData<T>,
 }
@@ -363,7 +360,7 @@ impl<T: 'static> PromptEditor<T> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.context_picker_menu_handle.toggle(window, cx);
+        self.trigger_completion_menu(window, cx);
     }
 
     pub fn remove_all_context(
@@ -488,8 +485,6 @@ impl<T: 'static> PromptEditor<T> {
                     editor.move_to_end(&Default::default(), window, cx)
                 });
             }
-        } else if self.context_strip.read(cx).has_context_items(cx) {
-            self.context_strip.focus_handle(cx).focus(window);
         }
     }
 
@@ -881,31 +876,11 @@ impl PromptEditor<BufferCodegen> {
             ))));
         });
 
-        let context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
-
-        let context_strip = cx.new(|cx| {
-            ContextStrip::new(
-                context_store.clone(),
-                workspace.clone(),
-                thread_store.clone(),
-                prompt_store,
-                context_picker_menu_handle.clone(),
-                SuggestContextKind::Thread,
-                ModelUsageContext::InlineAssistant,
-                window,
-                cx,
-            )
-        });
-
-        let context_strip_subscription =
-            cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event);
 
         let mut this: PromptEditor<BufferCodegen> = PromptEditor {
             editor: prompt_editor.clone(),
             context_store,
-            context_strip,
-            context_picker_menu_handle,
             model_selector: cx.new(|cx| {
                 AgentModelSelector::new(
                     fs,
@@ -922,7 +897,6 @@ impl PromptEditor<BufferCodegen> {
             pending_prompt: String::new(),
             _codegen_subscription: codegen_subscription,
             editor_subscriptions: Vec::new(),
-            _context_strip_subscription: context_strip_subscription,
             show_rate_limit_notice: false,
             mode,
             _phantom: Default::default(),
@@ -1046,31 +1020,11 @@ impl PromptEditor<TerminalCodegen> {
             ))));
         });
 
-        let context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
-
-        let context_strip = cx.new(|cx| {
-            ContextStrip::new(
-                context_store.clone(),
-                workspace.clone(),
-                thread_store.clone(),
-                prompt_store.clone(),
-                context_picker_menu_handle.clone(),
-                SuggestContextKind::Thread,
-                ModelUsageContext::InlineAssistant,
-                window,
-                cx,
-            )
-        });
-
-        let context_strip_subscription =
-            cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event);
 
         let mut this = Self {
             editor: prompt_editor.clone(),
             context_store,
-            context_strip,
-            context_picker_menu_handle,
             model_selector: cx.new(|cx| {
                 AgentModelSelector::new(
                     fs,
@@ -1087,7 +1041,6 @@ impl PromptEditor<TerminalCodegen> {
             pending_prompt: String::new(),
             _codegen_subscription: codegen_subscription,
             editor_subscriptions: Vec::new(),
-            _context_strip_subscription: context_strip_subscription,
             mode,
             show_rate_limit_notice: false,
             _phantom: Default::default(),
