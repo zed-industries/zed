@@ -10,11 +10,12 @@ use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use settings::Settings;
 use std::ops::Range;
 use workspace::searchable::Direction;
 
 use crate::{
-    Vim,
+    Vim, VimSettings,
     normal::mark,
     state::{Mode, Operator},
     surrounds::SurroundsType,
@@ -95,7 +96,9 @@ pub enum Motion {
     EndOfParagraph,
     StartOfDocument,
     EndOfDocument,
-    Matching,
+    Matching {
+        match_quotes: bool,
+    },
     GoToPercentage,
     UnmatchedForward {
         char: char,
@@ -500,7 +503,8 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.motion(Motion::EndOfDocument, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &Matching, window, cx| {
-        vim.motion(Motion::Matching, window, cx)
+        let match_quotes = VimSettings::get_global(cx).use_match_quotes;
+        vim.motion(Motion::Matching { match_quotes }, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &GoToPercentage, window, cx| {
         vim.motion(Motion::GoToPercentage, window, cx)
@@ -783,7 +787,7 @@ impl Motion {
             | Jump { line: true, .. } => MotionKind::Linewise,
             EndOfLine { .. }
             | EndOfLineDownward
-            | Matching
+            | Matching { .. }
             | FindForward { .. }
             | NextWordEnd { .. }
             | PreviousWordEnd { .. }
@@ -857,7 +861,7 @@ impl Motion {
             | EndOfParagraph
             | GoToPercentage
             | Jump { .. }
-            | Matching
+            | Matching { .. }
             | NextComment
             | NextGreaterIndent
             | NextLesserIndent
@@ -897,7 +901,7 @@ impl Motion {
             | Up { .. }
             | EndOfLine { .. }
             | MiddleOfLine { .. }
-            | Matching
+            | Matching { .. }
             | UnmatchedForward { .. }
             | UnmatchedBackward { .. }
             | FindForward { .. }
@@ -1049,7 +1053,7 @@ impl Motion {
                 end_of_document(map, point, maybe_times),
                 SelectionGoal::None,
             ),
-            Matching => (matching(map, point), SelectionGoal::None),
+            Matching { match_quotes } => (matching(map, point, *match_quotes), SelectionGoal::None),
             GoToPercentage => (go_to_percentage(map, point, times), SelectionGoal::None),
             UnmatchedForward { char } => (
                 unmatched_forward(map, point, *char, times),
@@ -2369,7 +2373,11 @@ fn matching_tag(map: &DisplaySnapshot, head: DisplayPoint) -> Option<DisplayPoin
     None
 }
 
-fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
+fn matching(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    match_quotes: bool,
+) -> DisplayPoint {
     // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1200
     let display_point = map.clip_at_line_end(display_point);
     let point = display_point.to_point(map);
@@ -2382,17 +2390,32 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
         line_end = map.max_point().to_point(map);
     }
 
-    // Attempt to find the smallest enclosing bracket range that also contains
-    // the offset, which only happens if the cursor is currently in a bracket.
-    let range_filter = |_buffer: &language::BufferSnapshot,
-                        opening_range: Range<usize>,
-                        closing_range: Range<usize>| {
-        opening_range.contains(&offset) || closing_range.contains(&offset)
+    let make_range_filter = |match_quotes: bool, require_on_bracket: bool| {
+        move |buffer: &language::BufferSnapshot, open: Range<usize>, close: Range<usize>| {
+            if !match_quotes && matches!(buffer.chars_at(open.start).next(), Some('\'' | '"' | '`')) {
+                return false;
+            }
+            if require_on_bracket {
+                // Attempt to find the smallest enclosing bracket range that also contains
+                // the offset, which only happens if the cursor is currently in a bracket.
+                open.contains(&offset) || close.contains(&offset)
+            } else {
+                true
+            }
+        }
     };
 
     let bracket_ranges = snapshot
-        .innermost_enclosing_bracket_ranges(offset..offset, Some(&range_filter))
-        .or_else(|| snapshot.innermost_enclosing_bracket_ranges(offset..offset, None));
+        .innermost_enclosing_bracket_ranges(
+            offset..offset,
+            Some(&make_range_filter(match_quotes, true)),
+        )
+        .or_else(|| {
+            snapshot.innermost_enclosing_bracket_ranges(
+                offset..offset,
+                Some(&make_range_filter(match_quotes, false)),
+            )
+        });
 
     if let Some((opening_range, closing_range)) = bracket_ranges {
         if opening_range.contains(&offset) {
@@ -2413,6 +2436,16 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
         let mut closest_distance = usize::MAX;
 
         for (open_range, close_range) in ranges {
+
+            if !match_quotes
+                && matches!(
+                    map.buffer_snapshot().chars_at(open_range.start).next(),
+                    Some('\'' | '"' | '`')
+                )
+            {
+                continue;
+            }
+
             if map.buffer_snapshot().chars_at(open_range.start).next() == Some('<') {
                 if offset > open_range.start && offset < close_range.start {
                     let mut chars = map.buffer_snapshot().chars_at(close_range.start);
