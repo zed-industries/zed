@@ -286,12 +286,6 @@ struct PendingOperation {
     op_id: usize,
 }
 
-impl PendingOperation {
-    fn contains_path(&self, path: &RepoPath) -> bool {
-        self.entries.iter().any(|p| &p.repo_path == path)
-    }
-}
-
 pub struct GitPanel {
     pub(crate) active_repository: Option<Entity<Repository>>,
     pub(crate) commit_editor: Entity<Editor>,
@@ -1246,21 +1240,19 @@ impl GitPanel {
         };
         let (stage, repo_paths) = match entry {
             GitListEntry::Status(status_entry) => {
-                let repo_paths = vec![status_entry.clone()];
-                let stage = if let Some(status) = self.entry_staging(&status_entry) {
-                    !status.is_fully_staged()
-                } else if status_entry.status.staging().is_fully_staged() {
+                if status_entry.status.staging().is_fully_staged() {
                     if let Some(op) = self.bulk_staging.clone()
                         && op.anchor == status_entry.repo_path
                     {
                         self.bulk_staging = None;
                     }
-                    false
+
+                    (false, vec![status_entry.clone()])
                 } else {
                     self.set_bulk_staging_anchor(status_entry.repo_path.clone(), cx);
-                    true
-                };
-                (stage, repo_paths)
+
+                    (true, vec![status_entry.clone()])
+                }
             }
             GitListEntry::Header(section) => {
                 let goal_staged_state = !self.header_state(section.header).selected();
@@ -2686,7 +2678,10 @@ impl GitPanel {
             if self.pending.iter().any(|pending| {
                 pending.target_status == TargetStatus::Reverted
                     && !pending.finished
-                    && pending.contains_path(&entry.repo_path)
+                    && pending
+                        .entries
+                        .iter()
+                        .any(|pending| pending.repo_path == entry.repo_path)
             }) {
                 continue;
             }
@@ -2737,7 +2732,10 @@ impl GitPanel {
                 last_pending_staged = pending.entries.first().cloned();
             }
             if let Some(single_staged) = &single_staged_entry
-                && pending.contains_path(&single_staged.repo_path)
+                && pending
+                    .entries
+                    .iter()
+                    .any(|entry| entry.repo_path == single_staged.repo_path)
             {
                 pending_status_for_single_staged = Some(pending.target_status);
             }
@@ -2800,7 +2798,7 @@ impl GitPanel {
             && let Some(index) = bulk_staging_anchor_new_index
             && let Some(entry) = self.entries.get(index)
             && let Some(entry) = entry.status_entry()
-            && self.entry_staging(entry).unwrap_or(entry.staging) == StageStatus::Staged
+            && self.entry_staging(entry) == StageStatus::Staged
         {
             self.bulk_staging = bulk_staging;
         }
@@ -2848,47 +2846,39 @@ impl GitPanel {
             self.entry_count += 1;
             if repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path) {
                 self.conflicted_count += 1;
-                if self
-                    .entry_staging(status_entry)
-                    .unwrap_or(status_entry.staging)
-                    .has_staged()
-                {
+                if self.entry_staging(status_entry).has_staged() {
                     self.conflicted_staged_count += 1;
                 }
             } else if status_entry.status.is_created() {
                 self.new_count += 1;
-                if self
-                    .entry_staging(status_entry)
-                    .unwrap_or(status_entry.staging)
-                    .has_staged()
-                {
+                if self.entry_staging(status_entry).has_staged() {
                     self.new_staged_count += 1;
                 }
             } else {
                 self.tracked_count += 1;
-                if self
-                    .entry_staging(status_entry)
-                    .unwrap_or(status_entry.staging)
-                    .has_staged()
-                {
+                if self.entry_staging(status_entry).has_staged() {
                     self.tracked_staged_count += 1;
                 }
             }
         }
     }
 
-    fn entry_staging(&self, entry: &GitStatusEntry) -> Option<StageStatus> {
+    fn entry_staging(&self, entry: &GitStatusEntry) -> StageStatus {
         for pending in self.pending.iter().rev() {
-            if pending.contains_path(&entry.repo_path) {
+            if pending
+                .entries
+                .iter()
+                .any(|pending_entry| pending_entry.repo_path == entry.repo_path)
+            {
                 match pending.target_status {
-                    TargetStatus::Staged => return Some(StageStatus::Staged),
-                    TargetStatus::Unstaged => return Some(StageStatus::Unstaged),
+                    TargetStatus::Staged => return StageStatus::Staged,
+                    TargetStatus::Unstaged => return StageStatus::Unstaged,
                     TargetStatus::Reverted => continue,
                     TargetStatus::Unchanged => continue,
                 }
             }
         }
-        None
+        entry.staging
     }
 
     pub(crate) fn has_staged_changes(&self) -> bool {
@@ -3728,8 +3718,7 @@ impl GitPanel {
         let ix = self.entry_by_path(&repo_path, cx)?;
         let entry = self.entries.get(ix)?;
 
-        let status = entry.status_entry()?;
-        let entry_staging = self.entry_staging(status).unwrap_or(status.staging);
+        let entry_staging = self.entry_staging(entry.status_entry()?);
 
         let checkbox = Checkbox::new("stage-file", entry_staging.as_bool().into())
             .disabled(!self.has_write_access(cx))
@@ -4023,8 +4012,8 @@ impl GitPanel {
         let checkbox_id: ElementId =
             ElementId::Name(format!("entry_{}_{}_checkbox", display_name, ix).into());
 
-        let entry_staging = self.entry_staging(entry).unwrap_or(entry.staging);
-        let mut is_staged: ToggleState = entry_staging.as_bool().into();
+        let entry_staging = self.entry_staging(entry);
+        let mut is_staged: ToggleState = self.entry_staging(entry).as_bool().into();
         if self.show_placeholders && !self.has_staged_changes() && !entry.status.is_created() {
             is_staged = ToggleState::Selected;
         }
