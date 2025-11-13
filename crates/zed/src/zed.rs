@@ -490,13 +490,13 @@ fn unstable_version_notification(cx: &mut App) {
         .flatten()
         .and_then(|timestamp| chrono::DateTime::parse_from_rfc3339(&timestamp).ok())
     {
-        if dbg!(time.fixed_offset()) - dbg!(last_shown) < chrono::Duration::days(7) {
+        if time.fixed_offset() - last_shown < chrono::Duration::days(7) {
             return;
         }
     }
     cx.spawn(async move |_| {
         db::kvp::KEY_VALUE_STORE
-            .write_kvp(db_key, dbg!(time.to_rfc3339()))
+            .write_kvp(db_key, time.to_rfc3339())
             .await
     })
     .detach_and_log_err(cx);
