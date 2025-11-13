@@ -48,10 +48,6 @@ use std::{cmp, pin::Pin};
 use telemetry::Telemetry;
 use thiserror::Error;
 use tokio::net::TcpStream;
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-use tokio_native_tls::{TlsConnector, native_tls};
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-use tokio_rustls::TlsConnector;
 use url::Url;
 use util::{ConnectionResult, ResultExt};
 
@@ -1335,20 +1331,10 @@ impl Client {
                 request_headers.insert("x-zed-metrics-id", HeaderValue::from_str(&metrics_id)?);
             }
 
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
-            let tls_connector = TlsConnector::from(
-                native_tls::TlsConnector::new()
-                    .map_err(|error| EstablishConnectionError::Other(error.into()))?,
-            );
-
-            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-            let tls_connector =
-                TlsConnector::from(std::sync::Arc::new(http_client_tls::tls_config()));
-
             let (stream, _) = async_tungstenite::tokio::client_async_tls_with_connector_and_config(
                 request,
                 stream,
-                Some(tls_connector),
+                Some(Arc::new(http_client_tls::tls_config()).into()),
                 None,
             )
             .await?;
