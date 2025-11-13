@@ -571,10 +571,15 @@ mod tests {
         expected_output: &str,
         cx: &mut TestAppContext,
     ) {
-        let results =
-            run_retrieval_searches(vec![query], project.clone(), None, &mut cx.to_async())
-                .await
-                .unwrap();
+        let results = run_retrieval_searches(
+            vec![query],
+            project.clone(),
+            #[cfg(feature = "eval-support")]
+            None,
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
 
         let mut results = results.into_iter().collect::<Vec<_>>();
         results.sort_by_key(|results| {
