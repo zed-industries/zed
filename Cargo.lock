@@ -8872,6 +8872,7 @@ dependencies = [
  "icons",
  "image",
  "log",
+ "open_ai",
  "open_router",
  "parking_lot",
  "proto",
@@ -11025,6 +11026,7 @@ dependencies = [
  "serde_json",
  "settings",
  "strum 0.27.2",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
