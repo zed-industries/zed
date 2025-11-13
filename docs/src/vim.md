@@ -51,7 +51,7 @@ Even when vim mode is **disabled**, all Vim actions (operators, text objects, an
 
 ### Example: Binding Vim actions to custom keys
 
-```json [keymap.json]
+```json [keymap]
 [
   {
     "context": "Editor",
