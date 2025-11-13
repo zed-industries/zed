@@ -2395,10 +2395,16 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
         .or_else(|| snapshot.innermost_enclosing_bracket_ranges(offset..offset, None));
 
     if let Some((opening_range, closing_range)) = bracket_ranges {
-        if opening_range.contains(&offset) {
-            return closing_range.start.to_display_point(map);
-        } else if closing_range.contains(&offset) {
-            return opening_range.start.to_display_point(map);
+        let mut chars = map.buffer_snapshot().chars_at(offset);
+        match chars.next() {
+            Some('/') => {}
+            _ => {
+                if opening_range.contains(&offset) {
+                    return closing_range.start.to_display_point(map);
+                } else if closing_range.contains(&offset) {
+                    return opening_range.start.to_display_point(map);
+                }
+            }
         }
     }
 
