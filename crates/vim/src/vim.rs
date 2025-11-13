@@ -57,7 +57,6 @@ use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
 
 use crate::{
-    helix::HELIX_JUMP_ACCENT,
     normal::{GoToPreviousTab, GoToTab},
     state::ReplayableAction,
 };
@@ -1769,7 +1768,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.update_editor(cx, |_, editor, cx| match behaviour {
-            HelixJumpBehaviour::Move | HelixJumpBehaviour::Extend => {
+            HelixJumpBehaviour::Move => {
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.select_anchor_ranges([candidate.range.clone()])
                 });
