@@ -336,7 +336,7 @@ pub fn evaluate(example: &Example, preds: &PredictionDetails) -> EvaluationResul
     let mut false_positive_lines = actual_context_lines.clone();
 
     for entry in &example.expected_context {
-        let mut best_alternative_score = Scores::default();
+        let mut best_alternative_score: Option<Scores> = None;
 
         for alternative in &entry.alternatives {
             let expected: HashSet<_> = alternative
@@ -354,13 +354,17 @@ pub fn evaluate(example: &Example, preds: &PredictionDetails) -> EvaluationResul
 
             false_positive_lines.retain(|line| !actual_context_lines.contains(line));
 
-            if scores.recall() > best_alternative_score.recall() {
-                best_alternative_score = scores;
+            if best_alternative_score
+                .as_ref()
+                .is_none_or(|best| scores.recall() > best.recall())
+            {
+                best_alternative_score = Some(scores);
             }
         }
 
-        eval_result.context.false_negatives += best_alternative_score.false_negatives;
-        eval_result.context.true_positives += best_alternative_score.true_positives;
+        let best_alternative = best_alternative_score.unwrap_or_default();
+        eval_result.context.false_negatives += best_alternative.false_negatives;
+        eval_result.context.true_positives += best_alternative.true_positives;
     }
 
     eval_result.context.false_positives = false_positive_lines.len();
