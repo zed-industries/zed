@@ -1693,7 +1693,7 @@ impl Vim {
                 editor.highlight_text::<HelixJumpHighlight>(
                     highlight_ranges,
                     HighlightStyle {
-                        color: Some(HELIX_JUMP_ACCENT),
+                        fade_out: Some(1.0),
                         ..Default::default()
                     },
                     cx,

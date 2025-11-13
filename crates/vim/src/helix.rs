@@ -38,13 +38,6 @@ pub(crate) const HELIX_JUMP_ACCENT: Hsla = Hsla {
     a: 1.0,
 };
 
-const HELIX_JUMP_LABEL_BACKGROUND: Hsla = Hsla {
-    h: HELIX_JUMP_ACCENT.h,
-    s: (HELIX_JUMP_ACCENT.s * 0.35).clamp(0.0, 1.0),
-    l: (HELIX_JUMP_ACCENT.l + 0.35).min(1.0),
-    a: 0.75,
-};
-
 actions!(
     vim,
     [
@@ -882,19 +875,13 @@ impl Vim {
             placement: BlockPlacement::Near(anchor),
             height: Some(0),
             style: BlockStyle::Fixed,
-            render: Arc::new(move |cx: &mut BlockContext| {
+            render: Arc::new(move |_cx: &mut BlockContext| {
                 div()
                     .block_mouse_except_scroll()
                     .child(
-                        div()
-                            .px_1()
-                            .rounded_sm()
-                            .bg(HELIX_JUMP_LABEL_BACKGROUND)
-                            .child(
-                                Label::new(text.clone())
-                                    .size(LabelSize::Small)
-                                    .color(Color::Custom(HELIX_JUMP_ACCENT)),
-                            ),
+                        Label::new(text.clone())
+                            .size(LabelSize::Default)
+                            .color(Color::Custom(HELIX_JUMP_ACCENT)),
                     )
                     .into_any_element()
             }),
