@@ -40,6 +40,7 @@ lmstudio = { workspace = true, features = ["schemars"] }
 log.workspace = true
 menu.workspace = true
 mistral = { workspace = true, features = ["schemars"] }
+oracle_code_assist = { workspace = true, features = ["schemars"] }
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 open_router = { workspace = true, features = ["schemars"] }

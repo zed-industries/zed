@@ -23,6 +23,7 @@ use crate::provider::ollama::OllamaLanguageModelProvider;
 use crate::provider::open_ai::OpenAiLanguageModelProvider;
 use crate::provider::open_ai_compatible::OpenAiCompatibleLanguageModelProvider;
 use crate::provider::open_router::OpenRouterLanguageModelProvider;
+use crate::provider::oracle::OracleCodeAssistModelProvider;
 use crate::provider::vercel::VercelLanguageModelProvider;
 use crate::provider::x_ai::XAiLanguageModelProvider;
 pub use crate::settings::*;
@@ -116,6 +117,10 @@ fn register_language_model_providers(
             client.http_client(),
             cx,
         )),
+        cx,
+    );
+    registry.register_provider(
+        Arc::new(OracleCodeAssistModelProvider::new(client.http_client(), cx)),
         cx,
     );
     registry.register_provider(

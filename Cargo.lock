@@ -8921,6 +8921,7 @@ dependencies = [
  "ollama",
  "open_ai",
  "open_router",
+ "oracle_code_assist",
  "partial-json-fixer",
  "project",
  "release_channel",
@@ -11114,6 +11115,28 @@ name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
+
+[[package]]
+name = "oracle_code_assist"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "futures 0.3.31",
+ "gpui",
+ "http_client",
+ "log",
+ "open_ai",
+ "rand 0.9.2",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "sha2",
+ "strum 0.27.2",
+ "tiny_http",
+ "url",
+ "urlencoding",
+]
 
 [[package]]
 name = "ordered-float"

@@ -1,0 +1,640 @@
+use anyhow::{Context as _, Result, anyhow};
+use collections::BTreeMap;
+use credentials_provider::CredentialsProvider;
+
+use futures::{FutureExt, StreamExt, future::BoxFuture};
+use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task, Window};
+use http_client::HttpClient;
+use language_model::{
+    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter, Role,
+};
+
+use open_ai::ResponseStreamEvent;
+use oracle_code_assist::oauth::{OAuthToken, OracleOAuthClient};
+use oracle_code_assist::{Model, stream_completion};
+pub use settings::OracleAvailableModel as AvailableModel;
+use settings::{Settings, SettingsStore};
+use std::sync::Arc;
+use std::time::Instant;
+use strum::IntoEnumIterator;
+
+use ui::{CommonAnimationExt, prelude::*};
+use util::ResultExt;
+
+use crate::AllLanguageModelSettings;
+
+const PROVIDER_ID: LanguageModelProviderId = language_model::ORACLE_PROVIDER_ID;
+const PROVIDER_NAME: LanguageModelProviderName = language_model::ORACLE_PROVIDER_NAME;
+
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct OracleCodeAssistSettings {
+    pub api_url: String,
+    pub available_models: Vec<AvailableModel>,
+}
+
+pub struct OracleCodeAssistModelProvider {
+    http_client: Arc<dyn HttpClient>,
+    state: gpui::Entity<State>,
+}
+
+pub struct State {
+    oauth_token: Option<OAuthToken>,
+    _subscription: Subscription,
+    // Task that schedules and performs proactive token refresh before expiry.
+    refresh_task: Option<Task<()>>,
+}
+
+impl State {
+    fn is_authenticated(&self) -> bool {
+        self.oauth_token.is_some()
+    }
+
+    fn reset_oauth_token(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .oracle
+            .api_url
+            .clone();
+        cx.spawn(async move |this, cx| {
+            credentials_provider
+                .delete_credentials(&api_url, &cx)
+                .await
+                .log_err();
+            this.update(cx, |this, cx| {
+                this.oauth_token = None;
+                this.refresh_task = None;
+                cx.notify();
+            })
+        })
+    }
+
+    fn set_oauth_token(
+        &mut self,
+        oauth_token: OAuthToken,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .oracle
+            .api_url
+            .clone();
+
+        let oauth_token_json = match serde_json::to_string(&oauth_token) {
+            Ok(json) => json,
+            Err(err) => {
+                return Task::ready(Err(anyhow::anyhow!(
+                    "Failed to serialize OAuth Token: {}",
+                    err
+                )));
+            }
+        };
+
+        cx.spawn(async move |this, cx| {
+            credentials_provider
+                .write_credentials(&api_url, "OAuth", oauth_token_json.as_bytes(), &cx)
+                .await
+                .log_err();
+            this.update(cx, |this, cx| {
+                this.oauth_token = Some(oauth_token);
+                this.schedule_oauth_refresh(cx);
+                cx.notify();
+            })
+        })
+    }
+
+    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        if self.is_authenticated() {
+            return Task::ready(Ok(()));
+        }
+
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .oracle
+            .api_url
+            .clone();
+
+        cx.spawn(async move |this, cx| {
+            let (_, credential_data) = credentials_provider
+                .read_credentials(&api_url, &cx)
+                .await?
+                .ok_or(AuthenticateError::CredentialsNotFound)?;
+            let oauth_str =
+                String::from_utf8(credential_data).context("Invalid OAuth data format")?;
+
+            let oauth_token: OAuthToken =
+                serde_json::from_str(&oauth_str).context("Invalid OAuth Token JSON format")?;
+
+            if !oauth_token.refresh_token.is_empty() && !oauth_token.access_token.is_empty() {
+                this.update(cx, |this, cx| {
+                    this.oauth_token = Some(oauth_token);
+                    this.schedule_oauth_refresh(cx);
+                    cx.notify();
+                })?;
+            }
+
+            Ok(())
+        })
+    }
+
+    fn schedule_oauth_refresh(&mut self, cx: &mut Context<Self>) {
+        let Some(token) = self.oauth_token.clone() else {
+            return;
+        };
+
+        // Drop any existing scheduled task.
+        self.refresh_task = None;
+
+        let http_client = cx.http_client();
+        let task = cx.spawn(async move |handle, cx| {
+            let delay = token
+                .expires_at
+                .saturating_duration_since(Instant::now() + OAuthToken::RENEW_BUFFER);
+
+            if !delay.is_zero() {
+                cx.background_spawn(async move {
+                    std::thread::sleep(delay);
+                })
+                .await;
+            }
+
+            let refreshed = cx
+                .background_spawn(async move { token.refresh(http_client).await })
+                .await
+                .log_err();
+
+            let task = match refreshed {
+                None => handle
+                    .update(cx, |state, cx| state.reset_oauth_token(cx))
+                    .log_err(),
+                Some(new_token) => handle
+                    .update(cx, |state, cx| state.set_oauth_token(new_token, cx))
+                    .log_err(),
+            };
+
+            if let Some(task) = task {
+                task.await.log_err();
+            }
+        });
+
+        self.refresh_task = Some(task);
+    }
+}
+
+impl OracleCodeAssistModelProvider {
+    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+        let state = cx.new(|cx| State {
+            oauth_token: None,
+            _subscription: cx.observe_global::<SettingsStore>(|_this: &mut State, cx| {
+                cx.notify();
+            }),
+            refresh_task: None,
+        });
+
+        Self { http_client, state }
+    }
+
+    fn create_language_model(&self, model: Model) -> Arc<dyn LanguageModel> {
+        Arc::new(OracleCodeAssistLanguageModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            state: self.state.clone(),
+            http_client: self.http_client.clone(),
+            request_limiter: RateLimiter::new(4),
+        })
+    }
+}
+
+impl LanguageModelProviderState for OracleCodeAssistModelProvider {
+    type ObservableEntity = State;
+
+    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
+        Some(self.state.clone())
+    }
+}
+
+impl LanguageModelProvider for OracleCodeAssistModelProvider {
+    fn id(&self) -> LanguageModelProviderId {
+        PROVIDER_ID
+    }
+
+    fn name(&self) -> LanguageModelProviderName {
+        PROVIDER_NAME
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::AiOracle
+    }
+
+    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        Some(self.create_language_model(Model::default()))
+    }
+
+    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        Some(self.create_language_model(Model::default_fast()))
+    }
+
+    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+        let mut models = BTreeMap::default();
+
+        for model in Model::iter() {
+            if !matches!(model, Model::Custom { .. }) {
+                models.insert(model.id().to_string(), model);
+            }
+        }
+
+        // Override with available models from settings
+        for model in &AllLanguageModelSettings::get_global(cx)
+            .oracle
+            .available_models
+        {
+            models.insert(
+                model.name.clone(),
+                Model::Custom {
+                    name: model.name.clone(),
+                    display_name: model.display_name.clone(),
+                    max_tokens: model.max_tokens,
+                    max_output_tokens: model.max_output_tokens,
+                    max_completion_tokens: model.max_completion_tokens,
+                    reasoning_effort: model.reasoning_effort.clone(),
+                },
+            );
+        }
+
+        models
+            .into_values()
+            .map(|model| self.create_language_model(model))
+            .collect()
+    }
+
+    fn is_authenticated(&self, cx: &App) -> bool {
+        self.state.read(cx).is_authenticated()
+    }
+
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
+        self.state.update(cx, |state, cx| state.authenticate(cx))
+    }
+
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
+        cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
+            .into()
+    }
+
+    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
+        self.state
+            .update(cx, |state, cx| state.reset_oauth_token(cx))
+    }
+}
+
+pub struct OracleCodeAssistLanguageModel {
+    id: LanguageModelId,
+    model: Model,
+    state: gpui::Entity<State>,
+    http_client: Arc<dyn HttpClient>,
+    request_limiter: RateLimiter,
+}
+
+impl OracleCodeAssistLanguageModel {
+    fn stream_completion(
+        &self,
+        request: open_ai::Request,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
+    {
+        let http_client = self.http_client.clone();
+        let Ok((oauth_token, api_url)) = cx.read_entity(&self.state, |state, cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).oracle;
+            (state.oauth_token.clone(), settings.api_url.clone())
+        }) else {
+            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
+        let future = self.request_limiter.stream(async move {
+            let Some(oauth_token) = oauth_token else {
+                return Err(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                });
+            };
+            let request = stream_completion(
+                http_client.as_ref(),
+                &api_url,
+                &oauth_token.access_token,
+                request,
+            );
+            let response = request.await?;
+            Ok(response)
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
+    }
+}
+
+impl LanguageModel for OracleCodeAssistLanguageModel {
+    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        match self.model {
+            Model::Grok4 => LanguageModelToolSchemaFormat::JsonSchemaSubset,
+            _ => LanguageModelToolSchemaFormat::JsonSchema,
+        }
+    }
+
+    fn id(&self) -> LanguageModelId {
+        self.id.clone()
+    }
+
+    fn name(&self) -> LanguageModelName {
+        LanguageModelName::from(self.model.display_name().to_string())
+    }
+
+    fn provider_id(&self) -> LanguageModelProviderId {
+        PROVIDER_ID
+    }
+
+    fn provider_name(&self) -> LanguageModelProviderName {
+        PROVIDER_NAME
+    }
+
+    fn supports_tools(&self) -> bool {
+        true
+    }
+
+    fn supports_images(&self) -> bool {
+        false
+    }
+
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto => true,
+            LanguageModelToolChoice::Any => true,
+            LanguageModelToolChoice::None => true,
+        }
+    }
+
+    fn telemetry_id(&self) -> String {
+        format!("oracle/{}", self.model.id())
+    }
+
+    fn max_token_count(&self) -> u64 {
+        self.model.max_token_count()
+    }
+
+    fn max_output_tokens(&self) -> Option<u64> {
+        self.model.max_output_tokens()
+    }
+
+    fn count_tokens(
+        &self,
+        request: LanguageModelRequest,
+        cx: &App,
+    ) -> BoxFuture<'static, Result<u64>> {
+        count_oca_tokens(request, self.model.clone(), cx)
+    }
+
+    fn stream_completion(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<
+            futures::stream::BoxStream<
+                'static,
+                Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+            >,
+            LanguageModelCompletionError,
+        >,
+    > {
+        let request = super::open_ai::into_open_ai(
+            request,
+            self.model.id(),
+            self.model.supports_parallel_tool_calls(),
+            self.model.supports_prompt_cache_key(),
+            self.max_output_tokens(),
+            self.model.reasoning_effort(),
+        );
+        let completions = self.stream_completion(request, cx);
+        async move {
+            let mapper = super::open_ai::OpenAiEventMapper::new();
+            Ok(mapper.map_stream(completions.await?).boxed())
+        }
+        .boxed()
+    }
+}
+
+pub fn count_oca_tokens(
+    request: LanguageModelRequest,
+    model: Model,
+    cx: &App,
+) -> BoxFuture<'static, Result<u64>> {
+    cx.background_spawn(async move {
+        let messages = request
+            .messages
+            .into_iter()
+            .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
+                role: match message.role {
+                    Role::User => "user".into(),
+                    Role::Assistant => "assistant".into(),
+                    Role::System => "system".into(),
+                },
+                content: Some(message.string_contents()),
+                name: None,
+                function_call: None,
+            })
+            .collect::<Vec<_>>();
+
+        let model_name = if model.max_token_count() >= 100_000 {
+            "gpt-4o"
+        } else {
+            "gpt-4"
+        };
+        tiktoken_rs::num_tokens_from_messages(model_name, &messages).map(|tokens| tokens as u64)
+    })
+    .boxed()
+}
+
+enum Status {
+    LoadingCredentials { _task: Task<()> },
+    Authenticating { _task: Task<()> },
+    Connected,
+    SignedOut,
+}
+
+struct ConfigurationView {
+    state: gpui::Entity<State>,
+    status: Status,
+}
+
+impl ConfigurationView {
+    fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        cx.observe(&state, |_, _, cx| {
+            cx.notify();
+        })
+        .detach();
+
+        let load_task = cx.spawn_in(window, {
+            let state = state.clone();
+            async move |this, cx| {
+                if let Some(task) = state
+                    .update(cx, |state, cx| state.authenticate(cx))
+                    .log_err()
+                {
+                    // We don't log an error, because "not signed in" is also an error.
+                    let _ = task.await;
+                }
+                let is_authenticated = state
+                    .update(cx, |state, _| state.is_authenticated())
+                    .log_err()
+                    .unwrap_or(false);
+
+                this.update(cx, |this, cx| {
+                    this.status = if is_authenticated {
+                        Status::Connected
+                    } else {
+                        Status::SignedOut
+                    };
+                    cx.notify();
+                })
+                .log_err();
+            }
+        });
+
+        Self {
+            state,
+            status: Status::LoadingCredentials { _task: load_task },
+        }
+    }
+
+    fn initiate_oauth(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(
+            self.status,
+            Status::Authenticating { .. } | Status::LoadingCredentials { .. }
+        ) {
+            return;
+        }
+
+        let state = self.state.clone();
+        let http_client = cx.http_client();
+        let authentication_task = cx.spawn_in(window, async move |this, cx| {
+            let session = cx
+                .update(|_window, cx| OracleOAuthClient::initiate_oauth(cx).log_err())
+                .log_err()
+                .flatten();
+
+            if let Some(oauth_session) = session {
+                let token = cx
+                    .background_spawn(async move {
+                        OracleOAuthClient::authenticate(http_client, oauth_session).await
+                    })
+                    .await
+                    .log_err();
+
+                if let Some(oauth_token) = token {
+                    if let Some(task) = state
+                        .update(cx, |state, cx| state.set_oauth_token(oauth_token, cx))
+                        .log_err()
+                    {
+                        task.await.log_err();
+                    }
+                }
+            }
+
+            let is_authenticated = state
+                .update(cx, |state, _| state.is_authenticated())
+                .log_err()
+                .unwrap_or(false);
+
+            this.update(cx, |this, cx| {
+                this.status = if is_authenticated {
+                    Status::Connected
+                } else {
+                    Status::SignedOut
+                };
+                cx.notify();
+            })
+            .log_err();
+        });
+
+        self.status = Status::Authenticating {
+            _task: authentication_task,
+        };
+        cx.notify();
+    }
+
+    fn sign_out(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Optimistically update UI state.
+        self.status = Status::SignedOut;
+        cx.notify();
+
+        let state = self.state.clone();
+        cx.spawn_in(window, async move |_, cx| {
+            state
+                .update(cx, |state, cx| state.reset_oauth_token(cx))?
+                .await
+                .log_err();
+            Ok::<(), anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
+    }
+}
+
+impl Render for ConfigurationView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        match &self.status {
+            Status::LoadingCredentials { .. } => {
+                let loading_icon = Icon::new(IconName::ArrowCircle).with_rotate_animation(2);
+                h_flex()
+                    .gap_2()
+                    .child(loading_icon)
+                    .child(Label::new("Loading Oracle Code Assist credentials…"))
+            }
+            Status::Authenticating { .. } => {
+                let loading_icon = Icon::new(IconName::ArrowCircle).with_rotate_animation(2);
+                h_flex()
+                    .gap_2()
+                    .child(loading_icon)
+                    .child(Label::new("Connecting to Oracle Code Assist…"))
+            }
+            Status::Connected => h_flex()
+                .mt_1()
+                .p_1()
+                .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().background)
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(IconName::Check).color(Color::Success))
+                        .child(Label::new("Connected to Oracle Code Assist")),
+                )
+                .child(
+                    Button::new("sign_out", "Sign Out")
+                        .label_size(LabelSize::Small)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.sign_out(window, cx);
+                        })),
+                ),
+            Status::SignedOut => {
+                const DESCRIPTION: &str = "To use Oracle Code Assist language models, you need to authenticate with your Oracle account. This will provide access to advanced AI-powered code completion and assistance features.";
+                v_flex().gap_2().child(Label::new(DESCRIPTION)).child(
+                    Button::new("connect_oca", "Connect to Oracle Code Assist")
+                        .icon_color(Color::Muted)
+                        .icon(IconName::AiOracle)
+                        .icon_position(IconPosition::Start)
+                        .icon_size(IconSize::Medium)
+                        .full_width()
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.initiate_oauth(window, cx);
+                        })),
+                )
+            }
+        }
+    }
+}
