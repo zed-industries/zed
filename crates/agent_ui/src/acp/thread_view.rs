@@ -5907,7 +5907,6 @@ fn default_markdown_style(
         syntax: cx.theme().syntax().clone(),
         selection_background_color: colors.element_selection_background,
         code_block_overflow_x_scroll: true,
-        table_overflow_x_scroll: true,
         heading_level_styles: Some(HeadingLevelStyles {
             h1: Some(TextStyleRefinement {
                 font_size: Some(rems(1.15).into()),
