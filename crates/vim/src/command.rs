@@ -47,6 +47,7 @@ use crate::{
         search::{FindCommand, ReplaceCommand, Replacement},
     },
     object::Object,
+    projections::{OpenAlternate, OpenAlternateVerticalSplit},
     state::{Mark, Mode},
     visual::VisualDeleteLine,
 };
@@ -1604,6 +1605,13 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::str(("opt", "ions"), "zed::OpenDefaultSettings"),
         VimCommand::str(("map", ""), "vim::OpenDefaultKeymap"),
         VimCommand::new(("h", "elp"), OpenDocs),
+        VimCommand::new(
+            ("a", "lternate"),
+            OpenAlternate {
+                split_direction: None,
+            },
+        ),
+        VimCommand::new(("avs", "plit"), OpenAlternateVerticalSplit),
     ]
 }
 

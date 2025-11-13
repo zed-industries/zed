@@ -20,6 +20,7 @@
 use crate::Vim;
 use anyhow::Result;
 use editor::Editor;
+use gpui::Action;
 use gpui::Context;
 use gpui::Window;
 use gpui::actions;
@@ -27,12 +28,14 @@ use project::Fs;
 use project::ProjectItem;
 use project::ProjectPath;
 use regex::Regex;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::parse_json_with_comments;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use util::rel_path::RelPath;
+use workspace::SplitDirection;
 
 #[derive(Debug)]
 struct Projection {
@@ -82,16 +85,17 @@ impl Projection {
     }
 }
 
-actions!(
-    vim,
-    [
-        /// Opens a projection of the current file.
-        OpenProjection,
-    ]
-);
+#[derive(Debug, Clone, JsonSchema, PartialEq, Deserialize, Action)]
+#[action(namespace = vim)]
+pub(crate) struct OpenAlternate {
+    pub(crate) split_direction: Option<SplitDirection>,
+}
+
+actions!(vim, [OpenAlternateVerticalSplit,]);
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
-    Vim::action(editor, cx, Vim::open_projection);
+    Vim::action(editor, cx, Vim::open_alternate);
+    Vim::action(editor, cx, Vim::open_alternate_vertical_split);
 }
 
 async fn load_projections(root_path: &Path, fs: Arc<dyn Fs>) -> Result<ProjectionsConfig> {
@@ -104,13 +108,14 @@ async fn load_projections(root_path: &Path, fs: Arc<dyn Fs>) -> Result<Projectio
 }
 
 impl Vim {
-    pub fn open_projection(
+    pub fn open_alternate(
         &mut self,
-        _: &OpenProjection,
+        action: &OpenAlternate,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.update_editor(cx, |_vim, editor, cx| {
+        let split_direction = action.split_direction.clone();
+        self.update_editor(cx, move |_vim, editor, cx| {
             let current_file_path = editor
                 .buffer()
                 .read(cx)
@@ -192,9 +197,23 @@ impl Vim {
                             path: alternate_rel_path.into_arc(),
                         };
 
-                        let result = workspace.update_in(cx, |workspace, window, cx| {
-                            workspace.open_path(alternate_project_path, None, true, window, cx)
-                        });
+                        let result =
+                            workspace.update_in(
+                                cx,
+                                |workspace, window, cx| match split_direction {
+                                    None => workspace.open_path(
+                                        alternate_project_path,
+                                        None,
+                                        true,
+                                        window,
+                                        cx,
+                                    ),
+                                    // TODO!: Update to actually support left/down/up/right.
+                                    Some(_split_direction) => {
+                                        workspace.split_path(alternate_project_path, window, cx)
+                                    }
+                                },
+                            );
 
                         match result {
                             Ok(task) => {
@@ -211,6 +230,21 @@ impl Vim {
                 .detach();
             });
         });
+    }
+
+    pub fn open_alternate_vertical_split(
+        &mut self,
+        _action: &OpenAlternateVerticalSplit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_alternate(
+            &OpenAlternate {
+                split_direction: Some(SplitDirection::Right),
+            },
+            window,
+            cx,
+        );
     }
 }
 
