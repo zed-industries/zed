@@ -289,8 +289,11 @@ pub async fn zeta2_predict(
             let new_text = prediction
                 .buffer
                 .update(cx, |buffer, cx| {
-                    buffer.edit(prediction.edits.iter().cloned(), None, cx);
-                    buffer.text()
+                    let branch = buffer.branch(cx);
+                    branch.update(cx, |branch, cx| {
+                        branch.edit(prediction.edits.iter().cloned(), None, cx);
+                        branch.text()
+                    })
                 })
                 .unwrap();
             language::unified_diff(&old_text, &new_text)
