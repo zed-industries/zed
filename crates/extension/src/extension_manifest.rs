@@ -195,6 +195,27 @@ pub struct TargetConfig {
     pub sha256: Option<String>,
 }
 
+impl TargetConfig {
+    pub fn from_proto(proto: proto::ExternalExtensionAgentTarget) -> Self {
+        Self {
+            archive: proto.archive,
+            cmd: proto.cmd,
+            args: proto.args,
+            sha256: proto.sha256,
+        }
+    }
+
+    pub fn to_proto(&self) -> proto::ExternalExtensionAgentTarget {
+        proto::ExternalExtensionAgentTarget {
+            archive: self.archive.clone(),
+            cmd: self.cmd.clone(),
+            args: self.args.clone(),
+            sha256: self.sha256.clone(),
+            env: Default::default(),
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub enum ExtensionLibraryKind {
     Rust,
