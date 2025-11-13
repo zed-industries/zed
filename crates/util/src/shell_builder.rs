@@ -1,5 +1,6 @@
 use crate::shell::get_system_shell;
 use crate::shell::{Shell, ShellKind};
+use std::borrow::Cow;
 
 /// ShellBuilder is used to turn a user-requested task into a
 /// program that can be executed by the shell.
@@ -78,9 +79,21 @@ impl ShellBuilder {
         task_args: &[String],
     ) -> (String, Vec<String>) {
         if let Some(task_command) = task_command {
-            let mut combined_command = task_args.iter().fold(task_command, |mut command, arg| {
+            let mut combined_command = self
+                .kind
+                .try_quote_prefix_aware(&task_command)
+                .map(Cow::into_owned)
+                .unwrap_or(task_command);
+
+            combined_command = task_args.iter().fold(combined_command, |mut command, arg| {
                 command.push(' ');
-                command.push_str(&self.kind.to_shell_variable(arg));
+                let substituted = self.kind.to_shell_variable(arg);
+                let quoted = self
+                    .kind
+                    .try_quote(&substituted)
+                    .map(Cow::into_owned)
+                    .unwrap_or(substituted);
+                command.push_str(&quoted);
                 command
             });
             if self.redirect_stdin {
@@ -173,5 +186,38 @@ mod test {
 
         assert_eq!(program, "fish");
         assert_eq!(args, vec!["-i", "-c", "begin; echo test; end </dev/null"]);
+    }
+
+    #[test]
+    fn quotes_special_characters_in_args() {
+        let shell = Shell::Program("bash".to_owned());
+        let shell_builder = ShellBuilder::new(&shell, false);
+
+        let (program, args) = shell_builder.build(
+            Some("/usr/bin/sandbox-exec".into()),
+            &[
+                "-p".to_string(),
+                "(version 1)(allow default)".to_string(),
+                "--".to_string(),
+                "/bin/bash".to_string(),
+                "-l".to_string(),
+                "-c".to_string(),
+                "ls -la".to_string(),
+            ],
+        );
+
+        assert_eq!(program, "bash");
+        assert_eq!(args[0], "-i");
+        assert_eq!(args[1], "-c");
+        assert!(
+            args[2].contains("-p '(version 1)(allow default)'"),
+            "combined command should quote policy argument: {}",
+            args[2]
+        );
+        assert!(
+            args[2].ends_with("-c 'ls -la'"),
+            "combined command should quote trailing argument: {}",
+            args[2]
+        );
     }
 }
