@@ -301,8 +301,25 @@ impl AgentServerStore {
                     }
                 }
             }
-            _ => {
-                // Only local projects support local extension agents
+            AgentServerStoreState::Remote {
+                project_id,
+                upstream_client,
+            } => {
+                upstream_client
+                    .read(cx)
+                    .proto_client()
+                    .send(proto::ExternalAgentsUpdated {
+                        project_id: *project_id,
+                        names: self
+                            .external_agents
+                            .keys()
+                            .map(|name| name.to_string())
+                            .collect(),
+                    })
+                    .log_err();
+            }
+            AgentServerStoreState::Collab => {
+                // Do nothing
             }
         }
 
