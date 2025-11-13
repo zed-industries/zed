@@ -103,10 +103,10 @@ use gpui::{
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
     DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
     Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
-    MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, ScrollHandle,
-    SharedString, Size, Stateful, Styled, Subscription, Task, TextStyle, TextStyleRefinement,
-    UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
-    div, point, prelude::*, pulsating_between, px, relative, size,
+    MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, PromptLevel, Render,
+    ScrollHandle, SharedString, Size, Stateful, Styled, Subscription, Task, TextStyle,
+    TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity,
+    WeakFocusHandle, Window, div, point, prelude::*, pulsating_between, px, relative, size,
 };
 use hover_links::{HoverLink, HoveredLinkState, find_file};
 use hover_popover::{HoverState, hide_hover};
@@ -3067,8 +3067,41 @@ impl Editor {
         self.read_only || self.buffer.read(cx).read_only()
     }
 
+    pub fn read_only_unless_saved(&self, cx: &App) -> bool {
+        self.buffer.read(cx).read_only_unless_saved()
+    }
+
     pub fn set_read_only(&mut self, read_only: bool) {
         self.read_only = read_only;
+    }
+
+    fn prompt_for_readonly_override(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let answer = window.prompt(
+            PromptLevel::Info,
+            "This file is currently read-only",
+            Some("Would you like to save it to disk to enable editing?"),
+            &["Save to disk", "Cancel"],
+            cx,
+        );
+
+        let workspace = self.workspace();
+
+        cx.spawn_in(window, async move |_editor, cx| {
+            if answer.await.ok() == Some(0) {
+                // User chose "Save to disk" - dispatch SaveAs action
+                // The save_as implementation in items.rs automatically changes the buffer
+                // capability from ReadOnlyUnlessSaved to ReadWrite and clears the editor's
+                // read_only flag after a successful save
+                if let Some(_workspace) = workspace {
+                    cx.update(|window, cx| {
+                        window.dispatch_action(workspace::SaveAs.boxed_clone(), cx);
+                    })
+                    .log_err();
+                }
+            }
+            anyhow::Ok(())
+        })
+        .detach();
     }
 
     pub fn set_use_autoclose(&mut self, autoclose: bool) {
@@ -4207,6 +4240,12 @@ impl Editor {
 
     pub fn handle_input(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         let text: Arc<str> = text.into();
+
+        // Check if buffer is read-only unless saved - prompt user to save
+        if self.read_only_unless_saved(cx) {
+            self.prompt_for_readonly_override(window, cx);
+            return;
+        }
 
         if self.read_only(cx) {
             return;

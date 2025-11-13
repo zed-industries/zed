@@ -667,7 +667,14 @@ impl MultiBuffer {
     }
 
     pub fn read_only(&self) -> bool {
-        self.capability == Capability::ReadOnly
+        matches!(
+            self.capability,
+            Capability::ReadOnly | Capability::ReadOnlyUnlessSaved
+        )
+    }
+
+    pub fn read_only_unless_saved(&self) -> bool {
+        self.capability == Capability::ReadOnlyUnlessSaved
     }
 
     /// Returns an up-to-date snapshot of the MultiBuffer.
