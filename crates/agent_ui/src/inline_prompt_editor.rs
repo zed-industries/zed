@@ -1,8 +1,9 @@
 use agent::HistoryStore;
 use collections::{HashMap, VecDeque};
 use editor::actions::Paste;
+use editor::code_context_menus::CodeContextMenu;
 use editor::display_map::{CreaseId, EditorMargins};
-use editor::{Addon, AnchorRangeExt as _};
+use editor::{Addon, AnchorRangeExt as _, ToOffset as _};
 use editor::{
     ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
     actions::{MoveDown, MoveUp},
@@ -98,6 +99,19 @@ impl<T: 'static> Render for PromptEditor<T> {
 
         buttons.extend(self.render_buttons(window, cx));
 
+        let menu_visible = self.is_completions_menu_visible(cx);
+        let add_context_button = IconButton::new("add-context", IconName::AtSign)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .when(!menu_visible, |this| {
+                this.tooltip(move |_window, cx| {
+                    Tooltip::with_meta("Add Context", None, "Or type @ to include context", cx)
+                })
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.trigger_completion_menu(window, cx);
+            }));
+
         v_flex()
             .key_context("PromptEditor")
             .capture_action(cx.listener(Self::paste))
@@ -182,7 +196,7 @@ impl<T: 'static> Render for PromptEditor<T> {
                             .pl_1()
                             .items_start()
                             .justify_between()
-                            .child(self.context_strip.clone())
+                            .child(add_context_button)
                             .child(self.model_selector.clone()),
                     ),
             )
@@ -360,6 +374,46 @@ impl<T: 'static> PromptEditor<T> {
     ) {
         self.context_store.update(cx, |store, cx| store.clear(cx));
         cx.notify();
+    }
+
+    pub fn is_completions_menu_visible(&self, cx: &App) -> bool {
+        self.editor
+            .read(cx)
+            .context_menu()
+            .borrow()
+            .as_ref()
+            .is_some_and(|menu| matches!(menu, CodeContextMenu::Completions(_)) && menu.visible())
+    }
+
+    pub fn trigger_completion_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            let menu_is_open = editor.context_menu().borrow().as_ref().is_some_and(|menu| {
+                matches!(menu, CodeContextMenu::Completions(_)) && menu.visible()
+            });
+
+            let has_at_sign = {
+                let snapshot = editor.display_snapshot(cx);
+                let cursor = editor.selections.newest::<text::Point>(&snapshot).head();
+                let offset = cursor.to_offset(&snapshot);
+                if offset > 0 {
+                    snapshot
+                        .buffer_snapshot()
+                        .reversed_chars_at(offset)
+                        .next()
+                        .map(|sign| sign == '@')
+                        .unwrap_or(false)
+                } else {
+                    false
+                }
+            };
+
+            if menu_is_open && has_at_sign {
+                return;
+            }
+
+            editor.insert("@", window, cx);
+            editor.show_completions(&editor::actions::ShowCompletions, window, cx);
+        });
     }
 
     fn cancel(
