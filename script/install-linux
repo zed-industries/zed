@@ -17,10 +17,9 @@ script/bundle-linux
 
 target="linux-$(uname -m)"
 commit=$(git rev-parse HEAD | cut -c 1-7)
+archive="zed-${target}.tar.gz"
 if  [[ "$ZED_CHANNEL" == "dev" ]]; then
   archive="zed-${commit}-${target}.tar.gz"
-else
-  archive="zed-${target}.tar.gz"
 fi
 export ZED_BUNDLE_PATH="${CARGO_TARGET_DIR:-target}/release/${archive}"
 script/install.sh
