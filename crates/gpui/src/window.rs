@@ -3895,32 +3895,38 @@ impl Window {
         }
 
         if !match_result.pending.is_empty() {
+            currently_pending.timer.take();
             currently_pending.keystrokes = match_result.pending;
             currently_pending.focus = self.focus;
-            currently_pending.timer = Some(self.spawn(cx, async move |cx| {
-                cx.background_executor.timer(Duration::from_secs(1)).await;
-                cx.update(move |window, cx| {
-                    let Some(currently_pending) = window
-                        .pending_input
-                        .take()
-                        .filter(|pending| pending.focus == window.focus)
-                    else {
-                        return;
-                    };
+            if match_result.pending_has_binding {
+                currently_pending.timer = Some(self.spawn(cx, async move |cx| {
+                    cx.background_executor.timer(Duration::from_secs(1)).await;
+                    cx.update(move |window, cx| {
+                        let Some(currently_pending) = window
+                            .pending_input
+                            .take()
+                            .filter(|pending| pending.focus == window.focus)
+                        else {
+                            return;
+                        };
 
-                    let node_id = window.focus_node_id_in_rendered_frame(window.focus);
-                    let dispatch_path = window.rendered_frame.dispatch_tree.dispatch_path(node_id);
+                        let node_id = window.focus_node_id_in_rendered_frame(window.focus);
+                        let dispatch_path =
+                            window.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
-                    let to_replay = window
-                        .rendered_frame
-                        .dispatch_tree
-                        .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
+                        let to_replay = window
+                            .rendered_frame
+                            .dispatch_tree
+                            .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
 
-                    window.pending_input_changed(cx);
-                    window.replay_pending_input(to_replay, cx)
-                })
-                .log_err();
-            }));
+                        window.pending_input_changed(cx);
+                        window.replay_pending_input(to_replay, cx)
+                    })
+                    .log_err();
+                }));
+            } else {
+                currently_pending.timer = None;
+            }
             self.pending_input = Some(currently_pending);
             self.pending_input_changed(cx);
             cx.propagate_event = false;
