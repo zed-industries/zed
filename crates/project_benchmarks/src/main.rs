@@ -59,9 +59,6 @@ fn main() -> Result<(), anyhow::Error> {
     }?;
     Application::headless().run(|cx| {
         settings::init(cx);
-        client::init_settings(cx);
-        language::init(cx);
-        Project::init_settings(cx);
         let client = Client::production(cx);
         let http_client = FakeHttpClient::with_200_response();
         let (_, rx) = watch::channel(None);
