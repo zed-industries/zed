@@ -3664,6 +3664,7 @@ impl EditorElement {
         row_block_types: &mut HashMap<DisplayRow, bool>,
         selections: &[Selection<Point>],
         selected_buffer_ids: &Vec<BufferId>,
+        latest_selection_anchors: &HashMap<BufferId, Anchor>,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         sticky_header_excerpt_id: Option<ExcerptId>,
         window: &mut Window,
@@ -3739,7 +3740,13 @@ impl EditorElement {
                 let selected = selected_buffer_ids.contains(&first_excerpt.buffer_id);
                 let result = v_flex().id(block_id).w_full().pr(editor_margins.right);
 
-                let jump_data = header_jump_data(snapshot, block_row_start, *height, first_excerpt);
+                let jump_data = header_jump_data(
+                    snapshot,
+                    block_row_start,
+                    *height,
+                    first_excerpt,
+                    latest_selection_anchors,
+                );
                 result
                     .child(self.render_buffer_header(
                         first_excerpt,
@@ -3774,7 +3781,13 @@ impl EditorElement {
             Block::BufferHeader { excerpt, height } => {
                 let mut result = v_flex().id(block_id).w_full();
 
-                let jump_data = header_jump_data(snapshot, block_row_start, *height, excerpt);
+                let jump_data = header_jump_data(
+                    snapshot,
+                    block_row_start,
+                    *height,
+                    excerpt,
+                    latest_selection_anchors,
+                );
 
                 if sticky_header_excerpt_id != Some(excerpt.id) {
                     let selected = selected_buffer_ids.contains(&excerpt.buffer_id);
@@ -4236,6 +4249,7 @@ impl EditorElement {
         line_layouts: &mut [LineWithInvisibles],
         selections: &[Selection<Point>],
         selected_buffer_ids: &Vec<BufferId>,
+        latest_selection_anchors: &HashMap<BufferId, Anchor>,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         sticky_header_excerpt_id: Option<ExcerptId>,
         window: &mut Window,
@@ -4279,6 +4293,7 @@ impl EditorElement {
                 &mut row_block_types,
                 selections,
                 selected_buffer_ids,
+                latest_selection_anchors,
                 is_row_soft_wrapped,
                 sticky_header_excerpt_id,
                 window,
@@ -4336,6 +4351,7 @@ impl EditorElement {
                 &mut row_block_types,
                 selections,
                 selected_buffer_ids,
+                latest_selection_anchors,
                 is_row_soft_wrapped,
                 sticky_header_excerpt_id,
                 window,
@@ -4391,6 +4407,7 @@ impl EditorElement {
                 &mut row_block_types,
                 selections,
                 selected_buffer_ids,
+                latest_selection_anchors,
                 is_row_soft_wrapped,
                 sticky_header_excerpt_id,
                 window,
@@ -4473,6 +4490,7 @@ impl EditorElement {
         hitbox: &Hitbox,
         selected_buffer_ids: &Vec<BufferId>,
         blocks: &[BlockLayout],
+        latest_selection_anchors: &HashMap<BufferId, Anchor>,
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
@@ -4481,6 +4499,7 @@ impl EditorElement {
             DisplayRow(scroll_position.y as u32),
             FILE_HEADER_HEIGHT + MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
             excerpt,
+            latest_selection_anchors,
         );
 
         let editor_bg_color = cx.theme().colors().editor_background;
@@ -7783,15 +7802,46 @@ fn header_jump_data(
     snapshot: &EditorSnapshot,
     block_row_start: DisplayRow,
     height: u32,
-    for_excerpt: &ExcerptInfo,
+    first_excerpt: &ExcerptInfo,
+    latest_selection_anchors: &HashMap<BufferId, Anchor>,
 ) -> JumpData {
-    let range = &for_excerpt.range;
-    let buffer = &for_excerpt.buffer;
-    let jump_anchor = range.primary.start;
+    let jump_target = if let Some(anchor) = latest_selection_anchors.get(&first_excerpt.buffer_id)
+        && let Some(range) = snapshot.context_range_for_excerpt(anchor.excerpt_id)
+    {
+        JumpTargetInExcerptInput {
+            id: anchor.excerpt_id,
+            buffer: &first_excerpt.buffer,
+            excerpt_start_anchor: range.start,
+            jump_anchor: anchor.text_anchor,
+        }
+    } else {
+        JumpTargetInExcerptInput {
+            id: first_excerpt.id,
+            buffer: &first_excerpt.buffer,
+            excerpt_start_anchor: first_excerpt.range.context.start,
+            jump_anchor: first_excerpt.range.primary.start,
+        }
+    };
+    header_jump_data_inner(snapshot, block_row_start, height, &jump_target)
+}
 
-    let excerpt_start = range.context.start;
-    let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
-    let rows_from_excerpt_start = if jump_anchor == excerpt_start {
+struct JumpTargetInExcerptInput<'a> {
+    id: ExcerptId,
+    buffer: &'a language::BufferSnapshot,
+    excerpt_start_anchor: text::Anchor,
+    jump_anchor: text::Anchor,
+}
+
+fn header_jump_data_inner(
+    snapshot: &EditorSnapshot,
+    block_row_start: DisplayRow,
+    height: u32,
+    for_excerpt: &JumpTargetInExcerptInput,
+) -> JumpData {
+    let buffer = &for_excerpt.buffer;
+    let jump_position = language::ToPoint::to_point(&for_excerpt.jump_anchor, buffer);
+    let excerpt_start = for_excerpt.excerpt_start_anchor;
+    let rows_from_excerpt_start = if for_excerpt.jump_anchor == excerpt_start {
         0
     } else {
         let excerpt_start_point = language::ToPoint::to_point(&excerpt_start, buffer);
@@ -7808,7 +7858,7 @@ fn header_jump_data(
 
     JumpData::MultiBufferPoint {
         excerpt_id: for_excerpt.id,
-        anchor: jump_anchor,
+        anchor: for_excerpt.jump_anchor,
         position: jump_position,
         line_offset_from_top,
     }
@@ -9125,15 +9175,18 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let (local_selections, selected_buffer_ids): (
+                    let (local_selections, selected_buffer_ids, latest_selection_anchors): (
                         Vec<Selection<Point>>,
                         Vec<BufferId>,
+                        HashMap<BufferId, Anchor>,
                     ) = self
                         .editor_with_selections(cx)
                         .map(|editor| {
                             editor.update(cx, |editor, cx| {
                                 let all_selections =
                                     editor.selections.all::<Point>(&snapshot.display_snapshot);
+                                let all_anchor_selections =
+                                    editor.selections.all_anchors(&snapshot.display_snapshot);
                                 let selected_buffer_ids =
                                     if editor.buffer_kind(cx) == ItemBufferKind::Singleton {
                                         Vec::new()
@@ -9162,10 +9215,31 @@ impl Element for EditorElement {
                                 selections
                                     .extend(editor.selections.pending(&snapshot.display_snapshot));
 
-                                (selections, selected_buffer_ids)
+                                let mut anchors_by_buffer: HashMap<BufferId, (usize, Anchor)> =
+                                    HashMap::default();
+                                for selection in all_anchor_selections.iter() {
+                                    let head = selection.head();
+                                    if let Some(buffer_id) = head.buffer_id {
+                                        anchors_by_buffer
+                                            .entry(buffer_id)
+                                            .and_modify(|(latest_id, latest_anchor)| {
+                                                if selection.id > *latest_id {
+                                                    *latest_id = selection.id;
+                                                    *latest_anchor = head;
+                                                }
+                                            })
+                                            .or_insert((selection.id, head));
+                                    }
+                                }
+                                let latest_selection_anchors = anchors_by_buffer
+                                    .into_iter()
+                                    .map(|(buffer_id, (_, anchor))| (buffer_id, anchor))
+                                    .collect();
+
+                                (selections, selected_buffer_ids, latest_selection_anchors)
                             })
                         })
-                        .unwrap_or_default();
+                        .unwrap_or_else(|| (Vec::new(), Vec::new(), HashMap::default()));
 
                     let (selections, mut active_rows, newest_selection_head) = self
                         .layout_selections(
@@ -9396,6 +9470,7 @@ impl Element for EditorElement {
                                     &mut line_layouts,
                                     &local_selections,
                                     &selected_buffer_ids,
+                                    &latest_selection_anchors,
                                     is_row_soft_wrapped,
                                     sticky_header_excerpt_id,
                                     window,
@@ -9429,6 +9504,7 @@ impl Element for EditorElement {
                                 &hitbox,
                                 &selected_buffer_ids,
                                 &blocks,
+                                &latest_selection_anchors,
                                 window,
                                 cx,
                             )
