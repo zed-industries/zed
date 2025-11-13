@@ -710,17 +710,25 @@ impl Render for ConfigureContextServerModal {
                     .section(
                         Section::new().child(
                             div()
-                                .id("modal-content")
-                                .max_h(vh(0.7, window))
-                                .overflow_y_scroll()
-                                .track_scroll(&scroll_handle)
-                                .child(self.render_modal_description(window, cx))
-                                .child(self.render_modal_content(cx))
-                                .child(match &self.state {
-                                    State::Idle => div(),
-                                    State::Waiting => Self::render_waiting_for_context_server(),
-                                    State::Error(error) => Self::render_modal_error(error.clone()),
-                                })
+                                .size_full()
+                                .child(
+                                    div()
+                                        .id("modal-content")
+                                        .max_h(vh(0.7, window))
+                                        .overflow_y_scroll()
+                                        .track_scroll(&scroll_handle)
+                                        .child(self.render_modal_description(window, cx))
+                                        .child(self.render_modal_content(cx))
+                                        .child(match &self.state {
+                                            State::Idle => div(),
+                                            State::Waiting => {
+                                                Self::render_waiting_for_context_server()
+                                            }
+                                            State::Error(error) => {
+                                                Self::render_modal_error(error.clone())
+                                            }
+                                        }),
+                                )
                                 .vertical_scrollbar_for(scroll_handle, window, cx),
                         ),
                     )
