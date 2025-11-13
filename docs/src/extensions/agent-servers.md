@@ -46,6 +46,7 @@ Each target must specify:
 - `archive`: URL to download the archive from (supports `.tar.gz`, `.zip`, etc.)
 - `cmd`: Command to run the agent server (relative to the extracted archive)
 - `args`: Command-line arguments to pass to the agent server (optional)
+- `sha256`: SHA-256 hash string of the archive's bytes (optional, but recommended for security)
 
 ### Optional Fields
 
