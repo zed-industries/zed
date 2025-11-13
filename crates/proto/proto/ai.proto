@@ -186,6 +186,16 @@ message ExternalAgentsUpdated {
     repeated string names = 2;
 }
 
+message ExternalExtensionAgent {
+    string name = 1;
+    optional string icon_path = 2;
+}
+
+message ExternalExtensionAgentsUpdated {
+    uint64 project_id = 1;
+    repeated ExternalExtensionAgent agents = 2;
+}
+
 message ExternalAgentLoadingStatusUpdated {
     uint64 project_id = 1;
     string name = 2;
