@@ -709,7 +709,7 @@ impl<D: PickerDelegate> Picker<D> {
         match &mut self.element_container {
             ElementContainer::List(state) => state.scroll_to_reveal_item(ix),
             ElementContainer::UniformList(scroll_handle) => {
-                scroll_handle.scroll_to_item(ix, ScrollStrategy::Top)
+                scroll_handle.scroll_to_item(ix, ScrollStrategy::Nearest)
             }
         }
     }

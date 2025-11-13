@@ -1655,7 +1655,10 @@ impl ProjectPanel {
                             }
                         project_panel.update_visible_entries(None, false, false, window, cx);
                         if is_new_entry && !is_dir {
-                            project_panel.open_entry(new_entry.id, true, false, cx);
+                            let settings = ProjectPanelSettings::get_global(cx);
+                            if settings.auto_open.should_open_on_create() {
+                                project_panel.open_entry(new_entry.id, true, false, cx);
+                            }
                         }
                         cx.notify();
                     })?;
@@ -2709,15 +2712,16 @@ impl ProjectPanel {
 
                             if item_count == 1 {
                                 // open entry if not dir, setting is enabled, and only focus if rename is not pending
-                                if !entry.is_dir()
-                                    && ProjectPanelSettings::get_global(cx).open_file_on_paste
-                                {
-                                    project_panel.open_entry(
-                                        entry.id,
-                                        disambiguation_range.is_none(),
-                                        false,
-                                        cx,
-                                    );
+                                if !entry.is_dir() {
+                                    let settings = ProjectPanelSettings::get_global(cx);
+                                    if settings.auto_open.should_open_on_paste() {
+                                        project_panel.open_entry(
+                                            entry.id,
+                                            disambiguation_range.is_none(),
+                                            false,
+                                            cx,
+                                        );
+                                    }
                                 }
 
                                 // if only one entry was pasted and it was disambiguated, open the rename editor
@@ -3593,7 +3597,10 @@ impl ProjectPanel {
                 let opened_entries = task.await.with_context(|| "failed to copy external paths")?;
                 this.update(cx, |this, cx| {
                     if open_file_after_drop && !opened_entries.is_empty() {
-                        this.open_entry(opened_entries[0], true, false, cx);
+                        let settings = ProjectPanelSettings::get_global(cx);
+                        if settings.auto_open.should_open_on_drop() {
+                            this.open_entry(opened_entries[0], true, false, cx);
+                        }
                     }
                 })
             }

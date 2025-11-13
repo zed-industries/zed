@@ -96,6 +96,7 @@ dependencies = [
  "auto_update",
  "editor",
  "extension_host",
+ "fs",
  "futures 0.3.31",
  "gpui",
  "language",
@@ -1330,10 +1331,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "clock",
+ "ctor",
  "db",
+ "futures 0.3.31",
  "gpui",
  "http_client",
  "log",
+ "parking_lot",
  "paths",
  "release_channel",
  "serde",
@@ -1344,6 +1349,7 @@ dependencies = [
  "util",
  "which 6.0.3",
  "workspace",
+ "zlog",
 ]
 
 [[package]]
@@ -6242,7 +6248,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "nanorand",
- "spin",
+ "spin 0.9.8",
 ]
 
 [[package]]
@@ -6353,9 +6359,9 @@ checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 
 [[package]]
 name = "fork"
-version = "0.2.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05dc8b302e04a1c27f4fe694439ef0f29779ca4edc205b7b58f00db04e29656d"
+checksum = "30268f1eefccc9d72f43692e8b89e659aeb52e84016c3b32b6e7e9f1c8f38f94"
 dependencies = [
  "libc",
 ]
@@ -7281,6 +7287,7 @@ dependencies = [
  "calloop",
  "calloop-wayland-source",
  "cbindgen",
+ "circular-buffer",
  "cocoa 0.26.0",
  "cocoa-foundation 0.2.0",
  "collections",
@@ -7336,6 +7343,7 @@ dependencies = [
  "slotmap",
  "smallvec",
  "smol",
+ "spin 0.10.0",
  "stacksafe",
  "strum 0.27.2",
  "sum_tree",
@@ -7799,6 +7807,7 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sha2",
  "tempfile",
  "url",
@@ -9065,7 +9074,7 @@ version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 dependencies = [
- "spin",
+ "spin 0.9.8",
 ]
 
 [[package]]
@@ -10006,6 +10015,18 @@ name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
+
+[[package]]
+name = "miniprofiler_ui"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "serde_json",
+ "smol",
+ "util",
+ "workspace",
+ "zed_actions",
+]
 
 [[package]]
 name = "miniz_oxide"
@@ -13088,6 +13109,7 @@ dependencies = [
  "settings",
  "smallvec",
  "telemetry",
+ "tempfile",
  "theme",
  "ui",
  "util",
@@ -15859,6 +15881,15 @@ name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+dependencies = [
+ "lock_api",
+]
+
+[[package]]
+name = "spin"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
 dependencies = [
  "lock_api",
 ]
@@ -21156,7 +21187,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.213.0"
+version = "0.214.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",
@@ -21174,6 +21205,7 @@ dependencies = [
  "breadcrumbs",
  "call",
  "channel",
+ "chrono",
  "clap",
  "cli",
  "client",
@@ -21231,6 +21263,7 @@ dependencies = [
  "menu",
  "migrator",
  "mimalloc",
+ "miniprofiler_ui",
  "nc",
  "nix 0.29.0",
  "node_runtime",
@@ -21703,6 +21736,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "strsim",
  "thiserror 2.0.17",
  "util",
  "uuid",

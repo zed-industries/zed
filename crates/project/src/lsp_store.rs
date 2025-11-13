@@ -563,8 +563,8 @@ impl LocalLspStore {
         allow_binary_download: bool,
         cx: &mut App,
     ) -> Task<Result<LanguageServerBinary>> {
-        if let Some(settings) = settings.binary.as_ref()
-            && settings.path.is_some()
+        if let Some(settings) = &settings.binary
+            && let Some(path) = settings.path.as_ref().map(PathBuf::from)
         {
             let settings = settings.clone();
 
@@ -573,7 +573,7 @@ impl LocalLspStore {
                 env.extend(settings.env.unwrap_or_default());
 
                 Ok(LanguageServerBinary {
-                    path: PathBuf::from(&settings.path.unwrap()),
+                    path: delegate.resolve_executable_path(path),
                     env: Some(env),
                     arguments: settings
                         .arguments
@@ -7650,14 +7650,16 @@ impl LspStore {
         let buffer = buffer.read(cx);
         let file = File::from_dyn(buffer.file())?;
         let abs_path = file.as_local()?.abs_path(cx);
-        let uri = lsp::Uri::from_file_path(abs_path).unwrap();
+        let uri = lsp::Uri::from_file_path(&abs_path)
+            .ok()
+            .with_context(|| format!("Failed to convert path to URI: {}", abs_path.display()))
+            .log_err()?;
         let next_snapshot = buffer.text_snapshot();
         for language_server in language_servers {
             let language_server = language_server.clone();
 
             let buffer_snapshots = self
-                .as_local_mut()
-                .unwrap()
+                .as_local_mut()?
                 .buffer_snapshots
                 .get_mut(&buffer.remote_id())
                 .and_then(|m| m.get_mut(&language_server.server_id()))?;
@@ -10140,6 +10142,8 @@ impl LspStore {
                     source: completion.source,
                     documentation: None,
                     label: CodeLabel::default(),
+                    match_start: None,
+                    snippet_deduplication_key: None,
                     insert_text_mode: None,
                     icon_path: None,
                     confirm: None,
@@ -12844,6 +12848,8 @@ async fn populate_labels_for_completions(
                     source: completion.source,
                     icon_path: None,
                     confirm: None,
+                    match_start: None,
+                    snippet_deduplication_key: None,
                 });
             }
             None => {
@@ -12858,6 +12864,8 @@ async fn populate_labels_for_completions(
                     insert_text_mode: None,
                     icon_path: None,
                     confirm: None,
+                    match_start: None,
+                    snippet_deduplication_key: None,
                 });
             }
         }
@@ -13505,6 +13513,10 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
 
     fn worktree_root_path(&self) -> &Path {
         self.worktree.abs_path().as_ref()
+    }
+
+    fn resolve_executable_path(&self, path: PathBuf) -> PathBuf {
+        self.worktree.resolve_executable_path(path)
     }
 
     async fn shell_env(&self) -> HashMap<String, String> {

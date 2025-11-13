@@ -29,9 +29,6 @@ jobs:
     - name: steps::clippy
       run: ./script/clippy
       shell: bash -euxo pipefail {0}
-    - name: steps::cargo_install_nextest
-      run: cargo install cargo-nextest --locked
-      shell: bash -euxo pipefail {0}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
       shell: bash -euxo pipefail {0}
@@ -57,16 +54,19 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
       shell: bash -euxo pipefail {0}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
     - name: steps::setup_linux
       run: ./script/linux
       shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
       shell: bash -euxo pipefail {0}
-    - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
-      with:
-        cache: rust
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
+      shell: bash -euxo pipefail {0}
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -75,8 +75,7 @@ jobs:
       run: ./script/clippy
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
-      run: cargo install cargo-nextest --locked
-      shell: bash -euxo pipefail {0}
+      uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 250
       shell: bash -euxo pipefail {0}
@@ -108,9 +107,6 @@ jobs:
         node-version: '20'
     - name: steps::clippy
       run: ./script/clippy.ps1
-      shell: pwsh
-    - name: steps::cargo_install_nextest
-      run: cargo install cargo-nextest --locked
       shell: pwsh
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 250
@@ -202,6 +198,9 @@ jobs:
     - name: steps::install_mold
       run: ./script/install-mold
       shell: bash -euxo pipefail {0}
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
+      shell: bash -euxo pipefail {0}
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
       shell: bash -euxo pipefail {0}
@@ -241,6 +240,9 @@ jobs:
       shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
+      shell: bash -euxo pipefail {0}
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
       shell: bash -euxo pipefail {0}
     - name: ./script/bundle-linux
       run: ./script/bundle-linux

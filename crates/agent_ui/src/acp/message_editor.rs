@@ -15,6 +15,7 @@ use editor::{
     EditorEvent, EditorMode, EditorSnapshot, EditorStyle, ExcerptId, FoldPlaceholder, Inlay,
     MultiBuffer, ToOffset,
     actions::Paste,
+    code_context_menus::CodeContextMenu,
     display_map::{Crease, CreaseId, FoldId},
     scroll::Autoscroll,
 };
@@ -270,6 +271,15 @@ impl MessageEditor {
 
     pub fn is_empty(&self, cx: &App) -> bool {
         self.editor.read(cx).is_empty(cx)
+    }
+
+    pub fn is_completions_menu_visible(&self, cx: &App) -> bool {
+        self.editor
+            .read(cx)
+            .context_menu()
+            .borrow()
+            .as_ref()
+            .is_some_and(|menu| matches!(menu, CodeContextMenu::Completions(_)) && menu.visible())
     }
 
     pub fn mentions(&self) -> HashSet<MentionUri> {
@@ -836,6 +846,45 @@ impl MessageEditor {
         cx.emit(MessageEditorEvent::Send)
     }
 
+    pub fn trigger_completion_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let editor = self.editor.clone();
+
+        cx.spawn_in(window, async move |_, cx| {
+            editor
+                .update_in(cx, |editor, window, cx| {
+                    let menu_is_open =
+                        editor.context_menu().borrow().as_ref().is_some_and(|menu| {
+                            matches!(menu, CodeContextMenu::Completions(_)) && menu.visible()
+                        });
+
+                    let has_at_sign = {
+                        let snapshot = editor.display_snapshot(cx);
+                        let cursor = editor.selections.newest::<text::Point>(&snapshot).head();
+                        let offset = cursor.to_offset(&snapshot);
+                        if offset > 0 {
+                            snapshot
+                                .buffer_snapshot()
+                                .reversed_chars_at(offset)
+                                .next()
+                                .map(|sign| sign == '@')
+                                .unwrap_or(false)
+                        } else {
+                            false
+                        }
+                    };
+
+                    if menu_is_open && has_at_sign {
+                        return;
+                    }
+
+                    editor.insert("@", window, cx);
+                    editor.show_completions(&editor::actions::ShowCompletions, window, cx);
+                })
+                .log_err();
+        })
+        .detach();
+    }
+
     fn chat(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
         self.send(cx);
     }
@@ -1193,6 +1242,17 @@ impl MessageEditor {
 
     pub fn text(&self, cx: &App) -> String {
         self.editor.read(cx).text(cx)
+    }
+
+    pub fn set_placeholder_text(
+        &mut self,
+        placeholder: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            editor.set_placeholder_text(placeholder, window, cx);
+        });
     }
 
     #[cfg(test)]
@@ -2611,13 +2671,14 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_large_file_mention_uses_outline(cx: &mut TestAppContext) {
+    async fn test_large_file_mention_fallback(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
 
         // Create a large file that exceeds AUTO_OUTLINE_SIZE
-        const LINE: &str = "fn example_function() { /* some code */ }\n";
+        // Using plain text without a configured language, so no outline is available
+        const LINE: &str = "This is a line of text in the file\n";
         let large_content = LINE.repeat(2 * (outline::AUTO_OUTLINE_SIZE / LINE.len()));
         assert!(large_content.len() > outline::AUTO_OUTLINE_SIZE);
 
@@ -2628,8 +2689,8 @@ mod tests {
         fs.insert_tree(
             "/project",
             json!({
-                "large_file.rs": large_content.clone(),
-                "small_file.rs": small_content,
+                "large_file.txt": large_content.clone(),
+                "small_file.txt": small_content,
             }),
         )
         .await;
@@ -2675,7 +2736,7 @@ mod tests {
         let large_file_abs_path = project.read_with(cx, |project, cx| {
             let worktree = project.worktrees(cx).next().unwrap();
             let worktree_root = worktree.read(cx).abs_path();
-            worktree_root.join("large_file.rs")
+            worktree_root.join("large_file.txt")
         });
         let large_file_task = message_editor.update(cx, |editor, cx| {
             editor.confirm_mention_for_file(large_file_abs_path, cx)
@@ -2684,11 +2745,20 @@ mod tests {
         let large_file_mention = large_file_task.await.unwrap();
         match large_file_mention {
             Mention::Text { content, .. } => {
-                // Should contain outline header for large files
-                assert!(content.contains("File outline for"));
-                assert!(content.contains("file too large to show full content"));
-                // Should not contain the full repeated content
-                assert!(!content.contains(&LINE.repeat(100)));
+                // Should contain some of the content but not all of it
+                assert!(
+                    content.contains(LINE),
+                    "Should contain some of the file content"
+                );
+                assert!(
+                    !content.contains(&LINE.repeat(100)),
+                    "Should not contain the full file"
+                );
+                // Should be much smaller than original
+                assert!(
+                    content.len() < large_content.len() / 10,
+                    "Should be significantly truncated"
+                );
             }
             _ => panic!("Expected Text mention for large file"),
         }
@@ -2698,7 +2768,7 @@ mod tests {
         let small_file_abs_path = project.read_with(cx, |project, cx| {
             let worktree = project.worktrees(cx).next().unwrap();
             let worktree_root = worktree.read(cx).abs_path();
-            worktree_root.join("small_file.rs")
+            worktree_root.join("small_file.txt")
         });
         let small_file_task = message_editor.update(cx, |editor, cx| {
             editor.confirm_mention_for_file(small_file_abs_path, cx)
@@ -2707,10 +2777,8 @@ mod tests {
         let small_file_mention = small_file_task.await.unwrap();
         match small_file_mention {
             Mention::Text { content, .. } => {
-                // Should contain the actual content
+                // Should contain the full actual content
                 assert_eq!(content, small_content);
-                // Should not contain outline header
-                assert!(!content.contains("File outline for"));
             }
             _ => panic!("Expected Text mention for small file"),
         }

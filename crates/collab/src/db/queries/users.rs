@@ -66,40 +66,6 @@ impl Database {
         .await
     }
 
-    /// Returns all users flagged as staff.
-    pub async fn get_staff_users(&self) -> Result<Vec<user::Model>> {
-        self.transaction(|tx| async {
-            let tx = tx;
-            Ok(user::Entity::find()
-                .filter(user::Column::Admin.eq(true))
-                .all(&*tx)
-                .await?)
-        })
-        .await
-    }
-
-    /// Returns a user by email address. There are no access checks here, so this should only be used internally.
-    pub async fn get_user_by_email(&self, email: &str) -> Result<Option<User>> {
-        self.transaction(|tx| async move {
-            Ok(user::Entity::find()
-                .filter(user::Column::EmailAddress.eq(email))
-                .one(&*tx)
-                .await?)
-        })
-        .await
-    }
-
-    /// Returns a user by GitHub user ID. There are no access checks here, so this should only be used internally.
-    pub async fn get_user_by_github_user_id(&self, github_user_id: i32) -> Result<Option<User>> {
-        self.transaction(|tx| async move {
-            Ok(user::Entity::find()
-                .filter(user::Column::GithubUserId.eq(github_user_id))
-                .one(&*tx)
-                .await?)
-        })
-        .await
-    }
-
     /// Returns a user by GitHub login. There are no access checks here, so this should only be used internally.
     pub async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
         self.transaction(|tx| async move {
@@ -270,39 +236,6 @@ impl Database {
         .await
     }
 
-    /// Sets "accepted_tos_at" on the user to the given timestamp.
-    pub async fn set_user_accepted_tos_at(
-        &self,
-        id: UserId,
-        accepted_tos_at: Option<DateTime>,
-    ) -> Result<()> {
-        self.transaction(|tx| async move {
-            user::Entity::update_many()
-                .filter(user::Column::Id.eq(id))
-                .set(user::ActiveModel {
-                    accepted_tos_at: ActiveValue::set(accepted_tos_at),
-                    ..Default::default()
-                })
-                .exec(&*tx)
-                .await?;
-            Ok(())
-        })
-        .await
-    }
-
-    /// hard delete the user.
-    pub async fn destroy_user(&self, id: UserId) -> Result<()> {
-        self.transaction(|tx| async move {
-            access_token::Entity::delete_many()
-                .filter(access_token::Column::UserId.eq(id))
-                .exec(&*tx)
-                .await?;
-            user::Entity::delete_by_id(id).exec(&*tx).await?;
-            Ok(())
-        })
-        .await
-    }
-
     /// Find users where github_login ILIKE name_query.
     pub async fn fuzzy_search_users(&self, name_query: &str, limit: u32) -> Result<Vec<User>> {
         self.transaction(|tx| async {
@@ -340,15 +273,5 @@ impl Database {
         }
         result.push('%');
         result
-    }
-
-    pub async fn get_users_missing_github_user_created_at(&self) -> Result<Vec<user::Model>> {
-        self.transaction(|tx| async move {
-            Ok(user::Entity::find()
-                .filter(user::Column::GithubUserCreatedAt.is_null())
-                .all(&*tx)
-                .await?)
-        })
-        .await
     }
 }

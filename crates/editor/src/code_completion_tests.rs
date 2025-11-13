@@ -305,6 +305,8 @@ impl CompletionBuilder {
             icon_path: None,
             insert_text_mode: None,
             confirm: None,
+            match_start: None,
+            snippet_deduplication_key: None,
         }
     }
 }

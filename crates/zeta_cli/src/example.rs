@@ -315,9 +315,6 @@ impl NamedExample {
         let (repo_owner, repo_name) = self.repo_name()?;
         let file_name = self.file_name();
 
-        fs::create_dir_all(&*REPOS_DIR)?;
-        fs::create_dir_all(&*WORKTREES_DIR)?;
-
         let repo_dir = REPOS_DIR.join(repo_owner.as_ref()).join(repo_name.as_ref());
         let repo_lock = lock_repo(&repo_dir).await;
 
@@ -332,7 +329,14 @@ impl NamedExample {
         }
 
         // Resolve the example to a revision, fetching it if needed.
-        let revision = run_git(&repo_dir, &["rev-parse", &self.example.revision]).await;
+        let revision = run_git(
+            &repo_dir,
+            &[
+                "rev-parse",
+                &format!("{}^{{commit}}", self.example.revision),
+            ],
+        )
+        .await;
         let revision = if let Ok(revision) = revision {
             revision
         } else {
@@ -349,7 +353,7 @@ impl NamedExample {
         };
 
         // Create the worktree for this example if needed.
-        let worktree_path = WORKTREES_DIR.join(&file_name);
+        let worktree_path = WORKTREES_DIR.join(&file_name).join(repo_name.as_ref());
         if worktree_path.is_dir() {
             run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
             run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
@@ -394,7 +398,7 @@ impl NamedExample {
         Ok(worktree_path)
     }
 
-    fn file_name(&self) -> String {
+    pub fn file_name(&self) -> String {
         self.name
             .chars()
             .map(|c| {
@@ -477,7 +481,7 @@ impl NamedExample {
             let mut matches = text.match_indices(&cursor_excerpt);
             let Some((excerpt_offset, _)) = matches.next() else {
                 anyhow::bail!(
-                    "Cursor excerpt did not exist in buffer.\nExcerpt:\n\n{cursor_excerpt}\nBuffer text:\n{text}\n"
+                    "\nExcerpt:\n\n{cursor_excerpt}\nBuffer text:\n{text}\n.Cursor excerpt did not exist in buffer."
                 );
             };
             assert!(matches.next().is_none());

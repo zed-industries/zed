@@ -15,7 +15,7 @@ use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, UpdateGlobal as _};
+use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, QuitMode, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
@@ -37,7 +37,8 @@ use std::{
     io::{self, IsTerminal},
     path::{Path, PathBuf},
     process,
-    sync::Arc,
+    sync::{Arc, OnceLock},
+    time::Instant,
 };
 use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
 use util::{ResultExt, TryFutureExt, maybe};
@@ -87,31 +88,33 @@ fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
         .collect::<Vec<_>>().join("\n\n");
 
     eprintln!("{message}: {error_details}");
-    Application::new().run(move |cx| {
-        if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |_, cx| {
-            cx.new(|_| gpui::Empty)
-        }) {
-            window
-                .update(cx, |_, window, cx| {
-                    let response = window.prompt(
-                        gpui::PromptLevel::Critical,
-                        message,
-                        Some(&error_details),
-                        &["Exit"],
-                        cx,
-                    );
+    Application::new()
+        .with_quit_mode(QuitMode::Explicit)
+        .run(move |cx| {
+            if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |_, cx| {
+                cx.new(|_| gpui::Empty)
+            }) {
+                window
+                    .update(cx, |_, window, cx| {
+                        let response = window.prompt(
+                            gpui::PromptLevel::Critical,
+                            message,
+                            Some(&error_details),
+                            &["Exit"],
+                            cx,
+                        );
 
-                    cx.spawn_in(window, async move |_, cx| {
-                        response.await?;
-                        cx.update(|_, cx| cx.quit())
+                        cx.spawn_in(window, async move |_, cx| {
+                            response.await?;
+                            cx.update(|_, cx| cx.quit())
+                        })
+                        .detach_and_log_err(cx);
                     })
-                    .detach_and_log_err(cx);
-                })
-                .log_err();
-        } else {
-            fail_to_open_window(anyhow::anyhow!("{message}: {error_details}"), cx)
-        }
-    })
+                    .log_err();
+            } else {
+                fail_to_open_window(anyhow::anyhow!("{message}: {error_details}"), cx)
+            }
+        })
 }
 
 fn fail_to_open_window_async(e: anyhow::Error, cx: &mut AsyncApp) {
@@ -160,7 +163,11 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
     }
 }
 
+pub static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
+
 pub fn main() {
+    STARTUP_TIME.get_or_init(|| Instant::now());
+
     #[cfg(unix)]
     util::prevent_root_execution();
 
@@ -537,7 +544,7 @@ pub fn main() {
         });
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
-        auto_update::init(client.http_client(), cx);
+        auto_update::init(client.clone(), cx);
         dap_adapters::init(cx);
         auto_update_ui::init(cx);
         reliability::init(
@@ -635,6 +642,7 @@ pub fn main() {
         zeta::init(cx);
         inspector_ui::init(app_state.clone(), cx);
         json_schema_store::init(cx);
+        miniprofiler_ui::init(*STARTUP_TIME.get().unwrap(), cx);
 
         cx.observe_global::<SettingsStore>({
             let http = app_state.client.http_client();
@@ -1224,6 +1232,7 @@ fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
         paths::database_dir(),
         paths::logs_dir(),
         paths::temp_dir(),
+        paths::hang_traces_dir(),
     ]
     .into_iter()
     .fold(HashMap::default(), |mut errors, path| {
