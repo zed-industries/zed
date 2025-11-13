@@ -216,7 +216,7 @@ struct GitHeaderEntry {
 impl GitHeaderEntry {
     pub fn contains(&self, status_entry: &GitStatusEntry, repo: &Repository) -> bool {
         let this = &self.header;
-        let status = status_entry.status;
+        let status = status_entry.file_status(repo);
         match this {
             Section::Conflict => {
                 repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path)
@@ -252,7 +252,6 @@ impl GitListEntry {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct GitStatusEntry {
     pub(crate) repo_path: RepoPath,
-    pub(crate) status: FileStatus,
 }
 
 impl GitStatusEntry {
@@ -269,15 +268,18 @@ impl GitStatusEntry {
             .map(|parent| parent.display(path_style).to_string())
     }
 
-    fn staging(&self, panel: &GitPanel, repo: &Repository) -> StageStatus {
-        if let Some(staging) = panel.entry_staging(&self.repo_path) {
-            return staging;
-        }
+    pub(crate) fn file_status(&self, repo: &Repository) -> FileStatus {
         repo.snapshot()
             .status_for_path(&self.repo_path)
             .unwrap()
             .status
-            .staging()
+    }
+
+    fn staging(&self, panel: &GitPanel, repo: &Repository) -> StageStatus {
+        if let Some(staging) = panel.entry_staging(&self.repo_path) {
+            return staging;
+        }
+        self.file_status(repo).staging()
     }
 }
 
@@ -447,6 +449,7 @@ impl GitPanel {
                         | RepositoryEvent::MergeHeadsChanged,
                         true,
                     ) => {
+                        println!("Event::RepositoryUpdated with full_scan");
                         this.schedule_update(true, window, cx);
                     }
                     GitStoreEvent::RepositoryUpdated(
@@ -456,6 +459,7 @@ impl GitPanel {
                     )
                     | GitStoreEvent::RepositoryAdded
                     | GitStoreEvent::RepositoryRemoved(_) => {
+                        println!("Event::RepositoryUpdated with full_scan");
                         this.schedule_update(false, window, cx);
                     }
                     GitStoreEvent::IndexWriteError(error) => {
@@ -825,11 +829,9 @@ impl GitPanel {
     ) {
         maybe!({
             let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
-            let active_repo = self.active_repository.as_ref()?;
-            let path = active_repo
-                .read(cx)
-                .repo_path_to_project_path(&entry.repo_path, cx)?;
-            if entry.status.is_deleted() {
+            let active_repo = self.active_repository.as_ref()?.read(cx);
+            let path = active_repo.repo_path_to_project_path(&entry.repo_path, cx)?;
+            if entry.file_status(active_repo).is_deleted() {
                 return None;
             }
 
@@ -855,7 +857,10 @@ impl GitPanel {
         maybe!({
             let list_entry = self.entries.get(self.selected_entry?)?.clone();
             let entry = list_entry.status_entry()?.to_owned();
-            let skip_prompt = action.skip_prompt || entry.status.is_created();
+            let skip_prompt = action.skip_prompt
+                || entry
+                    .file_status(self.active_repository.as_ref().unwrap().read(cx))
+                    .is_created();
 
             let prompt = if skip_prompt {
                 Task::ready(Ok(0))
@@ -904,7 +909,10 @@ impl GitPanel {
             let list_entry = self.entries.get(self.selected_entry?)?.clone();
             let entry = list_entry.status_entry()?.to_owned();
 
-            if !entry.status.is_created() {
+            if !entry
+                .file_status(self.active_repository.as_ref().unwrap().read(cx))
+                .is_created()
+            {
                 return Some(());
             }
 
@@ -982,7 +990,7 @@ impl GitPanel {
             }
             let filename = path.path.file_name()?.to_string();
 
-            if !entry.status.is_created() {
+            if !entry.file_status(active_repo.read(cx)).is_created() {
                 self.perform_checkout(vec![entry.clone()], window, cx);
             } else {
                 let prompt = prompt(&format!("Trash {}?", filename), None, window, cx);
@@ -1112,7 +1120,11 @@ impl GitPanel {
             .entries
             .iter()
             .filter_map(|entry| entry.status_entry().cloned())
-            .filter(|status_entry| !status_entry.status.is_created())
+            .filter(|status_entry| {
+                !status_entry
+                    .file_status(self.active_repository.as_ref().unwrap().read(cx))
+                    .is_created()
+            })
             .collect::<Vec<_>>();
 
         match entries.len() {
@@ -1162,7 +1174,11 @@ impl GitPanel {
             .entries
             .iter()
             .filter_map(|entry| entry.status_entry())
-            .filter(|status_entry| status_entry.status.is_created())
+            .filter(|status_entry| {
+                status_entry
+                    .file_status(self.active_repository.as_ref().unwrap().read(cx))
+                    .is_created()
+            })
             .cloned()
             .collect::<Vec<_>>();
 
@@ -1680,7 +1696,11 @@ impl GitPanel {
                 .entries
                 .iter()
                 .filter_map(|entry| entry.status_entry())
-                .filter(|status_entry| !status_entry.status.is_created())
+                .filter(|status_entry| {
+                    !status_entry
+                        .file_status(active_repository.read(cx))
+                        .is_created()
+                })
                 .map(|status_entry| status_entry.repo_path.clone())
                 .collect::<Vec<_>>();
 
@@ -1825,11 +1845,20 @@ impl GitPanel {
             None
         }?;
 
-        let action_text = if git_status_entry.status.is_deleted() {
+        let action_text = if git_status_entry
+            .file_status(self.active_repository.as_ref().unwrap().read(cx))
+            .is_deleted()
+        {
             Some("Delete")
-        } else if git_status_entry.status.is_created() {
+        } else if git_status_entry
+            .file_status(self.active_repository.as_ref().unwrap().read(cx))
+            .is_created()
+        {
             Some("Create")
-        } else if git_status_entry.status.is_modified() {
+        } else if git_status_entry
+            .file_status(self.active_repository.as_ref().unwrap().read(cx))
+            .is_modified()
+        {
             Some("Update")
         } else {
             None
@@ -2613,7 +2642,7 @@ impl GitPanel {
         let handle = cx.entity().downgrade();
         self.reopen_commit_buffer(window, cx);
         self.update_visible_entries_task = cx.spawn_in(window, async move |_, cx| {
-            cx.background_executor().timer(UPDATE_DEBOUNCE).await;
+            // cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             if let Some(git_panel) = handle.upgrade() {
                 git_panel
                     .update_in(cx, |git_panel, window, cx| {
@@ -2674,6 +2703,7 @@ impl GitPanel {
     }
 
     fn update_visible_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        println!("*** update_visible_entries ***");
         let path_style = self.project.read(cx).path_style(cx);
         let bulk_staging = self.bulk_staging.take();
         let last_staged_path_prev_index = bulk_staging
@@ -2725,7 +2755,6 @@ impl GitPanel {
 
             let entry = GitStatusEntry {
                 repo_path: entry.repo_path.clone(),
-                status: entry.status,
             };
 
             if staging.has_staged() {
@@ -2882,7 +2911,7 @@ impl GitPanel {
                 if status_entry.staging(self, repo).has_staged() {
                     self.conflicted_staged_count += 1;
                 }
-            } else if status_entry.status.is_created() {
+            } else if status_entry.file_status(repo).is_created() {
                 self.new_count += 1;
                 if status_entry.staging(self, repo).has_staged() {
                     self.new_staged_count += 1;
@@ -3920,12 +3949,16 @@ impl GitPanel {
         let Some(entry) = self.entries.get(ix).and_then(|e| e.status_entry()) else {
             return;
         };
-        let stage_title = if entry.status.staging().is_fully_staged() {
+        let file_status = entry.file_status(self.active_repository.as_ref().unwrap().read(cx));
+        let stage_title = if entry
+            .staging(self, self.active_repository.as_ref().unwrap().read(cx))
+            .is_fully_staged()
+        {
             "Unstage File"
         } else {
             "Stage File"
         };
-        let restore_title = if entry.status.is_created() {
+        let restore_title = if file_status.is_created() {
             "Trash File"
         } else {
             "Restore File"
@@ -3936,7 +3969,7 @@ impl GitPanel {
                 .action(stage_title, ToggleStaged.boxed_clone())
                 .action(restore_title, git::RestoreFile::default().boxed_clone());
 
-            if entry.status.is_created() {
+            if file_status.is_created() {
                 context_menu =
                     context_menu.action("Add to .gitignore", git::AddToGitignore.boxed_clone());
             }
@@ -4011,7 +4044,7 @@ impl GitPanel {
         let selected = self.selected_entry == Some(ix);
         let marked = self.marked_entries.contains(&ix);
         let status_style = GitPanelSettings::get_global(cx).status_style;
-        let status = entry.status;
+        let status = entry.file_status(self.active_repository.as_ref().unwrap().read(cx));
 
         let has_conflict = status.is_conflicted();
         let is_modified = status.is_modified();
@@ -4046,7 +4079,12 @@ impl GitPanel {
 
         let entry_staging = entry.staging(self, self.active_repository.as_ref().unwrap().read(cx));
         let mut is_staged: ToggleState = entry_staging.as_bool().into();
-        if self.show_placeholders && !self.has_staged_changes() && !entry.status.is_created() {
+        if self.show_placeholders
+            && !self.has_staged_changes()
+            && !entry
+                .file_status(self.active_repository.as_ref().unwrap().read(cx))
+                .is_created()
+        {
             is_staged = ToggleState::Selected;
         }
         println!("    Checkbox status = {is_staged:?},  entry.staging = {entry_staging:?}");

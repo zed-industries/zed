@@ -335,7 +335,7 @@ impl ProjectDiff {
             return;
         };
         let repo = git_repo.read(cx);
-        let sort_prefix = sort_prefix(repo, &entry.repo_path, entry.status, cx);
+        let sort_prefix = sort_prefix(repo, &entry.repo_path, entry.file_status(repo), cx);
         let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.0);
 
         self.move_to_path(path_key, window, cx)

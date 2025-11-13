@@ -4815,10 +4815,11 @@ impl Repository {
                     }),
             )
             .collect::<Vec<_>>();
-        if !edits.is_empty() {
+        let full_scan = !edits.is_empty();
+        self.snapshot.statuses_by_path.edit(edits, ());
+        if full_scan {
             cx.emit(RepositoryEvent::StatusesChanged { full_scan: true });
         }
-        self.snapshot.statuses_by_path.edit(edits, ());
         if update.is_last_update {
             self.snapshot.scan_id = update.scan_id;
         }
