@@ -5186,6 +5186,18 @@ impl MultiBufferSnapshot {
             if first_row > end_row {
                 break;
             }
+            
+            // Check if the line is inside a string literal by examining the syntax tree
+            // If inside a string, treat it as having zero indent to close any active indent guides
+            let is_in_string = self.point_to_buffer_offset(Point::new(first_row.0, 0))
+                .and_then(|(buffer_snapshot, buffer_offset)| {
+                    buffer_snapshot
+                        .language_scope_at(buffer_offset)
+                        .and_then(|scope| scope.override_name().map(|s| s.to_string()))
+                })
+                .map(|name| name == "string")
+                .unwrap_or(false);
+            
             let current_depth = indent_stack.len() as u32;
 
             // Avoid retrieving the language settings repeatedly for every buffer row.
@@ -5230,7 +5242,17 @@ impl MultiBufferSnapshot {
                 found_indent = true
             }
 
-            let depth = if found_indent {
+            // If the line is inside a string, ignore the indentation to prevent
+            // indent guides from being drawn within string literals
+            let depth = if is_in_string {
+                // For lines inside strings, use the previous depth to maintain continuity
+                // This prevents indent guides from being rendered inside the string content
+                if current_depth > 0 {
+                    current_depth - 1
+                } else {
+                    0
+                }
+            } else if found_indent {
                 line_indent.len(tab_size) / tab_size
             } else {
                 0
