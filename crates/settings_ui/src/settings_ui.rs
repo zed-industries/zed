@@ -585,7 +585,6 @@ pub fn open_settings_editor(
     }
 
     // We have to defer this to get the workspace off the stack.
-
     let path = path.map(ToOwned::to_owned);
     cx.defer(move |cx| {
         let current_rem_size: f32 = theme::ThemeSettings::get_global(cx).ui_font_size(cx).into();
@@ -2017,7 +2016,7 @@ impl SettingsWindow {
         let prev_files = self.files.clone();
         let settings_store = cx.global::<SettingsStore>();
         let mut ui_files = vec![];
-        let mut all_files = settings_store.get_all_files();
+        let mut all_files = dbg!(settings_store.get_all_files());
         if !all_files.contains(&settings::SettingsFile::User) {
             all_files.push(settings::SettingsFile::User);
         }
@@ -2030,14 +2029,12 @@ impl SettingsWindow {
             }
 
             if let Some(worktree_id) = settings_ui_file.worktree_id() {
-                let directory_name = all_projects(cx)
-                    .find_map(|project| project.read(cx).worktree_for_id(worktree_id, cx))
-                    .and_then(|worktree| worktree.read(cx).root_dir())
-                    .and_then(|root_dir| {
-                        root_dir
-                            .file_name()
-                            .map(|os_string| os_string.to_string_lossy().to_string())
-                    });
+                let directory_name = dbg!(
+                    all_projects(Some(window), cx)
+                        .find_map(|project| dbg!(project.read(cx).worktree_for_id(worktree_id, cx)))
+                        .map(|worktree| dbg!(worktree.read(cx).root_name()))
+                );
+                // .and_then(|root_dir| dbg!(dbg!(root_dir).file_name()));
 
                 let Some(directory_name) = directory_name else {
                     log::error!(
@@ -2047,7 +2044,8 @@ impl SettingsWindow {
                     continue;
                 };
 
-                self.worktree_root_dirs.insert(worktree_id, directory_name);
+                self.worktree_root_dirs
+                    .insert(worktree_id, directory_name.as_unix_str().to_string());
             }
 
             let focus_handle = prev_files
@@ -2063,7 +2061,7 @@ impl SettingsWindow {
 
         let mut missing_worktrees = Vec::new();
 
-        for worktree in all_projects(cx)
+        for worktree in all_projects(Some(window), cx)
             .flat_map(|project| project.read(cx).visible_worktrees(cx))
             .filter(|tree| !self.worktree_root_dirs.contains_key(&tree.read(cx).id()))
         {
@@ -2093,6 +2091,7 @@ impl SettingsWindow {
 
         self.worktree_root_dirs.extend(missing_worktrees);
 
+        dbg!(&ui_files);
         self.files = ui_files;
         let current_file_still_exists = self
             .files
@@ -3546,7 +3545,10 @@ impl Render for SettingsWindow {
     }
 }
 
-fn all_projects(cx: &App) -> impl Iterator<Item = Entity<project::Project>> {
+fn all_projects(
+    window: Option<&Window>,
+    cx: &App,
+) -> impl Iterator<Item = Entity<project::Project>> {
     workspace::AppState::global(cx)
         .upgrade()
         .map(|app_state| {
@@ -3555,7 +3557,15 @@ fn all_projects(cx: &App) -> impl Iterator<Item = Entity<project::Project>> {
                 .read(cx)
                 .workspaces()
                 .iter()
+                .inspect(|_| {
+                    dbg!("workspace");
+                })
                 .filter_map(|workspace| Some(workspace.read(cx).ok()?.project().clone()))
+                .chain(
+                    dbg!(window.and_then(|window| dbg!(window.root::<Workspace>())))
+                        .flatten()
+                        .map(|workspace| workspace.read(cx).project().clone()),
+                )
         })
         .into_iter()
         .flatten()
@@ -3572,7 +3582,7 @@ fn update_settings_file(
     match file {
         SettingsUiFile::Project((worktree_id, rel_path)) => {
             let rel_path = rel_path.join(paths::local_settings_file_relative_path());
-            let Some((worktree, project)) = all_projects(cx).find_map(|project| {
+            let Some((worktree, project)) = all_projects(None, cx).find_map(|project| {
                 project
                     .read(cx)
                     .worktree_for_id(worktree_id, cx)
