@@ -1351,7 +1351,6 @@ impl Workspace {
 
         let window_handle = window.window_handle().downcast::<Workspace>().unwrap();
         app_state.workspace_store.update(cx, |store, _| {
-            dbg!("Insert workspace");
             store.workspaces.insert(window_handle);
         });
 

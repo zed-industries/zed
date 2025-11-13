@@ -1340,7 +1340,6 @@ impl SettingsWindow {
 
             move |_, window, cx| {
                 let project = cx.entity();
-                dbg!("new project");
                 let Some(window) = window else {
                     return;
                 };
@@ -1361,21 +1360,8 @@ impl SettingsWindow {
         })
         .detach();
 
-        cx.observe_new::<Workspace>(move |real_ws, window, cx| {
+        cx.observe_new::<Workspace>(move |_, window, cx| {
             let workspace = cx.entity();
-            dbg!(
-                "new workspace",
-                real_ws.project().read(cx).visible_worktrees(cx).count()
-            );
-
-            dbg!(
-                real_ws
-                    .app_state()
-                    .workspace_store
-                    .read(cx)
-                    .workspaces()
-                    .len()
-            );
             let Some(window) = window else {
                 return;
             };
@@ -1383,7 +1369,6 @@ impl SettingsWindow {
             this_weak
                 .update(cx, |this, cx| {
                     this.fetch_files(window, cx);
-                    dbg!(all_projects(cx).count());
                     cx.observe_release_in(&workspace, window, |this, _, window, cx| {
                         this.fetch_files(window, cx)
                     })
@@ -1464,7 +1449,6 @@ impl SettingsWindow {
     ) {
         match event {
             project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
-                dbg!("Fetching files for new worktree");
                 cx.defer_in(window, |this, window, cx| {
                     this.fetch_files(window, cx);
                 });
@@ -1906,8 +1890,6 @@ impl SettingsWindow {
 
     #[track_caller]
     fn fetch_files(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
-        dbg!(std::panic::Location::caller(), all_projects(cx).count());
-
         self.worktree_root_dirs.clear();
         let prev_files = self.files.clone();
         let settings_store = cx.global::<SettingsStore>();
