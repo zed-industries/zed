@@ -290,20 +290,12 @@ impl AgentServerStore {
                             );
                         }
 
-                        // Archive-based launcher (download from URL)
-                        self.external_agents.insert(
-                            ExternalAgentServerName(display),
-                            Box::new(LocalExtensionArchiveAgent {
-                                fs: fs.clone(),
-                                http_client: http_client.clone(),
-                                node_runtime: node_runtime.clone(),
-                                project_environment: project_environment.clone(),
-                                extension_id: Arc::from(ext_id),
-                                agent_id: agent_name.clone(),
-                                targets: agent_entry.targets.clone(),
-                                env: agent_entry.env.clone(),
-                            }) as Box<dyn ExternalAgentServer>,
-                        );
+                        extension_agents.push((
+                            agent_name.clone(),
+                            ext_id.to_owned(),
+                            agent_entry.targets.clone(),
+                            agent_entry.env.clone(),
+                        ));
                     }
                 }
             }
