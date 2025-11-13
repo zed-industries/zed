@@ -74,29 +74,9 @@ impl Rope {
         if index >= self.len() {
             self.len()
         } else {
-            #[inline]
-            pub(crate) const fn is_utf8_char_boundary(u8: u8) -> bool {
-                // This is bit magic equivalent to: b < 128 || b >= 192
-                (u8 as i8) >= -0x40
-            }
-
             let (start, _, item) = self.chunks.find::<usize, _>((), &index, Bias::Left);
             let chunk_offset = index - start;
-            let lower_idx = item.map(|chunk| {
-                let lower_bound = chunk_offset.saturating_sub(3);
-                chunk
-                    .text
-                    .as_bytes()
-                    .get(lower_bound..=chunk_offset)
-                    .map(|it| {
-                        let new_idx = it
-                            .iter()
-                            .rposition(|&b| is_utf8_char_boundary(b))
-                            .unwrap_or(0);
-                        lower_bound + new_idx
-                    })
-                    .unwrap_or(chunk.text.len())
-            });
+            let lower_idx = item.map(|chunk| chunk.text.floor_char_boundary(chunk_offset));
             lower_idx.map_or_else(|| self.len(), |idx| start + idx)
         }
     }
@@ -105,22 +85,9 @@ impl Rope {
         if index > self.len() {
             self.len()
         } else {
-            #[inline]
-            pub(crate) const fn is_utf8_char_boundary(u8: u8) -> bool {
-                // This is bit magic equivalent to: b < 128 || b >= 192
-                (u8 as i8) >= -0x40
-            }
-
             let (start, _, item) = self.chunks.find::<usize, _>((), &index, Bias::Left);
             let chunk_offset = index - start;
-            let upper_idx = item.map(|chunk| {
-                let upper_bound = Ord::min(chunk_offset + 4, chunk.text.len());
-                chunk.text.as_bytes()[chunk_offset..upper_bound]
-                    .iter()
-                    .position(|&b| is_utf8_char_boundary(b))
-                    .map_or(upper_bound, |pos| pos + chunk_offset)
-            });
-
+            let upper_idx = item.map(|chunk| chunk.text.ceil_char_boundary(chunk_offset));
             upper_idx.map_or_else(|| self.len(), |idx| start + idx)
         }
     }
@@ -2186,79 +2153,43 @@ mod tests {
 
     #[test]
     fn test_floor_char_boundary() {
-        // polyfill of str::floor_char_boundary
-        fn floor_char_boundary(str: &str, index: usize) -> usize {
-            if index >= str.len() {
-                str.len()
-            } else {
-                let lower_bound = index.saturating_sub(3);
-                let new_index = str.as_bytes()[lower_bound..=index]
-                    .iter()
-                    .rposition(|b| (*b as i8) >= -0x40);
-
-                lower_bound + new_index.unwrap()
-            }
-        }
-
         let fixture = "地";
         let rope = Rope::from("地");
         for b in 0..=fixture.len() {
-            assert_eq!(
-                rope.floor_char_boundary(b),
-                floor_char_boundary(&fixture, b)
-            );
+            assert_eq!(rope.floor_char_boundary(b), fixture.floor_char_boundary(b));
         }
 
         let fixture = "";
         let rope = Rope::from("");
         for b in 0..=fixture.len() {
-            assert_eq!(
-                rope.floor_char_boundary(b),
-                floor_char_boundary(&fixture, b)
-            );
+            assert_eq!(rope.floor_char_boundary(b), fixture.floor_char_boundary(b));
         }
 
         let fixture = "🔴🟠🟡🟢🔵🟣⚫️⚪️🟤\n🏳️‍⚧️🏁🏳️‍🌈🏴‍☠️⛳️📬📭🏴🏳️🚩";
         let rope = Rope::from("🔴🟠🟡🟢🔵🟣⚫️⚪️🟤\n🏳️‍⚧️🏁🏳️‍🌈🏴‍☠️⛳️📬📭🏴🏳️🚩");
         for b in 0..=fixture.len() {
-            assert_eq!(
-                rope.floor_char_boundary(b),
-                floor_char_boundary(&fixture, b)
-            );
+            assert_eq!(rope.floor_char_boundary(b), fixture.floor_char_boundary(b));
         }
     }
 
     #[test]
     fn test_ceil_char_boundary() {
-        // polyfill of str::ceil_char_boundary
-        fn ceil_char_boundary(str: &str, index: usize) -> usize {
-            if index > str.len() {
-                str.len()
-            } else {
-                let upper_bound = Ord::min(index + 4, str.len());
-                str.as_bytes()[index..upper_bound]
-                    .iter()
-                    .position(|b| (*b as i8) >= -0x40)
-                    .map_or(upper_bound, |pos| pos + index)
-            }
-        }
-
         let fixture = "地";
         let rope = Rope::from("地");
         for b in 0..=fixture.len() {
-            assert_eq!(rope.ceil_char_boundary(b), ceil_char_boundary(&fixture, b));
+            assert_eq!(rope.ceil_char_boundary(b), fixture.ceil_char_boundary(b));
         }
 
         let fixture = "";
         let rope = Rope::from("");
         for b in 0..=fixture.len() {
-            assert_eq!(rope.ceil_char_boundary(b), ceil_char_boundary(&fixture, b));
+            assert_eq!(rope.ceil_char_boundary(b), fixture.ceil_char_boundary(b));
         }
 
         let fixture = "🔴🟠🟡🟢🔵🟣⚫️⚪️🟤\n🏳️‍⚧️🏁🏳️‍🌈🏴‍☠️⛳️📬📭🏴🏳️🚩";
         let rope = Rope::from("🔴🟠🟡🟢🔵🟣⚫️⚪️🟤\n🏳️‍⚧️🏁🏳️‍🌈🏴‍☠️⛳️📬📭🏴🏳️🚩");
         for b in 0..=fixture.len() {
-            assert_eq!(rope.ceil_char_boundary(b), ceil_char_boundary(&fixture, b));
+            assert_eq!(rope.ceil_char_boundary(b), fixture.ceil_char_boundary(b));
         }
     }
 
