@@ -139,12 +139,9 @@ impl<'a> StreamingFuzzyMatcher<'a> {
 
         self.matrix
             .reset(self.query_lines.len() + 1, buffer_line_count + 1);
-        // todo! rename
-        let new_query_line_count = self.query_lines.len();
-        let old_query_line_count = 0;
+        let query_line_count = self.query_lines.len();
 
-        // Process only the new query lines
-        for row in old_query_line_count..new_query_line_count {
+        for row in 0..query_line_count {
             let query_line = self.query_lines[row].trim();
             let leading_deletion_cost = (row + 1) as u32 * DELETION_COST;
 
@@ -197,7 +194,7 @@ impl<'a> StreamingFuzzyMatcher<'a> {
         let mut matches_with_best_cost = Vec::new();
 
         for col in 1..=buffer_line_count {
-            let cost = self.matrix.get(new_query_line_count, col).cost;
+            let cost = self.matrix.get(query_line_count, col).cost;
             if cost < best_cost {
                 best_cost = cost;
                 matches_with_best_cost.clear();
@@ -210,7 +207,7 @@ impl<'a> StreamingFuzzyMatcher<'a> {
         // Find ranges for the matches
         for &match_end_col in &matches_with_best_cost {
             let mut matched_lines = 0;
-            let mut query_row = new_query_line_count;
+            let mut query_row = query_line_count;
             let mut match_start_col = match_end_col;
             while query_row > 0 && match_start_col > 0 {
                 let current = self.matrix.get(query_row, match_start_col as usize);
@@ -234,7 +231,7 @@ impl<'a> StreamingFuzzyMatcher<'a> {
 
             let matched_buffer_row_count = buffer_row_end - buffer_row_start;
             let matched_ratio = matched_lines as f32
-                / (matched_buffer_row_count as f32).max(new_query_line_count as f32);
+                / (matched_buffer_row_count as f32).max(query_line_count as f32);
             if matched_ratio >= 0.8 {
                 let buffer_start_ix = self
                     .snapshot
