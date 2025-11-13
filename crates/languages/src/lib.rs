@@ -22,6 +22,7 @@ mod c;
 mod css;
 mod go;
 mod json;
+mod markdown;
 mod package_json;
 mod python;
 mod rust;
@@ -105,7 +106,8 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         fs.clone(),
     ));
     let vtsls_adapter = Arc::new(vtsls::VtslsLspAdapter::new(node.clone(), fs.clone()));
-    let yaml_lsp_adapter = Arc::new(yaml::YamlLspAdapter::new(node));
+    let yaml_lsp_adapter = Arc::new(yaml::YamlLspAdapter::new(node.clone()));
+    let markdown_adapter = Arc::new(markdown::MarkdownLspAdapter::new(node));
 
     let built_in_languages = [
         LanguageInfo {
@@ -165,7 +167,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         },
         LanguageInfo {
             name: "markdown",
-            adapters: vec![],
+            adapters: vec![markdown_adapter],
             ..Default::default()
         },
         LanguageInfo {
