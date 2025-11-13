@@ -94,11 +94,15 @@ fn write_aggregated_scores(
 ) -> Result<()> {
     let mut successful = Vec::new();
     let mut failed_count = 0;
-    writeln!(w, "## Errors\n")?;
+
     for result in all_results.iter().flatten() {
         match result {
             Ok(eval_result) => successful.push(eval_result),
             Err((err, name, repetition_ix)) => {
+                if failed_count == 0 {
+                    writeln!(w, "## Errors\n")?;
+                }
+
                 failed_count += 1;
                 let err = err
                     .to_string()
@@ -114,22 +118,28 @@ fn write_aggregated_scores(
             }
         }
     }
-    let aggregated_result = EvaluationResult {
-        context: Scores::aggregate(successful.iter().map(|r| &r.context)),
-        edit_prediction: Scores::aggregate(successful.iter().map(|r| &r.edit_prediction)),
-    };
 
-    writeln!(w, "\n{}", "-".repeat(80))?;
-    writeln!(w, "\n## TOTAL SCORES")?;
-    writeln!(w, "\n### Success Rate")?;
-    writeln!(
-        w,
-        "\nCongratulations! {}/{} ({:.2}%) of runs weren't outright failures 🎉",
-        successful.len(),
-        successful.len() + failed_count,
-        (successful.len() as f64 / (successful.len() + failed_count) as f64) * 100.0
-    )?;
-    writeln!(w, "{}", aggregated_result)?;
+    if successful.len() > 1 {
+        let aggregated_result = EvaluationResult {
+            context: Scores::aggregate(successful.iter().map(|r| &r.context)),
+            edit_prediction: Scores::aggregate(successful.iter().map(|r| &r.edit_prediction)),
+        };
+
+        writeln!(w, "\n{}", "-".repeat(80))?;
+        writeln!(w, "\n## TOTAL SCORES")?;
+        writeln!(w, "\n### Success Rate")?;
+        writeln!(w, "{}", aggregated_result)?;
+    }
+
+    if successful.len() + failed_count > 1 {
+        writeln!(
+            w,
+            "\nCongratulations! {}/{} ({:.2}%) of runs weren't outright failures 🎉",
+            successful.len(),
+            successful.len() + failed_count,
+            (successful.len() as f64 / (successful.len() + failed_count) as f64) * 100.0
+        )?;
+    }
 
     Ok(())
 }
