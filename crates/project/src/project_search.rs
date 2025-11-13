@@ -1,5 +1,6 @@
 use std::{
     io::{BufRead, BufReader},
+    ops::Range,
     path::Path,
     pin::pin,
     sync::{
@@ -296,9 +297,6 @@ impl Search {
                     }
                 };
 
-                let matches_count = AtomicUsize::new(0);
-                let matched_buffer_count = AtomicUsize::new(0);
-
                 let should_find_all_matches = !tx.is_closed();
 
                 let worker_pool = executor.scoped(|scope| {
@@ -309,8 +307,6 @@ impl Search {
                         let worker = Worker {
                             query: &query,
                             open_buffers: &open_buffers,
-                            matched_buffer_count: &matched_buffer_count,
-                            matches_count: &matches_count,
                             candidates: candidate_searcher.clone(),
                             find_all_matches_rx: find_all_matches_rx.clone(),
                         };
@@ -492,9 +488,9 @@ impl Search {
         find_all_matches_tx: Sender<(
             Entity<Buffer>,
             BufferSnapshot,
-            oneshot::Sender<SearchResult>,
+            oneshot::Sender<(Entity<Buffer>, Vec<Range<language::Anchor>>)>,
         )>,
-        results: Sender<oneshot::Receiver<SearchResult>>,
+        results: Sender<oneshot::Receiver<(Entity<Buffer>, Vec<Range<language::Anchor>>)>>,
         mut cx: AsyncApp,
     ) {
         _ = maybe!(async move {
@@ -511,16 +507,28 @@ impl Search {
     }
 
     async fn ensure_matched_ranges_are_reported_in_order(
-        rx: Receiver<oneshot::Receiver<SearchResult>>,
+        rx: Receiver<oneshot::Receiver<(Entity<Buffer>, Vec<Range<language::Anchor>>)>>,
         tx: Sender<SearchResult>,
     ) {
         use postage::stream::Stream;
         _ = maybe!(async move {
+            let mut matched_buffers = 0;
+            let mut matches = 0;
             while let Ok(mut next_buffer_matches) = rx.recv().await {
-                let Some(matches) = next_buffer_matches.recv().await else {
+                let Some((buffer, ranges)) = next_buffer_matches.recv().await else {
                     continue;
                 };
-                tx.send(matches).await?;
+
+                if matched_buffers > Search::MAX_SEARCH_RESULT_FILES
+                    || matches > Search::MAX_SEARCH_RESULT_RANGES
+                {
+                    _ = tx.send(SearchResult::LimitReached).await;
+                    break;
+                }
+                matched_buffers += 1;
+                matches += ranges.len();
+
+                _ = tx.send(SearchResult::Buffer { buffer, ranges }).await?;
             }
             anyhow::Ok(())
         })
@@ -569,8 +577,6 @@ impl Search {
 
 struct Worker<'search> {
     query: &'search SearchQuery,
-    matched_buffer_count: &'search AtomicUsize,
-    matches_count: &'search AtomicUsize,
     open_buffers: &'search HashSet<ProjectEntryId>,
     candidates: FindSearchCandidates,
     /// Ok, we're back in background: run full scan & find all matches in a given buffer snapshot.
@@ -578,7 +584,7 @@ struct Worker<'search> {
     find_all_matches_rx: Receiver<(
         Entity<Buffer>,
         BufferSnapshot,
-        oneshot::Sender<SearchResult>,
+        oneshot::Sender<(Entity<Buffer>, Vec<Range<language::Anchor>>)>,
     )>,
 }
 
@@ -623,8 +629,6 @@ impl Worker<'_> {
                 query: self.query,
                 open_entries: &self.open_buffers,
                 fs: fs.as_deref(),
-                matched_buffer_count: self.matched_buffer_count,
-                matches_count: self.matches_count,
                 confirm_contents_will_match_tx: &confirm_contents_will_match_tx,
                 get_buffer_for_full_scan_tx: &get_buffer_for_full_scan_tx,
             };
@@ -637,10 +641,7 @@ impl Worker<'_> {
                     let Some(matches) = find_all_matches else {
                         continue;
                     };
-                    let result = handler.handle_find_all_matches(matches).await;
-                    if let Some(_should_bail) = result {
-                        continue;
-                    }
+                    handler.handle_find_all_matches(matches).await;
                 },
                 find_first_match = find_first_match.next() => {
                     if let Some(buffer_with_at_least_one_match) = find_first_match {
@@ -672,13 +673,9 @@ struct RequestHandler<'worker> {
     query: &'worker SearchQuery,
     fs: Option<&'worker dyn Fs>,
     open_entries: &'worker HashSet<ProjectEntryId>,
-    matched_buffer_count: &'worker AtomicUsize,
-    matches_count: &'worker AtomicUsize,
     confirm_contents_will_match_tx: &'worker Sender<MatchingEntry>,
     get_buffer_for_full_scan_tx: &'worker Sender<ProjectPath>,
 }
-
-struct LimitReached;
 
 impl RequestHandler<'_> {
     async fn handle_find_all_matches(
@@ -686,9 +683,9 @@ impl RequestHandler<'_> {
         (buffer, snapshot, mut report_matches): (
             Entity<Buffer>,
             BufferSnapshot,
-            oneshot::Sender<SearchResult>,
+            oneshot::Sender<(Entity<Buffer>, Vec<Range<language::Anchor>>)>,
         ),
-    ) -> Option<LimitReached> {
+    ) {
         let ranges = self
             .query
             .search(&snapshot, None)
@@ -697,23 +694,9 @@ impl RequestHandler<'_> {
             .map(|range| snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end))
             .collect::<Vec<_>>();
 
-        let matched_ranges = ranges.len();
-        if self.matched_buffer_count.fetch_add(1, Ordering::Release)
-            > Search::MAX_SEARCH_RESULT_FILES
-            || self
-                .matches_count
-                .fetch_add(matched_ranges, Ordering::Release)
-                > Search::MAX_SEARCH_RESULT_RANGES
-        {
-            _ = report_matches.send(SearchResult::LimitReached).await;
-            Some(LimitReached)
-        } else {
-            _ = report_matches
-                .send(SearchResult::Buffer { buffer, ranges })
-                .await;
-            None
-        }
+        _ = report_matches.send((buffer, ranges)).await;
     }
+
     async fn handle_find_first_match(&self, mut entry: MatchingEntry) {
         _=maybe!(async move {
             let abs_path = entry.worktree_root.join(entry.path.path.as_std_path());
