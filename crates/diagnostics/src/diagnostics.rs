@@ -564,6 +564,20 @@ impl ProjectDiagnosticsEditor {
                 blocks.extend(more);
             }
 
+            let cmp_excerpts = |buffer_snapshot: &BufferSnapshot,
+                                a: &ExcerptRange<text::Anchor>,
+                                b: &ExcerptRange<text::Anchor>| {
+                let context_start = || a.context.start.cmp(&b.context.start, buffer_snapshot);
+                let context_end = || a.context.end.cmp(&b.context.end, buffer_snapshot);
+                let primary_start = || a.primary.start.cmp(&b.primary.start, buffer_snapshot);
+                let primary_end = || a.primary.end.cmp(&b.primary.end, buffer_snapshot);
+                context_start()
+                    .then_with(context_end)
+                    .then_with(primary_start)
+                    .then_with(primary_end)
+                    .then(cmp::Ordering::Greater)
+            };
+
             let mut excerpt_ranges: Vec<ExcerptRange<_>> = this.update(cx, |this, cx| {
                 this.multibuffer.update(cx, |multi_buffer, cx| {
                     let is_dirty = multi_buffer
@@ -575,10 +589,12 @@ impl ProjectDiagnosticsEditor {
                             .excerpts_for_buffer(buffer_id, cx)
                             .into_iter()
                             .map(|(_, range)| range)
+                            .sorted_by(|a, b| cmp_excerpts(&buffer_snapshot, a, b))
                             .collect(),
                     }
                 })
             })?;
+
             let mut result_blocks = vec![None; excerpt_ranges.len()];
             let context_lines = cx.update(|_, cx| multibuffer_context_lines(cx))?;
             for b in blocks {
@@ -592,40 +608,14 @@ impl ProjectDiagnosticsEditor {
                 buffer_snapshot = cx.update(|_, cx| buffer.read(cx).snapshot())?;
                 let initial_range = buffer_snapshot.anchor_after(b.initial_range.start)
                     ..buffer_snapshot.anchor_before(b.initial_range.end);
-
-                let bin_search = |probe: &ExcerptRange<text::Anchor>| {
-                    let context_start = || {
-                        probe
-                            .context
-                            .start
-                            .cmp(&excerpt_range.start, &buffer_snapshot)
-                    };
-                    let context_end =
-                        || probe.context.end.cmp(&excerpt_range.end, &buffer_snapshot);
-                    let primary_start = || {
-                        probe
-                            .primary
-                            .start
-                            .cmp(&initial_range.start, &buffer_snapshot)
-                    };
-                    let primary_end =
-                        || probe.primary.end.cmp(&initial_range.end, &buffer_snapshot);
-                    context_start()
-                        .then_with(context_end)
-                        .then_with(primary_start)
-                        .then_with(primary_end)
-                        .then(cmp::Ordering::Greater)
+                let excerpt_range = ExcerptRange {
+                    context: excerpt_range,
+                    primary: initial_range,
                 };
                 let i = excerpt_ranges
-                    .binary_search_by(bin_search)
+                    .binary_search_by(|probe| cmp_excerpts(&buffer_snapshot, probe, &excerpt_range))
                     .unwrap_or_else(|i| i);
-                excerpt_ranges.insert(
-                    i,
-                    ExcerptRange {
-                        context: excerpt_range,
-                        primary: initial_range,
-                    },
-                );
+                excerpt_ranges.insert(i, excerpt_range);
                 result_blocks.insert(i, Some(b));
             }
 

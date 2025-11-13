@@ -158,19 +158,20 @@ fn syntax_args_to_options(
         }),
         max_diagnostic_bytes: zeta2_args.max_diagnostic_bytes,
         max_prompt_bytes: zeta2_args.max_prompt_bytes,
-        prompt_format: zeta2_args.prompt_format.clone().into(),
+        prompt_format: zeta2_args.prompt_format.into(),
         file_indexing_parallelism: zeta2_args.file_indexing_parallelism,
         buffer_change_grouping_interval: Duration::ZERO,
     }
 }
 
-#[derive(clap::ValueEnum, Default, Debug, Clone)]
+#[derive(clap::ValueEnum, Default, Debug, Clone, Copy)]
 enum PromptFormat {
     MarkedExcerpt,
     LabeledSections,
     OnlySnippets,
     #[default]
     NumberedLines,
+    OldTextNewText,
 }
 
 impl Into<predict_edits_v3::PromptFormat> for PromptFormat {
@@ -180,6 +181,7 @@ impl Into<predict_edits_v3::PromptFormat> for PromptFormat {
             Self::LabeledSections => predict_edits_v3::PromptFormat::LabeledSections,
             Self::OnlySnippets => predict_edits_v3::PromptFormat::OnlySnippets,
             Self::NumberedLines => predict_edits_v3::PromptFormat::NumLinesUniDiff,
+            Self::OldTextNewText => predict_edits_v3::PromptFormat::OldTextNewText,
         }
     }
 }

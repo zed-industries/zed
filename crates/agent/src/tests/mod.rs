@@ -933,7 +933,7 @@ async fn test_profiles(cx: &mut TestAppContext) {
     // Test that test-1 profile (default) has echo and delay tools
     thread
         .update(cx, |thread, cx| {
-            thread.set_profile(AgentProfileId("test-1".into()));
+            thread.set_profile(AgentProfileId("test-1".into()), cx);
             thread.send(UserMessageId::new(), ["test"], cx)
         })
         .unwrap();
@@ -953,7 +953,7 @@ async fn test_profiles(cx: &mut TestAppContext) {
     // Switch to test-2 profile, and verify that it has only the infinite tool.
     thread
         .update(cx, |thread, cx| {
-            thread.set_profile(AgentProfileId("test-2".into()));
+            thread.set_profile(AgentProfileId("test-2".into()), cx);
             thread.send(UserMessageId::new(), ["test2"], cx)
         })
         .unwrap();
@@ -1002,8 +1002,8 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
     )
     .await;
     cx.run_until_parked();
-    thread.update(cx, |thread, _| {
-        thread.set_profile(AgentProfileId("test".into()))
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
     });
 
     let mut mcp_tool_calls = setup_context_server(
@@ -1169,8 +1169,8 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
     .await;
     cx.run_until_parked();
 
-    thread.update(cx, |thread, _| {
-        thread.set_profile(AgentProfileId("test".into()));
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx);
         thread.add_tool(EchoTool);
         thread.add_tool(DelayTool);
         thread.add_tool(WordListTool);
