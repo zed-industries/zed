@@ -362,6 +362,7 @@ impl AgentServerStore {
     }
 
     pub fn init_headless(session: &AnyProtoClient) {
+        session.add_entity_message_handler(Self::handle_external_extension_agents_updated);
         session.add_entity_request_handler(Self::handle_get_agent_server_command);
     }
 
