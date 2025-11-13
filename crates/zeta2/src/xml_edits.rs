@@ -215,6 +215,7 @@ fn parse_tag<'a>(input: &mut &'a str, tag: &str) -> Result<Option<ParsedTag<'a>>
             .with_context(|| format!("no `{close_tag}` tag"))?;
     let body = &input[closing_bracket_ix + '>'.len_utf8()..end_ix];
     let body = body.strip_prefix('\n').unwrap_or(body);
+    let body = body.strip_suffix('\n').unwrap_or(body);
     *input = &input[end_ix + close_tag.len()..];
     Ok(Some(ParsedTag { attributes, body }))
 }
@@ -248,9 +249,8 @@ impl<'a> StreamingFuzzyMatcher<'a> {
     }
 
     fn match_range(&mut self, range: Range<usize>) -> Option<(u32, Range<usize>)> {
-        let buffer_line_count = ((self.snapshot.offset_to_point(range.end).row
-            - self.snapshot.offset_to_point(range.start).row)
-            + 1) as usize;
+        let point_range = range.to_point(&self.snapshot);
+        let buffer_line_count = (point_range.end.row - point_range.start.row + 1) as usize;
 
         self.matrix
             .reset(self.query_lines.len() + 1, buffer_line_count + 1);
@@ -269,16 +269,10 @@ impl<'a> StreamingFuzzyMatcher<'a> {
                 SearchState::new(leading_deletion_cost, SearchDirection::Up),
             );
 
-            dbg!(
-                self.snapshot
-                    .text_for_range(range.clone())
-                    .collect::<String>()
-            );
             let mut buffer_lines = self.snapshot.text_for_range(range.clone()).lines();
 
             let mut col = 0;
             while let Some(buffer_line) = buffer_lines.next() {
-                dbg!(buffer_line);
                 let buffer_line = buffer_line.trim();
                 let up = SearchState::new(
                     self.matrix
@@ -295,9 +289,9 @@ impl<'a> StreamingFuzzyMatcher<'a> {
                     SearchDirection::Left,
                 );
                 let diagonal = SearchState::new(
-                    if query_line == buffer_line {
+                    if dbg!(query_line == buffer_line) {
                         self.matrix.get(row, col).cost
-                    } else if fuzzy_eq(query_line, buffer_line) {
+                    } else if dbg!(fuzzy_eq(query_line, buffer_line)) {
                         self.matrix.get(row, col).cost + REPLACEMENT_COST
                     } else {
                         self.matrix
@@ -329,27 +323,29 @@ impl<'a> StreamingFuzzyMatcher<'a> {
         }
 
         // Find ranges for the matches
-        let mut valid_matches = Vec::new();
-        for &buffer_row_end in &matches_with_best_cost {
+        for &match_end_col in &matches_with_best_cost {
             let mut matched_lines = 0;
             let mut query_row = new_query_line_count;
-            let mut buffer_row_start = buffer_row_end;
-            while query_row > 0 && buffer_row_start > 0 {
-                let current = self.matrix.get(query_row, buffer_row_start as usize);
+            let mut match_start_col = match_end_col;
+            while query_row > 0 && match_start_col > 0 {
+                let current = self.matrix.get(query_row, match_start_col as usize);
                 match current.direction {
                     SearchDirection::Diagonal => {
                         query_row -= 1;
-                        buffer_row_start -= 1;
+                        match_start_col -= 1;
                         matched_lines += 1;
                     }
                     SearchDirection::Up => {
                         query_row -= 1;
                     }
                     SearchDirection::Left => {
-                        buffer_row_start -= 1;
+                        match_start_col -= 1;
                     }
                 }
             }
+
+            let buffer_row_start = match_start_col + point_range.start.row;
+            let buffer_row_end = match_end_col + point_range.start.row;
 
             let matched_buffer_row_count = buffer_row_end - buffer_row_start;
             let matched_ratio = matched_lines as f32
@@ -362,16 +358,11 @@ impl<'a> StreamingFuzzyMatcher<'a> {
                     buffer_row_end - 1,
                     self.snapshot.line_len(buffer_row_end - 1),
                 ));
-                dbg!(
-                    self.snapshot
-                        .text_for_range(buffer_start_ix..buffer_end_ix)
-                        .collect::<String>()
-                );
-                valid_matches.push((buffer_row_start, buffer_start_ix..buffer_end_ix));
+                return Some((best_cost, buffer_start_ix..buffer_end_ix));
             }
         }
 
-        valid_matches.first().cloned()
+        None
     }
 
     /// Returns the query lines.
@@ -1183,7 +1174,7 @@ mod tests {
             "# };
         let parsed = parse_tag(&mut input, "tag").unwrap().unwrap();
         assert_eq!(parsed.attributes, "attr=\"foo\"");
-        assert_eq!(parsed.body, "tag value\n");
+        assert_eq!(parsed.body, "tag value");
         assert_eq!(input, "\n");
     }
 
@@ -1195,7 +1186,9 @@ mod tests {
             one two three four
             five six seven eight
             nine ten eleven twelve
-        "# };
+            thirteen fourteen fifteen
+            sixteen seventeen eighteen
+        "#};
 
         fs.insert_tree(
             path!("/root"),
@@ -1217,16 +1210,17 @@ mod tests {
         let edits = indoc! {r#"
             <edits path="root/file1">
             <old_text>
-            five six seven eight
+            nine ten eleven twelve
             </old_text>
             <new_text>
-            five SIX seven eight!
+            nine TEN eleven twelve!
             </new_text>
             </edits>
         "#};
 
+        let included_ranges = [(buffer_snapshot.anchor_before(Point::new(1, 0))..Anchor::MAX)];
         let (buffer, edits) = parse_xml_edits(edits, |_path| {
-            Some((&buffer_snapshot, &[(Anchor::MIN..Anchor::MAX)] as &[_]))
+            Some((&buffer_snapshot, included_ranges.as_slice()))
         })
         .await
         .unwrap();
@@ -1238,8 +1232,8 @@ mod tests {
         assert_eq!(
             edits,
             &[
-                (Point::new(1, 5)..Point::new(1, 8), "SIX".into()),
-                (Point::new(1, 20)..Point::new(1, 20), "!".into())
+                (Point::new(2, 5)..Point::new(2, 8), "TEN".into()),
+                (Point::new(2, 22)..Point::new(2, 22), "!".into())
             ]
         );
     }
