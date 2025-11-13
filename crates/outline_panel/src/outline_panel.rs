@@ -5850,7 +5850,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_multiple_workrees(cx: &mut TestAppContext) {
+    async fn test_multiple_worktrees(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -5956,7 +5956,7 @@ two/
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_previous(&SelectPrevious, window, cx);
-            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
+            outline_panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -5982,7 +5982,7 @@ two/
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_next(&SelectNext, window, cx);
-            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
+            outline_panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -6005,7 +6005,7 @@ two/  <==== selected"#,
         });
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
+            outline_panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -7542,7 +7542,7 @@ outline: fn main()"
 
         cx.update(|window, cx| {
             outline_panel.update(cx, |outline_panel, cx| {
-                outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
+                outline_panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
             });
         });
 
@@ -7574,7 +7574,7 @@ outline: fn main()"
 
         cx.update(|window, cx| {
             outline_panel.update(cx, |outline_panel, cx| {
-                outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
+                outline_panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
             });
         });
 
