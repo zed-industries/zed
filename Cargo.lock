@@ -17468,7 +17468,6 @@ dependencies = [
  "notifications",
  "pretty_assertions",
  "project",
- "release_channel",
  "remote",
  "rpc",
  "schemars 1.0.4",
