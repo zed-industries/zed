@@ -7799,18 +7799,21 @@ fn file_status_label_color(file_status: Option<FileStatus>) -> Color {
 }
 
 fn header_jump_data(
-    snapshot: &EditorSnapshot,
+    editor_snapshot: &EditorSnapshot,
     block_row_start: DisplayRow,
     height: u32,
     first_excerpt: &ExcerptInfo,
     latest_selection_anchors: &HashMap<BufferId, Anchor>,
 ) -> JumpData {
     let jump_target = if let Some(anchor) = latest_selection_anchors.get(&first_excerpt.buffer_id)
-        && let Some(range) = snapshot.context_range_for_excerpt(anchor.excerpt_id)
+        && let Some(range) = editor_snapshot.context_range_for_excerpt(anchor.excerpt_id)
+        && let Some(buffer) = editor_snapshot
+            .buffer_snapshot()
+            .buffer_for_excerpt(anchor.excerpt_id)
     {
         JumpTargetInExcerptInput {
             id: anchor.excerpt_id,
-            buffer: &first_excerpt.buffer,
+            buffer,
             excerpt_start_anchor: range.start,
             jump_anchor: anchor.text_anchor,
         }
@@ -7822,7 +7825,7 @@ fn header_jump_data(
             jump_anchor: first_excerpt.range.primary.start,
         }
     };
-    header_jump_data_inner(snapshot, block_row_start, height, &jump_target)
+    header_jump_data_inner(editor_snapshot, block_row_start, height, &jump_target)
 }
 
 struct JumpTargetInExcerptInput<'a> {
