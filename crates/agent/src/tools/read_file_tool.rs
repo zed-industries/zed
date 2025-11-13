@@ -14,6 +14,10 @@ use util::markdown::MarkdownCodeBlock;
 
 use crate::{AgentTool, ToolCallEventStream, outline};
 
+/// Maximum allowed size for reading file content with line ranges.
+/// If a line range request exceeds this size, it will be rejected.
+pub const MAX_LINE_RANGE_SIZE: usize = 262144; // 256 KB
+
 /// Reads the content of the given file in the project.
 ///
 /// - Never attempt to read a path that hasn't been previously mentioned.
@@ -221,7 +225,36 @@ impl AgentTool for ReadFileTool {
                     log.buffer_read(buffer.clone(), cx);
                 })?;
 
-                Ok(result.into())
+                if result.len() > MAX_LINE_RANGE_SIZE {
+                    let start_line = input.start_line.unwrap_or(1);
+                    let end_line = input.end_line.unwrap_or(u32::MAX);
+                    let line_count = end_line.saturating_sub(start_line).saturating_add(1);
+
+                    if line_count <= 1 {
+                        // Likely minified or single-line file
+                        Ok(formatdoc! {"
+                            The requested line contains {} bytes of content, which exceeds the maximum size of {} bytes.
+
+                            This appears to be a minified or single-line file. Use head tool to get first few bytes to help you understand the file structure.",
+                            result.len(),
+                            MAX_LINE_RANGE_SIZE
+                        }
+                        .into())
+                    } else {
+                        Ok(formatdoc! {"
+                            The requested line range (lines {}-{}) contains {} bytes of content, which exceeds the maximum size of {} bytes.
+
+                            Please request a smaller line range, or use the `grep` tool to search for specific content within this section.",
+                            start_line,
+                            end_line,
+                            result.len(),
+                            MAX_LINE_RANGE_SIZE
+                        }
+                        .into())
+                    }
+                } else {
+                    Ok(result.into())
+                }
             } else {
                 // No line ranges specified, so check file size to see if it's too big.
                 let buffer_content = outline::get_buffer_content_or_outline(
