@@ -1994,8 +1994,8 @@ impl Vim {
     fn sync_vim_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.update_editor(cx, |vim, editor, cx| {
             editor.set_cursor_shape(vim.cursor_shape(cx), cx);
-            editor.set_clip_at_line_ends(vim.clip_at_line_ends(), cx);
-            editor.set_input_enabled(vim.editor_input_enabled());
+            editor.set_clip_at_line_ends(vim.clip_at_line_ends(cx), cx);
+            editor.set_input_enabled(vim.editor_input_enabled(cx));
             editor.set_autoindent(vim.should_autoindent());
             editor
                 .selections
