@@ -341,8 +341,18 @@ mod tests {
             }
         "});
         cx.editor(|editor, _window, _app| assert!(editor.mouse_context_menu.is_none()));
+
         cx.update_editor(|editor, window, cx| {
-            deploy_context_menu(editor, Some(Default::default()), point, window, cx)
+            deploy_context_menu(editor, Some(Default::default()), point, window, cx);
+
+            // Assert that, even after deploying the editor's mouse context
+            // menu, the editor's focus handle still contains the focused
+            // element. The pane's tab bar relies on this to determine whether
+            // to show the tab bar buttons and there was a small flicker when
+            // deploying the mouse context menu that would cause this to not be
+            // true, making it so that the buttons would disappear for a couple
+            // of frames.
+            assert!(editor.focus_handle.contains_focused(window, cx));
         });
 
         cx.assert_editor_state(indoc! {"
