@@ -23,8 +23,8 @@ use project::{
 use settings::{Settings as _, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
-    CommonAnimationExt, KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip,
-    WithScrollbar, prelude::*,
+    CommonAnimationExt, KeyBinding, Modal, ModalFooter, ModalHeader, ScrollAxes, Scrollbars,
+    Section, Tooltip, WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{ModalView, Workspace};
@@ -691,7 +691,7 @@ impl Render for ConfigureContextServerModal {
 
         div()
             .elevation_3(cx)
-            .w(rems(34.))
+            .max_w(rems(34.))
             .key_context("ConfigureContextServerModal")
             .on_action(
                 cx.listener(|this, _: &menu::Cancel, _window, cx| this.cancel(&menu::Cancel, cx)),
@@ -712,8 +712,6 @@ impl Render for ConfigureContextServerModal {
                             div()
                                 .id("modal-content")
                                 .max_h(rems(40.))
-                                .overflow_y_scroll()
-                                .track_scroll(&scroll_handle)
                                 .child(self.render_modal_description(window, cx))
                                 .child(self.render_modal_content(cx))
                                 .child(match &self.state {
@@ -721,7 +719,16 @@ impl Render for ConfigureContextServerModal {
                                     State::Waiting => Self::render_waiting_for_context_server(),
                                     State::Error(error) => Self::render_modal_error(error.clone()),
                                 })
-                                .vertical_scrollbar_for(scroll_handle, window, cx),
+                                .custom_scrollbars(
+                                    Scrollbars::new(ScrollAxes::Vertical)
+                                        .tracked_scroll_handle(scroll_handle)
+                                        .with_track_along(
+                                            ScrollAxes::Vertical,
+                                            cx.theme().colors().panel_background,
+                                        ),
+                                    window,
+                                    cx,
+                                ),
                         ),
                     )
                     .footer(self.render_modal_footer(cx)),
