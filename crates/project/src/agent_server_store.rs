@@ -266,7 +266,7 @@ impl AgentServerStore {
         });
 
         // Insert agent servers from extension manifests
-        match &self.state {
+        match &mut self.state {
             AgentServerStoreState::Local {
                 node_runtime,
                 project_environment,
