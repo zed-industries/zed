@@ -193,6 +193,10 @@ pub struct TargetConfig {
     /// If not provided and the URL is a GitHub release, we'll attempt to fetch it from GitHub.
     #[serde(default)]
     pub sha256: Option<String>,
+    /// Environment variables to set when launching the agent server.
+    /// These target-specific env vars will override any env vars set at the agent level.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
 }
 
 impl TargetConfig {
@@ -202,6 +206,7 @@ impl TargetConfig {
             cmd: proto.cmd,
             args: proto.args,
             sha256: proto.sha256,
+            env: proto.env.into_iter().collect(),
         }
     }
 
@@ -211,7 +216,11 @@ impl TargetConfig {
             cmd: self.cmd.clone(),
             args: self.args.clone(),
             sha256: self.sha256.clone(),
-            env: Default::default(),
+            env: self
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
         }
     }
 }
