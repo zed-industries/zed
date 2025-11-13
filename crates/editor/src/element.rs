@@ -7806,12 +7806,12 @@ fn header_jump_data(
     latest_selection_anchors: &HashMap<BufferId, Anchor>,
 ) -> JumpData {
     let jump_target = if let Some(anchor) = latest_selection_anchors.get(&first_excerpt.buffer_id)
-        && let Some(excerpt) = snapshot.excerpt_before(anchor.excerpt_id)
+        && let Some(range) = snapshot.context_range_for_excerpt(anchor.excerpt_id)
     {
         JumpTargetInExcerptInput {
             id: anchor.excerpt_id,
             buffer: &first_excerpt.buffer,
-            excerpt_start_anchor: excerpt.start_anchor().text_anchor,
+            excerpt_start_anchor: range.start,
             jump_anchor: anchor.text_anchor,
         }
     } else {
