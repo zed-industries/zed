@@ -54,7 +54,7 @@ use settings::{Settings, SettingsStore, StatusStyle};
 use std::future::Future;
 use std::ops::Range;
 use std::path::Path;
-use std::{collections::HashSet, sync::Arc, time::Duration, usize};
+use std::{collections::HashSet, sync::Arc, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
@@ -175,8 +175,6 @@ fn git_panel_context_menu(
 }
 
 const GIT_PANEL_KEY: &str = "GitPanel";
-
-const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
 pub fn register(workspace: &mut Workspace) {
     workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
@@ -2582,7 +2580,6 @@ impl GitPanel {
         let handle = cx.entity().downgrade();
         self.reopen_commit_buffer(window, cx);
         self.update_visible_entries_task = cx.spawn_in(window, async move |_, cx| {
-            cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             if let Some(git_panel) = handle.upgrade() {
                 git_panel
                     .update_in(cx, |git_panel, window, cx| {
@@ -5074,11 +5071,10 @@ mod tests {
 
         let panel = workspace.update(cx, GitPanel::new).unwrap();
 
-        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+        cx.update_window_entity(&panel, |panel, _, _| {
             std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
-        });
-        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
-        handle.await;
+        })
+        .await;
 
         let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
         pretty_assertions::assert_eq!(
@@ -5100,11 +5096,10 @@ mod tests {
             ],
         );
 
-        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+        cx.update_window_entity(&panel, |panel, _, _| {
             std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
-        });
-        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
-        handle.await;
+        })
+        .await;
         let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
         pretty_assertions::assert_eq!(
             entries,
@@ -5195,11 +5190,10 @@ mod tests {
 
         let panel = workspace.update(cx, GitPanel::new).unwrap();
 
-        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+        cx.update_window_entity(&panel, |panel, _, _| {
             std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
-        });
-        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
-        handle.await;
+        })
+        .await;
 
         let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
         #[rustfmt::skip]
@@ -5244,11 +5238,10 @@ mod tests {
 
         cx.executor().run_until_parked();
 
-        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+        cx.update_window_entity(&panel, |panel, _, _| {
             std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
-        });
-        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
-        handle.await;
+        })
+        .await;
 
         let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
         #[rustfmt::skip]
@@ -5293,11 +5286,10 @@ mod tests {
 
         cx.executor().run_until_parked();
 
-        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+        cx.update_window_entity(&panel, |panel, _, _| {
             std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
-        });
-        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
-        handle.await;
+        })
+        .await;
 
         let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
         #[rustfmt::skip]
@@ -5387,11 +5379,10 @@ mod tests {
 
         let panel = workspace.update(cx, GitPanel::new).unwrap();
 
-        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+        cx.update_window_entity(&panel, |panel, _, _| {
             std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
-        });
-        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
-        handle.await;
+        })
+        .await;
 
         let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
         #[rustfmt::skip]
@@ -5460,11 +5451,10 @@ mod tests {
 
         cx.executor().run_until_parked();
 
-        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+        cx.update_window_entity(&panel, |panel, _, _| {
             std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
-        });
-        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
-        handle.await;
+        })
+        .await;
 
         let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
         #[rustfmt::skip]
@@ -5519,11 +5509,10 @@ mod tests {
 
         cx.executor().run_until_parked();
 
-        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+        cx.update_window_entity(&panel, |panel, _, _| {
             std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
-        });
-        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
-        handle.await;
+        })
+        .await;
 
         let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
         #[rustfmt::skip]
@@ -5648,6 +5637,21 @@ mod tests {
             cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let panel = workspace.update(cx, GitPanel::new).unwrap();
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
 
         // Enable the `sort_by_path` setting and wait for entries to be updated,
         // as there should no longer be separators between Tracked and Untracked
