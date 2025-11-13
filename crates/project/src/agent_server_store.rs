@@ -17,7 +17,10 @@ use gpui::{
 use http_client::{HttpClient, github::AssetKind};
 use node_runtime::NodeRuntime;
 use remote::RemoteClient;
-use rpc::{AnyProtoClient, TypedEnvelope, proto};
+use rpc::{
+    AnyProtoClient, TypedEnvelope,
+    proto::{self, ExternalExtensionAgent},
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, SettingsStore};
@@ -114,6 +117,12 @@ enum AgentServerStoreState {
         downstream_client: Option<(u64, AnyProtoClient)>,
         settings: Option<AllAgentServersSettings>,
         http_client: Arc<dyn HttpClient>,
+        extension_agents: Vec<(
+            Arc<str>,
+            String,
+            HashMap<String, extension::TargetConfig>,
+            HashMap<String, String>,
+        )>,
         _subscriptions: [Subscription; 1],
     },
     Remote {
