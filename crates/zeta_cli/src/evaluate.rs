@@ -79,17 +79,17 @@ pub async fn run_evaluate(
     });
     let all_results = futures::future::join_all(all_tasks).await;
 
-    write_aggregated_scores(&mut std::io::stdout(), &all_results).unwrap();
-    if let Some(mut output_file) =
+    write_aggregated_scores(&mut StdOutOrFile::stdout(), &all_results).unwrap();
+    if let Some(output_file) =
         std::fs::File::create(crate::paths::RUN_DIR.join("aggregated_results.md")).log_err()
     {
-        write_aggregated_scores(&mut output_file, &all_results).log_err();
+        write_aggregated_scores(&mut StdOutOrFile::file(output_file), &all_results).log_err();
     };
     print_run_data_dir(args.repetitions == 1);
 }
 
 fn write_aggregated_scores(
-    w: &mut impl std::io::Write,
+    w: &mut StdOutOrFile,
     all_results: &Vec<Vec<Result<EvaluationResult, (anyhow::Error, String, Option<u16>)>>>,
 ) -> Result<()> {
     let mut successful = Vec::new();
@@ -162,18 +162,18 @@ pub async fn run_evaluate_one(
             &example,
             &predict_result,
             &evaluation_result,
-            &mut std::io::stdout(),
+            &mut StdOutOrFile::stdout(),
         )?;
     }
 
-    if let Some(mut results_file) =
+    if let Some(results_file) =
         std::fs::File::create(predict_result.run_example_dir.join("results.md")).log_err()
     {
         write_eval_result(
             &example,
             &predict_result,
             &evaluation_result,
-            &mut results_file,
+            &mut StdOutOrFile::file(results_file),
         )
         .log_err();
     }
@@ -185,7 +185,7 @@ fn write_eval_result(
     example: &NamedExample,
     predictions: &PredictionDetails,
     evaluation_result: &EvaluationResult,
-    out: &mut impl Write,
+    out: &mut StdOutOrFile,
 ) -> Result<()> {
     writeln!(
         out,
@@ -379,11 +379,10 @@ pub fn evaluate(example: &Example, preds: &PredictionDetails) -> EvaluationResul
 /// Additions and deletions that are not present in `patch_b` will be highlighted in red.
 /// Additions and deletions that are present in `patch_b` will be highlighted in green.
 pub fn compare_diffs(patch_a: &str, patch_b: &str) -> String {
-    let use_color = std::io::stdout().is_terminal();
-    let green = if use_color { "\x1b[32m✓ " } else { "" };
-    let red = if use_color { "\x1b[31m✗ " } else { "" };
-    let neutral = if use_color { "  " } else { "" };
-    let reset = if use_color { "\x1b[0m" } else { "" };
+    let green = "\x1b[32m✓ ";
+    let red = "\x1b[31m✗ ";
+    let neutral = "  ";
+    let reset = "\x1b[0m";
     let lines_a = patch_a.lines().map(DiffLine::parse);
     let lines_b: Vec<_> = patch_b.lines().map(DiffLine::parse).collect();
 
@@ -401,4 +400,70 @@ pub fn compare_diffs(patch_a: &str, patch_b: &str) -> String {
         .collect::<Vec<String>>();
 
     annotated.join("\n")
+}
+
+pub enum StdOutOrFile {
+    StdOut(std::io::Stdout),
+    File(std::fs::File),
+}
+
+impl StdOutOrFile {
+    pub fn stdout() -> Self {
+        StdOutOrFile::StdOut(std::io::stdout())
+    }
+
+    pub fn file(file: std::fs::File) -> Self {
+        StdOutOrFile::File(file)
+    }
+
+    fn strip_ansi_sequences(bytes: &[u8]) -> Vec<u8> {
+        let mut result = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+
+        while i < bytes.len() {
+            if bytes[i] == b'\x1b' && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+                i += 2;
+                while i < bytes.len() {
+                    if bytes[i].is_ascii_alphabetic() {
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+            } else {
+                result.push(bytes[i]);
+                i += 1;
+            }
+        }
+
+        result
+    }
+
+    fn write_stripped(w: &mut impl Write, buf: &[u8]) -> std::io::Result<usize> {
+        let buf = Self::strip_ansi_sequences(buf);
+        w.write_all(&buf)?;
+        Ok(buf.len())
+    }
+}
+
+impl Write for StdOutOrFile {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            StdOutOrFile::StdOut(stdout) => {
+                if stdout.is_terminal() {
+                    stdout.write(buf)
+                } else {
+                    Self::write_stripped(stdout, buf)
+                }
+            }
+            StdOutOrFile::File(file) => Self::write_stripped(file, buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            StdOutOrFile::StdOut(stdout) => stdout.flush(),
+            StdOutOrFile::File(file) => file.flush(),
+        }
+    }
 }
