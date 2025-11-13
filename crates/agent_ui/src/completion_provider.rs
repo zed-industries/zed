@@ -1,24 +1,29 @@
+use std::cell::RefCell;
+use std::cmp::Reverse;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use agent::{HistoryEntry, HistoryStore};
-use anyhow::Result;
+use anyhow::{Context as _, Result, anyhow, bail};
 use editor::{CompletionProvider, Editor, ExcerptId, ToOffset as _};
 use file_icons::FileIcons;
-use fuzzy::{StringMatch, StringMatchCandidate};
+use futures::AsyncReadExt as _;
+use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
-use http_client::HttpClientWithUrl;
+use http_client::{AsyncBody, HttpClientWithUrl};
 use itertools::Itertools;
 use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
 use lsp::CompletionContext;
+use ordered_float::OrderedFloat;
 use project::lsp_store::SymbolLocation;
 use project::{
-    Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, Project,
-    ProjectPath, Symbol, WorktreeId,
+    Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, DocumentSymbol,
+    PathMatchCandidateSet, Project, ProjectPath, Symbol, WorktreeId,
 };
-use prompt_store::PromptStore;
+use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use text::{Anchor, OffsetRangeExt, ToPoint};
 use ui::prelude::*;
@@ -32,15 +37,10 @@ use crate::{
     context_store::ContextStore,
 };
 
-use super::fetch_context_picker::fetch_url_content;
-use super::file_context_picker::{FileMatch, search_files};
-use super::rules_context_picker::{RulesContextEntry, search_rules};
-use super::symbol_context_picker::SymbolMatch;
-use super::symbol_context_picker::search_symbols;
-use super::thread_context_picker::search_threads;
-use super::{
+use crate::context_picker::{
     ContextPickerAction, ContextPickerEntry, ContextPickerMode, MentionLink, RecentEntry,
-    available_context_picker_entries, recent_context_picker_entries_with_store, selection_ranges,
+    RulesContextEntry, available_context_picker_entries, crease_for_mention,
+    recent_context_picker_entries_with_store, selection_ranges,
 };
 use crate::inline_prompt_editor::ContextCreasesAddon;
 
@@ -52,6 +52,11 @@ pub(crate) enum Match {
     Fetch(SharedString),
     Rules(RulesContextEntry),
     Entry(EntryMatch),
+}
+
+pub struct FileMatch {
+    pub mat: PathMatch,
+    pub is_recent: bool,
 }
 
 pub struct EntryMatch {
@@ -150,7 +155,7 @@ fn search(
                 let mut matches = recent_entries
                     .into_iter()
                     .map(|entry| match entry {
-                        super::RecentEntry::File {
+                        RecentEntry::File {
                             project_path,
                             path_prefix,
                         } => Match::File(FileMatch {
@@ -165,7 +170,7 @@ fn search(
                             },
                             is_recent: true,
                         }),
-                        super::RecentEntry::Thread(entry) => Match::RecentThread(entry),
+                        RecentEntry::Thread(entry) => Match::RecentThread(entry),
                     })
                     .collect::<Vec<_>>();
 
@@ -233,7 +238,7 @@ fn search(
     }
 }
 
-pub struct ContextPickerCompletionProvider {
+pub struct ContextCompletionProvider {
     workspace: WeakEntity<Workspace>,
     context_store: WeakEntity<ContextStore>,
     thread_store: Option<WeakEntity<HistoryStore>>,
@@ -242,7 +247,7 @@ pub struct ContextPickerCompletionProvider {
     excluded_buffer: Option<WeakEntity<Buffer>>,
 }
 
-impl ContextPickerCompletionProvider {
+impl ContextCompletionProvider {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         context_store: WeakEntity<ContextStore>,
@@ -351,7 +356,7 @@ impl ContextPickerCompletionProvider {
                                         let range = snapshot.anchor_after(offset)
                                             ..snapshot.anchor_after(offset + text_len);
 
-                                        let crease = super::crease_for_mention(
+                                        let crease = crease_for_mention(
                                             format!(
                                                 "{} ({}-{})",
                                                 file_name,
@@ -586,11 +591,8 @@ impl ContextPickerCompletionProvider {
         context_store: Entity<ContextStore>,
         cx: &App,
     ) -> Completion {
-        let (file_name, directory) = super::file_context_picker::extract_file_name_and_directory(
-            &project_path.path,
-            path_prefix,
-            path_style,
-        );
+        let (file_name, directory) =
+            extract_file_name_and_directory(&project_path.path, path_prefix, path_style);
 
         let label =
             build_code_label_for_full_path(&file_name, directory.as_ref().map(|s| s.as_ref()), cx);
@@ -674,11 +676,8 @@ impl ContextPickerCompletionProvider {
             .worktree_for_id(symbol_path.worktree_id, cx)?;
         let path_prefix = RelPath::empty();
 
-        let (file_name, directory) = super::file_context_picker::extract_file_name_and_directory(
-            &symbol_path.path,
-            path_prefix,
-            path_style,
-        );
+        let (file_name, directory) =
+            extract_file_name_and_directory(&symbol_path.path, path_prefix, path_style);
         let full_path = if let Some(directory) = directory {
             format!("{}{}", directory, file_name)
         } else {
@@ -716,13 +715,8 @@ impl ContextPickerCompletionProvider {
                     let symbol = symbol.clone();
                     let context_store = context_store.clone();
                     let workspace = workspace.clone();
-                    let result = super::symbol_context_picker::add_symbol(
-                        symbol,
-                        false,
-                        workspace,
-                        context_store.downgrade(),
-                        cx,
-                    );
+                    let result =
+                        add_symbol(symbol, false, workspace, context_store.downgrade(), cx);
                     cx.spawn(async move |_| result.await.log_err()?.0)
                 },
             )),
@@ -744,7 +738,7 @@ fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: 
     label.build()
 }
 
-impl CompletionProvider for ContextPickerCompletionProvider {
+impl CompletionProvider for ContextCompletionProvider {
     fn completions(
         &self,
         excerpt_id: ExcerptId,
@@ -1079,6 +1073,444 @@ impl MentionCompletion {
     }
 }
 
+pub(crate) fn search_files(
+    query: String,
+    cancellation_flag: Arc<AtomicBool>,
+    workspace: &Entity<Workspace>,
+    cx: &App,
+) -> Task<Vec<FileMatch>> {
+    if query.is_empty() {
+        let workspace = workspace.read(cx);
+        let project = workspace.project().read(cx);
+        let visible_worktrees = workspace.visible_worktrees(cx).collect::<Vec<_>>();
+        let include_root_name = visible_worktrees.len() > 1;
+
+        let recent_matches = workspace
+            .recent_navigation_history(Some(10), cx)
+            .into_iter()
+            .map(|(project_path, _)| {
+                let path_prefix = if include_root_name {
+                    project
+                        .worktree_for_id(project_path.worktree_id, cx)
+                        .map(|wt| wt.read(cx).root_name().into())
+                        .unwrap_or_else(|| RelPath::empty().into())
+                } else {
+                    RelPath::empty().into()
+                };
+
+                FileMatch {
+                    mat: PathMatch {
+                        score: 0.,
+                        positions: Vec::new(),
+                        worktree_id: project_path.worktree_id.to_usize(),
+                        path: project_path.path,
+                        path_prefix,
+                        distance_to_relative_ancestor: 0,
+                        is_dir: false,
+                    },
+                    is_recent: true,
+                }
+            });
+
+        let file_matches = visible_worktrees.into_iter().flat_map(|worktree| {
+            let worktree = worktree.read(cx);
+            let path_prefix: Arc<RelPath> = if include_root_name {
+                worktree.root_name().into()
+            } else {
+                RelPath::empty().into()
+            };
+            worktree.entries(false, 0).map(move |entry| FileMatch {
+                mat: PathMatch {
+                    score: 0.,
+                    positions: Vec::new(),
+                    worktree_id: worktree.id().to_usize(),
+                    path: entry.path.clone(),
+                    path_prefix: path_prefix.clone(),
+                    distance_to_relative_ancestor: 0,
+                    is_dir: entry.is_dir(),
+                },
+                is_recent: false,
+            })
+        });
+
+        Task::ready(recent_matches.chain(file_matches).collect())
+    } else {
+        let worktrees = workspace.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
+        let include_root_name = worktrees.len() > 1;
+        let candidate_sets = worktrees
+            .into_iter()
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+
+                PathMatchCandidateSet {
+                    snapshot: worktree.snapshot(),
+                    include_ignored: worktree.root_entry().is_some_and(|entry| entry.is_ignored),
+                    include_root_name,
+                    candidates: project::Candidates::Entries,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let executor = cx.background_executor().clone();
+        cx.foreground_executor().spawn(async move {
+            fuzzy::match_path_sets(
+                candidate_sets.as_slice(),
+                query.as_str(),
+                &None,
+                false,
+                100,
+                &cancellation_flag,
+                executor,
+            )
+            .await
+            .into_iter()
+            .map(|mat| FileMatch {
+                mat,
+                is_recent: false,
+            })
+            .collect::<Vec<_>>()
+        })
+    }
+}
+
+pub fn extract_file_name_and_directory(
+    path: &RelPath,
+    path_prefix: &RelPath,
+    path_style: PathStyle,
+) -> (SharedString, Option<SharedString>) {
+    // If path is empty, this means we're matching with the root directory itself
+    // so we use the path_prefix as the name
+    if path.is_empty() && !path_prefix.is_empty() {
+        return (path_prefix.display(path_style).to_string().into(), None);
+    }
+
+    let full_path = path_prefix.join(path);
+    let file_name = full_path.file_name().unwrap_or_default();
+    let display_path = full_path.display(path_style);
+    let (directory, file_name) = display_path.split_at(display_path.len() - file_name.len());
+    (
+        file_name.to_string().into(),
+        Some(SharedString::new(directory)).filter(|dir| !dir.is_empty()),
+    )
+}
+
+pub(crate) fn add_symbol(
+    symbol: Symbol,
+    remove_if_exists: bool,
+    workspace: Entity<Workspace>,
+    context_store: WeakEntity<ContextStore>,
+    cx: &mut App,
+) -> Task<Result<(Option<AgentContextHandle>, bool)>> {
+    let project = workspace.read(cx).project().clone();
+    let open_buffer_task = project.update(cx, |project, cx| {
+        let SymbolLocation::InProject(symbol_path) = &symbol.path else {
+            return Task::ready(Err(anyhow!("can't add symbol from outside of project")));
+        };
+        project.open_buffer(symbol_path.clone(), cx)
+    });
+    cx.spawn(async move |cx| {
+        let buffer = open_buffer_task.await?;
+        let document_symbols = project
+            .update(cx, |project, cx| project.document_symbols(&buffer, cx))?
+            .await?;
+
+        // Try to find a matching document symbol. Document symbols include
+        // not only the symbol itself (e.g. function name), but they also
+        // include the context that they contain (e.g. function body).
+        let (name, range, enclosing_range) = if let Some(DocumentSymbol {
+            name,
+            range,
+            selection_range,
+            ..
+        }) =
+            find_matching_symbol(&symbol, document_symbols.as_slice())
+        {
+            (name, selection_range, range)
+        } else {
+            // If we do not find a matching document symbol, fall back to
+            // just the symbol itself
+            (symbol.name, symbol.range.clone(), symbol.range)
+        };
+
+        let (range, enclosing_range) = buffer.read_with(cx, |buffer, _| {
+            (
+                buffer.anchor_after(range.start)..buffer.anchor_before(range.end),
+                buffer.anchor_after(enclosing_range.start)
+                    ..buffer.anchor_before(enclosing_range.end),
+            )
+        })?;
+
+        context_store.update(cx, move |context_store, cx| {
+            context_store.add_symbol(
+                buffer,
+                name.into(),
+                range,
+                enclosing_range,
+                remove_if_exists,
+                cx,
+            )
+        })
+    })
+}
+
+fn find_matching_symbol(symbol: &Symbol, candidates: &[DocumentSymbol]) -> Option<DocumentSymbol> {
+    let mut candidates = candidates.iter();
+    let mut candidate = candidates.next()?;
+
+    loop {
+        if candidate.range.start > symbol.range.end {
+            return None;
+        }
+        if candidate.range.end < symbol.range.start {
+            candidate = candidates.next()?;
+            continue;
+        }
+        if candidate.selection_range == symbol.range {
+            return Some(candidate.clone());
+        }
+        if candidate.range.start <= symbol.range.start && symbol.range.end <= candidate.range.end {
+            candidates = candidate.children.iter();
+            candidate = candidates.next()?;
+            continue;
+        }
+        return None;
+    }
+}
+
+pub struct SymbolMatch {
+    pub symbol: Symbol,
+}
+
+pub(crate) fn search_symbols(
+    query: String,
+    cancellation_flag: Arc<AtomicBool>,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) -> Task<Vec<SymbolMatch>> {
+    let symbols_task = workspace.update(cx, |workspace, cx| {
+        workspace
+            .project()
+            .update(cx, |project, cx| project.symbols(&query, cx))
+    });
+    let project = workspace.read(cx).project().clone();
+    cx.spawn(async move |cx| {
+        let Some(symbols) = symbols_task.await.log_err() else {
+            return Vec::new();
+        };
+        let Some((visible_match_candidates, external_match_candidates)): Option<(Vec<_>, Vec<_>)> =
+            project
+                .update(cx, |project, cx| {
+                    symbols
+                        .iter()
+                        .enumerate()
+                        .map(|(id, symbol)| {
+                            StringMatchCandidate::new(id, symbol.label.filter_text())
+                        })
+                        .partition(|candidate| match &symbols[candidate.id].path {
+                            SymbolLocation::InProject(project_path) => project
+                                .entry_for_path(project_path, cx)
+                                .is_some_and(|e| !e.is_ignored),
+                            SymbolLocation::OutsideProject { .. } => false,
+                        })
+                })
+                .log_err()
+        else {
+            return Vec::new();
+        };
+
+        const MAX_MATCHES: usize = 100;
+        let mut visible_matches = cx.background_executor().block(fuzzy::match_strings(
+            &visible_match_candidates,
+            &query,
+            false,
+            true,
+            MAX_MATCHES,
+            &cancellation_flag,
+            cx.background_executor().clone(),
+        ));
+        let mut external_matches = cx.background_executor().block(fuzzy::match_strings(
+            &external_match_candidates,
+            &query,
+            false,
+            true,
+            MAX_MATCHES - visible_matches.len().min(MAX_MATCHES),
+            &cancellation_flag,
+            cx.background_executor().clone(),
+        ));
+        let sort_key_for_match = |mat: &StringMatch| {
+            let symbol = &symbols[mat.candidate_id];
+            (Reverse(OrderedFloat(mat.score)), symbol.label.filter_text())
+        };
+
+        visible_matches.sort_unstable_by_key(sort_key_for_match);
+        external_matches.sort_unstable_by_key(sort_key_for_match);
+        let mut matches = visible_matches;
+        matches.append(&mut external_matches);
+
+        matches
+            .into_iter()
+            .map(|mut mat| {
+                let symbol = symbols[mat.candidate_id].clone();
+                let filter_start = symbol.label.filter_range.start;
+                for position in &mut mat.positions {
+                    *position += filter_start;
+                }
+                SymbolMatch { symbol }
+            })
+            .collect()
+    })
+}
+
+pub(crate) fn search_threads(
+    query: String,
+    cancellation_flag: Arc<AtomicBool>,
+    thread_store: &Entity<HistoryStore>,
+    cx: &mut App,
+) -> Task<Vec<HistoryEntry>> {
+    let threads = thread_store.read(cx).entries().collect();
+    if query.is_empty() {
+        return Task::ready(threads);
+    }
+
+    let executor = cx.background_executor().clone();
+    cx.background_spawn(async move {
+        let candidates = threads
+            .iter()
+            .enumerate()
+            .map(|(id, thread)| StringMatchCandidate::new(id, thread.title()))
+            .collect::<Vec<_>>();
+        let matches = fuzzy::match_strings(
+            &candidates,
+            &query,
+            false,
+            true,
+            100,
+            &cancellation_flag,
+            executor,
+        )
+        .await;
+
+        matches
+            .into_iter()
+            .map(|mat| threads[mat.candidate_id].clone())
+            .collect()
+    })
+}
+
+pub(crate) fn search_rules(
+    query: String,
+    cancellation_flag: Arc<AtomicBool>,
+    prompt_store: &Entity<PromptStore>,
+    cx: &mut App,
+) -> Task<Vec<RulesContextEntry>> {
+    let search_task = prompt_store.read(cx).search(query, cancellation_flag, cx);
+    cx.background_spawn(async move {
+        search_task
+            .await
+            .into_iter()
+            .flat_map(|metadata| {
+                // Default prompts are filtered out as they are automatically included.
+                if metadata.default {
+                    None
+                } else {
+                    match metadata.id {
+                        PromptId::EditWorkflow => None,
+                        PromptId::User { uuid } => Some(RulesContextEntry {
+                            prompt_id: uuid,
+                            title: metadata.title?,
+                        }),
+                    }
+                }
+            })
+            .collect::<Vec<_>>()
+    })
+}
+
+pub(crate) async fn fetch_url_content(
+    http_client: Arc<HttpClientWithUrl>,
+    url: String,
+) -> Result<String> {
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+    enum ContentType {
+        Html,
+        Plaintext,
+        Json,
+    }
+
+    use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
+
+    let url = if !url.starts_with("https://") && !url.starts_with("http://") {
+        format!("https://{url}")
+    } else {
+        url
+    };
+
+    let mut response = http_client.get(&url, AsyncBody::default(), true).await?;
+
+    let mut body = Vec::new();
+    response
+        .body_mut()
+        .read_to_end(&mut body)
+        .await
+        .context("error reading response body")?;
+
+    if response.status().is_client_error() {
+        let text = String::from_utf8_lossy(body.as_slice());
+        bail!(
+            "status error {}, response: {text:?}",
+            response.status().as_u16()
+        );
+    }
+
+    let Some(content_type) = response.headers().get("content-type") else {
+        bail!("missing Content-Type header");
+    };
+    let content_type = content_type
+        .to_str()
+        .context("invalid Content-Type header")?;
+    let content_type = match content_type {
+        "text/html" => ContentType::Html,
+        "text/plain" => ContentType::Plaintext,
+        "application/json" => ContentType::Json,
+        _ => ContentType::Html,
+    };
+
+    match content_type {
+        ContentType::Html => {
+            let mut handlers: Vec<TagHandler> = vec![
+                Rc::new(RefCell::new(markdown::WebpageChromeRemover)),
+                Rc::new(RefCell::new(markdown::ParagraphHandler)),
+                Rc::new(RefCell::new(markdown::HeadingHandler)),
+                Rc::new(RefCell::new(markdown::ListHandler)),
+                Rc::new(RefCell::new(markdown::TableHandler::new())),
+                Rc::new(RefCell::new(markdown::StyledTextHandler)),
+            ];
+            if url.contains("wikipedia.org") {
+                use html_to_markdown::structure::wikipedia;
+
+                handlers.push(Rc::new(RefCell::new(wikipedia::WikipediaChromeRemover)));
+                handlers.push(Rc::new(RefCell::new(wikipedia::WikipediaInfoboxHandler)));
+                handlers.push(Rc::new(
+                    RefCell::new(wikipedia::WikipediaCodeHandler::new()),
+                ));
+            } else {
+                handlers.push(Rc::new(RefCell::new(markdown::CodeHandler)));
+            }
+
+            convert_html_to_markdown(&body[..], &mut handlers)
+        }
+        ContentType::Plaintext => Ok(std::str::from_utf8(&body)?.to_owned()),
+        ContentType::Json => {
+            let json: serde_json::Value = serde_json::from_slice(&body)?;
+
+            Ok(format!(
+                "```json\n{}\n```",
+                serde_json::to_string_pretty(&json)?
+            ))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1307,7 +1739,7 @@ mod tests {
                     .map(Entity::downgrade)
             });
             window.focus(&editor.focus_handle(cx));
-            editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
+            editor.set_completion_provider(Some(Rc::new(ContextCompletionProvider::new(
                 workspace.downgrade(),
                 context_store.downgrade(),
                 None,
@@ -1603,7 +2035,7 @@ mod tests {
         let editor_entity = editor.downgrade();
         editor.update_in(&mut cx, |editor, window, cx| {
             window.focus(&editor.focus_handle(cx));
-            editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
+            editor.set_completion_provider(Some(Rc::new(ContextCompletionProvider::new(
                 workspace.downgrade(),
                 context_store.downgrade(),
                 None,

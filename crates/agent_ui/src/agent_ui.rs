@@ -4,11 +4,11 @@ mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod buffer_codegen;
+mod completion_provider;
 mod context;
 mod context_picker;
 mod context_server_configuration;
 mod context_store;
-mod context_strip;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
@@ -32,7 +32,7 @@ use fs::Fs;
 use gpui::{Action, App, Entity, SharedString, actions};
 use language::LanguageRegistry;
 use language_model::{
-    ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
+    ConfiguredModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
 use project::DisableAiSettings;
 use project::agent_server_store::AgentServerCommand;
@@ -230,11 +230,6 @@ impl ModelUsageContext {
                 LanguageModelRegistry::read_global(cx).inline_assistant_model()
             }
         }
-    }
-
-    pub fn language_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        self.configured_model(cx)
-            .map(|configured_model| configured_model.model)
     }
 }
 

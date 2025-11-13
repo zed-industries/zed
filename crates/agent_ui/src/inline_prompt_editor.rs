@@ -29,10 +29,10 @@ use zed_actions::agent::ToggleModelSelector;
 
 use crate::agent_model_selector::AgentModelSelector;
 use crate::buffer_codegen::BufferCodegen;
+use crate::completion_provider::ContextCompletionProvider;
 use crate::context::{AgentContextHandle, AgentContextKey};
-use crate::context_picker::{ContextPickerCompletionProvider, crease_for_mention};
+use crate::context_picker::crease_for_mention;
 use crate::context_store::{ContextStore, ContextStoreEvent};
-use crate::context_strip::{ContextStrip, ContextStripEvent};
 use crate::terminal_codegen::TerminalCodegen;
 use crate::{
     CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext, RemoveAllContext,
@@ -765,21 +765,6 @@ impl<T: 'static> PromptEditor<T> {
             })
             .into_any_element()
     }
-
-    fn handle_context_strip_event(
-        &mut self,
-        _context_strip: &Entity<ContextStrip>,
-        event: &ContextStripEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            ContextStripEvent::PickerDismissed
-            | ContextStripEvent::BlurredEmpty
-            | ContextStripEvent::BlurredUp => self.editor.focus_handle(cx).focus(window),
-            ContextStripEvent::BlurredDown => {}
-        }
-    }
 }
 
 pub enum PromptEditorMode {
@@ -866,7 +851,7 @@ impl PromptEditor<BufferCodegen> {
 
         let prompt_editor_entity = prompt_editor.downgrade();
         prompt_editor.update(cx, |editor, _| {
-            editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
+            editor.set_completion_provider(Some(Rc::new(ContextCompletionProvider::new(
                 workspace.clone(),
                 context_store.downgrade(),
                 thread_store.clone(),
@@ -1010,7 +995,7 @@ impl PromptEditor<TerminalCodegen> {
 
         let prompt_editor_entity = prompt_editor.downgrade();
         prompt_editor.update(cx, |editor, _| {
-            editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
+            editor.set_completion_provider(Some(Rc::new(ContextCompletionProvider::new(
                 workspace.clone(),
                 context_store.downgrade(),
                 thread_store.clone(),

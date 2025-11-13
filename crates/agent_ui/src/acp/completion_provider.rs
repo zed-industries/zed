@@ -28,13 +28,12 @@ use workspace::Workspace;
 
 use crate::AgentPanel;
 use crate::acp::message_editor::MessageEditor;
-use crate::context_picker::file_context_picker::{FileMatch, search_files};
-use crate::context_picker::rules_context_picker::{RulesContextEntry, search_rules};
-use crate::context_picker::symbol_context_picker::SymbolMatch;
-use crate::context_picker::symbol_context_picker::search_symbols;
-use crate::context_picker::thread_context_picker::search_threads;
+use crate::completion_provider::{
+    FileMatch, SymbolMatch, extract_file_name_and_directory, search_files, search_rules,
+    search_symbols, search_threads,
+};
 use crate::context_picker::{
-    ContextPickerAction, ContextPickerEntry, ContextPickerMode, selection_ranges,
+    ContextPickerAction, ContextPickerEntry, ContextPickerMode, RulesContextEntry, selection_ranges,
 };
 
 pub(crate) enum Match {
@@ -206,11 +205,7 @@ impl ContextPickerCompletionProvider {
     ) -> Option<Completion> {
         let path_style = project.read(cx).path_style(cx);
         let (file_name, directory) =
-            crate::context_picker::file_context_picker::extract_file_name_and_directory(
-                &project_path.path,
-                path_prefix,
-                path_style,
-            );
+            extract_file_name_and_directory(&project_path.path, path_prefix, path_style);
 
         let label =
             build_code_label_for_full_path(&file_name, directory.as_ref().map(|s| s.as_ref()), cx);
