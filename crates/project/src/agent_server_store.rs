@@ -397,6 +397,7 @@ impl AgentServerStore {
             downstream_client,
             settings: old_settings,
             http_client,
+            extension_agents,
             ..
         } = &mut self.state
         else {
@@ -463,6 +464,23 @@ impl AgentServerStore {
                     }) as Box<dyn ExternalAgentServer>,
                 )
             }));
+        self.external_agents.extend(extension_agents.iter().map(
+            |(agent_name, ext_id, targets, env)| {
+                (
+                    ExternalAgentServerName(agent_name.clone().into()),
+                    Box::new(LocalExtensionArchiveAgent {
+                        fs: fs.clone(),
+                        http_client: http_client.clone(),
+                        node_runtime: node_runtime.clone(),
+                        project_environment: project_environment.clone(),
+                        extension_id: Arc::from(&**ext_id),
+                        targets: targets.clone(),
+                        env: env.clone(),
+                        agent_id: agent_name.clone(),
+                    }) as Box<dyn ExternalAgentServer>,
+                )
+            },
+        ));
 
         *old_settings = Some(new_settings.clone());
 
@@ -506,6 +524,7 @@ impl AgentServerStore {
                 http_client,
                 downstream_client: None,
                 settings: None,
+                extension_agents: vec![],
                 _subscriptions: [subscription],
             },
             external_agents: Default::default(),
