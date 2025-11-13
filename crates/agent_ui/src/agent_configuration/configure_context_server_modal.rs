@@ -253,7 +253,7 @@ pub struct ConfigureContextServerModal {
     source: ConfigurationSource,
     state: State,
     original_server_id: Option<ContextServerId>,
-    scroll_handle: Option<ScrollHandle>,
+    scroll_handle: ScrollHandle,
 }
 
 impl ConfigureContextServerModal {
@@ -363,7 +363,7 @@ impl ConfigureContextServerModal {
                         window,
                         cx,
                     ),
-                    scroll_handle: None,
+                    scroll_handle: ScrollHandle::new(),
                 })
             })
         })
@@ -683,15 +683,10 @@ impl ConfigureContextServerModal {
 
 impl Render for ConfigureContextServerModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Lazily initialize scroll handle only when rendering
-        if self.scroll_handle.is_none() {
-            self.scroll_handle = Some(ScrollHandle::new());
-        }
-        let scroll_handle = self.scroll_handle.as_ref().unwrap().clone();
-
+        let scroll_handle = self.scroll_handle.clone();
         div()
             .elevation_3(cx)
-            .max_w(rems(34.))
+            .w(rems(34.))
             .key_context("ConfigureContextServerModal")
             .on_action(
                 cx.listener(|this, _: &menu::Cancel, _window, cx| this.cancel(&menu::Cancel, cx)),
