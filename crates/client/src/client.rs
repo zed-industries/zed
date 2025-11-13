@@ -1518,7 +1518,6 @@ impl Client {
     pub async fn sign_out(self: &Arc<Self>, cx: &AsyncApp) {
         self.state.write().credentials = None;
         self.cloud_client.clear_credentials();
-
         self.disconnect(cx);
 
         if self.has_credentials(cx).await {
