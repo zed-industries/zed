@@ -113,6 +113,23 @@ Zed also supports chords (multi-key sequences) like `Ctrl+K Ctrl+C`, just like V
 ## Differences in User Interfaces
 
 ### No Workspace
+VS Code uses a dedicated Workspace concept, with multi-root folders, `.code-workspace` files, and a clear distinction between “a window” and “a workspace.”
+Zed simplifies this model.
+
+In Zed:
+- There is no workspace file format. Opening a folder is your project context.
+
+- Zed does not support multi-root workspaces. You can only open one folder at a time in a window.
+
+- Most project-level behavior is scoped to the folder you open. Search, Git integration, tasks, and environment detection all treat the opened directory as the project root.
+
+- Per-project settings are optional. You can add a .zed/settings.json file inside a project to override global settings, but Zed does not use .code-workspace files and won’t import them.
+
+- You can start from a single file or an empty window. Zed doesn’t require you to open a folder to begin editing.
+
+The result is a simpler model:
+Open a folder → work inside that folder → no additional workspace layer.
+
 
 ### Navigating in a Project
 
@@ -140,3 +157,50 @@ However there are several features that typically require extensions in VS Code 
 - Inline diagnostics and code actions via LSP
 
 You won’t find one-to-one replacements for every VS Code extension, especially if you rely on tools for DevOps, containers, or test runners. Zed's extension ecosystem is still growing, and the catalog is smaller by design.
+
+### Collaboration in Zed vs. VS Code
+
+Unlike VS Code, Zed doesn’t require an extension to collaborate. It’s built into the core experience.
+
+- Open the Collab Panel in the left dock.
+- Create a channel and [invite your collaborators](https://zed.dev/docs/collaboration#inviting-a-collaborator) to join.
+- [Share your screen or your codebase](https://zed.dev/docs/collaboration#share-a-project) directly.
+
+Once connected, you’ll see each other's cursors, selections, and edits in real time. Voice chat is included, so you can talk as you work. There’s no need for separate tools or third-party logins.
+You can choose to share individual buffers or your entire workspace. Zed’s collaboration is designed for everything from quick pair programming to longer team sessions.
+
+Learn how [Zed uses Zed](https://zed.dev/blog/zed-is-our-office) to plan work and collaborate.
+
+### Using AI in Zed
+If you’re used to GitHub Copilot in VS Code, you can do the same in Zed. You can also explore other agents through Zed Pro, or bring your own keys and connect without authentication. Zed is designed to enable many options for using AI, including disabling it entirely.
+Configuring GitHub Copilot
+You should be able to sign-in to GitHub Copilot by clicking on the Copilot icon in the status bar and following the setup instructions.
+You can also add this to your settings:
+{
+  "features": {
+    "edit_prediction_provider": "copilot"
+  }
+}
+To invoke completions, just start typing. Zed will offer suggestions inline. You can accept with Tab.
+Additional AI Options
+To use other AI models in Zed, you have several options:
+
+Use Zed’s hosted models, with higher rate limits. Requires authentication and subscription to Zed Pro.
+Bring your own API keys, no authentication needed
+Use external agents like Claude Code
+
+### Advanced Config and Productivity Tweaks
+Zed exposes advanced settings for power users who want to fine-tune their environment.
+Here are a few useful tweaks:
+Format on Save:
+"format_on_save": true
+Diagnostics Filtering:
+"diagnostics_max_severity": "warning"
+Enable direnv support:
+"load_direnv": true
+Custom Tasks: Define build or run commands with:
+
+"tasks": {
+  "build": "cargo build"
+}
+You can find and edit these in your global or project settings.json file.
