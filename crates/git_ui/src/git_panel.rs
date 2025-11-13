@@ -17,8 +17,8 @@ use futures::StreamExt as _;
 use git::blame::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions, GitCommitter,
-    PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
-    UpstreamTrackingStatus, get_git_committer,
+    PushOptions, Remote, RemoteCommandOutput, RemoteOperationKind, ResetMode, Upstream,
+    UpstreamTracking, UpstreamTrackingStatus, get_git_committer,
 };
 use git::stash::GitStash;
 use git::status::StageStatus;
@@ -1926,7 +1926,9 @@ impl GitPanel {
         cx.spawn_in(window, async move |_, cx| {
             let repo = repo?;
             let remotes = repo
-                .update(cx, |repo, _| repo.get_remotes(None))
+                .update(cx, |repo, _| {
+                    repo.get_remotes(None, RemoteOperationKind::Fetch)
+                })
                 .ok()?
                 .await
                 .ok()?
@@ -2190,7 +2192,7 @@ impl GitPanel {
         };
         telemetry::event!("Git Pulled");
         let branch = branch.clone();
-        let remote = self.get_remote(false, window, cx);
+        let remote = self.get_remote(false, RemoteOperationKind::Pull, window, cx);
         cx.spawn_in(window, async move |this, cx| {
             let remote = match remote.await {
                 Ok(Some(remote)) => remote,
@@ -2266,7 +2268,7 @@ impl GitPanel {
                 _ => None,
             }
         };
-        let remote = self.get_remote(select_remote, window, cx);
+        let remote = self.get_remote(select_remote, RemoteOperationKind::Push, window, cx);
 
         cx.spawn_in(window, async move |this, cx| {
             let remote = match remote.await {
@@ -2343,6 +2345,7 @@ impl GitPanel {
     fn get_remote(
         &mut self,
         always_select: bool,
+        operation_kind: RemoteOperationKind,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl Future<Output = anyhow::Result<Option<Remote>>> + use<> {
@@ -2360,7 +2363,7 @@ impl GitPanel {
                         let current_branch = repo.branch.as_ref().context("No active branch")?;
                         Some(current_branch.name().to_string())
                     };
-                    anyhow::Ok(repo.get_remotes(current_branch))
+                    anyhow::Ok(repo.get_remotes(current_branch, operation_kind))
                 })??
                 .await??;
 

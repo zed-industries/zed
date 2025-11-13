@@ -381,6 +381,12 @@ impl Drop for GitExcludeOverride {
     }
 }
 
+pub enum RemoteOperationKind {
+    Fetch,
+    Pull,
+    Push,
+}
+
 pub trait GitRepository: Send + Sync {
     fn reload_index(&self);
 
@@ -552,7 +558,11 @@ pub trait GitRepository: Send + Sync {
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>>;
 
-    fn get_remotes(&self) -> BoxFuture<'_, Result<Vec<Remote>>>;
+    fn get_remotes(
+        &self,
+        branch_name: Option<String>,
+        operation_kind: RemoteOperationKind,
+    ) -> BoxFuture<'_, Result<Vec<Remote>>>;
 
     /// returns a list of remote branches that contain HEAD
     fn check_for_pushed_commit(&self) -> BoxFuture<'_, Result<Vec<SharedString>>>;
@@ -1761,23 +1771,48 @@ impl GitRepository for RealGitRepository {
         .boxed()
     }
 
-    fn get_remotes(&self) -> BoxFuture<'_, Result<Vec<Remote>>> {
+    fn get_remotes(
+        &self,
+        branch_name: Option<String>,
+        operation_kind: RemoteOperationKind,
+    ) -> BoxFuture<'_, Result<Vec<Remote>>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
         self.executor
             .spawn(async move {
                 let working_directory = working_directory?;
-                let output = new_smol_command(&git_binary_path)
-                    .current_dir(&working_directory)
-                    .args(["rev-parse", "--abbrev-ref", "@{push}"])
-                    .output()
-                    .await?;
-                if output.status.success() {
-                    let abbrev_ref = String::from_utf8_lossy(&output.stdout);
-                    if let Some(remote_name) = abbrev_ref.split('/').next() {
-                        return Ok(vec![Remote {
-                            name: remote_name.trim().to_string().into(),
-                        }]);
+                match operation_kind {
+                    RemoteOperationKind::Push => {
+                        let output = new_smol_command(&git_binary_path)
+                            .current_dir(&working_directory)
+                            .args(["rev-parse", "--abbrev-ref", "@{push}"])
+                            .output()
+                            .await?;
+                        if output.status.success() {
+                            let abbrev_ref = String::from_utf8_lossy(&output.stdout);
+                            if let Some(remote_name) = abbrev_ref.split('/').next() {
+                                return Ok(vec![Remote {
+                                    name: remote_name.trim().to_string().into(),
+                                }]);
+                            }
+                        }
+                    }
+                    RemoteOperationKind::Fetch | RemoteOperationKind::Pull => {
+                        if let Some(branch_name) = branch_name {
+                            let output = new_smol_command(&git_binary_path)
+                                .current_dir(&working_directory)
+                                .args(["config", "--get"])
+                                .arg(format!("branch.{}.remote", branch_name))
+                                .output()
+                                .await?;
+
+                            if output.status.success() {
+                                let remote_name = String::from_utf8_lossy(&output.stdout);
+                                return Ok(vec![Remote {
+                                    name: remote_name.trim().to_string().into(),
+                                }]);
+                            }
+                        }
                     }
                 }
 

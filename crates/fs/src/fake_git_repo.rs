@@ -7,7 +7,8 @@ use git::{
     blame::Blame,
     repository::{
         AskPassDelegate, Branch, CommitDetails, CommitOptions, FetchOptions, GitRepository,
-        GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode, Worktree,
+        GitRepositoryCheckpoint, PushOptions, Remote, RemoteOperationKind, RepoPath, ResetMode,
+        Worktree,
     },
     status::{
         DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
@@ -566,7 +567,11 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn get_remotes(&self) -> BoxFuture<'_, Result<Vec<Remote>>> {
+    fn get_remotes(
+        &self,
+        _branch: Option<String>,
+        _operation_kind: RemoteOperationKind,
+    ) -> BoxFuture<'_, Result<Vec<Remote>>> {
         unimplemented!()
     }
 
