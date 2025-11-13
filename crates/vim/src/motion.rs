@@ -2392,7 +2392,8 @@ fn matching(
 
     let make_range_filter = |match_quotes: bool, require_on_bracket: bool| {
         move |buffer: &language::BufferSnapshot, open: Range<usize>, close: Range<usize>| {
-            if !match_quotes && matches!(buffer.chars_at(open.start).next(), Some('\'' | '"' | '`')) {
+            if !match_quotes && matches!(buffer.chars_at(open.start).next(), Some('\'' | '"' | '`'))
+            {
                 return false;
             }
             if require_on_bracket {
@@ -2436,7 +2437,6 @@ fn matching(
         let mut closest_distance = usize::MAX;
 
         for (open_range, close_range) in ranges {
-
             if !match_quotes
                 && matches!(
                     map.buffer_snapshot().chars_at(open_range.start).next(),
