@@ -274,8 +274,6 @@ impl AgentServerStore {
                 extension_agents.clear();
                 for (ext_id, manifest) in manifests {
                     for (agent_name, agent_entry) in &manifest.agent_servers {
-                        let display = SharedString::from(agent_entry.name.clone());
-
                         // Store absolute icon path if provided, resolving symlinks for dev extensions
                         let icon_path = if let Some(icon) = &agent_entry.icon {
                             let icon_path = extensions_dir.join(ext_id).join(icon);
@@ -286,7 +284,7 @@ impl AgentServerStore {
                                 .to_string_lossy()
                                 .to_string();
                             self.agent_icons.insert(
-                                ExternalAgentServerName(display.clone()),
+                                ExternalAgentServerName(agent_name.clone().into()),
                                 SharedString::from(absolute_icon_path.clone()),
                             );
                             Some(absolute_icon_path)
@@ -312,8 +310,6 @@ impl AgentServerStore {
                 let mut agents = vec![];
                 for (ext_id, manifest) in manifests {
                     for (agent_name, agent_entry) in &manifest.agent_servers {
-                        let display = SharedString::from(agent_entry.name.clone());
-
                         // Store absolute icon path if provided, resolving symlinks for dev extensions
                         let icon = if let Some(icon) = &agent_entry.icon {
                             let icon_path = extensions_dir.join(ext_id).join(icon);
@@ -326,7 +322,7 @@ impl AgentServerStore {
 
                             // Store icon locally for remote client
                             self.agent_icons.insert(
-                                ExternalAgentServerName(display.clone()),
+                                ExternalAgentServerName(agent_name.clone().into()),
                                 SharedString::from(absolute_icon_path.clone()),
                             );
 
