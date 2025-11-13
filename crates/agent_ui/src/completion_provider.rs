@@ -595,7 +595,7 @@ impl ContextCompletionProvider {
             extract_file_name_and_directory(&project_path.path, path_prefix, path_style);
 
         let label =
-            build_code_label_for_full_path(&file_name, directory.as_ref().map(|s| s.as_ref()), cx);
+            build_code_label_for_path(&file_name, directory.as_ref().map(|s| s.as_ref()), None, cx);
         let full_path = if let Some(directory) = directory {
             format!("{}{}", directory, file_name)
         } else {
@@ -684,19 +684,19 @@ impl ContextCompletionProvider {
             file_name.to_string()
         };
 
-        let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
-        let mut label = CodeLabelBuilder::default();
-        label.push_str(&symbol.name, None);
-        label.push_str(" ", None);
-        label.push_str(&file_name, comment_id);
-        label.push_str(&format!(" L{}", symbol.range.start.0.row + 1), comment_id);
+        let label = build_code_label_for_path(
+            &symbol.name,
+            Some(&file_name),
+            Some(symbol.range.start.0.row + 1),
+            cx,
+        );
 
         let new_text = format!("{} ", MentionLink::for_symbol(&symbol.name, &full_path));
         let new_text_len = new_text.len();
         Some(Completion {
             replace_range: source_range.clone(),
             new_text,
-            label: label.build(),
+            label,
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(IconName::Code.path().into()),
@@ -724,15 +724,28 @@ impl ContextCompletionProvider {
     }
 }
 
-fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: &App) -> CodeLabel {
-    let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
+pub fn build_code_label_for_path(
+    file: &str,
+    directory: Option<&str>,
+    line_number: Option<u32>,
+    cx: &App,
+) -> CodeLabel {
+    let variable_highlight_id = cx
+        .theme()
+        .syntax()
+        .highlight_id("variable")
+        .map(HighlightId);
     let mut label = CodeLabelBuilder::default();
 
-    label.push_str(file_name, None);
+    label.push_str(file, None);
     label.push_str(" ", None);
 
     if let Some(directory) = directory {
-        label.push_str(directory, comment_id);
+        label.push_str(directory, variable_highlight_id);
+    }
+
+    if let Some(line_number) = line_number {
+        label.push_str(&format!(" L{}", line_number), variable_highlight_id);
     }
 
     label.build()

@@ -12,7 +12,7 @@ use anyhow::Result;
 use editor::{CompletionProvider, Editor, ExcerptId};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
-use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
+use language::{Buffer, CodeLabel};
 use lsp::CompletionContext;
 use project::lsp_store::{CompletionDocumentation, SymbolLocation};
 use project::{
@@ -29,8 +29,8 @@ use workspace::Workspace;
 use crate::AgentPanel;
 use crate::acp::message_editor::MessageEditor;
 use crate::completion_provider::{
-    FileMatch, SymbolMatch, extract_file_name_and_directory, search_files, search_rules,
-    search_symbols, search_threads,
+    FileMatch, SymbolMatch, build_code_label_for_path, extract_file_name_and_directory,
+    search_files, search_rules, search_symbols, search_threads,
 };
 use crate::context_picker::{
     ContextPickerAction, ContextPickerEntry, ContextPickerMode, RulesContextEntry, selection_ranges,
@@ -208,7 +208,7 @@ impl ContextPickerCompletionProvider {
             extract_file_name_and_directory(&project_path.path, path_prefix, path_style);
 
         let label =
-            build_code_label_for_full_path(&file_name, directory.as_ref().map(|s| s.as_ref()), cx);
+            build_code_label_for_path(&file_name, directory.as_ref().map(|s| s.as_ref()), None, cx);
 
         let abs_path = project.read(cx).absolute_path(&project_path, cx)?;
 
@@ -270,7 +270,12 @@ impl ContextPickerCompletionProvider {
             ),
         };
 
-        let label = build_symbol_label(&symbol.name, &file_name, symbol.range.start.0.row + 1, cx);
+        let label = build_code_label_for_path(
+            &symbol.name,
+            Some(&file_name),
+            Some(symbol.range.start.0.row + 1),
+            cx,
+        );
 
         let uri = MentionUri::Symbol {
             abs_path,
@@ -689,35 +694,6 @@ impl ContextPickerCompletionProvider {
 
         entries
     }
-}
-
-fn build_symbol_label(symbol_name: &str, file_name: &str, line: u32, cx: &App) -> CodeLabel {
-    let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
-    let mut label = CodeLabelBuilder::default();
-
-    label.push_str(symbol_name, None);
-    label.push_str(" ", None);
-    label.push_str(&format!("{} L{}", file_name, line), comment_id);
-
-    label.build()
-}
-
-fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: &App) -> CodeLabel {
-    let path = cx
-        .theme()
-        .syntax()
-        .highlight_id("variable")
-        .map(HighlightId);
-    let mut label = CodeLabelBuilder::default();
-
-    label.push_str(file_name, None);
-    label.push_str(" ", None);
-
-    if let Some(directory) = directory {
-        label.push_str(directory, path);
-    }
-
-    label.build()
 }
 
 impl CompletionProvider for ContextPickerCompletionProvider {

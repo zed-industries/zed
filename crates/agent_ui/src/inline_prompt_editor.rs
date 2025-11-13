@@ -747,6 +747,7 @@ impl<T: 'static> PromptEditor<T> {
                     EditorStyle {
                         background: colors.editor_background,
                         local_player: cx.theme().players().local(),
+                        syntax: cx.theme().syntax().clone(),
                         text: text_style,
                         ..Default::default()
                     },
