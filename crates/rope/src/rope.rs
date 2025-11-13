@@ -759,7 +759,12 @@ impl<'a> Cursor<'a> {
     }
 
     pub fn summary<D: TextDimension>(&mut self, end_offset: usize) -> D {
-        debug_assert!(end_offset >= self.offset);
+        debug_assert!(
+            end_offset >= self.offset,
+            "end_offset: {}, self.offset: {}",
+            end_offset,
+            self.offset
+        );
 
         let mut summary = D::zero(());
         if let Some(start_chunk) = self.chunks.item() {

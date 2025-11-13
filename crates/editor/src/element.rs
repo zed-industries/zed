@@ -2525,7 +2525,7 @@ impl EditorElement {
 
         let (buffer_id, entry) = blame
             .update(cx, |blame, cx| {
-                blame.blame_for_rows(&[*row_info], cx).next()
+                blame.blame_for_rows(&[row_info.clone()], cx).next()
             })
             .flatten()?;
 
@@ -8698,6 +8698,17 @@ impl Element for EditorElement {
 
                     let is_light = cx.theme().appearance().is_light();
 
+                    let mut highlighted_ranges = self
+                        .editor_with_selections(cx)
+                        .map(|editor| {
+                            editor.read(cx).background_highlights_in_range(
+                                start_anchor..end_anchor,
+                                &snapshot.display_snapshot,
+                                cx.theme(),
+                            )
+                        })
+                        .unwrap_or_default();
+
                     for (ix, row_info) in row_infos.iter().enumerate() {
                         let Some(diff_status) = row_info.diff_status else {
                             continue;
@@ -8749,29 +8760,26 @@ impl Element for EditorElement {
                             filled_highlight
                         };
 
+                        let base_display_point =
+                            DisplayPoint::new(start_row + DisplayRow(ix as u32), 0);
+                        let base_offset =
+                            base_display_point.to_offset(&snapshot.display_snapshot, Bias::Left);
+
+                        for word_diff in row_info.word_diffs.clone() {
+                            let start = (word_diff.start + base_offset)
+                                .to_display_point(&snapshot.display_snapshot);
+                            let end = (word_diff.end + base_offset)
+                                .to_display_point(&snapshot.display_snapshot);
+                            highlighted_ranges.push((
+                                start..end,
+                                cx.theme().colors().version_control_deleted.alpha(0.6),
+                            ));
+                        }
+
                         highlighted_rows
-                            .entry(start_row + DisplayRow(ix as u32))
+                            .entry(base_display_point.row())
                             .or_insert(background);
                     }
-
-                    let mut highlighted_ranges = self
-                        .editor_with_selections(cx)
-                        .map(|editor| {
-                            editor.read(cx).background_highlights_in_range(
-                                start_anchor..end_anchor,
-                                &snapshot.display_snapshot,
-                                cx.theme(),
-                            )
-                        })
-                        .unwrap_or_default();
-
-                    // todo!: ugliness here
-                    let mut highlighted_ranges = self.editor.update(cx, |editor, cx| {
-                        editor.update_word_diff(&row_infos, cx);
-                        let diff = editor.word_diff_highlights(&row_infos);
-                        highlighted_ranges.extend(diff);
-                        highlighted_ranges
-                    });
 
                     let highlighted_gutter_ranges =
                         self.editor.read(cx).gutter_highlights_in_range(
@@ -8921,7 +8929,7 @@ impl Element for EditorElement {
                     let crease_trailers =
                         window.with_element_namespace("crease_trailers", |window| {
                             self.layout_crease_trailers(
-                                row_infos.iter().copied(),
+                                row_infos.iter().cloned(),
                                 &snapshot,
                                 window,
                                 cx,
@@ -8939,11 +8947,11 @@ impl Element for EditorElement {
 
                     for (diff_hunk, _) in &display_hunks {
                         if let DisplayDiffHunk::Unfolded {
-                            is_created_file,
                             diff_base_byte_range,
                             display_row_range,
                             multi_buffer_range,
                             status,
+                            ..
                         } = diff_hunk
                             && !diff_base_byte_range.is_empty()
                             && status.is_modified()
@@ -9032,16 +9040,6 @@ impl Element for EditorElement {
                                         let start = buffer.anchor_after(current_off);
                                         current_off += change.value().len();
                                         let end = buffer.anchor_before(current_off);
-
-                                        let start_point =
-                                            start.to_display_point(&snapshot.display_snapshot);
-                                        let end_point =
-                                            end.to_display_point(&snapshot.display_snapshot);
-
-                                        if start_point.row() == end_point.row() {
-                                            highlighted_ranges
-                                                .push((start_point..end_point, Hsla::blue()));
-                                        }
                                     }
                                     similar::ChangeTag::Delete => {}
                                 }

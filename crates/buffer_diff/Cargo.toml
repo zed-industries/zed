@@ -25,6 +25,7 @@ log.workspace = true
 pretty_assertions.workspace = true
 rope.workspace = true
 sum_tree.workspace = true
+similar.workspace = true
 text.workspace = true
 util.workspace = true
 

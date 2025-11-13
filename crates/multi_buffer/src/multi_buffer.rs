@@ -141,6 +141,8 @@ pub struct MultiBufferDiffHunk {
     pub diff_base_byte_range: Range<usize>,
     /// Whether or not this hunk also appears in the 'secondary diff'.
     pub secondary_status: DiffHunkSecondaryStatus,
+    /// The word diffs for this hunk.
+    pub word_diffs: Vec<Range<usize>>,
 }
 
 impl MultiBufferDiffHunk {
@@ -263,6 +265,7 @@ enum DiffTransform {
         summary: TextSummary,
         buffer_id: BufferId,
         hunk_info: DiffTransformHunkInfo,
+        word_diffs: Vec<Range<usize>>,
         base_text_byte_range: Range<usize>,
         has_trailing_newline: bool,
     },
@@ -334,13 +337,14 @@ pub struct ExpandInfo {
     pub excerpt_id: ExcerptId,
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RowInfo {
     pub buffer_id: Option<BufferId>,
     pub buffer_row: Option<u32>,
     pub multibuffer_row: Option<MultiBufferRow>,
     pub diff_status: Option<buffer_diff::DiffHunkStatus>,
     pub expand_info: Option<ExpandInfo>,
+    pub word_diffs: Vec<Range<usize>>,
 }
 
 /// A slice into a [`Buffer`] that is being edited in a [`MultiBuffer`].
@@ -497,6 +501,7 @@ struct MultiBufferRegion<'a, D: TextDimension> {
     buffer: &'a BufferSnapshot,
     is_main_buffer: bool,
     diff_hunk_status: Option<DiffHunkStatus>,
+    word_diffs: Vec<Range<usize>>,
     excerpt: &'a Excerpt,
     buffer_range: Range<D>,
     range: Range<D>,
@@ -2722,6 +2727,7 @@ impl MultiBuffer {
 
                             new_diff_transforms.push(
                                 DiffTransform::DeletedHunk {
+                                    word_diffs: hunk.word_diffs.clone(),
                                     base_text_byte_range: hunk.diff_base_byte_range.clone(),
                                     summary: base_text_summary,
                                     buffer_id: excerpt.buffer_id,
@@ -3173,6 +3179,7 @@ impl MultiBufferSnapshot {
                 buffer_id: excerpt.buffer_id,
                 excerpt_id: excerpt.id,
                 buffer_range: hunk.buffer_range.clone(),
+                word_diffs: hunk.word_diffs.clone(),
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                 secondary_status: hunk.secondary_status,
             })
@@ -6020,6 +6027,7 @@ where
                 base_text_byte_range,
                 has_trailing_newline,
                 hunk_info,
+                word_diffs,
                 ..
             } => {
                 let diff = self.diffs.get(buffer_id)?;
@@ -6034,6 +6042,7 @@ where
                 Some(MultiBufferRegion {
                     buffer,
                     excerpt,
+                    word_diffs: word_diffs.clone(),
                     has_trailing_newline: *has_trailing_newline,
                     is_main_buffer: false,
                     diff_hunk_status: Some(DiffHunkStatus::deleted(
@@ -6083,6 +6092,7 @@ where
                 Some(MultiBufferRegion {
                     buffer,
                     excerpt,
+                    word_diffs: Default::default(), //todo!
                     has_trailing_newline,
                     is_main_buffer: true,
                     diff_hunk_status: inserted_hunk_info
@@ -6651,6 +6661,7 @@ impl Iterator for MultiBufferRows<'_> {
                 multibuffer_row: Some(MultiBufferRow(0)),
                 diff_status: None,
                 expand_info: None,
+                word_diffs: Vec::default(),
             });
         }
 
@@ -6708,6 +6719,7 @@ impl Iterator for MultiBufferRows<'_> {
                     buffer_row: Some(last_row),
                     multibuffer_row: Some(multibuffer_row),
                     diff_status: None,
+                    word_diffs: Vec::default(),
                     expand_info,
                 });
             } else {
@@ -6748,6 +6760,7 @@ impl Iterator for MultiBufferRows<'_> {
             buffer_id: Some(region.buffer.remote_id()),
             buffer_row: Some(buffer_point.row),
             multibuffer_row: Some(MultiBufferRow(self.point.row)),
+            word_diffs: region.word_diffs, //todo!
             diff_status: region
                 .diff_hunk_status
                 .filter(|_| self.point < region.range.end),
