@@ -654,7 +654,9 @@ impl Vim {
             if was_enabled != enabled {
                 if let Some(vim) = editor.addon::<VimAddon>() {
                     vim.entity.update(cx, |_, cx| {
-                        cx.defer_in(window, |vim, window, cx| vim.sync_vim_settings(window, cx))
+                        cx.defer_in(window, move |vim, window, cx| {
+                            vim.apply_modal_setting_change(enabled, window, cx)
+                        })
                     });
                 }
             }
@@ -1988,6 +1990,24 @@ impl Vim {
                     });
                 }
             }
+        }
+    }
+
+    fn apply_modal_setting_change(
+        &mut self,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if enabled {
+            if !matches!(self.mode, Mode::Normal | Mode::HelixNormal) {
+                self.switch_mode(Mode::Normal, false, window, cx);
+            } else {
+                self.sync_vim_settings(window, cx);
+            }
+            self.focused(false, window, cx);
+        } else {
+            self.sync_vim_settings(window, cx);
         }
     }
 
