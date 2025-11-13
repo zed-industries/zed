@@ -21,7 +21,7 @@ use rpc::{AnyProtoClient, TypedEnvelope, proto};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, SettingsStore};
-use task::Shell;
+use task::{Shell, SpawnInTerminal};
 use util::{ResultExt as _, debug_panic};
 
 use crate::ProjectEnvironment;
@@ -1010,7 +1010,7 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
                     env: Some(command.env),
                 },
                 root_dir,
-                None,
+                response.login.map(SpawnInTerminal::from_proto),
             ))
         })
     }
