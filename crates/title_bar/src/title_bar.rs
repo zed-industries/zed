@@ -31,7 +31,6 @@ use gpui::{
 };
 use onboarding_banner::OnboardingBanner;
 use project::{Project, WorktreeSettings, git_store::GitStoreEvent};
-use release_channel::ReleaseChannel;
 use remote::RemoteConnectionOptions;
 use settings::{Settings, SettingsLocation};
 use std::sync::Arc;
@@ -292,38 +291,18 @@ impl TitleBar {
         );
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
-        let on_windows_nightly = cfg!(target_os = "windows")
-            && ReleaseChannel::try_global(cx)
-                .map(|channel| channel == ReleaseChannel::Nightly)
-                .unwrap_or(false);
-        let banner = if on_windows_nightly {
-            cx.new(|cx| {
-                OnboardingBanner::new(
-                    "Stable windows releases",
-                    IconName::Download,
-                    "Stable Windows releases",
-                    Some("Introducing:".into()),
-                    zed_actions::OpenBrowser {
-                        url: "https://zed.dev/download".to_string(),
-                    }
-                    .boxed_clone(),
-                    cx,
-                )
-            })
-        } else {
-            cx.new(|cx| {
-                OnboardingBanner::new(
-                    "ACP Claude Code Onboarding",
-                    IconName::AiClaude,
-                    "Claude Code",
-                    Some("Introducing:".into()),
-                    zed_actions::agent::OpenClaudeCodeOnboardingModal.boxed_clone(),
-                    cx,
-                )
-                // When updating this to a non-AI feature release, remove this line.
-                .visible_when(|cx| !project::DisableAiSettings::get_global(cx).disable_ai)
-            })
-        };
+        let banner = cx.new(|cx| {
+            OnboardingBanner::new(
+                "ACP Claude Code Onboarding",
+                IconName::AiClaude,
+                "Claude Code",
+                Some("Introducing:".into()),
+                zed_actions::agent::OpenClaudeCodeOnboardingModal.boxed_clone(),
+                cx,
+            )
+            // When updating this to a non-AI feature release, remove this line.
+            .visible_when(|cx| !project::DisableAiSettings::get_global(cx).disable_ai)
+        });
 
         let platform_titlebar = cx.new(|cx| PlatformTitleBar::new(id, cx));
 
