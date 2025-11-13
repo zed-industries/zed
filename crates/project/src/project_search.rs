@@ -3,10 +3,7 @@ use std::{
     ops::Range,
     path::Path,
     pin::pin,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::Arc,
 };
 
 use anyhow::Context;
