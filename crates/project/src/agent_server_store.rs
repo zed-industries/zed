@@ -790,6 +790,53 @@ impl AgentServerStore {
         })?
     }
 
+    async fn handle_external_extension_agents_updated(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ExternalExtensionAgentsUpdated>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            let AgentServerStoreState::Local {
+                extension_agents, ..
+            } = &mut this.state
+            else {
+                panic!(
+                    "handle_external_extension_agents_updated \
+                    should not be called for a non-remote project"
+                );
+            };
+
+            for ExternalExtensionAgent {
+                name,
+                icon_path,
+                extension_id,
+                targets,
+            } in envelope.payload.agents
+            {
+                if let Some(icon_path) = icon_path {
+                    this.agent_icons.insert(
+                        ExternalAgentServerName(name.clone().into()),
+                        icon_path.into(),
+                    );
+                }
+                extension_agents.push((
+                    Arc::from(&*name),
+                    extension_id,
+                    targets
+                        .into_iter()
+                        .map(|(k, v)| (k, extension::TargetConfig::from_proto(v)))
+                        .collect(),
+                    // fixme env
+                    Default::default(),
+                ));
+            }
+
+            this.reregister_agents(cx);
+            cx.emit(AgentServersUpdated);
+            Ok(())
+        })?
+    }
+
     async fn handle_loading_status_updated(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::ExternalAgentLoadingStatusUpdated>,
