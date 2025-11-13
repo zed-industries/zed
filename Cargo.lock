@@ -5860,6 +5860,7 @@ dependencies = [
  "lsp",
  "parking_lot",
  "pretty_assertions",
+ "proto",
  "semantic_version",
  "serde",
  "serde_json",
