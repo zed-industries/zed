@@ -23,8 +23,8 @@ use project::{
 use settings::{Settings as _, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
-    CommonAnimationExt, KeyBinding, Modal, ModalFooter, ModalHeader, ScrollAxes, Scrollbars,
-    Section, Tooltip, WithScrollbar, prelude::*,
+    CommonAnimationExt, KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{ModalView, Workspace};
@@ -712,6 +712,8 @@ impl Render for ConfigureContextServerModal {
                             div()
                                 .id("modal-content")
                                 .max_h(vh(0.7, window))
+                                .overflow_y_scroll()
+                                .track_scroll(&scroll_handle)
                                 .child(self.render_modal_description(window, cx))
                                 .child(self.render_modal_content(cx))
                                 .child(match &self.state {
@@ -719,16 +721,7 @@ impl Render for ConfigureContextServerModal {
                                     State::Waiting => Self::render_waiting_for_context_server(),
                                     State::Error(error) => Self::render_modal_error(error.clone()),
                                 })
-                                .custom_scrollbars(
-                                    Scrollbars::new(ScrollAxes::Vertical)
-                                        .tracked_scroll_handle(scroll_handle)
-                                        .with_track_along(
-                                            ScrollAxes::Vertical,
-                                            cx.theme().colors().panel_background,
-                                        ),
-                                    window,
-                                    cx,
-                                ),
+                                .vertical_scrollbar_for(scroll_handle, window, cx),
                         ),
                     )
                     .footer(self.render_modal_footer(cx)),
