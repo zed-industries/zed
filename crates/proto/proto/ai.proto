@@ -198,8 +198,7 @@ message ExternalExtensionAgent {
     string name = 1;
     optional string icon_path = 2;
     string extension_id = 3;
-    string agent_id = 4;
-    map<string, ExternalExtensionAgentTarget> targets = 5;
+    map<string, ExternalExtensionAgentTarget> targets = 4;
 }
 
 message ExternalExtensionAgentsUpdated {
