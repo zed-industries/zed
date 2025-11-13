@@ -122,6 +122,7 @@ enum AgentServerStoreState {
             String,
             HashMap<String, extension::TargetConfig>,
             HashMap<String, String>,
+            Option<String>,
         )>,
         _subscriptions: [Subscription; 1],
     },
@@ -276,7 +277,7 @@ impl AgentServerStore {
                         let display = SharedString::from(agent_entry.name.clone());
 
                         // Store absolute icon path if provided, resolving symlinks for dev extensions
-                        if let Some(icon) = &agent_entry.icon {
+                        let icon_path = if let Some(icon) = &agent_entry.icon {
                             let icon_path = extensions_dir.join(ext_id).join(icon);
                             // Canonicalize to resolve symlinks (dev extensions are symlinked)
                             let absolute_icon_path = icon_path
@@ -286,15 +287,19 @@ impl AgentServerStore {
                                 .to_string();
                             self.agent_icons.insert(
                                 ExternalAgentServerName(display.clone()),
-                                SharedString::from(absolute_icon_path),
+                                SharedString::from(absolute_icon_path.clone()),
                             );
-                        }
+                            Some(absolute_icon_path)
+                        } else {
+                            None
+                        };
 
                         extension_agents.push((
                             agent_name.clone(),
                             ext_id.to_owned(),
                             agent_entry.targets.clone(),
                             agent_entry.env.clone(),
+                            icon_path,
                         ));
                     }
                 }
@@ -465,9 +470,17 @@ impl AgentServerStore {
                 )
             }));
         self.external_agents.extend(extension_agents.iter().map(
-            |(agent_name, ext_id, targets, env)| {
+            |(agent_name, ext_id, targets, env, icon_path)| {
+                let name = ExternalAgentServerName(agent_name.clone().into());
+
+                // Restore icon if present
+                if let Some(icon) = icon_path {
+                    self.agent_icons
+                        .insert(name.clone(), SharedString::from(icon.clone()));
+                }
+
                 (
-                    ExternalAgentServerName(agent_name.clone().into()),
+                    name,
                     Box::new(LocalExtensionArchiveAgent {
                         fs: fs.clone(),
                         http_client: http_client.clone(),
@@ -813,6 +826,7 @@ impl AgentServerStore {
                 targets,
             } in envelope.payload.agents
             {
+                let icon_path_string = icon_path.clone();
                 if let Some(icon_path) = icon_path {
                     this.agent_icons.insert(
                         ExternalAgentServerName(name.clone().into()),
@@ -828,6 +842,7 @@ impl AgentServerStore {
                         .collect(),
                     // fixme env
                     Default::default(),
+                    icon_path_string,
                 ));
             }
 
