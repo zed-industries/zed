@@ -21,5 +21,5 @@ echo "target directory size: ${current_size_gb}gb. max size: ${max_size_gb}gb"
 
 if [[ ${current_size_gb} -gt ${max_size_gb} ]]; then
     echo "clearing target directory"
-    rm -rf target
+    rm -rf target/* target/.*
 fi
