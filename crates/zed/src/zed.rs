@@ -107,8 +107,8 @@ actions!(
         Minimize,
         /// Opens the default settings file.
         OpenDefaultSettings,
-        /// Opens project-specific settings.
-        OpenProjectSettings,
+        /// Opens project-specific settings file.
+        OpenProjectSettingsFile,
         /// Opens the project tasks configuration.
         OpenProjectTasks,
         /// Opens the tasks panel.
@@ -1708,7 +1708,7 @@ pub fn open_new_ssh_project_from_project(
 
 fn open_project_settings_file(
     workspace: &mut Workspace,
-    _: &OpenProjectSettings,
+    _: &OpenProjectSettingsFile,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -4998,7 +4998,7 @@ mod tests {
             .update(cx, |workspace, window, cx| {
                 // Call the exact function that contains the bug
                 eprintln!("About to call open_project_settings_file");
-                open_project_settings_file(workspace, &OpenProjectSettings, window, cx);
+                open_project_settings_file(workspace, &OpenProjectSettingsFile, window, cx);
             })
             .unwrap();
 
