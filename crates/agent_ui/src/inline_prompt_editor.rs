@@ -36,7 +36,6 @@ use crate::context_store::{ContextStore, ContextStoreEvent};
 use crate::terminal_codegen::TerminalCodegen;
 use crate::{
     CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext, RemoveAllContext,
-    ToggleContextPicker,
 };
 
 pub struct PromptEditor<T> {
@@ -125,7 +124,6 @@ impl<T: 'static> Render for PromptEditor<T> {
                 h_flex()
                     .items_start()
                     .cursor(CursorStyle::Arrow)
-                    .on_action(cx.listener(Self::toggle_context_picker))
                     .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
                         this.model_selector
                             .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
@@ -352,15 +350,6 @@ impl<T: 'static> PromptEditor<T> {
             }
             _ => {}
         }
-    }
-
-    fn toggle_context_picker(
-        &mut self,
-        _: &ToggleContextPicker,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.trigger_completion_menu(window, cx);
     }
 
     pub fn remove_all_context(
