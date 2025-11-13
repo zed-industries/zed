@@ -115,6 +115,8 @@ fn main() -> Result<(), anyhow::Error> {
                     if let SearchResult::Buffer { ranges, .. } = match_result {
                         matched_files += 1;
                         matched_chunks += ranges.len();
+                    } else {
+                        break;
                     }
                 }
                 let elapsed = timer.elapsed();
