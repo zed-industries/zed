@@ -7802,21 +7802,46 @@ fn header_jump_data(
     snapshot: &EditorSnapshot,
     block_row_start: DisplayRow,
     height: u32,
-    for_excerpt: &ExcerptInfo,
+    first_excerpt: &ExcerptInfo,
     latest_selection_anchors: &HashMap<BufferId, Anchor>,
 ) -> JumpData {
-    let range = &for_excerpt.range;
-
-    let jump_anchor = if let Some(anchor) = latest_selection_anchors.get(&for_excerpt.buffer_id) {
-        anchor.text_anchor
+    let jump_target = if let Some(anchor) = latest_selection_anchors.get(&first_excerpt.buffer_id)
+        && let Some(excerpt) = snapshot.excerpt_before(anchor.excerpt_id)
+    {
+        JumpTargetInExcerptInput {
+            id: anchor.excerpt_id,
+            buffer: &first_excerpt.buffer,
+            excerpt_start_anchor: excerpt.start_anchor().text_anchor,
+            jump_anchor: anchor.text_anchor,
+        }
     } else {
-        range.primary.start
+        JumpTargetInExcerptInput {
+            id: first_excerpt.id,
+            buffer: &first_excerpt.buffer,
+            excerpt_start_anchor: first_excerpt.range.context.start,
+            jump_anchor: first_excerpt.range.primary.start,
+        }
     };
+    header_jump_data_inner(snapshot, block_row_start, height, &jump_target)
+}
 
+struct JumpTargetInExcerptInput<'a> {
+    id: ExcerptId,
+    buffer: &'a language::BufferSnapshot,
+    excerpt_start_anchor: text::Anchor,
+    jump_anchor: text::Anchor,
+}
+
+fn header_jump_data_inner(
+    snapshot: &EditorSnapshot,
+    block_row_start: DisplayRow,
+    height: u32,
+    for_excerpt: &JumpTargetInExcerptInput,
+) -> JumpData {
     let buffer = &for_excerpt.buffer;
-    let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
-    let excerpt_start = range.context.start;
-    let rows_from_excerpt_start = if jump_anchor == excerpt_start {
+    let jump_position = language::ToPoint::to_point(&for_excerpt.jump_anchor, buffer);
+    let excerpt_start = for_excerpt.excerpt_start_anchor;
+    let rows_from_excerpt_start = if for_excerpt.jump_anchor == excerpt_start {
         0
     } else {
         let excerpt_start_point = language::ToPoint::to_point(&excerpt_start, buffer);
@@ -7833,7 +7858,7 @@ fn header_jump_data(
 
     JumpData::MultiBufferPoint {
         excerpt_id: for_excerpt.id,
-        anchor: jump_anchor,
+        anchor: for_excerpt.jump_anchor,
         position: jump_position,
         line_offset_from_top,
     }
