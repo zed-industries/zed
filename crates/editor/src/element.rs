@@ -8766,10 +8766,14 @@ impl Element for EditorElement {
                             base_display_point.to_offset(&snapshot.display_snapshot, Bias::Left);
 
                         for word_diff in row_info.word_diffs.clone() {
-                            let start = (word_diff.start + base_offset)
-                                .to_display_point(&snapshot.display_snapshot);
-                            let end = (word_diff.end + base_offset)
-                                .to_display_point(&snapshot.display_snapshot);
+                            // let start = (word_diff.start + base_offset)
+                            //     .to_display_point(&snapshot.display_snapshot);
+                            // let end = (word_diff.end + base_offset)
+                            //     .to_display_point(&snapshot.display_snapshot);
+                            let start =
+                                (word_diff.start).to_display_point(&snapshot.display_snapshot);
+                            let end = (word_diff.end).to_display_point(&snapshot.display_snapshot);
+
                             highlighted_ranges.push((
                                 start..end,
                                 cx.theme().colors().version_control_deleted.alpha(0.6),

@@ -19021,7 +19021,10 @@ impl Editor {
                 &hunks
                     .map(|hunk| buffer_diff::DiffHunk {
                         buffer_range: hunk.buffer_range,
-                        word_diffs: hunk.word_diffs,
+                        // todo! We might be able to ignore passing in the word diffs here
+                        // because they're not going to be used in staged or unstage
+                        base_word_diffs: hunk.base_word_diffs,
+                        buffer_word_diffs: hunk.buffer_word_diffs,
                         diff_base_byte_range: hunk.diff_base_byte_range,
                         secondary_status: hunk.secondary_status,
                         range: Point::zero()..Point::zero(), // unused

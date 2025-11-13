@@ -43,7 +43,7 @@ use std::{
     io,
     iter::{self, FromIterator},
     mem,
-    ops::{Range, RangeBounds, Sub},
+    ops::{Add, Range, RangeBounds, Sub},
     rc::Rc,
     str,
     sync::Arc,
@@ -142,7 +142,9 @@ pub struct MultiBufferDiffHunk {
     /// Whether or not this hunk also appears in the 'secondary diff'.
     pub secondary_status: DiffHunkSecondaryStatus,
     /// The word diffs for this hunk.
-    pub word_diffs: Vec<Range<usize>>,
+    pub base_word_diffs: Vec<Range<usize>>,
+    /// The word diffs for this hunk.
+    pub buffer_word_diffs: Vec<Range<text::Anchor>>,
 }
 
 impl MultiBufferDiffHunk {
@@ -259,13 +261,15 @@ pub struct MultiBufferSnapshot {
 enum DiffTransform {
     BufferContent {
         summary: TextSummary,
+        // todo! Move this into DiffTransformHunkInfo for better organization
+        buffer_word_diffs: Vec<Range<text::Anchor>>,
         inserted_hunk_info: Option<DiffTransformHunkInfo>,
     },
     DeletedHunk {
         summary: TextSummary,
         buffer_id: BufferId,
         hunk_info: DiffTransformHunkInfo,
-        word_diffs: Vec<Range<usize>>,
+        base_word_diffs: Vec<Range<usize>>,
         base_text_byte_range: Range<usize>,
         has_trailing_newline: bool,
     },
@@ -344,7 +348,7 @@ pub struct RowInfo {
     pub multibuffer_row: Option<MultiBufferRow>,
     pub diff_status: Option<buffer_diff::DiffHunkStatus>,
     pub expand_info: Option<ExpandInfo>,
-    pub word_diffs: Vec<Range<usize>>,
+    pub word_diffs: Vec<Range<Point>>,
 }
 
 /// A slice into a [`Buffer`] that is being edited in a [`MultiBuffer`].
@@ -497,11 +501,15 @@ struct MultiBufferCursor<'a, D: TextDimension> {
 }
 
 #[derive(Clone)]
+/// todo! double check this
+/// Match transformations to an item
+/// This is essentially a more detailed version of DiffTransform
 struct MultiBufferRegion<'a, D: TextDimension> {
     buffer: &'a BufferSnapshot,
     is_main_buffer: bool,
     diff_hunk_status: Option<DiffHunkStatus>,
-    word_diffs: Vec<Range<usize>>,
+    // todo! maybe this should just be a Range<usize>
+    word_diffs: Vec<Range<D>>,
     excerpt: &'a Excerpt,
     buffer_range: Range<D>,
     range: Range<D>,
@@ -2560,7 +2568,7 @@ impl MultiBuffer {
                     snapshot,
                     &mut new_diff_transforms,
                     excerpt_offset,
-                    end_of_current_insert,
+                    end_of_current_insert.as_ref(),
                 );
                 at_transform_boundary = true;
             }
@@ -2575,6 +2583,7 @@ impl MultiBuffer {
                 DiffTransform::BufferContent {
                     summary: Default::default(),
                     inserted_hunk_info: None,
+                    buffer_word_diffs: Vec::default(),
                 },
                 (),
             );
@@ -2595,7 +2604,11 @@ impl MultiBuffer {
         excerpts: &mut Cursor<Excerpt, TypedOffset<Excerpt>>,
         old_diff_transforms: &mut Cursor<DiffTransform, Dimensions<TypedOffset<Excerpt>, usize>>,
         new_diff_transforms: &mut SumTree<DiffTransform>,
-        end_of_current_insert: &mut Option<(TypedOffset<Excerpt>, DiffTransformHunkInfo)>,
+        end_of_current_insert: &mut Option<(
+            TypedOffset<Excerpt>,
+            DiffTransformHunkInfo,
+            Vec<Range<text::Anchor>>,
+        )>,
         old_expanded_hunks: &mut HashSet<DiffTransformHunkInfo>,
         snapshot: &MultiBufferSnapshot,
         change_kind: DiffChangeKind,
@@ -2679,7 +2692,7 @@ impl MultiBuffer {
                         snapshot,
                         new_diff_transforms,
                         hunk_excerpt_start,
-                        *end_of_current_insert,
+                        end_of_current_insert.as_ref(),
                     );
 
                     // For every existing hunk, determine if it was previously expanded
@@ -2727,7 +2740,7 @@ impl MultiBuffer {
 
                             new_diff_transforms.push(
                                 DiffTransform::DeletedHunk {
-                                    word_diffs: hunk.word_diffs.clone(),
+                                    base_word_diffs: hunk.base_word_diffs.clone(),
                                     base_text_byte_range: hunk.diff_base_byte_range.clone(),
                                     summary: base_text_summary,
                                     buffer_id: excerpt.buffer_id,
@@ -2739,8 +2752,12 @@ impl MultiBuffer {
                         }
 
                         if !hunk_buffer_range.is_empty() {
-                            *end_of_current_insert =
-                                Some((hunk_excerpt_end.min(excerpt_end), hunk_info));
+                            // yet another todo! check if we should be overwriting word diffs
+                            *end_of_current_insert = Some((
+                                hunk_excerpt_end.min(excerpt_end),
+                                hunk_info,
+                                hunk.buffer_word_diffs.clone(),
+                            ));
                         }
                     }
                 }
@@ -2763,10 +2780,12 @@ impl MultiBuffer {
         if let Some(DiffTransform::BufferContent {
             inserted_hunk_info,
             summary,
+            buffer_word_diffs,
         }) = subtree.first()
             && Self::extend_last_buffer_content_transform(
                 new_transforms,
                 *inserted_hunk_info,
+                buffer_word_diffs.clone(),
                 *summary,
             )
         {
@@ -2782,11 +2801,13 @@ impl MultiBuffer {
     fn push_diff_transform(new_transforms: &mut SumTree<DiffTransform>, transform: DiffTransform) {
         if let DiffTransform::BufferContent {
             inserted_hunk_info: inserted_hunk_anchor,
+            ref buffer_word_diffs,
             summary,
         } = transform
             && Self::extend_last_buffer_content_transform(
                 new_transforms,
                 inserted_hunk_anchor,
+                buffer_word_diffs.clone(),
                 summary,
             )
         {
@@ -2799,14 +2820,24 @@ impl MultiBuffer {
         old_snapshot: &MultiBufferSnapshot,
         new_transforms: &mut SumTree<DiffTransform>,
         end_offset: ExcerptOffset,
-        current_inserted_hunk: Option<(ExcerptOffset, DiffTransformHunkInfo)>,
+        current_inserted_hunk: Option<&(
+            ExcerptOffset,
+            DiffTransformHunkInfo,
+            Vec<Range<text::Anchor>>,
+        )>,
     ) {
-        let inserted_region = current_inserted_hunk.map(|(insertion_end_offset, hunk_info)| {
-            (end_offset.min(insertion_end_offset), Some(hunk_info))
-        });
-        let unchanged_region = [(end_offset, None)];
+        let inserted_region =
+            current_inserted_hunk.map(|(insertion_end_offset, hunk_info, buffer_word_diffs)| {
+                (
+                    end_offset.min(*insertion_end_offset),
+                    Some(hunk_info),
+                    buffer_word_diffs,
+                )
+            });
+        let unchanged_region = [(end_offset, None, &Vec::default())];
 
-        for (end_offset, inserted_hunk_info) in inserted_region.into_iter().chain(unchanged_region)
+        for (end_offset, inserted_hunk_info, buffer_word_diffs) in
+            inserted_region.into_iter().chain(unchanged_region)
         {
             let start_offset = new_transforms.summary().excerpt_len();
             if end_offset <= start_offset {
@@ -2817,13 +2848,15 @@ impl MultiBuffer {
 
             if !Self::extend_last_buffer_content_transform(
                 new_transforms,
-                inserted_hunk_info,
+                inserted_hunk_info.copied(),
+                buffer_word_diffs.clone(),
                 summary_to_add,
             ) {
                 new_transforms.push(
                     DiffTransform::BufferContent {
                         summary: summary_to_add,
-                        inserted_hunk_info,
+                        inserted_hunk_info: inserted_hunk_info.copied(),
+                        buffer_word_diffs: buffer_word_diffs.clone(),
                     },
                     (),
                 )
@@ -2834,17 +2867,21 @@ impl MultiBuffer {
     fn extend_last_buffer_content_transform(
         new_transforms: &mut SumTree<DiffTransform>,
         new_inserted_hunk_info: Option<DiffTransformHunkInfo>,
+        new_buffer_word_diffs: Vec<Range<text::Anchor>>,
         summary_to_add: TextSummary,
     ) -> bool {
         let mut did_extend = false;
         new_transforms.update_last(
             |last_transform| {
+                // todo! double check this
                 if let DiffTransform::BufferContent {
                     summary,
                     inserted_hunk_info: inserted_hunk_anchor,
+                    buffer_word_diffs,
                 } = last_transform
                     && *inserted_hunk_anchor == new_inserted_hunk_info
                 {
+                    buffer_word_diffs.extend(new_buffer_word_diffs);
                     *summary += summary_to_add;
                     did_extend = true;
                 }
@@ -3179,7 +3216,8 @@ impl MultiBufferSnapshot {
                 buffer_id: excerpt.buffer_id,
                 excerpt_id: excerpt.id,
                 buffer_range: hunk.buffer_range.clone(),
-                word_diffs: hunk.word_diffs.clone(),
+                base_word_diffs: hunk.base_word_diffs.clone(),
+                buffer_word_diffs: hunk.buffer_word_diffs.clone(),
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                 secondary_status: hunk.secondary_status,
             })
@@ -3328,7 +3366,7 @@ impl MultiBufferSnapshot {
     ) -> impl Iterator<Item = (Range<D>, M, &'a Excerpt)> + 'a
     where
         I: Iterator<Item = (Range<D>, M)> + 'a,
-        D: TextDimension + Ord + Sub<D, Output = D>,
+        D: TextDimension + Ord + Sub<D, Output = D> + Add<D, Output = D>,
     {
         let max_position = D::from_text_summary(&self.text_summary());
         let mut current_excerpt_metadata: Option<(ExcerptId, I)> = None;
@@ -3768,7 +3806,7 @@ impl MultiBufferSnapshot {
         clip_buffer_position: fn(&text::BufferSnapshot, D, Bias) -> D,
     ) -> D
     where
-        D: TextDimension + Ord + Sub<D, Output = D>,
+        D: TextDimension + Ord + Sub<D, Output = D> + Add<D, Output = D>,
     {
         let mut cursor = self.cursor();
         cursor.seek(&position);
@@ -3795,8 +3833,8 @@ impl MultiBufferSnapshot {
         convert_buffer_dimension: fn(&text::BufferSnapshot, D1) -> D2,
     ) -> D2
     where
-        D1: TextDimension + Ord + Sub<D1, Output = D1>,
-        D2: TextDimension + Ord + Sub<D2, Output = D2>,
+        D1: TextDimension + Ord + Sub<D1, Output = D1> + Add<D1, Output = D1>,
+        D2: TextDimension + Ord + Sub<D2, Output = D2> + Add<D2, Output = D2>,
     {
         let mut cursor = self.cursor::<DimensionPair<D1, D2>>();
         cursor.seek(&DimensionPair { key, value: None });
@@ -4383,7 +4421,7 @@ impl MultiBufferSnapshot {
         points: impl 'a + IntoIterator<Item = Point>,
     ) -> impl 'a + Iterator<Item = D>
     where
-        D: TextDimension + Sub<D, Output = D>,
+        D: TextDimension + Sub<D, Output = D> + Add<D, Output = D>,
     {
         let mut cursor = self.cursor::<DimensionPair<Point, D>>();
         cursor.seek(&DimensionPair {
@@ -5393,6 +5431,7 @@ impl MultiBufferSnapshot {
             + TextDimension
             + Ord
             + Sub<T, Output = T>
+            + Add<T, Output = T>
             + fmt::Debug,
     {
         self.lift_buffer_metadata(range, move |buffer, buffer_range| {
@@ -5416,6 +5455,7 @@ impl MultiBufferSnapshot {
             + TextDimension
             + Ord
             + Sub<T, Output = T>
+            + Add<T, Output = T>
             + fmt::Debug,
     {
         self.lift_buffer_metadata(range, move |buffer, buffer_range| {
@@ -5824,6 +5864,7 @@ impl MultiBufferSnapshot {
             if let DiffTransform::BufferContent {
                 summary,
                 inserted_hunk_info,
+                buffer_word_diffs: _,
             } = item
             {
                 if let Some(DiffTransform::BufferContent {
@@ -5848,7 +5889,7 @@ impl MultiBufferSnapshot {
 
 impl<'a, D> MultiBufferCursor<'a, D>
 where
-    D: TextDimension + Ord + Sub<D, Output = D>,
+    D: TextDimension + Ord + Sub<D, Output = D> + Add<D, Output = D>,
 {
     fn seek(&mut self, position: &D) {
         self.cached_region.take();
@@ -6027,22 +6068,56 @@ where
                 base_text_byte_range,
                 has_trailing_newline,
                 hunk_info,
-                word_diffs,
+                base_word_diffs,
                 ..
             } => {
                 let diff = self.diffs.get(buffer_id)?;
                 let buffer = diff.base_text();
                 let mut rope_cursor = buffer.as_rope().cursor(0);
                 let buffer_start = rope_cursor.summary::<D>(base_text_byte_range.start);
+
+                let word_diffs: Vec<Range<D>> = base_word_diffs
+                    .into_iter()
+                    .map(|diff| {
+                        // 3
+                        let start =
+                            rope_cursor.summary::<D>(base_text_byte_range.start + diff.start);
+                        let end = rope_cursor.summary::<D>(base_text_byte_range.start + diff.end);
+
+                        start..end
+                    })
+                    .collect();
+
+                let mut rope_cursor = buffer.as_rope().cursor(0);
+                let _ = rope_cursor.summary::<D>(base_text_byte_range.start);
                 let buffer_range_len = rope_cursor.summary::<D>(base_text_byte_range.end);
                 let mut buffer_end = buffer_start;
                 buffer_end.add_assign(&buffer_range_len);
                 let start = self.diff_transforms.start().output_dimension.0;
                 let end = self.diff_transforms.end().output_dimension.0;
+
+                //  --- buffer1
+                // 0  foo
+                // - boo
+                // - 👻
+                // --- buffer2 (excerpt starts at line 100)
+                // 1   bar
+                // 2 - baz
+                // 3 + BAZ
+
+                // start = (2, 0)
+                // D = Point
+                // word_diffs = vec![Point::new(2, 0)..Point::new(2, 3)]
+
                 Some(MultiBufferRegion {
                     buffer,
                     excerpt,
-                    word_diffs: word_diffs.clone(),
+                    word_diffs: dbg!(
+                        word_diffs
+                            .into_iter()
+                            .map(|range| start + range.start..start + range.end)
+                            .collect()
+                    ),
                     has_trailing_newline: *has_trailing_newline,
                     is_main_buffer: false,
                     diff_hunk_status: Some(DiffHunkStatus::deleted(
@@ -6053,7 +6128,9 @@ where
                 })
             }
             DiffTransform::BufferContent {
-                inserted_hunk_info, ..
+                inserted_hunk_info,
+                buffer_word_diffs,
+                ..
             } => {
                 let buffer = &excerpt.buffer;
                 let buffer_context_start = excerpt.range.context.start.summary::<D>(buffer);
@@ -6092,7 +6169,7 @@ where
                 Some(MultiBufferRegion {
                     buffer,
                     excerpt,
-                    word_diffs: Default::default(), //todo!
+                    word_diffs: Default::default(),
                     has_trailing_newline,
                     is_main_buffer: true,
                     diff_hunk_status: inserted_hunk_info

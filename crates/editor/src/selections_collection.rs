@@ -1,7 +1,7 @@
 use std::{
     cell::Ref,
     cmp, fmt, iter, mem,
-    ops::{Deref, DerefMut, Range, Sub},
+    ops::{Add, Deref, DerefMut, Range, Sub},
     sync::Arc,
 };
 
@@ -127,7 +127,7 @@ impl SelectionsCollection {
         self.pending.as_mut().map(|pending| &mut pending.selection)
     }
 
-    pub fn pending<D: TextDimension + Ord + Sub<D, Output = D>>(
+    pub fn pending<D: TextDimension + Ord + Sub<D, Output = D> + Add<D, Output = D>>(
         &self,
         snapshot: &DisplaySnapshot,
     ) -> Option<Selection<D>> {
@@ -140,7 +140,7 @@ impl SelectionsCollection {
 
     pub fn all<'a, D>(&self, snapshot: &DisplaySnapshot) -> Vec<Selection<D>>
     where
-        D: 'a + TextDimension + Ord + Sub<D, Output = D>,
+        D: 'a + TextDimension + Ord + Sub<D, Output = D> + Add<D, Output = D>,
     {
         let disjoint_anchors = &self.disjoint;
         let mut disjoint =
@@ -224,7 +224,7 @@ impl SelectionsCollection {
         snapshot: &DisplaySnapshot,
     ) -> Vec<Selection<D>>
     where
-        D: 'a + TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug,
+        D: 'a + TextDimension + Ord + Sub<D, Output = D> + Add<D, Output = D> + std::fmt::Debug,
     {
         let start_ix = match self
             .disjoint
@@ -281,7 +281,7 @@ impl SelectionsCollection {
             .unwrap()
     }
 
-    pub fn newest<D: TextDimension + Ord + Sub<D, Output = D>>(
+    pub fn newest<D: TextDimension + Ord + Sub<D, Output = D> + Add<D, Output = D>>(
         &self,
         snapshot: &DisplaySnapshot,
     ) -> Selection<D> {
@@ -304,7 +304,7 @@ impl SelectionsCollection {
             .unwrap()
     }
 
-    pub fn oldest<D: TextDimension + Ord + Sub<D, Output = D>>(
+    pub fn oldest<D: TextDimension + Ord + Sub<D, Output = D> + Add<D, Output = D>>(
         &self,
         snapshot: &DisplaySnapshot,
     ) -> Selection<D> {
@@ -320,14 +320,14 @@ impl SelectionsCollection {
             .unwrap_or_else(|| self.disjoint.first().cloned().unwrap())
     }
 
-    pub fn first<D: TextDimension + Ord + Sub<D, Output = D>>(
+    pub fn first<D: TextDimension + Ord + Sub<D, Output = D> + Add<D, Output = D>>(
         &self,
         snapshot: &DisplaySnapshot,
     ) -> Selection<D> {
         self.all(snapshot).first().unwrap().clone()
     }
 
-    pub fn last<D: TextDimension + Ord + Sub<D, Output = D>>(
+    pub fn last<D: TextDimension + Ord + Sub<D, Output = D> + Add<D, Output = D>>(
         &self,
         snapshot: &DisplaySnapshot,
     ) -> Selection<D> {
@@ -337,7 +337,7 @@ impl SelectionsCollection {
     /// Returns a list of (potentially backwards!) ranges representing the selections.
     /// Useful for test assertions, but prefer `.all()` instead.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn ranges<D: TextDimension + Ord + Sub<D, Output = D>>(
+    pub fn ranges<D: TextDimension + Ord + Sub<D, Output = D> + Add<D, Output = D>>(
         &self,
         snapshot: &DisplaySnapshot,
     ) -> Vec<Range<D>> {
@@ -1049,7 +1049,7 @@ pub(crate) fn resolve_selections_wrapping_blocks<'a, D, I>(
     map: &'a DisplaySnapshot,
 ) -> impl 'a + Iterator<Item = Selection<D>>
 where
-    D: TextDimension + Ord + Sub<D, Output = D>,
+    D: TextDimension + Ord + Sub<D, Output = D> + Add<D, Output = D>,
     I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
 {
     // Transforms `Anchor -> DisplayPoint -> Point -> DisplayPoint -> D`

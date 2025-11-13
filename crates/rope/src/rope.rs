@@ -1657,6 +1657,21 @@ where
     }
 }
 
+impl<K, V> ops::Add for DimensionPair<K, V>
+where
+    K: ops::Add<K, Output = K>,
+    V: ops::Add<V, Output = V>,
+{
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self {
+            key: self.key + rhs.key,
+            value: self.value.zip(rhs.value).map(|(a, b)| a + b),
+        }
+    }
+}
+
 impl<K, V> cmp::Eq for DimensionPair<K, V> where K: cmp::Eq {}
 
 impl<'a, K, V> sum_tree::Dimension<'a, ChunkSummary> for DimensionPair<K, V>

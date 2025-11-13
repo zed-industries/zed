@@ -35,6 +35,7 @@ pub struct BufferDiffSnapshot {
 #[derive(Clone)]
 struct BufferDiffInner {
     hunks: SumTree<InternalDiffHunk>,
+    // Used for making staging mo
     pending_hunks: SumTree<PendingHunk>,
     base_text: language::BufferSnapshot,
     base_text_exists: bool,
@@ -54,11 +55,18 @@ pub enum DiffHunkStatusKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Diff of Working Copy vs Index
+/// aka 'is this hunk staged or not'
 pub enum DiffHunkSecondaryStatus {
+    /// Unstaged
     HasSecondaryHunk,
+    /// Partially staged
     OverlapsWithSecondaryHunk,
+    /// Staged
     NoSecondaryHunk,
+    /// We are unstaging
     SecondaryHunkAdditionPending,
+    /// We are stagind
     SecondaryHunkRemovalPending,
 }
 
@@ -72,7 +80,8 @@ pub struct DiffHunk {
     /// The range in the buffer's diff base text to which this hunk corresponds.
     pub diff_base_byte_range: Range<usize>,
     pub secondary_status: DiffHunkSecondaryStatus,
-    pub word_diffs: Vec<Range<usize>>,
+    pub buffer_word_diffs: Vec<Range<Anchor>>,
+    pub base_word_diffs: Vec<Range<usize>>,
 }
 
 /// We store [`InternalDiffHunk`]s internally so we don't need to store the additional row range.
@@ -80,7 +89,8 @@ pub struct DiffHunk {
 struct InternalDiffHunk {
     buffer_range: Range<Anchor>,
     diff_base_byte_range: Range<usize>,
-    base_word_diffs: Vec<Range<usize>>,
+    base_word_diffs: Vec<Range<usize>>, // TODO maybe opt: smallvec?
+    buffer_word_diffs: Vec<Range<Anchor>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,7 +104,6 @@ struct PendingHunk {
 #[derive(Debug, Clone)]
 pub struct DiffHunkSummary {
     buffer_range: Range<Anchor>,
-    word_diffs: Vec<Range<usize>>,
 }
 
 impl sum_tree::Item for InternalDiffHunk {
@@ -103,7 +112,6 @@ impl sum_tree::Item for InternalDiffHunk {
     fn summary(&self, _cx: &text::BufferSnapshot) -> Self::Summary {
         DiffHunkSummary {
             buffer_range: self.buffer_range.clone(),
-            word_diffs: self.base_word_diffs.clone(),
         }
     }
 }
@@ -114,7 +122,6 @@ impl sum_tree::Item for PendingHunk {
     fn summary(&self, _cx: &text::BufferSnapshot) -> Self::Summary {
         DiffHunkSummary {
             buffer_range: self.buffer_range.clone(),
-            word_diffs: Vec::new(),
         }
     }
 }
@@ -125,7 +132,6 @@ impl sum_tree::Summary for DiffHunkSummary {
     fn zero(_cx: Self::Context<'_>) -> Self {
         DiffHunkSummary {
             buffer_range: Anchor::MIN..Anchor::MIN,
-            word_diffs: Vec::default(),
         }
     }
 
@@ -550,16 +556,12 @@ impl BufferDiffInner {
                     (
                         hunk.buffer_range.start,
                         hunk.diff_base_byte_range.start,
-                        hunk.base_word_diffs.clone(),
+                        hunk,
                     ),
                 ),
                 (
                     &hunk.buffer_range.end,
-                    (
-                        hunk.buffer_range.end,
-                        hunk.diff_base_byte_range.end,
-                        hunk.base_word_diffs.clone(),
-                    ),
+                    (hunk.buffer_range.end, hunk.diff_base_byte_range.end, hunk),
                 ),
             ]
         });
@@ -578,8 +580,12 @@ impl BufferDiffInner {
         let mut summaries = buffer.summaries_for_anchors_with_payload::<Point, _, _>(anchor_iter);
         iter::from_fn(move || {
             loop {
-                let (start_point, (start_anchor, start_base, _)) = summaries.next()?;
-                let (mut end_point, (mut end_anchor, end_base, word_diffs)) = summaries.next()?;
+                let (start_point, (start_anchor, start_base, hunk)) = summaries.next()?;
+                let (mut end_point, (mut end_anchor, end_base, _)) = summaries.next()?;
+
+                // todo! Do we need to clone here??
+                let base_word_diffs = hunk.base_word_diffs.clone();
+                let buffer_word_diffs = hunk.buffer_word_diffs.clone();
 
                 if !start_anchor.is_valid(buffer) {
                     continue;
@@ -649,7 +655,8 @@ impl BufferDiffInner {
                     range: start_point..end_point,
                     diff_base_byte_range: start_base..end_base,
                     buffer_range: start_anchor..end_anchor,
-                    word_diffs,
+                    base_word_diffs,
+                    buffer_word_diffs,
                     secondary_status,
                 });
             }
@@ -663,6 +670,7 @@ impl BufferDiffInner {
     ) -> impl 'a + Iterator<Item = DiffHunk> {
         let mut cursor = self
             .hunks
+            // todo!: Find out what summaries are being iterated over
             .filter::<_, DiffHunkSummary>(buffer, move |summary| {
                 let before_start = summary.buffer_range.end.cmp(&range.start, buffer).is_lt();
                 let after_end = summary.buffer_range.start.cmp(&range.end, buffer).is_gt();
@@ -681,7 +689,8 @@ impl BufferDiffInner {
                 buffer_range: hunk.buffer_range.clone(),
                 // The secondary status is not used by callers of this method.
                 secondary_status: DiffHunkSecondaryStatus::NoSecondaryHunk,
-                word_diffs: hunk.base_word_diffs.clone(),
+                base_word_diffs: hunk.base_word_diffs.clone(),
+                buffer_word_diffs: hunk.buffer_word_diffs.clone(),
             })
         })
     }
@@ -779,6 +788,7 @@ fn compute_hunks(
                     buffer_range: buffer.anchor_before(0)..buffer.anchor_before(0),
                     diff_base_byte_range: 0..diff_base.len() - 1,
                     base_word_diffs: Vec::default(),
+                    buffer_word_diffs: Vec::default(),
                 },
                 &buffer,
             );
@@ -804,6 +814,7 @@ fn compute_hunks(
                 buffer_range: Anchor::MIN..Anchor::MAX,
                 diff_base_byte_range: 0..0,
                 base_word_diffs: Vec::default(),
+                buffer_word_diffs: Vec::default(),
             },
             &buffer,
         );
@@ -883,49 +894,56 @@ fn process_patch_hunk(
     let end = Point::new(buffer_row_range.end, 0);
     let buffer_range = buffer.anchor_before(start)..buffer.anchor_before(end);
 
-    let base_word_diffs = if !diff_base_byte_range.is_empty() && !buffer_row_range.is_empty() {
-        let base_text: String = diff_base
-            .chunks_in_range(diff_base_byte_range.clone())
-            .collect();
+    let (base_word_diffs, buffer_word_diffs) =
+        if !diff_base_byte_range.is_empty() && !buffer_row_range.is_empty() {
+            let base_text: String = diff_base
+                .chunks_in_range(diff_base_byte_range.clone())
+                .collect();
 
-        let buffer_text: String = buffer.text_for_range(buffer_range.clone()).collect();
+            let buffer_text: String = buffer.text_for_range(buffer_range.clone()).collect();
 
-        let diff = similar::TextDiff::configure()
-            .algorithm(similar::Algorithm::Patience)
-            .diff_words(&base_text, &buffer_text);
+            let diff = similar::TextDiff::configure()
+                .algorithm(similar::Algorithm::Patience)
+                .diff_words(&base_text, &buffer_text);
 
-        let mut base_word_diffs = Vec::default();
-        let mut base_offset = 0;
-        let mut buffer_offset = buffer_range.start.to_offset(buffer);
+            let mut base_word_diffs = Vec::default();
+            let mut buffer_word_diffs = Vec::default();
 
-        for change in diff.iter_all_changes() {
-            let change_offset = change.value().len();
+            // Editor Element expects this to be relative to the start of the deleted hunk
+            let mut base_offset = diff_base_byte_range.start; //todo! check this // bytes
+            let mut buffer_offset = buffer_range.start.to_offset(buffer);
 
-            match change.tag() {
-                similar::ChangeTag::Equal => {
-                    buffer_offset += change_offset;
-                    base_offset += change_offset;
-                }
-                similar::ChangeTag::Insert => {
-                    // word_diffs.push(buffer_offset..buffer_offset + change_offset);
-                    buffer_offset += change_offset;
-                }
-                similar::ChangeTag::Delete => {
-                    base_word_diffs.push(base_offset..base_offset + change_offset);
-                    base_offset += change_offset;
+            for change in diff.iter_all_changes() {
+                let change_offset = change.value().len();
+
+                match change.tag() {
+                    similar::ChangeTag::Equal => {
+                        buffer_offset += change_offset;
+                        base_offset += change_offset;
+                    }
+                    similar::ChangeTag::Insert => {
+                        let start = buffer.anchor_before(buffer_offset);
+                        buffer_offset += change_offset;
+                        let end = buffer.anchor_after(buffer_offset);
+                        buffer_word_diffs.push(start..end);
+                    }
+                    similar::ChangeTag::Delete => {
+                        base_word_diffs.push(base_offset..base_offset + change_offset);
+                        base_offset += change_offset;
+                    }
                 }
             }
-        }
 
-        base_word_diffs
-    } else {
-        Vec::default()
-    };
+            (base_word_diffs, buffer_word_diffs)
+        } else {
+            (Vec::default(), Vec::default())
+        };
 
     InternalDiffHunk {
         buffer_range,
         diff_base_byte_range,
         base_word_diffs,
+        buffer_word_diffs,
     }
 }
 
@@ -1005,7 +1023,6 @@ impl BufferDiff {
         if self.secondary_diff.is_some() {
             self.inner.pending_hunks = SumTree::from_summary(DiffHunkSummary {
                 buffer_range: Anchor::MIN..Anchor::MIN,
-                word_diffs: Vec::default(),
             });
             cx.emit(BufferDiffEvent::DiffChanged {
                 changed_range: Some(Anchor::MIN..Anchor::MAX),
