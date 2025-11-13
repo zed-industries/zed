@@ -1939,6 +1939,7 @@ mod extension_agent_tests {
                 cmd: "./agent".into(),
                 args: vec![],
                 sha256: None,
+                env: Default::default(),
             },
         );
 
@@ -1979,6 +1980,7 @@ mod extension_agent_tests {
                         cmd: "./my-agent".into(),
                         args: vec!["--serve".into()],
                         sha256: None,
+                        env: Default::default(),
                     },
                 );
                 map
@@ -2016,6 +2018,7 @@ mod extension_agent_tests {
                 cmd: "./release-agent".into(),
                 args: vec!["serve".into()],
                 sha256: None,
+                env: Default::default(),
             },
         );
 
@@ -2058,6 +2061,7 @@ mod extension_agent_tests {
                         cmd: "node".into(),
                         args: vec!["index.js".into()],
                         sha256: None,
+                        env: Default::default(),
                     },
                 );
                 map
@@ -2104,6 +2108,7 @@ mod extension_agent_tests {
                             "./config.json".into(),
                         ],
                         sha256: None,
+                        env: Default::default(),
                     },
                 );
                 map
