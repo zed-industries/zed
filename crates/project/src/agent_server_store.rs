@@ -268,12 +268,9 @@ impl AgentServerStore {
         // Insert agent servers from extension manifests
         match &mut self.state {
             AgentServerStoreState::Local {
-                node_runtime,
-                project_environment,
-                fs,
-                http_client,
-                ..
+                extension_agents, ..
             } => {
+                extension_agents.clear();
                 for (ext_id, manifest) in manifests {
                     for (agent_name, agent_entry) in &manifest.agent_servers {
                         let display = SharedString::from(agent_entry.name.clone());
