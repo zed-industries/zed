@@ -43,10 +43,6 @@ async fn parse_xml_edits_inner<'a>(
             let old_text = buffer
                 .text_for_range(match_range.clone())
                 .collect::<String>();
-            eprintln!(
-                "{}",
-                pretty_assertions::StrComparison::new(&old_text, new_text_tag.body)
-            );
             let edits_within_hunk = language::text_diff(&old_text, &new_text_tag.body);
             edits.extend(
                 edits_within_hunk
@@ -178,9 +174,9 @@ impl<'a> StreamingFuzzyMatcher<'a> {
                     SearchDirection::Left,
                 );
                 let diagonal = SearchState::new(
-                    if dbg!(query_line == buffer_line) {
+                    if query_line == buffer_line {
                         self.matrix.get(row, col).cost
-                    } else if dbg!(fuzzy_eq(query_line, buffer_line)) {
+                    } else if fuzzy_eq(query_line, buffer_line) {
                         self.matrix.get(row, col).cost + REPLACEMENT_COST
                     } else {
                         self.matrix
