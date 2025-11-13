@@ -484,6 +484,20 @@ jobs:
       shell: bash -euxo pipefail {0}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  notify_on_failure:
+    needs:
+    - upload_release_assets
+    - auto_release_preview
+    if: failure()
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: release::notify_on_failure::notify_slack
+      run: |-
+        curl -X POST -H 'Content-type: application/json'\
+         --data '{"text":"${{ github.workflow }} failed:  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' "$SLACK_WEBHOOK"
+      shell: bash -euxo pipefail {0}
+      env:
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
   cancel-in-progress: true
