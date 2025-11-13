@@ -314,6 +314,36 @@ impl AgentServerStore {
                 project_id,
                 upstream_client,
             } => {
+                let mut agents = vec![];
+                for (ext_id, manifest) in manifests {
+                    for (agent_name, agent_entry) in &manifest.agent_servers {
+                        // Store absolute icon path if provided, resolving symlinks for dev extensions
+                        let icon = if let Some(icon) = &agent_entry.icon {
+                            let icon_path = extensions_dir.join(ext_id).join(icon);
+                            // Canonicalize to resolve symlinks (dev extensions are symlinked)
+                            Some(
+                                icon_path
+                                    .canonicalize()
+                                    .unwrap_or(icon_path)
+                                    .to_string_lossy()
+                                    .to_string(),
+                            )
+                        } else {
+                            None
+                        };
+
+                        agents.push(ExternalExtensionAgent {
+                            name: agent_name.to_string(),
+                            icon_path: icon,
+                            extension_id: ext_id.to_string(),
+                            targets: agent_entry
+                                .targets
+                                .iter()
+                                .map(|(k, v)| (k.clone(), v.to_proto()))
+                                .collect(),
+                        });
+                    }
+                }
                 upstream_client
                     .read(cx)
                     .proto_client()
