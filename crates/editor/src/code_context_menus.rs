@@ -49,6 +49,8 @@ pub const MENU_GAP: Pixels = px(4.);
 pub const MENU_ASIDE_X_PADDING: Pixels = px(16.);
 pub const MENU_ASIDE_MIN_WIDTH: Pixels = px(260.);
 pub const MENU_ASIDE_MAX_WIDTH: Pixels = px(500.);
+pub const COMPLETION_MENU_MIN_WIDTH: Pixels = px(280.);
+pub const COMPLETION_MENU_MAX_WIDTH: Pixels = px(540.);
 
 // Constants for the markdown cache. The purpose of this cache is to reduce flickering due to
 // documentation not yet being parsed.
@@ -211,6 +213,7 @@ pub enum ContextMenuOrigin {
     GutterIndicator(DisplayRow),
     QuickActionBar,
 }
+
 
 pub struct CompletionsMenu {
     pub id: CompletionId,
@@ -907,7 +910,7 @@ impl CompletionsMenu {
                                 })
                             });
 
-                        div().min_w(px(280.)).max_w(px(540.)).child(
+                        div().min_w(COMPLETION_MENU_MIN_WIDTH).max_w(COMPLETION_MENU_MAX_WIDTH).child(
                             ListItem::new(mat.candidate_id)
                                 .inset(true)
                                 .toggle_state(item_ix == selected_item)
