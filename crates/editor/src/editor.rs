@@ -17105,19 +17105,22 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<Navigated>>> {
-        let selection = self.selections.newest::<usize>(&self.display_snapshot(cx));
+        let selection = self.selections.newest_anchor();
         let multi_buffer = self.buffer.read(cx);
-        let head = selection.head();
-
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+        let selection_usize = selection.map(|anchor| anchor.to_offset(&multi_buffer_snapshot));
+        let head = selection_usize.head();
+
         let head_anchor = multi_buffer_snapshot.anchor_at(
             head,
-            if head < selection.tail() {
+            if head < selection_usize.tail() {
                 Bias::Right
             } else {
                 Bias::Left
             },
         );
+
+        let (_, head_text_anchor) = multi_buffer.text_anchor_for_position(head, cx)?;
 
         match self
             .find_all_references_task_sources
@@ -17135,6 +17138,7 @@ impl Editor {
         }
 
         let (buffer, head) = multi_buffer.text_anchor_for_position(head, cx)?;
+        let buffer_snapshot = buffer.read(cx).snapshot();
         let workspace = self.workspace()?;
         let project = workspace.read(cx).project().clone();
         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
@@ -17154,6 +17158,21 @@ impl Editor {
             let mut locations = cx.update(|_, cx| {
                 locations
                     .into_iter()
+                    .filter(|location| {
+                        if &location.buffer != &buffer {
+                            return true;
+                        }
+                        location
+                            .range
+                            .start
+                            .cmp(&head_text_anchor, &buffer_snapshot)
+                            .is_le()
+                            && location
+                                .range
+                                .end
+                                .cmp(&head_text_anchor, &buffer_snapshot)
+                                .is_ge()
+                    })
                     .map(|location| {
                         let buffer = location.buffer.read(cx);
                         (location.buffer, location.range.to_point(buffer))
