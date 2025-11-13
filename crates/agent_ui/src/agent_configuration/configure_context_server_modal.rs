@@ -711,7 +711,7 @@ impl Render for ConfigureContextServerModal {
                         Section::new().child(
                             div()
                                 .id("modal-content")
-                                .max_h(rems(40.))
+                                .max_h(vh(0.7, window))
                                 .child(self.render_modal_description(window, cx))
                                 .child(self.render_modal_content(cx))
                                 .child(match &self.state {
