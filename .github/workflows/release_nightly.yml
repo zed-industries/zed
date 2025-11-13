@@ -490,3 +490,21 @@ jobs:
         SENTRY_PROJECT: zed
         SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
     timeout-minutes: 60
+  notify_on_failure:
+    needs:
+    - bundle_linux_aarch64
+    - bundle_linux_x86_64
+    - bundle_mac_aarch64
+    - bundle_mac_x86_64
+    - bundle_windows_aarch64
+    - bundle_windows_x86_64
+    if: failure()
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: release::notify_on_failure::notify_slack
+      run: |-
+        curl -X POST -H 'Content-type: application/json'\
+         --data '{"text":"${{ github.workflow }} failed:  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' "$SLACK_WEBHOOK"
+      shell: bash -euxo pipefail {0}
+      env:
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
