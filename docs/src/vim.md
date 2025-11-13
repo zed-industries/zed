@@ -49,26 +49,6 @@ If you missed this, you can toggle vim mode on or off anytime by opening the com
 
 Even when vim mode is **disabled**, all Vim actions (operators, text objects, and motions) are available for custom keybindings. This allows you to use Vim's powerful editing commands without entering modal editing mode.
 
-### Example: Binding Vim actions to custom keys
-
-```json [keymap]
-[
-  {
-    "context": "Editor",
-    "bindings": {
-      // Delete inside quotes with Cmd+'
-      "cmd-'": [
-        "vim::PushDelete",
-        ["vim::PushObject", { "around": false }],
-        "vim::AnyQuotes"
-      ],
-      // Go to last modification with Cmd+.
-      "cmd-.": "vim::HelixGotoLastModification"
-    }
-  }
-]
-```
-
 ## Zed-specific features
 
 Zed is built on a modern foundation that (among other things) uses Tree-sitter and language servers to understand the content of the file you're editing and supports multiple cursors out of the box.
