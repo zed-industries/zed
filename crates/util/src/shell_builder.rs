@@ -79,21 +79,39 @@ impl ShellBuilder {
         task_args: &[String],
     ) -> (String, Vec<String>) {
         if let Some(task_command) = task_command {
-            let mut combined_command = self
-                .kind
-                .try_quote_prefix_aware(&task_command)
-                .map(Cow::into_owned)
-                .unwrap_or(task_command);
+            let should_quote = matches!(
+                self.kind,
+                ShellKind::Posix
+                    | ShellKind::Csh
+                    | ShellKind::Tcsh
+                    | ShellKind::Rc
+                    | ShellKind::Fish
+                    | ShellKind::Xonsh
+                    | ShellKind::Elvish
+            );
+
+            let mut combined_command = if should_quote {
+                self.kind
+                    .try_quote_prefix_aware(&task_command)
+                    .map(Cow::into_owned)
+                    .unwrap_or(task_command)
+            } else {
+                task_command
+            };
 
             combined_command = task_args.iter().fold(combined_command, |mut command, arg| {
                 command.push(' ');
                 let substituted = self.kind.to_shell_variable(arg);
-                let quoted = self
-                    .kind
-                    .try_quote(&substituted)
-                    .map(Cow::into_owned)
-                    .unwrap_or(substituted);
-                command.push_str(&quoted);
+                if should_quote {
+                    let quoted = self
+                        .kind
+                        .try_quote(&substituted)
+                        .map(Cow::into_owned)
+                        .unwrap_or(substituted);
+                    command.push_str(&quoted);
+                } else {
+                    command.push_str(&substituted);
+                }
                 command
             });
             if self.redirect_stdin {
