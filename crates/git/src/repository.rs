@@ -478,6 +478,12 @@ pub trait GitRepository: Send + Sync {
     fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>>;
     fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<'_, Result<crate::blame::Blame>>;
     fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<FileHistory>>;
+    fn file_history_paginated(
+        &self,
+        path: RepoPath,
+        skip: usize,
+        limit: Option<usize>,
+    ) -> BoxFuture<'_, Result<FileHistory>>;
 
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
     /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
@@ -1439,25 +1445,50 @@ impl GitRepository for RealGitRepository {
     }
 
     fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<FileHistory>> {
+        self.file_history_paginated(path, 0, None)
+    }
+
+    fn file_history_paginated(
+        &self,
+        path: RepoPath,
+        skip: usize,
+        limit: Option<usize>,
+    ) -> BoxFuture<'_, Result<FileHistory>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
         self.executor
             .spawn(async move {
                 let working_directory = working_directory?;
-                // Use a unique delimiter to separate commits
-                const COMMIT_DELIMITER: &str = "<<COMMIT_END>>";
+                // Use a unique delimiter with a random UUID to separate commits
+                // This essentially eliminates any chance of encountering the delimiter in actual commit data
+                let commit_delimiter = format!("<<COMMIT_END-{}>>", Uuid::new_v4());
+
+                let format_string = format!(
+                    "--pretty=format:%H%x00%s%x00%B%x00%at%x00%an%x00%ae{}",
+                    commit_delimiter
+                );
+
+                let mut args = vec!["--no-optional-locks", "log", "--follow", &format_string];
+
+                // Add pagination arguments if needed
+                let skip_str;
+                let limit_str;
+                if skip > 0 {
+                    skip_str = skip.to_string();
+                    args.push("--skip");
+                    args.push(&skip_str);
+                }
+                if let Some(n) = limit {
+                    limit_str = n.to_string();
+                    args.push("-n");
+                    args.push(&limit_str);
+                }
+
+                args.push("--");
+
                 let output = new_smol_command(&git_binary_path)
                     .current_dir(&working_directory)
-                    .args([
-                        "--no-optional-locks",
-                        "log",
-                        "--follow",
-                        &format!(
-                            "--pretty=format:%H%x00%s%x00%B%x00%at%x00%an%x00%ae{}",
-                            COMMIT_DELIMITER
-                        ),
-                        "--",
-                    ])
+                    .args(&args)
                     .arg(path.as_unix_str())
                     .output()
                     .await?;
@@ -1467,10 +1498,10 @@ impl GitRepository for RealGitRepository {
                     bail!("git log failed: {stderr}");
                 }
 
-                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stdout = std::str::from_utf8(&output.stdout)?;
                 let mut entries = Vec::new();
 
-                for commit_block in stdout.split(COMMIT_DELIMITER) {
+                for commit_block in stdout.split(commit_delimiter.as_str()) {
                     let commit_block = commit_block.trim();
                     if commit_block.is_empty() {
                         continue;

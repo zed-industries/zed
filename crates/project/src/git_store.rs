@@ -441,6 +441,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_reset);
         client.add_entity_request_handler(Self::handle_show);
         client.add_entity_request_handler(Self::handle_load_commit_diff);
+        client.add_entity_request_handler(Self::handle_file_history);
         client.add_entity_request_handler(Self::handle_checkout_files);
         client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
         client.add_entity_request_handler(Self::handle_set_index_text);
@@ -1015,16 +1016,7 @@ impl GitStore {
         path: RepoPath,
         cx: &mut App,
     ) -> Task<Result<git::repository::FileHistory>> {
-        let rx = repo.update(cx, |repo, _| {
-            repo.send_job(None, move |state, _| async move {
-                match state {
-                    RepositoryState::Local { backend, .. } => backend.file_history(path).await,
-                    RepositoryState::Remote { .. } => Err(anyhow!(
-                        "file history not supported for remote repositories yet"
-                    )),
-                }
-            })
-        });
+        let rx = repo.update(cx, |repo, _| repo.file_history(path));
 
         cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
@@ -2213,6 +2205,45 @@ impl GitStore {
                     new_text: file.new_text,
                 })
                 .collect(),
+        })
+    }
+
+    async fn handle_file_history(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitFileHistory>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitFileHistoryResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let path = RepoPath::from_proto(&envelope.payload.path)?;
+
+        let file_history = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.send_job(None, move |state, _| async move {
+                    match state {
+                        RepositoryState::Local { backend, .. } => backend.file_history(path).await,
+                        RepositoryState::Remote { .. } => {
+                            unreachable!("file history request received for remote repository")
+                        }
+                    }
+                })
+            })?
+            .await??;
+
+        Ok(proto::GitFileHistoryResponse {
+            entries: file_history
+                .entries
+                .into_iter()
+                .map(|entry| proto::FileHistoryEntry {
+                    sha: entry.sha.to_string(),
+                    subject: entry.subject.to_string(),
+                    message: entry.message.to_string(),
+                    commit_timestamp: entry.commit_timestamp,
+                    author_name: entry.author_name.to_string(),
+                    author_email: entry.author_email.to_string(),
+                })
+                .collect(),
+            path: file_history.path.to_proto(),
         })
     }
 
@@ -3872,6 +3903,44 @@ impl Repository {
                                 })
                             })
                             .collect::<Result<Vec<_>>>()?,
+                    })
+                }
+            }
+        })
+    }
+
+    pub fn file_history(
+        &mut self,
+        path: RepoPath,
+    ) -> oneshot::Receiver<Result<git::repository::FileHistory>> {
+        let id = self.id;
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local { backend, .. } => backend.file_history(path).await,
+                RepositoryState::Remote {
+                    client, project_id, ..
+                } => {
+                    let response = client
+                        .request(proto::GitFileHistory {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            path: path.to_proto(),
+                        })
+                        .await?;
+                    Ok(git::repository::FileHistory {
+                        entries: response
+                            .entries
+                            .into_iter()
+                            .map(|entry| git::repository::FileHistoryEntry {
+                                sha: entry.sha.into(),
+                                subject: entry.subject.into(),
+                                message: entry.message.into(),
+                                commit_timestamp: entry.commit_timestamp,
+                                author_name: entry.author_name.into(),
+                                author_email: entry.author_email.into(),
+                            })
+                            .collect(),
+                        path: RepoPath::from_proto(&response.path)?,
                     })
                 }
             }
