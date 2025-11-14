@@ -129,12 +129,15 @@ fn write_aggregated_scores(
         let aggregated_result = EvaluationResult {
             context: Scores::aggregate(successful.iter().map(|r| &r.context)),
             edit_prediction: has_edit_predictions.then(|| Scores::aggregate(edit_predictions)),
+            prompt_len: successful.iter().map(|r| r.prompt_len).sum::<usize>() / successful.len(),
+            generated_len: successful.iter().map(|r| r.generated_len).sum::<usize>()
+                / successful.len(),
         };
 
         writeln!(w, "\n{}", "-".repeat(80))?;
         writeln!(w, "\n## TOTAL SCORES")?;
         writeln!(w, "\n### Success Rate")?;
-        writeln!(w, "{}", aggregated_result)?;
+        writeln!(w, "{:#}", aggregated_result)?;
     }
 
     if successful.len() + failed_count > 1 {
@@ -241,6 +244,8 @@ fn write_eval_result(
 pub struct EvaluationResult {
     pub edit_prediction: Option<Scores>,
     pub context: Scores,
+    pub prompt_len: usize,
+    pub generated_len: usize,
 }
 
 #[derive(Default, Debug)]
@@ -362,15 +367,17 @@ impl EvaluationResult {
         writeln!(f, "### Scores\n")?;
         writeln!(
             f,
-            "                   TP     FP     FN     Precision   Recall     F1"
+            "                   Prompt  Generated  TP     FP     FN     Precision   Recall     F1"
         )?;
         writeln!(
             f,
-            "──────────────────────────────────────────────────────────────────"
+            "────────────────────────────────────────────────────────────────────────────────────"
         )?;
         writeln!(
             f,
-            "Context Retrieval  {:<6} {:<6} {:<6} {:>10.2} {:>7.2} {:>7.2}",
+            "Context Retrieval  {:<7} {:<10} {:<6} {:<6} {:<6} {:>10.2} {:>7.2} {:>7.2}",
+            "",
+            "",
             self.context.true_positives,
             self.context.false_positives,
             self.context.false_negatives,
@@ -381,7 +388,9 @@ impl EvaluationResult {
         if let Some(edit_prediction) = &self.edit_prediction {
             writeln!(
                 f,
-                "Edit Prediction    {:<6} {:<6} {:<6} {:>10.2} {:>7.2} {:>7.2}",
+                "Edit Prediction    {:<7} {:<10} {:<6} {:<6} {:<6} {:>10.2} {:>7.2} {:>7.2}",
+                self.prompt_len,
+                self.generated_len,
                 edit_prediction.true_positives,
                 edit_prediction.false_positives,
                 edit_prediction.false_negatives,
@@ -395,7 +404,11 @@ impl EvaluationResult {
 }
 
 pub fn evaluate(example: &Example, preds: &PredictionDetails, predict: bool) -> EvaluationResult {
-    let mut eval_result = EvaluationResult::default();
+    let mut eval_result = EvaluationResult {
+        prompt_len: preds.prompt_len,
+        generated_len: preds.generated_len,
+        ..Default::default()
+    };
 
     let actual_context_lines: HashSet<_> = preds
         .excerpts
