@@ -1,11 +1,12 @@
 use std::ops::Range;
 
 use collections::HashMap;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, SharedString, Task};
 use language::BufferId;
-use multi_buffer::Anchor;
+use multi_buffer::{Anchor, ToOffset as _};
 use project::CodeAction;
-use text::ToOffset;
+use settings::Settings;
+use text;
 use ui::{Context, Window, div, prelude::*};
 
 use crate::{
@@ -75,6 +76,7 @@ impl CodeLensCache {
         self.block_ids.get(buffer_id)
     }
 
+    #[allow(dead_code)]
     pub fn remove_buffer(&mut self, buffer_id: &BufferId) {
         self.lenses.remove(buffer_id);
         self.pending_refresh.remove(buffer_id);
@@ -108,55 +110,58 @@ impl Editor {
             return None;
         };
 
-        let range = Anchor::min()..Anchor::max();
+        let text_range = text::Anchor::MIN..text::Anchor::MAX;
 
         let project = project.clone();
         let excerpt_buffer = excerpt_buffer.clone();
+        let multibuffer = self.buffer().clone();
 
         let task = cx.spawn_in(window, async move |editor, cx| {
-            let actions_result = project
+            let actions_task = match project
                 .update(cx, |project, cx| {
-                    project.code_lens_actions(&excerpt_buffer, range.clone(), cx)
-                })
-                .ok();
-
-            let actions = if let Some(actions_task) = actions_result {
-                actions_task.await
-            } else {
-                return Some(());
+                    project.code_lens_actions::<text::Anchor>(&excerpt_buffer, text_range.clone(), cx)
+                }) {
+                Ok(task) => task,
+                Err(_) => return,
             };
 
+            let actions: anyhow::Result<Option<Vec<CodeAction>>> = actions_task.await;
+
             if let Ok(Some(actions)) = actions {
-                let lenses: Vec<CodeLensData> = actions
-                    .into_iter()
-                    .filter_map(|action| {
-                        let position = action.range.start;
+                let lenses: Vec<CodeLensData> = match multibuffer
+                    .update(cx, |multibuffer, cx| -> Vec<CodeLensData> {
+                        let snapshot = multibuffer.snapshot(cx);
+                        actions
+                            .into_iter()
+                            .filter_map(|action| {
+                                let position = snapshot
+                                    .anchor_in_excerpt(snapshot.excerpts().next()?.0, action.range.start)?;
 
-                        let text = if let Some(lsp_action) = action.lsp_action.as_ref() {
-                            match lsp_action {
-                                project::LspAction::CodeLens(lens) => {
-                                    if let Some(command) = &lens.command {
-                                        Some(format!("↪ {}", command.title))
-                                    } else {
-                                        Some("↪ CodeLens".to_string())
+                                let text = match &action.lsp_action {
+                                    project::LspAction::CodeLens(lens) => {
+                                        if let Some(command) = &lens.command {
+                                            Some(format!("↪ {}", command.title))
+                                        } else {
+                                            Some("↪ CodeLens".to_string())
+                                        }
                                     }
-                                }
-                                _ => None,
-                            }
-                        } else {
-                            None
-                        };
+                                    _ => None,
+                                };
 
-                        text.map(|text| CodeLensData {
-                            position,
-                            text: text.into(),
-                            action: Some(action),
-                        })
-                    })
-                    .collect();
+                                text.map(|text| CodeLensData {
+                                    position,
+                                    text: text.into(),
+                                    action: Some(action),
+                                })
+                            })
+                            .collect()
+                    }) {
+                    Ok(lenses) => lenses,
+                    Err(_) => return,
+                };
 
                 editor
-                    .update(cx, |editor, window, cx| {
+                    .update(cx, |editor, cx| {
                         if let Some(old_block_ids) = editor.code_lens_cache.get_block_ids(&buffer_id) {
                             editor.remove_blocks(old_block_ids.iter().copied().collect(), None, cx);
                         }
@@ -193,17 +198,20 @@ impl Editor {
                         editor.code_lens_cache.set_block_ids(buffer_id, block_ids);
                         cx.notify();
                     })
-                    .ok()?;
+                    .ok();
             }
-
-            Some(())
         });
 
-        self.code_lens_cache.set_refresh_task(buffer_id, task.clone());
-        Some(task)
+        self.code_lens_cache.set_refresh_task(buffer_id, task);
+        None
     }
 
-    pub fn toggle_code_lenses(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn toggle_code_lenses(
+        &mut self,
+        _: &crate::actions::ToggleCodeLens,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let enabled = !self.code_lens_cache.enabled();
         if self.code_lens_cache.toggle(enabled) {
             if enabled {
@@ -238,7 +246,7 @@ impl Editor {
         };
 
         let buffer_id = excerpt_buffer.read(cx).remote_id();
-        let snapshot = excerpt_buffer.read(cx).snapshot();
+        let snapshot = buffer.snapshot(cx);
 
         let Some(lenses) = self.code_lens_cache.get_lenses_for_buffer(buffer_id) else {
             return Vec::new();
