@@ -161,8 +161,7 @@ impl RenderOnce for Tab {
                     TabCloseSide::Start => (close_slot, indicator_slot),
                 };
 
-                base
-                    .h(Tab::container_height(cx))
+                base.h(Tab::container_height(cx))
                     .map(|this| match self.position {
                         TabPosition::First => {
                             if self.selected {
@@ -178,9 +177,15 @@ impl RenderOnce for Tab {
                                 this.pl_px().border_b_1().border_r_1()
                             }
                         }
-                        TabPosition::Middle(Ordering::Equal) => this.border_l_1().border_r_1().pb_px(),
-                        TabPosition::Middle(Ordering::Less) => this.border_l_1().pr_px().border_b_1(),
-                        TabPosition::Middle(Ordering::Greater) => this.border_r_1().pl_px().border_b_1(),
+                        TabPosition::Middle(Ordering::Equal) => {
+                            this.border_l_1().border_r_1().pb_px()
+                        }
+                        TabPosition::Middle(Ordering::Less) => {
+                            this.border_l_1().pr_px().border_b_1()
+                        }
+                        TabPosition::Middle(Ordering::Greater) => {
+                            this.border_r_1().pl_px().border_b_1()
+                        }
                     })
                     .child(
                         h_flex()
@@ -229,12 +234,7 @@ impl RenderOnce for Tab {
                         if let Some(slot) = indicator_content.take() {
                             row = row.child(build_indicator(slot));
                         }
-                        row = row.child(
-                            div()
-                                .flex_grow()
-                                .min_w_0()
-                                .children(self.children),
-                        );
+                        row = row.child(div().flex_grow().min_w_0().children(self.children));
                         if let Some(slot) = close_content.take() {
                             row = row.child(build_close(slot));
                         }
@@ -243,20 +243,14 @@ impl RenderOnce for Tab {
                         if let Some(slot) = close_content.take() {
                             row = row.child(build_close(slot));
                         }
-                        row = row.child(
-                            div()
-                                .flex_grow()
-                                .min_w_0()
-                                .children(self.children),
-                        );
+                        row = row.child(div().flex_grow().min_w_0().children(self.children));
                         if let Some(slot) = indicator_content.take() {
                             row = row.child(build_indicator(slot));
                         }
                     }
                 }
 
-                base
-                    .min_h(Tab::container_height(cx))
+                base.min_h(Tab::container_height(cx))
                     .w_full()
                     .border_b_1()
                     .child(row)

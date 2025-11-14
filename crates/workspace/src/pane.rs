@@ -18,10 +18,10 @@ use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{StreamExt, stream::FuturesUnordered};
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Corner, Div,
-    DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
-    Focusable, KeyContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point,
-    PromptLevel, Render, ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
-    actions, anchored, deferred, prelude::*, relative,
+    DragMoveEvent, Empty, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle,
+    FocusOutEvent, Focusable, KeyContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels,
+    Point, PromptLevel, Render, ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle,
+    Window, actions, anchored, deferred, prelude::*, relative,
 };
 use itertools::Itertools;
 use language::DiagnosticSeverity;
@@ -261,6 +261,10 @@ impl DeploySearch {
 }
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
+const VERTICAL_TAB_COLUMN_MIN_WIDTH: Pixels = px(110.);
+const VERTICAL_TAB_COLUMN_MAX_WIDTH: Pixels = px(420.);
+const DEFAULT_VERTICAL_TAB_COLUMN_WIDTH: Pixels = px(280.);
+const VERTICAL_TAB_RESIZE_HANDLE_WIDTH: Pixels = px(2.);
 
 pub enum Event {
     AddItem {
@@ -396,6 +400,7 @@ pub struct Pane {
     diagnostic_summary_update: Task<()>,
     /// If a certain project item wants to get recreated with specific data, it can persist its data before the recreation here.
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
+    vertical_tab_column_width: Pixels,
 }
 
 pub struct ActivationHistoryEntry {
@@ -447,6 +452,11 @@ pub struct DraggedTab {
     pub ix: usize,
     pub detail: usize,
     pub is_active: bool,
+}
+
+#[derive(Clone, Copy)]
+struct DraggedVerticalTabColumn {
+    pane_id: EntityId,
 }
 
 impl EventEmitter<Event> for Pane {}
@@ -540,6 +550,7 @@ impl Pane {
             zoom_out_on_close: true,
             diagnostic_summary_update: Task::ready(()),
             project_item_restoration_data: HashMap::default(),
+            vertical_tab_column_width: DEFAULT_VERTICAL_TAB_COLUMN_WIDTH,
         }
     }
 
@@ -3051,7 +3062,9 @@ impl Pane {
             .disabled(!self.can_navigate_forward())
             .tooltip({
                 let focus_handle = focus_handle.clone();
-                move |_window, cx| Tooltip::for_action_in("Go Forward", &GoForward, &focus_handle, cx)
+                move |_window, cx| {
+                    Tooltip::for_action_in("Go Forward", &GoForward, &focus_handle, cx)
+                }
             })
             .into_any_element();
 
@@ -3102,14 +3115,14 @@ impl Pane {
                 .drag_over::<DraggedSelection>(|bar, _, _, cx| {
                     bar.bg(cx.theme().colors().drop_target_background)
                 })
-                .on_drop(cx.listener(
-                    move |this, dragged_tab: &DraggedTab, window, cx| {
+                .on_drop(
+                    cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
                         this.drag_split_direction = None;
                         this.handle_tab_drop(dragged_tab, this.items.len(), window, cx)
-                    },
-                ))
-                .on_drop(cx.listener(
-                    move |this, selection: &DraggedSelection, window, cx| {
+                    }),
+                )
+                .on_drop(
+                    cx.listener(move |this, selection: &DraggedSelection, window, cx| {
                         this.drag_split_direction = None;
                         this.handle_project_entry_drop(
                             &selection.active_selection.entry_id,
@@ -3117,18 +3130,15 @@ impl Pane {
                             window,
                             cx,
                         )
-                    },
-                ))
+                    }),
+                )
                 .on_drop(cx.listener(move |this, paths, window, cx| {
                     this.drag_split_direction = None;
                     this.handle_external_paths_drop(paths, window, cx)
                 }))
                 .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                     if event.click_count() == 2 {
-                        window.dispatch_action(
-                            this.double_click_dispatch_action.boxed_clone(),
-                            cx,
-                        );
+                        window.dispatch_action(this.double_click_dispatch_action.boxed_clone(), cx);
                     }
                 }));
 
@@ -3246,6 +3256,24 @@ impl Pane {
             .into_any_element()
     }
 
+    fn render_vertical_tab_resize_handle(&self, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors();
+        div()
+            .id("pane_tab_column_resizer")
+            .flex_none()
+            .h_full()
+            .w(VERTICAL_TAB_RESIZE_HANDLE_WIDTH)
+            .cursor_col_resize()
+            .bg(colors.border.opacity(0.4))
+            .on_drag(
+                DraggedVerticalTabColumn {
+                    pane_id: cx.entity().entity_id(),
+                },
+                |_, _, _, cx| cx.new(|_| Empty),
+            )
+            .into_any_element()
+    }
+
     pub fn render_menu_overlay(menu: &Entity<ContextMenu>) -> Div {
         div().absolute().bottom_0().right_0().size_0().child(
             deferred(anchored().anchor(Corner::TopRight).child(menu.clone())).with_priority(1),
@@ -3315,6 +3343,21 @@ impl Pane {
         if direction != self.drag_split_direction {
             self.drag_split_direction = direction;
         }
+    }
+
+    fn handle_vertical_tab_resize_drag(
+        &mut self,
+        event: &DragMoveEvent<DraggedVerticalTabColumn>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.drag(cx).pane_id != cx.entity().entity_id() {
+            return;
+        }
+        let pointer_x = f32::from(event.event.position.x);
+        let layout_left = f32::from(event.bounds.left());
+        let width = px((pointer_x - layout_left).max(0.0));
+        self.set_vertical_tab_column_width(width, cx);
     }
 
     pub fn handle_tab_drop(
@@ -3633,6 +3676,29 @@ impl Pane {
             .collect()
     }
 
+    fn current_vertical_tab_column_width(&mut self) -> Pixels {
+        let clamped = Self::clamp_vertical_tab_column_width(self.vertical_tab_column_width);
+        if clamped != self.vertical_tab_column_width {
+            self.vertical_tab_column_width = clamped;
+        }
+        clamped
+    }
+
+    fn set_vertical_tab_column_width(&mut self, width: Pixels, cx: &mut Context<Self>) {
+        let clamped = Self::clamp_vertical_tab_column_width(width);
+        if clamped != self.vertical_tab_column_width {
+            self.vertical_tab_column_width = clamped;
+            cx.notify();
+        }
+    }
+
+    fn clamp_vertical_tab_column_width(width: Pixels) -> Pixels {
+        let width = f32::from(width);
+        let min = f32::from(VERTICAL_TAB_COLUMN_MIN_WIDTH);
+        let max = f32::from(VERTICAL_TAB_COLUMN_MAX_WIDTH);
+        px(width.clamp(min, max))
+    }
+
     fn to_the_side_item_ids(&self, item_id: EntityId, side: Side) -> Vec<EntityId> {
         match side {
             Side::Left => self
@@ -3679,7 +3745,10 @@ fn default_render_tab_bar_buttons(
         None => (false, false),
     };
     let show_nav_history_buttons = pane.display_nav_history_buttons.unwrap_or_default()
-        && matches!(TabBarSettings::get_global(cx).orientation, TabBarOrientation::Vertical);
+        && matches!(
+            TabBarSettings::get_global(cx).orientation,
+            TabBarOrientation::Vertical
+        );
 
     let mut right_children = h_flex()
         // Instead we need to replicate the spacing from the [TabBar]'s `end_slot` here.
@@ -4034,18 +4103,26 @@ impl Render for Pane {
             TabBarOrientation::Vertical => {
                 let mut pane_layout = h_flex().size_full().overflow_hidden();
                 if let Some(tab_bar) = tab_bar {
-                    pane_layout = pane_layout.child(
-                        v_flex()
-                            .id("pane_tab_column")
-                            .flex_none()
-                            .flex_basis(relative(0.25))
-                            .min_w(px(220.))
-                            .max_w(px(420.))
-                            .h_full()
-                            .overflow_hidden()
-                            .bg(cx.theme().colors().tab_bar_background)
-                            .child(tab_bar),
-                    );
+                    let tab_column_width = self.current_vertical_tab_column_width();
+                    pane_layout = pane_layout
+                        .on_drag_move::<DraggedVerticalTabColumn>(
+                            cx.listener(Self::handle_vertical_tab_resize_drag),
+                        )
+                        .child(
+                            v_flex()
+                                .id("pane_tab_column")
+                                .flex_none()
+                                .w(tab_column_width)
+                                .min_w(VERTICAL_TAB_COLUMN_MIN_WIDTH)
+                                .max_w(VERTICAL_TAB_COLUMN_MAX_WIDTH)
+                                .h_full()
+                                .overflow_hidden()
+                                .bg(cx.theme().colors().tab_bar_background)
+                                .border_r_1()
+                                .border_color(cx.theme().colors().border)
+                                .child(tab_bar),
+                        )
+                        .child(self.render_vertical_tab_resize_handle(cx));
                 }
                 pane_layout.child(pane_content).into_any_element()
             }
@@ -4283,7 +4360,6 @@ impl NavHistoryState {
             });
         }
     }
-
 }
 
 fn dirty_message_for(buffer_path: Option<ProjectPath>, path_style: PathStyle) -> String {
