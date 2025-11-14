@@ -7,7 +7,7 @@ mod transaction;
 
 use self::transaction::History;
 
-pub use anchor::{Anchor, AnchorRangeExt, Offset};
+pub use anchor::{Anchor, AnchorRangeExt};
 pub use position::{TypedOffset, TypedPoint, TypedRow};
 
 use anyhow::{Result, anyhow};
@@ -138,7 +138,7 @@ pub struct MultiBufferDiffHunk {
     /// The excerpt that contains the diff hunk.
     pub excerpt_id: ExcerptId,
     /// The range within the buffer's diff base that this hunk corresponds to.
-    pub diff_base_byte_range: Range<usize>,
+    pub diff_base_byte_range: Range<BufferOffset>,
     /// Whether or not this hunk also appears in the 'secondary diff'.
     pub secondary_status: DiffHunkSecondaryStatus,
 }
@@ -159,7 +159,7 @@ impl MultiBufferDiffHunk {
     }
 
     pub fn is_created_file(&self) -> bool {
-        self.diff_base_byte_range == (0..0)
+        self.diff_base_byte_range == (BufferOffset(0)..BufferOffset(0))
             && self.buffer_range == (text::Anchor::MIN..text::Anchor::MAX)
     }
 
@@ -3527,7 +3527,8 @@ impl MultiBufferSnapshot {
                 buffer_id: excerpt.buffer_id,
                 excerpt_id: excerpt.id,
                 buffer_range: hunk.buffer_range.clone(),
-                diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+                diff_base_byte_range: BufferOffset(hunk.diff_base_byte_range.start)
+                    ..BufferOffset(hunk.diff_base_byte_range.end),
                 secondary_status: hunk.secondary_status,
             })
         })
@@ -5216,7 +5217,9 @@ impl MultiBufferSnapshot {
     pub fn innermost_enclosing_bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
-        range_filter: Option<&dyn Fn(&BufferSnapshot, Range<usize>, Range<usize>) -> bool>,
+        range_filter: Option<
+            &dyn Fn(&BufferSnapshot, Range<BufferOffset>, Range<BufferOffset>) -> bool,
+        >,
     ) -> Option<(Range<MultiBufferOffset>, Range<MultiBufferOffset>)> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut excerpt = self.excerpt_containing(range.clone())?;
@@ -5227,7 +5230,13 @@ impl MultiBufferSnapshot {
         let range_filter = |open: Range<usize>, close: Range<usize>| -> bool {
             excerpt_buffer_range.contains(&BufferOffset(open.start))
                 && excerpt_buffer_range.contains(&BufferOffset(close.end))
-                && range_filter.is_none_or(|filter| filter(buffer, open, close))
+                && range_filter.is_none_or(|filter| {
+                    filter(
+                        buffer,
+                        BufferOffset(open.start)..BufferOffset(close.end),
+                        BufferOffset(close.start)..BufferOffset(close.end),
+                    )
+                })
         };
 
         let (open, close) = excerpt.buffer().innermost_enclosing_bracket_ranges(
@@ -7045,16 +7054,6 @@ where
 #[derive(Clone, PartialOrd, Ord, Eq, PartialEq, Debug)]
 struct OutputDimension<T>(T);
 
-impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for ExcerptOffset {
-    fn zero(_: ()) -> Self {
-        ExcerptOffset::new(0)
-    }
-
-    fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: ()) {
-        self.value += summary.input.len;
-    }
-}
-
 impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for MultiBufferOffset {
     fn zero(_: ()) -> Self {
         MultiBufferOffset::ZERO
@@ -7072,6 +7071,16 @@ impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for MultiBufferOffsetUtf1
 
     fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: ()) {
         self.0 += summary.output.len_utf16;
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for ExcerptOffset {
+    fn zero(_: ()) -> Self {
+        ExcerptOffset::new(0)
+    }
+
+    fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: ()) {
+        self.value += summary.input.len;
     }
 }
 
@@ -7136,16 +7145,6 @@ impl<'a, D: MultiBufferDimension> sum_tree::Dimension<'a, DiffTransformSummary>
         self.0.add_mb_text_summary(&summary.output)
     }
 }
-
-// impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for usize {
-//     fn zero(_: ()) -> Self {
-//         0
-//     }
-
-//     fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: ()) {
-//         *self += summary.output.len
-//     }
-// }
 
 impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for Point {
     fn zero(_: ()) -> Self {

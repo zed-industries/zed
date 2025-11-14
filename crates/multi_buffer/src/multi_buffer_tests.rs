@@ -925,7 +925,7 @@ fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
         .next()
         .unwrap();
 
-    assert_eq!(hunk.diff_base_byte_range.start, 0);
+    assert_eq!(hunk.diff_base_byte_range.start, BufferOffset(0));
 
     let buf2 = cx.new(|cx| Buffer::local("X", cx));
     multibuffer.update(cx, |multibuffer, cx| {

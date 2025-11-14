@@ -237,6 +237,3 @@ impl AnchorRangeExt for Range<Anchor> {
         self.start.to_point(content)..self.end.to_point(content)
     }
 }
-
-#[derive(Clone, Copy, Eq, PartialEq, Debug, Hash, Ord, PartialOrd)]
-pub struct Offset(pub usize);
