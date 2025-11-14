@@ -2,8 +2,8 @@ use std::{cmp, ops::Range};
 
 use language::Chunk;
 use multi_buffer::{
-    MultiBufferChunks, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow, MultiBufferRows,
-    MultiBufferSnapshot, RowInfo, ToOffset, ToPoint as _,
+    MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot,
+    RowInfo, ToOffset, ToPoint as _,
 };
 use rope::{Point, TextSummary};
 use sum_tree::{Dimensions, SumTree};
@@ -267,7 +267,8 @@ impl FilterMap {
                 new: 0..buffer_snapshot.len(),
             }],
         );
-        this
+        let snapshot = this.snapshot.clone();
+        (this, snapshot)
     }
 
     #[cfg(test)]
@@ -752,6 +753,10 @@ impl FilterSnapshot {
     pub(crate) fn max_row(&self) -> FilterRow {
         FilterRow(self.max_point().0.row)
     }
+
+    pub(crate) fn to_filter_point(&self, point: MultiBufferPoint) -> FilterPoint {
+        todo!()
+    }
 }
 
 fn push_isomorphic(
@@ -847,7 +852,16 @@ fn push_filter(
 
 impl FilterSnapshot {
     pub(crate) fn to_filter_offset(&self, offset: usize) -> FilterOffset {
-        todo!()
+        let (start, _end, item) =
+            self.transforms
+                .find::<Dimensions<usize, FilterOffset>, _>((), &offset, Bias::Right);
+        match item {
+            Some(FilterTransform::Isomorphic { .. }) => {
+                let overshoot = offset - start.0;
+                start.1 + FilterOffset(overshoot)
+            }
+            Some(FilterTransform::Filter { .. }) | None => start.1,
+        }
     }
 
     pub(crate) fn offset_to_point(&self, offset: FilterOffset) -> FilterPoint {
@@ -967,16 +981,76 @@ impl FilterSnapshot {
         }
     }
 
+    /// Returns true if the anchor resolves to an offset strictly inside a filtered region,
+    /// or if it resolves to one end of a filtered region and the bias points into the filtered region.
     pub(crate) fn is_anchor_filtered(&self, anchor: multi_buffer::Anchor) -> bool {
-        todo!()
+        let offset = anchor.to_offset(&self.buffer_snapshot);
+        let mut cursor = self.transforms.cursor::<usize>(());
+        cursor.seek(&offset, Bias::Right);
+        if let Some(prev_item) = cursor.prev_item()
+            && matches!(prev_item, FilterTransform::Filter { .. })
+        {
+            cursor.prev();
+        }
+        match cursor.item() {
+            Some(FilterTransform::Filter { .. }) => {
+                *cursor.start() < offset
+                    || (*cursor.start() == offset && anchor.bias() == Bias::Right)
+                    || offset < cursor.end()
+                    || (offset == cursor.end() && anchor.bias() == Bias::Left)
+            }
+            Some(FilterTransform::Isomorphic { .. }) | None => false,
+        }
     }
 
-    pub(crate) fn to_buffer_offset(&self, bias: Bias) -> usize {
-        todo!()
+    /// Translates a filter offset to a buffer offset. If there is a filtered region at the given offset,
+    /// uses the bias to decide whether the start or end of the filtered region should be returned.
+    pub(crate) fn to_buffer_offset(&self, offset: FilterOffset, bias: Bias) -> usize {
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<FilterOffset, usize>>(());
+        cursor.seek(&offset, Bias::Right);
+        if let Some(prev_item) = cursor.prev_item()
+            && matches!(prev_item, FilterTransform::Filter { .. })
+        {
+            cursor.prev();
+        }
+        match cursor.item() {
+            Some(FilterTransform::Isomorphic { .. }) => {
+                let overshoot = offset.0 - cursor.start().0.0;
+                cursor.start().1 + overshoot
+            }
+            Some(FilterTransform::Filter { .. }) => match bias {
+                Bias::Left => cursor.start().1,
+                Bias::Right => cursor.end().1,
+            },
+            None => self.buffer_snapshot.len(),
+        }
     }
 
-    pub(crate) fn to_buffer_point(&self, bias: Bias) -> MultiBufferPoint {
-        todo!()
+    /// Translates a filter point to a buffer point. If there is a filtered region at the given point,
+    /// uses the bias to decide whether the start or end of the filtered region should be returned.
+    pub(crate) fn to_buffer_point(&self, point: FilterPoint, bias: Bias) -> MultiBufferPoint {
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<FilterPoint, MultiBufferPoint>>(());
+        cursor.seek(&point, Bias::Right);
+        if let Some(prev_item) = cursor.prev_item()
+            && matches!(prev_item, FilterTransform::Filter { .. })
+        {
+            cursor.prev();
+        }
+        match cursor.item() {
+            Some(FilterTransform::Isomorphic { .. }) => {
+                let overshoot = point.0 - cursor.start().0.0;
+                cursor.start().1 + overshoot
+            }
+            Some(FilterTransform::Filter { .. }) => match bias {
+                Bias::Left => cursor.start().1,
+                Bias::Right => cursor.end().1,
+            },
+            None => self.buffer_snapshot.max_point(),
+        }
     }
 
     pub(crate) fn row_infos(&self, start_row: FilterRow) -> FilterRows<'_> {
@@ -1176,7 +1250,7 @@ mod tests {
         } else {
             FilterMode::RemoveInsertions
         };
-        let mut filter_map = FilterMap::new(
+        let (mut filter_map, _) = FilterMap::new(
             Some(mode),
             multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx)),
         );
@@ -1212,7 +1286,7 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let mut filter_map = FilterMap::new(
+        let (mut filter_map, _) = FilterMap::new(
             Some(FilterMode::RemoveInsertions),
             multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx)),
         );

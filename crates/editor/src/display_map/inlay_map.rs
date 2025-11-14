@@ -30,8 +30,7 @@ pub struct InlayMap {
 
 #[derive(Clone)]
 pub struct InlaySnapshot {
-    // pub buffer: MultiBufferSnapshot,
-    filter_snapshot: FilterSnapshot,
+    pub filter_snapshot: FilterSnapshot,
     transforms: SumTree<Transform>,
     pub version: usize,
 }
