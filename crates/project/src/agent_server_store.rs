@@ -340,6 +340,11 @@ impl AgentServerStore {
                                 .iter()
                                 .map(|(k, v)| (k.clone(), v.to_proto()))
                                 .collect(),
+                            env: agent_entry
+                                .env
+                                .iter()
+                                .map(|(k, v)| (k.clone(), v.clone()))
+                                .collect(),
                         });
                     }
                 }
@@ -828,6 +833,7 @@ impl AgentServerStore {
                 icon_path,
                 extension_id,
                 targets,
+                env,
             } in envelope.payload.agents
             {
                 let icon_path_string = icon_path.clone();
@@ -844,8 +850,7 @@ impl AgentServerStore {
                         .into_iter()
                         .map(|(k, v)| (k, extension::TargetConfig::from_proto(v)))
                         .collect(),
-                    // fixme env
-                    Default::default(),
+                    env.into_iter().collect(),
                     icon_path_string,
                 ));
             }
