@@ -8774,10 +8774,7 @@ impl Element for EditorElement {
                                 (word_diff.start).to_display_point(&snapshot.display_snapshot);
                             let end = (word_diff.end).to_display_point(&snapshot.display_snapshot);
 
-                            highlighted_ranges.push((
-                                start..end,
-                                cx.theme().colors().version_control_deleted.alpha(0.6),
-                            ));
+                            highlighted_ranges.push((start..end, background_color.alpha(0.6)));
                         }
 
                         highlighted_rows

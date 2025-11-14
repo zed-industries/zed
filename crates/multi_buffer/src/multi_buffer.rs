@@ -38,7 +38,8 @@ use std::{
     any::type_name,
     borrow::Cow,
     cell::{Cell, Ref, RefCell},
-    cmp, fmt,
+    cmp,
+    fmt::{self, Debug},
     future::Future,
     io,
     iter::{self, FromIterator},
@@ -279,6 +280,8 @@ enum DiffTransform {
 struct DiffTransformHunkInfo {
     excerpt_id: ExcerptId,
     hunk_start_anchor: text::Anchor,
+    /// 0 means that hunk info has no deletion field
+    hunk_deletion_offset: usize,
     hunk_secondary_status: DiffHunkSecondaryStatus,
 }
 
@@ -348,7 +351,7 @@ pub struct RowInfo {
     pub multibuffer_row: Option<MultiBufferRow>,
     pub diff_status: Option<buffer_diff::DiffHunkStatus>,
     pub expand_info: Option<ExpandInfo>,
-    pub word_diffs: Vec<Range<Point>>,
+    pub word_diffs: Vec<Range<usize>>,
 }
 
 /// A slice into a [`Buffer`] that is being edited in a [`MultiBuffer`].
@@ -509,7 +512,7 @@ struct MultiBufferRegion<'a, D: TextDimension> {
     is_main_buffer: bool,
     diff_hunk_status: Option<DiffHunkStatus>,
     // todo! maybe this should just be a Range<usize>
-    word_diffs: Vec<Range<D>>,
+    word_diffs: Vec<Range<usize>>,
     excerpt: &'a Excerpt,
     buffer_range: Range<D>,
     range: Range<D>,
@@ -2676,6 +2679,7 @@ impl MultiBuffer {
                     let hunk_info = DiffTransformHunkInfo {
                         excerpt_id: excerpt.id,
                         hunk_start_anchor: hunk.buffer_range.start,
+                        hunk_deletion_offset: hunk.diff_base_byte_range.len(),
                         hunk_secondary_status: hunk.secondary_status,
                     };
 
@@ -3366,7 +3370,7 @@ impl MultiBufferSnapshot {
     ) -> impl Iterator<Item = (Range<D>, M, &'a Excerpt)> + 'a
     where
         I: Iterator<Item = (Range<D>, M)> + 'a,
-        D: TextDimension + Ord + Sub<D, Output = D> + Add<D, Output = D>,
+        D: TextDimension + Ord + Sub<D, Output = D> + text::ToOffset,
     {
         let max_position = D::from_text_summary(&self.text_summary());
         let mut current_excerpt_metadata: Option<(ExcerptId, I)> = None;
@@ -3806,7 +3810,7 @@ impl MultiBufferSnapshot {
         clip_buffer_position: fn(&text::BufferSnapshot, D, Bias) -> D,
     ) -> D
     where
-        D: TextDimension + Ord + Sub<D, Output = D> + Add<D, Output = D>,
+        D: TextDimension + Ord + Sub<D, Output = D> + text::ToOffset,
     {
         let mut cursor = self.cursor();
         cursor.seek(&position);
@@ -3833,8 +3837,8 @@ impl MultiBufferSnapshot {
         convert_buffer_dimension: fn(&text::BufferSnapshot, D1) -> D2,
     ) -> D2
     where
-        D1: TextDimension + Ord + Sub<D1, Output = D1> + Add<D1, Output = D1>,
-        D2: TextDimension + Ord + Sub<D2, Output = D2> + Add<D2, Output = D2>,
+        D1: TextDimension + Ord + Sub<D1, Output = D1> + text::ToOffset,
+        D2: TextDimension + Ord + Sub<D2, Output = D2>,
     {
         let mut cursor = self.cursor::<DimensionPair<D1, D2>>();
         cursor.seek(&DimensionPair { key, value: None });
@@ -5431,7 +5435,7 @@ impl MultiBufferSnapshot {
             + TextDimension
             + Ord
             + Sub<T, Output = T>
-            + Add<T, Output = T>
+            + text::ToOffset
             + fmt::Debug,
     {
         self.lift_buffer_metadata(range, move |buffer, buffer_range| {
@@ -5455,7 +5459,7 @@ impl MultiBufferSnapshot {
             + TextDimension
             + Ord
             + Sub<T, Output = T>
-            + Add<T, Output = T>
+            + text::ToOffset
             + fmt::Debug,
     {
         self.lift_buffer_metadata(range, move |buffer, buffer_range| {
@@ -5889,7 +5893,7 @@ impl MultiBufferSnapshot {
 
 impl<'a, D> MultiBufferCursor<'a, D>
 where
-    D: TextDimension + Ord + Sub<D, Output = D> + Add<D, Output = D>,
+    D: TextDimension + Ord + Sub<D, Output = D> + text::ToOffset,
 {
     fn seek(&mut self, position: &D) {
         self.cached_region.take();
@@ -6112,12 +6116,7 @@ where
                 Some(MultiBufferRegion {
                     buffer,
                     excerpt,
-                    word_diffs: dbg!(
-                        word_diffs
-                            .into_iter()
-                            .map(|range| start + range.start..start + range.end)
-                            .collect()
-                    ),
+                    word_diffs: Vec::default(), //todo!
                     has_trailing_newline: *has_trailing_newline,
                     is_main_buffer: false,
                     diff_hunk_status: Some(DiffHunkStatus::deleted(
@@ -6166,10 +6165,34 @@ where
                     has_trailing_newline = excerpt.has_trailing_newline;
                 };
 
+                // todo! clean up comments and code 👻
+                // dbg!(start.to_offset(&buffer));
+                // dbg!(end.to_offset(&buffer));
+                // let start_distance = dbg!(buffer_start.to_offset(&buffer));
+                // .saturating_sub(dbg!(start.to_offset(&buffer)));
+                // let end_distance = dbg!(buffer_end.to_offset(&buffer));
+                // .saturating_sub(dbg!(end.to_offset(&buffer)));
+
+                let word_diffs = inserted_hunk_info
+                    .map(|info| {
+                        let offset = info.hunk_deletion_offset;
+
+                        buffer_word_diffs
+                            .iter()
+                            .map(|diff| {
+                                let mut range = diff.to_offset(&buffer);
+                                range.start += offset;
+                                range.end += offset;
+                                range
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
                 Some(MultiBufferRegion {
                     buffer,
                     excerpt,
-                    word_diffs: Default::default(),
+                    word_diffs,
                     has_trailing_newline,
                     is_main_buffer: true,
                     diff_hunk_status: inserted_hunk_info
@@ -6833,11 +6856,19 @@ impl Iterator for MultiBufferRows<'_> {
             })
         };
 
+        let line_start = text::ToOffset::to_offset(&Point::new(self.point.row, 0), &region.buffer);
+        let line_end = text::ToOffset::to_offset(&(Point::new(1, 0) + self.point), &region.buffer);
+
         let result = Some(RowInfo {
             buffer_id: Some(region.buffer.remote_id()),
             buffer_row: Some(buffer_point.row),
             multibuffer_row: Some(MultiBufferRow(self.point.row)),
-            word_diffs: region.word_diffs, //todo!
+            word_diffs: region
+                .word_diffs
+                .iter()
+                .filter(|diff| (diff.start >= line_start && diff.end < line_end) || true)
+                .cloned()
+                .collect(), //todo!
             diff_status: region
                 .diff_hunk_status
                 .filter(|_| self.point < region.range.end),
