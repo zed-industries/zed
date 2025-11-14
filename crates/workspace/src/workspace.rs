@@ -376,6 +376,8 @@ actions!(
 pub struct ToggleFileFinder {
     #[serde(default)]
     pub separate_history: bool,
+    #[serde(default)]
+    pub query: Option<String>,
 }
 
 /// Increases size of a currently focused dock by a given amount of pixels.
