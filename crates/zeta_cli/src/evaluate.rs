@@ -1,8 +1,4 @@
-use std::{
-    io::{IsTerminal, Write},
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{io::Write, path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use clap::Args;

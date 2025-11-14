@@ -38,24 +38,22 @@ async fn parse_xml_edits_inner<'a>(
     while let Some(old_text_tag) = parse_tag(&mut input, "old_text")? {
         let new_text_tag =
             parse_tag(&mut input, "new_text")?.context("no new_text tag following old_text")?;
-        if let Some(match_range) = fuzzy_match_in_ranges(old_text_tag.body, buffer, context_ranges)
-        {
-            let old_text = buffer
-                .text_for_range(match_range.clone())
-                .collect::<String>();
-            let edits_within_hunk = language::text_diff(&old_text, &new_text_tag.body);
-            edits.extend(
-                edits_within_hunk
-                    .into_iter()
-                    .map(move |(inner_range, inner_text)| {
-                        (
-                            buffer.anchor_after(match_range.start + inner_range.start)
-                                ..buffer.anchor_before(match_range.start + inner_range.end),
-                            inner_text,
-                        )
-                    }),
-            );
-        }
+        let match_range = fuzzy_match_in_ranges(old_text_tag.body, buffer, context_ranges)?;
+        let old_text = buffer
+            .text_for_range(match_range.clone())
+            .collect::<String>();
+        let edits_within_hunk = language::text_diff(&old_text, &new_text_tag.body);
+        edits.extend(
+            edits_within_hunk
+                .into_iter()
+                .map(move |(inner_range, inner_text)| {
+                    (
+                        buffer.anchor_after(match_range.start + inner_range.start)
+                            ..buffer.anchor_before(match_range.start + inner_range.end),
+                        inner_text,
+                    )
+                }),
+        );
     }
 
     Ok((buffer, edits))
@@ -65,22 +63,51 @@ fn fuzzy_match_in_ranges(
     old_text: &str,
     buffer: &BufferSnapshot,
     context_ranges: &[Range<Anchor>],
-) -> Option<Range<usize>> {
+) -> Result<Range<usize>> {
     let mut state = FuzzyMatcher::new(buffer, old_text);
     let mut best_match = None;
+    let mut tie_match_range = None;
+
     for range in context_ranges {
-        let best_match_score = best_match.as_ref().map(|(score, _)| *score);
-        best_match = match (best_match_score, state.match_range(range.to_offset(buffer))) {
-            (Some(best_score), Some((new_score, _))) if best_score > new_score => best_match,
-            (Some(best_score), Some(new_match @ (new_score, _))) if best_score < new_score => {
-                Some(new_match)
+        let best_match_cost = best_match.as_ref().map(|(score, _)| *score);
+        match (best_match_cost, state.match_range(range.to_offset(buffer))) {
+            (Some(lowest_cost), Some((new_cost, new_range))) => {
+                if new_cost == lowest_cost {
+                    tie_match_range = Some(new_range);
+                } else if new_cost < lowest_cost {
+                    tie_match_range.take();
+                    best_match = Some((new_cost, new_range));
+                }
             }
-            (None, Some(new_match)) => Some(new_match),
-            _ => best_match,
+            (None, Some(new_match)) => {
+                best_match = Some(new_match);
+            }
+            (None, None) | (Some(_), None) => {}
         };
     }
 
-    best_match.map(|(_, range)| range)
+    if let Some((_, best_match_range)) = best_match {
+        if let Some(tie_match_range) = tie_match_range {
+            anyhow::bail!(
+                "Multiple ambiguous matches:\n{:?}:\n{}\n\n{:?}:\n{}",
+                best_match_range.clone(),
+                buffer.text_for_range(best_match_range).collect::<String>(),
+                tie_match_range.clone(),
+                buffer.text_for_range(tie_match_range).collect::<String>()
+            );
+        }
+        return Ok(best_match_range);
+    }
+
+    anyhow::bail!(
+        "Failed to fuzzy match `old_text`:\n{}\nin:\n```\n{}\n```",
+        old_text,
+        context_ranges
+            .iter()
+            .map(|range| buffer.text_for_range(range.clone()).collect::<String>())
+            .collect::<Vec<String>>()
+            .join("```\n```")
+    );
 }
 
 struct ParsedTag<'a> {
