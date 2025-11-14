@@ -94,7 +94,7 @@ struct LanguageServerBinaryStatus {
 #[derive(Debug)]
 struct ServerInfo {
     name: LanguageServerName,
-    id: Option<LanguageServerId>,
+    id: LanguageServerId,
     health: Option<ServerHealth>,
     binary_status: Option<LanguageServerBinaryStatus>,
     message: Option<SharedString>,
@@ -102,9 +102,7 @@ struct ServerInfo {
 
 impl ServerInfo {
     fn server_selector(&self) -> LanguageServerSelector {
-        self.id
-            .map(LanguageServerSelector::Id)
-            .unwrap_or_else(|| LanguageServerSelector::Name(self.name.clone()))
+        LanguageServerSelector::Id(self.id)
     }
 }
 
@@ -429,7 +427,7 @@ enum ServerData<'a> {
         binary_status: Option<&'a LanguageServerBinaryStatus>,
     },
     WithBinaryStatus {
-        server_id: Option<LanguageServerId>,
+        server_id: LanguageServerId,
         server_name: &'a LanguageServerName,
         binary_status: &'a LanguageServerBinaryStatus,
     },
@@ -443,7 +441,7 @@ enum LspMenuItem {
         binary_status: Option<LanguageServerBinaryStatus>,
     },
     WithBinaryStatus {
-        server_id: Option<LanguageServerId>,
+        server_id: LanguageServerId,
         server_name: LanguageServerName,
         binary_status: LanguageServerBinaryStatus,
     },
@@ -468,7 +466,7 @@ impl LspMenuItem {
                 ..
             } => Some(ServerInfo {
                 name: health.name.clone(),
-                id: Some(*server_id),
+                id: *server_id,
                 health: health.health(),
                 binary_status: binary_status.clone(),
                 message: health.message(),
@@ -834,7 +832,7 @@ impl LspButton {
                         .push(ServerData::WithBinaryStatus {
                             server_name,
                             binary_status,
-                            server_id: Some(*server_id),
+                            server_id: *server_id,
                         });
                 }
             }
