@@ -1,6 +1,7 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorEvent, MultiBuffer, SelectionEffects, multibuffer_context_lines};
+use fs::Fs;
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncApp, AsyncWindowContext, Context,
@@ -11,16 +12,26 @@ use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
     Point, ReplicaId, Rope, TextBuffer,
 };
-use multi_buffer::PathKey;
-use project::{Project, WorktreeId, git_store::Repository};
+use multi_buffer::{PathKey, ToPoint as _};
+use project::{
+    Project, ProjectPath, WorktreeId,
+    git_store::Repository,
+    project_settings::{DiffViewQuickAction, ProjectSettings},
+};
+use settings::{Settings, update_settings_file};
 use std::{
     any::{Any, TypeId},
+    collections::HashMap,
     fmt::Write as _,
+    ops::Range,
     path::PathBuf,
     sync::Arc,
 };
+use text;
+use text::BufferId;
 use ui::{
-    Button, Color, Icon, IconName, Label, LabelCommon as _, SharedString, Tooltip, prelude::*,
+    Button, ButtonStyle, Color, ContextMenu, DropdownMenu, Icon, IconName, Label, LabelCommon as _,
+    SharedString, Tooltip, prelude::*,
 };
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
 use workspace::{
@@ -794,49 +805,313 @@ impl ToolbarItemView for CommitViewToolbar {
 }
 
 impl Render for CommitViewToolbar {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(commit_view) = self.commit_view(cx) else {
             return div();
         };
 
         let is_stash = commit_view.read(cx).stash.is_some();
-        if !is_stash {
-            return div();
-        }
-
         let focus_handle = commit_view.focus_handle(cx);
 
-        h_group_xl().my_neg_1().py_1().items_center().child(
+        // Get current settings
+        let settings = ProjectSettings::get_global(cx);
+        let current_action = if is_stash {
+            settings.git.diff_views.stash_quick_action
+        } else {
+            settings.git.diff_views.commit_quick_action
+        };
+        let is_readonly = if is_stash {
+            settings.git.diff_views.stash_opens_readonly
+        } else {
+            settings.git.diff_views.commit_opens_readonly
+        };
+
+        // Create the file actions dropdown menu
+        let fs = self.fs.clone();
+        let action_title = match current_action {
+            DiffViewQuickAction::OpenHead => "Head",
+            DiffViewQuickAction::OpenFinder => "Finder",
+            DiffViewQuickAction::OpenParent => "Parent",
+            DiffViewQuickAction::OpenModified => "Modified",
+            DiffViewQuickAction::OpenFromCursor => "From Cursor",
+        };
+        let file_actions_dropdown = DropdownMenu::new(
+            "commit-view-file-actions",
+            action_title,
+            ContextMenu::build(window, cx, move |mut menu, _window, _cx| {
+                let fs_for_cursor = fs.clone();
+                menu = menu.item(
+                    ui::ContextMenuEntry::new("Open From Cursor")
+                        .handler(move |_window, cx| {
+                            let fs = fs_for_cursor.clone();
+                            update_settings_file(fs, cx, move |settings, _| {
+                                if is_stash {
+                                    settings
+                                        .git
+                                        .get_or_insert_default()
+                                        .diff_views
+                                        .get_or_insert_default()
+                                        .stash_quick_action =
+                                        Some(settings::DiffViewQuickAction::OpenFromCursor);
+                                } else {
+                                    settings
+                                        .git
+                                        .get_or_insert_default()
+                                        .diff_views
+                                        .get_or_insert_default()
+                                        .commit_quick_action =
+                                        Some(settings::DiffViewQuickAction::OpenFromCursor);
+                                }
+                            });
+                        })
+                        .toggleable(
+                            ui::IconPosition::End,
+                            current_action == DiffViewQuickAction::OpenFromCursor,
+                        ),
+                );
+
+                let fs_for_head = fs.clone();
+                menu = menu.item(
+                    ui::ContextMenuEntry::new("Open Head")
+                        .handler(move |_window, cx| {
+                            let fs = fs_for_head.clone();
+                            update_settings_file(fs, cx, move |settings, _| {
+                                if is_stash {
+                                    settings
+                                        .git
+                                        .get_or_insert_default()
+                                        .diff_views
+                                        .get_or_insert_default()
+                                        .stash_quick_action =
+                                        Some(settings::DiffViewQuickAction::OpenHead);
+                                } else {
+                                    settings
+                                        .git
+                                        .get_or_insert_default()
+                                        .diff_views
+                                        .get_or_insert_default()
+                                        .commit_quick_action =
+                                        Some(settings::DiffViewQuickAction::OpenHead);
+                                }
+                            });
+                        })
+                        .toggleable(
+                            ui::IconPosition::End,
+                            current_action == DiffViewQuickAction::OpenHead,
+                        ),
+                );
+
+                let fs_for_finder = fs.clone();
+                menu = menu.item(
+                    ui::ContextMenuEntry::new("Open Finder")
+                        .handler(move |_window, cx| {
+                            let fs = fs_for_finder.clone();
+                            update_settings_file(fs, cx, move |settings, _| {
+                                if is_stash {
+                                    settings
+                                        .git
+                                        .get_or_insert_default()
+                                        .diff_views
+                                        .get_or_insert_default()
+                                        .stash_quick_action =
+                                        Some(settings::DiffViewQuickAction::OpenFinder);
+                                } else {
+                                    settings
+                                        .git
+                                        .get_or_insert_default()
+                                        .diff_views
+                                        .get_or_insert_default()
+                                        .commit_quick_action =
+                                        Some(settings::DiffViewQuickAction::OpenFinder);
+                                }
+                            });
+                        })
+                        .toggleable(
+                            ui::IconPosition::End,
+                            current_action == DiffViewQuickAction::OpenFinder,
+                        ),
+                );
+
+                let fs_for_parent = fs.clone();
+                menu = menu.item(
+                    ui::ContextMenuEntry::new("Open Parent")
+                        .handler(move |_window, cx| {
+                            let fs = fs_for_parent.clone();
+                            update_settings_file(fs, cx, move |settings, _| {
+                                if is_stash {
+                                    settings
+                                        .git
+                                        .get_or_insert_default()
+                                        .diff_views
+                                        .get_or_insert_default()
+                                        .stash_quick_action =
+                                        Some(settings::DiffViewQuickAction::OpenParent);
+                                } else {
+                                    settings
+                                        .git
+                                        .get_or_insert_default()
+                                        .diff_views
+                                        .get_or_insert_default()
+                                        .commit_quick_action =
+                                        Some(settings::DiffViewQuickAction::OpenParent);
+                                }
+                            });
+                        })
+                        .toggleable(
+                            ui::IconPosition::End,
+                            current_action == DiffViewQuickAction::OpenParent,
+                        ),
+                );
+
+                let fs_for_modified = fs.clone();
+                menu = menu.item(
+                    ui::ContextMenuEntry::new("Open Modified")
+                        .handler(move |_window, cx| {
+                            let fs = fs_for_modified.clone();
+                            update_settings_file(fs, cx, move |settings, _| {
+                                if is_stash {
+                                    settings
+                                        .git
+                                        .get_or_insert_default()
+                                        .diff_views
+                                        .get_or_insert_default()
+                                        .stash_quick_action =
+                                        Some(settings::DiffViewQuickAction::OpenModified);
+                                } else {
+                                    settings
+                                        .git
+                                        .get_or_insert_default()
+                                        .diff_views
+                                        .get_or_insert_default()
+                                        .commit_quick_action =
+                                        Some(settings::DiffViewQuickAction::OpenModified);
+                                }
+                            });
+                        })
+                        .toggleable(
+                            ui::IconPosition::End,
+                            current_action == DiffViewQuickAction::OpenModified,
+                        ),
+                );
+
+                menu
+            }),
+        );
+
+        // Create readonly toggle button
+        let readonly_button = Button::new("toggle-readonly", "")
+            .icon(IconName::Pencil)
+            .style(if is_readonly {
+                ButtonStyle::Subtle
+            } else {
+                ButtonStyle::Filled
+            })
+            .tooltip(move |window, cx| {
+                Tooltip::text(if is_readonly {
+                    "Files open as readonly (click to toggle)"
+                } else {
+                    "Files open as editable (click to toggle)"
+                })(window, cx)
+            })
+            .on_click(cx.listener(move |this, _, _window, cx| {
+                let is_stash = this
+                    .commit_view
+                    .as_ref()
+                    .and_then(|cv| cv.upgrade())
+                    .map(|cv| cv.read(cx).stash.is_some())
+                    .unwrap_or(false);
+                let fs = this.fs.clone();
+                update_settings_file(fs, cx, move |settings, _| {
+                    if is_stash {
+                        let current = settings
+                            .git
+                            .get_or_insert_default()
+                            .diff_views
+                            .get_or_insert_default()
+                            .stash_opens_readonly
+                            .unwrap_or(true);
+                        settings
+                            .git
+                            .get_or_insert_default()
+                            .diff_views
+                            .get_or_insert_default()
+                            .stash_opens_readonly = Some(!current);
+                    } else {
+                        let current = settings
+                            .git
+                            .get_or_insert_default()
+                            .diff_views
+                            .get_or_insert_default()
+                            .commit_opens_readonly
+                            .unwrap_or(true);
+                        settings
+                            .git
+                            .get_or_insert_default()
+                            .diff_views
+                            .get_or_insert_default()
+                            .commit_opens_readonly = Some(!current);
+                    }
+                });
+            }));
+
+        let mut toolbar = h_group_xl()
+            .my_neg_1()
+            .py_1()
+            .w_full()
+            .items_center()
+            .justify_between();
+
+        // Left side: stash actions (only for stashes)
+        if is_stash {
+            toolbar = toolbar.child(
+                h_group_sm()
+                    .child(
+                        Button::new("apply-stash", "Apply")
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Apply current stash",
+                                &ApplyCurrentStash,
+                                &focus_handle,
+                            ))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.apply_stash(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("pop-stash", "Pop")
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Pop current stash",
+                                &PopCurrentStash,
+                                &focus_handle,
+                            ))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.pop_stash(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("remove-stash", "Remove")
+                            .icon(IconName::Trash)
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Remove current stash",
+                                &DropCurrentStash,
+                                &focus_handle,
+                            ))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.remove_stash(window, cx)),
+                            ),
+                    ),
+            );
+        } else {
+            toolbar = toolbar.child(div());
+        }
+
+        // Right side: readonly toggle and file actions dropdown (always visible)
+        toolbar = toolbar.child(
             h_group_sm()
-                .child(
-                    Button::new("apply-stash", "Apply")
-                        .tooltip(Tooltip::for_action_title_in(
-                            "Apply current stash",
-                            &ApplyCurrentStash,
-                            &focus_handle,
-                        ))
-                        .on_click(cx.listener(|this, _, window, cx| this.apply_stash(window, cx))),
-                )
-                .child(
-                    Button::new("pop-stash", "Pop")
-                        .tooltip(Tooltip::for_action_title_in(
-                            "Pop current stash",
-                            &PopCurrentStash,
-                            &focus_handle,
-                        ))
-                        .on_click(cx.listener(|this, _, window, cx| this.pop_stash(window, cx))),
-                )
-                .child(
-                    Button::new("remove-stash", "Remove")
-                        .icon(IconName::Trash)
-                        .tooltip(Tooltip::for_action_title_in(
-                            "Remove current stash",
-                            &DropCurrentStash,
-                            &focus_handle,
-                        ))
-                        .on_click(cx.listener(|this, _, window, cx| this.remove_stash(window, cx))),
-                ),
-        )
+                .child(readonly_button)
+                .child(file_actions_dropdown),
+        );
+
+        toolbar
     }
 }
 
