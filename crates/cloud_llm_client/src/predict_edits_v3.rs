@@ -76,6 +76,8 @@ pub enum PromptFormat {
     OldTextNewText,
     /// Prompt format intended for use via zeta_cli
     OnlySnippets,
+    /// One-sentence instructions used in fine-tuned models
+    Minimal,
 }
 
 impl PromptFormat {
@@ -102,6 +104,7 @@ impl std::fmt::Display for PromptFormat {
             PromptFormat::OnlySnippets => write!(f, "Only Snippets"),
             PromptFormat::NumLinesUniDiff => write!(f, "Numbered Lines / Unified Diff"),
             PromptFormat::OldTextNewText => write!(f, "Old Text / New Text"),
+            PromptFormat::Minimal => write!(f, "Minimal"),
         }
     }
 }

@@ -49,7 +49,7 @@ pub async fn parse_diff<'a>(
             DiffEvent::FileEnd { renamed_to } => {
                 let (buffer, _) = edited_buffer
                     .take()
-                    .expect("Got a FileEnd event before an Hunk event");
+                    .context("Got a FileEnd event before an Hunk event")?;
 
                 if renamed_to.is_some() {
                     anyhow::bail!("edit predictions cannot rename files");
@@ -133,7 +133,7 @@ pub async fn apply_diff<'a>(
             DiffEvent::FileEnd { renamed_to } => {
                 let (buffer, _) = current_file
                     .take()
-                    .expect("Got a FileEnd event before an Hunk event");
+                    .context("Got a FileEnd event before an Hunk event")?;
 
                 if let Some(renamed_to) = renamed_to {
                     project

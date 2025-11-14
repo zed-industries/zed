@@ -126,7 +126,7 @@ pub async fn zeta2_predict(
         example_run_dir = example_run_dir.join(format!("{:03}", repetition_ix));
     }
     fs::create_dir_all(&example_run_dir)?;
-    if LATEST_EXAMPLE_RUN_DIR.exists() {
+    if LATEST_EXAMPLE_RUN_DIR.is_symlink() {
         fs::remove_file(&*LATEST_EXAMPLE_RUN_DIR)?;
     }
 
