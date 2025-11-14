@@ -214,7 +214,6 @@ impl LanguageServerState {
             let Some(server_info) = item.server_info() else {
                 continue;
             };
-
             let server_selector = server_info.server_selector();
             let is_remote = self
                 .lsp_store
@@ -822,37 +821,21 @@ impl LspButton {
                     BinaryStatus::Failed { .. } => {}
                 }
 
-                match server_names_to_worktrees.get(server_name) {
-                    Some(worktrees_for_name) => {
-                        match worktrees_for_name
-                            .iter()
-                            .find(|(worktree, _)| active_worktrees.contains(worktree))
-                            .or_else(|| worktrees_for_name.iter().next())
-                        {
-                            Some((worktree, server_id)) => {
-                                let worktree_name =
-                                    SharedString::new(worktree.read(cx).root_name_str());
-                                servers_per_worktree
-                                    .entry(worktree_name.clone())
-                                    .or_default()
-                                    .push(ServerData::WithBinaryStatus {
-                                        server_name,
-                                        binary_status,
-                                        server_id: Some(*server_id),
-                                    });
-                            }
-                            None => servers_without_worktree.push(ServerData::WithBinaryStatus {
-                                server_name,
-                                binary_status,
-                                server_id: None,
-                            }),
-                        }
-                    }
-                    None => servers_without_worktree.push(ServerData::WithBinaryStatus {
-                        server_name,
-                        binary_status,
-                        server_id: None,
-                    }),
+                if let Some(worktrees_for_name) = server_names_to_worktrees.get(server_name)
+                    && let Some((worktree, server_id)) = worktrees_for_name
+                        .iter()
+                        .find(|(worktree, _)| active_worktrees.contains(worktree))
+                        .or_else(|| worktrees_for_name.iter().next())
+                {
+                    let worktree_name = SharedString::new(worktree.read(cx).root_name_str());
+                    servers_per_worktree
+                        .entry(worktree_name.clone())
+                        .or_default()
+                        .push(ServerData::WithBinaryStatus {
+                            server_name,
+                            binary_status,
+                            server_id: Some(*server_id),
+                        });
                 }
             }
 
