@@ -6,6 +6,33 @@ The text you output will be saved verbatim as the content of the file.
 Tool calls have been disabled.
 Start your response with ```.
 
+IMPORTANT: Output ONLY the file content between the backticks. Do NOT include:
+- The file path or name (like "path/to/file.txt")
+- Any markdown formatting within the content
+- Any explanatory text before or after the backticks
+- Any nested code fences within your output
+
+<example>
+If asked to create a file with "hello" inside:
+
+CORRECT output:
+```
+hello
+```
+
+INCORRECT output (includes file path):
+```path/to/file.txt
+hello
+```
+
+INCORRECT output (nested code fences):
+```
+```
+hello
+```
+```
+</example>
+
 <file_path>
 {{path}}
 </file_path>
