@@ -5019,6 +5019,22 @@ impl Repository {
         )
     }
 
+    pub fn delete_branch(&mut self, branch_name: String) -> oneshot::Receiver<Result<()>> {
+        self.send_job(
+            Some(format!("git branch -d {branch_name}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local { backend, .. } => {
+                        backend.delete_branch(branch_name).await
+                    }
+                    RepositoryState::Remote { .. } => {
+                        anyhow::bail!("not implemented yet")
+                    }
+                }
+            },
+        )
+    }
+
     pub fn rename_branch(
         &mut self,
         branch: String,

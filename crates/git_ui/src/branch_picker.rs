@@ -20,9 +20,12 @@ use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
 
 pub fn register(workspace: &mut Workspace) {
-    workspace.register_action(open);
+    workspace.register_action(|workspace, branch: &zed_actions::git::Branch, window, cx| {
+        open(workspace, branch, BranchListMode::Checkout, window, cx);
+    });
     workspace.register_action(switch);
     workspace.register_action(checkout_branch);
+    workspace.register_action(delete_branch);
 }
 
 pub fn checkout_branch(
@@ -31,7 +34,28 @@ pub fn checkout_branch(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    open(workspace, &zed_actions::git::Branch, window, cx);
+    open(
+        workspace,
+        &zed_actions::git::Branch,
+        BranchListMode::Checkout,
+        window,
+        cx,
+    );
+}
+
+pub fn delete_branch(
+    workspace: &mut Workspace,
+    _: &zed_actions::git::DeleteBranch,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    open(
+        workspace,
+        &zed_actions::git::Branch,
+        BranchListMode::Delete,
+        window,
+        cx,
+    );
 }
 
 pub fn switch(
@@ -40,19 +64,26 @@ pub fn switch(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    open(workspace, &zed_actions::git::Branch, window, cx);
+    open(
+        workspace,
+        &zed_actions::git::Branch,
+        BranchListMode::Switch,
+        window,
+        cx,
+    );
 }
 
 pub fn open(
     workspace: &mut Workspace,
     _: &zed_actions::git::Branch,
+    mode: BranchListMode,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
     let repository = workspace.project().read(cx).active_repository(cx);
     let style = BranchListStyle::Modal;
     workspace.toggle_modal(window, cx, |window, cx| {
-        BranchList::new(repository, style, rems(34.), window, cx)
+        BranchList::new(repository, mode, style, rems(34.), window, cx)
     })
 }
 
@@ -62,10 +93,24 @@ pub fn popover(
     cx: &mut App,
 ) -> Entity<BranchList> {
     cx.new(|cx| {
-        let list = BranchList::new(repository, BranchListStyle::Popover, rems(20.), window, cx);
+        let list = BranchList::new(
+            repository,
+            BranchListMode::Checkout,
+            BranchListStyle::Popover,
+            rems(20.),
+            window,
+            cx,
+        );
         list.focus_handle(cx).focus(window);
         list
     })
+}
+
+#[derive(Debug, Clone)]
+pub enum BranchListMode {
+    Checkout,
+    Switch,
+    Delete,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -83,6 +128,7 @@ pub struct BranchList {
 impl BranchList {
     fn new(
         repository: Option<Entity<Repository>>,
+        mode: BranchListMode,
         style: BranchListStyle,
         width: Rems,
         window: &mut Window,
@@ -148,7 +194,7 @@ impl BranchList {
         })
         .detach_and_log_err(cx);
 
-        let delegate = BranchListDelegate::new(repository, style);
+        let delegate = BranchListDelegate::new(repository, mode, style);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
@@ -210,6 +256,7 @@ pub struct BranchListDelegate {
     all_branches: Option<Vec<Branch>>,
     default_branch: Option<SharedString>,
     repo: Option<Entity<Repository>>,
+    mode: BranchListMode,
     style: BranchListStyle,
     selected_index: usize,
     last_query: String,
@@ -217,10 +264,11 @@ pub struct BranchListDelegate {
 }
 
 impl BranchListDelegate {
-    fn new(repo: Option<Entity<Repository>>, style: BranchListStyle) -> Self {
+    fn new(repo: Option<Entity<Repository>>, mode: BranchListMode, style: BranchListStyle) -> Self {
         Self {
             matches: vec![],
             repo,
+            mode,
             style,
             all_branches: None,
             default_branch: None,
@@ -372,47 +420,80 @@ impl PickerDelegate for BranchListDelegate {
         let Some(entry) = self.matches.get(self.selected_index()) else {
             return;
         };
-        if entry.is_new {
-            let from_branch = if secondary {
-                self.default_branch.clone()
-            } else {
-                None
-            };
-            self.create_branch(
-                from_branch,
-                entry.branch.name().to_owned().into(),
-                window,
-                cx,
-            );
-            return;
+
+        match self.mode {
+            BranchListMode::Checkout | BranchListMode::Switch => {
+                if entry.is_new {
+                    let from_branch = if secondary {
+                        self.default_branch.clone()
+                    } else {
+                        None
+                    };
+                    self.create_branch(
+                        from_branch,
+                        entry.branch.name().to_owned().into(),
+                        window,
+                        cx,
+                    );
+                    return;
+                }
+
+                let current_branch = self.repo.as_ref().map(|repo| {
+                    repo.read_with(cx, |repo, _| {
+                        repo.branch.as_ref().map(|branch| branch.ref_name.clone())
+                    })
+                });
+
+                if current_branch
+                    .flatten()
+                    .is_some_and(|current_branch| current_branch == entry.branch.ref_name)
+                {
+                    cx.emit(DismissEvent);
+                    return;
+                }
+
+                let Some(repo) = self.repo.clone() else {
+                    return;
+                };
+
+                let branch = entry.branch.clone();
+                cx.spawn(async move |_, cx| {
+                    repo.update(cx, |repo, _| repo.change_branch(branch.name().to_string()))?
+                        .await??;
+
+                    anyhow::Ok(())
+                })
+                .detach_and_prompt_err(
+                    "Failed to change branch",
+                    window,
+                    cx,
+                    |_, _, _| None,
+                );
+            }
+            BranchListMode::Delete => {
+                if entry.is_new {
+                    return;
+                }
+
+                let Some(repo) = self.repo.clone() else {
+                    return;
+                };
+
+                let branch_name = entry.branch.name().to_string();
+                cx.spawn(async move |_, cx| {
+                    repo.update(cx, |r, _| r.delete_branch(branch_name.to_string()))?
+                        .await??;
+
+                    anyhow::Ok(())
+                })
+                .detach_and_prompt_err(
+                    "Failed to delete branch",
+                    window,
+                    cx,
+                    |_, _, _| None,
+                );
+            }
         }
-
-        let current_branch = self.repo.as_ref().map(|repo| {
-            repo.read_with(cx, |repo, _| {
-                repo.branch.as_ref().map(|branch| branch.ref_name.clone())
-            })
-        });
-
-        if current_branch
-            .flatten()
-            .is_some_and(|current_branch| current_branch == entry.branch.ref_name)
-        {
-            cx.emit(DismissEvent);
-            return;
-        }
-
-        let Some(repo) = self.repo.clone() else {
-            return;
-        };
-
-        let branch = entry.branch.clone();
-        cx.spawn(async move |_, cx| {
-            repo.update(cx, |repo, _| repo.change_branch(branch.name().to_string()))?
-                .await??;
-
-            anyhow::Ok(())
-        })
-        .detach_and_prompt_err("Failed to change branch", window, cx, |_, _, _| None);
 
         cx.emit(DismissEvent);
     }
