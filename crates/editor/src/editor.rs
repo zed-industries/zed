@@ -8401,7 +8401,11 @@ impl Editor {
             };
 
             let color = if is_phantom {
-                Color::Hint
+                if collides_with_existing {
+                    Color::Custom(cx.theme().colors().debugger_accent.opacity(0.5))
+                } else {
+                    Color::Hint
+                }
             } else if is_rejected {
                 Color::Disabled
             } else {
