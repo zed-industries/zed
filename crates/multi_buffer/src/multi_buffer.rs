@@ -261,6 +261,23 @@ pub struct MultiBufferSnapshot {
     show_headers: bool,
 }
 
+/// A section of text in a [`MultiBuffer`] that may or may not have changed relative to some "base
+/// text".
+///
+/// Despite having two variants, there are conceptually three different states:
+/// - `BufferContent { inserted_hunk_info: None, ..}` represents a region of text that has not
+///   changed, relative to the base text.
+/// - `BufferContent { inserted_hunk_info: Some(info), ..}` represents a region of text that has
+///   been added, relative to the base text.
+/// - `DeletedHunk` represents a region of text that has been deleted, relative to the base text.
+///
+/// The [`TextSummaries`](TextSummary) refer to either:
+/// - the buffer text (`multi_buffer.buffers[buffer_id].buffer.snapshot`)
+/// - the base text (`multi_buffer.diffs[buffer_id].diff.inner.base_text`)
+///
+/// The multibuffer tries to maintain an invariant that: "no two consecutive [`DiffTransform`]s can
+/// be merged". In other words, if two consecutive [`DiffTransform`]s *could* be merged, they will
+/// be.
 #[derive(Debug, Clone)]
 enum DiffTransform {
     BufferContent {

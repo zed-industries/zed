@@ -1091,6 +1091,8 @@ impl FilterSnapshot {
     }
 }
 
+/// A newtype wrapper for a row index in filter co-ordinates (i.e. `FilterRow(n)` represents the
+/// nth non-filtered row).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct FilterRow(pub u32);
 
@@ -1100,6 +1102,7 @@ impl std::fmt::Debug for FilterRow {
     }
 }
 
+/// Iterator over [`RowInfo`]s (ignoring filtered rows).
 #[derive(Clone)]
 pub(crate) struct FilterRows<'a> {
     transform_cursor:
