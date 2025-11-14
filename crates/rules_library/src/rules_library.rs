@@ -3,9 +3,9 @@ use collections::{HashMap, HashSet};
 use editor::{CompletionProvider, SelectionEffects};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
 use gpui::{
-    Action, App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, EventEmitter, Focusable,
-    PromptLevel, Subscription, Task, TextStyle, TitlebarOptions, WindowBounds, WindowHandle,
-    WindowOptions, actions, point, size, transparent_black,
+    Action, App, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, EventEmitter, Focusable, PromptLevel,
+    Subscription, Task, TextStyle, TitlebarOptions, WindowHandle, WindowOptions, actions, point,
+    size, transparent_black,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use language_model::{
@@ -118,7 +118,14 @@ pub fn open_rules_library(
         let store = store.await?;
         cx.update(|cx| {
             let app_id = ReleaseChannel::global(cx).app_id();
-            let bounds = Bounds::centered(None, size(px(1024.0), px(768.0)), cx);
+            // Pick the display of the last active window and center on it
+            let active_display_id = workspace::window_utils::active_display_id(cx);
+            let window_bounds = workspace::window_utils::centered_bounds_for_display_id(
+                active_display_id,
+                size(px(1024.0), px(768.0)),
+                cx,
+            );
+            let window_background = cx.theme().window_background_appearance();
             let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
                 Ok(val) if val == "server" => gpui::WindowDecorations::Server,
                 Ok(val) if val == "client" => gpui::WindowDecorations::Client,
@@ -132,8 +139,9 @@ pub fn open_rules_library(
                         traffic_light_position: Some(point(px(12.0), px(12.0))),
                     }),
                     app_id: Some(app_id.to_owned()),
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_background: cx.theme().window_background_appearance(),
+                    display_id: active_display_id,
+                    window_bounds: Some(window_bounds),
+                    window_background,
                     window_decorations: Some(window_decorations),
                     window_min_size: Some(DEFAULT_ADDITIONAL_WINDOW_SIZE),
                     kind: gpui::WindowKind::Floating,

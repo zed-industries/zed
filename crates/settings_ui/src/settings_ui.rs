@@ -8,8 +8,8 @@ use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, App, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle,
     Focusable, Global, KeyContext, ListState, ReadGlobal as _, ScrollHandle, Stateful,
-    Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
-    WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px, uniform_list,
+    Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowHandle,
+    WindowOptions, actions, div, list, point, prelude::*, px, uniform_list,
 };
 use project::{Project, WorktreeId};
 use release_channel::ReleaseChannel;
@@ -582,6 +582,16 @@ pub fn open_settings_editor(
             _ => gpui::WindowDecorations::Client,
         };
 
+        let target_display_id =
+            workspace::window_utils::display_id_for_window_center(&workspace_handle, cx);
+        // Precompute values that borrow `cx` to avoid overlapping mutable borrows inside the struct literal.
+        let window_bounds = workspace::window_utils::centered_bounds_for_display_id(
+            target_display_id,
+            scaled_bounds,
+            cx,
+        );
+        let window_background = cx.theme().window_background_appearance();
+
         cx.open_window(
             WindowOptions {
                 titlebar: Some(TitlebarOptions {
@@ -593,11 +603,13 @@ pub fn open_settings_editor(
                 show: true,
                 is_movable: true,
                 kind: gpui::WindowKind::Floating,
-                window_background: cx.theme().window_background_appearance(),
+                window_background,
                 app_id: Some(app_id.to_owned()),
                 window_decorations: Some(window_decorations),
                 window_min_size: Some(scaled_bounds),
-                window_bounds: Some(WindowBounds::centered(scaled_bounds, cx)),
+                // Center the settings window on the same display as the originating workspace window
+                display_id: target_display_id,
+                window_bounds: Some(window_bounds),
                 ..Default::default()
             },
             |window, cx| {
