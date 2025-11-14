@@ -599,6 +599,10 @@ impl Replacement {
                 escaped = false;
                 if phase == 1 && c.is_ascii_digit() {
                     buffer.push('$')
+                } else if phase == 1 && c == '$' {
+                    buffer.push('$');
+                    buffer.push('$');
+                    continue;
                 // unescape escaped parens
                 } else if phase == 0 && (c == '(' || c == ')') {
                 } else if c != delimiter {
@@ -654,6 +658,7 @@ impl Replacement {
 mod test {
     use std::time::Duration;
 
+    use super::Replacement;
     use crate::{
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
@@ -663,6 +668,30 @@ mod test {
     use indoc::indoc;
     use search::BufferSearchBar;
     use settings::SettingsStore;
+
+    #[gpui::test]
+    async fn test_replace_literal_dollar(cx: &mut gpui::TestAppContext) {
+        let replacement = Replacement::parse("/\\$Base/\\$BaseNew/".chars().peekable()).unwrap();
+        assert_eq!(replacement.replacement, "$$BaseNew");
+
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {
+            "ˇ$Base one
+            $Base two
+            $Base three"
+        })
+        .await;
+
+        cx.simulate_shared_keystrokes(": % s / \\ $ B a s e / \\ $ B a s e N e w / g")
+            .await;
+        cx.simulate_shared_keystrokes("enter").await;
+
+        cx.shared_state().await.assert_eq(indoc! {
+            "$BaseNew one
+            $BaseNew two
+            ˇ$BaseNew three"
+        });
+    }
 
     #[gpui::test]
     async fn test_move_to_next(cx: &mut gpui::TestAppContext) {

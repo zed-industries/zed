@@ -1,0 +1,25 @@
+{"Put":{"state":"ˇ$Base one\n$Base two\n$Base three"}}
+{"Key":":"}
+{"Key":"%"}
+{"Key":"s"}
+{"Key":"/"}
+{"Key":"\\"}
+{"Key":"$"}
+{"Key":"B"}
+{"Key":"a"}
+{"Key":"s"}
+{"Key":"e"}
+{"Key":"/"}
+{"Key":"\\"}
+{"Key":"$"}
+{"Key":"B"}
+{"Key":"a"}
+{"Key":"s"}
+{"Key":"e"}
+{"Key":"N"}
+{"Key":"e"}
+{"Key":"w"}
+{"Key":"/"}
+{"Key":"g"}
+{"Key":"enter"}
+{"Get":{"state":"$BaseNew one\n$BaseNew two\nˇ$BaseNew three","mode":"Normal"}}
