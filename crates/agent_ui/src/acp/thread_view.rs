@@ -5859,7 +5859,6 @@ impl Render for AcpThreadView {
                     None
                 }
             })
-            .children(self.render_thread_error(cx))
             .children(self.render_thread_error(window, cx))
             .when_some(
                 self.new_server_version_available.as_ref().filter(|_| {
