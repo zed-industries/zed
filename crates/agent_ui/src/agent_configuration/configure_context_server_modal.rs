@@ -1,5 +1,4 @@
 use std::{
-    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
@@ -208,7 +207,8 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
     /// The environment variables to set
     "env": {env}
   }}
-}}"#)
+}}"#
+    )
 }
 
 fn resolve_context_server_extension(
