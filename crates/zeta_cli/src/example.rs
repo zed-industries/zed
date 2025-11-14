@@ -6,9 +6,10 @@ use std::{
     io::Write,
     mem,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
+use crate::headless::ZetaCliAppState;
 use anyhow::{Context as _, Result, anyhow};
 use clap::ValueEnum;
 use cloud_zeta2_prompt::CURSOR_MARKER;
@@ -18,13 +19,14 @@ use futures::{
     AsyncWriteExt as _,
     lock::{Mutex, OwnedMutexGuard},
 };
-use gpui::{AsyncApp, Entity, http_client::Url};
+use futures::{FutureExt as _, future::Shared};
+use gpui::{AppContext as _, AsyncApp, Entity, Task, http_client::Url};
 use language::{Anchor, Buffer};
 use project::{Project, ProjectPath};
 use pulldown_cmark::CowStr;
 use serde::{Deserialize, Serialize};
 use util::{paths::PathStyle, rel_path::RelPath};
-use zeta2::udiff::OpenedBuffers;
+use zeta2::{Zeta, udiff::OpenedBuffers};
 
 use crate::paths::{REPOS_DIR, WORKTREES_DIR};
 
@@ -257,6 +259,11 @@ impl NamedExample {
                                 if !text.ends_with('\n') {
                                     text.push('\n');
                                 }
+
+                                if named.example.expected_context.is_empty() {
+                                    named.example.expected_context.push(Default::default());
+                                }
+
                                 let alternatives = &mut named
                                     .example
                                     .expected_context
@@ -311,12 +318,85 @@ impl NamedExample {
         }
     }
 
+    pub async fn setup_project<'a>(
+        &'a self,
+        app_state: &Arc<ZetaCliAppState>,
+        repetitions: u16,
+        cx: &mut AsyncApp,
+    ) -> Result<(Entity<Project>, Vec<Entity<Zeta>>, OpenedBuffers<'a>)> {
+        let worktree_path = self.setup_worktree().await?;
+
+        static AUTHENTICATED: OnceLock<Shared<Task<()>>> = OnceLock::new();
+
+        AUTHENTICATED
+            .get_or_init(|| {
+                let client = app_state.client.clone();
+                cx.spawn(async move |cx| {
+                    client
+                        .sign_in_with_optional_connect(true, cx)
+                        .await
+                        .unwrap();
+                })
+                .shared()
+            })
+            .clone()
+            .await;
+
+        let project = cx.update(|cx| {
+            Project::local(
+                app_state.client.clone(),
+                app_state.node_runtime.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                None,
+                cx,
+            )
+        })?;
+
+        let worktree = project
+            .update(cx, |project, cx| {
+                project.create_worktree(&worktree_path, true, cx)
+            })?
+            .await?;
+        worktree
+            .read_with(cx, |worktree, _cx| {
+                worktree.as_local().unwrap().scan_complete()
+            })?
+            .await;
+
+        let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone())?;
+
+        let zetas = (0..repetitions)
+            .map(|_| {
+                let zeta = cx.new(|cx| {
+                    zeta2::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx)
+                })?;
+
+                cx.subscribe(&buffer_store, {
+                    let project = project.clone();
+                    let zeta = zeta.clone();
+                    move |_, event, cx| match event {
+                        project::buffer_store::BufferStoreEvent::BufferAdded(buffer) => {
+                            zeta.update(cx, |zeta, cx| zeta.register_buffer(&buffer, &project, cx));
+                        }
+                        _ => {}
+                    }
+                })?
+                .detach();
+
+                anyhow::Ok(zeta)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let edited_buffers = self.apply_edit_history(&project, cx).await?;
+
+        anyhow::Ok((project, zetas, edited_buffers))
+    }
+
     pub async fn setup_worktree(&self) -> Result<PathBuf> {
         let (repo_owner, repo_name) = self.repo_name()?;
         let file_name = self.file_name();
-
-        fs::create_dir_all(&*REPOS_DIR)?;
-        fs::create_dir_all(&*WORKTREES_DIR)?;
 
         let repo_dir = REPOS_DIR.join(repo_owner.as_ref()).join(repo_name.as_ref());
         let repo_lock = lock_repo(&repo_dir).await;
@@ -332,7 +412,14 @@ impl NamedExample {
         }
 
         // Resolve the example to a revision, fetching it if needed.
-        let revision = run_git(&repo_dir, &["rev-parse", &self.example.revision]).await;
+        let revision = run_git(
+            &repo_dir,
+            &[
+                "rev-parse",
+                &format!("{}^{{commit}}", self.example.revision),
+            ],
+        )
+        .await;
         let revision = if let Ok(revision) = revision {
             revision
         } else {
@@ -349,7 +436,7 @@ impl NamedExample {
         };
 
         // Create the worktree for this example if needed.
-        let worktree_path = WORKTREES_DIR.join(&file_name);
+        let worktree_path = WORKTREES_DIR.join(&file_name).join(repo_name.as_ref());
         if worktree_path.is_dir() {
             run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
             run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
@@ -394,7 +481,7 @@ impl NamedExample {
         Ok(worktree_path)
     }
 
-    fn file_name(&self) -> String {
+    pub fn file_name(&self) -> String {
         self.name
             .chars()
             .map(|c| {
@@ -477,7 +564,7 @@ impl NamedExample {
             let mut matches = text.match_indices(&cursor_excerpt);
             let Some((excerpt_offset, _)) = matches.next() else {
                 anyhow::bail!(
-                    "Cursor excerpt did not exist in buffer.\nExcerpt:\n\n{cursor_excerpt}\nBuffer text:\n{text}\n"
+                    "\nExcerpt:\n\n{cursor_excerpt}\nBuffer text:\n{text}\n.Cursor excerpt did not exist in buffer."
                 );
             };
             assert!(matches.next().is_none());

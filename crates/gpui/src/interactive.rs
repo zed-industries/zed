@@ -305,9 +305,10 @@ pub enum KeyboardButton {
 }
 
 /// An enum representing the mouse button that was pressed.
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
+#[derive(Hash, Default, PartialEq, Eq, Copy, Clone, Debug)]
 pub enum MouseButton {
     /// The left mouse button.
+    #[default]
     Left,
 
     /// The right mouse button.
@@ -333,26 +334,15 @@ impl MouseButton {
     }
 }
 
-impl Default for MouseButton {
-    fn default() -> Self {
-        Self::Left
-    }
-}
-
 /// A navigation direction, such as back or forward.
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
+#[derive(Hash, Default, PartialEq, Eq, Copy, Clone, Debug)]
 pub enum NavigationDirection {
     /// The back button.
+    #[default]
     Back,
 
     /// The forward button.
     Forward,
-}
-
-impl Default for NavigationDirection {
-    fn default() -> Self {
-        Self::Back
-    }
 }
 
 /// A mouse move event from the platform.

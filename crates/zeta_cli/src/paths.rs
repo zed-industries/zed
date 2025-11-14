@@ -1,8 +1,53 @@
 use std::{env, path::PathBuf, sync::LazyLock};
 
-static TARGET_DIR: LazyLock<PathBuf> = LazyLock::new(|| env::current_dir().unwrap().join("target"));
-pub static CACHE_DIR: LazyLock<PathBuf> =
-    LazyLock::new(|| TARGET_DIR.join("zeta-prediction-cache"));
-pub static REPOS_DIR: LazyLock<PathBuf> = LazyLock::new(|| TARGET_DIR.join("zeta-repos"));
-pub static WORKTREES_DIR: LazyLock<PathBuf> = LazyLock::new(|| TARGET_DIR.join("zeta-worktrees"));
-pub static LOGS_DIR: LazyLock<PathBuf> = LazyLock::new(|| TARGET_DIR.join("zeta-logs"));
+pub static TARGET_ZETA_DIR: LazyLock<PathBuf> =
+    LazyLock::new(|| env::current_dir().unwrap().join("target/zeta"));
+pub static CACHE_DIR: LazyLock<PathBuf> = LazyLock::new(|| TARGET_ZETA_DIR.join("cache"));
+pub static REPOS_DIR: LazyLock<PathBuf> = LazyLock::new(|| TARGET_ZETA_DIR.join("repos"));
+pub static WORKTREES_DIR: LazyLock<PathBuf> = LazyLock::new(|| TARGET_ZETA_DIR.join("worktrees"));
+pub static RUN_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
+    TARGET_ZETA_DIR
+        .join("runs")
+        .join(chrono::Local::now().format("%d-%m-%y-%H_%M_%S").to_string())
+});
+pub static LATEST_EXAMPLE_RUN_DIR: LazyLock<PathBuf> =
+    LazyLock::new(|| TARGET_ZETA_DIR.join("latest"));
+
+pub fn print_run_data_dir(deep: bool) {
+    println!("\n## Run Data\n");
+    let mut files = Vec::new();
+
+    let current_dir = std::env::current_dir().unwrap();
+    for file in std::fs::read_dir(&*RUN_DIR).unwrap() {
+        let file = file.unwrap();
+        if file.file_type().unwrap().is_dir() && deep {
+            for file in std::fs::read_dir(file.path()).unwrap() {
+                let path = file.unwrap().path();
+                let path = path.strip_prefix(&current_dir).unwrap_or(&path);
+                files.push(format!(
+                    "- {}/\x1b[34m{}\x1b[0m",
+                    path.parent().unwrap().display(),
+                    path.file_name().unwrap().display(),
+                ));
+            }
+        } else {
+            let path = file.path();
+            let path = path.strip_prefix(&current_dir).unwrap_or(&path);
+            files.push(format!(
+                "- {}/\x1b[34m{}\x1b[0m",
+                path.parent().unwrap().display(),
+                path.file_name().unwrap().display(),
+            ));
+        }
+    }
+    files.sort();
+
+    for file in files {
+        println!("{}", file);
+    }
+
+    println!(
+        "\n💡 Tip of the day: {} always points to the latest run\n",
+        LATEST_EXAMPLE_RUN_DIR.display()
+    );
+}

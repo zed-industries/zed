@@ -1075,8 +1075,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
         });
     }
 
@@ -1091,7 +1089,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_large_file_uses_outline(cx: &mut TestAppContext) {
+    async fn test_large_file_uses_fallback(cx: &mut TestAppContext) {
         init_test_settings(cx);
 
         // Create a large file that exceeds AUTO_OUTLINE_SIZE
@@ -1103,16 +1101,16 @@ mod tests {
 
         let file_context = load_context_for("file.txt", large_content, cx).await;
 
+        // Should contain some of the actual file content
         assert!(
-            file_context
-                .text
-                .contains(&format!("# File outline for {}", path!("test/file.txt"))),
-            "Large files should not get an outline"
+            file_context.text.contains(LINE),
+            "Should contain some of the file content"
         );
 
+        // Should be much smaller than original
         assert!(
-            file_context.text.len() < content_len,
-            "Outline should be smaller than original content"
+            file_context.text.len() < content_len / 10,
+            "Should be significantly smaller than original content"
         );
     }
 

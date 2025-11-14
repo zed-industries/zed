@@ -965,7 +965,7 @@ impl<'a> Iterator for WrapChunks<'a> {
         }
 
         if self.input_chunk.text.is_empty() {
-            self.input_chunk = self.input_chunks.next().unwrap();
+            self.input_chunk = self.input_chunks.next()?;
         }
 
         let mut input_len = 0;

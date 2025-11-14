@@ -50,13 +50,14 @@ impl crate::AgentServer for CustomAgentServer {
     fn set_default_mode(&self, mode_id: Option<acp::SessionModeId>, fs: Arc<dyn Fs>, cx: &mut App) {
         let name = self.name();
         update_settings_file(fs, cx, move |settings, _| {
-            settings
+            if let Some(settings) = settings
                 .agent_servers
                 .get_or_insert_default()
                 .custom
                 .get_mut(&name)
-                .unwrap()
-                .default_mode = mode_id.map(|m| m.to_string())
+            {
+                settings.default_mode = mode_id.map(|m| m.to_string())
+            }
         });
     }
 

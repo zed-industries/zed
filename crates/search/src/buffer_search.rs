@@ -127,12 +127,6 @@ pub struct BufferSearchBar {
     regex_language: Option<Arc<Language>>,
 }
 
-impl BufferSearchBar {
-    pub fn query_editor_focused(&self) -> bool {
-        self.query_editor_focused
-    }
-}
-
 impl EventEmitter<Event> for BufferSearchBar {}
 impl EventEmitter<workspace::ToolbarItemEvent> for BufferSearchBar {}
 impl Render for BufferSearchBar {
@@ -521,6 +515,10 @@ impl ToolbarItemView for BufferSearchBar {
 }
 
 impl BufferSearchBar {
+    pub fn query_editor_focused(&self) -> bool {
+        self.query_editor_focused
+    }
+
     pub fn register(registrar: &mut impl SearchActionsRegistrar) {
         registrar.register_handler(ForDeployed(|this, _: &FocusSearch, window, cx| {
             this.query_editor.focus_handle(cx).focus(window);
@@ -696,6 +694,8 @@ impl BufferSearchBar {
     pub fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
         self.dismissed = true;
         self.query_error = None;
+        self.sync_select_next_case_sensitivity(cx);
+
         for searchable_item in self.searchable_items_with_matches.keys() {
             if let Some(searchable_item) =
                 WeakSearchableItemHandle::upgrade(searchable_item.as_ref(), cx)
@@ -711,6 +711,7 @@ impl BufferSearchBar {
             let handle = active_editor.item_focus_handle(cx);
             self.focus(&handle, window);
         }
+
         cx.emit(Event::UpdateLocation);
         cx.emit(ToolbarItemEvent::ChangeLocation(
             ToolbarItemLocation::Hidden,
@@ -730,6 +731,7 @@ impl BufferSearchBar {
             }
             self.search_suggested(window, cx);
             self.smartcase(window, cx);
+            self.sync_select_next_case_sensitivity(cx);
             self.replace_enabled = deploy.replace_enabled;
             self.selection_search_enabled = if deploy.selection_search_enabled {
                 Some(FilteredSearchRange::Default)
@@ -919,6 +921,7 @@ impl BufferSearchBar {
         self.default_options = self.search_options;
         drop(self.update_matches(false, false, window, cx));
         self.adjust_query_regex_language(cx);
+        self.sync_select_next_case_sensitivity(cx);
         cx.notify();
     }
 
@@ -953,6 +956,7 @@ impl BufferSearchBar {
     pub fn set_search_options(&mut self, search_options: SearchOptions, cx: &mut Context<Self>) {
         self.search_options = search_options;
         self.adjust_query_regex_language(cx);
+        self.sync_select_next_case_sensitivity(cx);
         cx.notify();
     }
 
@@ -1507,6 +1511,7 @@ impl BufferSearchBar {
             .read(cx)
             .as_singleton()
             .expect("query editor should be backed by a singleton buffer");
+
         if enable {
             if let Some(regex_language) = self.regex_language.clone() {
                 query_buffer.update(cx, |query_buffer, cx| {
@@ -1519,6 +1524,24 @@ impl BufferSearchBar {
             })
         }
     }
+
+    /// Updates the searchable item's case sensitivity option to match the
+    /// search bar's current case sensitivity setting. This ensures that
+    /// editor's `select_next`/ `select_previous` operations respect the buffer
+    /// search bar's search options.
+    ///
+    /// Clears the case sensitivity when the search bar is dismissed so that
+    /// only the editor's settings are respected.
+    fn sync_select_next_case_sensitivity(&self, cx: &mut Context<Self>) {
+        let case_sensitive = match self.dismissed {
+            true => None,
+            false => Some(self.search_options.contains(SearchOptions::CASE_SENSITIVE)),
+        };
+
+        if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
+            active_searchable_item.set_search_is_case_sensitive(case_sensitive, cx);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1528,11 +1551,10 @@ mod tests {
     use super::*;
     use editor::{
         DisplayPoint, Editor, MultiBuffer, SearchSettings, SelectionEffects,
-        display_map::DisplayRow,
+        display_map::DisplayRow, test::editor_test_context::EditorTestContext,
     };
     use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
-    use project::Project;
     use settings::{SearchSettingsContent, SettingsStore};
     use smol::stream::StreamExt as _;
     use unindent::Unindent as _;
@@ -1542,11 +1564,8 @@ mod tests {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
-            workspace::init_settings(cx);
             editor::init(cx);
 
-            language::init(cx);
-            Project::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             crate::init(cx);
         });
@@ -2965,6 +2984,61 @@ mod tests {
                 "Calling deploy on an already deployed search bar should not prevent settings updates from being detected"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_select_occurrence_case_sensitivity(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_test(cx);
+        let mut editor_cx = EditorTestContext::for_editor_in(editor, cx).await;
+
+        // Start with case sensitive search settings.
+        let mut search_settings = SearchSettings::default();
+        search_settings.case_sensitive = true;
+        update_search_settings(search_settings, cx);
+        search_bar.update(cx, |search_bar, cx| {
+            let mut search_options = search_bar.search_options;
+            search_options.insert(SearchOptions::CASE_SENSITIVE);
+            search_bar.set_search_options(search_options, cx);
+        });
+
+        editor_cx.set_state("«ˇfoo»\nFOO\nFoo\nfoo");
+        editor_cx.update_editor(|e, window, cx| {
+            e.select_next(&Default::default(), window, cx).unwrap();
+        });
+        editor_cx.assert_editor_state("«ˇfoo»\nFOO\nFoo\n«ˇfoo»");
+
+        // Update the search bar's case sensitivite toggle, so we can later
+        // confirm that `select_next` will now be case-insensitive.
+        editor_cx.set_state("«ˇfoo»\nFOO\nFoo\nfoo");
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.toggle_case_sensitive(&Default::default(), window, cx);
+        });
+        editor_cx.update_editor(|e, window, cx| {
+            e.select_next(&Default::default(), window, cx).unwrap();
+        });
+        editor_cx.assert_editor_state("«ˇfoo»\n«ˇFOO»\nFoo\nfoo");
+
+        // Confirm that, after dismissing the search bar, only the editor's
+        // search settings actually affect the behavior of `select_next`.
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.dismiss(&Default::default(), window, cx);
+        });
+        editor_cx.set_state("«ˇfoo»\nFOO\nFoo\nfoo");
+        editor_cx.update_editor(|e, window, cx| {
+            e.select_next(&Default::default(), window, cx).unwrap();
+        });
+        editor_cx.assert_editor_state("«ˇfoo»\nFOO\nFoo\n«ˇfoo»");
+
+        // Update the editor's search settings, disabling case sensitivity, to
+        // check that the value is respected.
+        let mut search_settings = SearchSettings::default();
+        search_settings.case_sensitive = false;
+        update_search_settings(search_settings, cx);
+        editor_cx.set_state("«ˇfoo»\nFOO\nFoo\nfoo");
+        editor_cx.update_editor(|e, window, cx| {
+            e.select_next(&Default::default(), window, cx).unwrap();
+        });
+        editor_cx.assert_editor_state("«ˇfoo»\n«ˇFOO»\nFoo\nfoo");
     }
 
     fn update_search_settings(search_settings: SearchSettings, cx: &mut TestAppContext) {

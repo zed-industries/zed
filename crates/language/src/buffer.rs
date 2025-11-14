@@ -1618,6 +1618,18 @@ impl Buffer {
         self.parse_status.1.clone()
     }
 
+    /// Wait until the buffer is no longer parsing
+    pub fn parsing_idle(&self) -> impl Future<Output = ()> + use<> {
+        let mut parse_status = self.parse_status();
+        async move {
+            while *parse_status.borrow() != ParseStatus::Idle {
+                if parse_status.changed().await.is_err() {
+                    break;
+                }
+            }
+        }
+    }
+
     /// Assign to the buffer a set of diagnostics created by a given language server.
     pub fn update_diagnostics(
         &mut self,
@@ -2041,6 +2053,11 @@ impl Buffer {
             }
             _ => self.has_unsaved_edits(),
         }
+    }
+
+    /// Marks the buffer as having a conflict regardless of current buffer state.
+    pub fn set_conflict(&mut self) {
+        self.has_conflict = true;
     }
 
     /// Checks if the buffer and its file have both changed since the buffer

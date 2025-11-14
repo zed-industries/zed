@@ -66,7 +66,6 @@ pub struct MarkdownStyle {
     pub selection_background_color: Hsla,
     pub heading: StyleRefinement,
     pub heading_level_styles: Option<HeadingLevelStyles>,
-    pub table_overflow_x_scroll: bool,
     pub height_is_multiple_of_line_height: bool,
     pub prevent_mouse_interaction: bool,
 }
@@ -87,7 +86,6 @@ impl Default for MarkdownStyle {
             selection_background_color: Default::default(),
             heading: Default::default(),
             heading_level_styles: None,
-            table_overflow_x_scroll: false,
             height_is_multiple_of_line_height: false,
             prevent_mouse_interaction: false,
         }
@@ -787,7 +785,6 @@ impl Element for MarkdownElement {
         };
         let mut code_block_ids = HashSet::default();
 
-        let mut current_code_block_metadata = None;
         let mut current_img_block_range: Option<Range<usize>> = None;
         for (range, event) in parsed_markdown.events.iter() {
             // Skip alt text for images that rendered
@@ -849,7 +846,7 @@ impl Element for MarkdownElement {
                                 markdown_end,
                             );
                         }
-                        MarkdownTag::CodeBlock { kind, metadata } => {
+                        MarkdownTag::CodeBlock { kind, .. } => {
                             let language = match kind {
                                 CodeBlockKind::Fenced => None,
                                 CodeBlockKind::FencedLang(language) => {
@@ -861,8 +858,6 @@ impl Element for MarkdownElement {
                                     .cloned(),
                                 _ => None,
                             };
-
-                            current_code_block_metadata = Some(metadata.clone());
 
                             let is_indented = matches!(kind, CodeBlockKind::Indented);
                             let scroll_handle = if self.style.code_block_overflow_x_scroll {
@@ -935,64 +930,7 @@ impl Element for MarkdownElement {
                                     builder.push_code_block(language);
                                     builder.push_div(code_block, range, markdown_end);
                                 }
-                                (CodeBlockRenderer::Custom { render, .. }, _) => {
-                                    let parent_container = render(
-                                        kind,
-                                        &parsed_markdown,
-                                        range.clone(),
-                                        metadata.clone(),
-                                        window,
-                                        cx,
-                                    );
-
-                                    let mut parent_container: AnyDiv = if let Some(scroll_handle) =
-                                        scroll_handle.as_ref()
-                                    {
-                                        let scrollbars = Scrollbars::new(ScrollAxes::Horizontal)
-                                            .id(("markdown-code-block-scrollbar", range.start))
-                                            .tracked_scroll_handle(scroll_handle.clone())
-                                            .with_track_along(
-                                                ScrollAxes::Horizontal,
-                                                cx.theme().colors().editor_background,
-                                            )
-                                            .notify_content();
-
-                                        parent_container
-                                            .rounded_b_lg()
-                                            .custom_scrollbars(scrollbars, window, cx)
-                                            .into()
-                                    } else {
-                                        parent_container.into()
-                                    };
-
-                                    parent_container.style().refine(&self.style.code_block);
-                                    builder.push_div(parent_container, range, markdown_end);
-
-                                    let code_block = div()
-                                        .id(("code-block", range.start))
-                                        .rounded_b_lg()
-                                        .map(|mut code_block| {
-                                            if let Some(scroll_handle) = scroll_handle.as_ref() {
-                                                code_block.style().restrict_scroll_to_axis =
-                                                    Some(true);
-                                                code_block
-                                                    .flex()
-                                                    .overflow_x_scroll()
-                                                    .overflow_y_hidden()
-                                                    .track_scroll(scroll_handle)
-                                            } else {
-                                                code_block.w_full().overflow_hidden()
-                                            }
-                                        });
-
-                                    if let Some(code_block_text_style) = &self.style.code_block.text
-                                    {
-                                        builder.push_text_style(code_block_text_style.to_owned());
-                                    }
-
-                                    builder.push_code_block(language);
-                                    builder.push_div(code_block, range, markdown_end);
-                                }
+                                (CodeBlockRenderer::Custom { .. }, _) => {}
                             }
                         }
                         MarkdownTag::HtmlBlock => builder.push_div(div(), range, markdown_end),
@@ -1052,54 +990,54 @@ impl Element for MarkdownElement {
                         MarkdownTag::MetadataBlock(_) => {}
                         MarkdownTag::Table(alignments) => {
                             builder.table_alignments = alignments.clone();
+
                             builder.push_div(
                                 div()
                                     .id(("table", range.start))
-                                    .flex()
+                                    .min_w_0()
+                                    .size_full()
+                                    .mb_2()
                                     .border_1()
                                     .border_color(cx.theme().colors().border)
                                     .rounded_sm()
-                                    .when(self.style.table_overflow_x_scroll, |mut table| {
-                                        table.style().restrict_scroll_to_axis = Some(true);
-                                        table.overflow_x_scroll()
-                                    }),
+                                    .overflow_hidden(),
                                 range,
                                 markdown_end,
                             );
-                            // This inner `v_flex` is so the table rows will stack vertically without disrupting the `overflow_x_scroll`.
-                            builder.push_div(div().v_flex().flex_grow(), range, markdown_end);
                         }
                         MarkdownTag::TableHead => {
+                            let column_count = builder.table_alignments.len();
+
                             builder.push_div(
                                 div()
-                                    .flex()
-                                    .justify_between()
-                                    .border_b_1()
-                                    .border_color(cx.theme().colors().border),
+                                    .grid()
+                                    .grid_cols(column_count as u16)
+                                    .bg(cx.theme().colors().title_bar_background),
                                 range,
                                 markdown_end,
                             );
                             builder.push_text_style(TextStyleRefinement {
-                                font_weight: Some(FontWeight::BOLD),
+                                font_weight: Some(FontWeight::SEMIBOLD),
                                 ..Default::default()
                             });
                         }
                         MarkdownTag::TableRow => {
+                            let column_count = builder.table_alignments.len();
+
                             builder.push_div(
-                                div().h_flex().justify_between().px_1().py_0p5(),
+                                div().grid().grid_cols(column_count as u16),
                                 range,
                                 markdown_end,
                             );
                         }
                         MarkdownTag::TableCell => {
-                            let column_count = builder.table_alignments.len();
-
                             builder.push_div(
                                 div()
-                                    .flex()
+                                    .min_w_0()
+                                    .border(px(0.5))
+                                    .border_color(cx.theme().colors().border)
                                     .px_1()
-                                    .w(relative(1. / column_count as f32))
-                                    .truncate(),
+                                    .py_0p5(),
                                 range,
                                 markdown_end,
                             );
@@ -1129,24 +1067,6 @@ impl Element for MarkdownElement {
                         builder.pop_code_block();
                         if self.style.code_block.text.is_some() {
                             builder.pop_text_style();
-                        }
-
-                        let metadata = current_code_block_metadata.take();
-
-                        if let CodeBlockRenderer::Custom {
-                            transform: Some(transform),
-                            ..
-                        } = &self.code_block_renderer
-                        {
-                            builder.modify_current_div(|el| {
-                                transform(
-                                    el,
-                                    range.clone(),
-                                    metadata.clone().unwrap_or_default(),
-                                    window,
-                                    cx,
-                                )
-                            });
                         }
 
                         if let CodeBlockRenderer::Default {
@@ -1232,7 +1152,6 @@ impl Element for MarkdownElement {
                         }
                     }
                     MarkdownTagEnd::Table => {
-                        builder.pop_div();
                         builder.pop_div();
                         builder.table_alignments.clear();
                     }

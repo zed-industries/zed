@@ -113,7 +113,7 @@ impl MasterProcess {
             .args(additional_args)
             .args(args);
 
-        master_process.arg(format!("ControlPath={}", socket_path.display()));
+        master_process.arg(format!("ControlPath='{}'", socket_path.display()));
 
         let process = master_process.arg(&url).spawn()?;
 
@@ -487,7 +487,9 @@ impl SshRemoteConnection {
         drop(askpass);
 
         let ssh_shell = socket.shell().await;
+        log::info!("Remote shell discovered: {}", ssh_shell);
         let ssh_platform = socket.platform(ShellKind::new(&ssh_shell, false)).await?;
+        log::info!("Remote platform discovered: {}", ssh_shell);
         let ssh_path_style = match ssh_platform.os {
             "windows" => PathStyle::Windows,
             _ => PathStyle::Posix,
@@ -606,12 +608,12 @@ impl SshRemoteConnection {
             .unwrap(),
         );
         if !self.socket.connection_options.upload_binary_over_ssh
-            && let Some((url, body)) = delegate
-                .get_download_params(self.ssh_platform, release_channel, wanted_version, cx)
+            && let Some(url) = delegate
+                .get_download_url(self.ssh_platform, release_channel, wanted_version, cx)
                 .await?
         {
             match self
-                .download_binary_on_server(&url, &body, &tmp_path_gz, delegate, cx)
+                .download_binary_on_server(&url, &tmp_path_gz, delegate, cx)
                 .await
             {
                 Ok(_) => {
@@ -622,7 +624,7 @@ impl SshRemoteConnection {
                 }
                 Err(e) => {
                     log::error!(
-                        "Failed to download binary on server, attempting to upload server: {e:#}",
+                        "Failed to download binary on server, attempting to download locally and then upload it the server: {e:#}",
                     )
                 }
             }
@@ -644,7 +646,6 @@ impl SshRemoteConnection {
     async fn download_binary_on_server(
         &self,
         url: &str,
-        body: &str,
         tmp_path_gz: &RelPath,
         delegate: &Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
@@ -670,12 +671,6 @@ impl SshRemoteConnection {
                 &[
                     "-f",
                     "-L",
-                    "-X",
-                    "GET",
-                    "-H",
-                    "Content-Type: application/json",
-                    "-d",
-                    body,
                     url,
                     "-o",
                     &tmp_path_gz.display(self.path_style()),
@@ -695,19 +690,13 @@ impl SshRemoteConnection {
                     return Err(e);
                 }
 
+                log::info!("curl is not available, trying wget");
                 match self
                     .socket
                     .run_command(
                         self.ssh_shell_kind,
                         "wget",
-                        &[
-                            "--header=Content-Type: application/json",
-                            "--body-data",
-                            body,
-                            url,
-                            "-O",
-                            &tmp_path_gz.display(self.path_style()),
-                        ],
+                        &[url, "-O", &tmp_path_gz.display(self.path_style())],
                         true,
                     )
                     .await
@@ -987,13 +976,11 @@ impl SshSocket {
         args: &[impl AsRef<str>],
         allow_pseudo_tty: bool,
     ) -> Result<String> {
-        let output = self
-            .ssh_command(shell_kind, program, args, allow_pseudo_tty)
-            .output()
-            .await?;
+        let mut command = self.ssh_command(shell_kind, program, args, allow_pseudo_tty);
+        let output = command.output().await?;
         anyhow::ensure!(
             output.status.success(),
-            "failed to run command: {}",
+            "failed to run command {command:?}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
         Ok(String::from_utf8_lossy(&output.stdout).to_string())

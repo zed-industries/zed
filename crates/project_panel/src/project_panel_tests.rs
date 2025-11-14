@@ -4,7 +4,7 @@ use gpui::{Empty, Entity, TestAppContext, VisualTestContext, WindowHandle};
 use pretty_assertions::assert_eq;
 use project::FakeFs;
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{ProjectPanelAutoOpenSettings, SettingsStore};
 use std::path::{Path, PathBuf};
 use util::{path, paths::PathStyle, rel_path::rel_path};
 use workspace::{
@@ -1996,6 +1996,248 @@ async fn test_remove_opened_file(cx: &mut gpui::TestAppContext) {
         "Project panel should have no deleted file, with one last file remaining"
     );
     ensure_no_open_items_and_panes(&workspace, cx);
+}
+
+#[gpui::test]
+async fn test_auto_open_new_file_when_enabled(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+    set_auto_open_settings(
+        cx,
+        ProjectPanelAutoOpenSettings {
+            on_create: Some(true),
+            ..Default::default()
+        },
+    );
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({})).await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    cx.run_until_parked();
+    panel
+        .update_in(cx, |panel, window, cx| {
+            panel.filename_editor.update(cx, |editor, cx| {
+                editor.set_text("auto-open.rs", window, cx);
+            });
+            panel.confirm_edit(true, window, cx).unwrap()
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    ensure_single_file_is_opened(&workspace, "auto-open.rs", cx);
+}
+
+#[gpui::test]
+async fn test_auto_open_new_file_when_disabled(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+    set_auto_open_settings(
+        cx,
+        ProjectPanelAutoOpenSettings {
+            on_create: Some(false),
+            ..Default::default()
+        },
+    );
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({})).await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    cx.run_until_parked();
+    panel
+        .update_in(cx, |panel, window, cx| {
+            panel.filename_editor.update(cx, |editor, cx| {
+                editor.set_text("manual-open.rs", window, cx);
+            });
+            panel.confirm_edit(true, window, cx).unwrap()
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    ensure_no_open_items_and_panes(&workspace, cx);
+}
+
+#[gpui::test]
+async fn test_auto_open_on_paste_when_enabled(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+    set_auto_open_settings(
+        cx,
+        ProjectPanelAutoOpenSettings {
+            on_paste: Some(true),
+            ..Default::default()
+        },
+    );
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "src": {
+                "original.rs": ""
+            },
+            "target": {}
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "root/src", cx);
+    toggle_expand_dir(&panel, "root/target", cx);
+
+    select_path(&panel, "root/src/original.rs", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.copy(&Default::default(), window, cx);
+    });
+
+    select_path(&panel, "root/target", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.paste(&Default::default(), window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    ensure_single_file_is_opened(&workspace, "target/original.rs", cx);
+}
+
+#[gpui::test]
+async fn test_auto_open_on_paste_when_disabled(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+    set_auto_open_settings(
+        cx,
+        ProjectPanelAutoOpenSettings {
+            on_paste: Some(false),
+            ..Default::default()
+        },
+    );
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "src": {
+                "original.rs": ""
+            },
+            "target": {}
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "root/src", cx);
+    toggle_expand_dir(&panel, "root/target", cx);
+
+    select_path(&panel, "root/src/original.rs", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.copy(&Default::default(), window, cx);
+    });
+
+    select_path(&panel, "root/target", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.paste(&Default::default(), window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    ensure_no_open_items_and_panes(&workspace, cx);
+    assert!(
+        find_project_entry(&panel, "root/target/original.rs", cx).is_some(),
+        "Pasted entry should exist even when auto-open is disabled"
+    );
+}
+
+#[gpui::test]
+async fn test_auto_open_on_drop_when_enabled(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+    set_auto_open_settings(
+        cx,
+        ProjectPanelAutoOpenSettings {
+            on_drop: Some(true),
+            ..Default::default()
+        },
+    );
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({})).await;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let external_path = temp_dir.path().join("dropped.rs");
+    std::fs::write(&external_path, "// dropped").unwrap();
+    fs.insert_tree_from_real_fs(temp_dir.path(), temp_dir.path())
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    let root_entry = find_project_entry(&panel, "root", cx).unwrap();
+    panel.update_in(cx, |panel, window, cx| {
+        panel.drop_external_files(std::slice::from_ref(&external_path), root_entry, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    ensure_single_file_is_opened(&workspace, "dropped.rs", cx);
+}
+
+#[gpui::test]
+async fn test_auto_open_on_drop_when_disabled(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+    set_auto_open_settings(
+        cx,
+        ProjectPanelAutoOpenSettings {
+            on_drop: Some(false),
+            ..Default::default()
+        },
+    );
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({})).await;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let external_path = temp_dir.path().join("manual.rs");
+    std::fs::write(&external_path, "// dropped").unwrap();
+    fs.insert_tree_from_real_fs(temp_dir.path(), temp_dir.path())
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    let root_entry = find_project_entry(&panel, "root", cx).unwrap();
+    panel.update_in(cx, |panel, window, cx| {
+        panel.drop_external_files(std::slice::from_ref(&external_path), root_entry, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    ensure_no_open_items_and_panes(&workspace, cx);
+    assert!(
+        find_project_entry(&panel, "root/manual.rs", cx).is_some(),
+        "Dropped entry should exist even when auto-open is disabled"
+    );
 }
 
 #[gpui::test]
@@ -7333,14 +7575,8 @@ fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        init_settings(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
-        language::init(cx);
-        editor::init_settings(cx);
         crate::init(cx);
-        workspace::init_settings(cx);
-        client::init_settings(cx);
-        Project::init_settings(cx);
 
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
@@ -7358,12 +7594,9 @@ fn init_test_with_editor(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let app_state = AppState::test(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
-        init_settings(cx);
-        language::init(cx);
         editor::init(cx);
         crate::init(cx);
         workspace::init(app_state, cx);
-        Project::init_settings(cx);
 
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
@@ -7374,6 +7607,19 @@ fn init_test_with_editor(cx: &mut TestAppContext) {
                 settings.project.worktree.file_scan_exclusions = Some(Vec::new())
             });
         });
+    });
+}
+
+fn set_auto_open_settings(
+    cx: &mut TestAppContext,
+    auto_open_settings: ProjectPanelAutoOpenSettings,
+) {
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().auto_open = Some(auto_open_settings);
+            });
+        })
     });
 }
 

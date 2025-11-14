@@ -28,7 +28,7 @@ use rpc::{
     proto::{self, REMOTE_SERVER_PEER_ID, REMOTE_SERVER_PROJECT_ID},
 };
 
-use settings::{Settings as _, initial_server_settings_content};
+use settings::initial_server_settings_content;
 use smol::stream::StreamExt;
 use std::{
     num::NonZeroU64,
@@ -74,9 +74,6 @@ pub struct HeadlessAppState {
 impl HeadlessProject {
     pub fn init(cx: &mut App) {
         settings::init(cx);
-        language::init(cx);
-        project::Project::init_settings(cx);
-        extension_host::ExtensionSettings::register(cx);
         log_store::init(true, cx);
     }
 
@@ -713,9 +710,15 @@ impl HeadlessProject {
             PathStyle::local(),
         )?;
         let results = this.update(&mut cx, |this, cx| {
-            this.buffer_store.update(cx, |buffer_store, cx| {
-                buffer_store.find_search_candidates(&query, message.limit as _, this.fs.clone(), cx)
-            })
+            project::Search::local(
+                this.fs.clone(),
+                this.buffer_store.clone(),
+                this.worktree_store.clone(),
+                message.limit as _,
+                cx,
+            )
+            .into_handle(query, cx)
+            .matching_buffers(cx)
         })?;
 
         let mut response = proto::FindSearchCandidatesResponse {

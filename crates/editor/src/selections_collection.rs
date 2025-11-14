@@ -372,7 +372,7 @@ impl SelectionsCollection {
         let is_empty = positions.start == positions.end;
         let line_len = display_map.line_len(row);
         let line = display_map.layout_row(row, text_layout_details);
-        let start_col = line.index_for_x(positions.start) as u32;
+        let start_col = line.closest_index_for_x(positions.start) as u32;
 
         let (start, end) = if is_empty {
             let point = DisplayPoint::new(row, std::cmp::min(start_col, line_len));
@@ -382,7 +382,7 @@ impl SelectionsCollection {
                 return None;
             }
             let start = DisplayPoint::new(row, start_col);
-            let end_col = line.index_for_x(positions.end) as u32;
+            let end_col = line.closest_index_for_x(positions.end) as u32;
             let end = DisplayPoint::new(row, end_col);
             (start, end)
         };
@@ -483,6 +483,43 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
             })
             .cloned()
             .collect();
+
+        self.selections_changed |= changed;
+    }
+
+    pub fn remove_selections_from_buffer(&mut self, buffer_id: language::BufferId) {
+        let mut changed = false;
+
+        let filtered_selections: Arc<[Selection<Anchor>]> = {
+            self.disjoint
+                .iter()
+                .filter(|selection| {
+                    if let Some(selection_buffer_id) =
+                        self.snapshot.buffer_id_for_anchor(selection.start)
+                    {
+                        let should_remove = selection_buffer_id == buffer_id;
+                        changed |= should_remove;
+                        !should_remove
+                    } else {
+                        true
+                    }
+                })
+                .cloned()
+                .collect()
+        };
+
+        if filtered_selections.is_empty() {
+            let default_anchor = self.snapshot.anchor_before(0);
+            self.collection.disjoint = Arc::from([Selection {
+                id: post_inc(&mut self.collection.next_selection_id),
+                start: default_anchor,
+                end: default_anchor,
+                reversed: false,
+                goal: SelectionGoal::None,
+            }]);
+        } else {
+            self.collection.disjoint = filtered_selections;
+        }
 
         self.selections_changed |= changed;
     }

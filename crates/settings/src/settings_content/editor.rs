@@ -96,6 +96,10 @@ pub struct EditorSettingsContent {
     /// Default: 4.0
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub fast_scroll_sensitivity: Option<f32>,
+    /// Settings for sticking scopes to the top of the editor.
+    ///
+    /// Default: sticky scroll is disabled
+    pub sticky_scroll: Option<StickyScrollContent>,
     /// Whether the line numbers on editors gutter are relative or not.
     /// When "enabled" shows relative number of buffer lines, when "wrapped" shows
     /// relative number of display lines.
@@ -310,6 +314,16 @@ pub struct ScrollbarContent {
     pub cursors: Option<bool>,
     /// Forcefully enable or disable the scrollbar for each axis
     pub axes: Option<ScrollbarAxesContent>,
+}
+
+/// Sticky scroll related settings
+#[skip_serializing_none]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct StickyScrollContent {
+    /// Whether sticky scroll is enabled.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
 }
 
 /// Minimap related settings
@@ -745,9 +759,13 @@ pub enum SnippetSortOrder {
 pub struct SearchSettingsContent {
     /// Whether to show the project search button in the status bar.
     pub button: Option<bool>,
+    /// Whether to only match on whole words.
     pub whole_word: Option<bool>,
+    /// Whether to match case sensitively.
     pub case_sensitive: Option<bool>,
+    /// Whether to include gitignored files in search results.
     pub include_ignored: Option<bool>,
+    /// Whether to interpret the search query as a regular expression.
     pub regex: Option<bool>,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: Option<bool>,

@@ -1097,7 +1097,7 @@ impl DisplaySnapshot {
         details: &TextLayoutDetails,
     ) -> u32 {
         let layout_line = self.layout_row(display_row, details);
-        layout_line.index_for_x(x) as u32
+        layout_line.closest_index_for_x(x) as u32
     }
 
     pub fn grapheme_at(&self, mut point: DisplayPoint) -> Option<SharedString> {
@@ -1577,7 +1577,7 @@ pub mod tests {
         LanguageMatcher,
     };
     use lsp::LanguageServerId;
-    use project::Project;
+
     use rand::{Rng, prelude::*};
     use settings::{SettingsContent, SettingsStore};
     use smol::stream::StreamExt;
@@ -2966,10 +2966,7 @@ pub mod tests {
     fn init_test(cx: &mut App, f: impl Fn(&mut SettingsContent)) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
-        workspace::init_settings(cx);
-        language::init(cx);
         crate::init(cx);
-        Project::init_settings(cx);
         theme::init(LoadThemes::JustBase, cx);
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, f);

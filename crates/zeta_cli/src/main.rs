@@ -35,8 +35,10 @@ use crate::util::{open_buffer, open_buffer_with_language_server};
 #[derive(Parser, Debug)]
 #[command(name = "zeta")]
 struct ZetaCliArgs {
+    #[arg(long, default_value_t = false)]
+    printenv: bool,
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -54,6 +56,7 @@ enum Command {
         #[arg(long, value_enum, default_value_t = ExampleFormat::Md)]
         output_format: ExampleFormat,
     },
+    Clean,
 }
 
 #[derive(Subcommand, Debug)]
@@ -158,19 +161,20 @@ fn syntax_args_to_options(
         }),
         max_diagnostic_bytes: zeta2_args.max_diagnostic_bytes,
         max_prompt_bytes: zeta2_args.max_prompt_bytes,
-        prompt_format: zeta2_args.prompt_format.clone().into(),
+        prompt_format: zeta2_args.prompt_format.into(),
         file_indexing_parallelism: zeta2_args.file_indexing_parallelism,
         buffer_change_grouping_interval: Duration::ZERO,
     }
 }
 
-#[derive(clap::ValueEnum, Default, Debug, Clone)]
+#[derive(clap::ValueEnum, Default, Debug, Clone, Copy)]
 enum PromptFormat {
     MarkedExcerpt,
     LabeledSections,
     OnlySnippets,
     #[default]
     NumberedLines,
+    OldTextNewText,
 }
 
 impl Into<predict_edits_v3::PromptFormat> for PromptFormat {
@@ -180,6 +184,7 @@ impl Into<predict_edits_v3::PromptFormat> for PromptFormat {
             Self::LabeledSections => predict_edits_v3::PromptFormat::LabeledSections,
             Self::OnlySnippets => predict_edits_v3::PromptFormat::OnlySnippets,
             Self::NumberedLines => predict_edits_v3::PromptFormat::NumLinesUniDiff,
+            Self::OldTextNewText => predict_edits_v3::PromptFormat::OldTextNewText,
         }
     }
 }
@@ -410,14 +415,22 @@ fn main() {
         let app_state = Arc::new(headless::init(cx));
         cx.spawn(async move |cx| {
             match args.command {
-                Command::Zeta1 {
+                None => {
+                    if args.printenv {
+                        ::util::shell_env::print_env();
+                        return;
+                    } else {
+                        panic!("Expected a command");
+                    }
+                }
+                Some(Command::Zeta1 {
                     command: Zeta1Command::Context { context_args },
-                } => {
+                }) => {
                     let context = zeta1_context(context_args, &app_state, cx).await.unwrap();
                     let result = serde_json::to_string_pretty(&context.body).unwrap();
                     println!("{}", result);
                 }
-                Command::Zeta2 { command } => match command {
+                Some(Command::Zeta2 { command }) => match command {
                     Zeta2Command::Predict(arguments) => {
                         run_zeta2_predict(arguments, &app_state, cx).await;
                     }
@@ -461,12 +474,15 @@ fn main() {
                         println!("{}", result.unwrap());
                     }
                 },
-                Command::ConvertExample {
+                Some(Command::ConvertExample {
                     path,
                     output_format,
-                } => {
+                }) => {
                     let example = NamedExample::load(path).unwrap();
                     example.write(output_format, io::stdout()).unwrap();
+                }
+                Some(Command::Clean) => {
+                    std::fs::remove_dir_all(&*crate::paths::TARGET_ZETA_DIR).unwrap()
                 }
             };
 

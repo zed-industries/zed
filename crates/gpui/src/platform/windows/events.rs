@@ -239,7 +239,7 @@ impl WindowsWindowInner {
     fn handle_timer_msg(&self, handle: HWND, wparam: WPARAM) -> Option<isize> {
         if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
             for runnable in self.main_receiver.drain() {
-                runnable.run();
+                WindowsDispatcher::execute_runnable(runnable);
             }
             self.handle_paint_msg(handle)
         } else {
@@ -487,14 +487,12 @@ impl WindowsWindowInner {
         let scale_factor = lock.scale_factor;
         let wheel_scroll_amount = match modifiers.shift {
             true => {
-                self.system_settings
-                    .borrow()
+                self.system_settings()
                     .mouse_wheel_settings
                     .wheel_scroll_chars
             }
             false => {
-                self.system_settings
-                    .borrow()
+                self.system_settings()
                     .mouse_wheel_settings
                     .wheel_scroll_lines
             }
@@ -541,8 +539,7 @@ impl WindowsWindowInner {
         };
         let scale_factor = lock.scale_factor;
         let wheel_scroll_chars = self
-            .system_settings
-            .borrow()
+            .system_settings()
             .mouse_wheel_settings
             .wheel_scroll_chars;
         drop(lock);
@@ -677,8 +674,7 @@ impl WindowsWindowInner {
         // used by Chrome. However, it may result in one row of pixels being obscured
         // in our client area. But as Chrome says, "there seems to be no better solution."
         if is_maximized
-            && let Some(ref taskbar_position) =
-                self.system_settings.borrow().auto_hide_taskbar_position
+            && let Some(ref taskbar_position) = self.system_settings().auto_hide_taskbar_position
         {
             // For the auto-hide taskbar, adjust in by 1 pixel on taskbar edge,
             // so the window isn't treated as a "fullscreen app", which would cause
@@ -1072,7 +1068,7 @@ impl WindowsWindowInner {
             lock.border_offset.update(handle).log_err();
             // system settings may emit a window message which wants to take the refcell lock, so drop it
             drop(lock);
-            self.system_settings.borrow_mut().update(display, wparam.0);
+            self.system_settings_mut().update(display, wparam.0);
         } else {
             self.handle_system_theme_changed(handle, lparam)?;
         };
@@ -1146,8 +1142,10 @@ impl WindowsWindowInner {
             require_presentation: false,
             force_render,
         });
+
         self.state.borrow_mut().callbacks.request_frame = Some(request_frame);
         unsafe { ValidateRect(Some(handle), None).ok().log_err() };
+
         Some(0)
     }
 
@@ -1332,20 +1330,12 @@ fn parse_normal_key(
     lparam: LPARAM,
     mut modifiers: Modifiers,
 ) -> Option<(Keystroke, bool)> {
-    let mut key_char = None;
+    let (key_char, prefer_character_input) = process_key(vkey, lparam.hiword());
+
     let key = parse_immutable(vkey).or_else(|| {
         let scan_code = lparam.hiword() & 0xFF;
-        key_char = generate_key_char(
-            vkey,
-            scan_code as u32,
-            modifiers.control,
-            modifiers.shift,
-            modifiers.alt,
-        );
         get_keystroke_key(vkey, scan_code as u32, &mut modifiers)
     })?;
-
-    let prefer_character_input = should_prefer_character_input(vkey, lparam.hiword() & 0xFF);
 
     Some((
         Keystroke {
@@ -1357,11 +1347,11 @@ fn parse_normal_key(
     ))
 }
 
-fn should_prefer_character_input(vkey: VIRTUAL_KEY, scan_code: u16) -> bool {
+fn process_key(vkey: VIRTUAL_KEY, scan_code: u16) -> (Option<String>, bool) {
     let mut keyboard_state = [0u8; 256];
     unsafe {
         if GetKeyboardState(&mut keyboard_state).is_err() {
-            return false;
+            return (None, false);
         }
     }
 
@@ -1372,21 +1362,25 @@ fn should_prefer_character_input(vkey: VIRTUAL_KEY, scan_code: u16) -> bool {
             scan_code as u32,
             Some(&keyboard_state),
             &mut buffer_c,
-            0x5,
+            0x4,
         )
     };
-    if result_c < 0 {
-        return false;
+
+    if result_c == 0 {
+        return (None, false);
     }
 
-    let c = &buffer_c[..result_c as usize];
-    if char::decode_utf16(c.iter().copied())
-        .next()
-        .and_then(|ch| ch.ok())
-        .map(|ch| ch.is_control())
-        .unwrap_or(true)
-    {
-        return false;
+    let c = &buffer_c[..result_c.unsigned_abs() as usize];
+    let key_char = String::from_utf16(c)
+        .ok()
+        .filter(|s| !s.is_empty() && !s.chars().next().unwrap().is_control());
+
+    if result_c < 0 {
+        return (key_char, true);
+    }
+
+    if key_char.is_none() {
+        return (None, false);
     }
 
     // Workaround for some bug that makes the compiler think keyboard_state is still zeroed out
@@ -1395,9 +1389,10 @@ fn should_prefer_character_input(vkey: VIRTUAL_KEY, scan_code: u16) -> bool {
     let alt_down = (keyboard_state[VK_MENU.0 as usize] & 0x80) != 0;
     let win_down = (keyboard_state[VK_LWIN.0 as usize] & 0x80) != 0
         || (keyboard_state[VK_RWIN.0 as usize] & 0x80) != 0;
+
     let has_modifiers = ctrl_down || alt_down || win_down;
     if !has_modifiers {
-        return false;
+        return (key_char, false);
     }
 
     let mut state_no_modifiers = keyboard_state;
@@ -1417,15 +1412,15 @@ fn should_prefer_character_input(vkey: VIRTUAL_KEY, scan_code: u16) -> bool {
             scan_code as u32,
             Some(&state_no_modifiers),
             &mut buffer_c_no_modifiers,
-            0x5,
+            0x4,
         )
     };
-    if result_c_no_modifiers <= 0 {
-        return false;
-    }
 
-    let c_no_modifiers = &buffer_c_no_modifiers[..result_c_no_modifiers as usize];
-    c != c_no_modifiers
+    let c_no_modifiers = &buffer_c_no_modifiers[..result_c_no_modifiers.unsigned_abs() as usize];
+    (
+        key_char,
+        result_c != result_c_no_modifiers || c != c_no_modifiers,
+    )
 }
 
 fn parse_ime_composition_string(ctx: HIMC, comp_type: IME_COMPOSITION_STRING) -> Option<String> {

@@ -17,6 +17,9 @@ macro_rules! var {
 }
 
 secret!(ANTHROPIC_API_KEY);
+secret!(OPENAI_API_KEY);
+secret!(GOOGLE_AI_API_KEY);
+secret!(GOOGLE_CLOUD_PROJECT);
 secret!(APPLE_NOTARIZATION_ISSUER_ID);
 secret!(APPLE_NOTARIZATION_KEY);
 secret!(APPLE_NOTARIZATION_KEY_ID);
@@ -38,7 +41,8 @@ secret!(ZED_ZIPPY_APP_ID);
 secret!(ZED_ZIPPY_APP_PRIVATE_KEY);
 secret!(DISCORD_WEBHOOK_RELEASE_NOTES);
 secret!(WINGET_TOKEN);
-secret!(RELEASE_NOTES_API_TOKEN);
+secret!(VERCEL_TOKEN);
+secret!(SLACK_WEBHOOK_WORKFLOW_FAILURES);
 
 // todo(ci) make these secrets too...
 var!(AZURE_SIGNING_ACCOUNT_NAME);
@@ -75,6 +79,12 @@ pub fn bundle_envs(platform: Platform) -> Env {
 pub(crate) fn one_workflow_per_non_main_branch() -> Concurrency {
     Concurrency::default()
         .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}")
+        .cancel_in_progress(true)
+}
+
+pub(crate) fn allow_concurrent_runs() -> Concurrency {
+    Concurrency::default()
+        .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.run_id }}")
         .cancel_in_progress(true)
 }
 
