@@ -2605,9 +2605,14 @@ impl Render for AgentPanel {
                     let model_registry = LanguageModelRegistry::read_global(cx);
                     let configuration_error =
                         model_registry.configuration_error(model_registry.default_model(), cx);
+
+                    let agent_server_store = self.project.read(cx).agent_server_store().clone();
+                    let has_external_agents = agent_server_store.read(cx).has_external_agents();
+
                     parent
                         .map(|this| {
                             if !self.should_render_onboarding(cx)
+                                && !has_external_agents
                                 && let Some(err) = configuration_error.as_ref()
                             {
                                 this.child(self.render_configuration_error(
@@ -2785,4 +2790,92 @@ struct TrialEndUpsell;
 
 impl Dismissable for TrialEndUpsell {
     const KEY: &'static str = "dismissed-trial-end-upsell";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use collections::HashMap;
+    use gpui::{SharedString, TestAppContext};
+    use language_model::LanguageModelRegistry;
+    use project::agent_server_store::{
+        AgentServerCommand, AllAgentServersSettings, CustomAgentServerSettings,
+    };
+    use settings::SettingsStore;
+    use std::path::PathBuf;
+
+    fn init_test_settings(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language_model::init_settings(cx);
+        });
+    }
+
+    #[gpui::test]
+    fn test_configuration_error_suppressed_with_external_agents(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        cx.update(|cx| {
+            let mut custom_agents = HashMap::default();
+            custom_agents.insert(
+                SharedString::from("test-acp-agent"),
+                CustomAgentServerSettings {
+                    command: AgentServerCommand {
+                        path: PathBuf::from("/usr/local/bin/test-acp-agent"),
+                        args: vec!["serve".to_string(), "--stdio".to_string()],
+                        env: None,
+                    },
+                    default_mode: None,
+                },
+            );
+
+            AllAgentServersSettings::override_global(
+                AllAgentServersSettings {
+                    claude: None,
+                    gemini: None,
+                    codex: None,
+                    custom: custom_agents,
+                },
+                cx,
+            );
+
+            let settings = AllAgentServersSettings::get_global(cx);
+            assert!(
+                !settings.custom.is_empty(),
+                "External agent should be configured"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_configuration_error_shown_without_external_agents(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        cx.update(|cx| {
+            AllAgentServersSettings::override_global(
+                AllAgentServersSettings {
+                    claude: None,
+                    gemini: None,
+                    codex: None,
+                    custom: HashMap::default(),
+                },
+                cx,
+            );
+
+            let model_registry = LanguageModelRegistry::read_global(cx);
+            let config_error =
+                model_registry.configuration_error(model_registry.default_model(), cx);
+
+            let settings = AllAgentServersSettings::get_global(cx);
+            assert!(
+                settings.custom.is_empty(),
+                "No external agents should be configured"
+            );
+
+            let error = config_error.expect("config error should exist");
+            assert_eq!(
+                error.to_string(),
+                "Configure at least one LLM provider to start using the panel."
+            );
+        });
+    }
 }
