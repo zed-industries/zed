@@ -1037,5 +1037,21 @@
       "g g": "settings_editor::FocusFirstNavEntry",
       "shift-g": "settings_editor::FocusLastNavEntry"
     }
+  },
+  {
+    "context": "CommitDiff > Editor && vim_mode == normal",
+    "bindings": {
+      "g space": "git::OpenExcerpts",
+      "ctrl-w space": "git::OpenExcerptsSplit",
+      "ctrl-w g space": "git::OpenExcerptsSplit"
+    }
+  },
+  {
+    "context": "StashDiff > Editor && vim_mode == normal",
+    "bindings": {
+      "g space": "git::OpenExcerpts",
+      "ctrl-w space": "git::OpenExcerptsSplit",
+      "ctrl-w g space": "git::OpenExcerptsSplit"
+    }
   }
 ]
