@@ -1283,6 +1283,7 @@ struct CurrentEditPrediction {
     buffer_id: EntityId,
     completion: EditPrediction,
     was_shown: bool,
+    was_accepted: bool,
 }
 
 impl CurrentEditPrediction {
@@ -1399,7 +1400,12 @@ impl ZetaEditPredictionProvider {
         zeta: Entity<Zeta>,
         project: Entity<Project>,
         singleton_buffer: Option<Entity<Buffer>>,
+        cx: &mut Context<Self>,
     ) -> Self {
+        cx.on_release(|this, cx| {
+            this.take_current_edit_prediction(cx);
+        })
+        .detach();
         Self {
             zeta,
             singleton_buffer,
@@ -1408,6 +1414,16 @@ impl ZetaEditPredictionProvider {
             current_completion: None,
             last_request_timestamp: Instant::now(),
             project,
+        }
+    }
+
+    fn take_current_edit_prediction(&mut self, cx: &mut App) {
+        if let Some(completion) = self.current_completion.take() {
+            if !completion.was_accepted {
+                self.zeta.update(cx, |zeta, cx| {
+                    zeta.discard_completion(completion.completion.id, completion.was_shown, cx);
+                });
+            }
         }
     }
 }
@@ -1531,6 +1547,7 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
                             buffer_id: buffer.entity_id(),
                             completion,
                             was_shown: false,
+                            was_accepted: false,
                         })
                     })
                 }
@@ -1565,13 +1582,9 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
                     let snapshot = buffer.read(cx).snapshot();
                     if new_completion.should_replace_completion(old_completion, &snapshot) {
                         this.zeta.update(cx, |zeta, cx| {
-                            zeta.discard_completion(
-                                old_compltion.completion.id,
-                                completion.was_shown,
-                                cx,
-                            );
                             zeta.completion_shown(&new_completion.completion, cx);
                         });
+                        this.take_current_edit_prediction(cx);
                         this.current_completion = Some(new_completion);
                     }
                 } else {
@@ -1613,14 +1626,12 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
     }
 
     fn accept(&mut self, cx: &mut Context<Self>) {
-        let completion_id = self
-            .current_completion
-            .as_ref()
-            .map(|completion| completion.completion.id);
-        if let Some(completion_id) = completion_id {
+        let completion = self.current_completion.as_mut();
+        if let Some(completion) = completion {
+            completion.was_accepted = true;
             self.zeta
                 .update(cx, |zeta, cx| {
-                    zeta.accept_edit_prediction(completion_id, cx)
+                    zeta.accept_edit_prediction(completion.completion.id, cx)
                 })
                 .detach();
         }
@@ -1629,11 +1640,7 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
 
     fn discard(&mut self, cx: &mut Context<Self>) {
         self.pending_completions.clear();
-        if let Some(completion) = self.current_completion.take() {
-            self.zeta.update(cx, |zeta, cx| {
-                zeta.discard_completion(completion.completion.id, completion.was_shown, cx);
-            });
-        }
+        self.take_current_edit_prediction(cx);
     }
 
     fn did_show(&mut self, _cx: &mut Context<Self>) {
@@ -1656,13 +1663,13 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
 
         // Invalidate previous completion if it was generated for a different buffer.
         if *buffer_id != buffer.entity_id() {
-            self.current_completion.take();
+            self.take_current_edit_prediction(cx);
             return None;
         }
 
         let buffer = buffer.read(cx);
         let Some(edits) = completion.interpolate(&buffer.snapshot()) else {
-            self.current_completion.take();
+            self.take_current_edit_prediction(cx);
             return None;
         };
 
