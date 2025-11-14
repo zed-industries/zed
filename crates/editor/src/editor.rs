@@ -177,7 +177,7 @@ use std::{
     iter::{self, Peekable},
     mem,
     num::NonZeroU32,
-    ops::{Deref, DerefMut, Not, Range, RangeInclusive},
+    ops::{Deref, DerefMut, Not, Range, RangeBounds, RangeInclusive},
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -17155,9 +17155,12 @@ impl Editor {
             let Some(locations) = references.await? else {
                 return anyhow::Ok(Navigated::No);
             };
+            let locations_pre_filtering = locations.len();
+            dbg!(locations_pre_filtering);
             let mut locations = cx.update(|_, cx| {
                 locations
                     .into_iter()
+                    // filter out the current cursor location
                     .filter(|location| {
                         if &location.buffer != &buffer {
                             return true;
@@ -17166,12 +17169,12 @@ impl Editor {
                             .range
                             .start
                             .cmp(&head_text_anchor, &buffer_snapshot)
-                            .is_le()
-                            && location
+                            .is_gt()
+                            || location
                                 .range
                                 .end
                                 .cmp(&head_text_anchor, &buffer_snapshot)
-                                .is_ge()
+                                .is_lt()
                     })
                     .map(|location| {
                         let buffer = location.buffer.read(cx);
@@ -17186,8 +17189,25 @@ impl Editor {
                 ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
                 ranges.dedup();
             }
+            let locations_post_filtering = locations.len();
+            dbg!(locations_post_filtering);
+            let range_count: usize = locations.values().map(|ranges| ranges.len()).sum();
+
+            if range_count == 0 {
+                return Ok(Navigated::No);
+            }
 
             workspace.update_in(cx, |workspace, window, cx| {
+                if range_count == 1 {
+                    let (key, ranges) = locations.into_iter().next().unwrap();
+                    let range = ranges.remove(0);
+
+                    editor.update(cx, |a, b, c| {
+
+                    });
+                    return Ok(Navigated::Yes);
+                }
+
                 let target = locations
                     .iter()
                     .flat_map(|(k, v)| iter::repeat(k.clone()).zip(v))
