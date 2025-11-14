@@ -99,11 +99,13 @@ static CONTEXT_RETRIEVAL_MODEL_ID: LazyLock<String> = LazyLock::new(|| {
     })
 });
 static EDIT_PREDICTIONS_MODEL_ID: LazyLock<String> = LazyLock::new(|| {
-    env::var("ZED_ZETA2_EP_MODEL").unwrap_or(if *USE_OLLAMA {
-        "qwen3-coder:30b".to_string()
-    } else {
-        "yqvev8r3".to_string()
-    })
+    match env::var("ZED_ZETA2_EP_MODEL").as_deref() {
+        Ok("zeta2-exp") => "4w5n28vw", // Fine-tuned model @ Baseten
+        Ok(model) => model,
+        Err(_) if *USE_OLLAMA => "qwen3-coder:30b",
+        Err(_) => "yqvev8r3", // Vanilla qwen3-coder @ Baseten
+    }
+    .to_string()
 });
 static PREDICT_EDITS_URL: LazyLock<Option<String>> = LazyLock::new(|| {
     env::var("ZED_PREDICT_EDITS_URL").ok().or_else(|| {
