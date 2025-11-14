@@ -764,6 +764,31 @@ pub fn main() {
 }
 
 fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut App) {
+    cx.spawn({
+        let app_state = app_state.clone();
+        println!("WOOOOOO");
+        async |cx| -> Result<()> {
+            let workspace = dbg!(workspace::get_any_active_workspace(app_state, cx.clone()).await)?;
+            let workspace = workspace.entity(cx)?;
+
+            struct WindowsNightly;
+            workspace.update(cx, |this, cx| {
+                dbg!("showing notif");
+                this.show_notification(NotificationId::unique::<WindowsNightly>(), cx, |cx| {
+                    cx.new(|cx| {
+                        workspace::notifications::ErrorMessagePrompt::new(
+                            "You're using an unstable version of Zed (Nightly)".to_string(),
+                            cx,
+                        )
+                        .with_link_button("Download Stable", "https://zed.dev/download")
+                    })
+                });
+            })?;
+            Ok(())
+        }
+    })
+    .detach();
+
     if let Some(kind) = request.kind {
         match kind {
             OpenRequestKind::CliConnection(connection) => {
