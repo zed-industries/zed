@@ -37,6 +37,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{Buffer, File};
+use language::language_settings::{language_settings, SoftWrap as ConfigSoftWrap};
 use language_model::{
     ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
@@ -1558,6 +1559,12 @@ impl GitPanel {
                 .filter(|message| !message.trim().is_empty());
         } else if message.trim().is_empty() {
             return None;
+        }
+        if let Some(language) = &git_commit_language {
+            let settings = language_settings(Some(language.name()), None, cx);
+            if settings.soft_wrap == ConfigSoftWrap::None {
+                return Some(message);
+            }
         }
         let buffer = cx.new(|cx| {
             let mut buffer = Buffer::local(message, cx);
