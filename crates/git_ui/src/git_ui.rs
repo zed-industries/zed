@@ -38,6 +38,7 @@ pub mod file_diff_view;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod onboarding;
+pub mod open_historical;
 pub mod picker_prompt;
 pub mod project_diff;
 pub(crate) mod remote_output;
