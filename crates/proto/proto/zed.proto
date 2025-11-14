@@ -410,10 +410,8 @@ message Envelope {
         AgentServerCommand agent_server_command = 374;
 
         ExternalAgentsUpdated external_agents_updated = 375;
-        ExternalExtensionAgentsUpdated external_extension_agents_updated = 376;
-
-        ExternalAgentLoadingStatusUpdated external_agent_loading_status_updated = 377;
-        NewExternalAgentVersionAvailable new_external_agent_version_available = 378;
+        ExternalAgentLoadingStatusUpdated external_agent_loading_status_updated = 376;
+        NewExternalAgentVersionAvailable new_external_agent_version_available = 377;
 
         StashDrop stash_drop = 379;
         StashApply stash_apply = 380;
@@ -437,7 +435,9 @@ message Envelope {
 
         OpenImageByPath open_image_by_path = 392;
         OpenImageResponse open_image_response = 393;
-        CreateImageForPeer create_image_for_peer = 394; // current max
+        CreateImageForPeer create_image_for_peer = 394;
+
+        ExternalExtensionAgentsUpdated external_extension_agents_updated = 395; // current max
     }
 
     reserved 87 to 88;
