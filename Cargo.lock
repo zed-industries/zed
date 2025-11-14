@@ -16587,6 +16587,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "sweep_ai"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "edit_prediction",
+ "editor",
+ "gpui",
+ "http_client",
+ "indoc",
+ "language",
+ "log",
+ "project",
+ "rand 0.9.2",
+ "reqwest_client",
+ "serde",
+ "serde_json",
+ "settings",
+ "tree-sitter-rust",
+ "util",
+ "workspace",
+ "worktree",
+ "zlog",
+]
+
+[[package]]
 name = "symphonia"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
