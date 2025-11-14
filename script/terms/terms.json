@@ -3,7 +3,8 @@
         {
             "lang": "en-US",
             "type": "rtf",
-            "file": "terms.rtf"
+            "file": "terms.rtf",
+            "encoding": "windows-1252"
         }
     ]
 }
