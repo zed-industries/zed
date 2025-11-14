@@ -187,7 +187,9 @@ pub(crate) fn merge_anchor_ranges(ranges: &mut Vec<Range<Anchor>>, snapshot: &Bu
             .is_ge()
         {
             let removed = ranges.remove(index);
-            ranges[index - 1].end = removed.end;
+            if removed.end.cmp(&ranges[index - 1].end, snapshot).is_gt() {
+                ranges[index - 1].end = removed.end;
+            }
         } else {
             index += 1;
         }
@@ -416,7 +418,7 @@ fn expand_to_parent_range<T: ToPoint + ToOffset>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::merge_excerpts::merge_excerpts;
+    use crate::assemble_excerpts::assemble_excerpts;
     use cloud_zeta2_prompt::write_codeblock;
     use edit_prediction_context::Line;
     use gpui::TestAppContext;
@@ -591,18 +593,21 @@ mod tests {
         let mut output = String::new();
         for (buffer, ranges) in results {
             buffer.read_with(cx, |buffer, cx| {
-                let excerpts = ranges.into_iter().map(|range| {
-                    let point_range = range.to_point(buffer);
-                    if point_range.end.column > 0 {
-                        Line(point_range.start.row)..Line(point_range.end.row + 1)
-                    } else {
-                        Line(point_range.start.row)..Line(point_range.end.row)
-                    }
-                });
+                let excerpts = ranges
+                    .into_iter()
+                    .map(|range| {
+                        let point_range = range.to_point(buffer);
+                        if point_range.end.column > 0 {
+                            Line(point_range.start.row)..Line(point_range.end.row + 1)
+                        } else {
+                            Line(point_range.start.row)..Line(point_range.end.row)
+                        }
+                    })
+                    .collect();
 
                 write_codeblock(
                     &buffer.file().unwrap().full_path(cx),
-                    merge_excerpts(&buffer.snapshot(), excerpts).iter(),
+                    assemble_excerpts(&buffer.snapshot(), excerpts).iter(),
                     &[],
                     Line(buffer.max_point().row),
                     false,

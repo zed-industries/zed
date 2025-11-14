@@ -42,14 +42,14 @@ use util::rel_path::RelPathBuf;
 use util::{LogErrorFuture, TryFutureExt};
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
-pub mod merge_excerpts;
+pub mod assemble_excerpts;
 mod prediction;
 mod provider;
 pub mod retrieval_search;
 pub mod udiff;
 mod xml_edits;
 
-use crate::merge_excerpts::merge_excerpts;
+use crate::assemble_excerpts::assemble_excerpts;
 use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
 pub use provider::ZetaEditPredictionProvider;
@@ -827,13 +827,14 @@ impl Zeta {
                         let included_files = included_files
                             .iter()
                             .map(|(_, snapshot, path, ranges)| {
-                                let excerpts = merge_excerpts(
-                                    &snapshot,
-                                    ranges.iter().map(|range| {
+                                let ranges = ranges
+                                    .iter()
+                                    .map(|range| {
                                         let point_range = range.to_point(&snapshot);
                                         Line(point_range.start.row)..Line(point_range.end.row)
-                                    }),
-                                );
+                                    })
+                                    .collect::<Vec<_>>();
+                                let excerpts = assemble_excerpts(&snapshot, ranges);
                                 predict_edits_v3::IncludedFile {
                                     path: path.clone(),
                                     max_row: Line(snapshot.max_point().row),
