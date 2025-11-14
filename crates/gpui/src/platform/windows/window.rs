@@ -6,7 +6,7 @@ use std::{
     path::PathBuf,
     rc::{Rc, Weak},
     str::FromStr,
-    sync::{Arc, Once},
+    sync::{Arc, Once, atomic::AtomicBool},
     time::{Duration, Instant},
 };
 
@@ -53,6 +53,9 @@ pub struct WindowsWindowState {
     pub nc_button_pressed: Option<u32>,
 
     pub display: WindowsDisplay,
+    /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
+    /// as resizing them has failed, causing us to have lost at least the render target.
+    pub invalidate_devices: Arc<AtomicBool>,
     fullscreen: Option<StyleAndBounds>,
     initial_placement: Option<WindowOpenStatus>,
     hwnd: HWND,
@@ -83,6 +86,7 @@ impl WindowsWindowState {
         min_size: Option<Size<Pixels>>,
         appearance: WindowAppearance,
         disable_direct_composition: bool,
+        invalidate_devices: Arc<AtomicBool>,
     ) -> Result<Self> {
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
@@ -138,6 +142,7 @@ impl WindowsWindowState {
             fullscreen,
             initial_placement,
             hwnd,
+            invalidate_devices,
         })
     }
 
@@ -211,6 +216,7 @@ impl WindowsWindowInner {
             context.min_size,
             context.appearance,
             context.disable_direct_composition,
+            context.invalidate_devices.clone(),
         )?);
 
         Ok(Rc::new(Self {
@@ -361,6 +367,7 @@ struct WindowCreateContext {
     appearance: WindowAppearance,
     disable_direct_composition: bool,
     directx_devices: DirectXDevices,
+    invalidate_devices: Arc<AtomicBool>,
 }
 
 impl WindowsWindow {
@@ -380,6 +387,7 @@ impl WindowsWindow {
             platform_window_handle,
             disable_direct_composition,
             directx_devices,
+            invalidate_devices,
         } = creation_info;
         register_window_class(icon);
         let hide_title_bar = params
@@ -440,6 +448,7 @@ impl WindowsWindow {
             appearance,
             disable_direct_composition,
             directx_devices,
+            invalidate_devices,
         };
         let creation_result = unsafe {
             CreateWindowExW(
