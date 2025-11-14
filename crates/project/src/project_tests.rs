@@ -9575,7 +9575,7 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         repository_updates.lock().drain(..).collect::<Vec<_>>(),
         vec![
-            RepositoryEvent::StatusesChanged { full_scan: true },
+            RepositoryEvent::StatusesChanged,
             RepositoryEvent::MergeHeadsChanged,
         ],
         "Initial worktree scan should produce a repo update event"
@@ -9743,8 +9743,8 @@ async fn test_odd_events_for_ignored_dirs(
         vec![
             RepositoryEvent::MergeHeadsChanged,
             RepositoryEvent::BranchChanged,
-            RepositoryEvent::StatusesChanged { full_scan: false },
-            RepositoryEvent::StatusesChanged { full_scan: false },
+            RepositoryEvent::StatusesChanged,
+            RepositoryEvent::StatusesChanged,
         ],
         "Initial worktree scan should produce a repo update event"
     );
