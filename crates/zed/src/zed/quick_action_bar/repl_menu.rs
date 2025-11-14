@@ -388,16 +388,55 @@ fn session_state(session: Entity<Session>, cx: &mut App) -> ReplMenuState {
         }
     };
 
-    match &session.kernel {
-        Kernel::Restarting => ReplMenuState {
-            tooltip: format!("Restarting {}", kernel_name).into(),
-            icon_is_animating: true,
-            popover_disabled: true,
+    let transitional =
+        |tooltip: SharedString, animating: bool, popover_disabled: bool| ReplMenuState {
+            tooltip,
+            icon_is_animating: animating,
+            popover_disabled,
             icon_color: Color::Muted,
             indicator: Some(Indicator::dot().color(Color::Muted)),
             status: session.kernel.status(),
             ..fill_fields()
-        },
+        };
+
+    let starting = || transitional(format!("{} is starting", kernel_name).into(), true, true);
+    let restarting = || transitional(format!("Restarting {}", kernel_name).into(), true, true);
+    let shutting_down = || {
+        transitional(
+            format!("{} is shutting down", kernel_name).into(),
+            false,
+            true,
+        )
+    };
+    let auto_restarting = || {
+        transitional(
+            format!("Auto-restarting {}", kernel_name).into(),
+            true,
+            true,
+        )
+    };
+    let unknown = || transitional(format!("{} state unknown", kernel_name).into(), false, true);
+    let other = |state: &str| {
+        transitional(
+            format!("{} state: {}", kernel_name, state).into(),
+            false,
+            true,
+        )
+    };
+
+    let shutdown = || ReplMenuState {
+        tooltip: "Nothing running".into(),
+        icon: IconName::ReplNeutral,
+        icon_color: Color::Default,
+        icon_is_animating: false,
+        popover_disabled: false,
+        indicator: None,
+        status: KernelStatus::Shutdown,
+        ..fill_fields()
+    };
+
+    match &session.kernel {
+        Kernel::Restarting => restarting(),
         Kernel::RunningKernel(kernel) => match &kernel.execution_state() {
             ExecutionState::Idle => ReplMenuState {
                 tooltip: format!("Run code on {} ({})", kernel_name, kernel_language).into(),
@@ -413,16 +452,15 @@ fn session_state(session: Entity<Session>, cx: &mut App) -> ReplMenuState {
                 status: session.kernel.status(),
                 ..fill_fields()
             },
+            ExecutionState::Unknown => unknown(),
+            ExecutionState::Starting => starting(),
+            ExecutionState::Restarting => restarting(),
+            ExecutionState::Terminating => shutting_down(),
+            ExecutionState::AutoRestarting => auto_restarting(),
+            ExecutionState::Dead => shutdown(),
+            ExecutionState::Other(state) => other(state),
         },
-        Kernel::StartingKernel(_) => ReplMenuState {
-            tooltip: format!("{} is starting", kernel_name).into(),
-            icon_is_animating: true,
-            popover_disabled: true,
-            icon_color: Color::Muted,
-            indicator: Some(Indicator::dot().color(Color::Muted)),
-            status: session.kernel.status(),
-            ..fill_fields()
-        },
+        Kernel::StartingKernel(_) => starting(),
         Kernel::ErroredLaunch(e) => ReplMenuState {
             tooltip: format!("Error with kernel {}: {}", kernel_name, e).into(),
             popover_disabled: false,
@@ -430,23 +468,7 @@ fn session_state(session: Entity<Session>, cx: &mut App) -> ReplMenuState {
             status: session.kernel.status(),
             ..fill_fields()
         },
-        Kernel::ShuttingDown => ReplMenuState {
-            tooltip: format!("{} is shutting down", kernel_name).into(),
-            popover_disabled: true,
-            icon_color: Color::Muted,
-            indicator: Some(Indicator::dot().color(Color::Muted)),
-            status: session.kernel.status(),
-            ..fill_fields()
-        },
-        Kernel::Shutdown => ReplMenuState {
-            tooltip: "Nothing running".into(),
-            icon: IconName::ReplNeutral,
-            icon_color: Color::Default,
-            icon_is_animating: false,
-            popover_disabled: false,
-            indicator: None,
-            status: KernelStatus::Shutdown,
-            ..fill_fields()
-        },
+        Kernel::ShuttingDown => shutting_down(),
+        Kernel::Shutdown => shutdown(),
     }
 }

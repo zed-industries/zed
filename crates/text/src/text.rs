@@ -496,21 +496,25 @@ pub struct Edit<D> {
     pub old: Range<D>,
     pub new: Range<D>,
 }
-
 impl<D> Edit<D>
 where
-    D: Sub<D, Output = D> + PartialEq + Copy,
+    D: PartialEq,
 {
-    pub fn old_len(&self) -> D {
+    pub fn is_empty(&self) -> bool {
+        self.old.start == self.old.end && self.new.start == self.new.end
+    }
+}
+
+impl<D, DDelta> Edit<D>
+where
+    D: Sub<D, Output = DDelta> + Copy,
+{
+    pub fn old_len(&self) -> DDelta {
         self.old.end - self.old.start
     }
 
-    pub fn new_len(&self) -> D {
+    pub fn new_len(&self) -> DDelta {
         self.new.end - self.new.start
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.old.start == self.old.end && self.new.start == self.new.end
     }
 }
 
@@ -2277,12 +2281,20 @@ impl BufferSnapshot {
             } else {
                 insertion_cursor.prev();
             }
-            let insertion = insertion_cursor.item().expect("invalid insertion");
+            let Some(insertion) = insertion_cursor.item() else {
+                panic!(
+                    "invalid insertion for buffer {}@{:?} with anchor {:?}",
+                    self.remote_id(),
+                    self.version,
+                    anchor
+                );
+            };
             assert_eq!(
                 insertion.timestamp,
                 anchor.timestamp,
-                "invalid insertion for buffer {} with anchor {:?}",
+                "invalid insertion for buffer {}@{:?} and anchor {:?}",
                 self.remote_id(),
+                self.version,
                 anchor
             );
 
@@ -2312,6 +2324,7 @@ impl BufferSnapshot {
             self.visible_text.len()
         } else {
             debug_assert!(anchor.buffer_id == Some(self.remote_id));
+            debug_assert!(self.version.observed(anchor.timestamp));
             let anchor_key = InsertionFragmentKey {
                 timestamp: anchor.timestamp,
                 split_offset: anchor.offset,
@@ -2335,10 +2348,7 @@ impl BufferSnapshot {
                 .item()
                 .filter(|insertion| insertion.timestamp == anchor.timestamp)
             else {
-                panic!(
-                    "invalid anchor {:?}. buffer id: {}, version: {:?}",
-                    anchor, self.remote_id, self.version
-                );
+                self.panic_bad_anchor(anchor);
             };
 
             let (start, _, item) = self
@@ -2357,13 +2367,29 @@ impl BufferSnapshot {
         }
     }
 
-    fn fragment_id_for_anchor(&self, anchor: &Anchor) -> &Locator {
-        self.try_fragment_id_for_anchor(anchor).unwrap_or_else(|| {
+    #[cold]
+    fn panic_bad_anchor(&self, anchor: &Anchor) -> ! {
+        if anchor.buffer_id.is_some_and(|id| id != self.remote_id) {
+            panic!(
+                "invalid anchor - buffer id does not match: anchor {anchor:?}; buffer id: {}, version: {:?}",
+                self.remote_id, self.version
+            );
+        } else if !self.version.observed(anchor.timestamp) {
+            panic!(
+                "invalid anchor - snapshot has not observed lamport: {:?}; version: {:?}",
+                anchor, self.version
+            );
+        } else {
             panic!(
                 "invalid anchor {:?}. buffer id: {}, version: {:?}",
-                anchor, self.remote_id, self.version,
-            )
-        })
+                anchor, self.remote_id, self.version
+            );
+        }
+    }
+
+    fn fragment_id_for_anchor(&self, anchor: &Anchor) -> &Locator {
+        self.try_fragment_id_for_anchor(anchor)
+            .unwrap_or_else(|| self.panic_bad_anchor(anchor))
     }
 
     fn try_fragment_id_for_anchor(&self, anchor: &Anchor) -> Option<&Locator> {

@@ -30,6 +30,7 @@ mod keymap;
 mod path_builder;
 mod platform;
 pub mod prelude;
+mod profiler;
 mod scene;
 mod shared_string;
 mod shared_uri;
@@ -87,6 +88,7 @@ use key_dispatch::*;
 pub use keymap::*;
 pub use path_builder::*;
 pub use platform::*;
+pub use profiler::*;
 pub use refineable::*;
 pub use scene::*;
 pub use shared_string::*;
@@ -107,7 +109,7 @@ pub use util::{FutureExt, Timeout, arc_cow::ArcCow};
 pub use view::*;
 pub use window::*;
 
-use std::{any::Any, borrow::BorrowMut, future::Future};
+use std::{any::Any, future::Future};
 use taffy::TaffyLayoutEngine;
 
 /// The context trait, allows the different contexts in GPUI to be used
@@ -253,7 +255,7 @@ pub trait BorrowAppContext {
 
 impl<C> BorrowAppContext for C
 where
-    C: BorrowMut<App>,
+    C: std::borrow::BorrowMut<App>,
 {
     fn set_global<G: Global>(&mut self, global: G) {
         self.borrow_mut().set_global(global)

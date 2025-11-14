@@ -23,6 +23,7 @@ use collections::HashMap;
 use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, SelectionEffects,
     ToPoint,
+    actions::Paste,
     movement::{self, FindRange},
 };
 use gpui::{
@@ -39,6 +40,7 @@ use normal::search::SearchSubmit;
 use object::Object;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use settings::RegisterSetting;
 pub use settings::{
     ModeContent, Settings, SettingsStore, UseSystemClipboard, update_settings_file,
 };
@@ -267,8 +269,6 @@ actions!(
 
 /// Initializes the `vim` crate.
 pub fn init(cx: &mut App) {
-    vim_mode_setting::init(cx);
-    VimSettings::register(cx);
     VimGlobals::register(cx);
 
     cx.observe_new(Vim::register).detach();
@@ -668,7 +668,7 @@ impl Vim {
                 editor,
                 cx,
                 |vim, _: &SwitchToHelixNormalMode, window, cx| {
-                    vim.switch_mode(Mode::HelixNormal, false, window, cx)
+                    vim.switch_mode(Mode::HelixNormal, true, window, cx)
                 },
             );
             Vim::action(editor, cx, |_, _: &PushForcedMotion, _, cx| {
@@ -919,6 +919,17 @@ impl Vim {
                 );
             });
 
+            Vim::action(
+                editor,
+                cx,
+                |vim, _: &editor::actions::Paste, window, cx| match vim.mode {
+                    Mode::Replace => vim.paste_replace(window, cx),
+                    _ => {
+                        vim.update_editor(cx, |_, editor, cx| editor.paste(&Paste, window, cx));
+                    }
+                },
+            );
+
             normal::register(editor, cx);
             insert::register(editor, cx);
             helix::register(editor, cx);
@@ -932,16 +943,17 @@ impl Vim {
             change_list::register(editor, cx);
             digraph::register(editor, cx);
 
-            cx.defer_in(window, |vim, window, cx| {
-                vim.focused(false, window, cx);
-            })
+            if editor.is_focused(window) {
+                cx.defer_in(window, |vim, window, cx| {
+                    vim.focused(false, window, cx);
+                })
+            }
         })
     }
 
     fn deactivate(editor: &mut Editor, cx: &mut Context<Editor>) {
         editor.set_cursor_shape(CursorShape::Bar, cx);
         editor.set_clip_at_line_ends(false, cx);
-        editor.set_collapse_matches(false);
         editor.set_input_enabled(true);
         editor.set_autoindent(true);
         editor.selections.set_line_mode(false);
@@ -1197,7 +1209,7 @@ impl Vim {
                     s.select_anchor_ranges(vec![pos..pos])
                 }
 
-                let snapshot = s.display_map();
+                let snapshot = s.display_snapshot();
                 if let Some(pending) = s.pending_anchor_mut()
                     && pending.reversed
                     && mode.is_visual()
@@ -1917,7 +1929,6 @@ impl Vim {
         self.update_editor(cx, |vim, editor, cx| {
             editor.set_cursor_shape(vim.cursor_shape(cx), cx);
             editor.set_clip_at_line_ends(vim.clip_at_line_ends(), cx);
-            editor.set_collapse_matches(true);
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
             editor
@@ -1931,6 +1942,7 @@ impl Vim {
     }
 }
 
+#[derive(RegisterSetting)]
 struct VimSettings {
     pub default_mode: Mode,
     pub toggle_relative_line_numbers: bool,

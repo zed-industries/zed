@@ -9,7 +9,6 @@ use windows::Win32::UI::{
     },
     WindowsAndMessaging::KL_NAMELENGTH,
 };
-use windows_core::HSTRING;
 
 use crate::{
     KeybindingKeystroke, Keystroke, Modifiers, PlatformKeyboardLayout, PlatformKeyboardMapper,
@@ -93,14 +92,13 @@ impl PlatformKeyboardMapper for WindowsKeyboardMapper {
 
 impl WindowsKeyboardLayout {
     pub(crate) fn new() -> Result<Self> {
-        let mut buffer = [0u16; KL_NAMELENGTH as usize];
+        let mut buffer = [0u16; KL_NAMELENGTH as usize]; // KL_NAMELENGTH includes the null terminator
         unsafe { GetKeyboardLayoutNameW(&mut buffer)? };
-        let id = HSTRING::from_wide(&buffer).to_string();
+        let id = String::from_utf16_lossy(&buffer[..buffer.len() - 1]); // Remove the null terminator
         let entry = windows_registry::LOCAL_MACHINE.open(format!(
-            "System\\CurrentControlSet\\Control\\Keyboard Layouts\\{}",
-            id
+            "System\\CurrentControlSet\\Control\\Keyboard Layouts\\{id}"
         ))?;
-        let name = entry.get_hstring("Layout Text")?.to_string();
+        let name = entry.get_string("Layout Text")?;
         Ok(Self { id, name })
     }
 
@@ -108,38 +106,6 @@ impl WindowsKeyboardLayout {
         Self {
             id: "unknown".to_string(),
             name: "unknown".to_string(),
-        }
-    }
-
-    pub(crate) fn uses_altgr(&self) -> bool {
-        // Check if this is a known AltGr layout by examining the layout ID
-        // The layout ID is a hex string like "00000409" (US) or "00000407" (German)
-        // Extract the language ID (last 4 bytes)
-        let id_bytes = self.id.as_bytes();
-        if id_bytes.len() >= 4 {
-            let lang_id = &id_bytes[id_bytes.len() - 4..];
-            // List of keyboard layouts that use AltGr (non-exhaustive)
-            matches!(
-                lang_id,
-                b"0407" | // German
-                b"040C" | // French
-                b"040A" | // Spanish
-                b"0415" | // Polish
-                b"0413" | // Dutch
-                b"0816" | // Portuguese
-                b"041D" | // Swedish
-                b"0414" | // Norwegian
-                b"040B" | // Finnish
-                b"041F" | // Turkish
-                b"0419" | // Russian
-                b"0405" | // Czech
-                b"040E" | // Hungarian
-                b"0424" | // Slovenian
-                b"041B" | // Slovak
-                b"0418" // Romanian
-            )
-        } else {
-            false
         }
     }
 }
@@ -259,7 +225,7 @@ pub(crate) fn generate_key_char(
     }
 
     let mut buffer = [0; 8];
-    let len = unsafe { ToUnicode(vkey.0 as u32, scan_code, Some(&state), &mut buffer, 1 << 2) };
+    let len = unsafe { ToUnicode(vkey.0 as u32, scan_code, Some(&state), &mut buffer, 0x5) };
 
     match len {
         len if len > 0 => String::from_utf16(&buffer[..len as usize])

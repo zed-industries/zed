@@ -4,7 +4,7 @@ use acp_thread::{AcpThread, AgentThreadEntry};
 use agent::HistoryStore;
 use agent_client_protocol::{self as acp, ToolCallId};
 use collections::HashMap;
-use editor::{Editor, EditorMode, MinimapVisibility};
+use editor::{Editor, EditorMode, MinimapVisibility, SizingBehavior};
 use gpui::{
     AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     ScrollHandle, SharedString, TextStyleRefinement, WeakEntity, Window,
@@ -357,7 +357,7 @@ fn create_editor_diff(
             EditorMode::Full {
                 scale_ui_elements_with_buffer_font_size: false,
                 show_active_line_background: false,
-                sized_by_content: true,
+                sizing_behavior: SizingBehavior::SizeByContent,
             },
             diff.read(cx).multibuffer().clone(),
             None,
@@ -401,10 +401,9 @@ mod tests {
     use acp_thread::{AgentConnection, StubAgentConnection};
     use agent::HistoryStore;
     use agent_client_protocol as acp;
-    use agent_settings::AgentSettings;
     use assistant_text_thread::TextThreadStore;
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
-    use editor::{EditorSettings, RowInfo};
+    use editor::RowInfo;
     use fs::FakeFs;
     use gpui::{AppContext as _, SemanticVersion, TestAppContext};
 
@@ -413,7 +412,7 @@ mod tests {
     use pretty_assertions::assert_matches;
     use project::Project;
     use serde_json::json;
-    use settings::{Settings as _, SettingsStore};
+    use settings::SettingsStore;
     use util::path;
     use workspace::Workspace;
 
@@ -539,13 +538,8 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
-            AgentSettings::register(cx);
-            workspace::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(SemanticVersion::default(), cx);
-            EditorSettings::register(cx);
         });
     }
 }

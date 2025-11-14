@@ -334,7 +334,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub use_on_type_format: Option<bool>,
-    /// Which code actions to run on save after the formatter.
+    /// Which code actions to run on save before the formatter.
     /// These are not run if formatting is off.
     ///
     /// Default: {} (or {"source.organizeImports": true} for Go).

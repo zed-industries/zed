@@ -30,6 +30,7 @@ pub struct Callout {
     icon: Option<IconName>,
     title: Option<SharedString>,
     description: Option<SharedString>,
+    description_slot: Option<AnyElement>,
     actions_slot: Option<AnyElement>,
     dismiss_action: Option<AnyElement>,
     line_height: Option<Pixels>,
@@ -44,6 +45,7 @@ impl Callout {
             icon: None,
             title: None,
             description: None,
+            description_slot: None,
             actions_slot: None,
             dismiss_action: None,
             line_height: None,
@@ -73,6 +75,13 @@ impl Callout {
     /// The description can be single or multi-line text.
     pub fn description(mut self, description: impl Into<SharedString>) -> Self {
         self.description = Some(description.into());
+        self
+    }
+
+    /// Allows for any element—like markdown elements—to fill the description slot of the callout.
+    /// This method wins over `description` if both happen to be set.
+    pub fn description_slot(mut self, description: impl IntoElement) -> Self {
+        self.description_slot = Some(description.into_any_element());
         self
     }
 
@@ -179,15 +188,27 @@ impl RenderOnce for Callout {
                                 )
                             }),
                     )
-                    .when_some(self.description, |this, description| {
-                        this.child(
-                            div()
-                                .w_full()
-                                .flex_1()
-                                .text_ui_sm(cx)
-                                .text_color(cx.theme().colors().text_muted)
-                                .child(description),
-                        )
+                    .map(|this| {
+                        if let Some(description_slot) = self.description_slot {
+                            this.child(
+                                div()
+                                    .w_full()
+                                    .flex_1()
+                                    .text_ui_sm(cx)
+                                    .child(description_slot),
+                            )
+                        } else if let Some(description) = self.description {
+                            this.child(
+                                div()
+                                    .w_full()
+                                    .flex_1()
+                                    .text_ui_sm(cx)
+                                    .text_color(cx.theme().colors().text_muted)
+                                    .child(description),
+                            )
+                        } else {
+                            this
+                        }
                     }),
             )
     }

@@ -248,6 +248,7 @@ mod macos {
 #[cfg(target_os = "windows")]
 mod windows {
     use std::{
+        ffi::OsString,
         fs,
         io::Write,
         path::{Path, PathBuf},
@@ -325,6 +326,49 @@ mod windows {
         }
     }
 
+    /// Locate `binary` in the newest installed Windows SDK.
+    pub fn find_latest_windows_sdk_binary(
+        binary: &str,
+    ) -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
+        let key = windows_registry::LOCAL_MACHINE
+            .open("SOFTWARE\\WOW6432Node\\Microsoft\\Microsoft SDKs\\Windows\\v10.0")?;
+
+        let install_folder: String = key.get_string("InstallationFolder")?; // "C:\Program Files (x86)\Windows Kits\10\"
+        let install_folder_bin = Path::new(&install_folder).join("bin");
+
+        let mut versions: Vec<_> = std::fs::read_dir(&install_folder_bin)?
+            .flatten()
+            .filter(|entry| entry.path().is_dir())
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .collect();
+
+        versions.sort_by_key(|s| {
+            s.split('.')
+                .filter_map(|p| p.parse().ok())
+                .collect::<Vec<u32>>()
+        });
+
+        let arch = match std::env::consts::ARCH {
+            "x86_64" => "x64",
+            "aarch64" => "arm64",
+            _ => Err(format!(
+                "Unsupported architecture: {}",
+                std::env::consts::ARCH
+            ))?,
+        };
+
+        if let Some(highest_version) = versions.last() {
+            return Ok(Some(
+                install_folder_bin
+                    .join(highest_version)
+                    .join(arch)
+                    .join(binary),
+            ));
+        }
+
+        Ok(None)
+    }
+
     /// You can set the `GPUI_FXC_PATH` environment variable to specify the path to the fxc.exe compiler.
     fn find_fxc_compiler() -> String {
         // Check environment variable
@@ -345,12 +389,8 @@ mod windows {
             return path.trim().to_string();
         }
 
-        // Check the default path
-        if Path::new(r"C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\fxc.exe")
-            .exists()
-        {
-            return r"C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\fxc.exe"
-                .to_string();
+        if let Ok(Some(path)) = find_latest_windows_sdk_binary("fxc.exe") {
+            return path.to_string_lossy().into_owned();
         }
 
         panic!("Failed to find fxc.exe");

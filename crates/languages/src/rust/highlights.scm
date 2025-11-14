@@ -41,6 +41,9 @@
       name: (identifier) @function.special)
   ])
 
+(macro_invocation
+  "!" @function.special)
+
 (macro_definition
   name: (identifier) @function.special.definition)
 
@@ -192,7 +195,9 @@
 (unary_expression "!" @operator)
 operator: "/" @operator
 
-(lifetime) @lifetime
+(lifetime
+  "'" @lifetime
+  (identifier) @lifetime)
 
 (parameter (identifier) @variable.parameter)
 

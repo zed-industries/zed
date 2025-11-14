@@ -64,12 +64,15 @@ pub enum MenuItem {
         /// The name of this menu item
         name: SharedString,
 
-        /// the action to perform when this menu item is selected
+        /// The action to perform when this menu item is selected
         action: Box<dyn Action>,
 
         /// The OS Action that corresponds to this action, if any
         /// See [`OsAction`] for more information
         os_action: Option<OsAction>,
+
+        /// Whether this action is checked
+        checked: bool,
     },
 }
 
@@ -98,6 +101,7 @@ impl MenuItem {
             name: name.into(),
             action: Box::new(action),
             os_action: None,
+            checked: false,
         }
     }
 
@@ -111,6 +115,7 @@ impl MenuItem {
             name: name.into(),
             action: Box::new(action),
             os_action: Some(os_action),
+            checked: false,
         }
     }
 
@@ -123,12 +128,34 @@ impl MenuItem {
                 name,
                 action,
                 os_action,
+                checked,
             } => OwnedMenuItem::Action {
                 name: name.into(),
                 action,
                 os_action,
+                checked,
             },
             MenuItem::SystemMenu(os_menu) => OwnedMenuItem::SystemMenu(os_menu.owned()),
+        }
+    }
+
+    /// Set whether this menu item is checked
+    ///
+    /// Only for [`MenuItem::Action`], otherwise, will be ignored
+    pub fn checked(mut self, checked: bool) -> Self {
+        match self {
+            MenuItem::Action {
+                action,
+                os_action,
+                name,
+                ..
+            } => MenuItem::Action {
+                name,
+                action,
+                os_action,
+                checked,
+            },
+            _ => self,
         }
     }
 }
@@ -171,12 +198,15 @@ pub enum OwnedMenuItem {
         /// The name of this menu item
         name: String,
 
-        /// the action to perform when this menu item is selected
+        /// The action to perform when this menu item is selected
         action: Box<dyn Action>,
 
         /// The OS Action that corresponds to this action, if any
         /// See [`OsAction`] for more information
         os_action: Option<OsAction>,
+
+        /// Whether this action is checked
+        checked: bool,
     },
 }
 
@@ -189,10 +219,12 @@ impl Clone for OwnedMenuItem {
                 name,
                 action,
                 os_action,
+                checked,
             } => OwnedMenuItem::Action {
                 name: name.clone(),
                 action: action.boxed_clone(),
                 os_action: *os_action,
+                checked: *checked,
             },
             OwnedMenuItem::SystemMenu(os_menu) => OwnedMenuItem::SystemMenu(os_menu.clone()),
         }

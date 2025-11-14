@@ -176,6 +176,8 @@ pub struct AgentProfileContent {
     pub enable_all_context_servers: Option<bool>,
     #[serde(default)]
     pub context_servers: IndexMap<Arc<str>, ContextServerPresetContent>,
+    /// The default language model selected when using this profile.
+    pub default_model: Option<LanguageModelSelection>,
 }
 
 #[skip_serializing_none]

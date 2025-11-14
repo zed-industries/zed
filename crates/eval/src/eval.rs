@@ -23,7 +23,6 @@ use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use language_model::{ConfiguredModel, LanguageModel, LanguageModelRegistry, SelectedModel};
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
-use project::Project;
 use project::project_settings::ProjectSettings;
 use prompt_store::PromptBuilder;
 use release_channel::AppVersion;
@@ -354,7 +353,6 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
 
     let settings_store = SettingsStore::new(cx, &settings::default_settings());
     cx.set_global(settings_store);
-    client::init_settings(cx);
 
     // Set User-Agent so we can download language servers from GitHub
     let user_agent = format!(
@@ -375,8 +373,6 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
             .expect("could not start HTTP client")
     };
     cx.set_http_client(Arc::new(http));
-
-    Project::init_settings(cx);
 
     let client = Client::production(cx);
     cx.set_http_client(client.http_client());
@@ -422,8 +418,6 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     let node_runtime = NodeRuntime::new(client.http_client(), None, rx);
 
     let extension_host_proxy = ExtensionHostProxy::global(cx);
-
-    language::init(cx);
     debug_adapter_extension::init(extension_host_proxy.clone(), cx);
     language_extension::init(LspAccess::Noop, extension_host_proxy, languages.clone());
     language_model::init(client.clone(), cx);
@@ -469,8 +463,8 @@ pub fn find_model(
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "No language model with ID {}/{} was available. Available models: {}",
-                selected.model.0,
                 selected.provider.0,
+                selected.model.0,
                 model_registry
                     .available_models(cx)
                     .map(|model| format!("{}/{}", model.provider_id().0, model.id().0))

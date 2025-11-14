@@ -110,7 +110,24 @@ impl Replayer {
         }
         lock.running = true;
         let this = self.clone();
-        window.defer(cx, move |window, cx| this.next(window, cx))
+        window.defer(cx, move |window, cx| {
+            this.next(window, cx);
+            let Some(Some(workspace)) = window.root::<Workspace>() else {
+                return;
+            };
+            let Some(editor) = workspace
+                .read(cx)
+                .active_item(cx)
+                .and_then(|item| item.act_as::<Editor>(cx))
+            else {
+                return;
+            };
+            editor.update(cx, |editor, cx| {
+                editor
+                    .buffer()
+                    .update(cx, |multi, cx| multi.finalize_last_transaction(cx))
+            });
+        })
     }
 
     pub fn stop(self) {

@@ -1,0 +1,69 @@
+# Generated from xtask::workflows::run_unit_evals
+# Rebuild with `cargo xtask workflows`.
+name: run_unit_evals
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+  RUST_BACKTRACE: '1'
+  ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+  ZED_EVAL_TELEMETRY: '1'
+  MODEL_NAME: ${{ inputs.model_name }}
+on:
+  workflow_dispatch:
+    inputs:
+      model_name:
+        description: model_name
+        required: true
+        type: string
+      commit_sha:
+        description: commit_sha
+        required: true
+        type: string
+jobs:
+  run_unit_evals:
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      shell: bash -euxo pipefail {0}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+    - name: steps::setup_linux
+      run: ./script/linux
+      shell: bash -euxo pipefail {0}
+    - name: steps::install_mold
+      run: ./script/install-mold
+      shell: bash -euxo pipefail {0}
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
+      shell: bash -euxo pipefail {0}
+    - name: steps::cargo_install_nextest
+      uses: taiki-e/install-action@nextest
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than 250
+      shell: bash -euxo pipefail {0}
+    - name: ./script/run-unit-evals
+      run: ./script/run-unit-evals
+      shell: bash -euxo pipefail {0}
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+        GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+        UNIT_EVAL_COMMIT: ${{ inputs.commit_sha }}
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        rm -rf ./../.cargo
+      shell: bash -euxo pipefail {0}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.run_id }}
+  cancel-in-progress: true

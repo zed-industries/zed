@@ -148,6 +148,8 @@ impl DapLocator for CargoLocator {
             .first()
             .is_some_and(|arg| arg == "test" || arg == "t");
 
+        let is_ignored = build_config.args.contains(&"--include-ignored".to_owned());
+
         let executables = output
             .lines()
             .filter(|line| !line.trim().is_empty())
@@ -205,6 +207,9 @@ impl DapLocator for CargoLocator {
         let mut args: Vec<_> = test_name.into_iter().collect();
         if is_test {
             args.push("--nocapture".to_owned());
+            if is_ignored {
+                args.push("--include-ignored".to_owned());
+            }
         }
 
         Ok(DebugRequest::Launch(task::LaunchRequest {

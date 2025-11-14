@@ -1053,11 +1053,16 @@ impl Render for LspButton {
             (None, "All Servers Operational")
         };
 
-        let lsp_button = cx.entity();
+        let lsp_button = cx.weak_entity();
 
         div().child(
             PopoverMenu::new("lsp-tool")
-                .menu(move |_, cx| lsp_button.read(cx).lsp_menu.clone())
+                .menu(move |_, cx| {
+                    lsp_button
+                        .read_with(cx, |lsp_button, _| lsp_button.lsp_menu.clone())
+                        .ok()
+                        .flatten()
+                })
                 .anchor(Corner::BottomLeft)
                 .with_handle(self.popover_menu_handle.clone())
                 .trigger_with_tooltip(

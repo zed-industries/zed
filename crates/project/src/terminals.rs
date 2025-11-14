@@ -2,13 +2,13 @@ use anyhow::Result;
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
 
+use futures::{FutureExt, future::Shared};
 use itertools::Itertools as _;
 use language::LanguageName;
 use remote::RemoteClient;
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::{
-    borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -76,16 +76,6 @@ impl Project {
 
         let (completion_tx, completion_rx) = bounded(1);
 
-        // Start with the environment that we might have inherited from the Zed CLI.
-        let mut env = self
-            .environment
-            .read(cx)
-            .get_cli_environment()
-            .unwrap_or_default();
-        // Then extend it with the explicit env variables from the settings, so they take
-        // precedence.
-        env.extend(settings.env);
-
         let local_path = if is_via_remote { None } else { path.clone() };
         let task_state = Some(TaskState {
             spawned_task: spawn_task.clone(),
@@ -100,8 +90,12 @@ impl Project {
                 .unwrap_or_else(get_default_system_shell),
             None => settings.shell.program(),
         };
-
         let is_windows = self.path_style(cx).is_windows();
+        let shell_kind = ShellKind::new(&shell, is_windows);
+
+        // Prepare a task for resolving the environment
+        let env_task =
+            self.resolve_directory_environment(&shell, path.clone(), remote_client.clone(), cx);
 
         let project_path_contexts = self
             .active_entry()
@@ -121,7 +115,9 @@ impl Project {
             .collect::<Vec<_>>();
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
-            let shell_kind = ShellKind::new(&shell, is_windows);
+            let mut env = env_task.await.unwrap_or_default();
+            env.extend(settings.env);
+
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
                     let Some(toolchain) = toolchain.await else {
@@ -131,8 +127,10 @@ impl Project {
                         .language_for_name(&toolchain.language_name.0)
                         .await
                         .ok();
-                    let lister = language?.toolchain_lister();
-                    return Some(lister?.activation_script(&toolchain, shell_kind));
+                    let lister = language?.toolchain_lister()?;
+                    return cx
+                        .update(|cx| lister.activation_script(&toolchain, shell_kind, cx))
+                        .ok();
                 }
                 None
             })
@@ -143,14 +141,8 @@ impl Project {
                 .update(cx, move |_, cx| {
                     let format_to_run = || {
                         if let Some(command) = &spawn_task.command {
-                            let mut command: Option<Cow<str>> = shell_kind.try_quote(command);
-                            if let Some(command) = &mut command
-                                && command.starts_with('"')
-                                && let Some(prefix) = shell_kind.command_prefix()
-                            {
-                                *command = Cow::Owned(format!("{prefix}{command}"));
-                            }
-
+                            let command = shell_kind.prepend_command_prefix(command);
+                            let command = shell_kind.try_quote_prefix_aware(&command);
                             let args = spawn_task
                                 .args
                                 .iter()
@@ -172,12 +164,13 @@ impl Project {
                                     let activation_script =
                                         activation_script.join(&format!("{separator} "));
                                     let to_run = format_to_run();
+
+                                    let arg = format!("{activation_script}{separator} {to_run}");
+                                    let args = shell_kind.args_for_shell(false, arg);
                                     let shell = remote_client
                                         .read(cx)
                                         .shell()
                                         .unwrap_or_else(get_default_system_shell);
-                                    let arg = format!("{activation_script}{separator} {to_run}");
-                                    let args = shell_kind.args_for_shell(false, arg);
 
                                     create_remote_shell(
                                         Some((&shell, &args)),
@@ -300,17 +293,6 @@ impl Project {
         }
         let settings = TerminalSettings::get(settings_location, cx).clone();
         let detect_venv = settings.detect_venv.as_option().is_some();
-
-        // Start with the environment that we might have inherited from the Zed CLI.
-        let mut env = self
-            .environment
-            .read(cx)
-            .get_cli_environment()
-            .unwrap_or_default();
-        // Then extend it with the explicit env variables from the settings, so they take
-        // precedence.
-        env.extend(settings.env);
-
         let local_path = if is_via_remote { None } else { path.clone() };
 
         let project_path_contexts = self
@@ -338,10 +320,18 @@ impl Project {
             None => settings.shell.program(),
         };
 
-        let shell_kind = ShellKind::new(&shell, self.path_style(cx).is_windows());
+        let is_windows = self.path_style(cx).is_windows();
+
+        // Prepare a task for resolving the environment
+        let env_task =
+            self.resolve_directory_environment(&shell, path.clone(), remote_client.clone(), cx);
 
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
+            let shell_kind = ShellKind::new(&shell, is_windows);
+            let mut env = env_task.await.unwrap_or_default();
+            env.extend(settings.env);
+
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
                     let Some(toolchain) = toolchain.await else {
@@ -351,13 +341,16 @@ impl Project {
                         .language_for_name(&toolchain.language_name.0)
                         .await
                         .ok();
-                    let lister = language?.toolchain_lister();
-                    return Some(lister?.activation_script(&toolchain, shell_kind));
+                    let lister = language?.toolchain_lister()?;
+                    return cx
+                        .update(|cx| lister.activation_script(&toolchain, shell_kind, cx))
+                        .ok();
                 }
                 None
             })
             .await
             .unwrap_or_default();
+
             let builder = project
                 .update(cx, move |_, cx| {
                     let (shell, env) = {
@@ -474,9 +467,13 @@ impl Project {
         TerminalSettings::get(settings_location, cx)
     }
 
-    pub fn exec_in_shell(&self, command: String, cx: &App) -> Result<smol::process::Command> {
+    pub fn exec_in_shell(
+        &self,
+        command: String,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<smol::process::Command>> {
         let path = self.first_project_directory(cx);
-        let remote_client = self.remote_client.as_ref();
+        let remote_client = self.remote_client.clone();
         let settings = self.terminal_settings(&path, cx).clone();
         let shell = remote_client
             .as_ref()
@@ -487,42 +484,76 @@ impl Project {
         let builder = ShellBuilder::new(&shell, is_windows).non_interactive();
         let (command, args) = builder.build(Some(command), &Vec::new());
 
-        let mut env = self
-            .environment
-            .read(cx)
-            .get_cli_environment()
-            .unwrap_or_default();
-        env.extend(settings.env);
+        let env_task = self.resolve_directory_environment(
+            &shell.program(),
+            path.as_ref().map(|p| Arc::from(&**p)),
+            remote_client.clone(),
+            cx,
+        );
 
-        match remote_client {
-            Some(remote_client) => {
-                let command_template =
-                    remote_client
-                        .read(cx)
-                        .build_command(Some(command), &args, &env, None, None)?;
-                let mut command = std::process::Command::new(command_template.program);
-                command.args(command_template.args);
-                command.envs(command_template.env);
-                Ok(command)
-            }
-            None => {
-                let mut command = std::process::Command::new(command);
-                command.args(args);
-                command.envs(env);
-                if let Some(path) = path {
-                    command.current_dir(path);
+        cx.spawn(async move |project, cx| {
+            let mut env = env_task.await.unwrap_or_default();
+            env.extend(settings.env);
+
+            project.update(cx, move |_, cx| {
+                match remote_client {
+                    Some(remote_client) => {
+                        let command_template = remote_client.read(cx).build_command(
+                            Some(command),
+                            &args,
+                            &env,
+                            None,
+                            None,
+                        )?;
+                        let mut command = std::process::Command::new(command_template.program);
+                        command.args(command_template.args);
+                        command.envs(command_template.env);
+                        Ok(command)
+                    }
+                    None => {
+                        let mut command = std::process::Command::new(command);
+                        command.args(args);
+                        command.envs(env);
+                        if let Some(path) = path {
+                            command.current_dir(path);
+                        }
+                        Ok(command)
+                    }
                 }
-                Ok(command)
-            }
-        }
-        .map(|mut process| {
-            util::set_pre_exec_to_start_new_session(&mut process);
-            smol::process::Command::from(process)
+                .map(|mut process| {
+                    util::set_pre_exec_to_start_new_session(&mut process);
+                    smol::process::Command::from(process)
+                })
+            })?
         })
     }
 
     pub fn local_terminal_handles(&self) -> &Vec<WeakEntity<terminal::Terminal>> {
         &self.terminals.local_handles
+    }
+
+    fn resolve_directory_environment(
+        &self,
+        shell: &str,
+        path: Option<Arc<Path>>,
+        remote_client: Option<Entity<RemoteClient>>,
+        cx: &mut App,
+    ) -> Shared<Task<Option<HashMap<String, String>>>> {
+        if let Some(path) = &path {
+            let shell = Shell::Program(shell.to_string());
+            self.environment
+                .update(cx, |project_env, cx| match &remote_client {
+                    Some(remote_client) => project_env.remote_directory_environment(
+                        &shell,
+                        path.clone(),
+                        remote_client.clone(),
+                        cx,
+                    ),
+                    None => project_env.local_directory_environment(&shell, path.clone(), cx),
+                })
+        } else {
+            Task::ready(None).shared()
+        }
     }
 }
 
@@ -533,12 +564,8 @@ fn create_remote_shell(
     remote_client: Entity<RemoteClient>,
     cx: &mut App,
 ) -> Result<(Shell, HashMap<String, String>)> {
-    // Alacritty sets its terminfo to `alacritty`, this requiring hosts to have it installed
-    // to properly display colors.
-    // We do not have the luxury of assuming the host has it installed,
-    // so we set it to a default that does not break the highlighting via ssh.
-    env.entry("TERM".to_string())
-        .or_insert_with(|| "xterm-256color".to_string());
+    // Set default terminfo that does not break the highlighting via ssh.
+    env.insert("TERM".to_string(), "xterm-256color".to_string());
 
     let (program, args) = match spawn_command {
         Some((program, args)) => (Some(program.clone()), args),

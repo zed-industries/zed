@@ -14,6 +14,55 @@ pub(crate) fn build_nix(
     cachix_filter: Option<&str>,
     deps: &[&NamedJob],
 ) -> NamedJob {
+    // on our macs we manually install nix. for some reason the cachix action is running
+    // under a non-login /bin/bash shell which doesn't source the proper script to add the
+    // nix profile to PATH, so we manually add them here
+    pub fn set_path() -> Step<Run> {
+        named::bash(indoc! {r#"
+                echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
+                echo "/Users/administrator/.nix-profile/bin" >> "$GITHUB_PATH"
+            "#})
+    }
+
+    pub fn install_nix() -> Step<Use> {
+        named::uses(
+            "cachix",
+            "install-nix-action",
+            "02a151ada4993995686f9ed4f1be7cfbb229e56f", // v31
+        )
+        .add_with(("github_access_token", vars::GITHUB_TOKEN))
+    }
+
+    pub fn cachix_action(cachix_filter: Option<&str>) -> Step<Use> {
+        let mut step = named::uses(
+            "cachix",
+            "cachix-action",
+            "0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad", // v16
+        )
+        .add_with(("name", "zed"))
+        .add_with(("authToken", vars::CACHIX_AUTH_TOKEN))
+        .add_with(("cachixArgs", "-v"));
+        if let Some(cachix_filter) = cachix_filter {
+            step = step.add_with(("pushFilter", cachix_filter));
+        }
+        step
+    }
+
+    pub fn build(flake_output: &str) -> Step<Run> {
+        named::bash(&format!(
+            "nix build .#{} -L --accept-flake-config",
+            flake_output
+        ))
+    }
+
+    pub fn limit_store() -> Step<Run> {
+        named::bash(indoc! {r#"
+                if [ "$(du -sm /nix/store | cut -f1)" -gt 50000 ]; then
+                    nix-collect-garbage -d || true
+                fi"#
+        })
+    }
+
     let runner = match platform {
         Platform::Windows => unimplemented!(),
         Platform::Linux => runners::LINUX_X86_BUNDLER,
@@ -54,53 +103,4 @@ pub(crate) fn build_nix(
         name: format!("build_nix_{platform}_{arch}"),
         job,
     }
-}
-
-// on our macs we manually install nix. for some reason the cachix action is running
-// under a non-login /bin/bash shell which doesn't source the proper script to add the
-// nix profile to PATH, so we manually add them here
-pub fn set_path() -> Step<Run> {
-    named::bash(indoc! {r#"
-            echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
-            echo "/Users/administrator/.nix-profile/bin" >> "$GITHUB_PATH"
-        "#})
-}
-
-pub fn install_nix() -> Step<Use> {
-    named::uses(
-        "cachix",
-        "install-nix-action",
-        "02a151ada4993995686f9ed4f1be7cfbb229e56f", // v31
-    )
-    .add_with(("github_access_token", vars::GITHUB_TOKEN))
-}
-
-pub fn cachix_action(cachix_filter: Option<&str>) -> Step<Use> {
-    let mut step = named::uses(
-        "cachix",
-        "cachix-action",
-        "0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad", // v16
-    )
-    .add_with(("name", "zed"))
-    .add_with(("authToken", vars::CACHIX_AUTH_TOKEN))
-    .add_with(("cachixArgs", "-v"));
-    if let Some(cachix_filter) = cachix_filter {
-        step = step.add_with(("pushFilter", cachix_filter));
-    }
-    step
-}
-
-pub fn build(flake_output: &str) -> Step<Run> {
-    named::bash(&format!(
-        "nix build .#{} -L --accept-flake-config",
-        flake_output
-    ))
-}
-
-pub fn limit_store() -> Step<Run> {
-    named::bash(indoc! {r#"
-            if [ "$(du -sm /nix/store | cut -f1)" -gt 50000 ]; then
-                nix-collect-garbage -d || true
-            fi"#
-    })
 }

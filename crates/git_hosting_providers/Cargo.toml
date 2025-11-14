@@ -23,6 +23,7 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 url.workspace = true
+urlencoding.workspace = true
 util.workspace = true
 
 [dev-dependencies]

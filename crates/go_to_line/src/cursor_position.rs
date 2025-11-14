@@ -1,6 +1,6 @@
-use editor::{Editor, MultiBufferSnapshot};
+use editor::{Editor, EditorEvent, MultiBufferSnapshot};
 use gpui::{App, Entity, FocusHandle, Focusable, Styled, Subscription, Task, WeakEntity};
-use settings::Settings;
+use settings::{RegisterSetting, Settings};
 use std::{fmt::Write, num::NonZeroU32, time::Duration};
 use text::{Point, Selection};
 use ui::{
@@ -81,7 +81,7 @@ impl CursorPosition {
 
     fn update_position(
         &mut self,
-        editor: Entity<Editor>,
+        editor: &Entity<Editor>,
         debounce: Option<Duration>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -269,19 +269,21 @@ impl StatusItemView for CursorPosition {
         cx: &mut Context<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
-            self._observe_active_editor =
-                Some(
-                    cx.observe_in(&editor, window, |cursor_position, editor, window, cx| {
-                        Self::update_position(
-                            cursor_position,
-                            editor,
-                            Some(UPDATE_DEBOUNCE),
-                            window,
-                            cx,
-                        )
-                    }),
-                );
-            self.update_position(editor, None, window, cx);
+            self._observe_active_editor = Some(cx.subscribe_in(
+                &editor,
+                window,
+                |cursor_position, editor, event, window, cx| match event {
+                    EditorEvent::SelectionsChanged { .. } => Self::update_position(
+                        cursor_position,
+                        editor,
+                        Some(UPDATE_DEBOUNCE),
+                        window,
+                        cx,
+                    ),
+                    _ => {}
+                },
+            ));
+            self.update_position(&editor, None, window, cx);
         } else {
             self.position = None;
             self._observe_active_editor = None;
@@ -291,7 +293,7 @@ impl StatusItemView for CursorPosition {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, RegisterSetting)]
 pub enum LineIndicatorFormat {
     Short,
     Long,

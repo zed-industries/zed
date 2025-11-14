@@ -489,7 +489,11 @@ impl Copilot {
             let node_path = node_runtime.binary_path().await?;
             ensure_node_version_for_copilot(&node_path).await?;
 
-            let arguments: Vec<OsString> = vec![server_path.into(), "--stdio".into()];
+            let arguments: Vec<OsString> = vec![
+                "--experimental-sqlite".into(),
+                server_path.into(),
+                "--stdio".into(),
+            ];
             let binary = LanguageServerBinary {
                 path: node_path,
                 arguments,

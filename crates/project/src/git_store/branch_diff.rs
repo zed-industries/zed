@@ -63,11 +63,7 @@ impl BranchDiff {
             window,
             move |this, _git_store, event, _window, cx| match event {
                 GitStoreEvent::ActiveRepositoryChanged(_)
-                | GitStoreEvent::RepositoryUpdated(
-                    _,
-                    RepositoryEvent::StatusesChanged { full_scan: _ },
-                    true,
-                )
+                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::StatusesChanged, true)
                 | GitStoreEvent::ConflictsUpdated => {
                     cx.emit(BranchDiffEvent::FileListChanged);
                     *this.update_needed.borrow_mut() = ();

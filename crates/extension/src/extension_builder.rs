@@ -3,9 +3,7 @@ use crate::{
     parse_wasm_extension_version,
 };
 use anyhow::{Context as _, Result, bail};
-use async_compression::futures::bufread::GzipDecoder;
-use async_tar::Archive;
-use futures::{AsyncReadExt, io::Cursor};
+use futures::AsyncReadExt;
 use heck::ToSnakeCase;
 use http_client::{self, AsyncBody, HttpClient};
 use serde::Deserialize;
@@ -417,27 +415,47 @@ impl ExtensionBuilder {
             return Ok(clang_path);
         }
 
-        let mut tar_out_dir = wasi_sdk_dir.clone();
-        tar_out_dir.set_extension("archive");
+        let tar_out_dir = self.cache_dir.join("wasi-sdk-temp");
 
         fs::remove_dir_all(&wasi_sdk_dir).ok();
         fs::remove_dir_all(&tar_out_dir).ok();
+        fs::create_dir_all(&tar_out_dir).context("failed to create extraction directory")?;
 
-        log::info!("downloading wasi-sdk to {}", wasi_sdk_dir.display());
         let mut response = self.http.get(&url, AsyncBody::default(), true).await?;
-        let body = GzipDecoder::new({
-            // stream the entire request into memory at once as the artifact is quite big (100MB+)
-            let mut b = vec![];
-            response.body_mut().read_to_end(&mut b).await?;
-            Cursor::new(b)
-        });
-        let tar = Archive::new(body);
 
-        log::info!("un-tarring wasi-sdk to {}", wasi_sdk_dir.display());
-        tar.unpack(&tar_out_dir)
+        // Write the response to a temporary file
+        let tar_gz_path = self.cache_dir.join("wasi-sdk.tar.gz");
+        let mut tar_gz_file =
+            fs::File::create(&tar_gz_path).context("failed to create temporary tar.gz file")?;
+        let response_body = response.body_mut();
+        let mut body_bytes = Vec::new();
+        response_body.read_to_end(&mut body_bytes).await?;
+        std::io::Write::write_all(&mut tar_gz_file, &body_bytes)?;
+        drop(tar_gz_file);
+
+        log::info!("un-tarring wasi-sdk to {}", tar_out_dir.display());
+
+        // Shell out to tar to extract the archive
+        let tar_output = util::command::new_smol_command("tar")
+            .arg("-xzf")
+            .arg(&tar_gz_path)
+            .arg("-C")
+            .arg(&tar_out_dir)
+            .output()
             .await
-            .context("failed to unpack wasi-sdk archive")?;
+            .context("failed to run tar")?;
+
+        if !tar_output.status.success() {
+            bail!(
+                "failed to extract wasi-sdk archive: {}",
+                String::from_utf8_lossy(&tar_output.stderr)
+            );
+        }
+
         log::info!("finished downloading wasi-sdk");
+
+        // Clean up the temporary tar.gz file
+        fs::remove_file(&tar_gz_path).ok();
 
         let inner_dir = fs::read_dir(&tar_out_dir)?
             .next()

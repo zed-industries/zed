@@ -572,6 +572,14 @@ impl Modifiers {
         }
     }
 
+    /// Returns [`Modifiers`] with just function.
+    pub fn function() -> Modifiers {
+        Modifiers {
+            function: true,
+            ..Default::default()
+        }
+    }
+
     /// Returns [`Modifiers`] with command + shift.
     pub fn command_shift() -> Modifiers {
         Modifiers {

@@ -25,6 +25,7 @@ futures.workspace = true
 gpui.workspace = true
 inventory.workspace = true
 log.workspace = true
+migrator.workspace = true
 paths.workspace = true
 release_channel.workspace = true
 rust-embed.workspace = true
@@ -40,7 +41,6 @@ smallvec.workspace = true
 strum.workspace = true
 util.workspace = true
 zlog.workspace = true
-migrator.workspace = true
 
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }

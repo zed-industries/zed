@@ -562,7 +562,6 @@ fn resolve_path(
 mod tests {
     use super::*;
     use crate::{ContextServerRegistry, Templates};
-    use client::TelemetrySettings;
     use fs::Fs;
     use gpui::{TestAppContext, UpdateGlobal};
     use language_model::fake_provider::FakeLanguageModel;
@@ -1753,10 +1752,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            TelemetrySettings::register(cx);
-            agent_settings::AgentSettings::register(cx);
-            Project::init_settings(cx);
         });
     }
 }

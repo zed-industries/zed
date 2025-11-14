@@ -75,11 +75,13 @@
 - [Overview](./extensions.md)
 - [Installing Extensions](./extensions/installing-extensions.md)
 - [Developing Extensions](./extensions/developing-extensions.md)
+- [Extension Capabilities](./extensions/capabilities.md)
 - [Language Extensions](./extensions/languages.md)
 - [Debugger Extensions](./extensions/debugger-extensions.md)
 - [Theme Extensions](./extensions/themes.md)
 - [Icon Theme Extensions](./extensions/icon-themes.md)
 - [Slash Command Extensions](./extensions/slash-commands.md)
+- [Agent Server Extensions](./extensions/agent-servers.md)
 - [MCP Server Extensions](./extensions/mcp-extensions.md)
 
 # Language Support
@@ -165,6 +167,5 @@
   - [Local Collaboration](./development/local-collaboration.md)
   - [Using Debuggers](./development/debuggers.md)
   - [Glossary](./development/glossary.md)
-- [Release Process](./development/releases.md)
 - [Release Notes](./development/release-notes.md)
 - [Debugging Crashes](./development/debugging-crashes.md)

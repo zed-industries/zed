@@ -54,10 +54,8 @@ impl EditorLspTestContext {
 
         cx.update(|cx| {
             assets::Assets.load_test_fonts(cx);
-            language::init(cx);
             crate::init(cx);
             workspace::init(app_state.clone(), cx);
-            Project::init_settings(cx);
         });
 
         let file_name = format!(

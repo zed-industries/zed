@@ -537,7 +537,7 @@ impl TabSwitcherDelegate {
         let Some(tab_match) = self.matches.get(ix) else {
             return;
         };
-        let Some(pane) = self.pane.upgrade() else {
+        let Some(pane) = tab_match.pane.upgrade() else {
             return;
         };
         pane.update(cx, |pane, cx| {

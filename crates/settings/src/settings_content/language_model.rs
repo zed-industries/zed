@@ -388,17 +388,12 @@ pub struct OpenRouterProvider {
     sort: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "lowercase")]
 pub enum DataCollection {
+    #[default]
     Allow,
     Disallow,
-}
-
-impl Default for DataCollection {
-    fn default() -> Self {
-        Self::Allow
-    }
 }
 
 fn default_true() -> bool {

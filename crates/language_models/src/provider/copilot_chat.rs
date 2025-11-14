@@ -29,6 +29,8 @@ use settings::SettingsStore;
 use ui::{CommonAnimationExt, prelude::*};
 use util::debug_panic;
 
+use crate::ui::ConfiguredApiCard;
+
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("copilot_chat");
 const PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("GitHub Copilot Chat");
@@ -1326,27 +1328,12 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.state.read(cx).is_authenticated(cx) {
-            h_flex()
-                .mt_1()
-                .p_1()
-                .justify_between()
-                .rounded_md()
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().background)
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(Label::new("Authorized")),
-                )
-                .child(
-                    Button::new("sign_out", "Sign Out")
-                        .label_size(LabelSize::Small)
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(copilot::SignOut.boxed_clone(), cx);
-                        }),
-                )
+            ConfiguredApiCard::new("Authorized")
+                .button_label("Sign Out")
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(copilot::SignOut.boxed_clone(), cx);
+                })
+                .into_any_element()
         } else {
             let loading_icon = Icon::new(IconName::ArrowCircle).with_rotate_animation(4);
 
@@ -1357,37 +1344,49 @@ impl Render for ConfigurationView {
                     Status::Starting { task: _ } => h_flex()
                         .gap_2()
                         .child(loading_icon)
-                        .child(Label::new("Starting Copilot…")),
+                        .child(Label::new("Starting Copilot…"))
+                        .into_any_element(),
                     Status::SigningIn { prompt: _ }
                     | Status::SignedOut {
                         awaiting_signing_in: true,
                     } => h_flex()
                         .gap_2()
                         .child(loading_icon)
-                        .child(Label::new("Signing into Copilot…")),
+                        .child(Label::new("Signing into Copilot…"))
+                        .into_any_element(),
                     Status::Error(_) => {
                         const LABEL: &str = "Copilot had issues starting. Please try restarting it. If the issue persists, try reinstalling Copilot.";
                         v_flex()
                             .gap_6()
                             .child(Label::new(LABEL))
                             .child(svg().size_8().path(IconName::CopilotError.path()))
+                            .into_any_element()
                     }
                     _ => {
                         const LABEL: &str = "To use Zed's agent with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
 
-                        v_flex().gap_2().child(Label::new(LABEL)).child(
-                            Button::new("sign_in", "Sign in to use GitHub Copilot")
-                                .full_width()
-                                .style(ButtonStyle::Outlined)
-                                .icon_color(Color::Muted)
-                                .icon(IconName::Github)
-                                .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::Small)
-                                .on_click(|_, window, cx| copilot::initiate_sign_in(window, cx)),
-                        )
+                        v_flex()
+                            .gap_2()
+                            .child(Label::new(LABEL))
+                            .child(
+                                Button::new("sign_in", "Sign in to use GitHub Copilot")
+                                    .full_width()
+                                    .style(ButtonStyle::Outlined)
+                                    .icon_color(Color::Muted)
+                                    .icon(IconName::Github)
+                                    .icon_position(IconPosition::Start)
+                                    .icon_size(IconSize::Small)
+                                    .on_click(|_, window, cx| {
+                                        copilot::initiate_sign_in(window, cx)
+                                    }),
+                            )
+                            .into_any_element()
                     }
                 },
-                None => v_flex().gap_6().child(Label::new(ERROR_LABEL)),
+                None => v_flex()
+                    .gap_6()
+                    .child(Label::new(ERROR_LABEL))
+                    .into_any_element(),
             }
         }
     }

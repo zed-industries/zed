@@ -266,7 +266,7 @@ impl language::File for GitBlob {
     }
 
     fn path(&self) -> &Arc<RelPath> {
-        &self.path.0
+        self.path.as_ref()
     }
 
     fn full_path(&self, _: &App) -> PathBuf {
@@ -415,12 +415,14 @@ fn format_commit(commit: &CommitDetails, is_stash: bool) -> String {
         commit.author_name, commit.author_email
     )
     .unwrap();
+    let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
     writeln!(
         &mut result,
         "Date:   {}",
-        time_format::format_local_timestamp(
+        time_format::format_localized_timestamp(
             time::OffsetDateTime::from_unix_timestamp(commit.commit_timestamp).unwrap(),
             time::OffsetDateTime::now_utc(),
+            local_offset,
             time_format::TimestampFormat::MediumAbsolute,
         ),
     )

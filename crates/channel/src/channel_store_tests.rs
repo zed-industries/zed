@@ -237,7 +237,6 @@ fn init_test(cx: &mut App) -> Entity<ChannelStore> {
     let settings_store = SettingsStore::test(cx);
     cx.set_global(settings_store);
     release_channel::init(SemanticVersion::default(), cx);
-    client::init_settings(cx);
 
     let clock = Arc::new(FakeSystemClock::new());
     let http = FakeHttpClient::with_404_response();

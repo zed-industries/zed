@@ -110,18 +110,12 @@ impl Chunk {
     }
 
     pub fn floor_char_boundary(&self, index: usize) -> usize {
-        #[inline]
-        pub(crate) const fn is_utf8_char_boundary(u8: u8) -> bool {
-            // This is bit magic equivalent to: b < 128 || b >= 192
-            (u8 as i8) >= -0x40
-        }
-
         if index >= self.text.len() {
             self.text.len()
         } else {
             let mut i = index;
             while i > 0 {
-                if is_utf8_char_boundary(self.text.as_bytes()[i]) {
+                if util::is_utf8_char_boundary(self.text.as_bytes()[i]) {
                     break;
                 }
                 i -= 1;
@@ -423,25 +417,7 @@ impl<'a> ChunkSlice<'a> {
     }
 
     pub fn floor_char_boundary(&self, index: usize) -> usize {
-        #[inline]
-        pub(crate) const fn is_utf8_char_boundary(u8: u8) -> bool {
-            // This is bit magic equivalent to: b < 128 || b >= 192
-            (u8 as i8) >= -0x40
-        }
-
-        if index >= self.text.len() {
-            self.text.len()
-        } else {
-            let mut i = index;
-            while i > 0 {
-                if is_utf8_char_boundary(self.text.as_bytes()[i]) {
-                    break;
-                }
-                i -= 1;
-            }
-
-            i
-        }
+        self.text.floor_char_boundary(index)
     }
 
     #[inline(always)]

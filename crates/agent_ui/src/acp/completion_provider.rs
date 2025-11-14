@@ -109,6 +109,8 @@ impl ContextPickerCompletionProvider {
                 icon_path: Some(mode.icon().path().into()),
                 documentation: None,
                 source: project::CompletionSource::Custom,
+                match_start: None,
+                snippet_deduplication_key: None,
                 insert_text_mode: None,
                 // This ensures that when a user accepts this completion, the
                 // completion menu will still be shown after "@category " is
@@ -146,6 +148,8 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
+            match_start: None,
+            snippet_deduplication_key: None,
             icon_path: Some(icon_for_completion),
             confirm: Some(confirm_completion_callback(
                 thread_entry.title().clone(),
@@ -177,6 +181,8 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
+            match_start: None,
+            snippet_deduplication_key: None,
             icon_path: Some(icon_path),
             confirm: Some(confirm_completion_callback(
                 rule.title,
@@ -233,6 +239,8 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(completion_icon_path),
+            match_start: None,
+            snippet_deduplication_key: None,
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 file_name,
@@ -284,6 +292,8 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_path),
+            match_start: None,
+            snippet_deduplication_key: None,
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 symbol.name.into(),
@@ -316,6 +326,8 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_path),
+            match_start: None,
+            snippet_deduplication_key: None,
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 url_to_fetch.to_string().into(),
@@ -384,6 +396,8 @@ impl ContextPickerCompletionProvider {
             icon_path: Some(action.icon().path().into()),
             documentation: None,
             source: project::CompletionSource::Custom,
+            match_start: None,
+            snippet_deduplication_key: None,
             insert_text_mode: None,
             // This ensures that when a user accepts this completion, the
             // completion menu will still be shown after "@category " is
@@ -646,16 +660,14 @@ impl ContextPickerCompletionProvider {
         cx: &mut App,
     ) -> Vec<ContextPickerEntry> {
         let embedded_context = self.prompt_capabilities.borrow().embedded_context;
-        let mut entries = if embedded_context {
-            vec![
-                ContextPickerEntry::Mode(ContextPickerMode::File),
-                ContextPickerEntry::Mode(ContextPickerMode::Symbol),
-                ContextPickerEntry::Mode(ContextPickerMode::Thread),
-            ]
-        } else {
-            // File is always available, but we don't need a mode entry
-            vec![]
-        };
+        let mut entries = vec![
+            ContextPickerEntry::Mode(ContextPickerMode::File),
+            ContextPickerEntry::Mode(ContextPickerMode::Symbol),
+        ];
+
+        if embedded_context {
+            entries.push(ContextPickerEntry::Mode(ContextPickerMode::Thread));
+        }
 
         let has_selection = workspace
             .read(cx)
@@ -696,14 +708,18 @@ fn build_symbol_label(symbol_name: &str, file_name: &str, line: u32, cx: &App) -
 }
 
 fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: &App) -> CodeLabel {
-    let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
+    let path = cx
+        .theme()
+        .syntax()
+        .highlight_id("variable")
+        .map(HighlightId);
     let mut label = CodeLabelBuilder::default();
 
     label.push_str(file_name, None);
     label.push_str(" ", None);
 
     if let Some(directory) = directory {
-        label.push_str(directory, comment_id);
+        label.push_str(directory, path);
     }
 
     label.build()
@@ -772,6 +788,8 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 )),
                                 source: project::CompletionSource::Custom,
                                 icon_path: None,
+                                match_start: None,
+                                snippet_deduplication_key: None,
                                 insert_text_mode: None,
                                 confirm: Some(Arc::new({
                                     let editor = editor.clone();

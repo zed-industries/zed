@@ -754,7 +754,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
         use lsp::CompletionItemKind as Kind;
-        let len = item.label.len();
+        let label_len = item.label.len();
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
             Kind::CLASS | Kind::INTERFACE | Kind::ENUM => grammar.highlight_id_for_name("type"),
@@ -779,8 +779,9 @@ impl LspAdapter for TypeScriptLspAdapter {
         };
         Some(language::CodeLabel::filtered(
             text,
+            label_len,
             item.filter_text.as_deref(),
-            vec![(0..len, highlight_id)],
+            vec![(0..label_len, highlight_id)],
         ))
     }
 
@@ -1090,8 +1091,7 @@ mod tests {
     use std::path::Path;
 
     use gpui::{AppContext as _, BackgroundExecutor, TestAppContext};
-    use language::language_settings;
-    use project::{FakeFs, Project};
+    use project::FakeFs;
     use serde_json::json;
     use task::TaskTemplates;
     use unindent::Unindent;
@@ -1103,12 +1103,14 @@ mod tests {
 
     #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {
-        let language = crate::language(
-            "typescript",
-            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-        );
-
-        let text = r#"
+        for language in [
+            crate::language(
+                "typescript",
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            ),
+            crate::language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()),
+        ] {
+            let text = r#"
             function a() {
               // local variables are included
               let a1 = 1;
@@ -1121,35 +1123,38 @@ mod tests {
             // exported variables are included
             export const d = e;
         "#
-        .unindent();
+            .unindent();
 
-        let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
-        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
-        assert_eq!(
-            outline
-                .items
-                .iter()
-                .map(|item| (item.text.as_str(), item.depth))
-                .collect::<Vec<_>>(),
-            &[
-                ("function a()", 0),
-                ("let a1", 1),
-                ("async function a2()", 1),
-                ("let b", 0),
-                ("function getB()", 0),
-                ("const d", 0),
-            ]
-        );
+            let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+            let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
+            assert_eq!(
+                outline
+                    .items
+                    .iter()
+                    .map(|item| (item.text.as_str(), item.depth))
+                    .collect::<Vec<_>>(),
+                &[
+                    ("function a()", 0),
+                    ("let a1", 1),
+                    ("async function a2()", 1),
+                    ("let b", 0),
+                    ("function getB()", 0),
+                    ("const d", 0),
+                ]
+            );
+        }
     }
 
     #[gpui::test]
     async fn test_outline_with_destructuring(cx: &mut TestAppContext) {
-        let language = crate::language(
-            "typescript",
-            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-        );
-
-        let text = r#"
+        for language in [
+            crate::language(
+                "typescript",
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            ),
+            crate::language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()),
+        ] {
+            let text = r#"
             // Top-level destructuring
             const { a1, a2 } = a;
             const [b1, b2] = b;
@@ -1177,55 +1182,58 @@ mod tests {
               }
             }
         "#
-        .unindent();
+            .unindent();
 
-        let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
-        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
-        assert_eq!(
-            outline
-                .items
-                .iter()
-                .map(|item| (item.text.as_str(), item.depth))
-                .collect::<Vec<_>>(),
-            &[
-                ("const a1", 0),
-                ("const a2", 0),
-                ("const b1", 0),
-                ("const b2", 0),
-                ("const c1", 0),
-                ("const c2", 0),
-                ("const rest1", 0),
-                ("const d1", 0),
-                ("const e1", 0),
-                ("const h1", 0),
-                ("const rest2", 0),
-                ("function processData()", 0),
-                ("const c1", 1),
-                ("const c2", 1),
-                ("const d1", 1),
-                ("const d2", 1),
-                ("const d3", 1),
-                ("const g1", 1),
-                ("const x", 1),
-                ("const y", 1),
-                ("class DataHandler", 0),
-                ("method()", 1),
-                ("const a1", 2),
-                ("const a2", 2),
-                ("const b1", 2),
-                ("const b2", 2),
-            ]
-        );
+            let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+            let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
+            assert_eq!(
+                outline
+                    .items
+                    .iter()
+                    .map(|item| (item.text.as_str(), item.depth))
+                    .collect::<Vec<_>>(),
+                &[
+                    ("const a1", 0),
+                    ("const a2", 0),
+                    ("const b1", 0),
+                    ("const b2", 0),
+                    ("const c1", 0),
+                    ("const c2", 0),
+                    ("const rest1", 0),
+                    ("const d1", 0),
+                    ("const e1", 0),
+                    ("const h1", 0),
+                    ("const rest2", 0),
+                    ("function processData()", 0),
+                    ("const c1", 1),
+                    ("const c2", 1),
+                    ("const d1", 1),
+                    ("const d2", 1),
+                    ("const d3", 1),
+                    ("const g1", 1),
+                    ("const x", 1),
+                    ("const y", 1),
+                    ("class DataHandler", 0),
+                    ("method()", 1),
+                    ("const a1", 2),
+                    ("const a2", 2),
+                    ("const b1", 2),
+                    ("const b2", 2),
+                ]
+            );
+        }
     }
 
     #[gpui::test]
     async fn test_outline_with_object_properties(cx: &mut TestAppContext) {
-        let language = crate::language(
-            "typescript",
-            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-        );
-
-        let text = r#"
+        for language in [
+            crate::language(
+                "typescript",
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            ),
+            crate::language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()),
+        ] {
+            let text = r#"
             // Object with function properties
             const o = { m() {}, async n() {}, g: function* () {}, h: () => {}, k: function () {} };
 
@@ -1246,47 +1254,50 @@ mod tests {
                 return local;
             }
         "#
-        .unindent();
+            .unindent();
 
-        let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
-        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
-        assert_eq!(
-            outline
-                .items
-                .iter()
-                .map(|item| (item.text.as_str(), item.depth))
-                .collect::<Vec<_>>(),
-            &[
-                ("const o", 0),
-                ("m()", 1),
-                ("async n()", 1),
-                ("g", 1),
-                ("h", 1),
-                ("k", 1),
-                ("const p", 0),
-                ("p1", 1),
-                ("p2", 1),
-                ("p3", 1),
-                ("const q", 0),
-                ("r", 1),
-                ("s", 2),
-                ("t", 1),
-                ("function getData()", 0),
-                ("const local", 1),
-                ("x", 2),
-                ("y", 2),
-            ]
-        );
+            let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+            let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
+            assert_eq!(
+                outline
+                    .items
+                    .iter()
+                    .map(|item| (item.text.as_str(), item.depth))
+                    .collect::<Vec<_>>(),
+                &[
+                    ("const o", 0),
+                    ("m()", 1),
+                    ("async n()", 1),
+                    ("g", 1),
+                    ("h", 1),
+                    ("k", 1),
+                    ("const p", 0),
+                    ("p1", 1),
+                    ("p2", 1),
+                    ("p3", 1),
+                    ("const q", 0),
+                    ("r", 1),
+                    ("s", 2),
+                    ("t", 1),
+                    ("function getData()", 0),
+                    ("const local", 1),
+                    ("x", 2),
+                    ("y", 2),
+                ]
+            );
+        }
     }
 
     #[gpui::test]
     async fn test_outline_with_computed_property_names(cx: &mut TestAppContext) {
-        let language = crate::language(
-            "typescript",
-            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-        );
-
-        let text = r#"
+        for language in [
+            crate::language(
+                "typescript",
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            ),
+            crate::language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()),
+        ] {
+            let text = r#"
             // Symbols as object keys
             const sym = Symbol("test");
             const obj1 = {
@@ -1323,40 +1334,41 @@ mod tests {
                 }
             };
         "#
-        .unindent();
+            .unindent();
 
-        let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
-        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
-        assert_eq!(
-            outline
-                .items
-                .iter()
-                .map(|item| (item.text.as_str(), item.depth))
-                .collect::<Vec<_>>(),
-            &[
-                ("const sym", 0),
-                ("const obj1", 0),
-                ("[sym]", 1),
-                ("[Symbol(\"inline\")]", 1),
-                ("normalKey", 1),
-                ("enum Color", 0),
-                ("const obj2", 0),
-                ("[Color.Red]", 1),
-                ("[Color.Blue]", 1),
-                ("regularProp", 1),
-                ("const key", 0),
-                ("const obj3", 0),
-                ("[key]", 1),
-                ("[\"string\" + \"concat\"]", 1),
-                ("[1 + 1]", 1),
-                ("static", 1),
-                ("const obj4", 0),
-                ("[sym]", 1),
-                ("nested", 2),
-                ("regular", 1),
-                ("[key]", 2),
-            ]
-        );
+            let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+            let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
+            assert_eq!(
+                outline
+                    .items
+                    .iter()
+                    .map(|item| (item.text.as_str(), item.depth))
+                    .collect::<Vec<_>>(),
+                &[
+                    ("const sym", 0),
+                    ("const obj1", 0),
+                    ("[sym]", 1),
+                    ("[Symbol(\"inline\")]", 1),
+                    ("normalKey", 1),
+                    ("enum Color", 0),
+                    ("const obj2", 0),
+                    ("[Color.Red]", 1),
+                    ("[Color.Blue]", 1),
+                    ("regularProp", 1),
+                    ("const key", 0),
+                    ("const obj3", 0),
+                    ("[key]", 1),
+                    ("[\"string\" + \"concat\"]", 1),
+                    ("[1 + 1]", 1),
+                    ("static", 1),
+                    ("const obj4", 0),
+                    ("[sym]", 1),
+                    ("nested", 2),
+                    ("regular", 1),
+                    ("[key]", 2),
+                ]
+            );
+        }
     }
 
     #[gpui::test]
@@ -1419,8 +1431,6 @@ mod tests {
     async fn test_package_json_discovery(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         cx.update(|cx| {
             settings::init(cx);
-            Project::init_settings(cx);
-            language_settings::init(cx);
         });
 
         let package_json_1 = json!({
@@ -1580,8 +1590,6 @@ mod tests {
     ) {
         cx.update(|cx| {
             settings::init(cx);
-            Project::init_settings(cx);
-            language_settings::init(cx);
         });
 
         // Test case with all test runners present

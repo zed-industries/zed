@@ -179,6 +179,7 @@ When viewing files with changes, Zed displays diff hunks that can be expanded or
 | {#action git::Push}                       | {#kb git::Push}                       |
 | {#action git::ForcePush}                  | {#kb git::ForcePush}                  |
 | {#action git::Pull}                       | {#kb git::Pull}                       |
+| {#action git::PullRebase}                 | {#kb git::PullRebase}                 |
 | {#action git::Fetch}                      | {#kb git::Fetch}                      |
 | {#action git::Diff}                       | {#kb git::Diff}                       |
 | {#action git::Restore}                    | {#kb git::Restore}                    |

@@ -200,8 +200,6 @@ pub fn init(
     node_runtime: NodeRuntime,
     cx: &mut App,
 ) {
-    ExtensionSettings::register(cx);
-
     let store = cx.new(move |cx| {
         ExtensionStore::new(
             paths::extensions_dir().clone(),

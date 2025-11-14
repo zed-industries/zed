@@ -130,9 +130,17 @@ impl ContextServerConfiguration {
                     .ok()
                     .flatten()?;
 
-                let command = descriptor.command(worktree_store, cx).await.log_err()?;
-
-                Some(ContextServerConfiguration::Extension { command, settings })
+                match descriptor.command(worktree_store, cx).await {
+                    Ok(command) => {
+                        Some(ContextServerConfiguration::Extension { command, settings })
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to create context server configuration from settings: {e:#}"
+                        );
+                        None
+                    }
+                }
             }
         }
     }
@@ -1299,7 +1307,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            Project::init_settings(cx);
             let mut settings = ProjectSettings::get_global(cx).clone();
             for (id, config) in context_server_configurations {
                 settings.context_servers.insert(id, config);

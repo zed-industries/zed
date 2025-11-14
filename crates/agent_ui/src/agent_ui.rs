@@ -12,7 +12,6 @@ mod context_strip;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
-mod message_editor;
 mod profile_selector;
 mod slash_command;
 mod slash_command_picker;
@@ -31,7 +30,10 @@ use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{Action, App, Entity, SharedString, actions};
-use language::LanguageRegistry;
+use language::{
+    LanguageRegistry,
+    language_settings::{AllLanguageSettings, EditPredictionProvider},
+};
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
@@ -248,8 +250,6 @@ pub fn init(
     is_eval: bool,
     cx: &mut App,
 ) {
-    AgentSettings::register(cx);
-
     assistant_text_thread::init(client.clone(), cx);
     rules_library::init(cx);
     if !is_eval {
@@ -289,7 +289,25 @@ pub fn init(
 
 fn update_command_palette_filter(cx: &mut App) {
     let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
+    let agent_enabled = AgentSettings::get_global(cx).enabled;
+    let edit_prediction_provider = AllLanguageSettings::get_global(cx)
+        .edit_predictions
+        .provider;
+
     CommandPaletteFilter::update_global(cx, |filter, _| {
+        use editor::actions::{
+            AcceptEditPrediction, AcceptPartialEditPrediction, NextEditPrediction,
+            PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
+        };
+        let edit_prediction_actions = [
+            TypeId::of::<AcceptEditPrediction>(),
+            TypeId::of::<AcceptPartialEditPrediction>(),
+            TypeId::of::<ShowEditPrediction>(),
+            TypeId::of::<NextEditPrediction>(),
+            TypeId::of::<PreviousEditPrediction>(),
+            TypeId::of::<ToggleEditPrediction>(),
+        ];
+
         if disable_ai {
             filter.hide_namespace("agent");
             filter.hide_namespace("assistant");
@@ -298,42 +316,45 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.hide_namespace("zed_predict_onboarding");
             filter.hide_namespace("edit_prediction");
 
-            use editor::actions::{
-                AcceptEditPrediction, AcceptPartialEditPrediction, NextEditPrediction,
-                PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
-            };
-            let edit_prediction_actions = [
-                TypeId::of::<AcceptEditPrediction>(),
-                TypeId::of::<AcceptPartialEditPrediction>(),
-                TypeId::of::<ShowEditPrediction>(),
-                TypeId::of::<NextEditPrediction>(),
-                TypeId::of::<PreviousEditPrediction>(),
-                TypeId::of::<ToggleEditPrediction>(),
-            ];
             filter.hide_action_types(&edit_prediction_actions);
             filter.hide_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
         } else {
-            filter.show_namespace("agent");
+            if agent_enabled {
+                filter.show_namespace("agent");
+            } else {
+                filter.hide_namespace("agent");
+            }
+
             filter.show_namespace("assistant");
-            filter.show_namespace("copilot");
+
+            match edit_prediction_provider {
+                EditPredictionProvider::None => {
+                    filter.hide_namespace("edit_prediction");
+                    filter.hide_namespace("copilot");
+                    filter.hide_namespace("supermaven");
+                    filter.hide_action_types(&edit_prediction_actions);
+                }
+                EditPredictionProvider::Copilot => {
+                    filter.show_namespace("edit_prediction");
+                    filter.show_namespace("copilot");
+                    filter.hide_namespace("supermaven");
+                    filter.show_action_types(edit_prediction_actions.iter());
+                }
+                EditPredictionProvider::Supermaven => {
+                    filter.show_namespace("edit_prediction");
+                    filter.hide_namespace("copilot");
+                    filter.show_namespace("supermaven");
+                    filter.show_action_types(edit_prediction_actions.iter());
+                }
+                EditPredictionProvider::Zed | EditPredictionProvider::Codestral => {
+                    filter.show_namespace("edit_prediction");
+                    filter.hide_namespace("copilot");
+                    filter.hide_namespace("supermaven");
+                    filter.show_action_types(edit_prediction_actions.iter());
+                }
+            }
+
             filter.show_namespace("zed_predict_onboarding");
-
-            filter.show_namespace("edit_prediction");
-
-            use editor::actions::{
-                AcceptEditPrediction, AcceptPartialEditPrediction, NextEditPrediction,
-                PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
-            };
-            let edit_prediction_actions = [
-                TypeId::of::<AcceptEditPrediction>(),
-                TypeId::of::<AcceptPartialEditPrediction>(),
-                TypeId::of::<ShowEditPrediction>(),
-                TypeId::of::<NextEditPrediction>(),
-                TypeId::of::<PreviousEditPrediction>(),
-                TypeId::of::<ToggleEditPrediction>(),
-            ];
-            filter.show_action_types(edit_prediction_actions.iter());
-
             filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
         }
     });
@@ -422,4 +443,138 @@ fn register_slash_commands(cx: &mut App) {
         }
     })
     .detach();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
+    use command_palette_hooks::CommandPaletteFilter;
+    use editor::actions::AcceptEditPrediction;
+    use gpui::{BorrowAppContext, TestAppContext, px};
+    use project::DisableAiSettings;
+    use settings::{
+        DefaultAgentView, DockPosition, NotifyWhenAgentWaiting, Settings, SettingsStore,
+    };
+
+    #[gpui::test]
+    fn test_agent_command_palette_visibility(cx: &mut TestAppContext) {
+        // Init settings
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            command_palette_hooks::init(cx);
+            AgentSettings::register(cx);
+            DisableAiSettings::register(cx);
+            AllLanguageSettings::register(cx);
+        });
+
+        let agent_settings = AgentSettings {
+            enabled: true,
+            button: true,
+            dock: DockPosition::Right,
+            default_width: px(300.),
+            default_height: px(600.),
+            default_model: None,
+            inline_assistant_model: None,
+            commit_message_model: None,
+            thread_summary_model: None,
+            inline_alternatives: vec![],
+            default_profile: AgentProfileId::default(),
+            default_view: DefaultAgentView::Thread,
+            profiles: Default::default(),
+            always_allow_tool_actions: false,
+            notify_when_agent_waiting: NotifyWhenAgentWaiting::default(),
+            play_sound_when_agent_done: false,
+            single_file_review: false,
+            model_parameters: vec![],
+            preferred_completion_mode: CompletionMode::Normal,
+            enable_feedback: false,
+            expand_edit_card: true,
+            expand_terminal_card: true,
+            use_modifier_to_send: true,
+            message_editor_min_lines: 1,
+        };
+
+        cx.update(|cx| {
+            AgentSettings::override_global(agent_settings.clone(), cx);
+            DisableAiSettings::override_global(DisableAiSettings { disable_ai: false }, cx);
+
+            // Initial update
+            update_command_palette_filter(cx);
+        });
+
+        // Assert visible
+        cx.update(|cx| {
+            let filter = CommandPaletteFilter::try_global(cx).unwrap();
+            assert!(
+                !filter.is_hidden(&NewThread),
+                "NewThread should be visible by default"
+            );
+        });
+
+        // Disable agent
+        cx.update(|cx| {
+            let mut new_settings = agent_settings.clone();
+            new_settings.enabled = false;
+            AgentSettings::override_global(new_settings, cx);
+
+            // Trigger update
+            update_command_palette_filter(cx);
+        });
+
+        // Assert hidden
+        cx.update(|cx| {
+            let filter = CommandPaletteFilter::try_global(cx).unwrap();
+            assert!(
+                filter.is_hidden(&NewThread),
+                "NewThread should be hidden when agent is disabled"
+            );
+        });
+
+        // Test EditPredictionProvider
+        // Enable EditPredictionProvider::Copilot
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.project
+                        .all_languages
+                        .features
+                        .get_or_insert(Default::default())
+                        .edit_prediction_provider = Some(EditPredictionProvider::Copilot);
+                });
+            });
+            update_command_palette_filter(cx);
+        });
+
+        cx.update(|cx| {
+            let filter = CommandPaletteFilter::try_global(cx).unwrap();
+            assert!(
+                !filter.is_hidden(&AcceptEditPrediction),
+                "EditPrediction should be visible when provider is Copilot"
+            );
+        });
+
+        // Disable EditPredictionProvider (None)
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.project
+                        .all_languages
+                        .features
+                        .get_or_insert(Default::default())
+                        .edit_prediction_provider = Some(EditPredictionProvider::None);
+                });
+            });
+            update_command_palette_filter(cx);
+        });
+
+        cx.update(|cx| {
+            let filter = CommandPaletteFilter::try_global(cx).unwrap();
+            assert!(
+                filter.is_hidden(&AcceptEditPrediction),
+                "EditPrediction should be hidden when provider is None"
+            );
+        });
+    }
 }

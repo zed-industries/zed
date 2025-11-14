@@ -1,75 +1,17 @@
 #!/usr/bin/env bash
 
-# Based on the template in: https://docs.digitalocean.com/reference/api/spaces-api/
 bash -euo pipefail
 source script/lib/blob-store.sh
 
-allowed_targets=("linux-targz" "macos" "freebsd")
-is_allowed_target() {
-    for val in "${allowed_targets[@]}"; do
-        if [[ "$1" == "$val" ]]; then
-            return 0
-        fi
-    done
-    return 1
-}
-
-allowed_arch=("x86_64" "aarch64")
-is_allowed_arch() {
-    for val in "${allowed_arch[@]}"; do
-        if [[ "$1" == "$val" ]]; then
-            return 0
-        fi
-    done
-    return 1
-}
-
-if is_allowed_target "$1"; then
-    target="$1"
-else
-    echo "Error: Target '$1' is not allowed"
-    echo "Usage: $0 [${allowed_targets[*]}] {arch}"
-    exit 1
-fi
-if is_allowed_arch "$2"; then
-    arch="$2"
-else
-    echo "Error: Arch '$2' is not allowed"
-    echo "Usage: $0 $1 [${allowed_arch[*]}]"
-    exit 1
-fi
-echo "Uploading nightly for target: $target $arch"
-
 bucket_name="zed-nightly-host"
 
-sha=$(git rev-parse HEAD)
-echo ${sha} > target/latest-sha
-
-find target -type f -name "zed-remote-server-*.gz" -print0 | while IFS= read -r -d '' file_to_upload; do
-    upload_to_blob_store $bucket_name "$file_to_upload" "nightly/$(basename "$file_to_upload")"
+for file_to_upload in ./release-artifacts/*; do
+    [ -f "$file_to_upload" ] || continue
+    upload_to_blob_store_public $bucket_name "$file_to_upload" "nightly/$(basename "$file_to_upload")"
+    upload_to_blob_store_public $bucket_name "$file_to_upload" "${GITHUB_SHA}/$(basename "$file_to_upload")"
     rm -f "$file_to_upload"
 done
 
-case "$target" in
-    macos)
-        upload_to_blob_store $bucket_name "target/$arch-apple-darwin/release/Zed.dmg" "nightly/Zed-$arch.dmg"
-        upload_to_blob_store $bucket_name "target/latest-sha" "nightly/latest-sha"
-        rm -f "target/$arch-apple-darwin/release/Zed.dmg" "target/release/Zed.dmg"
-        rm -f "target/latest-sha"
-        ;;
-    linux-targz)
-        find . -type f -name "zed-*.tar.gz" -print0 | while IFS= read -r -d '' file_to_upload; do
-            upload_to_blob_store $bucket_name "$file_to_upload" "nightly/$(basename "$file_to_upload")"
-            rm -f "$file_to_upload"
-        done
-        upload_to_blob_store $bucket_name "target/latest-sha" "nightly/latest-sha-linux-targz"
-        rm -f "target/latest-sha"
-        ;;
-    freebsd)
-        echo "No freebsd client build (yet)."
-        ;;
-    *)
-        echo "Error: Unknown target '$target'"
-        exit 1
-        ;;
-esac
+sha=$(git rev-parse HEAD)
+echo -n ${sha} > ./release-artifacts/latest-sha
+upload_to_blob_store_public $bucket_name "release-artifacts/latest-sha" "nightly/latest-sha"

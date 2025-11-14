@@ -76,26 +76,20 @@ impl Vim {
                         Point::new(row, snapshot.line_len(multi_buffer::MultiBufferRow(row)))
                     };
 
-                    let number_result = if !selection.is_empty() {
-                        find_number_in_range(&snapshot, start, end)
+                    let find_result = if !selection.is_empty() {
+                        find_target(&snapshot, start, end, true)
                     } else {
-                        find_number(&snapshot, start)
+                        find_target(&snapshot, start, end, false)
                     };
 
-                    if let Some((range, num, radix)) = number_result {
+                    if let Some((range, target, radix)) = find_result {
                         let replace = match radix {
-                            10 => increment_decimal_string(&num, delta),
-                            16 => increment_hex_string(&num, delta),
-                            2 => increment_binary_string(&num, delta),
+                            10 => increment_decimal_string(&target, delta),
+                            16 => increment_hex_string(&target, delta),
+                            2 => increment_binary_string(&target, delta),
+                            0 => increment_toggle_string(&target),
                             _ => unreachable!(),
                         };
-                        delta += step as i64;
-                        edits.push((range.clone(), replace));
-                        if selection.is_empty() {
-                            new_anchors.push((false, snapshot.anchor_after(range.end)))
-                        }
-                    } else if let Some((range, boolean)) = find_boolean(&snapshot, start) {
-                        let replace = toggle_boolean(&boolean);
                         delta += step as i64;
                         edits.push((range.clone(), replace));
                         if selection.is_empty() {
@@ -200,83 +194,127 @@ fn increment_binary_string(num: &str, delta: i64) -> String {
     format!("{:0width$b}", result, width = num.len())
 }
 
-fn find_number_in_range(
+fn find_target(
     snapshot: &MultiBufferSnapshot,
     start: Point,
     end: Point,
+    need_range: bool,
 ) -> Option<(Range<Point>, String, u32)> {
     let start_offset = start.to_offset(snapshot);
     let end_offset = end.to_offset(snapshot);
 
     let mut offset = start_offset;
+    let mut first_char_is_num = snapshot
+        .chars_at(offset)
+        .next()
+        .map_or(false, |ch| ch.is_ascii_hexdigit());
+    let mut pre_char = String::new();
 
     // Backward scan to find the start of the number, but stop at start_offset
-    for ch in snapshot.reversed_chars_at(offset) {
-        if ch.is_ascii_hexdigit() || ch == '-' || ch == 'b' || ch == 'x' {
-            if offset == 0 {
-                break;
-            }
-            offset -= ch.len_utf8();
-            if offset < start_offset {
-                offset = start_offset;
-                break;
-            }
-        } else {
+    for ch in snapshot.reversed_chars_at(offset + 1) {
+        // Search boundaries
+        if offset == 0 || ch.is_whitespace() || (need_range && offset <= start_offset) {
             break;
         }
+
+        // Avoid the influence of hexadecimal letters
+        if first_char_is_num
+            && !ch.is_ascii_hexdigit()
+            && (ch != 'b' && ch != 'B')
+            && (ch != 'x' && ch != 'X')
+            && ch != '-'
+        {
+            // Used to determine if the initial character is a number.
+            if is_numeric_string(&pre_char) {
+                break;
+            } else {
+                first_char_is_num = false;
+            }
+        }
+
+        pre_char.insert(0, ch);
+        offset -= ch.len_utf8();
     }
 
     let mut begin = None;
-    let mut end_num = None;
-    let mut num = String::new();
+    let mut end = None;
+    let mut target = String::new();
     let mut radix = 10;
+    let mut is_num = false;
 
     let mut chars = snapshot.chars_at(offset).peekable();
 
     while let Some(ch) = chars.next() {
-        if offset >= end_offset {
+        if need_range && offset >= end_offset {
             break; // stop at end of selection
         }
 
-        if num == "0" && ch == 'b' && chars.peek().is_some() && chars.peek().unwrap().is_digit(2) {
+        if target == "0"
+            && (ch == 'b' || ch == 'B')
+            && chars.peek().is_some()
+            && chars.peek().unwrap().is_digit(2)
+        {
             radix = 2;
             begin = None;
-            num = String::new();
-        } else if num == "0"
-            && ch == 'x'
+            target = String::new();
+        } else if target == "0"
+            && (ch == 'x' || ch == 'X')
             && chars.peek().is_some()
             && chars.peek().unwrap().is_ascii_hexdigit()
         {
             radix = 16;
             begin = None;
-            num = String::new();
-        }
-
-        if ch.is_digit(radix)
-            || (begin.is_none()
+            target = String::new();
+        } else if ch == '.' {
+            is_num = false;
+            begin = None;
+            target = String::new();
+        } else if ch.is_digit(radix)
+            || ((begin.is_none() || !is_num)
                 && ch == '-'
                 && chars.peek().is_some()
                 && chars.peek().unwrap().is_digit(radix))
         {
+            if !is_num {
+                is_num = true;
+                begin = Some(offset);
+                target = String::new();
+            } else if begin.is_none() {
+                begin = Some(offset);
+            }
+            target.push(ch);
+        } else if ch.is_ascii_alphabetic() && !is_num {
             if begin.is_none() {
                 begin = Some(offset);
             }
-            num.push(ch);
-        } else if begin.is_some() {
-            end_num = Some(offset);
+            target.push(ch);
+        } else if begin.is_some() && (is_num || !is_num && is_toggle_word(&target)) {
+            // End of matching
+            end = Some(offset);
             break;
         } else if ch == '\n' {
             break;
+        } else {
+            // To match the next word
+            is_num = false;
+            begin = None;
+            target = String::new();
         }
 
         offset += ch.len_utf8();
     }
 
-    if let Some(begin) = begin {
-        let end_num = end_num.unwrap_or(offset);
+    if let Some(begin) = begin
+        && (is_num || !is_num && is_toggle_word(&target))
+    {
+        if !is_num {
+            radix = 0;
+        }
+
+        let end = end.unwrap_or(offset);
         Some((
-            begin.to_point(snapshot)..end_num.to_point(snapshot),
-            num,
+            begin.to_point(snapshot)..end.to_point(snapshot),
+            target,
             radix,
         ))
     } else {
@@ -284,133 +322,38 @@ fn find_number_in_range(
     }
 }
 
-fn find_number(
-    snapshot: &MultiBufferSnapshot,
-    start: Point,
-) -> Option<(Range<Point>, String, u32)> {
-    let mut offset = start.to_offset(snapshot);
-
-    let ch0 = snapshot.chars_at(offset).next();
-    if ch0.as_ref().is_some_and(char::is_ascii_hexdigit) || matches!(ch0, Some('-' | 'b' | 'x')) {
-        // go backwards to the start of any number the selection is within
-        for ch in snapshot.reversed_chars_at(offset) {
-            if ch.is_ascii_hexdigit() || ch == '-' || ch == 'b' || ch == 'x' {
-                offset -= ch.len_utf8();
-                continue;
-            }
-            break;
-        }
+fn is_numeric_string(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
     }
 
-    let mut begin = None;
-    let mut end = None;
-    let mut num = String::new();
-    let mut radix = 10;
-
-    let mut chars = snapshot.chars_at(offset).peekable();
-    // find the next number on the line (may start after the original cursor position)
-    while let Some(ch) = chars.next() {
-        if num == "0" && ch == 'b' && chars.peek().is_some() && chars.peek().unwrap().is_digit(2) {
-            radix = 2;
-            begin = None;
-            num = String::new();
-        }
-        if num == "0"
-            && ch == 'x'
-            && chars.peek().is_some()
-            && chars.peek().unwrap().is_ascii_hexdigit()
-        {
-            radix = 16;
-            begin = None;
-            num = String::new();
-        }
-
-        if ch.is_digit(radix)
-            || (begin.is_none()
-                && ch == '-'
-                && chars.peek().is_some()
-                && chars.peek().unwrap().is_digit(radix))
-        {
-            if begin.is_none() {
-                begin = Some(offset);
-            }
-            num.push(ch);
-        } else if begin.is_some() {
-            end = Some(offset);
-            break;
-        } else if ch == '\n' {
-            break;
-        }
-        offset += ch.len_utf8();
-    }
-    if let Some(begin) = begin {
-        let end = end.unwrap_or(offset);
-        Some((begin.to_point(snapshot)..end.to_point(snapshot), num, radix))
+    let (_, rest) = if let Some(r) = s.strip_prefix('-') {
+        (true, r)
     } else {
-        None
+        (false, s)
+    };
+
+    if rest.is_empty() {
+        return false;
+    }
+
+    if let Some(digits) = rest.strip_prefix("0b").or_else(|| rest.strip_prefix("0B")) {
+        digits.is_empty() || digits.chars().all(|c| c == '0' || c == '1')
+    } else if let Some(digits) = rest.strip_prefix("0x").or_else(|| rest.strip_prefix("0X")) {
+        digits.is_empty() || digits.chars().all(|c| c.is_ascii_hexdigit())
+    } else {
+        !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit())
     }
 }
 
-fn find_boolean(snapshot: &MultiBufferSnapshot, start: Point) -> Option<(Range<Point>, String)> {
-    let mut offset = start.to_offset(snapshot);
-
-    let ch0 = snapshot.chars_at(offset).next();
-    if ch0.as_ref().is_some_and(|c| c.is_ascii_alphabetic()) {
-        for ch in snapshot.reversed_chars_at(offset) {
-            if ch.is_ascii_alphabetic() {
-                offset -= ch.len_utf8();
-                continue;
-            }
-            break;
-        }
-    }
-
-    let mut begin = None;
-    let mut end = None;
-    let mut word = String::new();
-
-    let chars = snapshot.chars_at(offset);
-
-    for ch in chars {
-        if ch.is_ascii_alphabetic() {
-            if begin.is_none() {
-                begin = Some(offset);
-            }
-            word.push(ch);
-        } else if begin.is_some() {
-            end = Some(offset);
-            let word_lower = word.to_lowercase();
-            if BOOLEAN_PAIRS
-                .iter()
-                .any(|(a, b)| word_lower == *a || word_lower == *b)
-            {
-                return Some((
-                    begin.unwrap().to_point(snapshot)..end.unwrap().to_point(snapshot),
-                    word,
-                ));
-            }
-            begin = None;
-            end = None;
-            word = String::new();
-        } else if ch == '\n' {
-            break;
-        }
-        offset += ch.len_utf8();
-    }
-    if let Some(begin) = begin {
-        let end = end.unwrap_or(offset);
-        let word_lower = word.to_lowercase();
-        if BOOLEAN_PAIRS
-            .iter()
-            .any(|(a, b)| word_lower == *a || word_lower == *b)
-        {
-            return Some((begin.to_point(snapshot)..end.to_point(snapshot), word));
-        }
-    }
-    None
+fn is_toggle_word(word: &str) -> bool {
+    let lower = word.to_lowercase();
+    BOOLEAN_PAIRS
+        .iter()
+        .any(|(a, b)| lower == *a || lower == *b)
 }
 
-fn toggle_boolean(boolean: &str) -> String {
+fn increment_toggle_string(boolean: &str) -> String {
     let lower = boolean.to_lowercase();
 
     let target = BOOLEAN_PAIRS
@@ -802,7 +745,7 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_toggle_boolean(cx: &mut gpui::TestAppContext) {
+    async fn test_increment_toggle(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.set_state("let enabled = trˇue;", Mode::Normal);
@@ -858,6 +801,23 @@ mod test {
         cx.set_state("let enabled = Onˇ;", Mode::Normal);
         cx.simulate_keystrokes("v b ctrl-a");
         cx.assert_state("let enabled = ˇOff;", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_increment_order(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("aaˇa false 1 2 3", Mode::Normal);
+        cx.simulate_keystrokes("ctrl-a");
+        cx.assert_state("aaa truˇe 1 2 3", Mode::Normal);
+
+        cx.set_state("aaˇa 1 false 2 3", Mode::Normal);
+        cx.simulate_keystrokes("ctrl-a");
+        cx.assert_state("aaa ˇ2 false 2 3", Mode::Normal);
+
+        cx.set_state("trueˇ 1 2 3", Mode::Normal);
+        cx.simulate_keystrokes("ctrl-a");
+        cx.assert_state("true ˇ2 2 3", Mode::Normal);
     }
 
     #[gpui::test]

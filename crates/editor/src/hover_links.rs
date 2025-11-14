@@ -116,7 +116,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let hovered_link_modifier = Editor::multi_cursor_modifier(false, &modifiers, cx);
+        let hovered_link_modifier = Editor::is_cmd_or_ctrl_pressed(&modifiers, cx);
         if !hovered_link_modifier || self.has_pending_selection() {
             self.hide_hovered_link(cx);
             return;
@@ -241,8 +241,8 @@ impl Editor {
                         }
                     })
                     .collect();
-                let navigate_task =
-                    self.navigate_to_hover_links(None, links, modifiers.alt, window, cx);
+                let split = Self::is_alt_pressed(&modifiers, cx);
+                let navigate_task = self.navigate_to_hover_links(None, links, split, window, cx);
                 self.select(SelectPhase::End, window, cx);
                 return navigate_task;
             }
@@ -261,7 +261,8 @@ impl Editor {
         );
 
         let navigate_task = if point.as_valid().is_some() {
-            match (modifiers.shift, modifiers.alt) {
+            let split = Self::is_alt_pressed(&modifiers, cx);
+            match (modifiers.shift, split) {
                 (true, true) => {
                     self.go_to_type_definition_split(&GoToTypeDefinitionSplit, window, cx)
                 }

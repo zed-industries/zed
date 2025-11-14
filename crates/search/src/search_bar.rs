@@ -46,7 +46,6 @@ pub(crate) fn input_base_styles(border_color: Hsla, map: impl FnOnce(Div) -> Div
         .h_8()
         .pl_2()
         .pr_1()
-        .py_1()
         .border_1()
         .border_color(border_color)
         .rounded_md()

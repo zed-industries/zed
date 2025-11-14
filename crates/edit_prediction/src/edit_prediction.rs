@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
 use client::EditPredictionUsage;
 use gpui::{App, Context, Entity, SharedString};
@@ -19,7 +19,7 @@ pub enum EditPrediction {
     /// Edits within the buffer that requested the prediction
     Local {
         id: Option<SharedString>,
-        edits: Vec<(Range<language::Anchor>, String)>,
+        edits: Vec<(Range<language::Anchor>, Arc<str>)>,
         edit_preview: Option<language::EditPreview>,
     },
     /// Jump to a different file from the one that requested the prediction
@@ -104,6 +104,7 @@ pub trait EditPredictionProvider: 'static + Sized {
     );
     fn accept(&mut self, cx: &mut Context<Self>);
     fn discard(&mut self, cx: &mut Context<Self>);
+    fn did_show(&mut self, _cx: &mut Context<Self>) {}
     fn suggest(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -142,6 +143,7 @@ pub trait EditPredictionProviderHandle {
         direction: Direction,
         cx: &mut App,
     );
+    fn did_show(&self, cx: &mut App);
     fn accept(&self, cx: &mut App);
     fn discard(&self, cx: &mut App);
     fn suggest(
@@ -233,6 +235,10 @@ where
         self.update(cx, |this, cx| this.discard(cx))
     }
 
+    fn did_show(&self, cx: &mut App) {
+        self.update(cx, |this, cx| this.did_show(cx))
+    }
+
     fn suggest(
         &self,
         buffer: &Entity<Buffer>,
@@ -248,8 +254,8 @@ where
 pub fn interpolate_edits(
     old_snapshot: &BufferSnapshot,
     new_snapshot: &BufferSnapshot,
-    current_edits: &[(Range<Anchor>, String)],
-) -> Option<Vec<(Range<Anchor>, String)>> {
+    current_edits: &[(Range<Anchor>, Arc<str>)],
+) -> Option<Vec<(Range<Anchor>, Arc<str>)>> {
     let mut edits = Vec::new();
 
     let mut model_edits = current_edits.iter().peekable();
@@ -274,7 +280,7 @@ pub fn interpolate_edits(
                 if let Some(model_suffix) = model_new_text.strip_prefix(&user_new_text) {
                     if !model_suffix.is_empty() {
                         let anchor = old_snapshot.anchor_after(user_edit.old.end);
-                        edits.push((anchor..anchor, model_suffix.to_string()));
+                        edits.push((anchor..anchor, model_suffix.into()));
                     }
 
                     model_edits.next();

@@ -67,13 +67,13 @@ pub trait RemoteClientDelegate: Send + Sync {
         tx: oneshot::Sender<EncryptedPassword>,
         cx: &mut AsyncApp,
     );
-    fn get_download_params(
+    fn get_download_url(
         &self,
         platform: RemotePlatform,
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<Option<(String, String)>>>;
+    ) -> Task<Result<Option<String>>>;
     fn download_server_binary_locally(
         &self,
         platform: RemotePlatform,
@@ -1669,13 +1669,13 @@ mod fake {
             unreachable!()
         }
 
-        fn get_download_params(
+        fn get_download_url(
             &self,
             _platform: RemotePlatform,
             _release_channel: ReleaseChannel,
             _version: Option<SemanticVersion>,
             _cx: &mut AsyncApp,
-        ) -> Task<Result<Option<(String, String)>>> {
+        ) -> Task<Result<Option<String>>> {
             unreachable!()
         }
 

@@ -16,9 +16,6 @@ pub(crate) trait DiagnosticsToolbarEditor: Send + Sync {
     /// Toggles whether warning diagnostics should be displayed by the
     /// diagnostics editor.
     fn toggle_warnings(&self, window: &mut Window, cx: &mut App);
-    /// Indicates whether any of the excerpts displayed by the diagnostics
-    /// editor are stale.
-    fn has_stale_excerpts(&self, cx: &App) -> bool;
     /// Indicates whether the diagnostics editor is currently updating the
     /// diagnostics.
     fn is_updating(&self, cx: &App) -> bool;
@@ -37,14 +34,12 @@ pub(crate) trait DiagnosticsToolbarEditor: Send + Sync {
 
 impl Render for ToolbarControls {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut has_stale_excerpts = false;
         let mut include_warnings = false;
         let mut is_updating = false;
 
         match &self.editor {
             Some(editor) => {
                 include_warnings = editor.include_warnings(cx);
-                has_stale_excerpts = editor.has_stale_excerpts(cx);
                 is_updating = editor.is_updating(cx);
             }
             None => {}
@@ -86,7 +81,6 @@ impl Render for ToolbarControls {
                         IconButton::new("refresh-diagnostics", IconName::ArrowCircle)
                             .icon_color(Color::Info)
                             .shape(IconButtonShape::Square)
-                            .disabled(!has_stale_excerpts)
                             .tooltip(Tooltip::for_action_title(
                                 "Refresh diagnostics",
                                 &ToggleDiagnosticsRefresh,

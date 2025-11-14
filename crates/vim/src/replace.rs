@@ -1,5 +1,5 @@
 use crate::{
-    Vim,
+    Operator, Vim,
     motion::{self, Motion},
     object::Object,
     state::Mode,
@@ -8,7 +8,7 @@ use editor::{
     Anchor, Bias, Editor, EditorSnapshot, SelectionEffects, ToOffset, ToPoint,
     display_map::ToDisplayPoint,
 };
-use gpui::{Context, Window, actions};
+use gpui::{ClipboardEntry, Context, Window, actions};
 use language::{Point, SelectionGoal};
 use std::ops::Range;
 use std::sync::Arc;
@@ -278,10 +278,27 @@ impl Vim {
             );
         }
     }
+
+    /// Pastes the clipboard contents, replacing the same number of characters
+    /// as the clipboard's contents.
+    pub fn paste_replace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let clipboard_text =
+            cx.read_from_clipboard()
+                .and_then(|item| match item.entries().first() {
+                    Some(ClipboardEntry::String(text)) => Some(text.text().to_string()),
+                    _ => None,
+                });
+
+        if let Some(text) = clipboard_text {
+            self.push_operator(Operator::Replace, window, cx);
+            self.normal_replace(Arc::from(text), window, cx);
+        }
+    }
 }
 
 #[cfg(test)]
 mod test {
+    use gpui::ClipboardItem;
     use indoc::indoc;
 
     use crate::{
@@ -520,5 +537,23 @@ mod test {
             let highlights = editor.all_text_background_highlights(window, cx);
             assert_eq!(0, highlights.len());
         });
+    }
+
+    #[gpui::test]
+    async fn test_paste_replace(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(indoc! {"ˇ123"}, Mode::Replace);
+        cx.write_to_clipboard(ClipboardItem::new_string("456".to_string()));
+        cx.dispatch_action(editor::actions::Paste);
+        cx.assert_state(indoc! {"45ˇ6"}, Mode::Replace);
+
+        // If the clipboard's contents length is greater than the remaining text
+        // length, nothing sould be replace and cursor should remain in the same
+        // position.
+        cx.set_state(indoc! {"ˇ123"}, Mode::Replace);
+        cx.write_to_clipboard(ClipboardItem::new_string("4567".to_string()));
+        cx.dispatch_action(editor::actions::Paste);
+        cx.assert_state(indoc! {"ˇ123"}, Mode::Replace);
     }
 }

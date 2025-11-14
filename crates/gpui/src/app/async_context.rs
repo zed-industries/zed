@@ -176,7 +176,7 @@ impl AsyncApp {
         lock.open_window(options, build_root_view)
     }
 
-    /// Schedule a future to be polled in the background.
+    /// Schedule a future to be polled in the foreground.
     #[track_caller]
     pub fn spawn<AsyncFn, R>(&self, f: AsyncFn) -> Task<R>
     where

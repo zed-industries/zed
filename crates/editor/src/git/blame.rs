@@ -602,6 +602,7 @@ impl GitBlame {
     }
 
     fn regenerate_on_edit(&mut self, cx: &mut Context<Self>) {
+        // todo(lw): hot foreground spawn
         self.regenerate_on_edit_task = cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL)
@@ -762,11 +763,6 @@ mod tests {
             cx.set_global(settings);
 
             theme::init(theme::LoadThemes::JustBase, cx);
-
-            language::init(cx);
-            client::init_settings(cx);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
 
             crate::init(cx);
         });

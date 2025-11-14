@@ -800,22 +800,6 @@ impl Default for PathMatcher {
     }
 }
 
-/// Custom character comparison that prioritizes lowercase for same letters
-fn compare_chars(a: char, b: char) -> Ordering {
-    // First compare case-insensitive
-    match a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()) {
-        Ordering::Equal => {
-            // If same letter, prioritize lowercase (lowercase < uppercase)
-            match (a.is_ascii_lowercase(), b.is_ascii_lowercase()) {
-                (true, false) => Ordering::Less,    // lowercase comes first
-                (false, true) => Ordering::Greater, // uppercase comes after
-                _ => Ordering::Equal,               // both same case or both non-ascii
-            }
-        }
-        other => other,
-    }
-}
-
 /// Compares two sequences of consecutive digits for natural sorting.
 ///
 /// This function is a core component of natural sorting that handles numeric comparison
@@ -916,21 +900,25 @@ where
 /// * Numbers are compared by numeric value, not character by character
 /// * Leading zeros affect ordering when numeric values are equal
 /// * Can handle numbers larger than u128::MAX (falls back to string comparison)
+/// * When strings are equal case-insensitively, lowercase is prioritized (lowercase < uppercase)
 ///
 /// # Algorithm
 ///
 /// The function works by:
-/// 1. Processing strings character by character
+/// 1. Processing strings character by character in a case-insensitive manner
 /// 2. When encountering digits, treating consecutive digits as a single number
 /// 3. Comparing numbers by their numeric value rather than lexicographically
-/// 4. For non-numeric characters, using case-sensitive comparison with lowercase priority
+/// 4. For non-numeric characters, using case-insensitive comparison
+/// 5. If everything is equal case-insensitively, using case-sensitive comparison as final tie-breaker
 pub fn natural_sort(a: &str, b: &str) -> Ordering {
     let mut a_iter = a.chars().peekable();
     let mut b_iter = b.chars().peekable();
 
     loop {
         match (a_iter.peek(), b_iter.peek()) {
-            (None, None) => return Ordering::Equal,
+            (None, None) => {
+                return b.cmp(a);
+            }
             (None, _) => return Ordering::Less,
             (_, None) => return Ordering::Greater,
             (Some(&a_char), Some(&b_char)) => {
@@ -940,7 +928,10 @@ pub fn natural_sort(a: &str, b: &str) -> Ordering {
                         ordering => return ordering,
                     }
                 } else {
-                    match compare_chars(a_char, b_char) {
+                    match a_char
+                        .to_ascii_lowercase()
+                        .cmp(&b_char.to_ascii_lowercase())
+                    {
                         Ordering::Equal => {
                             a_iter.next();
                             b_iter.next();
@@ -952,6 +943,7 @@ pub fn natural_sort(a: &str, b: &str) -> Ordering {
         }
     }
 }
+
 pub fn compare_rel_paths(
     (path_a, a_is_file): (&RelPath, bool),
     (path_b, b_is_file): (&RelPath, bool),
@@ -1242,6 +1234,33 @@ mod tests {
                 (Path::new("test_DIRS/BAR"), true),
                 (Path::new("test_DIRS/foo_1"), true),
                 (Path::new("test_DIRS/foo_2"), true),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_paths_mixed_case_numeric_ordering() {
+        let mut entries = [
+            (Path::new(".config"), false),
+            (Path::new("Dir1"), false),
+            (Path::new("dir01"), false),
+            (Path::new("dir2"), false),
+            (Path::new("Dir02"), false),
+            (Path::new("dir10"), false),
+            (Path::new("Dir10"), false),
+        ];
+
+        entries.sort_by(|&a, &b| compare_paths(a, b));
+
+        let ordered: Vec<&str> = entries
+            .iter()
+            .map(|(path, _)| path.to_str().unwrap())
+            .collect();
+
+        assert_eq!(
+            ordered,
+            vec![
+                ".config", "Dir1", "dir01", "dir2", "Dir02", "dir10", "Dir10"
             ]
         );
     }
@@ -1574,6 +1593,21 @@ mod tests {
     }
 
     #[perf]
+    fn file_in_dirs() {
+        let path = Path::new("/work/.env");
+        let path_matcher = PathMatcher::new(&["**/.env".to_owned()], PathStyle::Posix).unwrap();
+        assert!(
+            path_matcher.is_match(path),
+            "Path matcher should match {path:?}"
+        );
+        let path = Path::new("/work/package.json");
+        assert!(
+            !path_matcher.is_match(path),
+            "Path matcher should not match {path:?}"
+        );
+    }
+
+    #[perf]
     fn project_search() {
         let path = Path::new("/Users/someonetoignore/work/zed/zed.dev/node_modules");
         let path_matcher =
@@ -1902,10 +1936,25 @@ mod tests {
             ),
             Ordering::Less
         );
+    }
 
-        // Mixed case with numbers
-        assert_eq!(natural_sort("File1", "file2"), Ordering::Greater);
+    #[perf]
+    fn test_natural_sort_case_sensitive() {
+        // Numerically smaller values come first.
+        assert_eq!(natural_sort("File1", "file2"), Ordering::Less);
         assert_eq!(natural_sort("file1", "File2"), Ordering::Less);
+
+        // Numerically equal values: the case-insensitive comparison decides first.
+        // Case-sensitive comparison only occurs when both are equal case-insensitively.
+        assert_eq!(natural_sort("Dir1", "dir01"), Ordering::Less);
+        assert_eq!(natural_sort("dir2", "Dir02"), Ordering::Less);
+        assert_eq!(natural_sort("dir2", "dir02"), Ordering::Less);
+
+        // Numerically equal and case-insensitively equal:
+        // the lexicographically smaller (case-sensitive) one wins.
+        assert_eq!(natural_sort("dir1", "Dir1"), Ordering::Less);
+        assert_eq!(natural_sort("dir02", "Dir02"), Ordering::Less);
+        assert_eq!(natural_sort("dir10", "Dir10"), Ordering::Less);
     }
 
     #[perf]

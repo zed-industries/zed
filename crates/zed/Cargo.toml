@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.212.0"
+version = "0.214.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -73,6 +73,7 @@ gpui = { workspace = true, features = [
     "windows-manifest",
 ] }
 gpui_tokio.workspace = true
+rayon.workspace = true
 
 edit_prediction_button.workspace = true
 http_client.workspace = true
@@ -96,6 +97,7 @@ markdown.workspace = true
 markdown_preview.workspace = true
 menu.workspace = true
 migrator.workspace = true
+miniprofiler_ui.workspace = true
 mimalloc = { version = "0.1", optional = true }
 nc.workspace = true
 nix = { workspace = true, features = ["pthread", "signal"] }
@@ -165,9 +167,11 @@ zeta.workspace = true
 zeta2.workspace = true
 zlog.workspace = true
 zlog_settings.workspace = true
+chrono.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
+chrono.workspace = true
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"

@@ -1,6 +1,5 @@
 use std::any::TypeId;
 
-use dap::debugger_settings::DebuggerSettings;
 use debugger_panel::DebugPanel;
 use editor::Editor;
 use gpui::{Action, App, DispatchPhase, EntityInputHandler, actions};
@@ -10,7 +9,6 @@ use project::debugger::{self, breakpoint_store::SourceBreakpoint, session::Threa
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::DebugSession;
-use settings::Settings;
 use stack_trace_view::StackTraceView;
 use tasks_ui::{Spawn, TaskOverrides};
 use ui::{FluentBuilder, InteractiveElement};
@@ -115,7 +113,6 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    DebuggerSettings::register(cx);
     workspace::FollowableViewRegistry::register::<DebugSession>(cx);
 
     cx.observe_new(|workspace: &mut Workspace, _, _| {

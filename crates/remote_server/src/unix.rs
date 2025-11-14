@@ -321,6 +321,7 @@ fn init_paths() -> anyhow::Result<()> {
         paths::languages_dir(),
         paths::logs_dir(),
         paths::temp_dir(),
+        paths::hang_traces_dir(),
         paths::remote_extensions_dir(),
         paths::remote_extensions_uploads_dir(),
     ]
@@ -396,8 +397,6 @@ pub fn execute_run(
 
         log::info!("gpui app started, initializing server");
         let session = start_server(listeners, log_rx, cx);
-
-        client::init_settings(cx);
 
         GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
         git_hosting_providers::init(cx);

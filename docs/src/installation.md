@@ -50,6 +50,7 @@ Zed supports the follow macOS releases:
 
 | Version       | Codename | Apple Status   | Zed Status          |
 | ------------- | -------- | -------------- | ------------------- |
+| macOS 26.x    | Tahoe    | Supported      | Supported           |
 | macOS 15.x    | Sequoia  | Supported      | Supported           |
 | macOS 14.x    | Sonoma   | Supported      | Supported           |
 | macOS 13.x    | Ventura  | Supported      | Supported           |
@@ -74,30 +75,30 @@ Zed supports machines with Intel (x86_64) or Apple (aarch64) processors that mee
 
 ### Linux
 
-Zed supports 64bit Intel/AMD (x86_64) and 64Bit ARM (aarch64) processors.
+Zed supports 64-bit Intel/AMD (x86_64) and 64-bit Arm (aarch64) processors.
 
-Zed requires a Vulkan 1.3 driver, and the following desktop portals:
+Zed requires a Vulkan 1.3 driver and the following desktop portals:
 
 - `org.freedesktop.portal.FileChooser`
 - `org.freedesktop.portal.OpenURI`
-- `org.freedesktop.portal.Secret`, or `org.freedesktop.Secrets`
+- `org.freedesktop.portal.Secret` or `org.freedesktop.Secrets`
 
 ### Windows
 
-Zed supports the follow Windows releases:
-| Version | Microsoft Status | Zed Status |
-| ------------------------- | ------------------ | ------------------- |
-| Windows 11 (all releases) | Supported | Supported |
-| Windows 10 (64-bit) | Supported | Supported |
+Zed supports the following Windows releases:
+| Version | Zed Status |
+| ------------------------- | ------------------- |
+| Windows 11, version 22H2 and later | Supported |
+| Windows 10, version 1903 and later | Supported |
+
+A 64-bit operating system is required to run Zed.
 
 #### Windows Hardware
 
-Zed supports machines with Intel or AMD 64-bit (x86_64) processors that meet the above Windows requirements:
+Zed supports machines with x64 (Intel, AMD) or Arm64 (Qualcomm) processors that meet the following requirements:
 
-- Windows 11 (64-bit)
-- Windows 10 (64-bit)
 - Graphics: A GPU that supports DirectX 11 (most PCs from 2012+).
-- Driver: Current NVIDIA/AMD/Intel driver (not the Microsoft Basic Display Adapter).
+- Driver: Current NVIDIA/AMD/Intel/Qualcomm driver (not the Microsoft Basic Display Adapter).
 
 ### FreeBSD
 

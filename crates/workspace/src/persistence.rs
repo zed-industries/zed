@@ -791,12 +791,11 @@ impl WorkspaceDb {
                     remote_connection_id IS ?
                 LIMIT 1
             })
-            .map(|mut prepared_statement| {
+            .and_then(|mut prepared_statement| {
                 (prepared_statement)((
                     root_paths.serialize().paths,
                     remote_connection_id.map(|id| id.0 as i32),
                 ))
-                .unwrap()
             })
             .context("No workspaces found")
             .warn_on_err()

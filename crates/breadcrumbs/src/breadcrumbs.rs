@@ -100,13 +100,21 @@ impl Render for Breadcrumbs {
 
         let breadcrumbs_stack = h_flex().gap_1().children(breadcrumbs);
 
+        let prefix_element = active_item.breadcrumb_prefix(window, cx);
+
+        let breadcrumbs = if let Some(prefix) = prefix_element {
+            h_flex().gap_1p5().child(prefix).child(breadcrumbs_stack)
+        } else {
+            breadcrumbs_stack
+        };
+
         match active_item
             .downcast::<Editor>()
             .map(|editor| editor.downgrade())
         {
             Some(editor) => element.child(
                 ButtonLike::new("toggle outline view")
-                    .child(breadcrumbs_stack)
+                    .child(breadcrumbs)
                     .style(ButtonStyle::Transparent)
                     .on_click({
                         let editor = editor.clone();
@@ -141,7 +149,7 @@ impl Render for Breadcrumbs {
                 // Match the height and padding of the `ButtonLike` in the other arm.
                 .h(rems_from_px(22.))
                 .pl_1()
-                .child(breadcrumbs_stack),
+                .child(breadcrumbs),
         }
     }
 }

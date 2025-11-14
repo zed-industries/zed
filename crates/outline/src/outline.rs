@@ -575,11 +575,8 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let state = AppState::test(cx);
-            language::init(cx);
             crate::init(cx);
             editor::init(cx);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
             state
         })
     }

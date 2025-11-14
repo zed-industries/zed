@@ -76,3 +76,27 @@ pub fn derive_merge_from(input: TokenStream) -> TokenStream {
 
     TokenStream::from(expanded)
 }
+
+/// Registers the setting type with the SettingsStore. Note that you need to
+/// have `gpui` in your dependencies for this to work.
+#[proc_macro_derive(RegisterSetting)]
+pub fn derive_register_setting(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as DeriveInput);
+    let type_name = &input.ident;
+
+    quote! {
+        settings::private::inventory::submit! {
+            settings::private::RegisteredSetting {
+                settings_value: || {
+                    Box::new(settings::private::SettingValue::<#type_name> {
+                        global_value: None,
+                        local_values: Vec::new(),
+                    })
+                },
+                from_settings: |content| Box::new(<#type_name as settings::Settings>::from_settings(content)),
+                id: || std::any::TypeId::of::<#type_name>(),
+            }
+        }
+    }
+    .into()
+}

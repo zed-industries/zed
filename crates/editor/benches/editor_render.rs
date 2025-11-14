@@ -4,7 +4,6 @@ use editor::{
     actions::{DeleteToPreviousWordStart, SelectAll, SplitSelectionIntoLines},
 };
 use gpui::{AppContext, Focusable as _, TestAppContext, TestDispatcher};
-use project::Project;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use settings::SettingsStore;
 use ui::IntoElement;
@@ -125,10 +124,6 @@ pub fn benches() {
         assets::Assets.load_test_fonts(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         // release_channel::init(SemanticVersion::default(), cx);
-        client::init_settings(cx);
-        language::init(cx);
-        workspace::init_settings(cx);
-        Project::init_settings(cx);
         editor::init(cx);
     });
 

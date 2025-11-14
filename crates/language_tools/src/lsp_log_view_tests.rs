@@ -109,12 +109,7 @@ fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        workspace::init_settings(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         release_channel::init(SemanticVersion::default(), cx);
-        language::init(cx);
-        client::init_settings(cx);
-        Project::init_settings(cx);
-        editor::init_settings(cx);
     });
 }

@@ -1,5 +1,5 @@
 use collections::HashMap;
-use gpui::{Context, Window};
+use gpui::{AppContext, Context, Window};
 use itertools::Itertools;
 use std::{ops::Range, time::Duration};
 use text::{AnchorRangeExt, BufferId, ToPoint};
@@ -59,8 +59,9 @@ pub(super) fn refresh_linked_ranges(
         let mut applicable_selections = Vec::new();
         editor
             .update(cx, |editor, cx| {
-                let selections = editor.selections.all::<usize>(&editor.display_snapshot(cx));
-                let snapshot = editor.buffer.read(cx).snapshot(cx);
+                let display_snapshot = editor.display_snapshot(cx);
+                let selections = editor.selections.all::<usize>(&display_snapshot);
+                let snapshot = display_snapshot.buffer_snapshot();
                 let buffer = editor.buffer.read(cx);
                 for selection in selections {
                     let cursor_position = selection.head();
@@ -90,14 +91,16 @@ pub(super) fn refresh_linked_ranges(
         let highlights = project
             .update(cx, |project, cx| {
                 let mut linked_edits_tasks = vec![];
-
                 for (buffer, start, end) in &applicable_selections {
-                    let snapshot = buffer.read(cx).snapshot();
-                    let buffer_id = buffer.read(cx).remote_id();
-
                     let linked_edits_task = project.linked_edits(buffer, *start, cx);
-                    let highlights = move || async move {
+                    let cx = cx.to_async();
+                    let highlights = async move {
                         let edits = linked_edits_task.await.log_err()?;
+                        let snapshot = cx
+                            .read_entity(&buffer, |buffer, _| buffer.snapshot())
+                            .ok()?;
+                        let buffer_id = snapshot.remote_id();
+
                         // Find the range containing our current selection.
                         // We might not find one, because the selection contains both the start and end of the contained range
                         // (think of selecting <`html>foo`</html> - even though there's a matching closing tag, the selection goes beyond the range of the opening tag)
@@ -128,7 +131,7 @@ pub(super) fn refresh_linked_ranges(
                         siblings.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0, &snapshot));
                         Some((buffer_id, siblings))
                     };
-                    linked_edits_tasks.push(highlights());
+                    linked_edits_tasks.push(highlights);
                 }
                 linked_edits_tasks
             })

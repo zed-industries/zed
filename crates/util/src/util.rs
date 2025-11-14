@@ -51,6 +51,12 @@ macro_rules! debug_panic {
     };
 }
 
+#[inline]
+pub const fn is_utf8_char_boundary(u8: u8) -> bool {
+    // This is bit magic equivalent to: b < 128 || b >= 192
+    (u8 as i8) >= -0x40
+}
+
 pub fn truncate(s: &str, max_chars: usize) -> &str {
     match s.char_indices().nth(max_chars) {
         None => s,
@@ -611,17 +617,21 @@ where
     let file = caller.file().replace('\\', "/");
     // In this codebase all crates reside in a `crates` directory,
     // so discard the prefix up to that segment to find the crate name
-    let target = file
-        .split_once("crates/")
-        .and_then(|(_, s)| s.split_once("/src/"));
+    let file = file.split_once("crates/");
+    let target = file.as_ref().and_then(|(_, s)| s.split_once("/src/"));
 
     let module_path = target.map(|(krate, module)| {
-        krate.to_owned() + "::" + &module.trim_end_matches(".rs").replace('/', "::")
+        if module.starts_with(krate) {
+            module.trim_end_matches(".rs").replace('/', "::")
+        } else {
+            krate.to_owned() + "::" + &module.trim_end_matches(".rs").replace('/', "::")
+        }
     });
+    let file = file.map(|(_, file)| format!("crates/{file}"));
     log::logger().log(
         &log::Record::builder()
-            .target(target.map_or("", |(krate, _)| krate))
-            .module_path(module_path.as_deref())
+            .target(module_path.as_deref().unwrap_or(""))
+            .module_path(file.as_deref())
             .args(format_args!("{:?}", error))
             .file(Some(caller.file()))
             .line(Some(caller.line()))

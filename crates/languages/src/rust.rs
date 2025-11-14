@@ -529,7 +529,7 @@ impl LspInstaller for RustLspAdapter {
                     })
                     .await
                     .inspect_err(|err| {
-                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err}",)
+                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err:#}",)
                     })
             };
             if let (Some(actual_digest), Some(expected_digest)) =
@@ -1445,7 +1445,6 @@ mod tests {
         cx.update(|cx| {
             let test_settings = SettingsStore::test(cx);
             cx.set_global(test_settings);
-            language::init(cx);
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings(cx, |s| {
                     s.project.all_languages.defaults.tab_size = NonZeroU32::new(2);

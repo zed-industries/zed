@@ -170,12 +170,7 @@ cp "assets/licenses.md" "${zed_dir}/licenses.md"
 
 # Create archive out of everything that's in the temp directory
 arch=$(uname -m)
-target="linux-${arch}"
-if  [[ "$channel" == "dev" ]]; then
-  archive="zed-${commit}-${target}.tar.gz"
-else
-  archive="zed-${target}.tar.gz"
-fi
+archive="zed-linux-${arch}.tar.gz"
 
 rm -rf "${archive}"
 remove_match="zed(-[a-zA-Z0-9]+)?-linux-$(uname -m)\.tar\.gz"

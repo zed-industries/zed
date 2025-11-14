@@ -316,7 +316,7 @@ You should be able to sign-in to Supermaven by clicking on the Supermaven icon i
 
 ### Codestral {#codestral}
 
-To use Mistral's Codestral as your provider, start by going to the the Agent Panel settings view by running the {#action agent::OpenSettings} action.
+To use Mistral's Codestral as your provider, start by going to the Agent Panel settings view by running the {#action agent::OpenSettings} action.
 Look for the Mistral item and add a Codestral API key in the corresponding text input.
 
 After that, you should be able to switch your provider to it in your `settings.json` file:

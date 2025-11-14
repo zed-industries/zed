@@ -69,6 +69,7 @@ settings.workspace = true
 smol.workspace = true
 url.workspace = true
 task.workspace = true
+terminal.workspace = true
 theme.workspace = true
 toml.workspace = true
 tree-sitter = { workspace = true, optional = true }

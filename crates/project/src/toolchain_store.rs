@@ -527,7 +527,7 @@ impl LocalToolchainStore {
 
             let project_env = environment
                 .update(cx, |environment, cx| {
-                    environment.get_local_directory_environment(
+                    environment.local_directory_environment(
                         &Shell::System,
                         abs_path.as_path().into(),
                         cx,
@@ -590,7 +590,7 @@ impl LocalToolchainStore {
 
             let project_env = environment
                 .update(cx, |environment, cx| {
-                    environment.get_local_directory_environment(
+                    environment.local_directory_environment(
                         &Shell::System,
                         path.as_path().into(),
                         cx,
