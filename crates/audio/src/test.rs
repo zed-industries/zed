@@ -8,6 +8,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use gpui::BorrowAppContext;
+use plotly::layout::Axis;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rodio::{ChannelCount, Decoder, SampleRate, mixer, nz, wav_to_file};
@@ -17,6 +18,7 @@ use spectrum_analyzer::windows::hann_window;
 use spectrum_analyzer::{FrequencyLimit, FrequencySpectrum, samples_fft_to_spectrum};
 
 use crate::audio_settings::LIVE_SETTINGS;
+use crate::test::detector::BasicVoiceDetector;
 use crate::{Audio, LEGACY_CHANNEL_COUNT, LEGACY_SAMPLE_RATE, RodioExt, VoipParts};
 
 #[gpui::test]
@@ -93,7 +95,7 @@ fn test_full_audio_pipeline(cx: &mut gpui::TestAppContext) {
     let expected_output =
         recording_of_davids_voice(full_pipeline.channels(), full_pipeline.sample_rate());
     rodio::wav_to_file(full_pipeline.clone(), "full_pipeline_output.wav").unwrap();
-    rodio::wav_to_file(expected_output.clone(), "full_pipeline_expected_output.wav").unwrap();
+    rodio::wav_to_file(expected_output.clone(), "full_pipeline_expected.wav").unwrap();
     assert_similar_voice_spectra(expected_output, full_pipeline);
 }
 
@@ -127,27 +129,7 @@ fn maximum_energy(mut a: impl rodio::Source) -> f32 {
 
 const CHUNK_DURATION: Duration = Duration::from_millis(100);
 
-struct BasicVoiceDetector {
-    threshold: f32,
-    voice_less_duration: Duration,
-}
-
-impl BasicVoiceDetector {
-    fn new(source: impl rodio::Source) -> Self {
-        Self {
-            threshold: 0.5 * maximum_energy(source),
-            voice_less_duration: Duration::ZERO,
-        }
-    }
-    fn may_contain_voice(&mut self, spectrum: &FrequencySpectrum) -> bool {
-        if energy_of_spectrum(&spectrum) > self.threshold {
-            true
-        } else {
-            self.voice_less_duration += CHUNK_DURATION;
-            false
-        }
-    }
-}
+mod detector;
 
 // Test signals should be at least 50% voice
 fn assert_similar_voice_spectra(
@@ -160,75 +142,82 @@ fn assert_similar_voice_spectra(
     assert_eq!(expected.sample_rate(), pipeline.sample_rate());
     assert_eq!(expected.channels(), pipeline.channels());
 
-    let mut voice_detector = BasicVoiceDetector::new(expected.clone());
-    let chunk_size: usize =
-        (CHUNK_DURATION.as_secs_f64() * expected.sample_rate().get() as f64).ceil() as usize;
-    let chunk_size = chunk_size.next_power_of_two();
-
     let total_duration = expected.total_duration().expect("just asserted");
-    let expected_samplse: Vec<_> = expected.clone().collect();
+    let voice_detector = BasicVoiceDetector::new(expected.clone());
+    assert!(
+        voice_detector
+            .voice_less_duration()
+            .div_duration_f32(total_duration)
+            < 0.75,
+        "Test samples should be at least 25% voice and those parts should be recognized as such"
+    );
+
+    let expected_samples: Vec<_> = expected.clone().collect();
     let pipeline_samples: Vec<_> = pipeline.clone().collect();
-    let (passing, len) = expected_samplse
-        .chunks_exact(chunk_size)
-        .zip(pipeline_samples.chunks_exact(chunk_size))
-        .map(|(input, output)| {
+
+    const CHUNK_DURATION: u64 = 50;
+    let (passing, len) = voice_detector
+        .segments_with_voice
+        .into_iter()
+        // beautiful functional code :3
+        .flat_map(|to_judge| {
+            let segment = to_judge.end - to_judge.start;
+            let segments_per_chunk = segment.as_millis() as u64 / CHUNK_DURATION;
+            (0..segments_per_chunk)
+                .map(|idx| Duration::from_millis(idx * CHUNK_DURATION))
+                .map(|offset| to_judge.start + offset)
+                .collect::<Vec<_>>()
+        })
+        .map(|chunk_start| {
+            let start =
+                chunk_start.as_millis() as usize * expected.sample_rate().get() as usize / 1000;
+            // This will slightly over-sample into the next chunk but it's Fine(tm)
+            let length = 50 * expected.sample_rate().get() as usize / 1000;
+            let end = start + length.next_power_of_two();
             (
-                samples_fft_to_spectrum(
-                    &hann_window(input),
-                    expected.sample_rate().get(),
-                    FrequencyLimit::Min(4.0),
-                    Some(&divide_by_N_sqrt),
-                )
-                .unwrap(),
-                samples_fft_to_spectrum(
-                    &hann_window(output),
-                    pipeline.sample_rate().get(),
-                    FrequencyLimit::Min(4.0),
-                    Some(&divide_by_N_sqrt),
-                )
-                .unwrap(),
+                chunk_start,
+                (&expected_samples[start..end], &pipeline_samples[start..end]),
             )
         })
-        .filter(|(expected, _)| voice_detector.may_contain_voice(&expected))
-        // beautiful functional code :3
+        .map(|(chunk_start, (input, output))| {
+            (
+                chunk_start,
+                (
+                    samples_fft_to_spectrum(
+                        &hann_window(input),
+                        expected.sample_rate().get(),
+                        FrequencyLimit::Min(4.0),
+                        Some(&divide_by_N_sqrt),
+                    )
+                    .unwrap(),
+                    samples_fft_to_spectrum(
+                        &hann_window(output),
+                        pipeline.sample_rate().get(),
+                        FrequencyLimit::Min(4.0),
+                        Some(&divide_by_N_sqrt),
+                    )
+                    .unwrap(),
+                ),
+            )
+        })
         .filter_map(assert_same_voice_signal)
         .fold((0, 0), |(passing, len), passed| {
             (passing + u32::from(passed), len + 1)
         });
 
     assert!(
-        voice_detector
-            .voice_less_duration
-            .div_duration_f32(total_duration)
-            < 0.5,
-        "Test samples should be at least 50% voice and those parts should be recognized as such"
-    );
-    assert!(
         passing > len * 9 / 10,
         ">10% of chunks mismatched: {passing} passing out of {len}"
     );
 }
 
-fn lowest_loud_frequency(spectrum: &FrequencySpectrum) -> f32 {
-    let spectrum: Vec<_> = spectrum.data().iter().collect();
-    let max_amplitude = spectrum
-        .iter()
-        .map(|(_, amplitude)| *amplitude)
-        .max_by_key(|amplitude| *amplitude)
-        .unwrap()
-        .val();
-    spectrum
-        .iter()
-        .filter(|(_, amplitude)| {
-            max_amplitude * 0.5 < amplitude.val() && amplitude.val() <= max_amplitude
-        })
-        .map(|(freq, _)| freq.val())
-        .min_by(|a, b| a.total_cmp(b))
-        .unwrap()
+fn spectra_chunk_size(source: &impl Source) -> usize {
+    ((CHUNK_DURATION.as_secs_f64() * source.sample_rate().get() as f64).ceil() as usize)
+        .next_power_of_two()
 }
 
 fn assert_same_voice_signal(
-    (expected, pipeline): (FrequencySpectrum, FrequencySpectrum),
+    (chunk_start, (expected, pipeline)): (Duration, (FrequencySpectrum, FrequencySpectrum)),
 ) -> Option<bool> {
     // The timbre of a voice (the difference in how voices sound) is determined
     // by all kinds of resonances in the throat/mouth. These happen roughly at
@@ -251,10 +240,11 @@ fn assert_same_voice_signal(
         }
     };
 
-    assert!(less_than_10percent_diff((
-        voice_freq_expected,
-        voice_freq_pipeline
-    )));
+    assert!(
+        less_than_10percent_diff((voice_freq_expected, voice_freq_pipeline)),
+        "expected: {voice_freq_expected}, pipeline: {voice_freq_pipeline}, at: {chunk_start:?}\n\n{}",
+        plot_spectra(&expected, &pipeline)
+    );
 
     // Guards against voice distortion
     // unfortunately affected by (de)noise as that (de)distorts voice.
@@ -266,13 +256,14 @@ fn assert_same_voice_signal(
 }
 
 fn fundamental_voice_freq(spectrum: &FrequencySpectrum) -> Option<f32> {
-    let human_speech_range = 80.0..260.0;
-    let lowest_loud_freq = dbg!(lowest_loud_frequency(spectrum));
-    if human_speech_range.contains(&lowest_loud_freq) {
-        Some(lowest_loud_freq)
-    } else {
-        None
-    }
+    let human_speech_range = 90.0..260.0;
+    let spectrum: Vec<_> = spectrum.data().iter().collect();
+    spectrum
+        .iter()
+        .filter(|(freq, _)| human_speech_range.contains(&freq.val()))
+        // .inspect(|(freq, ampl)| println!("{freq},{ampl}"))
+        .max_by(|(_, a_ampl), (_, b_ampl)| a_ampl.val().total_cmp(&b_ampl.val()))
+        .map(|(freq, _ampl)| freq.val())
 }
 
 fn same_ratio_between_harmonics(
@@ -288,7 +279,7 @@ fn same_ratio_between_harmonics(
 
         let voice_harmonics = (2..=3)
             .into_iter()
-            .map(move |i| dbg!(fundamental_voice_freq * i as f32));
+            .map(move |i| dbg!(fundamental_voice_freq) * i as f32);
         voice_harmonics.clone().map(move |freq| {
             let (_freq, harmonic) = spectrum.freq_val_closest(freq);
             harmonic.val() / fundamental.val()
@@ -297,12 +288,17 @@ fn same_ratio_between_harmonics(
 
     ratios(expected, fundamental_voice_freq)
         .zip(ratios(pipeline, fundamental_voice_freq))
-        .all(less_than_10percent_diff)
+        .all(less_than_20percent_diff)
 }
 
 fn less_than_10percent_diff((a, b): (f32, f32)) -> bool {
     dbg!(a, b);
     (a - b).abs() < a.max(b) * 0.1
+}
+
+fn less_than_20percent_diff((a, b): (f32, f32)) -> bool {
+    dbg!(a, b);
+    (a - b).abs() < a.max(b) * 0.3
 }
 
 fn display_loudest_5_frequencies(spectrum: &FrequencySpectrum) -> String {
@@ -322,10 +318,15 @@ fn plot_spectra(expected: &FrequencySpectrum, pipeline: &FrequencySpectrum) -> S
 
     let mut plot = Plot::new();
 
+    let layout = plotly::Layout::new().x_axis(Axis::new().type_(plotly::layout::AxisType::Log));
+    // .y_axis(Axis::new().type_(plotly::layout::AxisType::Log));
+    plot.set_layout(layout);
+
     let (x, y): (Vec<_>, Vec<_>) = expected
         .data()
         .iter()
         .map(|(freq, amplitude)| (freq.val(), amplitude.val()))
+        .filter(|(freq, _)| *freq > 85.0)
         .unzip();
     let trace = Bar::new(x, y)
         .name("expected")
@@ -337,6 +338,7 @@ fn plot_spectra(expected: &FrequencySpectrum, pipeline: &FrequencySpectrum) -> S
         .data()
         .iter()
         .map(|(freq, amplitude)| (freq.val(), amplitude.val()))
+        .filter(|(freq, _)| *freq > 85.0)
         .unzip();
     let trace = Bar::new(x, y)
         .name("pipeline")

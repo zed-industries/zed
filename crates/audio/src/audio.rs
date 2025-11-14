@@ -36,12 +36,10 @@ pub use rodio_ext::RodioExt;
 
 use crate::audio_settings::LIVE_SETTINGS;
 
-// We are migrating to 16kHz sample rate from 48kHz. In the future
-// once we are reasonably sure most users have upgraded we will
-// remove the LEGACY parameters.
-//
+// We are migrating to 44100Hz mono from 48kHz stereo. In the future once we are
+// reasonably sure most users have upgraded we will remove the LEGACY
+// parameters.
 // We migrate to 44100 because if its good for cd's its good enough for us
-// by the denoiser and future Speech to Text layers.
 pub const SAMPLE_RATE: NonZero<u32> = nz!(44100);
 pub const CHANNEL_COUNT: NonZero<u16> = nz!(1);
 pub const BUFFER_SIZE: usize = // echo canceller and livekit want 10ms of audio
@@ -205,24 +203,29 @@ impl Audio {
                         *sample = (*processed).to_sample();
                     }
                 }
-            })
-            .denoise()
-            .context("Could not set up denoiser")?
-            .automatic_gain_control(automatic_gain_control_settings())
-            .periodic_access(Duration::from_millis(100), move |agc_source| {
-                agc_source
-                    .set_enabled(LIVE_SETTINGS.auto_microphone_volume.load(Ordering::Relaxed));
-                let denoise = agc_source.inner_mut();
-                denoise
-                    .set_enabled(LIVE_SETTINGS.denoise.load(Ordering::Relaxed))
-                    .unwrap(); // todo make this log?
             });
+        // .denoise()
+        // .context("Could not set up denoiser")?
+        // .automatic_gain_control(automatic_gain_control_settings())
+        // .periodic_access(Duration::from_millis(100), move |agc_source| {
+        //     agc_source
+        //         .set_enabled(LIVE_SETTINGS.auto_microphone_volume.load(Ordering::Relaxed));
+        //     let denoise = agc_source.inner_mut();
+        //     denoise
+        //         .set_enabled(LIVE_SETTINGS.denoise.load(Ordering::Relaxed))
+        //         .unwrap(); // todo make this log?
+        // });
 
         let stream = if voip_parts.legacy_audio_compatible {
             stream.constant_params(LEGACY_CHANNEL_COUNT, LEGACY_SAMPLE_RATE)
         } else {
             stream.constant_params(CHANNEL_COUNT, SAMPLE_RATE)
         };
+
+        // the audio processing module gives us half its buffer duration
+        // of empty samples. We can skip those.
+        const APM_CHUNK_DURATION: Duration = Duration::from_millis(10);
+        let stream = stream.skip_duration(APM_CHUNK_DURATION / 2);
 
         let (replay, stream) = stream.replayable(REPLAY_DURATION)?;
         voip_parts
