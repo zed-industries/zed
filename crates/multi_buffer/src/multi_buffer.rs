@@ -241,10 +241,49 @@ impl fmt::Display for MultiBufferOffset {
     }
 }
 
+impl rand::distr::uniform::SampleUniform for MultiBufferOffset {
+    type Sampler = MultiBufferOffsetUniformSampler;
+}
+
+pub struct MultiBufferOffsetUniformSampler {
+    sampler: rand::distr::uniform::UniformUsize,
+}
+
+impl rand::distr::uniform::UniformSampler for MultiBufferOffsetUniformSampler {
+    type X = MultiBufferOffset;
+
+    fn new<B1, B2>(low_b: B1, high_b: B2) -> Result<Self, rand::distr::uniform::Error>
+    where
+        B1: rand::distr::uniform::SampleBorrow<Self::X> + Sized,
+        B2: rand::distr::uniform::SampleBorrow<Self::X> + Sized,
+    {
+        let low = *low_b.borrow();
+        let high = *high_b.borrow();
+        let sampler = rand::distr::uniform::UniformUsize::new(low.0, high.0);
+        sampler.map(|sampler| MultiBufferOffsetUniformSampler { sampler })
+    }
+
+    #[inline] // if the range is constant, this helps LLVM to do the
+    // calculations at compile-time.
+    fn new_inclusive<B1, B2>(low_b: B1, high_b: B2) -> Result<Self, rand::distr::uniform::Error>
+    where
+        B1: rand::distr::uniform::SampleBorrow<Self::X> + Sized,
+        B2: rand::distr::uniform::SampleBorrow<Self::X> + Sized,
+    {
+        let low = *low_b.borrow();
+        let high = *high_b.borrow();
+        let sampler = rand::distr::uniform::UniformUsize::new_inclusive(low.0, high.0);
+        sampler.map(|sampler| MultiBufferOffsetUniformSampler { sampler })
+    }
+
+    fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> Self::X {
+        MultiBufferOffset(self.sampler.sample(rng))
+    }
+}
 impl MultiBufferDimension for MultiBufferOffset {
     type TextDimension = usize;
     fn from_summary(summary: &MBTextSummary) -> Self {
-        MultiBufferOffset(summary.len)
+        summary.len
     }
 
     fn add_text_dim(&mut self, other: &Self::TextDimension) {
@@ -252,7 +291,7 @@ impl MultiBufferDimension for MultiBufferOffset {
     }
 
     fn add_mb_text_summary(&mut self, summary: &MBTextSummary) {
-        self.0 += summary.len;
+        *self += summary.len;
     }
 }
 impl MultiBufferDimension for MultiBufferOffsetUtf16 {
@@ -330,10 +369,10 @@ pub struct BufferOffsetUtf16(pub OffsetUtf16);
 
 impl MultiBufferOffset {
     const ZERO: Self = Self(0);
-    fn saturating_sub(self, other: MultiBufferOffset) -> usize {
+    pub fn saturating_sub(self, other: MultiBufferOffset) -> usize {
         self.0.saturating_sub(other.0)
     }
-    fn saturating_sub_usize(self, other: usize) -> MultiBufferOffset {
+    pub fn saturating_sub_usize(self, other: usize) -> MultiBufferOffset {
         MultiBufferOffset(self.0.saturating_sub(other))
     }
 }
@@ -385,6 +424,20 @@ impl ops::Add<usize> for MultiBufferOffset {
 impl ops::AddAssign<usize> for MultiBufferOffset {
     fn add_assign(&mut self, other: usize) {
         self.0 += other;
+    }
+}
+
+impl ops::Add for MultiBufferOffset {
+    type Output = Self;
+
+    fn add(self, rhs: MultiBufferOffset) -> Self::Output {
+        MultiBufferOffset(self.0 + rhs.0)
+    }
+}
+
+impl ops::AddAssign<MultiBufferOffset> for MultiBufferOffset {
+    fn add_assign(&mut self, other: MultiBufferOffset) {
+        self.0 += other.0;
     }
 }
 
@@ -626,7 +679,7 @@ pub struct DiffTransformSummary {
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct MBTextSummary {
     /// Length in bytes.
-    pub len: usize,
+    pub len: MultiBufferOffset,
     /// Length in UTF-8.
     pub chars: usize,
     /// Length in UTF-16 code units
@@ -651,7 +704,7 @@ pub struct MBTextSummary {
 impl From<TextSummary> for MBTextSummary {
     fn from(summary: TextSummary) -> Self {
         MBTextSummary {
-            len: summary.len,
+            len: MultiBufferOffset(summary.len),
             chars: summary.chars,
             len_utf16: summary.len_utf16,
             lines: summary.lines,
@@ -661,6 +714,11 @@ impl From<TextSummary> for MBTextSummary {
             longest_row: summary.longest_row,
             longest_row_chars: summary.longest_row_chars,
         }
+    }
+}
+impl From<&str> for MBTextSummary {
+    fn from(text: &str) -> Self {
+        MBTextSummary::from(TextSummary::from(text))
     }
 }
 
@@ -1584,7 +1642,7 @@ impl MultiBuffer {
         let mut new_excerpts = cursor.slice(&prev_locator, Bias::Right);
         prev_locator = cursor.start().unwrap_or(Locator::min_ref()).clone();
 
-        let edit_start = ExcerptOffset::new(new_excerpts.summary().text.len);
+        let edit_start = ExcerptOffset::new(new_excerpts.summary().text.len.0);
         new_excerpts.update_last(
             |excerpt| {
                 excerpt.has_trailing_newline = true;
@@ -1628,7 +1686,7 @@ impl MultiBuffer {
             new_excerpt_ids.push(ExcerptIdMapping { id, locator }, ());
         }
 
-        let edit_end = ExcerptOffset::new(new_excerpts.summary().text.len);
+        let edit_end = ExcerptOffset::new(new_excerpts.summary().text.len.0);
 
         let suffix = cursor.suffix();
         let changed_trailing_excerpt = suffix.is_empty();
@@ -1686,7 +1744,7 @@ impl MultiBuffer {
             show_headers: _,
         } = self.snapshot.get_mut();
         let start = ExcerptOffset::new(0);
-        let prev_len = ExcerptOffset::new(excerpts.summary().text.len);
+        let prev_len = ExcerptOffset::new(excerpts.summary().text.len.0);
         *excerpts = Default::default();
         *trailing_excerpt_update_count += 1;
         *is_dirty = false;
@@ -1972,7 +2030,7 @@ impl MultiBuffer {
 
                 // Push an edit for the removal of this run of excerpts.
                 let old_end = cursor.start().1;
-                let new_start = ExcerptOffset::new(new_excerpts.summary().text.len);
+                let new_start = ExcerptOffset::new(new_excerpts.summary().text.len.0);
                 edits.push(Edit {
                     old: old_start..old_end,
                     new: new_start..new_start,
@@ -2490,7 +2548,7 @@ impl MultiBuffer {
             .buffer
             .text_summary_for_range(excerpt.range.context.clone());
 
-        let new_start_offset = ExcerptOffset::new(new_excerpts.summary().text.len);
+        let new_start_offset = ExcerptOffset::new(new_excerpts.summary().text.len.0);
         let old_start_offset = cursor.start().1;
         let new_text_len = ExcerptOffset::new(excerpt.text_summary.len);
         let edit = Edit {
@@ -2596,7 +2654,7 @@ impl MultiBuffer {
                 .buffer
                 .text_summary_for_range(excerpt.range.context.clone());
 
-            let new_start_offset = ExcerptOffset::new(new_excerpts.summary().text.len);
+            let new_start_offset = ExcerptOffset::new(new_excerpts.summary().text.len.0);
             let old_start_offset = cursor.start().1;
             let new_text_len = ExcerptOffset::new(excerpt.text_summary.len);
             let edit = Edit {
@@ -2758,7 +2816,7 @@ impl MultiBuffer {
                         .map(|edit| {
                             let excerpt_old_start = cursor.start().1;
                             let excerpt_new_start =
-                                ExcerptOffset::new(new_excerpts.summary().text.len);
+                                ExcerptOffset::new(new_excerpts.summary().text.len.0);
                             let old_start = excerpt_old_start + ExcerptOffset::new(edit.old.start);
                             let old_end = excerpt_old_start + ExcerptOffset::new(edit.old.end);
                             let new_start = excerpt_new_start + ExcerptOffset::new(edit.new.start);
@@ -2855,9 +2913,8 @@ impl MultiBuffer {
             let edit_old_end_overshoot = edit.old.end - old_diff_transforms.start().0;
             let edit_new_end_overshoot = edit.new.end - new_diff_transforms.summary().excerpt_len();
             let edit_old_end = old_diff_transforms.start().1 + edit_old_end_overshoot.value;
-            let edit_new_end = MultiBufferOffset(
-                new_diff_transforms.summary().output.len + edit_new_end_overshoot.value,
-            );
+            let edit_new_end =
+                new_diff_transforms.summary().output.len + edit_new_end_overshoot.value;
             let output_edit = Edit {
                 old: edit_old_start..edit_old_end,
                 new: edit_new_start..edit_new_end,
@@ -3268,14 +3325,9 @@ impl MultiBuffer {
             }
 
             let new_start = last_end.map_or(MultiBufferOffset::ZERO, |last_end| last_end + 1usize);
-            let end = snapshot.clip_offset(
-                MultiBufferOffset(rng.random_range(new_start.0..=snapshot.len().0)),
-                Bias::Right,
-            );
-            let start = snapshot.clip_offset(
-                MultiBufferOffset(rng.random_range(new_start.0..=end.0)),
-                Bias::Right,
-            );
+            let end =
+                snapshot.clip_offset(rng.random_range(new_start..=snapshot.len()), Bias::Right);
+            let start = snapshot.clip_offset(rng.random_range(new_start..=end), Bias::Right);
             last_end = Some(end);
 
             let mut range = start..end;
@@ -3973,7 +4025,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn len(&self) -> MultiBufferOffset {
-        MultiBufferOffset(self.diff_transforms.summary().output.len)
+        self.diff_transforms.summary().output.len
     }
 
     pub fn max_position<MBR: MultiBufferDimension>(&self) -> MBR {
@@ -3981,7 +4033,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.diff_transforms.summary().output.len == 0
+        self.diff_transforms.summary().output.len == MultiBufferOffset(0)
     }
 
     pub fn widest_line_number(&self) -> u32 {
@@ -4779,7 +4831,7 @@ impl MultiBufferSnapshot {
         points: impl 'a + IntoIterator<Item = Point>,
     ) -> impl 'a + Iterator<Item = D>
     where
-        D: MultiBufferDimension + Sub<D, Output = D> + AddAssign,
+        D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output>,
     {
         let mut cursor = self.cursor::<DimensionPair<Point, D>, Point, _>();
         cursor.seek(&DimensionPair {
@@ -6218,14 +6270,8 @@ impl MultiBufferSnapshot {
         start_offset: MultiBufferOffset,
         rng: &mut impl rand::Rng,
     ) -> Range<MultiBufferOffset> {
-        let end = self.clip_offset(
-            MultiBufferOffset(rng.random_range(start_offset.0..=self.len().0)),
-            Bias::Right,
-        );
-        let start = self.clip_offset(
-            MultiBufferOffset(rng.random_range(start_offset.0..=end.0)),
-            Bias::Right,
-        );
+        let end = self.clip_offset(rng.random_range(start_offset..=self.len()), Bias::Right);
+        let start = self.clip_offset(rng.random_range(start_offset..=end), Bias::Right);
         start..end
     }
 
@@ -6281,7 +6327,7 @@ impl MultiBufferSnapshot {
                         self.diff_transforms.items(())
                     );
                 }
-                if summary.len == 0 && !self.is_empty() {
+                if summary.len == MultiBufferOffset(0) && !self.is_empty() {
                     panic!("empty buffer content transform");
                 }
             }
@@ -6879,7 +6925,7 @@ impl sum_tree::Item for DiffTransform {
 
 impl DiffTransformSummary {
     fn excerpt_len(&self) -> ExcerptOffset {
-        ExcerptOffset::new(self.input.len)
+        ExcerptOffset::new(self.input.len.0)
     }
 }
 
@@ -6926,7 +6972,7 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for ExcerptOffset {
     }
 
     fn add_summary(&mut self, summary: &'a ExcerptSummary, _: ()) {
-        self.value += summary.text.len;
+        self.value += summary.text.len.0;
     }
 }
 impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for MultiBufferOffset {
@@ -6935,7 +6981,7 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for MultiBufferOffset {
     }
 
     fn add_summary(&mut self, summary: &'a ExcerptSummary, (): ()) {
-        self.0 += summary.text.len;
+        *self += summary.text.len;
     }
 }
 
@@ -6960,7 +7006,7 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for PointUtf16 {
 
 impl sum_tree::SeekTarget<'_, ExcerptSummary, ExcerptSummary> for ExcerptOffset {
     fn cmp(&self, cursor_location: &ExcerptSummary, _: ()) -> cmp::Ordering {
-        Ord::cmp(&self.value, &cursor_location.text.len)
+        Ord::cmp(&self.value, &cursor_location.text.len.0)
     }
 }
 
@@ -7060,7 +7106,7 @@ impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for MultiBufferOffset {
     }
 
     fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: ()) {
-        self.0 += summary.output.len;
+        *self += summary.output.len;
     }
 }
 
@@ -7080,7 +7126,7 @@ impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for ExcerptOffset {
     }
 
     fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: ()) {
-        self.value += summary.input.len;
+        self.value += summary.input.len.0;
     }
 }
 
