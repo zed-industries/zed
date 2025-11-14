@@ -214,7 +214,6 @@ pub enum ContextMenuOrigin {
     QuickActionBar,
 }
 
-
 pub struct CompletionsMenu {
     pub id: CompletionId,
     pub source: CompletionsMenuSource,
@@ -910,26 +909,29 @@ impl CompletionsMenu {
                                 })
                             });
 
-                        div().min_w(COMPLETION_MENU_MIN_WIDTH).max_w(COMPLETION_MENU_MAX_WIDTH).child(
-                            ListItem::new(mat.candidate_id)
-                                .inset(true)
-                                .toggle_state(item_ix == selected_item)
-                                .on_click(cx.listener(move |editor, _event, window, cx| {
-                                    cx.stop_propagation();
-                                    if let Some(task) = editor.confirm_completion(
-                                        &ConfirmCompletion {
-                                            item_ix: Some(item_ix),
-                                        },
-                                        window,
-                                        cx,
-                                    ) {
-                                        task.detach_and_log_err(cx)
-                                    }
-                                }))
-                                .start_slot::<AnyElement>(start_slot)
-                                .child(h_flex().overflow_hidden().child(completion_label))
-                                .end_slot::<Label>(documentation_label),
-                        )
+                        div()
+                            .min_w(COMPLETION_MENU_MIN_WIDTH)
+                            .max_w(COMPLETION_MENU_MAX_WIDTH)
+                            .child(
+                                ListItem::new(mat.candidate_id)
+                                    .inset(true)
+                                    .toggle_state(item_ix == selected_item)
+                                    .on_click(cx.listener(move |editor, _event, window, cx| {
+                                        cx.stop_propagation();
+                                        if let Some(task) = editor.confirm_completion(
+                                            &ConfirmCompletion {
+                                                item_ix: Some(item_ix),
+                                            },
+                                            window,
+                                            cx,
+                                        ) {
+                                            task.detach_and_log_err(cx)
+                                        }
+                                    }))
+                                    .start_slot::<AnyElement>(start_slot)
+                                    .child(h_flex().overflow_hidden().child(completion_label))
+                                    .end_slot::<Label>(documentation_label),
+                            )
                     })
                     .collect()
             }),
