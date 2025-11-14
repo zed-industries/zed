@@ -5992,6 +5992,7 @@ fn default_markdown_style(
         },
         link: TextStyleRefinement {
             background_color: Some(colors.editor_foreground.opacity(0.025)),
+            color: Some(colors.text_accent),
             underline: Some(UnderlineStyle {
                 color: Some(colors.text_accent.opacity(0.5)),
                 thickness: px(1.),
