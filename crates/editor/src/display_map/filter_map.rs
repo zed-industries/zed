@@ -3,7 +3,7 @@ use std::{cmp, ops::Range};
 use language::Chunk;
 use multi_buffer::{
     MultiBufferChunks, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow, MultiBufferRows,
-    MultiBufferSnapshot, RowInfo, ToOffset as _, ToPoint as _,
+    MultiBufferSnapshot, RowInfo, ToOffset, ToPoint as _,
 };
 use rope::{Point, TextSummary};
 use sum_tree::{Dimensions, SumTree};
@@ -88,7 +88,7 @@ impl sum_tree::ContextLessSummary for TransformSummary {
     }
 }
 
-struct FilterMap {
+pub(crate) struct FilterMap {
     snapshot: FilterSnapshot,
     mode: Option<FilterMode>,
 }
@@ -117,13 +117,13 @@ impl FilterMode {
 #[derive(Clone)]
 pub(crate) struct FilterSnapshot {
     transforms: SumTree<FilterTransform>,
-    buffer_snapshot: MultiBufferSnapshot,
-    version: usize,
+    pub(crate) buffer_snapshot: MultiBufferSnapshot,
+    pub(crate) version: usize,
 }
 
 /// A byte index into the buffer (after ignored diff hunk lines are deleted)
-#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
-pub(crate) struct FilterOffset(usize);
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, Default)]
+pub(crate) struct FilterOffset(pub(crate) usize);
 
 impl std::fmt::Debug for FilterOffset {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -137,6 +137,22 @@ impl FilterOffset {
     /// [`FilterMode`] is set).
     fn naive_range(Range { start, end }: Range<usize>) -> Range<Self> {
         FilterOffset(start)..FilterOffset(end)
+    }
+}
+
+impl std::ops::Add for FilterOffset {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        FilterOffset(self.0 + rhs.0)
+    }
+}
+
+impl std::ops::Sub for FilterOffset {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        FilterOffset(self.0 - rhs.0)
     }
 }
 
@@ -168,8 +184,31 @@ impl sum_tree::Dimension<'_, TransformSummary> for MultiBufferPoint {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
-pub(crate) struct FilterPoint(Point);
+#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Default)]
+pub(crate) struct FilterPoint(pub(crate) Point);
+
+impl std::ops::Add for FilterPoint {
+    type Output = Self;
+
+    fn add(mut self, rhs: Self) -> Self::Output {
+        self += rhs;
+        self
+    }
+}
+
+impl std::ops::AddAssign<FilterPoint> for FilterPoint {
+    fn add_assign(&mut self, rhs: FilterPoint) {
+        self.0 += rhs.0;
+    }
+}
+
+impl std::ops::Sub for FilterPoint {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        FilterPoint(self.0 - rhs.0)
+    }
+}
 
 impl sum_tree::Dimension<'_, TransformSummary> for FilterPoint {
     fn zero(_: <TransformSummary as sum_tree::Summary>::Context<'_>) -> Self {
@@ -202,7 +241,10 @@ impl sum_tree::Dimension<'_, TransformSummary> for usize {
 pub(crate) type FilterEdit = text::Edit<FilterOffset>;
 
 impl FilterMap {
-    pub(crate) fn new(mode: Option<FilterMode>, buffer_snapshot: MultiBufferSnapshot) -> Self {
+    pub(crate) fn new(
+        mode: Option<FilterMode>,
+        buffer_snapshot: MultiBufferSnapshot,
+    ) -> (Self, FilterSnapshot) {
         let mut this = Self {
             mode,
             snapshot: FilterSnapshot {
@@ -706,6 +748,10 @@ impl FilterSnapshot {
             offset = new_offset;
         }
     }
+
+    pub(crate) fn max_row(&self) -> FilterRow {
+        FilterRow(self.max_point().0.row)
+    }
 }
 
 fn push_isomorphic(
@@ -800,7 +846,11 @@ fn push_filter(
 }
 
 impl FilterSnapshot {
-    fn offset_to_point(&self, offset: FilterOffset) -> FilterPoint {
+    pub(crate) fn to_filter_offset(&self, offset: usize) -> FilterOffset {
+        todo!()
+    }
+
+    pub(crate) fn offset_to_point(&self, offset: FilterOffset) -> FilterPoint {
         let (start, _end, item) = self
             .transforms
             .find::<Dimensions<FilterOffset, FilterPoint, usize>, _>((), &offset, Bias::Right);
@@ -816,7 +866,7 @@ impl FilterSnapshot {
         }
     }
 
-    fn point_to_offset(&self, point: FilterPoint) -> FilterOffset {
+    pub(crate) fn point_to_offset(&self, point: FilterPoint) -> FilterOffset {
         type D = Dimensions<FilterPoint, FilterOffset, MultiBufferPoint>;
         let (start, _end, item) = self.transforms.find::<D, _>((), &point, Bias::Right);
         match item {
@@ -831,15 +881,19 @@ impl FilterSnapshot {
         }
     }
 
-    fn max_point(&self) -> FilterPoint {
+    pub(crate) fn max_point(&self) -> FilterPoint {
         FilterPoint(self.transforms.summary().output.lines)
     }
 
-    fn len(&self) -> FilterOffset {
+    pub(crate) fn len(&self) -> FilterOffset {
         FilterOffset(self.transforms.summary().output.len)
     }
 
-    fn text_summary_for_range(&self, range: Range<FilterOffset>) -> TextSummary {
+    pub(crate) fn text_summary(&self) -> TextSummary {
+        self.transforms.summary().output
+    }
+
+    pub(crate) fn text_summary_for_range(&self, range: Range<FilterOffset>) -> TextSummary {
         let mut summary = TextSummary::default();
 
         let mut cursor = self
@@ -890,7 +944,7 @@ impl FilterSnapshot {
     /// point 0:100 would be clipped to 0:50 . This function trivially "takes
     /// into account" filtered lines, since the `point` parameter is already a
     /// [`FilterPoint`], which always refers to non-filtered lines.
-    fn clip_point(&self, point: FilterPoint, bias: Bias) -> FilterPoint {
+    pub(crate) fn clip_point(&self, point: FilterPoint, bias: Bias) -> FilterPoint {
         let (start, _end, item) = self
             .transforms
             .find::<Dimensions<FilterPoint, MultiBufferPoint>, _>((), &point, Bias::Right);
@@ -913,7 +967,19 @@ impl FilterSnapshot {
         }
     }
 
-    fn row_infos(&self, start_row: FilterRow) -> FilterRows<'_> {
+    pub(crate) fn is_anchor_filtered(&self, anchor: multi_buffer::Anchor) -> bool {
+        todo!()
+    }
+
+    pub(crate) fn to_buffer_offset(&self, bias: Bias) -> usize {
+        todo!()
+    }
+
+    pub(crate) fn to_buffer_point(&self, bias: Bias) -> MultiBufferPoint {
+        todo!()
+    }
+
+    pub(crate) fn row_infos(&self, start_row: FilterRow) -> FilterRows<'_> {
         FilterRows {
             transform_cursor: self.transforms.cursor(()),
             buffer_rows: self.buffer_snapshot.row_infos(MultiBufferRow(0)),
@@ -926,7 +992,7 @@ impl FilterSnapshot {
         &'a self,
         range: Range<FilterOffset>,
         language_aware: bool,
-        highlights: Highlights<'a>,
+        highlights: &Highlights<'a>,
     ) -> FilterChunks<'a> {
         let mut cursor = self
             .transforms
@@ -951,6 +1017,7 @@ impl FilterSnapshot {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct FilterRow(pub u32);
 
 impl std::fmt::Debug for FilterRow {
@@ -959,7 +1026,8 @@ impl std::fmt::Debug for FilterRow {
     }
 }
 
-struct FilterRows<'a> {
+#[derive(Clone)]
+pub(crate) struct FilterRows<'a> {
     transform_cursor:
         sum_tree::Cursor<'a, 'static, FilterTransform, Dimensions<FilterPoint, MultiBufferPoint>>,
     snapshot: &'a FilterSnapshot,
@@ -1053,7 +1121,7 @@ impl<'a> Iterator for FilterChunks<'a> {
 }
 
 impl<'a> FilterChunks<'a> {
-    fn seek(&mut self, range: Range<FilterOffset>) {
+    pub(crate) fn seek(&mut self, range: Range<FilterOffset>) {
         self.cursor.seek(&range.start, Bias::Right);
         let overshoot = range.start.0 - self.cursor.start().0.0;
         let buffer_start = self.cursor.start().1 + overshoot;
