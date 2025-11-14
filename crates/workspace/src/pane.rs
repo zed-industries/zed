@@ -11,7 +11,7 @@ use crate::{
     move_item,
     notifications::NotifyResultExt,
     toolbar::Toolbar,
-    workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
+    workspace_settings::{AutosaveSetting, TabBarOrientation, TabBarSettings, WorkspaceSettings},
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -21,7 +21,7 @@ use gpui::{
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
     Focusable, KeyContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point,
     PromptLevel, Render, ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
-    actions, anchored, deferred, prelude::*,
+    actions, anchored, deferred, prelude::*, relative,
 };
 use itertools::Itertools;
 use language::DiagnosticSeverity;
@@ -47,8 +47,8 @@ use theme::ThemeSettings;
 use ui::{
     ButtonSize, Color, ContextMenu, ContextMenuEntry, ContextMenuItem, DecoratedIcon, IconButton,
     IconButtonShape, IconDecoration, IconDecorationKind, IconName, IconSize, Indicator, Label,
-    PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip, prelude::*,
-    right_click_menu,
+    PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabBarLayout, TabLayout, TabPosition, Tooltip,
+    prelude::*, right_click_menu,
 };
 use util::{ResultExt, debug_panic, maybe, paths::PathStyle, truncate_and_remove_front};
 
@@ -2520,6 +2520,7 @@ impl Pane {
         focus_handle: &FocusHandle,
         window: &mut Window,
         cx: &mut Context<Pane>,
+        tab_layout: TabLayout,
     ) -> impl IntoElement + use<> {
         let is_active = ix == self.active_item_index;
         let is_preview = self
@@ -2588,7 +2589,10 @@ impl Pane {
         };
 
         let settings = ItemSettings::get_global(cx);
-        let close_side = &settings.close_position;
+        let close_side = match settings.close_position {
+            ClosePosition::Left => ui::TabCloseSide::Start,
+            ClosePosition::Right => ui::TabCloseSide::End,
+        };
         let show_close_button = &settings.show_close_button;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
         let item_id = item.item_id();
@@ -2605,10 +2609,8 @@ impl Pane {
             } else {
                 TabPosition::Middle(position_relative_to_active_item)
             })
-            .close_side(match close_side {
-                ClosePosition::Left => ui::TabCloseSide::Start,
-                ClosePosition::Right => ui::TabCloseSide::End,
-            })
+            .close_side(close_side)
+            .layout(tab_layout)
             .toggle_state(is_active)
             .on_click(cx.listener(move |pane: &mut Self, _, window, cx| {
                 pane.activate_item(ix, true, true, window, cx)
@@ -3016,9 +3018,10 @@ impl Pane {
             })
     }
 
-    fn render_tab_bar(&mut self, window: &mut Window, cx: &mut Context<Pane>) -> AnyElement {
+    fn nav_history_buttons(&mut self, cx: &mut Context<Pane>) -> (AnyElement, AnyElement) {
         let focus_handle = self.focus_handle.clone();
-        let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
+
+        let back_button = IconButton::new("navigate_backward", IconName::ArrowLeft)
             .icon_size(IconSize::Small)
             .on_click({
                 let entity = cx.entity();
@@ -3032,9 +3035,10 @@ impl Pane {
             .tooltip({
                 let focus_handle = focus_handle.clone();
                 move |_window, cx| Tooltip::for_action_in("Go Back", &GoBack, &focus_handle, cx)
-            });
+            })
+            .into_any_element();
 
-        let navigate_forward = IconButton::new("navigate_forward", IconName::ArrowRight)
+        let forward_button = IconButton::new("navigate_forward", IconName::ArrowRight)
             .icon_size(IconSize::Small)
             .on_click({
                 let entity = cx.entity();
@@ -3047,10 +3051,20 @@ impl Pane {
             .disabled(!self.can_navigate_forward())
             .tooltip({
                 let focus_handle = focus_handle.clone();
-                move |_window, cx| {
-                    Tooltip::for_action_in("Go Forward", &GoForward, &focus_handle, cx)
-                }
-            });
+                move |_window, cx| Tooltip::for_action_in("Go Forward", &GoForward, &focus_handle, cx)
+            })
+            .into_any_element();
+
+        (back_button, forward_button)
+    }
+
+    fn render_tab_bar(&mut self, window: &mut Window, cx: &mut Context<Pane>) -> AnyElement {
+        let focus_handle = self.focus_handle.clone();
+        let tab_bar_orientation = TabBarSettings::get_global(cx).orientation;
+        let tab_layout = match tab_bar_orientation {
+            TabBarOrientation::Horizontal => TabLayout::Horizontal,
+            TabBarOrientation::Vertical => TabLayout::Vertical,
+        };
 
         let mut tab_items = self
             .items
@@ -3058,7 +3072,7 @@ impl Pane {
             .enumerate()
             .zip(tab_details(&self.items, window, cx))
             .map(|((ix, item), detail)| {
-                self.render_tab(ix, &**item, detail, &focus_handle, window, cx)
+                self.render_tab(ix, &**item, detail, &focus_handle, window, cx, tab_layout)
             })
             .collect::<Vec<_>>();
         let tab_count = tab_items.len();
@@ -3075,15 +3089,147 @@ impl Pane {
         let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
         let pinned_tabs = tab_items;
 
-        TabBar::new("tab_bar")
-            .when(
-                self.display_nav_history_buttons.unwrap_or_default(),
-                |tab_bar| {
-                    tab_bar
-                        .start_child(navigate_backward)
-                        .start_child(navigate_forward)
-                },
-            )
+        let drop_target = |tab_count: usize,
+                           tab_bar_orientation: TabBarOrientation,
+                           cx: &mut Context<Pane>| {
+            let mut target = div()
+                .id("tab_bar_drop_target")
+                .child("")
+                .flex_grow()
+                .drag_over::<DraggedTab>(|bar, _, _, cx| {
+                    bar.bg(cx.theme().colors().drop_target_background)
+                })
+                .drag_over::<DraggedSelection>(|bar, _, _, cx| {
+                    bar.bg(cx.theme().colors().drop_target_background)
+                })
+                .on_drop(cx.listener(
+                    move |this, dragged_tab: &DraggedTab, window, cx| {
+                        this.drag_split_direction = None;
+                        this.handle_tab_drop(dragged_tab, this.items.len(), window, cx)
+                    },
+                ))
+                .on_drop(cx.listener(
+                    move |this, selection: &DraggedSelection, window, cx| {
+                        this.drag_split_direction = None;
+                        this.handle_project_entry_drop(
+                            &selection.active_selection.entry_id,
+                            Some(tab_count),
+                            window,
+                            cx,
+                        )
+                    },
+                ))
+                .on_drop(cx.listener(move |this, paths, window, cx| {
+                    this.drag_split_direction = None;
+                    this.handle_external_paths_drop(paths, window, cx)
+                }))
+                .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                    if event.click_count() == 2 {
+                        window.dispatch_action(
+                            this.double_click_dispatch_action.boxed_clone(),
+                            cx,
+                        );
+                    }
+                }));
+
+            target = match tab_bar_orientation {
+                TabBarOrientation::Horizontal => target
+                    .min_w_6()
+                    .h(Tab::container_height(cx))
+                    .overflow_hidden(),
+                TabBarOrientation::Vertical => target
+                    .min_h(Tab::container_height(cx))
+                    .w_full()
+                    .overflow_hidden(),
+            };
+
+            target
+        };
+
+        let (pinned_section, unpinned_section) = match tab_bar_orientation {
+            TabBarOrientation::Horizontal => {
+                let max_scroll = self.tab_bar_scroll_handle.max_offset().width;
+                let is_scrollable = max_scroll > px(2.0);
+                let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
+                let has_active_unpinned_tab = self.active_item_index >= self.pinned_tab_count;
+
+                let pinned_section = pinned_tabs.len().ne(&0).then(|| {
+                    h_flex()
+                        .children(pinned_tabs)
+                        .when(is_scrollable && is_scrolled, |this| {
+                            this.when(has_active_unpinned_tab, |this| this.border_r_2())
+                                .when(!has_active_unpinned_tab, |this| this.border_r_1())
+                                .border_color(cx.theme().colors().border)
+                        })
+                });
+
+                let drop_target = drop_target(tab_count, tab_bar_orientation, cx);
+
+                let unpinned_section = h_flex()
+                    .id("unpinned tabs")
+                    .overflow_x_scroll()
+                    .w_full()
+                    .track_scroll(&self.tab_bar_scroll_handle)
+                    .on_scroll_wheel(cx.listener(|this, _, _, _| {
+                        this.suppress_scroll = true;
+                    }))
+                    .children(unpinned_tabs)
+                    .child(drop_target);
+
+                (pinned_section, unpinned_section.into_any_element())
+            }
+            TabBarOrientation::Vertical => {
+                let max_scroll = self.tab_bar_scroll_handle.max_offset().height;
+                let is_scrollable = max_scroll > px(2.0);
+                let is_scrolled = self.tab_bar_scroll_handle.offset().y < px(0.);
+                let has_active_unpinned_tab = self.active_item_index >= self.pinned_tab_count;
+
+                let pinned_section = pinned_tabs.len().ne(&0).then(|| {
+                    v_flex()
+                        .children(pinned_tabs)
+                        .when(is_scrollable && is_scrolled, |this| {
+                            this.when(has_active_unpinned_tab, |this| this.border_b_2())
+                                .when(!has_active_unpinned_tab, |this| this.border_b_1())
+                                .border_color(cx.theme().colors().border)
+                        })
+                });
+
+                let drop_target = drop_target(tab_count, tab_bar_orientation, cx)
+                    .flex_grow()
+                    .h_full();
+
+                let unpinned_section = v_flex()
+                    .id("unpinned tabs")
+                    .overflow_y_scroll()
+                    .h_full()
+                    .track_scroll(&self.tab_bar_scroll_handle)
+                    .on_scroll_wheel(cx.listener(|this, _, _, _| {
+                        this.suppress_scroll = true;
+                    }))
+                    .children(unpinned_tabs)
+                    .child(drop_target);
+
+                (pinned_section, unpinned_section.into_any_element())
+            }
+        };
+
+        let tab_bar_layout = match tab_bar_orientation {
+            TabBarOrientation::Horizontal => TabBarLayout::Horizontal,
+            TabBarOrientation::Vertical => TabBarLayout::Vertical,
+        };
+
+        let mut tab_bar_element = TabBar::new("tab_bar").layout(tab_bar_layout);
+
+        let show_nav_history_buttons = self.display_nav_history_buttons.unwrap_or_default();
+        if show_nav_history_buttons && matches!(tab_bar_orientation, TabBarOrientation::Horizontal)
+        {
+            let (back_button, forward_button) = self.nav_history_buttons(cx);
+            tab_bar_element = tab_bar_element
+                .start_child(back_button)
+                .start_child(forward_button);
+        }
+
+        tab_bar_element
             .map(|tab_bar| {
                 if self.show_tab_bar_buttons {
                     let render_tab_buttons = self.render_tab_bar_buttons.clone();
@@ -3095,79 +3241,8 @@ impl Pane {
                     tab_bar
                 }
             })
-            .children(pinned_tabs.len().ne(&0).then(|| {
-                let max_scroll = self.tab_bar_scroll_handle.max_offset().width;
-                // We need to check both because offset returns delta values even when the scroll handle is not scrollable
-                let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
-                // Avoid flickering when max_offset is very small (< 2px).
-                // The border adds 1-2px which can push max_offset back to 0, creating a loop.
-                let is_scrollable = max_scroll > px(2.0);
-                let has_active_unpinned_tab = self.active_item_index >= self.pinned_tab_count;
-                h_flex()
-                    .children(pinned_tabs)
-                    .when(is_scrollable && is_scrolled, |this| {
-                        this.when(has_active_unpinned_tab, |this| this.border_r_2())
-                            .when(!has_active_unpinned_tab, |this| this.border_r_1())
-                            .border_color(cx.theme().colors().border)
-                    })
-            }))
-            .child(
-                h_flex()
-                    .id("unpinned tabs")
-                    .overflow_x_scroll()
-                    .w_full()
-                    .track_scroll(&self.tab_bar_scroll_handle)
-                    .on_scroll_wheel(cx.listener(|this, _, _, _| {
-                        this.suppress_scroll = true;
-                    }))
-                    .children(unpinned_tabs)
-                    .child(
-                        div()
-                            .id("tab_bar_drop_target")
-                            .min_w_6()
-                            // HACK: This empty child is currently necessary to force the drop target to appear
-                            // despite us setting a min width above.
-                            .child("")
-                            // HACK: h_full doesn't occupy the complete height, using fixed height instead
-                            .h(Tab::container_height(cx))
-                            .flex_grow()
-                            .drag_over::<DraggedTab>(|bar, _, _, cx| {
-                                bar.bg(cx.theme().colors().drop_target_background)
-                            })
-                            .drag_over::<DraggedSelection>(|bar, _, _, cx| {
-                                bar.bg(cx.theme().colors().drop_target_background)
-                            })
-                            .on_drop(cx.listener(
-                                move |this, dragged_tab: &DraggedTab, window, cx| {
-                                    this.drag_split_direction = None;
-                                    this.handle_tab_drop(dragged_tab, this.items.len(), window, cx)
-                                },
-                            ))
-                            .on_drop(cx.listener(
-                                move |this, selection: &DraggedSelection, window, cx| {
-                                    this.drag_split_direction = None;
-                                    this.handle_project_entry_drop(
-                                        &selection.active_selection.entry_id,
-                                        Some(tab_count),
-                                        window,
-                                        cx,
-                                    )
-                                },
-                            ))
-                            .on_drop(cx.listener(move |this, paths, window, cx| {
-                                this.drag_split_direction = None;
-                                this.handle_external_paths_drop(paths, window, cx)
-                            }))
-                            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                                if event.click_count() == 2 {
-                                    window.dispatch_action(
-                                        this.double_click_dispatch_action.boxed_clone(),
-                                        cx,
-                                    );
-                                }
-                            })),
-                    ),
-            )
+            .children(pinned_section)
+            .child(unpinned_section)
             .into_any_element()
     }
 
@@ -3603,11 +3678,19 @@ fn default_render_tab_bar_buttons(
         Some(_) => (false, pane.items_len() > 1),
         None => (false, false),
     };
-    // Ideally we would return a vec of elements here to pass directly to the [TabBar]'s
-    // `end_slot`, but due to needing a view here that isn't possible.
-    let right_children = h_flex()
+    let show_nav_history_buttons = pane.display_nav_history_buttons.unwrap_or_default()
+        && matches!(TabBarSettings::get_global(cx).orientation, TabBarOrientation::Vertical);
+
+    let mut right_children = h_flex()
         // Instead we need to replicate the spacing from the [TabBar]'s `end_slot` here.
-        .gap(DynamicSpacing::Base04.rems(cx))
+        .gap(DynamicSpacing::Base04.rems(cx));
+
+    if show_nav_history_buttons {
+        let (back_button, forward_button) = pane.nav_history_buttons(cx);
+        right_children = right_children.child(back_button).child(forward_button);
+    }
+
+    let right_children = right_children
         .child(
             PopoverMenu::new("pane-tab-bar-popover-menu")
                 .trigger_with_tooltip(
@@ -3709,8 +3792,101 @@ impl Render for Pane {
             return div().track_focus(&self.focus_handle(cx));
         };
         let is_local = project.read(cx).is_local();
+        let tab_bar_orientation = TabBarSettings::get_global(cx).orientation;
+        let has_active_item = self.active_item().is_some();
+        let show_tab_bar = has_active_item && display_tab_bar;
+        let tab_bar = show_tab_bar.then(|| (self.render_tab_bar.clone())(self, window, cx));
 
-        v_flex()
+        let pane_content = {
+            let has_worktrees = project.read(cx).visible_worktrees(cx).next().is_some();
+            // main content
+            div()
+                .flex_1()
+                .relative()
+                .group("")
+                .overflow_hidden()
+                .on_drag_move::<DraggedTab>(cx.listener(Self::handle_drag_move))
+                .on_drag_move::<DraggedSelection>(cx.listener(Self::handle_drag_move))
+                .when(is_local, |div| {
+                    div.on_drag_move::<ExternalPaths>(cx.listener(Self::handle_drag_move))
+                })
+                .map(|div| {
+                    if let Some(item) = self.active_item() {
+                        div.id("pane_placeholder")
+                            .v_flex()
+                            .size_full()
+                            .overflow_hidden()
+                            .child(self.toolbar.clone())
+                            .child(item.to_any())
+                    } else {
+                        let placeholder = div
+                            .id("pane_placeholder")
+                            .h_flex()
+                            .size_full()
+                            .justify_center()
+                            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                                if event.click_count() == 2 {
+                                    window.dispatch_action(
+                                        this.double_click_dispatch_action.boxed_clone(),
+                                        cx,
+                                    );
+                                }
+                            }));
+                        if has_worktrees {
+                            placeholder
+                        } else {
+                            placeholder.child(
+                                Label::new("Open a file or project to get started.")
+                                    .color(Color::Muted),
+                            )
+                        }
+                    }
+                })
+                .child(
+                    // drag target
+                    div()
+                        .invisible()
+                        .absolute()
+                        .bg(cx.theme().colors().drop_target_background)
+                        .group_drag_over::<DraggedTab>("", |style| style.visible())
+                        .group_drag_over::<DraggedSelection>("", |style| style.visible())
+                        .when(is_local, |div| {
+                            div.group_drag_over::<ExternalPaths>("", |style| style.visible())
+                        })
+                        .when_some(self.can_drop_predicate.clone(), |this, p| {
+                            this.can_drop(move |a, window, cx| p(a, window, cx))
+                        })
+                        .on_drop(cx.listener(move |this, dragged_tab, window, cx| {
+                            this.handle_tab_drop(dragged_tab, this.active_item_index(), window, cx)
+                        }))
+                        .on_drop(cx.listener(
+                            move |this, selection: &DraggedSelection, window, cx| {
+                                this.handle_dragged_selection_drop(selection, None, window, cx)
+                            },
+                        ))
+                        .on_drop(cx.listener(move |this, paths, window, cx| {
+                            this.handle_external_paths_drop(paths, window, cx)
+                        }))
+                        .map(|div| {
+                            let size = DefiniteLength::Fraction(0.5);
+                            match self.drag_split_direction {
+                                None => div.top_0().right_0().bottom_0().left_0(),
+                                Some(SplitDirection::Up) => div.top_0().left_0().right_0().h(size),
+                                Some(SplitDirection::Down) => {
+                                    div.left_0().bottom_0().right_0().h(size)
+                                }
+                                Some(SplitDirection::Left) => {
+                                    div.top_0().left_0().bottom_0().w(size)
+                                }
+                                Some(SplitDirection::Right) => {
+                                    div.top_0().bottom_0().right_0().w(size)
+                                }
+                            }
+                        }),
+                )
+        };
+
+        let mut pane = v_flex()
             .key_context(key_context)
             .track_focus(&self.focus_handle(cx))
             .size_full()
@@ -3845,135 +4021,66 @@ impl Render for Pane {
                 } else {
                     cx.propagate();
                 }
-            }))
-            .when(self.active_item().is_some() && display_tab_bar, |pane| {
-                pane.child((self.render_tab_bar.clone())(self, window, cx))
-            })
-            .child({
-                let has_worktrees = project.read(cx).visible_worktrees(cx).next().is_some();
-                // main content
-                div()
-                    .flex_1()
-                    .relative()
-                    .group("")
-                    .overflow_hidden()
-                    .on_drag_move::<DraggedTab>(cx.listener(Self::handle_drag_move))
-                    .on_drag_move::<DraggedSelection>(cx.listener(Self::handle_drag_move))
-                    .when(is_local, |div| {
-                        div.on_drag_move::<ExternalPaths>(cx.listener(Self::handle_drag_move))
-                    })
-                    .map(|div| {
-                        if let Some(item) = self.active_item() {
-                            div.id("pane_placeholder")
-                                .v_flex()
-                                .size_full()
-                                .overflow_hidden()
-                                .child(self.toolbar.clone())
-                                .child(item.to_any())
-                        } else {
-                            let placeholder = div
-                                .id("pane_placeholder")
-                                .h_flex()
-                                .size_full()
-                                .justify_center()
-                                .on_click(cx.listener(
-                                    move |this, event: &ClickEvent, window, cx| {
-                                        if event.click_count() == 2 {
-                                            window.dispatch_action(
-                                                this.double_click_dispatch_action.boxed_clone(),
-                                                cx,
-                                            );
-                                        }
-                                    },
-                                ));
-                            if has_worktrees {
-                                placeholder
-                            } else {
-                                placeholder.child(
-                                    Label::new("Open a file or project to get started.")
-                                        .color(Color::Muted),
-                                )
-                            }
-                        }
-                    })
-                    .child(
-                        // drag target
-                        div()
-                            .invisible()
-                            .absolute()
-                            .bg(cx.theme().colors().drop_target_background)
-                            .group_drag_over::<DraggedTab>("", |style| style.visible())
-                            .group_drag_over::<DraggedSelection>("", |style| style.visible())
-                            .when(is_local, |div| {
-                                div.group_drag_over::<ExternalPaths>("", |style| style.visible())
-                            })
-                            .when_some(self.can_drop_predicate.clone(), |this, p| {
-                                this.can_drop(move |a, window, cx| p(a, window, cx))
-                            })
-                            .on_drop(cx.listener(move |this, dragged_tab, window, cx| {
-                                this.handle_tab_drop(
-                                    dragged_tab,
-                                    this.active_item_index(),
-                                    window,
-                                    cx,
-                                )
-                            }))
-                            .on_drop(cx.listener(
-                                move |this, selection: &DraggedSelection, window, cx| {
-                                    this.handle_dragged_selection_drop(selection, None, window, cx)
-                                },
-                            ))
-                            .on_drop(cx.listener(move |this, paths, window, cx| {
-                                this.handle_external_paths_drop(paths, window, cx)
-                            }))
-                            .map(|div| {
-                                let size = DefiniteLength::Fraction(0.5);
-                                match self.drag_split_direction {
-                                    None => div.top_0().right_0().bottom_0().left_0(),
-                                    Some(SplitDirection::Up) => {
-                                        div.top_0().left_0().right_0().h(size)
-                                    }
-                                    Some(SplitDirection::Down) => {
-                                        div.left_0().bottom_0().right_0().h(size)
-                                    }
-                                    Some(SplitDirection::Left) => {
-                                        div.top_0().left_0().bottom_0().w(size)
-                                    }
-                                    Some(SplitDirection::Right) => {
-                                        div.top_0().bottom_0().right_0().w(size)
-                                    }
-                                }
-                            }),
-                    )
-            })
-            .on_mouse_down(
-                MouseButton::Navigate(NavigationDirection::Back),
-                cx.listener(|pane, _, window, cx| {
-                    if let Some(workspace) = pane.workspace.upgrade() {
-                        let pane = cx.entity().downgrade();
-                        window.defer(cx, move |window, cx| {
-                            workspace.update(cx, |workspace, cx| {
-                                workspace.go_back(pane, window, cx).detach_and_log_err(cx)
-                            })
+            }));
+
+        let content_layout = match tab_bar_orientation {
+            TabBarOrientation::Horizontal => {
+                let mut column = v_flex().size_full().overflow_hidden();
+                if let Some(tab_bar) = tab_bar {
+                    column = column.child(tab_bar);
+                }
+                column.child(pane_content).into_any_element()
+            }
+            TabBarOrientation::Vertical => {
+                let mut pane_layout = h_flex().size_full().overflow_hidden();
+                if let Some(tab_bar) = tab_bar {
+                    pane_layout = pane_layout.child(
+                        v_flex()
+                            .id("pane_tab_column")
+                            .flex_none()
+                            .flex_basis(relative(0.25))
+                            .min_w(px(220.))
+                            .max_w(px(420.))
+                            .h_full()
+                            .overflow_hidden()
+                            .bg(cx.theme().colors().tab_bar_background)
+                            .child(tab_bar),
+                    );
+                }
+                pane_layout.child(pane_content).into_any_element()
+            }
+        };
+
+        pane = pane.child(content_layout);
+
+        pane.on_mouse_down(
+            MouseButton::Navigate(NavigationDirection::Back),
+            cx.listener(|pane, _, window, cx| {
+                if let Some(workspace) = pane.workspace.upgrade() {
+                    let pane = cx.entity().downgrade();
+                    window.defer(cx, move |window, cx| {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.go_back(pane, window, cx).detach_and_log_err(cx)
                         })
-                    }
-                }),
-            )
-            .on_mouse_down(
-                MouseButton::Navigate(NavigationDirection::Forward),
-                cx.listener(|pane, _, window, cx| {
-                    if let Some(workspace) = pane.workspace.upgrade() {
-                        let pane = cx.entity().downgrade();
-                        window.defer(cx, move |window, cx| {
-                            workspace.update(cx, |workspace, cx| {
-                                workspace
-                                    .go_forward(pane, window, cx)
-                                    .detach_and_log_err(cx)
-                            })
+                    })
+                }
+            }),
+        )
+        .on_mouse_down(
+            MouseButton::Navigate(NavigationDirection::Forward),
+            cx.listener(|pane, _, window, cx| {
+                if let Some(workspace) = pane.workspace.upgrade() {
+                    let pane = cx.entity().downgrade();
+                    window.defer(cx, move |window, cx| {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace
+                                .go_forward(pane, window, cx)
+                                .detach_and_log_err(cx)
                         })
-                    }
-                }),
-            )
+                    })
+                }
+            }),
+        )
     }
 }
 
@@ -4176,6 +4283,7 @@ impl NavHistoryState {
             });
         }
     }
+
 }
 
 fn dirty_message_for(buffer_path: Option<ProjectPath>, path_style: PathStyle) -> String {

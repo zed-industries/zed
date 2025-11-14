@@ -1257,7 +1257,8 @@ or
 "tab_bar": {
   "show": true,
   "show_nav_history_buttons": true,
-  "show_tab_bar_buttons": true
+  "show_tab_bar_buttons": true,
+  "orientation": "horizontal"
 }
 ```
 
@@ -1290,6 +1291,16 @@ or
 **Options**
 
 `boolean` values
+
+### Orientation
+
+- Description: Whether the tab bar is shown horizontally (above editor panes) or vertically (beside them).
+- Setting: `orientation`
+- Default: `"horizontal"`
+
+**Options**
+
+`"horizontal" | "vertical"`
 
 ## Editor Tabs
 

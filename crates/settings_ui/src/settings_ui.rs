@@ -503,6 +503,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::ShellDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::EditPredictionsMode>(render_dropdown)
         .add_basic_renderer::<settings::RelativeLineNumbers>(render_dropdown)
+        .add_basic_renderer::<settings::TabBarOrientation>(render_dropdown)
         // please semicolon stay on next line
         ;
 }

@@ -5,6 +5,13 @@ use smallvec::SmallVec;
 
 use crate::prelude::*;
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum TabLayout {
+    #[default]
+    Horizontal,
+    Vertical,
+}
+
 const START_TAB_SLOT_SIZE: Pixels = px(12.);
 const END_TAB_SLOT_SIZE: Pixels = px(14.);
 
@@ -38,6 +45,7 @@ pub struct Tab {
     start_slot: Option<AnyElement>,
     end_slot: Option<AnyElement>,
     children: SmallVec<[AnyElement; 2]>,
+    layout: TabLayout,
 }
 
 impl Tab {
@@ -53,6 +61,7 @@ impl Tab {
             start_slot: None,
             end_slot: None,
             children: SmallVec::new(),
+            layout: TabLayout::Horizontal,
         }
     }
 
@@ -73,6 +82,11 @@ impl Tab {
 
     pub fn end_slot<E: IntoElement>(mut self, element: impl Into<Option<E>>) -> Self {
         self.end_slot = element.into().map(IntoElement::into_any_element);
+        self
+    }
+
+    pub fn layout(mut self, layout: TabLayout) -> Self {
+        self.layout = layout;
         self
     }
 
@@ -124,59 +138,130 @@ impl RenderOnce for Tab {
             ),
         };
 
-        let (start_slot, end_slot) = {
-            let start_slot = h_flex()
-                .size(START_TAB_SLOT_SIZE)
-                .justify_center()
-                .children(self.start_slot);
-
-            let end_slot = h_flex()
-                .size(END_TAB_SLOT_SIZE)
-                .justify_center()
-                .children(self.end_slot);
-
-            match self.close_side {
-                TabCloseSide::End => (start_slot, end_slot),
-                TabCloseSide::Start => (end_slot, start_slot),
-            }
-        };
-
-        self.div
-            .h(Tab::container_height(cx))
+        let base = self
+            .div
             .bg(tab_bg)
             .border_color(cx.theme().colors().border)
-            .map(|this| match self.position {
-                TabPosition::First => {
-                    if self.selected {
-                        this.pl_px().border_r_1().pb_px()
-                    } else {
-                        this.pl_px().pr_px().border_b_1()
-                    }
-                }
-                TabPosition::Last => {
-                    if self.selected {
-                        this.border_l_1().border_r_1().pb_px()
-                    } else {
-                        this.pl_px().border_b_1().border_r_1()
-                    }
-                }
-                TabPosition::Middle(Ordering::Equal) => this.border_l_1().border_r_1().pb_px(),
-                TabPosition::Middle(Ordering::Less) => this.border_l_1().pr_px().border_b_1(),
-                TabPosition::Middle(Ordering::Greater) => this.border_r_1().pl_px().border_b_1(),
-            })
-            .cursor_pointer()
-            .child(
-                h_flex()
+            .cursor_pointer();
+
+        match self.layout {
+            TabLayout::Horizontal => {
+                let indicator_slot = h_flex()
+                    .size(START_TAB_SLOT_SIZE)
+                    .justify_center()
+                    .children(self.start_slot);
+
+                let close_slot = h_flex()
+                    .size(END_TAB_SLOT_SIZE)
+                    .justify_center()
+                    .children(self.end_slot);
+
+                let (start_slot, end_slot) = match self.close_side {
+                    TabCloseSide::End => (indicator_slot, close_slot),
+                    TabCloseSide::Start => (close_slot, indicator_slot),
+                };
+
+                base
+                    .h(Tab::container_height(cx))
+                    .map(|this| match self.position {
+                        TabPosition::First => {
+                            if self.selected {
+                                this.pl_px().border_r_1().pb_px()
+                            } else {
+                                this.pl_px().pr_px().border_b_1()
+                            }
+                        }
+                        TabPosition::Last => {
+                            if self.selected {
+                                this.border_l_1().border_r_1().pb_px()
+                            } else {
+                                this.pl_px().border_b_1().border_r_1()
+                            }
+                        }
+                        TabPosition::Middle(Ordering::Equal) => this.border_l_1().border_r_1().pb_px(),
+                        TabPosition::Middle(Ordering::Less) => this.border_l_1().pr_px().border_b_1(),
+                        TabPosition::Middle(Ordering::Greater) => this.border_r_1().pl_px().border_b_1(),
+                    })
+                    .child(
+                        h_flex()
+                            .group("")
+                            .relative()
+                            .h(Tab::content_height(cx))
+                            .px(DynamicSpacing::Base04.px(cx))
+                            .gap(DynamicSpacing::Base04.rems(cx))
+                            .text_color(text_color)
+                            .child(start_slot)
+                            .children(self.children)
+                            .child(end_slot),
+                    )
+            }
+            TabLayout::Vertical => {
+                let mut indicator_content = self.start_slot;
+                let mut close_content = self.end_slot;
+
+                let build_indicator = |slot: AnyElement| {
+                    h_flex()
+                        .size(START_TAB_SLOT_SIZE)
+                        .justify_center()
+                        .child(slot)
+                        .into_any_element()
+                };
+
+                let build_close = |slot: AnyElement| {
+                    h_flex()
+                        .size(END_TAB_SLOT_SIZE)
+                        .justify_center()
+                        .child(slot)
+                        .into_any_element()
+                };
+
+                let mut row = h_flex()
                     .group("")
                     .relative()
-                    .h(Tab::content_height(cx))
+                    .w_full()
+                    .min_h(Tab::content_height(cx))
                     .px(DynamicSpacing::Base04.px(cx))
                     .gap(DynamicSpacing::Base04.rems(cx))
-                    .text_color(text_color)
-                    .child(start_slot)
-                    .children(self.children)
-                    .child(end_slot),
-            )
+                    .text_color(text_color);
+
+                match self.close_side {
+                    TabCloseSide::End => {
+                        if let Some(slot) = indicator_content.take() {
+                            row = row.child(build_indicator(slot));
+                        }
+                        row = row.child(
+                            div()
+                                .flex_grow()
+                                .min_w_0()
+                                .children(self.children),
+                        );
+                        if let Some(slot) = close_content.take() {
+                            row = row.child(build_close(slot));
+                        }
+                    }
+                    TabCloseSide::Start => {
+                        if let Some(slot) = close_content.take() {
+                            row = row.child(build_close(slot));
+                        }
+                        row = row.child(
+                            div()
+                                .flex_grow()
+                                .min_w_0()
+                                .children(self.children),
+                        );
+                        if let Some(slot) = indicator_content.take() {
+                            row = row.child(build_indicator(slot));
+                        }
+                    }
+                }
+
+                base
+                    .min_h(Tab::container_height(cx))
+                    .w_full()
+                    .border_b_1()
+                    .child(row)
+            }
+        }
     }
 }
 
