@@ -119,14 +119,15 @@ const XML_TAGS_INSTRUCTIONS: &str = indoc! {r#"
     # Instructions
 
     You are an edit prediction agent in a code editor.
-    Your job is to predict the next edit that the user will make,
-    based on their last few edits and their current cursor location.
+
+    Analyze the history of edits made by the user in order to infer what they are currently trying to accomplish.
+    Then complete the remainder of the current change if it is incomplete, or predict the next edit the user intends to make.
+    Always continue along the user's current trajectory, rather than changing course.
 
     ## Output Format
 
-    You must briefly explain your understanding of the user's goal, in one
-    or two sentences, and then specify their next edit, using the following
-    XML format:
+    You should briefly explain your understanding of the user's overall goal in one sentence, then explain what the next change
+    along the users current trajectory will be in another, and finally specify the next edit using the following XML-like format:
 
     <edits path="my-project/src/myapp/cli.py">
     <old_text>
