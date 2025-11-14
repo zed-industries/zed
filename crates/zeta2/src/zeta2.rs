@@ -91,8 +91,15 @@ pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
 
 static USE_OLLAMA: LazyLock<bool> =
     LazyLock::new(|| env::var("ZED_ZETA2_OLLAMA").is_ok_and(|var| !var.is_empty()));
-static MODEL_ID: LazyLock<String> = LazyLock::new(|| {
-    env::var("ZED_ZETA2_MODEL").unwrap_or(if *USE_OLLAMA {
+static CONTEXT_RETRIEVAL_MODEL_ID: LazyLock<String> = LazyLock::new(|| {
+    env::var("ZED_ZETA2_CONTEXT_MODEL").unwrap_or(if *USE_OLLAMA {
+        "qwen3-coder:30b".to_string()
+    } else {
+        "yqvev8r3".to_string()
+    })
+});
+static EDIT_PREDICTIONS_MODEL_ID: LazyLock<String> = LazyLock::new(|| {
+    env::var("ZED_ZETA2_EP_MODEL").unwrap_or(if *USE_OLLAMA {
         "qwen3-coder:30b".to_string()
     } else {
         "yqvev8r3".to_string()
@@ -826,7 +833,7 @@ impl Zeta {
                         } else {
                             included_files.push((
                                 active_buffer.clone(),
-                                active_snapshot,
+                                active_snapshot.clone(),
                                 excerpt_path.clone(),
                                 vec![excerpt_anchor_range],
                             ));
@@ -940,7 +947,7 @@ impl Zeta {
 
                 let (prompt, _) = prompt_result?;
                 let request = open_ai::Request {
-                    model: MODEL_ID.clone(),
+                    model: EDIT_PREDICTIONS_MODEL_ID.clone(),
                     messages: vec![open_ai::RequestMessage::User {
                         content: open_ai::MessageContent::Plain(prompt),
                     }],
@@ -1010,7 +1017,16 @@ impl Zeta {
 
                 let (edited_buffer_snapshot, edits) = match options.prompt_format {
                     PromptFormat::NumLinesUniDiff => {
+                        // TODO: Implement parsing of multi-file diffs
                         crate::udiff::parse_diff(&output_text, get_buffer_from_context).await?
+                    }
+                    PromptFormat::MinimalPrompt => {
+                        if output_text.contains("--- a/\n+++ b/\nNo edits") {
+                            let edits = vec![];
+                            (&active_snapshot, edits)
+                        } else {
+                            crate::udiff::parse_diff(&output_text, get_buffer_from_context).await?
+                        }
                     }
                     PromptFormat::OldTextNewText => {
                         crate::xml_edits::parse_xml_edits(&output_text, get_buffer_from_context)
@@ -1363,7 +1379,7 @@ impl Zeta {
         let (tool_schema, tool_description) = TOOL_SCHEMA.clone();
 
         let request = open_ai::Request {
-            model: MODEL_ID.clone(),
+            model: CONTEXT_RETRIEVAL_MODEL_ID.clone(),
             messages: vec![open_ai::RequestMessage::User {
                 content: open_ai::MessageContent::Plain(prompt),
             }],
