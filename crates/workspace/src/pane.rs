@@ -3061,7 +3061,6 @@ impl Pane {
             })
             .disabled(!self.can_navigate_forward())
             .tooltip({
-                let focus_handle = focus_handle.clone();
                 move |_window, cx| {
                     Tooltip::for_action_in("Go Forward", &GoForward, &focus_handle, cx)
                 }
