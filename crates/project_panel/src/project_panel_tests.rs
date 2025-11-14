@@ -807,6 +807,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.rename(&Default::default(), window, cx)
     });
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -2398,6 +2399,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         ],
     );
     panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+    cx.executor().run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
@@ -2603,6 +2605,7 @@ async fn test_create_duplicate_items_and_check_history(cx: &mut gpui::TestAppCon
         ],
     );
     panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+    cx.executor().run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
