@@ -169,7 +169,11 @@ pub struct TabSnapshot {
 
 impl TabSnapshot {
     pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
-        &self.fold_snapshot.inlay_snapshot.buffer
+        &self
+            .fold_snapshot
+            .inlay_snapshot
+            .filter_snapshot
+            .buffer_snapshot
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
@@ -319,7 +323,15 @@ impl TabSnapshot {
     }
 
     pub fn make_tab_point(&self, point: Point, bias: Bias) -> TabPoint {
-        let inlay_point = self.fold_snapshot.inlay_snapshot.to_inlay_point(point);
+        let filter_point = self
+            .fold_snapshot
+            .inlay_snapshot
+            .filter_snapshot
+            .to_filter_point(point);
+        let inlay_point = self
+            .fold_snapshot
+            .inlay_snapshot
+            .to_inlay_point(filter_point);
         let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
         self.to_tab_point(fold_point)
     }
@@ -327,9 +339,14 @@ impl TabSnapshot {
     pub fn to_point(&self, point: TabPoint, bias: Bias) -> Point {
         let fold_point = self.to_fold_point(point, bias).0;
         let inlay_point = fold_point.to_inlay_point(&self.fold_snapshot);
+        let filter_point = self
+            .fold_snapshot
+            .inlay_snapshot
+            .to_filter_point(inlay_point);
         self.fold_snapshot
             .inlay_snapshot
-            .to_buffer_point(inlay_point)
+            .filter_snapshot
+            .to_buffer_point(filter_point, bias)
     }
 
     fn expand_tabs<'a, I>(&self, mut cursor: TabStopCursor<'a, I>, column: u32) -> u32
@@ -636,6 +653,7 @@ mod tests {
     use crate::{
         MultiBuffer,
         display_map::{
+            filter_map::FilterMap,
             fold_map::{FoldMap, FoldOffset},
             inlay_map::InlayMap,
         },
@@ -750,7 +768,8 @@ mod tests {
         ];
         let buffer = MultiBuffer::build_simple("", cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (_, filter_snapshot) = FilterMap::new(None, buffer_snapshot);
+        let (_, inlay_snapshot) = InlayMap::new(filter_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -786,7 +805,8 @@ mod tests {
 
         let buffer = MultiBuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (_, filter_snapshot) = FilterMap::new(None, buffer_snapshot);
+        let (_, inlay_snapshot) = InlayMap::new(filter_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -825,7 +845,8 @@ mod tests {
         let text = "γ\tw⭐\n🍐🍗 \t";
         let buffer = MultiBuffer::build_simple(text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (_, filter_snapshot) = FilterMap::new(None, buffer_snapshot);
+        let (_, inlay_snapshot) = InlayMap::new(filter_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -864,7 +885,8 @@ mod tests {
 
         let buffer = MultiBuffer::build_simple(&input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (_, filter_snapshot) = FilterMap::new(None, buffer_snapshot);
+        let (_, inlay_snapshot) = InlayMap::new(filter_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         tab_snapshot.max_expansion_column = rng.random_range(0..323);
@@ -909,7 +931,8 @@ mod tests {
 
         let buffer = MultiBuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (_, filter_snapshot) = FilterMap::new(None, buffer_snapshot);
+        let (_, inlay_snapshot) = InlayMap::new(filter_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -956,7 +979,8 @@ mod tests {
 
         let buffer = MultiBuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (_, filter_snapshot) = FilterMap::new(None, buffer_snapshot);
+        let (_, inlay_snapshot) = InlayMap::new(filter_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -970,7 +994,8 @@ mod tests {
 
         let buffer = MultiBuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (_, filter_snapshot) = FilterMap::new(None, buffer_snapshot);
+        let (_, inlay_snapshot) = InlayMap::new(filter_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -1030,7 +1055,8 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         log::info!("Buffer text: {:?}", buffer_snapshot.text());
 
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (filter_map, filter_snapshot) = FilterMap::new(None, buffer_snapshot);
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(filter_snapshot);
         log::info!("InlayMap text: {:?}", inlay_snapshot.text());
         let (mut fold_map, _) = FoldMap::new(inlay_snapshot.clone());
         fold_map.randomly_mutate(&mut rng);
@@ -1106,7 +1132,8 @@ mod tests {
         // Create buffer and tab map
         let buffer = MultiBuffer::build_simple(&text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (filter_map, filter_snapshot) = FilterMap::new(None, buffer_snapshot);
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(filter_snapshot);
         let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
 
@@ -1145,7 +1172,8 @@ mod tests {
         let text = "\tfoo\tbarbarbar\t\tbaz\n";
         let buffer = MultiBuffer::build_simple(text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (_, filter_snapshot) = FilterMap::new(None, buffer_snapshot);
+        let (_, inlay_snapshot) = InlayMap::new(filter_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let chunks = fold_snapshot.chunks(
             FoldOffset(0)..fold_snapshot.len(),
@@ -1183,7 +1211,8 @@ mod tests {
 
         let buffer = MultiBuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (_, filter_snapshot) = FilterMap::new(None, buffer_snapshot);
+        let (_, inlay_snapshot) = InlayMap::new(filter_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
 
         let chunks = fold_snapshot.chunks_at(FoldPoint::new(0, 0));
@@ -1241,7 +1270,8 @@ mod tests {
         // Build the buffer and create cursor
         let buffer = MultiBuffer::build_simple(&input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, filter_snapshot) = FilterMap::new(None, buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(filter_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
 
         // First, collect all expected tab positions
@@ -1307,7 +1337,8 @@ mod tests {
         let text = "\r\t😁foo\tb😀arbar🤯bar\t\tbaz\n";
         let buffer = MultiBuffer::build_simple(text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (_, filter_snapshot) = FilterMap::new(None, buffer_snapshot);
+        let (_, inlay_snapshot) = InlayMap::new(filter_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let chunks = fold_snapshot.chunks(
             FoldOffset(0)..fold_snapshot.len(),
@@ -1351,7 +1382,8 @@ mod tests {
         // Build the buffer and create cursor
         let buffer = MultiBuffer::build_simple(&input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, filter_snapshot) = FilterMap::new(None, buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(filter_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
 
         // First, collect all expected tab positions

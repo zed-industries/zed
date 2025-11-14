@@ -1012,6 +1012,7 @@ mod tests {
                 1,
                 FoldPlaceholder::test(),
                 DiagnosticSeverity::Warning,
+                None,
                 cx,
             )
         });
@@ -1210,6 +1211,7 @@ mod tests {
                     1,
                     FoldPlaceholder::test(),
                     DiagnosticSeverity::Warning,
+                    None,
                     cx,
                 )
             });

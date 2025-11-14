@@ -3,7 +3,9 @@ use std::any::Any;
 use ::settings::Settings;
 use command_palette_hooks::CommandPaletteFilter;
 use commit_modal::CommitModal;
-use editor::{Editor, actions::DiffClipboardWithSelectionData};
+use editor::{
+    Editor, MultiBuffer, actions::DiffClipboardWithSelectionData, display_map::FilterMode,
+};
 use ui::{
     Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, ParentElement, Render, Styled,
     StyledExt, div, h_flex, rems, v_flex,
@@ -25,7 +27,10 @@ use onboarding::GitOnboardingModal;
 use project::git_store::Repository;
 use project_diff::ProjectDiff;
 use ui::prelude::*;
-use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr};
+use util::rel_path::RelPath;
+use workspace::{
+    ModalView, OpenOptions, SplitDirection, Workspace, notifications::DetachAndPromptErr,
+};
 use zed_actions;
 
 use crate::{git_panel::GitPanel, text_diff_view::TextDiffView};
@@ -51,7 +56,8 @@ actions!(
     git,
     [
         /// Resets the git onboarding state to show the tutorial again.
-        ResetOnboarding
+        ResetOnboarding,
+        OpenSplitDiff
     ]
 );
 
@@ -221,6 +227,69 @@ pub fn init(cx: &mut App) {
                 };
             },
         );
+        workspace.register_action(|workspace, _: &OpenSplitDiff, window, cx| {
+            open_split_diff(workspace, window, cx);
+        });
+    })
+    .detach();
+}
+
+fn open_split_diff(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<'_, Workspace>,
+) {
+    let buffer = workspace.project().update(cx, |project, cx| {
+        let worktree = project.worktrees(cx).next().unwrap();
+        project.open_buffer(
+            (
+                worktree.read(cx).id(),
+                RelPath::unix("scripts/spellcheck.sh").unwrap(),
+            ),
+            cx,
+        )
+    });
+    cx.spawn_in(window, async move |workspace, cx| {
+        let buffer = buffer.await?;
+        workspace.update_in(cx, |workspace, window, cx| {
+            let multibuffer = cx.new(|cx| {
+                let mut multibuffer = MultiBuffer::singleton(buffer, cx);
+                multibuffer.set_all_diff_hunks_expanded(cx);
+                multibuffer
+            });
+            // let deletions_only_editor = cx.new(|cx| {
+            //     Editor::filtered(
+            //         multibuffer.clone(),
+            //         workspace.project().clone(),
+            //         FilterMode::RemoveInsertions,
+            //         window,
+            //         cx,
+            //     )
+            // });
+            let insertions_only_editor = cx.new(|cx| {
+                Editor::filtered(
+                    multibuffer,
+                    workspace.project().clone(),
+                    FilterMode::RemoveDeletions,
+                    window,
+                    cx,
+                )
+            });
+            // workspace.add_item_to_active_pane(
+            //     Box::new(deletions_only_editor),
+            //     None,
+            //     true,
+            //     window,
+            //     cx,
+            // );
+            workspace.split_item(
+                SplitDirection::horizontal(cx),
+                Box::new(insertions_only_editor),
+                window,
+                cx,
+            );
+        })?;
+        anyhow::Ok(())
     })
     .detach();
 }

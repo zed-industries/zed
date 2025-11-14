@@ -1204,7 +1204,9 @@ mod tests {
     use super::*;
     use crate::{
         MultiBuffer,
-        display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap},
+        display_map::{
+            filter_map::FilterMap, fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap,
+        },
         test::test_font,
     };
     use gpui::{LineFragment, px, test::observe};
@@ -1253,7 +1255,8 @@ mod tests {
         });
         let mut buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
         log::info!("Buffer text: {:?}", buffer_snapshot.text());
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut filter_map, filter_snapshot) = FilterMap::new(None, buffer_snapshot.clone());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(filter_snapshot.clone());
         log::info!("InlayMap text: {:?}", inlay_snapshot.text());
         let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot.clone());
         log::info!("FoldMap text: {:?}", fold_snapshot.text());
@@ -1337,8 +1340,9 @@ mod tests {
             }
 
             log::info!("Buffer text: {:?}", buffer_snapshot.text());
-            let (inlay_snapshot, inlay_edits) =
-                inlay_map.sync(buffer_snapshot.clone(), buffer_edits);
+            let (filter_snapshot, filter_edits) =
+                filter_map.sync(buffer_snapshot.clone(), buffer_edits);
+            let (inlay_snapshot, inlay_edits) = inlay_map.sync(filter_snapshot, filter_edits);
             log::info!("InlayMap text: {:?}", inlay_snapshot.text());
             let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
             log::info!("FoldMap text: {:?}", fold_snapshot.text());

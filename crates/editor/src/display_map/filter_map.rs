@@ -88,13 +88,13 @@ impl sum_tree::ContextLessSummary for TransformSummary {
     }
 }
 
-pub(crate) struct FilterMap {
+pub struct FilterMap {
     snapshot: FilterSnapshot,
     mode: Option<FilterMode>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum FilterMode {
+pub enum FilterMode {
     RemoveDeletions,
     RemoveInsertions,
 }
@@ -241,7 +241,7 @@ impl sum_tree::Dimension<'_, TransformSummary> for usize {
 pub(crate) type FilterEdit = text::Edit<FilterOffset>;
 
 impl FilterMap {
-    pub(crate) fn new(
+    pub fn new(
         mode: Option<FilterMode>,
         buffer_snapshot: MultiBufferSnapshot,
     ) -> (Self, FilterSnapshot) {
@@ -275,6 +275,8 @@ impl FilterMap {
     fn check_invariants(&self) {
         use itertools::Itertools;
         use multi_buffer::MultiBufferRow;
+
+        assert!(!self.snapshot.transforms.is_empty(), "empty transforms");
 
         #[cfg(test)]
         pretty_assertions::assert_eq!(
@@ -324,7 +326,7 @@ impl FilterMap {
         self.snapshot.print_transforms();
 
         #[cfg(test)]
-        log::info!("filter map output text:\n{}", self.snapshot.text());
+        log::info!("filter map output text:\n{}", self.snapshot.debug_text());
 
         let mut expected_summary = TextSummary::default();
         let mut expected_text = String::new();
@@ -360,7 +362,7 @@ impl FilterMap {
 
         #[cfg(test)]
         pretty_assertions::assert_eq!(
-            self.snapshot.text(),
+            self.snapshot.debug_text(),
             expected_text,
             "wrong output text for nontrivial map"
         );
@@ -369,12 +371,42 @@ impl FilterMap {
             self.snapshot.transforms.summary().output,
             expected_summary,
             "wrong output summary for nontrivial map"
-        )
+        );
+
+        let expected_filter_row_infos: Vec<_> = self
+            .snapshot
+            .buffer_snapshot
+            .row_infos(MultiBufferRow(0))
+            .filter(|row| {
+                row.diff_status
+                    .is_none_or(|status| !mode.should_remove(status.kind))
+            })
+            .collect();
+        let actual_filter_row_infos: Vec<_> = self.snapshot.row_infos(FilterRow(0)).collect();
+        pretty_assertions::assert_eq!(
+            actual_filter_row_infos,
+            expected_filter_row_infos,
+            "rows were not filtered correctly"
+        );
     }
 }
 
 impl FilterMap {
-    pub(crate) fn sync(
+    pub fn set_mode(&mut self, mode: Option<FilterMode>) -> (FilterSnapshot, Vec<FilterEdit>) {
+        if mode == self.mode {
+            return (self.snapshot.clone(), vec![]);
+        }
+        self.mode = mode;
+        self.sync(
+            self.snapshot.buffer_snapshot.clone(),
+            vec![text::Edit {
+                old: 0..self.snapshot.buffer_snapshot.len(),
+                new: 0..self.snapshot.buffer_snapshot.len(),
+            }],
+        )
+    }
+
+    pub fn sync(
         &mut self,
         buffer_snapshot: MultiBufferSnapshot,
         mut buffer_edits: Vec<text::Edit<usize>>,
@@ -641,6 +673,17 @@ impl FilterMap {
 
         drop(transform_cursor);
 
+        if new_transforms.is_empty() {
+            new_transforms.push(
+                FilterTransform::Isomorphic {
+                    summary: TextSummary::default(),
+                    #[cfg(test)]
+                    text: Default::default(),
+                },
+                (),
+            );
+        }
+
         let new_snapshot = FilterSnapshot {
             transforms: new_transforms,
             buffer_snapshot,
@@ -661,8 +704,8 @@ fn check_edits(
     output_edits: &[text::Edit<FilterOffset>],
     new_snapshot: &FilterSnapshot,
 ) {
-    let mut edited_old_text = old_snapshot.text();
-    let new_text = new_snapshot.text();
+    let mut edited_old_text = old_snapshot.debug_text();
+    let new_text = new_snapshot.debug_text();
 
     dbg!(&output_edits);
 
@@ -710,8 +753,10 @@ fn diff_hunk_bounds(
 }
 
 impl FilterSnapshot {
+    /// A naive implementation of [`FilterSnapshot::text`]. They should always
+    /// produce the same text.
     #[cfg(test)]
-    fn text(&self) -> String {
+    fn debug_text(&self) -> String {
         self.transforms
             .iter()
             .filter_map(|t| match t {
@@ -719,6 +764,26 @@ impl FilterSnapshot {
                 FilterTransform::Filter { .. } => None,
             })
             .collect()
+    }
+
+    fn text(&self) -> String {
+        let mut offset = 0;
+        let mut buffer = String::new();
+        for transform in self.transforms.iter() {
+            match transform {
+                FilterTransform::Isomorphic { summary, .. } => {
+                    buffer.extend(
+                        self.buffer_snapshot
+                            .text_for_range(offset..offset + summary.len),
+                    );
+                    offset += summary.len;
+                }
+                FilterTransform::Filter { summary, .. } => {
+                    offset += summary.len;
+                }
+            }
+        }
+        buffer
     }
 
     #[cfg(test)]
@@ -752,10 +817,6 @@ impl FilterSnapshot {
 
     pub(crate) fn max_row(&self) -> FilterRow {
         FilterRow(self.max_point().0.row)
-    }
-
-    pub(crate) fn to_filter_point(&self, point: MultiBufferPoint) -> FilterPoint {
-        todo!()
     }
 }
 
@@ -859,6 +920,19 @@ impl FilterSnapshot {
             Some(FilterTransform::Isomorphic { .. }) => {
                 let overshoot = offset - start.0;
                 start.1 + FilterOffset(overshoot)
+            }
+            Some(FilterTransform::Filter { .. }) | None => start.1,
+        }
+    }
+
+    pub(crate) fn to_filter_point(&self, point: MultiBufferPoint) -> FilterPoint {
+        let (start, _end, item) = self
+            .transforms
+            .find::<Dimensions<MultiBufferPoint, FilterPoint>, _>((), &point, Bias::Right);
+        match item {
+            Some(FilterTransform::Isomorphic { .. }) => {
+                let overshoot = point - start.0;
+                start.1 + FilterPoint(overshoot)
             }
             Some(FilterTransform::Filter { .. }) | None => start.1,
         }
@@ -979,6 +1053,25 @@ impl FilterSnapshot {
             }
             None => self.max_point(),
         }
+
+        // // if the point is valid, check that this function doesn't change it
+        // #[cfg(any(test, debug_assertions))]
+        // 'check: {
+        //     let text = self.text();
+        //     let Some(row) = text.lines().nth(point.0.row as usize) else {
+        //         // the row was invalid, so we can't assert
+        //         break 'check;
+        //     };
+
+        //     if point.0.column as usize > row.as_bytes().len() {
+        //         // the column was invalid, so we can't assert
+        //         break 'check;
+        //     }
+
+        //     assert_eq!(point, result);
+        // }
+
+        // result
     }
 
     /// Returns true if the anchor resolves to an offset strictly inside a filtered region,
@@ -1118,6 +1211,12 @@ impl<'a> Iterator for FilterRows<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let target = FilterPoint(Point::new(self.next_row.0, 0));
         self.transform_cursor.seek_forward(&target, Bias::Right);
+
+        // cursor:           v         v
+        // |----|-----|------|---------|
+        if self.transform_cursor.item().is_none() && self.transform_cursor.start().0 == target {
+            self.transform_cursor.prev();
+        }
         let mut buffer_start = self.transform_cursor.start().1;
         match self.transform_cursor.item()? {
             FilterTransform::Isomorphic { .. } => {

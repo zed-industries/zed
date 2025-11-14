@@ -1728,6 +1728,24 @@ impl Editor {
         clone
     }
 
+    pub fn filtered(
+        buffer: Entity<MultiBuffer>,
+        project: Entity<Project>,
+        filter_mode: FilterMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Editor::new_internal(
+            EditorMode::full(),
+            buffer,
+            Some(project),
+            None,
+            Some(filter_mode),
+            window,
+            cx,
+        )
+    }
+
     pub fn new(
         mode: EditorMode,
         buffer: Entity<MultiBuffer>,
@@ -1735,7 +1753,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Editor::new_internal(mode, buffer, project, None, window, cx)
+        Editor::new_internal(mode, buffer, project, None, None, window, cx)
     }
 
     fn new_internal(
@@ -1743,6 +1761,7 @@ impl Editor {
         multi_buffer: Entity<MultiBuffer>,
         project: Option<Entity<Project>>,
         display_map: Option<Entity<DisplayMap>>,
+        filter_mode: Option<FilterMode>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -1806,6 +1825,7 @@ impl Editor {
                     MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
                     fold_placeholder,
                     diagnostics_max_severity,
+                    filter_mode,
                     cx,
                 )
             })
@@ -2855,6 +2875,7 @@ impl Editor {
                 MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
                 Default::default(),
                 DiagnosticSeverity::Off,
+                None,
                 cx,
             )
         }));
@@ -19157,6 +19178,7 @@ impl Editor {
             self.buffer.clone(),
             None,
             Some(self.display_map.clone()),
+            None,
             window,
             cx,
         );
@@ -19279,6 +19301,13 @@ impl Editor {
             self.display_map
                 .update(cx, |map, cx| map.set_wrap_width(width, cx))
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_filter_mode(&mut self, filter_mode: Option<FilterMode>, cx: &mut App) {
+        self.display_map.update(cx, |display_map, cx| {
+            display_map.set_filter_mode(filter_mode, cx);
+        });
     }
 
     pub fn set_soft_wrap(&mut self) {

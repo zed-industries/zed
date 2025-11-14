@@ -72,6 +72,7 @@ pub fn marked_display_snapshot(
             1,
             FoldPlaceholder::test(),
             DiagnosticSeverity::Warning,
+            None,
             cx,
         )
     });

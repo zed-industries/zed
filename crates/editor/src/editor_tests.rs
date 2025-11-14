@@ -1506,6 +1506,62 @@ fn test_move_cursor(cx: &mut TestAppContext) {
     });
 }
 
+// FIXME
+#[gpui::test]
+async fn test_filtered_editor(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_editor(|editor, window, cx| {
+        editor.set_expand_all_diff_hunks(cx);
+        editor.set_text("one\nTWO\nTHREE\nfour\n", window, cx);
+    });
+    cx.set_head_text("one\ntwo\nthree\nfour\n");
+
+    cx.update_editor(|editor, _, cx| {
+        editor.set_filter_mode(Some(FilterMode::RemoveDeletions), cx);
+    });
+    cx.run_until_parked();
+    let text = cx.editor(|editor, window, cx| editor.display_text(cx));
+    pretty_assertions::assert_eq!(text, "one\nTWO\nTHREE\nfour\n");
+    cx.set_selections_state(indoc! {"
+        ˇone
+        two
+        three
+        TWO
+        THREE
+        four
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.move_down(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.move_down(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.move_down(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        one
+        two
+        three
+        TWO
+        THREE
+        ˇfour
+    "});
+    // let row_infos = cx.editor(|editor, window, cx| {
+    //     editor
+    //         .display_snapshot(cx)
+    //         .row_infos(DisplayRow(0))
+    //         .collect::<Vec<_>>()
+    // });
+    // dbg!(&row_infos);
+}
+
 #[gpui::test]
 fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
