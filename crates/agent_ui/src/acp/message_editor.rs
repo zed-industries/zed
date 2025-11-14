@@ -1,7 +1,8 @@
 use crate::{
     ChatWithFollow,
     acp::completion_provider::{ContextPickerCompletionProvider, SlashCommandCompletion},
-    context_picker::{ContextPickerAction, fetch_context_picker::fetch_url_content},
+    completion_provider::fetch_url_content,
+    context_picker::ContextPickerAction,
 };
 use acp_thread::{MentionUri, selection_name};
 use agent::{HistoryStore, outline};
@@ -1038,12 +1039,11 @@ impl MessageEditor {
                 continue;
             };
             let abs_path = worktree.read(cx).absolutize(&path.path);
-            let (file_name, _) =
-                crate::context_picker::file_context_picker::extract_file_name_and_directory(
-                    &path.path,
-                    worktree.read(cx).root_name(),
-                    path_style,
-                );
+            let (file_name, _) = crate::completion_provider::extract_file_name_and_directory(
+                &path.path,
+                worktree.read(cx).root_name(),
+                path_style,
+            );
 
             let uri = if entry.is_dir() {
                 MentionUri::Directory { abs_path }
