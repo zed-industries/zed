@@ -29,5 +29,4 @@ curl -fsSL --output - "$WILD_URL" \
     | $SUDO tar -C ${DEST_DIR} --strip-components=1 --no-overwrite-dir -xzf - \
     "${WILD_PACKAGE}/wild"
 
-cat <<EOF
-Wild is installed to ${DEST_DIR}/wild
+echo Wild is installed to ${DEST_DIR}/wild
