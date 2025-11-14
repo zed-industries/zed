@@ -1,7 +1,8 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorEvent, MultiBuffer, SelectionEffects, multibuffer_context_lines};
-use git::repository::{CommitDetails, CommitDiff, RepoPath};
+use git::commit::CommitDetails;
+use git::repository::{CommitDiff, RepoPath};
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncApp, AsyncWindowContext, Context,
     Entity, EventEmitter, FocusHandle, Focusable, IntoElement, PromptLevel, Render, Task,
@@ -415,20 +416,18 @@ fn format_commit(commit: &CommitDetails, is_stash: bool) -> String {
         commit.author_name, commit.author_email
     )
     .unwrap();
-    let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
     writeln!(
         &mut result,
         "Date:   {}",
-        time_format::format_localized_timestamp(
-            time::OffsetDateTime::from_unix_timestamp(commit.commit_timestamp).unwrap(),
+        time_format::format_local_timestamp(
+            commit.commit_time,
             time::OffsetDateTime::now_utc(),
-            local_offset,
             time_format::TimestampFormat::MediumAbsolute,
         ),
     )
     .unwrap();
     result.push('\n');
-    for line in commit.message.split('\n') {
+    for line in commit.raw_message().split('\n') {
         if line.is_empty() {
             result.push('\n');
         } else {
@@ -467,14 +466,21 @@ impl Item for CommitView {
     }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        let short_sha = self.commit.sha.get(0..7).unwrap_or(&*self.commit.sha);
-        let subject = truncate_and_trailoff(self.commit.message.split('\n').next().unwrap(), 20);
+        let short_sha = self.commit.short_sha();
+        let subject =
+            truncate_and_trailoff(self.commit.raw_message().split('\n').next().unwrap(), 20);
         format!("{short_sha} - {subject}").into()
     }
 
     fn tab_tooltip_text(&self, _: &App) -> Option<ui::SharedString> {
-        let short_sha = self.commit.sha.get(0..16).unwrap_or(&*self.commit.sha);
-        let subject = self.commit.message.split('\n').next().unwrap();
+        let short_sha = self.commit.short_sha();
+        let subject = self
+            .commit
+            .message
+            .message
+            .split('\n')
+            .next()
+            .unwrap_or_default();
         Some(format!("{short_sha} - {subject}").into())
     }
 
