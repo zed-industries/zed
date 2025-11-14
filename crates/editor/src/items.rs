@@ -21,6 +21,7 @@ use language::{
     SelectionGoal, proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
+use multi_buffer::MultiBufferOffset;
 use project::{
     Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
     project_settings::ProjectSettings, search::SearchQuery,
@@ -1735,7 +1736,7 @@ impl SearchableItem for Editor {
             let mut ranges = Vec::new();
 
             let search_within_ranges = if search_within_ranges.is_empty() {
-                vec![buffer.anchor_before(0)..buffer.anchor_after(buffer.len())]
+                vec![buffer.anchor_before(MultiBufferOffset(0))..buffer.anchor_after(buffer.len())]
             } else {
                 search_within_ranges
             };
@@ -1746,7 +1747,10 @@ impl SearchableItem for Editor {
                 {
                     ranges.extend(
                         query
-                            .search(search_buffer, Some(search_range.clone()))
+                            .search(
+                                search_buffer,
+                                Some(search_range.start.0..search_range.end.0),
+                            )
                             .await
                             .into_iter()
                             .map(|match_range| {

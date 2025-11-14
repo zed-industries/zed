@@ -601,7 +601,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     // Add another completion trigger to test the second language server
     editor_b.update_in(cx_b, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([68..68])
+            s.select_ranges([MultiBufferOffset(68)..MultiBufferOffset(68)])
         });
         editor.handle_input("; b", window, cx);
         editor.handle_input(".", window, cx);

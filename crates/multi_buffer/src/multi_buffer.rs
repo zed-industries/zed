@@ -347,12 +347,50 @@ impl AddAssign<DimensionPair<usize, Point>> for BufferOffset {
     }
 }
 
+impl language::ToPoint for BufferOffset {
+    fn to_point(&self, snapshot: &text::BufferSnapshot) -> Point {
+        self.0.to_point(snapshot)
+    }
+}
+
+impl language::ToPointUtf16 for BufferOffset {
+    fn to_point_utf16(&self, snapshot: &text::BufferSnapshot) -> PointUtf16 {
+        self.0.to_point_utf16(snapshot)
+    }
+}
+
+impl language::ToOffset for BufferOffset {
+    fn to_offset(&self, snapshot: &text::BufferSnapshot) -> usize {
+        self.0.to_offset(snapshot)
+    }
+}
+
+impl language::ToOffsetUtf16 for BufferOffset {
+    fn to_offset_utf16(&self, snapshot: &text::BufferSnapshot) -> OffsetUtf16 {
+        self.0.to_offset_utf16(snapshot)
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct MultiBufferOffsetUtf16(pub OffsetUtf16);
+
+impl ops::Add<usize> for MultiBufferOffsetUtf16 {
+    type Output = MultiBufferOffsetUtf16;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        MultiBufferOffsetUtf16(OffsetUtf16(self.0.0 + rhs))
+    }
+}
 
 impl AddAssign<OffsetUtf16> for MultiBufferOffsetUtf16 {
     fn add_assign(&mut self, rhs: OffsetUtf16) {
         self.0 += rhs;
+    }
+}
+
+impl AddAssign<usize> for MultiBufferOffsetUtf16 {
+    fn add_assign(&mut self, rhs: usize) {
+        self.0.0 += rhs;
     }
 }
 
@@ -427,6 +465,14 @@ impl ops::AddAssign<usize> for MultiBufferOffset {
     }
 }
 
+impl ops::Add<isize> for MultiBufferOffset {
+    type Output = Self;
+
+    fn add(self, rhs: isize) -> Self::Output {
+        MultiBufferOffset((self.0 as isize + rhs) as usize)
+    }
+}
+
 impl ops::Add for MultiBufferOffset {
     type Output = Self;
 
@@ -438,12 +484,6 @@ impl ops::Add for MultiBufferOffset {
 impl ops::AddAssign<MultiBufferOffset> for MultiBufferOffset {
     fn add_assign(&mut self, other: MultiBufferOffset) {
         self.0 += other.0;
-    }
-}
-
-impl language::ToOffset for BufferOffset {
-    fn to_offset(&self, _: &text::BufferSnapshot) -> usize {
-        self.0
     }
 }
 
@@ -2429,7 +2469,7 @@ impl MultiBuffer {
             let start = snapshot.point_to_offset(Point::new(range.start.row, 0));
             let end = snapshot.point_to_offset(Point::new(range.end.row + 1, 0));
             let start = start.saturating_sub_usize(1);
-            let end = snapshot.len().min(end + 1);
+            let end = snapshot.len().min(end + 1usize);
             cursor.seek(&start, Bias::Right);
             while let Some(item) = cursor.item() {
                 if *cursor.start() >= end {
