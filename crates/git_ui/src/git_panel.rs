@@ -12,7 +12,9 @@ use agent_settings::AgentSettings;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use db::kvp::KEY_VALUE_STORE;
-use editor::{Editor, EditorElement, EditorMode, MultiBuffer};
+use editor::{
+    Direction, Editor, EditorElement, EditorMode, MultiBuffer, actions::ExpandAllDiffHunks,
+};
 use futures::StreamExt as _;
 use git::blame::ParsedCommitMessage;
 use git::repository::{
@@ -69,7 +71,7 @@ use cloud_llm_client::CompletionIntent;
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId},
+    notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
 };
 
 actions!(
@@ -799,15 +801,46 @@ impl GitPanel {
                 return None;
             }
 
-            self.workspace
+            let open_task = self
+                .workspace
                 .update(cx, |workspace, cx| {
-                    workspace
-                        .open_path_preview(path, None, false, false, true, window, cx)
-                        .detach_and_prompt_err("Failed to open file", window, cx, |e, _, _| {
-                            Some(format!("{e}"))
-                        });
+                    workspace.open_path_preview(path, None, false, false, true, window, cx)
                 })
-                .ok()
+                .ok()?;
+
+            cx.spawn_in(window, async move |_, mut cx| {
+                let item = open_task
+                    .await
+                    .notify_async_err(&mut cx)
+                    .ok_or_else(|| anyhow::anyhow!("Failed to open file"))?;
+                if let Some(active_editor) = item.downcast::<Editor>() {
+                    if let Some(diff_task) =
+                        active_editor.update(cx, |editor, _cx| editor.wait_for_diff_to_load())?
+                    {
+                        diff_task.await;
+                    }
+
+                    cx.update(|window, cx| {
+                        active_editor.update(cx, |editor, cx| {
+                            editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
+
+                            let snapshot = editor.snapshot(window, cx);
+                            editor.go_to_hunk_before_or_after_position(
+                                &snapshot,
+                                language::Point::new(0, 0),
+                                Direction::Next,
+                                window,
+                                cx,
+                            );
+                        })
+                    })?;
+                }
+
+                anyhow::Ok(())
+            })
+            .detach();
+
+            Some(())
         });
     }
 
