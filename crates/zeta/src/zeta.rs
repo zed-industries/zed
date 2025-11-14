@@ -1565,6 +1565,11 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
                     let snapshot = buffer.read(cx).snapshot();
                     if new_completion.should_replace_completion(old_completion, &snapshot) {
                         this.zeta.update(cx, |zeta, cx| {
+                            zeta.discard_completion(
+                                old_compltion.completion.id,
+                                completion.was_shown,
+                                cx,
+                            );
                             zeta.completion_shown(&new_completion.completion, cx);
                         });
                         this.current_completion = Some(new_completion);
