@@ -7,7 +7,7 @@ use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::B
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{convert::TryFrom, time::Duration};
+use std::{convert::TryFrom, time::Duration, fmt::Debug};
 
 pub const LMSTUDIO_API_URL: &str = "http://localhost:1234/api/v0";
 
@@ -210,6 +210,20 @@ pub struct FunctionContent {
 }
 
 #[derive(Serialize, Debug)]
+pub struct CompletionRequest {
+    pub model: String,
+    pub prompt: String,
+    pub stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    // The completon endpoint doesn't support tools
+}
+
+#[derive(Serialize, Debug)]
 pub struct ChatCompletionRequest {
     pub model: String,
     pub messages: Vec<ChatMessage>,
@@ -227,17 +241,10 @@ pub struct ChatCompletionRequest {
 }
 
 #[derive(Serialize, Debug)]
-pub struct CompletionRequest {
-    pub model: String,
-    pub prompt: String,
-    pub stream: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<i32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stop: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f32>,
-    // Tools are not supported by LMStudio for non-chat completions
+#[serde(untagged)]
+pub enum Request {
+    ChatCompletion(ChatCompletionRequest),
+    Completion(CompletionRequest),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -246,21 +253,27 @@ pub struct ChatResponse {
     pub object: String,
     pub created: u64,
     pub model: String,
-    pub choices: Vec<ChoiceDelta>,
+    pub choices: Vec<ResponseChoice>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+pub enum ResponseChoice {
+    Delta(ChoiceDelta),
+    Text(TextChoice),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ChoiceDelta {
     pub index: u32,
-    pub delta: ChatResponseMessageDelta,
+    pub delta: ChatCompletionResponseMessageDelta,
     pub finish_reason: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct CompletionChoiceDelta {
+pub struct TextChoice {
     pub index: u32,
     pub text: String,
-    pub logprobs: Option<serde_json::Value>,
     pub finish_reason: Option<String>,
 }
 
@@ -309,33 +322,17 @@ pub struct LmStudioError {
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(untagged)]
-pub enum ChatResponseStreamResult {
-    Ok(ChatResponseStreamEvent),
+pub enum ResponseStreamResult {
+    Ok(ResponseStreamEvent),
     Err { error: LmStudioError },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(untagged)]
-pub enum CompletionResponseStreamResult {
-    Ok(CompletionResponseStreamEvent),
-    Err { error: LmStudioError },
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ChatResponseStreamEvent {
+pub struct ResponseStreamEvent {
     pub created: u32,
     pub model: String,
     pub object: String,
-    pub choices: Vec<ChoiceDelta>,
-    pub usage: Option<Usage>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct CompletionResponseStreamEvent {
-    pub created: u32,
-    pub model: String,
-    pub object: String,
-    pub choices: Vec<CompletionChoiceDelta>,
+    pub choices: Vec<ResponseChoice>,
     pub usage: Option<Usage>,
 }
 
@@ -384,7 +381,7 @@ pub enum CompatibilityType {
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ChatResponseMessageDelta {
+pub struct ChatCompletionResponseMessageDelta {
     pub role: Option<Role>,
     pub content: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -394,16 +391,20 @@ pub struct ChatResponseMessageDelta {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct ResponseMessageDelta {
+pub struct CompletionResponseMessageDelta {
     pub text: String,
 }
 
 pub async fn complete(
     client: &dyn HttpClient,
     api_url: &str,
-    request: ChatCompletionRequest,
+    request: Request,
 ) -> Result<ChatResponse> {
-    let uri = format!("{api_url}/chat/completions");
+    let uri = match request {
+        Request::ChatCompletion(_) => format!("{api_url}/chat/completions"),
+        Request::Completion(_) => format!("{api_url}/completions"),
+    };
+
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
@@ -430,12 +431,16 @@ pub async fn complete(
     }
 }
 
-pub async fn stream_chat_completion(
+pub async fn stream_complete(
     client: &dyn HttpClient,
     api_url: &str,
-    request: ChatCompletionRequest,
-) -> Result<BoxStream<'static, Result<ChatResponseStreamEvent>>> {
-    let uri = format!("{api_url}/chat/completions");
+    request: Request,
+) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
+    let uri = match request {
+        Request::ChatCompletion(_) => format!("{api_url}/chat/completions"),
+        Request::Completion(_) => format!("{api_url}/completions"),
+    };
+
     let request_builder = http::Request::builder()
         .method(Method::POST)
         .uri(uri)
@@ -455,58 +460,8 @@ pub async fn stream_chat_completion(
                             None
                         } else {
                             match serde_json::from_str(line) {
-                                Ok(ChatResponseStreamResult::Ok(response)) => Some(Ok(response)),
-                                Ok(ChatResponseStreamResult::Err { error, .. }) => {
-                                    Some(Err(anyhow!(error.message)))
-                                }
-                                Err(error) => Some(Err(anyhow!(error))),
-                            }
-                        }
-                    }
-                    Err(error) => Some(Err(anyhow!(error))),
-                }
-            })
-            .boxed())
-    } else {
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-        anyhow::bail!(
-            "Failed to connect to LM Studio API: {} {}",
-            response.status(),
-            body,
-        );
-    }
-}
-
-pub async fn stream_completion(
-    client: &dyn HttpClient,
-    api_url: &str,
-    request: CompletionRequest,
-) -> Result<BoxStream<'static, Result<CompletionResponseStreamEvent>>> {
-    let uri = format!("{api_url}/completions");
-    let request_builder = http::Request::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json");
-
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
-    let mut response = client.send(request).await?;
-    if response.status().is_success() {
-        let reader = BufReader::new(response.into_body());
-        Ok(reader
-            .lines()
-            .filter_map(|line| async move {
-                match line {
-                    Ok(line) => {
-                        let line = line.strip_prefix("data: ")?;
-                        if line == "[DONE]" {
-                            None
-                        } else {
-                            match serde_json::from_str(line) {
-                                Ok(CompletionResponseStreamResult::Ok(response)) => {
-                                    Some(Ok(response))
-                                }
-                                Ok(CompletionResponseStreamResult::Err { error, .. }) => {
+                                Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
+                                Ok(ResponseStreamResult::Err { error, .. }) => {
                                     Some(Err(anyhow!(error.message)))
                                 }
                                 Err(error) => Some(Err(anyhow!(error))),

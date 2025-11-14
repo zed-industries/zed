@@ -5,7 +5,7 @@ use http_client::HttpClient;
 use language::{Anchor, Buffer, ToOffset};
 use std::{path::Path, sync::Arc, time::Duration};
 
-use crate::{stream_completion, CompletionRequest};
+use crate::{ResponseChoice, CompletionRequest, stream_complete};
 
 pub const LMSTUDIO_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
@@ -121,8 +121,6 @@ impl EditPredictionProvider for LMStudioCompletionProvider {
                 prefix, suffix
             );
 
-            println!("Prompt: {}", prompt);
-
             let stop_vec = vec![
                 "<|endoftext|>".to_string(),
                 "<|fim_prefix|>".to_string(),
@@ -144,13 +142,17 @@ impl EditPredictionProvider for LMStudioCompletionProvider {
                 temperature: Some(0.2),
             };
 
-            let mut stream = stream_completion(&*http_client, &api_url, request).await?;
+            let mut stream = stream_complete(&*http_client, &api_url, crate::Request::Completion(request)).await?;
 
             let mut completion_text = String::new();
 
             while let Some(event) = futures::StreamExt::next(&mut stream).await {
                 for choice in event?.choices {
-                    completion_text.push_str(&choice.text);
+                    let ResponseChoice::Text(text_choice) = choice else {
+                        continue;
+                    };
+
+                    completion_text.push_str(&text_choice.text);
 
                     this.update(cx, |this, cx| {
                         this.completion_text = Some(completion_text.clone());
@@ -203,7 +205,6 @@ impl EditPredictionProvider for LMStudioCompletionProvider {
         }
 
         let completion_text = self.completion_text.as_ref()?;
-        println!("completion_text: {:?}", completion_text);
 
         if let Some(completion_position) = self.completion_position {
             if cursor_position != completion_position {

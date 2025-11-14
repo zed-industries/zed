@@ -14,7 +14,7 @@ use language_model::{
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, RateLimiter, Role,
 };
-use lmstudio::{ModelType, get_models};
+use lmstudio::{ResponseChoice, ModelType, Request, get_models};
 pub use settings::LmStudioAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
@@ -374,7 +374,7 @@ impl LmStudioLanguageModel {
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
-        Result<futures::stream::BoxStream<'static, Result<lmstudio::ChatResponseStreamEvent>>>,
+        Result<futures::stream::BoxStream<'static, Result<lmstudio::ResponseStreamEvent>>>,
     > {
         let http_client = self.http_client.clone();
         let Ok(api_url) = cx.update(|cx| {
@@ -385,7 +385,7 @@ impl LmStudioLanguageModel {
         };
 
         let future = self.request_limiter.stream(async move {
-            let request = lmstudio::stream_chat_completion(http_client.as_ref(), &api_url, request);
+            let request = lmstudio::stream_complete(http_client.as_ref(), &api_url, Request::ChatCompletion(request));
             let response = request.await?;
             Ok(response)
         });
@@ -486,7 +486,7 @@ impl LmStudioEventMapper {
 
     pub fn map_stream(
         mut self,
-        events: Pin<Box<dyn Send + Stream<Item = Result<lmstudio::ChatResponseStreamEvent>>>>,
+        events: Pin<Box<dyn Send + Stream<Item = Result<lmstudio::ResponseStreamEvent>>>>,
     ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
     {
         events.flat_map(move |event| {
@@ -499,15 +499,16 @@ impl LmStudioEventMapper {
 
     pub fn map_event(
         &mut self,
-        event: lmstudio::ChatResponseStreamEvent,
+        event: lmstudio::ResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        let Some(choice) = event.choices.into_iter().next() else {
+        let Some(ResponseChoice::Delta(choice)) = event.choices.into_iter().next() else {
             return vec![Err(LanguageModelCompletionError::from(anyhow!(
                 "Response contained no choices"
             )))];
         };
 
         let mut events = Vec::new();
+
         if let Some(content) = choice.delta.content {
             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
         }
