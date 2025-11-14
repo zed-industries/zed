@@ -18,6 +18,3 @@ rustflags = [
 
 [env]
 MACOSX_DEPLOYMENT_TARGET = "10.15.7"
-
-[net]
-git-fetch-with-cli = true
