@@ -910,7 +910,7 @@ fn process_patch_hunk(
             let mut buffer_word_diffs = Vec::default();
 
             // Editor Element expects this to be relative to the start of the deleted hunk
-            let mut base_offset = diff_base_byte_range.start; //todo! check this // bytes
+            let mut base_offset = 0; //todo! check this // bytes
             let mut buffer_offset = buffer_range.start.to_offset(buffer);
 
             for change in diff.iter_all_changes() {

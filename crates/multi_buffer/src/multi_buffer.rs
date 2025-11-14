@@ -6080,18 +6080,6 @@ where
                 let mut rope_cursor = buffer.as_rope().cursor(0);
                 let buffer_start = rope_cursor.summary::<D>(base_text_byte_range.start);
 
-                let word_diffs: Vec<Range<D>> = base_word_diffs
-                    .into_iter()
-                    .map(|diff| {
-                        // 3
-                        let start =
-                            rope_cursor.summary::<D>(base_text_byte_range.start + diff.start);
-                        let end = rope_cursor.summary::<D>(base_text_byte_range.start + diff.end);
-
-                        start..end
-                    })
-                    .collect();
-
                 let mut rope_cursor = buffer.as_rope().cursor(0);
                 let _ = rope_cursor.summary::<D>(base_text_byte_range.start);
                 let buffer_range_len = rope_cursor.summary::<D>(base_text_byte_range.end);
@@ -6100,6 +6088,13 @@ where
                 let start = self.diff_transforms.start().output_dimension.0;
                 let end = self.diff_transforms.end().output_dimension.0;
 
+                let diff_offset = dbg!(start.to_offset(&buffer));
+                let diff_offset = dbg!(start.to_offset(&excerpt.buffer));
+
+                let word_diffs: Vec<Range<usize>> = base_word_diffs
+                    .into_iter()
+                    .map(|diff| diff.start + diff_offset..diff.end + diff_offset)
+                    .collect();
                 //  --- buffer1
                 // 0  foo
                 // - boo
@@ -6116,7 +6111,7 @@ where
                 Some(MultiBufferRegion {
                     buffer,
                     excerpt,
-                    word_diffs: Vec::default(), //todo!
+                    word_diffs, //todo!
                     has_trailing_newline: *has_trailing_newline,
                     is_main_buffer: false,
                     diff_hunk_status: Some(DiffHunkStatus::deleted(
