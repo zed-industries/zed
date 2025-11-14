@@ -3224,18 +3224,12 @@ impl GitPanel {
     ) -> Option<impl IntoElement> {
         self.active_repository.as_ref()?;
 
-        let text;
-        let action;
-        let tooltip;
-        if self.total_staged_count() == self.entry_count && self.entry_count > 0 {
-            text = "Unstage All";
-            action = git::UnstageAll.boxed_clone();
-            tooltip = "git reset";
-        } else {
-            text = "Stage All";
-            action = git::StageAll.boxed_clone();
-            tooltip = "git add --all ."
-        }
+        let (text, action, stage, tooltip) =
+            if self.total_staged_count() == self.entry_count && self.entry_count > 0 {
+                ("Unstage All", UnstageAll.boxed_clone(), false, "git reset")
+            } else {
+                ("Stage All", StageAll.boxed_clone(), true, "git add --all")
+            };
 
         let change_string = match self.entry_count {
             0 => "No Changes".to_string(),
@@ -3273,11 +3267,15 @@ impl GitPanel {
                                     &self.focus_handle,
                                 ))
                                 .disabled(self.entry_count == 0)
-                                .on_click(move |_, _, cx| {
-                                    let action = action.boxed_clone();
-                                    cx.defer(move |cx| {
-                                        cx.dispatch_action(action.as_ref());
-                                    })
+                                .on_click({
+                                    let git_panel = cx.weak_entity();
+                                    move |_, _, cx| {
+                                        git_panel
+                                            .update(cx, |git_panel, cx| {
+                                                git_panel.change_all_files_stage(stage, cx);
+                                            })
+                                            .ok();
+                                    }
                                 }),
                         ),
                 ),
