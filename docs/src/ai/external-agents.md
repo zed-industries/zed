@@ -3,7 +3,7 @@
 Zed supports terminal-based agents through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
 
 Currently, [Gemini CLI](https://github.com/google-gemini/gemini-cli) serves as the reference implementation.
-[Claude Code](https://www.anthropic.com/claude-code) and [Codex](https://developers.openai.com/codex) are also included by default, and you can [add custom ACP-compatible agents](#add-more-agents) as well.
+[Claude Code](https://www.anthropic.com/claude-code), [Codex](https://developers.openai.com/codex), and Cursor Agent are also supported, and you can [add custom ACP-compatible agents](#add-more-agents) as well.
 
 > Note that Zed's affordance for external agents is strictly UI-based; the billing and legal/terms arrangement is directly between you and the agent provider.
 > Zed does not charge for use of external agents, and our [zero-data retention agreements/privacy guarantees](./ai-improvement.md) are **_only_** applicable for Zed's hosted models.
@@ -182,6 +182,58 @@ And to give it context, you can @-mention files, symbols, or fetch the web.
 > Note that some first-party agent features don't yet work with Codex: editing past messages, resuming threads from history, and checkpointing.
 > We hope to add these features in the near future.
 
+## Cursor Agent
+
+Zed provides built-in support for custom cursor-agent integration through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com). If you have an ACP-compatible cursor-agent executable, you can configure it to work seamlessly with Zed's [agent panel](./agent-panel.md).
+
+### Configuration
+
+To use a cursor-agent with Zed, you need to configure it in your `settings.json`:
+
+```json [settings]
+{
+  "agent_servers": {
+    "cursor": {
+      "command": "/path/to/cursor-agent",
+      "args": ["--acp"],
+      "env": {}
+    }
+  }
+}
+```
+
+Replace `/path/to/cursor-agent` with the actual path to your ACP-compatible cursor-agent executable.
+
+### Getting Started
+
+Once configured, open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new cursor-agent thread.
+
+If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap` command to include:
+
+```json [keymap]
+[
+  {
+    "bindings": {
+      "cmd-alt-x": ["agent::NewExternalAgentThread", { "agent": "cursor" }]
+    }
+  }
+]
+```
+
+### Requirements
+
+Your cursor-agent must:
+- Implement the [Agent Client Protocol (ACP)](https://agentclientprotocol.com)
+- Communicate via stdin/stdout
+- Support ACP methods: initialize, new_session, prompt, and tool execution
+- Be executable from the command line
+
+### Usage
+
+Once configured, you can use your cursor-agent similar to other external agents in Zed. You can @-mention files, recent threads, symbols, or fetch the web to provide context.
+
+> Note: Cursor-compatible keybindings are already available in Zed. You can activate them via Settings > Keymap > Cursor (macOS/Linux).
+
 ## Add More Agents {#add-more-agents}
 
 Add more external agents to Zed by installing [Agent Server extensions](../extensions/agent-servers.md).
@@ -204,7 +256,7 @@ You can also add agents through your `settings.json`, by specifying certain fiel
 
 This can be useful if you're in the middle of developing a new agent that speaks the protocol and you want to debug it.
 
-It's also possible to specify a custom path, arguments, or environment for the builtin integrations by using the `claude` and `gemini` names.
+It's also possible to specify a custom path, arguments, or environment for the builtin integrations by using the `claude`, `gemini`, `codex`, or `cursor` names.
 
 ## Debugging Agents
 
