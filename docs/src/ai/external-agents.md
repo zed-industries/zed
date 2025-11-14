@@ -213,14 +213,14 @@ To assign a custom keybinding to start a new thread for agents that were added b
 ```json [keymap]
 {
   "bindings": {
-    "cmd-alt-n": [
+    "cmd-alt-n": [ // Your custom keybinding
       "agent::NewExternalAgentThread",
       {
         "agent": {
           "custom": {
-            "name": "My Agent",
+            "name": "My Agent", // The agent name as it appears in the UI (e.g., "OpenCode", "Auggie CLI", etc.)
             "command": {
-              "command": "my-agent",
+              "command": "my-agent", // The agent name in lowercase with no spaces
               "args": ["acp"]
             }
           }
