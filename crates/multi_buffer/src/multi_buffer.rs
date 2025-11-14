@@ -1855,7 +1855,7 @@ impl MultiBuffer {
             if let Some(excerpt) = excerpts.item()
                 && excerpt.locator == *locator
             {
-                let excerpt_start = excerpts.start().1.clone();
+                let excerpt_start = excerpts.start().1;
                 let excerpt_end = ExcerptDimension(excerpt_start.0 + excerpt.text_summary.lines);
 
                 diff_transforms.seek_forward(&excerpt_start, Bias::Left);
@@ -5195,7 +5195,7 @@ impl MultiBufferSnapshot {
             excerpt,
             offset: diff_transforms.start().output_dimension.0,
             buffer_offset: BufferOffset(excerpt.range.context.start.to_offset(&excerpt.buffer)),
-            excerpt_offset: excerpts.start().1.0.clone(),
+            excerpt_offset: excerpts.start().1.0,
             diff_transforms,
         })
     }
@@ -6108,7 +6108,7 @@ impl MultiBufferSnapshot {
             sought_exact = true;
         }
         if sought_exact {
-            let start = cursor.start().1.clone();
+            let start = cursor.start().1;
             let end = cursor.end().1;
             let mut diff_transforms = self
                 .diff_transforms
@@ -6161,7 +6161,7 @@ impl MultiBufferSnapshot {
         let region = cursor.region()?;
         let offset = region.range.start;
         let buffer_offset = start_excerpt.buffer_start_offset();
-        let excerpt_offset = cursor.excerpts.start().clone().0;
+        let excerpt_offset = cursor.excerpts.start().0;
         Some(MultiBufferExcerpt {
             diff_transforms: cursor.diff_transforms,
             excerpt: start_excerpt,
@@ -6770,7 +6770,7 @@ impl<'a> MultiBufferExcerpt<'a> {
     }
 
     fn map_offset_to_buffer_internal(&self, offset: MultiBufferOffset) -> BufferOffset {
-        let mut excerpt_offset = self.diff_transforms.start().excerpt_dimension.clone();
+        let mut excerpt_offset = self.diff_transforms.start().excerpt_dimension;
         if let Some(DiffTransform::BufferContent { .. }) = self.diff_transforms.item() {
             excerpt_offset.0 += offset - self.diff_transforms.start().output_dimension.0;
         };

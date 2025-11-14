@@ -64,8 +64,9 @@ pub use items::MAX_TAB_TITLE_LEN;
 pub use lsp::CompletionContext;
 pub use lsp_ext::lsp_tasks;
 pub use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MBTextSummary, MultiBuffer, MultiBufferOffset,
-    MultiBufferOffsetUtf16, MultiBufferSnapshot, PathKey, RowInfo, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, BufferOffset, ExcerptId, ExcerptRange, MBTextSummary, MultiBuffer,
+    MultiBufferOffset, MultiBufferOffsetUtf16, MultiBufferSnapshot, PathKey, RowInfo, ToOffset,
+    ToPoint,
 };
 pub use text::Bias;
 
@@ -134,7 +135,6 @@ use lsp_colors::LspColorData;
 use markdown::Markdown;
 use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
-use multi_buffer::BufferOffset;
 use multi_buffer::{
     ExcerptInfo, ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow,
 };
