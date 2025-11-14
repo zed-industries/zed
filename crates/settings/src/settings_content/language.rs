@@ -79,6 +79,7 @@ pub enum EditPredictionProvider {
     Supermaven,
     Zed,
     Codestral,
+    #[serde(rename = "lmstudio")]
     LmStudio,
 }
 

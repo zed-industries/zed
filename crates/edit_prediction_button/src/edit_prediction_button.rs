@@ -480,6 +480,7 @@ impl EditPredictionButton {
         let mut providers = Vec::new();
 
         providers.push(EditPredictionProvider::Zed);
+        providers.push(EditPredictionProvider::LmStudio);
 
         if let Some(copilot) = Copilot::global(cx) {
             if matches!(copilot.read(cx).status(), Status::Authorized) {
@@ -497,10 +498,6 @@ impl EditPredictionButton {
 
         if CodestralCompletionProvider::has_api_key(cx) {
             providers.push(EditPredictionProvider::Codestral);
-        }
-
-        if std::env::var("LMSTUDIO_MODEL").is_ok() {
-            providers.push(EditPredictionProvider::LmStudio);
         }
 
         providers
