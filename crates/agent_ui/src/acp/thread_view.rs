@@ -6066,6 +6066,7 @@ pub(crate) mod tests {
     use acp_thread::StubAgentConnection;
     use agent_client_protocol::SessionId;
     use assistant_text_thread::TextThreadStore;
+    use editor::MultiBufferOffset;
     use fs::FakeFs;
     use gpui::{EventEmitter, SemanticVersion, TestAppContext, VisualTestContext};
     use project::Project;
@@ -7234,7 +7235,7 @@ pub(crate) mod tests {
                         Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
 
                     editor.change_selections(Default::default(), window, cx, |selections| {
-                        selections.select_ranges([8..15]);
+                        selections.select_ranges([MultiBufferOffset(8)..MultiBufferOffset(15)]);
                     });
 
                     editor
@@ -7296,7 +7297,7 @@ pub(crate) mod tests {
                         Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
 
                     editor.change_selections(Default::default(), window, cx, |selections| {
-                        selections.select_ranges([8..15]);
+                        selections.select_ranges([MultiBufferOffset(8)..MultiBufferOffset(15)]);
                     });
 
                     editor

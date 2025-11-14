@@ -1,6 +1,9 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorEvent, MultiBuffer, SelectionEffects, multibuffer_context_lines};
+use editor::{
+    Editor, EditorEvent, MultiBuffer, MultiBufferOffset, SelectionEffects,
+    multibuffer_context_lines,
+};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncApp, AsyncWindowContext, Context,
@@ -187,7 +190,7 @@ impl CommitView {
             editor.update(cx, |editor, cx| {
                 editor.disable_header_for_buffer(metadata_buffer_id.unwrap(), cx);
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
-                    selections.select_ranges(vec![0..0]);
+                    selections.select_ranges(vec![MultiBufferOffset(0)..MultiBufferOffset(0)]);
                 });
             });
         }

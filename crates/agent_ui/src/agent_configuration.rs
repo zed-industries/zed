@@ -12,7 +12,7 @@ use client::zed_urls;
 use cloud_llm_client::{Plan, PlanV1, PlanV2};
 use collections::HashMap;
 use context_server::ContextServerId;
-use editor::{Editor, SelectionEffects, scroll::Autoscroll};
+use editor::{Editor, MultiBufferOffset, SelectionEffects, scroll::Autoscroll};
 use extension::ExtensionManifest;
 use extension_host::ExtensionStore;
 use fs::Fs;
@@ -1362,7 +1362,15 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                 .map(|(range, _)| range.clone())
                 .collect::<Vec<_>>();
 
-            item.edit(edits, cx);
+            item.edit(
+                edits.into_iter().map(|(range, s)| {
+                    (
+                        MultiBufferOffset(range.start)..MultiBufferOffset(range.end),
+                        s,
+                    )
+                }),
+                cx,
+            );
             if let Some((unique_server_name, buffer)) =
                 unique_server_name.zip(item.buffer().read(cx).as_singleton())
             {
@@ -1375,7 +1383,9 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                         window,
                         cx,
                         |selections| {
-                            selections.select_ranges(vec![range]);
+                            selections.select_ranges(vec![
+                                MultiBufferOffset(range.start)..MultiBufferOffset(range.end),
+                            ]);
                         },
                     );
                 }

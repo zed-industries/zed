@@ -323,7 +323,7 @@ impl MultiBuffer {
         D: MultiBufferDimension
             + Ord
             + Sub<D, Output = D::TextDimension>
-            + for<'a> AddAssign<&'a D::TextDimension>,
+            + AddAssign<D::TextDimension>,
         D::TextDimension: PartialOrd + Sub<D::TextDimension, Output = D::TextDimension>,
     {
         let Some(transaction) = self.history.transaction(transaction_id) else {
@@ -365,9 +365,9 @@ impl MultiBuffer {
                             let excerpt_start = D::from_summary(&cursor.start().text);
 
                             let mut start = excerpt_start;
-                            start += &(range.start - excerpt_buffer_start);
+                            start += range.start - excerpt_buffer_start;
                             let mut end = excerpt_start;
-                            end += &(range.end - excerpt_buffer_start);
+                            end += range.end - excerpt_buffer_start;
 
                             ranges.push(start..end);
                             break;
