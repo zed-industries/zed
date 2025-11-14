@@ -84,7 +84,7 @@ pub async fn run_evaluate(
     {
         write_aggregated_scores(&mut output_file, &all_results).log_err();
     };
-    print_run_data_dir(args.repetitions == 1);
+    print_run_data_dir(args.repetitions == 1, std::io::stdout().is_terminal());
 }
 
 fn write_aggregated_scores(
@@ -103,8 +103,7 @@ fn write_aggregated_scores(
                 }
 
                 failed_count += 1;
-                let err = err
-                    .to_string()
+                let err = format!("{err:?}")
                     .replace("<edits", "```xml\n<edits")
                     .replace("</edits>", "</edits>\n```");
                 writeln!(
@@ -173,6 +172,7 @@ pub async fn run_evaluate_one(
             &predict_result,
             &evaluation_result,
             &mut std::io::stdout(),
+            std::io::stdout().is_terminal(),
         )?;
     }
 
@@ -184,6 +184,7 @@ pub async fn run_evaluate_one(
             &predict_result,
             &evaluation_result,
             &mut results_file,
+            false,
         )
         .log_err();
     }
@@ -196,16 +197,25 @@ fn write_eval_result(
     predictions: &PredictionDetails,
     evaluation_result: &EvaluationResult,
     out: &mut impl Write,
+    use_color: bool,
 ) -> Result<()> {
     writeln!(
         out,
         "## Expected edit prediction:\n\n```diff\n{}\n```\n",
-        compare_diffs(&example.example.expected_patch, &predictions.diff)
+        compare_diffs(
+            &example.example.expected_patch,
+            &predictions.diff,
+            use_color
+        )
     )?;
     writeln!(
         out,
         "## Actual edit prediction:\n\n```diff\n{}\n```\n",
-        compare_diffs(&predictions.diff, &example.example.expected_patch)
+        compare_diffs(
+            &predictions.diff,
+            &example.example.expected_patch,
+            use_color
+        )
     )?;
     writeln!(out, "{:#}", evaluation_result)?;
 
@@ -434,8 +444,7 @@ pub fn evaluate(example: &Example, preds: &PredictionDetails) -> EvaluationResul
 /// Return annotated `patch_a` so that:
 /// Additions and deletions that are not present in `patch_b` will be highlighted in red.
 /// Additions and deletions that are present in `patch_b` will be highlighted in green.
-pub fn compare_diffs(patch_a: &str, patch_b: &str) -> String {
-    let use_color = std::io::stdout().is_terminal();
+pub fn compare_diffs(patch_a: &str, patch_b: &str, use_color: bool) -> String {
     let green = if use_color { "\x1b[32m✓ " } else { "" };
     let red = if use_color { "\x1b[31m✗ " } else { "" };
     let neutral = if use_color { "  " } else { "" };
